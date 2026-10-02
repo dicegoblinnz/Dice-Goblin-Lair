@@ -72,7 +72,12 @@ export class ShopifyAdmin {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'client_credentials', client_id: this.clientId, client_secret: this.clientSecret }),
     });
-    if (!response.ok) throw new Error(`Shopify token request failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) {
+      const body = await response.text();
+      // Shopify answers with an HTML error page; its title says what's wrong (e.g. "Oauth error app_not_installed").
+      const reason = body.match(/<title>([^<]+)<\/title>/i)?.[1]?.replace(/^\d+\s*-\s*/, '') || body.slice(0, 200);
+      throw new Error(`Shopify login failed (${response.status}): ${reason}`);
+    }
     const { access_token: token, expires_in: expiresIn } = await response.json();
     this.token = token;
     this.tokenExpires = Date.now() + (expiresIn || 86399) * 1000;

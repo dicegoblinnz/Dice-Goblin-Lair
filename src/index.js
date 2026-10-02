@@ -19,6 +19,8 @@ const lair = (env) => env.LAIR.get(env.LAIR.idFromName('dice-goblin'));
 const internalCall = (env, origin, path, body) =>
   lair(env).fetch(new Request(`${origin}/internal/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body }));
 
+const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
 /** A plain page for anyone who opens the app's own address: what it is, where to book, and whether it's connected. */
 async function statusPage(env) {
   let rows = [];
@@ -54,6 +56,7 @@ li span{display:inline-grid;place-items:center;width:1.4rem;height:1.4rem;border
 <ul>
 ${line(true, 'Booking app is running', '')}
 ${line(shopifyOk, 'Connected to the Shopify store', 'Waiting for the Shopify app to be installed with its permissions')}
+${!shopifyOk && connection?.advice ? `<li class="hint"><span aria-hidden="true"></span><small>${escapeHtml(connection.advice)}</small></li>` : ''}
 ${line(webhookOk, 'Online payments are reported back to the app', 'Payment notifications not set up yet')}
 ${line(Boolean(proxy?.seen), 'The website has reached the app through dicegoblin.nz/apps/lair', 'Waiting for the store link (app proxy) to be set up')}
 </ul>

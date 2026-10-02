@@ -789,7 +789,7 @@ export class Lair {
       email: emailReady(this.env),
       payOnline: rules.payOnline,
       timezone: rules.tz,
-      rooms: rules.rooms.map((r) => `${r.name}: ${r.tables.length} tables (${r.tables[0]?.id || '-'}…), ${dollars(r.price)} per person`),
+      rooms: rules.rooms.map((r) => `${r.name}: ${r.tables.length} ${r.tables.length === 1 ? 'table' : 'tables'} (${r.tables[0]?.id || '-'}…), ${dollars(r.price)} per person`),
     };
     if (this.shopify.configured) {
       try {
@@ -800,10 +800,19 @@ export class Lair {
         result.missingScopes = REQUIRED_SCOPES.filter(
           (scope) => !info.scopes.includes(scope) && !(scope.startsWith('read_') && info.scopes.includes(scope.replace(/^read_/, 'write_'))),
         );
+        if (result.missingScopes.length) result.advice = `Add these permissions to the app's version in the Dev Dashboard, release it, and approve the update in Shopify: ${result.missingScopes.join(', ')}`;
       } catch (error) {
         result.shopifyLogin = String(error.message || error).slice(0, 300);
+        result.advice = /app_not_installed/.test(result.shopifyLogin)
+          ? 'The app is not installed on the store yet: Dev Dashboard → the app → Install app → choose the Dice Goblin store.'
+          : /invalid|client|credential|401/i.test(result.shopifyLogin)
+            ? 'Shopify did not accept the client ID or secret: check SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET in the config table.'
+            : 'Shopify could not be reached just now; the app retries every 10 minutes.';
       }
       result.paymentWebhook = await this.ensureWebhook(webhookUrl, { force });
+      if (!result.paymentWebhook.ok && /Shopify login failed/.test(result.paymentWebhook.reason || '')) result.paymentWebhook.reason = 'Waiting for the Shopify login to work.';
+    } else {
+      result.advice = 'Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to the config table.';
     }
     this.note({ connection: result });
     return result;
