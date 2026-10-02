@@ -1755,3 +1755,94 @@ test('GET /members/birthdays (staff): the next 30 days, soonest first, with spen
     ['3001', '2026-10-25', 24, 15, false, 12000],
   ]);
 });
+
+test('join every session: a seat at each upcoming session with room, the series growing seats members, and leaving frees the seats', async () => {
+  const mail = captureEmails();
+  try {
+    const listed = await call('POST', 'games', {
+      title: 'Weekly Mothership', system: 'Mothership', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Space horror.', seats: 3, tables: ['A1'],
+      start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly',
+    }, 'gm');
+    const { sessions } = listed.data;
+    const seriesId = listed.data.game.seriesId;
+    assert.equal(sessions.length, 9);
+    await call('POST', 'bookings', { kind: 'gm-seat', gameId: sessions[1].id, people: 2, name: 'Kai', email: 'kai@example.com', players: [{ name: 'Kai' }, { name: 'Tama' }] }, 'kai');
+    const join = { people: 2, players: [{ name: 'Mia', character: 'Ripley' }, { name: 'Leo' }], name: 'Mia', email: 'mia@example.com' };
+    assert.equal((await call('POST', `games/${sessions[0].id}/join-series`, join)).status, 401);
+    assert.equal((await call('POST', `games/${sessions[0].id}/join-series`, { ...join, people: 4 }, 'mia')).status, 422, 'no more people than the game has seats');
+    await settle();
+    mail.sent.length = 0;
+
+    const joined = await call('POST', `games/${sessions[0].id}/join-series`, join, 'mia');
+    assert.equal(joined.status, 200, joined.data.error);
+    assert.deepEqual(joined.data.member, { seriesId, people: 2, players: [{ name: 'Mia', character: 'Ripley' }, { name: 'Leo', character: '' }] });
+    assert.equal(joined.data.booked.length, 8);
+    assert.deepEqual(joined.data.full.map((x) => x.gameId), [sessions[1].id], 'the session with one seat left is full for two');
+    const seat = lair.booking(joined.data.booked[0].ref);
+    assert.deepEqual([seat.kind, seat.status, seat.pay, seat.paid, seat.amount, seat.seriesId, seat.customerId], ['gm-seat', 'confirmed', 'day', false, 3000, seriesId, 'mia']);
+    await settle();
+    assert.match(mail.sent.find((m) => m.to === 'mia@example.com').text, /every upcoming session of Weekly Mothership/);
+    assert.equal((await call('POST', 'bookings', tableBooking({ email: 'mia@example.com' }), 'mia')).status, 200, 'series seats leave room under the per-email limit');
+    const again = await call('POST', `games/${sessions[0].id}/join-series`, join, 'mia');
+    assert.deepEqual(again.data.booked.map((x) => x.ref), joined.data.booked.map((x) => x.ref), 'joining again keeps the same seats');
+
+    // A week on, the series grows by a session, and Mia has a seat at it.
+    Date.now = () => NOW + 7 * 24 * HOUR;
+    lair.seriesDay = null;
+    lair.extendSeries(lair.rulesCache, Date.now());
+    const newest = lair.sql.exec('SELECT id FROM games WHERE series_id = ? ORDER BY starts_at DESC LIMIT 1', seriesId).one().id;
+    assert.ok(!sessions.some((x) => x.id === newest));
+    assert.deepEqual(lair.gameBookings(newest).filter((b) => b.kind === 'gm-seat').map((b) => b.customerId), ['mia']);
+    assert.deepEqual((await call('GET', 'me', null, 'mia')).data.series.map((x) => [x.seriesId, x.title, x.people]), [[seriesId, 'Weekly Mothership', 2]]);
+
+    mail.sent.length = 0;
+    assert.equal((await call('POST', `series/${seriesId}/leave`, {}, 'kai')).status, 404);
+    const left = await call('POST', `series/${seriesId}/leave`, {}, 'mia');
+    assert.equal(left.status, 200, left.data.error);
+    assert.equal(left.data.cancelled, 8, 'every upcoming seat it made (the first session is in the past now)');
+    assert.equal(lair.booking(joined.data.booked[0].ref).status, 'confirmed', 'past sessions are left alone');
+    await settle();
+    const gm = mail.sent.filter((m) => m.to === 'ellie@example.com');
+    assert.equal(gm.length, 1);
+    assert.match(gm[0].text, /Mia has stopped coming to every session/);
+    assert.deepEqual((await call('GET', 'me', null, 'mia')).data.series, []);
+    Date.now = () => NOW + 14 * 24 * HOUR;
+    lair.seriesDay = null;
+    lair.extendSeries(lair.rulesCache, Date.now());
+    const latest = lair.sql.exec('SELECT id FROM games WHERE series_id = ? ORDER BY starts_at DESC LIMIT 1', seriesId).one().id;
+    assert.equal(lair.gameBookings(latest).filter((b) => b.kind === 'gm-seat').length, 0, 'no seats once she has left');
+  } finally {
+    mail.restore();
+  }
+});
+
+test('join every session: a date the GM adds seats members and tells them; skipping one session keeps the rest; one-offs have no series', async () => {
+  const mail = captureEmails();
+  try {
+    const flexible = await call('POST', 'games', {
+      title: 'Flexible Blades', system: 'Blades in the Dark', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Heists.', seats: 4, tables: ['B1'],
+      start: at('2026-10-02', 18), end: at('2026-10-02', 21), schedule: 'flexible',
+    }, 'gm');
+    const joined = await call('POST', `games/${flexible.data.game.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia');
+    assert.equal(joined.data.booked.length, 1);
+    await settle();
+    mail.sent.length = 0;
+    const added = await call('POST', `games/${flexible.data.game.id}/sessions`, { start: at('2026-10-09', 18), end: at('2026-10-09', 21) }, 'gm');
+    assert.equal(added.status, 200, added.data.error);
+    const seats = lair.gameBookings(added.data.game.id).filter((b) => b.kind === 'gm-seat');
+    assert.deepEqual(seats.map((b) => [b.customerId, b.party[0].name]), [['mia', 'Mia']]);
+    await settle();
+    assert.match(mail.sent.find((m) => m.to === 'mia@example.com').subject, /New session: Flexible Blades/);
+
+    const skipped = await call('POST', `bookings/${seats[0].id}/update`, { status: 'cancelled' }, 'mia');
+    assert.equal(skipped.status, 200, skipped.data.error);
+    assert.equal(lair.booking(joined.data.booked[0].ref).status, 'confirmed', 'the other session stays booked');
+    await settle();
+    assert.ok(mail.sent.some((m) => m.to === 'ellie@example.com' && /Seat dropped/.test(m.subject)));
+
+    const oneOff = await call('POST', 'games', { title: 'One-off', system: 'Other', gm: 'Ellie', blurb: 'x', seats: 3, tables: ['B2'], start: at('2026-10-02', 18), end: at('2026-10-02', 21) }, 'gm');
+    assert.equal((await call('POST', `games/${oneOff.data.game.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia')).status, 422);
+  } finally {
+    mail.restore();
+  }
+});

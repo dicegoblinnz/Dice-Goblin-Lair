@@ -7,7 +7,7 @@
 import {
   ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, LairTime, RuleError, addDays, birthdayPercent, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
   PRIZE_CODE_DAYS, ROLL_EVERY, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, nextBirthday, oneRoom, parseBirthday, parseTableList, parseTicketCode,
-  publicBooking, publicGame, readSettingsData, refName, refundFor, rollPrize, rulesFromSettings, seatsTaken, tableIndex,
+  publicBooking, publicGame, readSettingsData, refName, refundFor, rollPrize, rulesFromSettings, seatPlayers, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -127,12 +127,20 @@ const MIGRATIONS = [
   [
     "CREATE UNIQUE INDEX IF NOT EXISTS prizes_birthday ON prizes (customer_id, period) WHERE source = 'birthday'",
   ],
+  // "Join every session": a player's standing seat at a game series. The seats it makes carry the series id.
+  [
+    `CREATE TABLE IF NOT EXISTS series_members (
+      series_id TEXT NOT NULL, customer_id TEXT NOT NULL, people INTEGER NOT NULL, players TEXT, name TEXT, email TEXT, status TEXT NOT NULL,
+      created_at INTEGER, updated_at INTEGER, PRIMARY KEY (series_id, customer_id))`,
+    'ALTER TABLE bookings ADD COLUMN series_id TEXT',
+    'CREATE INDEX IF NOT EXISTS bookings_series ON bookings (series_id, customer_id)',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
   'id', 'ref', 'kind', 'status', 'tables', 'room', 'starts_at', 'ends_at', 'people', 'name', 'email', 'phone', 'notes', 'activity',
   'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'party', 'arrived_at',
-  'refund', 'created_at', 'updated_at',
+  'refund', 'series_id', 'created_at', 'updated_at',
 ];
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
@@ -232,7 +240,7 @@ export class Lair {
       people: r.people, name: r.name, email: r.email, phone: r.phone, notes: r.notes, activity: r.activity, extras: parse(r.extras, []),
       pay: r.pay, paid: Boolean(r.paid), amount: r.amount, gameId: r.game_id, customerId: r.customer_id, holdUntil: r.hold_until,
       draftOrderId: r.draft_order_id, orderId: r.order_id, party: parse(r.party, []), arrivedAt: r.arrived_at || null,
-      refund: r.refund || null, refundDue: r.refund === 'due', refunded: r.refund === 'done',
+      refund: r.refund || null, refundDue: r.refund === 'due', refunded: r.refund === 'done', seriesId: r.series_id || null,
     };
   }
 
@@ -309,7 +317,7 @@ export class Lair {
       b.id, b.ref, b.kind, b.status, JSON.stringify(b.tables), b.room || null, b.start, b.end, b.people, b.name || null, b.email || null,
       b.phone || null, b.notes || null, b.activity || null, JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount || 0,
       b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null,
-      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, now, now,
+      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, b.seriesId || null, now, now,
     );
   }
 
@@ -518,6 +526,8 @@ export class Lair {
       if (a === 'games' && c === 'update') return json(await this.updateGame(b, body, who));
       if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who));
       if (a === 'games' && c === 'sessions') return json(await this.addSession(b, body, who));
+      if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
+      if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who));
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
       if (a === 'blocks' && !b) return json(await this.createBlock(body, who));
@@ -615,7 +625,7 @@ export class Lair {
     }
     if (!who.staff && booking.email) {
       const active = this.sql
-        .exec("SELECT COUNT(*) AS n FROM bookings WHERE lower(email) = lower(?) AND ends_at > ? AND status IN ('held', 'confirmed')", booking.email, now)
+        .exec("SELECT COUNT(*) AS n FROM bookings WHERE lower(email) = lower(?) AND ends_at > ? AND status IN ('held', 'confirmed') AND series_id IS NULL", booking.email, now)
         .one().n;
       if (active >= LIMITS.activePerEmail) throw new RuleError(`You already have ${active} bookings coming up. Call us to book more.`, 429);
     }
@@ -925,7 +935,9 @@ export class Lair {
           status: row.approved ? 'open' : 'pending', feeApproved: true,
           imageId: row.image_id || latest?.imageId || null, gmBio: latest?.gmBio ?? details.gmBio,
         };
-        created.push(this.saveSession(base, session, now));
+        const game = this.saveSession(base, session, now);
+        this.seatSeriesMembers(game, rules, now);
+        created.push(game);
       } catch (error) {
         if (!(error instanceof RuleError)) throw error;
         skipped.push({ start, reason: error.message });
@@ -1051,6 +1063,16 @@ export class Lair {
       status: approved ? 'open' : 'pending', credited: null, feeApproved: true, imageId: game.imageId,
     };
     const created = this.saveSession(base, session, now);
+    const seated = this.seatSeriesMembers(created, rules, now);
+    if (seated.length && emailReady(this.env)) {
+      this.later(this.mailMany(seated.filter((x) => isEmail(x.member.email)).map(({ member, result }) => this.letter(member.email, `New session: ${created.title}, ${this.when(created, rules)}`, {
+        title: 'New session, same seat',
+        intro: `Kia ora ${member.name}, ${created.gm} added a session of ${created.title}, and Gobgob saved your seat.`,
+        details: [['When', this.when(created, rules)], ['Players', this.partyLine(result.seat.party)], ['Fee', `${dollars(result.seat.amount)}, pay at the counter`], ['Ticket', result.seat.ref]],
+        outro: "Can't make this one? Cancel it in My Lair and your other sessions stay booked.",
+        button: { label: 'See it in My Lair', url: this.page('myLair') },
+      }))));
+    }
     if (!approved) {
       this.notifyStaff(`Game to approve: ${created.title}`, {
         title: 'A session to approve',
@@ -1059,6 +1081,129 @@ export class Lair {
       });
     }
     return { game: this.gameView(created, this.state(created.start - 1, created.end + 1), rules) };
+  }
+
+  /* ---------------- joining every session of a game ---------------- */
+  seriesMember(seriesId, customerId) {
+    return this.sql.exec('SELECT * FROM series_members WHERE series_id = ? AND customer_id = ?', seriesId, String(customerId)).toArray()[0] || null;
+  }
+
+  /** Seats taken at one session */
+  takenSeats(gameId) {
+    return this.sql.exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated')", gameId).one().n;
+  }
+
+  /**
+   * A series member's seat at one session: theirs already, a new one when there's room, or null when it's full.
+   * Series members pay at the counter each session. No awaits.
+   */
+  seatSeriesMember(session, member, rules, now) {
+    const existing = this.sql
+      .exec("SELECT * FROM bookings WHERE game_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated') LIMIT 1", session.id, member.customer_id)
+      .toArray()[0];
+    if (existing) return { seat: this.rowToBooking(existing), created: false };
+    if (session.seats - this.takenSeats(session.id) < member.people) return null;
+    const seat = {
+      id: makeId('bk'), ref: this.uniqueRef(member.name), kind: 'gm-seat', status: 'confirmed', gameId: session.id, seriesId: session.seriesId,
+      tables: session.tables, room: session.room, start: session.start, end: session.end, people: member.people, name: member.name, email: member.email,
+      amount: (session.seatPrice || rules.prices.gmSeat) * member.people, pay: 'day', paid: false, activity: 'rpg', party: parse(member.players, []),
+      customerId: member.customer_id,
+    };
+    this.saveBooking(seat, now);
+    return { seat, created: true };
+  }
+
+  /** A new open session seats the series' members while there's room, first to join first. Returns the new seats. No awaits. */
+  seatSeriesMembers(session, rules, now) {
+    if (session.status !== 'open' || !session.seriesId) return [];
+    const members = this.sql.exec("SELECT * FROM series_members WHERE series_id = ? AND status = 'active' ORDER BY created_at", session.seriesId).toArray();
+    return members.map((member) => ({ member, result: this.seatSeriesMember(session, member, rules, now) })).filter((x) => x.result?.created);
+  }
+
+  /**
+   * POST /games/:id/join-series { people, players, name, email } (logged in): a seat at every upcoming session of the
+   * game's series that has room, now and as new sessions appear. Skip one session by cancelling that seat; leave with
+   * POST /series/:id/leave. Joining again (to change who's coming) books every session again.
+   */
+  async joinSeries(gameId, input, who, client = '') {
+    if (!who.customerId) throw new RuleError('Log in to join a game.', 401);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const game = this.game(gameId);
+    if (!game || !['open', 'full'].includes(game.status)) throw new RuleError('That game is not open for players.', 404);
+    if (!game.seriesId) throw new RuleError("This game is a one-off, so there's only the one session. Book a seat instead.", 422);
+    const series = this.sql.exec('SELECT * FROM series WHERE id = ?', game.seriesId).toArray()[0];
+    if (!series || series.status !== 'active') throw new RuleError("This game isn't running any more.", 409);
+    const most = Math.min(8, game.seats);
+    const people = Math.floor(Number(input.people));
+    if (!(people >= 1 && people <= most)) throw new RuleError(`Join with 1 to ${most} people.`);
+    const name = trimmed(input.name, 80);
+    const email = trimmed(input.email, 120);
+    if (!name) throw new RuleError('Add your name.');
+    if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
+    const players = seatPlayers(input.players, people, name);
+    this.checkRate(who, client, now);
+    this.write(
+      `INSERT INTO series_members (series_id, customer_id, people, players, name, email, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+       ON CONFLICT(series_id, customer_id) DO UPDATE SET people = excluded.people, players = excluded.players, name = excluded.name, email = excluded.email,
+         status = 'active', updated_at = excluded.updated_at`,
+      game.seriesId, who.customerId, people, JSON.stringify(players), name, email, now, now,
+    );
+    this.touchMember(who.customerId, { name, email }, now);
+    const member = this.seriesMember(game.seriesId, who.customerId);
+    const booked = [];
+    const full = [];
+    const sessions = this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status = 'open' AND starts_at > ? ORDER BY starts_at", game.seriesId, now).toArray().map((r) => this.rowToGame(r));
+    for (const session of sessions) {
+      const got = this.seatSeriesMember(session, member, rules, now);
+      if (got) booked.push({ gameId: session.id, start: session.start, ref: got.seat.ref });
+      else full.push({ gameId: session.id, start: session.start });
+    }
+    if (emailReady(this.env)) {
+      const dates = (list) => list.map((x) => `${this.when(sessions.find((g) => g.id === x.gameId), rules)}${x.ref ? ` (${x.ref})` : ''}`).join('\n');
+      this.later(this.mail(this.letter(email, `You're in for every session: ${game.title}`, {
+        title: "You're in for every session!",
+        intro: `Kia ora ${name}, you've got a seat at every upcoming session of ${game.title}${game.gm ? ` with GM ${game.gm}` : ''}. New sessions get your seat too, while there's room.`,
+        details: [
+          ['Game', game.title], ['Players', this.partyLine(players)], ['Booked', dates(booked)], ['Already full', dates(full)],
+          ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, paid at the counter`],
+        ],
+        outro: ['Show your ticket code or your member card at the counter each session.', "Skipping one? Cancel that session's seat in My Lair. To stop coming altogether, leave the game in My Lair."],
+        button: { label: 'See it in My Lair', url: this.page('myLair') },
+      })));
+    }
+    return { member: { seriesId: game.seriesId, people, players }, booked, full };
+  }
+
+  /** POST /series/:id/leave (logged in): stop being seated at every session, and free the upcoming seats it made. */
+  async leaveSeries(seriesId, who) {
+    if (!who.customerId) throw new RuleError('Log in to manage your games.', 401);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const member = this.seriesMember(seriesId, who.customerId);
+    if (!member || member.status !== 'active') throw new RuleError("You're not signed up for every session of that game.", 404);
+    this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, who.customerId);
+    const seats = this.sql
+      .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, who.customerId, now)
+      .toArray().map((r) => this.rowToBooking(r));
+    for (const seat of seats) {
+      const refund = refundFor(seat, rules, now);
+      this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund.due ? 'due' : seat.refund, now, seat.id);
+      this.dropDraft(seat);
+    }
+    const game = seats.length ? this.game(seats[0].gameId) : null;
+    if (game && emailReady(this.env) && isEmail(game.gmEmail)) {
+      this.later(this.mail(this.letter(game.gmEmail, `Player left: ${game.title}`, {
+        title: 'A player left your game',
+        intro: `Kia ora ${game.gm}, ${member.name} has stopped coming to every session of ${game.title}. Their ${seats.length === 1 ? 'seat' : 'seats'} at the next ${seats.length === 1 ? 'session is' : `${seats.length} sessions are`} free again.`,
+        details: [['Game', game.title], ['Player', `${member.name}${member.people > 1 ? ` (${member.people} seats)` : ''}`], ['Sessions freed', seats.map((x) => this.when(x, rules)).join('\n')]],
+        button: { label: 'See the games board', url: this.page('gm') },
+        signoff: 'Gobgob',
+      })));
+    }
+    return { ok: true, cancelled: seats.length };
   }
 
   /**
@@ -1949,7 +2094,10 @@ export class Lair {
       bookings: own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map(view),
       seats: own.filter((b) => b.kind === 'gm-seat').map((b) => {
         const g = seatGames.get(b.gameId);
-        return { ...view(b), gameId: b.gameId, gameTitle: g?.title || 'GM game', system: g?.system || '', gm: g?.gm || '', image: this.imageUrl(g?.imageId) };
+        return {
+          ...view(b), gameId: b.gameId, gameTitle: g?.title || 'GM game', system: g?.system || '', gm: g?.gm || '', image: this.imageUrl(g?.imageId),
+          seriesId: b.seriesId || null,
+        };
       }),
       games: gameRows.map((g) => ({ ...this.gameView(g, span, rules), players: this.gamePlayers(span, g.id) })),
       joins: joins.map((j) => ({ id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, status: j.status })),
@@ -1958,6 +2106,11 @@ export class Lair {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
         spendTotal: member.spendTotal, card: member.card,
       },
+      // Games they're seated at every session of (POST /series/:id/leave stops it)
+      series: this.sql
+        .exec("SELECT m.*, s.details AS details FROM series_members m JOIN series s ON s.id = m.series_id WHERE m.customer_id = ? AND m.status = 'active' AND s.status = 'active'", who.customerId)
+        .toArray()
+        .map((m) => ({ seriesId: m.series_id, title: parse(m.details, {}).title || 'GM game', people: m.people, players: parse(m.players, []) })),
       rolls: this.rollsState(who.customerId, now, new LairTime(rules.tz).key(now)),
       prizes: this.sql.exec('SELECT * FROM prizes WHERE customer_id = ? ORDER BY created_at DESC LIMIT 10', who.customerId).toArray().map((p) => this.prizeView(p)),
     };
