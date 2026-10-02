@@ -6,8 +6,8 @@
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
   ACTIVE, HOUR, MIN, LairTime, RuleError, addDays, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
-  eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, oneRoom, parseTableList, parseTicketCode, publicBooking, publicGame,
-  readSettingsData, refName, refundFor, rulesFromSettings, seatsTaken, tableIndex,
+  ROLL_EVERY, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, oneRoom, parseBirthday, parseTableList, parseTicketCode,
+  publicBooking, publicGame, readSettingsData, refName, refundFor, rulesFromSettings, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -104,6 +104,16 @@ const MIGRATIONS = [
   [
     'ALTER TABLE bookings ADD COLUMN refund TEXT',
   ],
+  // Members: one per Shopify customer who has used the Lair logged in. Their spend is one row per paid order.
+  [
+    `CREATE TABLE IF NOT EXISTS members (
+      customer_id TEXT PRIMARY KEY, name TEXT, first_name TEXT, email TEXT, birthday TEXT, last_seen INTEGER, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS members_email ON members (lower(email))',
+    'CREATE INDEX IF NOT EXISTS members_birthday ON members (birthday)',
+    `CREATE TABLE IF NOT EXISTS spend (
+      order_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, amount INTEGER NOT NULL, source TEXT, created_at INTEGER NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS spend_customer ON spend (customer_id, created_at)',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -136,6 +146,8 @@ const parse = (text, fallback) => {
 
 const dollars = (cents) => `$${(cents / 100).toFixed(2)}`;
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
+const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
+const YEAR = 365 * 24 * HOUR;
 
 export class Lair {
   constructor(ctx, env) {
@@ -473,17 +485,19 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && ['floor', 'me'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile'].includes(a));
+        const known = (request.method === 'GET' && ['floor', 'me', 'members'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
-      if (request.method === 'GET' && a === 'me') return json(await this.me(who));
+      if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who));
+      if (request.method === 'GET' && a === 'members' && !b) return json(this.members(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
+      if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
@@ -599,6 +613,7 @@ export class Lair {
       customerId: override ? null : who.customerId || null,
     });
     this.saveBooking(booking, now);
+    if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email }, now);
     // --- saved: the table is ours ---
 
     let notice = wantsPayNow && !payNow ? "Online payment isn't available, so pay at the counter. Your booking is confirmed." : null;
@@ -1432,12 +1447,15 @@ export class Lair {
     const joins = this.sql
       .exec("SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? AND starts_at < ? AND status != 'cancelled' ORDER BY starts_at", customerId, from, to)
       .toArray().map((r) => this.rowToJoin(r));
+    const member = this.memberRow(customerId);
+    if (!member && !bookings.length && !joins.length) throw new RuleError(`No member with the card DGC-${customerId}.`, 404);
     const items = [...bookings.map((b) => this.dayItem(b, rules, 'booking')), ...joins.map((j) => this.dayItem(j, rules, 'join'))].sort((a, b) => a.start - b.start);
-    const name = bookings[0]?.name || joins[0]?.name || `DGC-${customerId}`;
+    const name = member?.name || bookings[0]?.name || joins[0]?.name || `DGC-${customerId}`;
     const due = items.reduce((sum, x) => sum + x.due, 0);
     const list = items.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${x.checkedIn ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
     return {
-      found: true, kind: 'member', member: { customerId, name }, customer: { id: customerId }, bookings: items, checkedIn: false, due,
+      found: true, kind: 'member', member: { customerId, name, firstName: member?.first_name || '', email: member?.email || '' }, customer: { id: customerId },
+      bookings: items, checkedIn: false, due,
       message: items.length ? `${name} has ${items.length} ${items.length === 1 ? 'booking' : 'bookings'} today. ${list}.` : `${name} has nothing booked today.`,
     };
   }
@@ -1472,6 +1490,7 @@ export class Lair {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
       join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, who.customerId || null, now, now,
     );
+    this.touchMember(who.customerId, { name, email }, now);
     this.confirmJoin(join, rules);
     return { join: { id: join.id, ref: join.ref, occurrenceId, people, name }, spacesLeft: left - people };
   }
@@ -1581,11 +1600,99 @@ export class Lair {
     return { roll, prizeRoll: true, prize: prizeOf(row), message: made ? null : 'Show this screen at the counter to claim it.' };
   }
 
+  /* ---------------- members ---------------- */
+  memberRow(customerId) {
+    return customerId ? this.sql.exec('SELECT * FROM members WHERE customer_id = ?', String(customerId)).toArray()[0] || null : null;
+  }
+
+  /** A known member whose email matches, most recently seen first */
+  memberByEmail(email) {
+    if (!isEmail(email)) return null;
+    return this.sql.exec('SELECT * FROM members WHERE lower(email) = lower(?) ORDER BY last_seen DESC LIMIT 1', String(email).trim()).toArray()[0] || null;
+  }
+
+  /**
+   * A logged-in customer booked, joined or opened My Lair: remember them. A booking only fills in a name or email we
+   * don't have yet (people book for friends and groups); My Lair's profile form sets them. No awaits.
+   */
+  touchMember(customerId, { name, email } = {}, now = Date.now()) {
+    if (!customerId) return;
+    const full = trimmed(name, 80) || null;
+    const first = full ? full.split(/\s+/)[0].slice(0, 40) : null;
+    this.write(
+      `INSERT INTO members (customer_id, name, first_name, email, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(customer_id) DO UPDATE SET name = COALESCE(members.name, excluded.name), first_name = COALESCE(members.first_name, excluded.first_name),
+         email = COALESCE(members.email, excluded.email), last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
+      String(customerId), full, first, isEmail(email) ? trimmed(email, 120) : null, now, now, now,
+    );
+  }
+
+  /** Spend from paid orders: all of it, and the last 12 months */
+  spendOf(customerId, now = Date.now()) {
+    const row = this.sql
+      .exec('SELECT COALESCE(SUM(amount), 0) AS total, COALESCE(SUM(CASE WHEN created_at > ? THEN amount ELSE 0 END), 0) AS year FROM spend WHERE customer_id = ?', now - YEAR, String(customerId))
+      .one();
+    return { total: row?.total || 0, year: row?.year || 0 };
+  }
+
+  /** A member as staff see them */
+  memberView(row, now = Date.now()) {
+    const spend = this.spendOf(row.customer_id, now);
+    return {
+      customerId: row.customer_id, name: row.name || '', firstName: row.first_name || '', email: row.email || '', birthday: row.birthday || '',
+      spendYear: spend.year, spendTotal: spend.total, rollsFromSpend: Math.floor(spend.total / ROLL_EVERY), lastSeen: row.last_seen || null,
+      card: `DGC-${row.customer_id}`,
+    };
+  }
+
+  /** POST /me/profile: the member's own name, email and birthday ('MM-DD' or empty). Only the fields sent change. */
+  async saveProfile(input, who) {
+    if (!who.customerId) throw new RuleError('Log in to save your details.', 401);
+    const now = Date.now();
+    const row = this.memberRow(who.customerId) || {};
+    const has = (key) => Object.prototype.hasOwnProperty.call(input, key);
+    const name = has('name') ? trimmed(input.name, 80) || null : row.name || null;
+    const firstName = has('firstName') ? trimmed(input.firstName, 40) || null : row.first_name || (name ? name.split(/\s+/)[0].slice(0, 40) : null);
+    let email = row.email || null;
+    if (has('email')) {
+      email = trimmed(input.email, 120) || null;
+      if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
+    }
+    const birthday = has('birthday') ? parseBirthday(input.birthday) : row.birthday || null;
+    this.write(
+      `INSERT INTO members (customer_id, name, first_name, email, birthday, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(customer_id) DO UPDATE SET name = excluded.name, first_name = excluded.first_name, email = excluded.email,
+         birthday = excluded.birthday, last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
+      who.customerId, name, firstName, email, birthday, now, now, now,
+    );
+    return { member: this.memberView(this.memberRow(who.customerId), now) };
+  }
+
+  /** GET /members?q= (staff): find members by name, email or card number. */
+  members(url, who) {
+    this.requireStaff(who);
+    const now = Date.now();
+    const q = trimmed(url.searchParams.get('q'), 80).toLowerCase();
+    if (!q) return this.sql.exec('SELECT * FROM members ORDER BY last_seen DESC LIMIT 25').toArray().map((r) => this.memberView(r, now));
+    const card = parseTicketCode(q)?.card || (/^\d{3,20}$/.test(q) ? q : '');
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    return this.sql
+      .exec(
+        `SELECT * FROM members WHERE customer_id = ? OR lower(name) LIKE ? ESCAPE '\\' OR lower(first_name) LIKE ? ESCAPE '\\' OR lower(email) LIKE ? ESCAPE '\\'
+         ORDER BY last_seen DESC LIMIT 25`,
+        card, like, like, like,
+      )
+      .toArray()
+      .map((r) => this.memberView(r, now));
+  }
+
   /* ---------------- My Lair ---------------- */
   async me(who) {
     if (!who.customerId) throw new RuleError('Log in to see your bookings.', 401);
     const rules = await this.rules();
     const now = Date.now();
+    this.touchMember(who.customerId, {}, now);
+    const member = this.memberView(this.memberRow(who.customerId), now);
     const since = now - 30 * 24 * HOUR;
     const own = this.sql.exec('SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToBooking(r));
     const view = (b) => ({
@@ -1613,6 +1720,10 @@ export class Lair {
       games: gameRows.map((g) => ({ ...this.gameView(g, span, rules), players: this.gamePlayers(span, g.id) })),
       joins: joins.map((j) => ({ id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, status: j.status })),
       credits,
+      member: {
+        firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
+        spendTotal: member.spendTotal, card: member.card,
+      },
     };
   }
 

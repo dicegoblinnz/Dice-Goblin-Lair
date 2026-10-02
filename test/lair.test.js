@@ -1356,7 +1356,11 @@ test('check-in: new codes with or without the dash, old GOB codes, and member ca
   lair.saveBooking(legacy, NOW);
   const old = await call('POST', 'checkin', { code: 'gob7k2qxm' }, 'staff');
   assert.deepEqual([old.data.booking.ref, old.data.checkedIn], ['GOB-7K2QXM', true]);
-  assert.equal((await call('POST', 'checkin', { code: 'DGC-1' }, 'staff')).data.bookings.length, 0);
+  assert.equal((await call('POST', 'checkin', { code: 'DGC-1' }, 'staff')).status, 404, 'not a member');
+  await call('GET', 'me', null, '5555');
+  const quiet = await call('POST', 'checkin', { code: 'DGC-5555' }, 'staff');
+  assert.deepEqual([quiet.status, quiet.data.bookings.length], [200, 0]);
+  assert.match(quiet.data.message, /nothing booked today/);
 });
 
 test('the public booking page applies the house rules to staff too; walk-ins can take several tables', async () => {
@@ -1485,4 +1489,51 @@ test('no-shows: an unpaid one is just recorded; a paid one gets a Refund? note; 
   } finally {
     mail.restore();
   }
+});
+
+test('members: remembered when they book, sign up or open My Lair; a booking only fills in blanks; the profile form sets them', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20 },
+  ]);
+  await call('POST', 'bookings', tableBooking({ name: 'Sam Smith' }), '1001');
+  await call('POST', 'bookings', tableBooking({ tables: ['T4'], name: 'Birthday crew', email: 'crew@example.com' }), '1001');
+  await call('POST', 'events/quiz@2026-10-01/join', { name: 'Aroha Ngata', email: 'aroha@example.com', people: 1 }, '1002');
+  await call('POST', 'bookings', { kind: 'walkin', tables: ['T9'], start: NOW, end: NOW + HOUR, people: 2, name: 'Walk-in pal' }, 'staff');
+  const sam = lair.memberRow('1001');
+  assert.deepEqual([sam.name, sam.first_name, sam.email], ['Sam Smith', 'Sam', 'sam@example.com']);
+  assert.equal(lair.memberRow('1002').first_name, 'Aroha');
+  assert.equal(lair.memberRow('staff'), null, 'a staff walk-in is for someone else');
+
+  assert.equal((await call('POST', 'me/profile', { firstName: 'Sammy' })).status, 401);
+  assert.equal((await call('POST', 'me/profile', { birthday: '13-01' }, '1001')).status, 422);
+  assert.equal((await call('POST', 'me/profile', { birthday: '02-30' }, '1001')).status, 422);
+  assert.equal((await call('POST', 'me/profile', { email: 'not an email' }, '1001')).status, 422);
+  const saved = await call('POST', 'me/profile', { firstName: 'Sammy', name: 'Samantha Smith', email: 'sammy@example.com', birthday: '02-29' }, '1001');
+  assert.equal(saved.status, 200, saved.data.error);
+  assert.deepEqual([saved.data.member.firstName, saved.data.member.birthday, saved.data.member.card], ['Sammy', '02-29', 'DGC-1001']);
+  const me = (await call('GET', 'me', null, '1001')).data;
+  assert.deepEqual(me.member, { firstName: 'Sammy', name: 'Samantha Smith', email: 'sammy@example.com', birthday: '02-29', spendYear: 0, spendTotal: 0, card: 'DGC-1001' });
+  assert.equal((await call('POST', 'me/profile', { birthday: '' }, '1001')).data.member.birthday, '');
+  assert.equal(lair.memberRow('1001').first_name, 'Sammy', 'only the fields sent change');
+  await call('GET', 'me', null, '1003');
+  assert.ok(lair.memberRow('1003').last_seen, 'opening My Lair is enough to be a member');
+});
+
+test('GET /members?q= (staff): search by name, email or card, with spend over the last 12 months and all time', async () => {
+  await call('POST', 'bookings', tableBooking({ name: 'Sam Smith' }), '1001');
+  await call('POST', 'bookings', tableBooking({ tables: ['T4'], name: 'Aroha Ngata', email: 'aroha@example.com' }), '1002');
+  lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', 'gid://shopify/Order/1', '1001', 5000, 'web', NOW - 10 * 24 * HOUR);
+  lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', 'gid://shopify/Order/2', '1001', 3000, 'pos', NOW - 400 * 24 * HOUR);
+  assert.equal((await call('GET', 'members?q=sam', null, '1001')).status, 403);
+  const bySam = (await call('GET', 'members?q=SAM', null, 'staff')).data;
+  assert.equal(bySam.length, 1);
+  assert.deepEqual(
+    (({ customerId, name, email, birthday, spendYear, spendTotal, rollsFromSpend }) => ({ customerId, name, email, birthday, spendYear, spendTotal, rollsFromSpend }))(bySam[0]),
+    { customerId: '1001', name: 'Sam Smith', email: 'sam@example.com', birthday: '', spendYear: 5000, spendTotal: 8000, rollsFromSpend: 4 },
+  );
+  assert.equal(bySam[0].lastSeen, NOW);
+  assert.deepEqual((await call('GET', 'members?q=aroha%40', null, 'staff')).data.map((m) => m.customerId), ['1002']);
+  assert.deepEqual((await call('GET', 'members?q=dgc-1002', null, 'staff')).data.map((m) => m.customerId), ['1002']);
+  assert.deepEqual((await call('GET', 'members?q=100%25', null, 'staff')).data, [], 'a % is searched for, not a wildcard');
+  assert.equal((await call('GET', 'members', null, 'staff')).data.length, 2);
 });

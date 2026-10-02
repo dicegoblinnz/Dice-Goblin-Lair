@@ -503,6 +503,21 @@ export function checkGame(input, ctx) {
   return { ...details, ...checkGameSession(input, details, ctx) };
 }
 
+/* ---------- members ---------- */
+const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/** A birthday as 'MM-DD' (a full date's year is dropped), null when it's left empty. Anything else is refused. */
+export function parseBirthday(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const m = text.match(/^(?:\d{4}-)?(\d{2})-(\d{2})$/);
+  if (!m || +m[1] < 1 || +m[1] > 12 || +m[2] < 1 || +m[2] > MONTH_DAYS[+m[1] - 1]) throw new RuleError('Pick a real birthday, or leave it empty.');
+  return `${m[1]}-${m[2]}`;
+}
+
+/** Spend earns a bonus dice roll every $20. */
+export const ROLL_EVERY = 2000;
+
 /* ---------- what the public may see ---------- */
 export function publicBooking(b) {
   return { id: b.id, kind: b.kind, tables: b.tables, start: b.start, end: b.end, status: b.status, gameId: b.gameId || null, people: b.kind === 'walkin' || b.kind === 'table' ? undefined : b.people };
