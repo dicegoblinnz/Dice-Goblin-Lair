@@ -6,11 +6,51 @@ const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const REF_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const ACTIVE = new Set(['held', 'confirmed', 'seated']);
 
-/** Booking references like GOB-7K2QXM: 6 characters, no look-alikes (0/O, 1/I/L). Callers check they're unused. */
+/** The first release's references, like GOB-7K2QXM: 6 characters, no look-alikes (0/O, 1/I/L). Still valid at the counter. */
 export const makeRef = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
   return `GOB-${Array.from(bytes, (b) => REF_CHARS[b % REF_CHARS.length]).join('')}`;
 };
+
+/**
+ * The name part of a ticket code: the booker's first name in capitals, A–Z only (Tūī → TUI), cut to 10 letters.
+ * GOB when there are fewer than 2 letters to use. Never DGC, which is kept for member cards.
+ */
+export function refName(name) {
+  const first = String(name || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').trim().split(/\s+/)[0] || '';
+  const letters = first.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 10);
+  return letters.length >= 2 && letters !== 'DGC' ? letters : 'GOB';
+}
+
+/** Ticket codes like SAM-4821: the booker's first name and 4 digits. Callers check they're unused. */
+export const makeNameRef = (name) => `${refName(name)}-${String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0')}`;
+
+/**
+ * What staff scanned or typed at the counter. Scanners send a code with or without its dash, sometimes with other
+ * characters around it. Returns { card: customerId } for a member card (DGC-<customer id>), { refs } with every
+ * ticket code it could be (GOBAB2345 could be GOB-AB2345 or GOBAB-2345; the caller looks each up), or null.
+ */
+export function parseTicketCode(text) {
+  const upper = String(text || '').toUpperCase();
+  const bare = upper.replace(/[^A-Z0-9]/g, '');
+  const card = bare.match(/^DGC(\d{1,20})$/);
+  if (card) return { card: card[1], refs: [] };
+  const refs = [];
+  const add = (ref) => {
+    if (!refs.includes(ref)) refs.push(ref);
+  };
+  for (const m of upper.matchAll(/(?:^|[^A-Z])([A-Z]{2,10})-(\d{4})(?!\d)/g)) add(`${m[1]}-${m[2]}`);
+  for (const m of upper.matchAll(/GOB-([A-Z0-9]{6})(?![A-Z0-9])/g)) add(`GOB-${m[1]}`);
+  if (refs.length) return { card: null, refs };
+  // No dash: every way the letters and digits could split.
+  let m = bare.match(/^([A-Z]{2,10})(\d{4})$/);
+  if (m) add(`${m[1]}-${m[2]}`);
+  m = bare.match(/GOB([A-Z0-9]{6})/);
+  if (m) add(`GOB-${m[1]}`);
+  m = bare.match(/^([A-Z0-9]{6})$/);
+  if (m) add(`GOB-${m[1]}`);
+  return refs.length ? { card: null, refs } : null;
+}
 /** Online bookings (not staff) can't be bigger than this; bigger groups call the shop. */
 export const ONLINE_LIMITS = { people: 24, tables: 10 };
 /** What we should know about a booking: the only extras the app keeps. Wargames and big box games get double tables. */

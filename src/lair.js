@@ -6,8 +6,8 @@
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
   ACTIVE, HOUR, MIN, LairTime, RuleError, addDays, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
-  eventOccurrences, findOccurrence, isFree, makeId, makeRef, oneRoom, parseTableList, publicBooking, publicGame, readSettingsData, refundFor,
-  rulesFromSettings, seatsTaken, tableIndex,
+  eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, oneRoom, parseTableList, parseTicketCode, publicBooking, publicGame,
+  readSettingsData, refName, refundFor, rulesFromSettings, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -307,13 +307,21 @@ export class Lair {
     return this.sql.exec('SELECT * FROM bookings WHERE game_id = ?', gameId).toArray().map((r) => this.rowToBooking(r));
   }
 
-  uniqueRef() {
+  /**
+   * A ticket code nobody has used, booking or event sign-up: SAM-4821 from the booker's first name. If that name's
+   * 10,000 codes are nearly all used, GOB-4821, and after that the first release's GOB-7K2QXM style.
+   */
+  uniqueRef(name = '') {
+    const used = (ref) => this.sql.exec('SELECT 1 AS n FROM bookings WHERE ref = ? UNION ALL SELECT 1 AS n FROM event_joins WHERE ref = ?', ref, ref).toArray().length > 0;
+    for (const prefix of [...new Set([refName(name), 'GOB'])]) {
+      for (let i = 0; i < 25; i += 1) {
+        const ref = makeNameRef(prefix);
+        if (!used(ref)) return ref;
+      }
+    }
     for (let i = 0; i < 20; i += 1) {
       const ref = makeRef();
-      if (
-        !this.sql.exec('SELECT id FROM bookings WHERE ref = ?', ref).toArray().length
-        && !this.sql.exec('SELECT id FROM event_joins WHERE ref = ?', ref).toArray().length
-      ) return ref;
+      if (!used(ref)) return ref;
     }
     throw new Error('Could not find a free booking reference');
   }
@@ -575,7 +583,7 @@ export class Lair {
     const wantsPayNow = input.pay === 'now' && kind !== 'walkin';
     const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
     Object.assign(booking, {
-      id: makeId('bk'), ref: this.uniqueRef(), pay: payNow ? 'now' : 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
+      id: makeId('bk'), ref: this.uniqueRef(input.name), pay: payNow ? 'now' : 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
       status: kind === 'walkin' ? 'seated' : payNow ? 'held' : 'confirmed', holdUntil: payNow ? now + HOLD_MINUTES * MIN : null,
       customerId: who.customerId || null,
     });
@@ -807,7 +815,7 @@ export class Lair {
     const game = { id: makeId('gm'), ...base, ...session };
     this.saveGame(game, now);
     this.saveBooking({
-      id: makeId('bk'), ref: this.uniqueRef(), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
+      id: makeId('bk'), ref: this.uniqueRef(game.gm), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
       people: game.seats + 1, name: `GM ${game.gm}`, status: 'confirmed', pay: 'day', paid: true, amount: 0, activity: 'rpg', customerId: game.gmCustomerId,
     }, now);
     return game;
@@ -1179,7 +1187,7 @@ export class Lair {
     const refs = new Set();
     for (const a of order.note_attributes || []) if (a.name === '_booking' && a.value) refs.add(String(a.value));
     for (const item of order.line_items || []) for (const p of item.properties || []) if (p.name === '_booking' && p.value) refs.add(String(p.value));
-    for (const match of String(order.note || '').matchAll(/GOB-[A-Z0-9]{4,8}/g)) refs.add(match[0]);
+    for (const match of String(order.note || '').matchAll(/\b(?:[A-Z]{2,10}-\d{4}|GOB-[A-Z0-9]{6})\b/g)) refs.add(match[0]);
     if (!refs.size) return { updated: [] };
     const rules = await this.rules();
     const verified = [];
@@ -1256,53 +1264,109 @@ export class Lair {
 
   /* ---------------- check-in at the counter ---------------- */
   /**
-   * Staff scan a ticket (or type its code). Scanners send the code with or without its dash, sometimes with other
-   * characters around it. Checks the booking or event sign-up in and says what's left to pay.
+   * Staff scan a ticket or type its code: SAM-4821 (with or without the dash), the first release's GOB-7K2QXM, or a
+   * member card DGC-<customer id>. A ticket is checked in and the reply says what's left to pay; a member card lists
+   * that person's bookings and sign-ups for today, for staff to pick from.
    */
   async checkIn(input, who) {
     this.requireStaff(who);
     const rules = await this.rules();
     // --- no awaits from here on ---
-    const now = Date.now();
-    const time = new LairTime(rules.tz);
-    const raw = String(input.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const match = raw.match(/GOB([A-Z0-9]{6})/) || raw.match(/^([A-Z0-9]{6})$/);
-    if (!match) throw new RuleError("That doesn't look like a ticket code. They look like GOB-7K2QXM.", 404);
-    const ref = `GOB-${match[1]}`;
+    return this.ticketCheckIn(input, rules, Date.now());
+  }
+
+  /** The check-in itself, shared by the staff page and the POS. No awaits. */
+  ticketCheckIn(input, rules, now) {
+    const code = parseTicketCode(input.code);
+    if (!code) throw new RuleError("That doesn't look like a ticket code. They look like SAM-4821, or DGC- and a number on a member card.", 404);
+    if (code.card) return this.memberCard(code.card, rules, now);
     const force = input.force === true;
-    const today = (start, end) => now >= start - 3 * HOUR && now <= end;
-    const booking = this.booking(ref);
-    if (booking) {
-      const game = booking.gameId ? this.game(booking.gameId) : null;
-      const due = booking.paid ? 0 : booking.amount || 0;
-      const base = { found: true, kind: 'booking', booking: { ...booking, players: booking.party }, game: game ? this.gameView(game, this.state(game.start - 1, game.end + 1), rules) : null, due };
-      const who2 = `${booking.name}${booking.people ? `, ${booking.people} ${booking.people === 1 ? 'person' : 'people'}` : ''}${booking.tables.length ? ` at ${booking.tables.join(', ')}` : ''}`;
-      const pay = due ? ` Charge ${dollars(due)}.` : booking.paid ? ' Paid online.' : '';
-      if (['cancelled', 'noshow'].includes(booking.status) && !force) {
-        return { ...base, checkedIn: false, reason: 'cancelled', message: `This booking was ${booking.status === 'noshow' ? 'marked as a no-show' : 'cancelled'}: ${who2}.` };
-      }
-      if ((booking.status === 'seated' || booking.status === 'done' || booking.arrivedAt) && !force) {
-        return { ...base, checkedIn: true, reason: 'already', message: `Already checked in${booking.arrivedAt ? ` at ${new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, hour: 'numeric', minute: '2-digit' }).format(new Date(booking.arrivedAt))}` : ''}: ${who2}.${pay}` };
-      }
-      if (!today(booking.start, booking.end) && !force) {
-        return { ...base, checkedIn: false, reason: 'not-today', message: `This booking is for ${time.label(booking.start)}, not today: ${who2}.` };
-      }
-      booking.status = 'seated';
-      booking.arrivedAt = now;
-      booking.holdUntil = null;
-      this.saveBooking(booking, now);
-      return { ...base, booking: { ...booking, players: booking.party }, checkedIn: true, message: `Checked in: ${who2}.${pay}` };
+    for (const ref of code.refs) {
+      const booking = this.booking(ref);
+      if (booking) return this.checkInBooking(booking, rules, now, force);
+      const row = this.sql.exec('SELECT * FROM event_joins WHERE ref = ?', ref).toArray()[0];
+      if (row) return this.checkInJoin(this.rowToJoin(row), rules, now, force);
     }
-    const row = this.sql.exec('SELECT * FROM event_joins WHERE ref = ?', ref).toArray()[0];
-    if (!row) throw new RuleError(`No booking or sign-up with the code ${ref}.`, 404);
-    const join = this.rowToJoin(row);
-    const base = { found: true, kind: 'join', join, due: 0 };
+    throw new RuleError(`No booking or sign-up with the code ${code.refs[0]}.`, 404);
+  }
+
+  clock(ms, rules) {
+    return new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
+  }
+
+  checkInBooking(booking, rules, now, force) {
+    const time = new LairTime(rules.tz);
+    const game = booking.gameId ? this.game(booking.gameId) : null;
+    const due = booking.paid ? 0 : booking.amount || 0;
+    const base = { found: true, kind: 'booking', booking: { ...booking, players: booking.party }, game: game ? this.gameView(game, this.state(game.start - 1, game.end + 1), rules) : null, due };
+    const who = `${booking.name}${booking.people ? `, ${booking.people} ${booking.people === 1 ? 'person' : 'people'}` : ''}${booking.tables.length ? ` at ${booking.tables.join(', ')}` : ''}`;
+    const pay = due ? ` Charge ${dollars(due)}.` : booking.paid ? ' Paid online.' : '';
+    if (['cancelled', 'noshow'].includes(booking.status) && !force) {
+      return { ...base, checkedIn: false, reason: 'cancelled', message: `This booking was ${booking.status === 'noshow' ? 'marked as a no-show' : 'cancelled'}: ${who}.` };
+    }
+    if ((booking.status === 'seated' || booking.status === 'done' || booking.arrivedAt) && !force) {
+      return { ...base, checkedIn: true, reason: 'already', message: `Already checked in${booking.arrivedAt ? ` at ${this.clock(booking.arrivedAt, rules)}` : ''}: ${who}.${pay}` };
+    }
+    if (!(now >= booking.start - 3 * HOUR && now <= booking.end) && !force) {
+      return { ...base, checkedIn: false, reason: 'not-today', message: `This booking is for ${time.label(booking.start)}, not today: ${who}.` };
+    }
+    booking.status = 'seated';
+    booking.arrivedAt = now;
+    booking.holdUntil = null;
+    this.saveBooking(booking, now);
+    return { ...base, booking: { ...booking, players: booking.party }, checkedIn: true, message: `Checked in: ${who}.${pay}` };
+  }
+
+  checkInJoin(join, rules, now, force) {
+    const time = new LairTime(rules.tz);
+    const due = join.paid ? 0 : join.amount || 0;
+    const base = { found: true, kind: 'join', join, due };
     const label = `${join.name}, ${join.people} ${join.people === 1 ? 'person' : 'people'} for ${join.title || 'the event'}`;
+    const pay = due ? ` Charge ${dollars(due)}.` : join.paid ? ' Paid online.' : '';
     if (join.status === 'cancelled' && !force) return { ...base, checkedIn: false, reason: 'cancelled', message: `This sign-up was cancelled: ${label}.` };
-    if (join.arrivedAt && !force) return { ...base, checkedIn: true, reason: 'already', message: `Already checked in: ${label}.` };
-    if (!today(join.start, join.end) && !force) return { ...base, checkedIn: false, reason: 'not-today', message: `This sign-up is for ${time.label(join.start)}, not today: ${label}.` };
+    if (join.arrivedAt && !force) return { ...base, checkedIn: true, reason: 'already', message: `Already checked in: ${label}.${pay}` };
+    if (!(now >= join.start - 3 * HOUR && now <= join.end) && !force) return { ...base, checkedIn: false, reason: 'not-today', message: `This sign-up is for ${time.label(join.start)}, not today: ${label}.` };
     this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, updated_at = ? WHERE id = ?", now, now, join.id);
-    return { ...base, join: { ...join, status: 'attended', arrivedAt: now }, checkedIn: true, message: `Checked in: ${label}.` };
+    return { ...base, join: { ...join, status: 'attended', arrivedAt: now }, checkedIn: true, message: `Checked in: ${label}.${pay}` };
+  }
+
+  /** One of a member's bookings or sign-ups today, as the counter sees it */
+  dayItem(item, rules, type) {
+    if (type === 'join') {
+      return {
+        kind: 'join', id: item.id, ref: item.ref, title: item.title || 'Event', start: item.start, end: item.end, people: item.people, tables: [],
+        status: item.status, checkedIn: Boolean(item.arrivedAt), due: item.paid ? 0 : item.amount || 0, occurrenceId: item.occurrenceId,
+      };
+    }
+    const game = item.gameId ? this.game(item.gameId) : null;
+    const where = `${item.tables.length > 1 ? 'Tables' : 'Table'} ${item.tables.join(', ')}`;
+    const title = item.kind === 'gm-seat' ? game?.title || 'GM game' : item.kind === 'gm' ? `Running ${game?.title || 'a game'}` : where;
+    return {
+      kind: 'booking', id: item.id, ref: item.ref, title, start: item.start, end: item.end, people: item.people, tables: item.tables, status: item.status,
+      checkedIn: Boolean(item.arrivedAt) || ['seated', 'done'].includes(item.status), due: item.paid ? 0 : item.amount || 0, gameId: item.gameId || null,
+    };
+  }
+
+  /** A member card at the counter: that person's bookings and sign-ups today (none are checked in until staff pick one). */
+  memberCard(customerId, rules, now) {
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    const from = time.at(today, 0);
+    const to = time.at(addDays(today, 1), 0);
+    const bookings = this.sql
+      .exec("SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? AND starts_at < ? AND status NOT IN ('cancelled', 'noshow') ORDER BY starts_at", customerId, from, to)
+      .toArray().map((r) => this.rowToBooking(r));
+    const joins = this.sql
+      .exec("SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? AND starts_at < ? AND status != 'cancelled' ORDER BY starts_at", customerId, from, to)
+      .toArray().map((r) => this.rowToJoin(r));
+    const items = [...bookings.map((b) => this.dayItem(b, rules, 'booking')), ...joins.map((j) => this.dayItem(j, rules, 'join'))].sort((a, b) => a.start - b.start);
+    const name = bookings[0]?.name || joins[0]?.name || `DGC-${customerId}`;
+    const due = items.reduce((sum, x) => sum + x.due, 0);
+    const list = items.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${x.checkedIn ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
+    return {
+      found: true, kind: 'member', member: { customerId, name }, customer: { id: customerId }, bookings: items, checkedIn: false, due,
+      message: items.length ? `${name} has ${items.length} ${items.length === 1 ? 'booking' : 'bookings'} today. ${list}.` : `${name} has nothing booked today.`,
+    };
   }
 
   /* ---------------- events ---------------- */
@@ -1327,7 +1391,7 @@ export class Lair {
     const left = occurrence.capacity - taken;
     if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'space' : 'spaces'} left.` : 'This one is full.', 409);
     const join = {
-      id: makeId('ej'), ref: this.uniqueRef(), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
+      id: makeId('ej'), ref: this.uniqueRef(name), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
       end: occurrence.end, people, name, email, note: String(input.note || '').trim().slice(0, 300), status: 'confirmed',
     };
     this.write(

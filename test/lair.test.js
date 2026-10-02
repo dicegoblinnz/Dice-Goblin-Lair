@@ -118,7 +118,7 @@ test('book a table: pay on the day', async () => {
   assert.equal(status, 200);
   assert.equal(data.booking.status, 'confirmed');
   assert.equal(data.booking.amount, 4000);
-  assert.match(data.booking.ref, /^GOB-[A-Z2-9]{6}$/);
+  assert.match(data.booking.ref, /^SAM-\d{4}$/);
 });
 
 test('the same table cannot be booked twice', async () => {
@@ -1012,7 +1012,7 @@ test('events: repeating dates (weekly, monthly nth weekday, skips, until) and si
   const first = await join('dnd-monday@2026-10-05', {});
   assert.equal(first.status, 200);
   assert.equal(first.data.spacesLeft, 4);
-  assert.match(first.data.join.ref, /^GOB-/);
+  assert.match(first.data.join.ref, /^AROHA-\d{4}$/);
   assert.equal((await join('dnd-monday@2026-10-05', { people: 5, email: 'big@example.com' })).status, 409);
   assert.equal((await join('dnd-monday@2026-10-05', { people: 4, email: 'four@example.com' })).data.spacesLeft, 0);
   assert.equal((await join('dnd-monday@2026-10-26', {})).status, 404);
@@ -1275,4 +1275,76 @@ test('emails: several at once go to Resend as one batch call', async () => {
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('ticket codes: the booker\'s first name and 4 digits, GOB when there\'s no usable name', async () => {
+  const { refName, parseTicketCode } = await import('../src/core.js');
+  assert.deepEqual(
+    ['Sam Smith', 'tūī ngata', 'Zoë', 'J', '', '李雷', 'Bartholomew-James', "O'Brien", 'Dgc'].map(refName),
+    ['SAM', 'TUI', 'ZOE', 'GOB', 'GOB', 'GOB', 'BARTHOLOME', 'OBRIEN', 'GOB'],
+  );
+  const named = await call('POST', 'bookings', tableBooking({ name: 'Tūī Ngata', email: 'tui@example.com' }));
+  assert.match(named.data.booking.ref, /^TUI-\d{4}$/);
+  const walkin = await call('POST', 'bookings', { kind: 'walkin', tables: ['T9'], start: NOW, end: NOW + HOUR, people: 2 }, 'staff');
+  assert.match(walkin.data.booking.ref, /^GOB-\d{4}$/);
+  const game = await call('POST', 'games', { title: 'Ref game', system: 'Other', gm: 'Rangi', blurb: 'x', seats: 3, tables: ['A3'], start: at('2026-10-01', 18), end: at('2026-10-01', 21) }, 'gm');
+  assert.match(lair.gameBookings(game.data.game.id)[0].ref, /^RANGI-\d{4}$/);
+
+  assert.deepEqual(parseTicketCode('TICKET: sam-4821\n'), { card: null, refs: ['SAM-4821'] });
+  assert.deepEqual(parseTicketCode('gobab2345').refs.sort(), ['GOB-AB2345', 'GOBAB-2345']);
+  assert.deepEqual(parseTicketCode(' dgc-7250013 '), { card: '7250013', refs: [] });
+  assert.deepEqual(parseTicketCode('GOB-DGC234'), { card: null, refs: ['GOB-DGC234'] });
+  assert.equal(parseTicketCode('hello'), null);
+});
+
+test('ticket codes are unique across bookings and event sign-ups', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20 },
+  ]);
+  const realRandom = crypto.getRandomValues.bind(crypto);
+  crypto.getRandomValues = (array) => {
+    if (array instanceof Uint32Array) {
+      array[0] = 7;
+      return array;
+    }
+    return realRandom(array);
+  };
+  try {
+    const first = await call('POST', 'bookings', tableBooking({ name: 'Sam' }));
+    const second = await call('POST', 'events/quiz@2026-10-01/join', { name: 'Sam Two', email: 'sam2@example.com', people: 1 });
+    const third = await call('POST', 'bookings', tableBooking({ name: 'Sam', tables: ['T4'], email: 'sam3@example.com' }));
+    assert.equal(first.data.booking.ref, 'SAM-0007');
+    assert.equal(second.data.join.ref, 'GOB-0007');
+    assert.match(third.data.booking.ref, /^GOB-[A-Z2-9]{6}$/);
+  } finally {
+    crypto.getRandomValues = realRandom;
+  }
+});
+
+test('check-in: new codes with or without the dash, old GOB codes, and member cards list today\'s bookings', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20 },
+  ]);
+  const mine = (await call('POST', 'bookings', tableBooking({ tables: ['T5'] }), '7250013')).data.booking;
+  const quiz = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Sam', email: 'sam@example.com', people: 2 }, '7250013')).data.join;
+  await call('POST', 'bookings', tableBooking({ tables: ['T6'], start: at('2026-10-02', 15), end: at('2026-10-02', 17) }), '7250013');
+  await call('POST', 'bookings', tableBooking({ tables: ['T7'], email: 'other@example.com' }), '9999');
+
+  const card = await call('POST', 'checkin', { code: 'DGC-7250013' }, 'staff');
+  assert.equal(card.status, 200, card.data.error);
+  assert.deepEqual([card.data.kind, card.data.checkedIn, card.data.customer.id], ['member', false, '7250013']);
+  assert.deepEqual(card.data.bookings.map((x) => [x.kind, x.ref]), [['booking', mine.ref], ['join', quiz.ref]]);
+  assert.equal(card.data.due, 4000);
+  assert.match(card.data.message, /Sam has 2 bookings today/);
+  assert.equal(lair.booking(mine.id).status, 'confirmed', 'a member card checks nothing in by itself');
+
+  const scanned = await call('POST', 'checkin', { code: mine.ref.replace('-', '').toLowerCase() }, 'staff');
+  assert.deepEqual([scanned.data.kind, scanned.data.checkedIn], ['booking', true]);
+
+  // A booking from the first release keeps its GOB-XXXXXX code.
+  const legacy = { ...lair.booking(mine.id), id: 'bk_legacy', ref: 'GOB-7K2QXM', tables: ['T8'], status: 'confirmed', arrivedAt: null, customerId: null };
+  lair.saveBooking(legacy, NOW);
+  const old = await call('POST', 'checkin', { code: 'gob7k2qxm' }, 'staff');
+  assert.deepEqual([old.data.booking.ref, old.data.checkedIn], ['GOB-7K2QXM', true]);
+  assert.equal((await call('POST', 'checkin', { code: 'DGC-1' }, 'staff')).data.bookings.length, 0);
 });
