@@ -113,21 +113,29 @@ export class ShopifyAdmin {
     return data;
   }
 
-  /** Rooms, events and the Lair settings from the theme (the live theme, or THEME_ID while testing). */
+  /**
+   * Rooms, events and the Lair settings from the theme. The live theme wins once it has the booking settings (so
+   * publishing the new theme needs no config change); before that, THEME_ID names the preview theme to read.
+   */
   async loadLairData(themeId) {
     const fields = (node) => Object.fromEntries(node.fields.map((f) => [f.key, f.value]));
-    const themeQuery = themeId
-      ? `theme(id: "gid://shopify/OnlineStoreTheme/${themeId}") { files(filenames: ["config/settings_data.json"]) { nodes { body { ... on OnlineStoreThemeFileBodyText { content } } } } }`
-      : `themes(roles: [MAIN], first: 1) { nodes { files(filenames: ["config/settings_data.json"]) { nodes { body { ... on OnlineStoreThemeFileBodyText { content } } } } } }`;
+    const settingsFile = 'files(filenames: ["config/settings_data.json"]) { nodes { body { ... on OnlineStoreThemeFileBodyText { content } } } }';
+    const id = String(themeId || '').trim();
+    const previewQuery = /^\d+$/.test(id) ? `preview: theme(id: "gid://shopify/OnlineStoreTheme/${id}") { id name ${settingsFile} }` : '';
     const data = await this.graphql(`query LairData {
       rooms: metaobjects(type: "lair_room", first: 50) { nodes { handle capabilities { publishable { status } } fields { key value } } }
       events: metaobjects(type: "lair_event", first: 250, sortKey: "id", reverse: true) { nodes { handle capabilities { publishable { status } } fields { key value } } }
-      ${themeQuery}
+      main: themes(roles: [MAIN], first: 1) { nodes { id name ${settingsFile} } }
+      ${previewQuery}
     }`);
     // Entries saved as drafts don't show on the website, so they don't count here either.
     const live = (n) => n.capabilities?.publishable?.status !== 'DRAFT';
-    const themeNode = themeId ? data.theme : data.themes?.nodes?.[0];
-    const settingsText = themeNode?.files?.nodes?.[0]?.body?.content || null;
+    const textOf = (theme) => theme?.files?.nodes?.[0]?.body?.content || null;
+    const main = data.main?.nodes?.[0] || null;
+    const hasLairSettings = (theme) => /"lair_[a-z_]+"\s*:/.test(textOf(theme) || '');
+    const themeNode = hasLairSettings(main) ? main : data.preview && textOf(data.preview) ? data.preview : main;
+    const settingsText = textOf(themeNode);
+    const theme = themeNode ? { id: String(themeNode.id || '').split('/').pop(), name: themeNode.name, live: themeNode === main } : null;
     const rooms = data.rooms.nodes.filter(live).map((n) => {
       const f = fields(n);
       return {
@@ -144,7 +152,7 @@ export class ShopifyAdmin {
         return { id: n.handle, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '' };
       })
       .filter((e) => Number.isFinite(e.start));
-    return { rooms, events, settingsText };
+    return { rooms, events, settingsText, theme };
   }
 
   /** Which permissions the store granted the app, for the health check. */

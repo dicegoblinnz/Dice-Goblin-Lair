@@ -639,6 +639,42 @@ test('Shopify helper: refreshes the token after ACCESS_DENIED, and never deletes
   }
 });
 
+test('booking rules: the live theme wins once it has them, THEME_ID before that, and a deleted theme falls back', async () => {
+  const { ShopifyAdmin } = await import('../src/shopify.js');
+  const storage = { get: async () => null, put: async () => {}, delete: async () => {} };
+  const admin = new ShopifyAdmin({ SHOP: 'shop.test', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret' }, storage);
+  const withSettings = (id, name, current) => ({
+    id: `gid://shopify/OnlineStoreTheme/${id}`, name, files: { nodes: [{ body: { content: `/* auto-generated */\n${JSON.stringify({ current })}` } }] },
+  });
+  const oldLive = withSettings(1, 'Old theme', { color: '#000' });
+  const preview = withSettings(2, 'Dice Goblin 2.0', { lair_hours: 'Mon 16:00-24:00' });
+  let query = '';
+  const shopifyReturns = (main, previewTheme) => {
+    admin.graphql = async (q) => {
+      query = q;
+      return { rooms: { nodes: [] }, events: { nodes: [] }, main: { nodes: main ? [main] : [] }, preview: previewTheme };
+    };
+  };
+
+  shopifyReturns(oldLive, preview); // before publishing: THEME_ID's preview theme
+  let data = await admin.loadLairData('2');
+  assert.match(query, /OnlineStoreTheme\/2"/);
+  assert.deepEqual(data.theme, { id: '2', name: 'Dice Goblin 2.0', live: false });
+  assert.match(data.settingsText, /lair_hours/);
+
+  shopifyReturns(withSettings(3, 'Dice Goblin 2.0 (GitHub)', { lair_hours: 'Mon 16:00-24:00' }), preview); // published copy wins
+  data = await admin.loadLairData('2');
+  assert.deepEqual(data.theme, { id: '3', name: 'Dice Goblin 2.0 (GitHub)', live: true });
+
+  shopifyReturns(oldLive, null); // THEME_ID points at a deleted theme
+  data = await admin.loadLairData('2');
+  assert.equal(data.theme.id, '1');
+
+  shopifyReturns(oldLive, undefined); // anything but a number is never put into the query
+  await admin.loadLairData('2") { id } x: shop {');
+  assert.doesNotMatch(query, /preview:/);
+});
+
 test('the fancy room is one table for up to 12, for groups of 4 or more, at $15 a person', async () => {
   const three = await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 3 }));
   assert.equal(three.status, 422);
@@ -745,7 +781,9 @@ test('health check: the cron run records Shopify login, missing permissions and 
 
   const probe = new Lair(fakeCtx(), { CONFIG: db, SHOP: 'shop.test', CURRENCY: 'NZD' });
   await probe.useConfig();
-  probe.shopify.loadLairData = async () => ({ rooms: FALLBACK, events: [], settingsText: null });
+  probe.shopify.loadLairData = async () => ({
+    rooms: FALLBACK, events: [], settingsText: JSON.stringify({ current: { lair_refund_hours: 24 } }), theme: { id: '42', name: 'Dice Goblin 2.0', live: false },
+  });
   probe.shopify.appInfo = async () => ({ app: 'Dice Goblin Lair', shop: 'Dice Goblin', scopes: ['read_customers', 'read_metaobjects', 'read_themes', 'write_orders', 'write_draft_orders', 'write_store_credit_account_transactions'] });
   probe.shopify.webhookUris = async () => ['https://lair.example.workers.dev/webhooks/orders-paid'];
   const response = await probe.fetch(new Request('https://lair.example.workers.dev/internal/maintenance', {
@@ -759,7 +797,7 @@ test('health check: the cron run records Shopify login, missing permissions and 
   const connection = JSON.parse(db.status.get('connection').value);
   assert.equal(connection.shopifyLogin, 'ok');
   const rules = JSON.parse(db.status.get('rules').value);
-  assert.equal(rules.source, 'shopify');
+  assert.equal(rules.source, 'theme "Dice Goblin 2.0" (42, preview)');
   assert.ok(rules.rooms.some((r) => r.startsWith('Fancy room: 1 × 12 seats, $15, min 4 people')));
   assert.ok(rules.hours.includes('mon 16:00-24:00'));
   resetConfigCache();

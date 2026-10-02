@@ -283,22 +283,28 @@ export class Lair {
   async rules() {
     if (this.rulesCache && Date.now() - this.rulesLoadedAt < RULES_TTL) return this.rulesCache;
     let rules = null;
+    let source = 'built-in defaults';
     if (this.shopify.configured) {
       try {
-        const { rooms, events, settingsText } = await this.shopify.loadLairData(this.env.THEME_ID);
+        const { rooms, events, settingsText, theme } = await this.shopify.loadLairData(this.env.THEME_ID);
         const settings = settingsText ? readSettingsData(settingsText) : {};
         rules = rulesFromSettings(settings, rooms.length ? rooms : FALLBACK_ROOMS, events);
+        const hasLair = Object.keys(settings).some((key) => key.startsWith('lair_'));
+        source = theme && hasLair ? `theme "${theme.name}" (${theme.id}${theme.live ? ', live' : ', preview'})` : 'Shopify rooms, default rules (no theme has the booking settings)';
       } catch (error) {
         console.error('Lair: could not load settings from Shopify', error);
       }
     }
-    if (rules || !this.rulesCache) this.rulesCache = rules || rulesFromSettings({}, FALLBACK_ROOMS, []);
+    if (rules || !this.rulesCache) {
+      this.rulesCache = rules || rulesFromSettings({}, FALLBACK_ROOMS, []);
+      this.rulesSource = source;
+    }
     // After a failed load, keep what we had and try again in a minute rather than on every request.
     this.rulesLoadedAt = rules || !this.shopify.configured ? Date.now() : Date.now() - RULES_TTL + MIN;
     const r = this.rulesCache;
     this.note({
       rules: {
-        source: rules ? 'shopify' : 'built-in defaults',
+        source: this.rulesSource,
         timezone: r.tz,
         rooms: r.rooms.map((room) => `${room.name}: ${room.tables.length} × ${room.seats} seats, $${room.price / 100}${room.minPeople ? `, min ${room.minPeople} people` : ''}${room.bookable ? '' : ', not bookable online'}`),
         hours: Object.entries(r.hours).map(([day, h]) => `${day} ${h ? `${String(Math.floor(h[0] / 60)).padStart(2, '0')}:${String(h[0] % 60).padStart(2, '0')}-${String(Math.floor(h[1] / 60)).padStart(2, '0')}:${String(h[1] % 60).padStart(2, '0')}` : 'closed'}`),

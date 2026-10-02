@@ -27,6 +27,7 @@ One Durable Object with a small SQLite database  (src/lair.js: bookings, games, 
 ## Where things live
 
 - **Code:** GitHub, `dicegoblinnz/Dice-Goblin-Lair`. Every push to `main` is built and deployed by Cloudflare Workers Builds (the Worker is `dice-goblin-lair` on the dicegoblinnz Cloudflare account).
+- **Theme:** GitHub, `dicegoblinnz/Dice-Goblin-website`, branch `dice-goblin-2-theme` (connect it in Shopify: Online Store → Themes → Add theme → Connect from GitHub).
 - **Address:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Open it for a plain status page; the website reaches the app through `www.dicegoblin.nz/apps/lair`.
 - **Keys and settings:** the D1 database `dice-goblin-lair-config`, table `config` (Cloudflare → Storage & databases → D1). Changes there apply within a minute, no redeploy needed. A Worker variable or secret with the same name overrides the database.
 - **Health:** the same database's `status` table. Every 10 minutes the app checks its Shopify login, permissions, payment webhook, rooms and hours and writes the result there (`connection`, `rules`, `proxy`, `lastError`).
@@ -35,7 +36,7 @@ One Durable Object with a small SQLite database  (src/lair.js: bookings, games, 
 | --- | --- |
 | `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` | the Shopify app's credentials (Dev Dashboard → app → Settings) |
 | `SETUP_KEY` | key for `/setup?key=…`, which re-runs the health check and the payment webhook set-up on demand |
-| `THEME_ID` | the theme to read Lair settings from while it's unpublished; leave empty to use the live theme |
+| `THEME_ID` | the preview theme to read the booking settings from until the new theme is published. Once the live theme has the booking settings the app uses it by itself; the `rules` row in `status` names the theme it read |
 | `RESEND_API_KEY`, `FROM_EMAIL`, `REPLY_TO`, `STAFF_EMAIL` | booking emails through Resend (optional) |
 
 ## Set up
