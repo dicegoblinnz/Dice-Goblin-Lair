@@ -144,12 +144,23 @@ export class ShopifyAdmin {
         minPeople: Number(f.min_people || 0),
       };
     });
+    const list = (value) => {
+      try {
+        const parsed = JSON.parse(value || '[]');
+        return Array.isArray(parsed) ? parsed.map(String) : [];
+      } catch {
+        return [];
+      }
+    };
     const events = data.events.nodes
       .filter(live)
       .map((n) => {
         const f = fields(n);
         const start = Date.parse(f.starts_at);
-        return { id: n.handle, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '' };
+        return {
+          id: n.handle, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '',
+          repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: list(f.skip_dates), capacity: f.capacity ? Number(f.capacity) : null,
+        };
       })
       .filter((e) => Number.isFinite(e.start));
     return { rooms, events, settingsText, theme };
@@ -229,6 +240,34 @@ export class ShopifyAdmin {
     return result.storeCreditAccountTransaction;
   }
 
+  /**
+   * A one-use discount code for a dice roller prize, valid for 24 hours.
+   * percent: 0-1 off everything, or 1 off the given variant only (the Dice Chest dice), with an optional minimum subtotal.
+   */
+  async createPrizeCode({ title, code, percent, variantId = null, minSubtotalCents = 0, endsAt, customerId = null }) {
+    const data = await this.graphql(
+      `mutation Prize($discount: DiscountCodeBasicInput!) {
+        discountCodeBasicCreate(basicCodeDiscount: $discount) { codeDiscountNode { id } userErrors { field message code } }
+      }`,
+      {
+        discount: {
+          title, code, startsAt: new Date(Date.now() - 60_000).toISOString(), endsAt: new Date(endsAt).toISOString(),
+          usageLimit: 1, appliesOncePerCustomer: true,
+          context: customerId ? { customers: { add: [`gid://shopify/Customer/${customerId}`] } } : { all: 'ALL' },
+          customerGets: {
+            value: { percentage: percent },
+            items: variantId ? { products: { productVariantsToAdd: [`gid://shopify/ProductVariant/${variantId}`] } } : { all: true },
+          },
+          ...(minSubtotalCents > 0 ? { minimumRequirement: { subtotal: { greaterThanOrEqualToSubtotal: (minSubtotalCents / 100).toFixed(2) } } } : {}),
+          combinesWith: { productDiscounts: true, orderDiscounts: false, shippingDiscounts: true },
+        },
+      },
+    );
+    const result = data.discountCodeBasicCreate;
+    if (result.userErrors.length) throw new Error(result.userErrors.map((e) => e.message).join('; '));
+    return result.codeDiscountNode.id;
+  }
+
   /** Where Shopify currently sends orders/paid for this app */
   async webhookUris() {
     const data = await this.graphql('query Hooks { webhookSubscriptions(first: 25, topics: [ORDERS_PAID]) { nodes { id uri } } }');
@@ -254,13 +293,13 @@ export class ShopifyAdmin {
 export const emailReady = (env) => Boolean(env.RESEND_API_KEY && env.FROM_EMAIL);
 
 /** Send one email through Resend. Never throws; returns { ok, attempted, status, message }. */
-export async function sendEmail(env, { to, subject, text }) {
+export async function sendEmail(env, { to, subject, text, replyTo = null }) {
   if (!emailReady(env) || !to) return { ok: false, attempted: false, status: 0, message: 'Email is not set up.' };
   try {
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: env.FROM_EMAIL, to: [to], subject, text, ...(env.REPLY_TO ? { reply_to: env.REPLY_TO } : {}) }),
+      body: JSON.stringify({ from: env.FROM_EMAIL, to: [to], subject, text, ...(replyTo || env.REPLY_TO ? { reply_to: replyTo || env.REPLY_TO } : {}) }),
     });
     if (response.ok) return { ok: true, attempted: true, status: response.status, message: 'Sent.' };
     const body = await response.text().catch(() => '');

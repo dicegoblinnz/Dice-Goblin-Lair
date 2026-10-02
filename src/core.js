@@ -13,8 +13,17 @@ export const makeRef = () => {
 };
 /** Online bookings (not staff) can't be bigger than this; bigger groups call the shop. */
 export const ONLINE_LIMITS = { people: 24, tables: 10 };
-/** Most tables an online booking may take: enough for the group plus one, at least 3 (a big-box or wargame setup). */
-export const maxOnlineTables = (people) => Math.min(ONLINE_LIMITS.tables, Math.max(3, people + 1));
+/** What we should know about a booking: the only extras the app keeps. Wargames and big box games get double tables. */
+export const BOOKING_EXTRAS = ['wargame', 'bigbox', 'celebrating'];
+const DOUBLE_EXTRAS = new Set(['wargame', 'bigbox']);
+/**
+ * Most tables an online booking may take: enough tables to seat the group (4 to a table in most rooms), doubled
+ * for a wargame or big box game. 1-4 people get 1 table (2 for a wargame), 5-8 get 2 (or 4), and so on.
+ */
+export const maxOnlineTables = (people, seatsPerTable = 4, extras = []) =>
+  Math.min(ONLINE_LIMITS.tables, Math.max(1, Math.ceil(people / Math.max(1, seatsPerTable))) * (extras.some((x) => DOUBLE_EXTRAS.has(x)) ? 2 : 1));
+/** GM games may take enough tables for the players and GM, and always at least 2 (a GM decides their own setup). */
+export const maxGameTables = (people, seatsPerTable = 4) => Math.min(ONLINE_LIMITS.tables, Math.max(2, Math.ceil(people / Math.max(1, seatsPerTable))));
 export const makeId = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 export const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && bStart < aEnd;
 
@@ -57,6 +66,13 @@ export class LairTime {
   weekday(key) {
     const [y, m, d] = key.split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  }
+
+  /** Whole days from day key a to day key b */
+  daysBetween(a, b) {
+    const [y1, m1, d1] = a.split('-').map(Number);
+    const [y2, m2, d2] = b.split('-').map(Number);
+    return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / (24 * HOUR));
   }
 
   minutesOf(ms) {
@@ -172,18 +188,104 @@ export function tableIndex(rooms) {
   return map;
 }
 
+/* ---------- events: repeating events, one item per date ----------
+   The same rules as the theme. An event's start/end are its first date. Later dates keep the same Lair wall-clock
+   start and the same length. weekly = every 7 days, fortnightly = 14, monthly = the same nth weekday as the first
+   date (n = ceil(day / 7)); a month without one is skipped. Dates run to repeatUntil (inclusive) and dates in
+   skipDates are left out. Each date's id is `${handle}@${YYYY-MM-DD}` (its Lair start date), one-off events included. */
+const REPEAT_DAYS = { weekly: 7, fortnightly: 14 };
+const dayKey = (value) => (/^\d{4}-\d{2}-\d{2}/.test(String(value || '')) ? String(value).slice(0, 10) : null);
+const times = new Map();
+export const lairTime = (tz = 'Pacific/Auckland') => {
+  if (!times.has(tz)) times.set(tz, new LairTime(tz));
+  return times.get(tz);
+};
+
+function eventDates(e, time, fromKey, toKey) {
+  const first = time.key(e.start);
+  const repeat = String(e.repeat || '').trim().toLowerCase();
+  const until = dayKey(e.repeatUntil);
+  const last = until && until < toKey ? until : toKey;
+  const keys = [];
+  if (REPEAT_DAYS[repeat]) {
+    const step = REPEAT_DAYS[repeat];
+    // Jump close to the window instead of walking from the first date.
+    const skipSteps = Math.max(0, Math.floor(time.daysBetween(first, fromKey) / step) - 1);
+    for (let key = addDays(first, skipSteps * step); key <= last; key = addDays(key, step)) keys.push(key);
+  } else if (repeat === 'monthly') {
+    const [fy, fm, fd] = first.split('-').map(Number);
+    const nth = Math.ceil(fd / 7);
+    const weekday = time.weekday(first);
+    let y = fy;
+    let m = fm;
+    for (let monthStart = `${y}-${String(m).padStart(2, '0')}-01`; monthStart <= last; monthStart = `${y}-${String(m).padStart(2, '0')}-01`) {
+      const key = addDays(monthStart, ((weekday - time.weekday(monthStart) + 7) % 7) + (nth - 1) * 7);
+      if (key.slice(0, 7) === monthStart.slice(0, 7) && key >= first && key <= last) keys.push(key);
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+  } else {
+    keys.push(first);
+  }
+  const skip = new Set((e.skipDates || []).map(dayKey).filter(Boolean));
+  return keys.filter((key) => key >= fromKey && !skip.has(key));
+}
+
+/** Every date of the Lair's events that overlaps [from, to) */
+export function eventOccurrences(rules, from, to) {
+  const time = lairTime(rules.tz);
+  const out = [];
+  for (const e of rules.events || []) {
+    if (!Number.isFinite(e.start)) continue;
+    const length = Number.isFinite(e.end) && e.end > e.start ? e.end - e.start : 3 * HOUR;
+    const clock = time.minutesOf(e.start);
+    const fromKey = time.key(from - length - 24 * HOUR);
+    const toKey = time.key(to);
+    for (const key of eventDates(e, time, fromKey, toKey)) {
+      const start = time.at(key, clock);
+      if (!overlaps(start, start + length, from, to)) continue;
+      out.push({
+        id: `${e.id}@${key}`, eventId: e.id, title: e.title, start, end: start + length, tables: e.tables || '',
+        capacity: Number(e.capacity) > 0 ? Math.floor(Number(e.capacity)) : null,
+      });
+    }
+  }
+  return out;
+}
+
+/** One date of an event, by its occurrence id (`handle@YYYY-MM-DD`), or null */
+export function findOccurrence(rules, occurrenceId) {
+  const match = String(occurrenceId || '').match(/^(.+)@(\d{4}-\d{2}-\d{2})$/);
+  if (!match) return null;
+  const event = (rules.events || []).find((e) => e.id === match[1]);
+  if (!event) return null;
+  const time = lairTime(rules.tz);
+  const dayStart = time.at(match[2], 0);
+  return eventOccurrences({ ...rules, events: [event] }, dayStart, dayStart + 24 * HOUR).find((o) => o.id === occurrenceId) || null;
+}
+
 /* ---------- availability ---------- */
-export function blockingItems(state, rules) {
-  const fromEvents = (rules.events || [])
-    .filter((e) => e.tables)
-    .map((e) => ({ id: `ev-${e.id}`, tables: parseTableList(e.tables, rules.rooms), start: e.start, end: e.end, label: e.title }));
-  return [...state.blocks, ...fromEvents];
+/** Staff holds plus the event dates that hold tables, overlapping [from, to) */
+export function blockingItems(state, rules, from = -Infinity, to = Infinity) {
+  const lo = Number.isFinite(from) ? from : Date.now() - 31 * 24 * HOUR;
+  const hi = Number.isFinite(to) ? to : Date.now() + 400 * 24 * HOUR;
+  const fromEvents = eventOccurrences({ ...rules, events: (rules.events || []).filter((e) => e.tables) }, lo, hi)
+    .map((o) => ({ id: `ev-${o.id}`, tables: parseTableList(o.tables, rules.rooms), start: o.start, end: o.end, label: o.title }));
+  return [...state.blocks.filter((b) => overlaps(b.start, b.end, lo, hi)), ...fromEvents];
+}
+
+/** Shop tables (staff only) are open to everyone while an opening covers the whole time. */
+export function shopTableOpen(state, tableId, start, end) {
+  return (state.openings || []).some((o) => o.tables.includes(tableId) && o.start <= start && o.end >= end);
 }
 
 /** ignore: a booking id, or a Set of ids (a GM game's own bookings when moving the game) */
 export function isFree(state, rules, tableId, start, end, ignore = null) {
   const skip = ignore instanceof Set ? ignore : new Set(ignore ? [ignore] : []);
-  for (const b of blockingItems(state, rules)) {
+  for (const b of blockingItems(state, rules, start, end)) {
     if (b.tables.includes(tableId) && overlaps(start, end, b.start, b.end)) return false;
   }
   for (const b of state.bookings) {
@@ -242,11 +344,25 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   const people = Math.floor(Number(input.people));
   if (!(people >= 1 && people <= 60)) throw new RuleError('Tell us how many people are coming.');
   const seats = known.reduce((sum, t) => sum + (t.seats || room.seats), 0);
+  const extras = Array.isArray(input.extras) ? [...new Set(input.extras.map((x) => clean(x, 30)))].filter((x) => BOOKING_EXTRAS.includes(x)) : [];
   if (!staff) {
     if (people > ONLINE_LIMITS.people) throw new RuleError(`For groups over ${ONLINE_LIMITS.people}, give us a call and we'll set it up.`);
     if (room.minPeople && people < room.minPeople) throw new RuleError(`${room.name} is for groups of ${room.minPeople} or more.`);
     if (people > seats) throw new RuleError(`${people} people need more tables (these seat ${seats}).`);
-    if (tables.length > maxOnlineTables(people)) throw new RuleError('That is more tables than your group needs. Call us for bigger setups.');
+    const perTable = Math.min(...known.map((t) => t.seats || room.seats));
+    const allowed = input.game ? maxGameTables(people, perTable) : maxOnlineTables(people, perTable, extras);
+    if (tables.length > allowed) {
+      throw new RuleError(
+        input.game
+          ? `That's more tables than your game needs. Pick up to ${allowed}.`
+          : `That's more tables than your group needs. We seat ${perTable} at a table, so pick fewer tables, or tick Wargame or Big box game for a double setup.`,
+      );
+    }
+    for (const id of tables) {
+      if ((rules.shopTables || []).includes(id) && !shopTableOpen(state, id, start, end)) {
+        throw new RuleError(`${id} is a shop table, kept for the team's own games. Pick another table.`);
+      }
+    }
   }
 
   for (const id of tables) {
@@ -261,8 +377,7 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   }
   return {
     tables, room: room.id, start, end, people, name: name || 'Walk-in', email, phone: clean(input.phone, 40),
-    notes: clean(input.notes, 500), activity: clean(input.activity, 30) || 'board',
-    extras: Array.isArray(input.extras) ? input.extras.map((x) => clean(x, 30)).slice(0, 10) : [],
+    notes: clean(input.notes, 500), activity: clean(input.activity, 30) || 'board', extras,
     amount: room.price * people,
   };
 }
@@ -279,7 +394,16 @@ export function checkSeatBooking(input, { state, rules, now }) {
   const email = clean(input.email, 120);
   if (!name) throw new RuleError('Add your name.');
   if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
-  return { game, people, name, email, tables: game.tables, start: game.start, end: game.end, amount: rules.prices.gmSeat * people };
+  // One name per seat (the GM sees who's coming), each with an optional character name. The booking page always
+  // sends them; an older page that doesn't gets the booker's name on every seat.
+  const given = Array.isArray(input.players) ? input.players : null;
+  const players = Array.from({ length: people }, (_, i) => ({
+    name: given ? clean(given[i]?.name, 60) || (i === 0 ? name : '') : i === 0 ? name : `${name} +${i}`,
+    character: given ? clean(given[i]?.character, 60) : '',
+  }));
+  if (players.some((p) => !p.name)) throw new RuleError('Add a name for every seat.');
+  const unit = game.seatPrice || rules.prices.gmSeat;
+  return { game, people, name, email, players, tables: game.tables, start: game.start, end: game.end, amount: unit * people };
 }
 
 export function seatsTaken(state, gameId) {
@@ -288,23 +412,45 @@ export function seatsTaken(state, gameId) {
     .reduce((sum, b) => sum + b.people, 0);
 }
 
-export function checkGame(input, { state, rules, time, now, staff = false }) {
+export const GM_FEES = [0, 500, 1000];
+export const SCHEDULES = ['one-shot', 'weekly', 'fortnightly', 'flexible'];
+const CHARACTERS = ['pregens', 'bring', 'at-table'];
+
+/** The details of a GM game every session shares (checked once, when the game is listed) */
+export function checkGameDetails(input) {
   const title = clean(input.title, 80);
   const gm = clean(input.gm, 60);
-  const blurb = clean(input.blurb, 600);
+  const blurb = clean(input.blurb, 1200);
   if (!title || !gm || !blurb) throw new RuleError('Add a title, your GM name and a short pitch.');
   const seats = Math.floor(Number(input.seats));
   if (!(seats >= 2 && seats <= 8)) throw new RuleError('Games can have 2 to 8 player seats.');
+  const gmFee = Number(input.gmFee ?? 500);
+  if (!GM_FEES.includes(gmFee)) throw new RuleError('Pick a GM fee of $0, $5 or $10.');
+  const schedule = SCHEDULES.includes(input.schedule) ? input.schedule : 'one-shot';
+  const characters = CHARACTERS.includes(input.characters) ? input.characters : (input.pregens ? 'pregens' : '');
+  return {
+    title, gm, blurb, seats, gmFee, schedule, characters,
+    system: clean(input.system, 40) || 'Other', level: clean(input.level, 20) || 'new',
+    age: clean(input.age, 20) || 'All ages', tags: (Array.isArray(input.tags) ? input.tags : []).map((x) => clean(x, 30)).slice(0, 8),
+    safety: (Array.isArray(input.safety) ? input.safety : []).map((x) => clean(x, 30)).slice(0, 6), pregens: characters === 'pregens',
+    bring: clean(input.bring, 300), contentNotes: clean(input.contentNotes, 500), sessionZero: clean(input.sessionZero, 300),
+    gmBio: clean(input.gmBio, 600),
+  };
+}
+
+/** One session's tables and time, checked like a table booking for the GM plus every seat. */
+export function checkGameSession(input, details, { state, rules, time, now, staff = false }) {
   const booking = checkTableBooking(
-    { tables: input.tables, start: input.start, end: input.end, people: seats + 1, name: `GM ${gm}`, email: input.email || 'gm@lair.local' },
+    { tables: input.tables, start: input.start, end: input.end, people: details.seats + 1, name: `GM ${details.gm}`, email: 'gm@lair.local', game: true },
     { state, rules, time, now, staff },
   );
-  return {
-    title, gm, blurb, seats, system: clean(input.system, 40) || 'Other', level: clean(input.level, 20) || 'new',
-    age: clean(input.age, 20) || 'All ages', tags: (input.tags || []).map((x) => clean(x, 30)).slice(0, 6),
-    safety: (input.safety || []).map((x) => clean(x, 30)).slice(0, 4), pregens: Boolean(input.pregens),
-    tables: booking.tables, start: booking.start, end: booking.end,
-  };
+  const room = tableIndex(rules.rooms).get(booking.tables[0]).roomObj;
+  return { tables: booking.tables, start: booking.start, end: booking.end, room: room.id, seatPrice: room.price + details.gmFee };
+}
+
+export function checkGame(input, ctx) {
+  const details = checkGameDetails(input);
+  return { ...details, ...checkGameSession(input, details, ctx) };
 }
 
 /* ---------- what the public may see ---------- */
@@ -312,12 +458,16 @@ export function publicBooking(b) {
   return { id: b.id, kind: b.kind, tables: b.tables, start: b.start, end: b.end, status: b.status, gameId: b.gameId || null, people: b.kind === 'walkin' || b.kind === 'table' ? undefined : b.people };
 }
 
-export function publicGame(g, state) {
+export function publicGame(g, state, rules = null) {
   const taken = seatsTaken(state, g.id);
+  const gmFee = g.gmFee ?? rules?.prices.gmCredit ?? 500;
   return {
     id: g.id, title: g.title, system: g.system, gm: g.gm, level: g.level, age: g.age, tags: g.tags, safety: g.safety,
     pregens: g.pregens, blurb: g.blurb, tables: g.tables, start: g.start, end: g.end, seats: g.seats, taken,
     status: g.status === 'open' && taken >= g.seats ? 'full' : g.status, campaign: g.campaign || null, credited: g.credited ?? null,
+    schedule: g.schedule || 'one-shot', seriesId: g.seriesId || null, gmFee, seatPrice: g.seatPrice || rules?.prices.gmSeat || 1500,
+    room: g.room || null, characters: g.characters || (g.pregens ? 'pregens' : ''), bring: g.bring || '', contentNotes: g.contentNotes || '',
+    sessionZero: g.sessionZero || '', gmBio: g.gmBio || '', image: g.image || null, gmFeeApproved: Boolean(g.feeApproved) || gmFee <= 500,
   };
 }
 
@@ -342,16 +492,19 @@ export function rulesFromSettings(settings = {}, rooms = [], events = []) {
     gmSeat: Math.round(Number(settings.price_gm_seat ?? 15) * 100),
     gmCredit: Math.round(Number(settings.gm_credit ?? 5) * 100),
   };
+  const builtRooms = buildRooms(rooms, prices.table);
   return {
     tz: settings.lair_timezone || 'Pacific/Auckland',
     hours: parseHours(settings.lair_hours || DEFAULT_HOURS),
+    // The shop's own tables (managers run games there): closed to the public unless a manager opens them.
+    shopTables: parseTableList(settings.lair_shop_tables ?? 'T1-T3', builtRooms),
     leadMinutes: Number(settings.lair_lead_minutes ?? 60),
     horizonDays: Number(settings.lair_horizon_days ?? 60),
     maxHours: Number(settings.lair_max_hours ?? 8),
     payOnline: settings.lair_pay_online !== false,
     refundHours: Number(settings.lair_refund_hours ?? 24),
     prices,
-    rooms: buildRooms(rooms, prices.table),
+    rooms: builtRooms,
     events,
   };
 }

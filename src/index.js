@@ -3,6 +3,7 @@
 //                            on other paths are served the same way, in case the proxy URL was entered without /proxy.
 //   /webhooks/orders-paid    Shopify webhook, HMAC checked
 //   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook
+//   /img/<id>                a GM's game picture (public, cached)
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
 import { Lair } from './lair.js';
@@ -67,6 +68,7 @@ li span{display:inline-grid;place-items:center;width:1.4rem;height:1.4rem;border
 ${line(true, 'Booking app is running', '')}
 ${line(shopifyOk, 'Connected to the Shopify store', 'Waiting for the Shopify app to be installed with its permissions')}
 ${!shopifyOk && connection?.advice ? hint(connection.advice) : ''}
+${shopifyOk && connection?.featureAdvice ? hint(connection.featureAdvice) : ''}
 ${line(webhookOk, 'Online payments are reported back to the app', 'Payment notifications not set up yet')}
 ${line(proxyOk, `The website has reached the app through dicegoblin.nz${escapeHtml(proxy?.prefix || '/apps/lair')}`, 'Waiting for the store link (app proxy) to be set up')}
 ${!proxyOk && shopifyOk ? hint(proxyHint) : ''}
@@ -84,10 +86,20 @@ function clientAddress(request) {
 }
 
 export default {
-  async fetch(request, rawEnv) {
+  async fetch(request, rawEnv, ctx) {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ ok: true });
     const env = await withConfig(rawEnv);
+
+    // GM game pictures: public, never change (a new picture gets a new id), so they're cached at the edge.
+    if (request.method === 'GET' && /^\/img\/[A-Za-z0-9_.-]{4,80}$/.test(url.pathname)) {
+      const cache = typeof caches !== 'undefined' ? caches.default : null;
+      const hit = cache ? await cache.match(request) : null;
+      if (hit) return hit;
+      const res = await lair(env).fetch(new Request(`${url.origin}/internal/img/${url.pathname.slice(5)}`, { headers: { 'X-Lair-Internal': '1' } }));
+      if (res.ok && cache) ctx?.waitUntil?.(cache.put(request, res.clone()));
+      return res;
+    }
 
     // Shopify signs every app proxy request. The proxy URL should end in /proxy, but a signed request on any other
     // path is served the same way, so a proxy URL entered without "/proxy" still works.

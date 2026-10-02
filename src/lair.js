@@ -5,8 +5,9 @@
 // with no `await` in between. Where a Shopify call has to come after a write (checkouts, store credit), the
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
-  ACTIVE, HOUR, MIN, LairTime, RuleError, blockingItems, checkGame, checkSeatBooking, checkTableBooking, isFree, makeId,
-  makeRef, oneRoom, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings, seatsTaken, tableIndex,
+  ACTIVE, HOUR, MIN, LairTime, RuleError, addDays, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
+  eventOccurrences, findOccurrence, isFree, makeId, makeRef, oneRoom, parseTableList, publicBooking, publicGame, readSettingsData, refundFor,
+  rulesFromSettings, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -19,6 +20,11 @@ const FALLBACK_ROOMS = [
 ];
 /** Permissions the Shopify app needs (checked by the health check) */
 const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions'];
+/** Permissions only some features need: everything else works without them */
+const FEATURE_SCOPES = { write_discounts: 'dice roller prize codes' };
+/** The Dice Chest prize: a free dice with any purchase, for a natural 1 on the home page roller */
+const DICE_CHEST = { variantId: '50363551023207', price: 500 };
+const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
 const PERSON_TTL = 5 * MIN;
@@ -54,15 +60,55 @@ const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS bookings_hold ON bookings (status, hold_until)',
     'CREATE INDEX IF NOT EXISTS bookings_email_lower ON bookings (lower(email), ends_at)',
   ],
+  // 3 Oct 2026: GM game series and fees, seat names, check-in, shop table openings, event sign-ups, GM profiles,
+  // game pictures and the dice roller.
+  [
+    'ALTER TABLE games ADD COLUMN schedule TEXT',
+    'ALTER TABLE games ADD COLUMN series_id TEXT',
+    'ALTER TABLE games ADD COLUMN gm_fee INTEGER',
+    'ALTER TABLE games ADD COLUMN seat_price INTEGER',
+    'ALTER TABLE games ADD COLUMN room TEXT',
+    'ALTER TABLE games ADD COLUMN characters TEXT',
+    'ALTER TABLE games ADD COLUMN bring TEXT',
+    'ALTER TABLE games ADD COLUMN content_notes TEXT',
+    'ALTER TABLE games ADD COLUMN session_zero TEXT',
+    'ALTER TABLE games ADD COLUMN gm_bio TEXT',
+    'ALTER TABLE games ADD COLUMN image_id TEXT',
+    'ALTER TABLE games ADD COLUMN fee_approved INTEGER',
+    'CREATE INDEX IF NOT EXISTS games_series ON games (series_id)',
+    'ALTER TABLE bookings ADD COLUMN party TEXT',
+    'ALTER TABLE bookings ADD COLUMN arrived_at INTEGER',
+    'CREATE INDEX IF NOT EXISTS bookings_customer ON bookings (customer_id, ends_at)',
+    `CREATE TABLE IF NOT EXISTS series (
+      id TEXT PRIMARY KEY, schedule TEXT NOT NULL, gm_customer_id TEXT, details TEXT NOT NULL, tables TEXT NOT NULL, clock INTEGER NOT NULL,
+      length INTEGER NOT NULL, first_day TEXT NOT NULL, status TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0, image_id TEXT,
+      created_at INTEGER, updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS openings (
+      id TEXT PRIMARY KEY, tables TEXT NOT NULL, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL, note TEXT, created_by TEXT, created_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS openings_time ON openings (ends_at, starts_at)',
+    `CREATE TABLE IF NOT EXISTS event_joins (
+      id TEXT PRIMARY KEY, ref TEXT NOT NULL UNIQUE, occurrence_id TEXT NOT NULL, event_id TEXT NOT NULL, title TEXT, starts_at INTEGER NOT NULL,
+      ends_at INTEGER NOT NULL, people INTEGER NOT NULL, name TEXT, email TEXT, note TEXT, status TEXT NOT NULL, customer_id TEXT,
+      arrived_at INTEGER, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS event_joins_occurrence ON event_joins (occurrence_id)',
+    'CREATE INDEX IF NOT EXISTS event_joins_time ON event_joins (ends_at, starts_at)',
+    'CREATE TABLE IF NOT EXISTS gm_profiles (customer_id TEXT PRIMARY KEY, name TEXT, bio TEXT, updated_at INTEGER)',
+    'CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL, owner TEXT, created_at INTEGER)',
+    `CREATE TABLE IF NOT EXISTS rolls (
+      key TEXT NOT NULL, day TEXT NOT NULL, roll INTEGER NOT NULL, prize TEXT, code TEXT, expires_at INTEGER, created_at INTEGER,
+      PRIMARY KEY (key, day))`,
+  ],
 ];
 
 const BOOKING_COLUMNS = [
   'id', 'ref', 'kind', 'status', 'tables', 'room', 'starts_at', 'ends_at', 'people', 'name', 'email', 'phone', 'notes', 'activity',
-  'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'created_at', 'updated_at',
+  'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'party', 'arrived_at',
+  'created_at', 'updated_at',
 ];
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
-  'starts_at', 'ends_at', 'seats', 'status', 'credited', 'created_at', 'updated_at',
+  'starts_at', 'ends_at', 'seats', 'status', 'credited', 'schedule', 'series_id', 'gm_fee', 'seat_price', 'room', 'characters', 'bring',
+  'content_notes', 'session_zero', 'gm_bio', 'image_id', 'fee_approved', 'created_at', 'updated_at',
 ];
 /** Insert, or update everything except id and created_at. A clash on ref fails loudly instead of replacing a row. */
 const upsert = (table, columns) =>
@@ -154,7 +200,7 @@ export class Lair {
       id: r.id, ref: r.ref, kind: r.kind, status: r.status, tables: parse(r.tables, []), room: r.room, start: r.starts_at, end: r.ends_at,
       people: r.people, name: r.name, email: r.email, phone: r.phone, notes: r.notes, activity: r.activity, extras: parse(r.extras, []),
       pay: r.pay, paid: Boolean(r.paid), amount: r.amount, gameId: r.game_id, customerId: r.customer_id, holdUntil: r.hold_until,
-      draftOrderId: r.draft_order_id, orderId: r.order_id,
+      draftOrderId: r.draft_order_id, orderId: r.order_id, party: parse(r.party, []), arrivedAt: r.arrived_at || null,
     };
   }
 
@@ -163,11 +209,45 @@ export class Lair {
       id: r.id, title: r.title, system: r.system, gm: r.gm, gmCustomerId: r.gm_customer_id, gmEmail: r.gm_email, level: r.level, age: r.age,
       tags: parse(r.tags, []), safety: parse(r.safety, []), pregens: Boolean(r.pregens), blurb: r.blurb, tables: parse(r.tables, []),
       start: r.starts_at, end: r.ends_at, seats: r.seats, status: r.status, credited: r.credited,
+      schedule: r.schedule || 'one-shot', seriesId: r.series_id || null, gmFee: r.gm_fee ?? null, seatPrice: r.seat_price ?? null, room: r.room || null,
+      characters: r.characters || '', bring: r.bring || '', contentNotes: r.content_notes || '', sessionZero: r.session_zero || '',
+      gmBio: r.gm_bio || '', imageId: r.image_id || null, feeApproved: Boolean(r.fee_approved),
     };
   }
 
   rowToBlock(r) {
     return { id: r.id, tables: parse(r.tables, []), start: r.starts_at, end: r.ends_at, label: r.label, type: r.type };
+  }
+
+  rowToOpening(r) {
+    return { id: r.id, tables: parse(r.tables, []), start: r.starts_at, end: r.ends_at, note: r.note || '' };
+  }
+
+  rowToJoin(r) {
+    return {
+      id: r.id, ref: r.ref, occurrenceId: r.occurrence_id, eventId: r.event_id, title: r.title, start: r.starts_at, end: r.ends_at,
+      people: r.people, name: r.name, email: r.email, note: r.note || '', status: r.status, customerId: r.customer_id, arrivedAt: r.arrived_at || null,
+    };
+  }
+
+  /** A game picture's public address (pictures are served by the Worker at /img/<id>) */
+  imageUrl(id) {
+    return id ? `${String(this.env.PUBLIC_URL || '').replace(/\/$/, '')}/img/${id}` : null;
+  }
+
+  /** The public view of a game, with its picture */
+  gameView(g, st, rules) {
+    return { ...publicGame(g, st, rules), image: this.imageUrl(g.imageId) };
+  }
+
+  /** Who's in a game's seats (for its GM and for staff) */
+  gamePlayers(st, gameId) {
+    return st.bookings
+      .filter((b) => b.gameId === gameId && b.kind === 'gm-seat' && ACTIVE.has(b.status))
+      .flatMap((b) => {
+        const party = b.party?.length ? b.party : [{ name: b.name, character: '' }];
+        return party.map((p) => ({ name: p.name, character: p.character || '', ref: b.ref, paid: b.paid, arrived: Boolean(b.arrivedAt) || b.status === 'seated' }));
+      });
   }
 
   /** Everything that touches the window [from, to) */
@@ -176,6 +256,7 @@ export class Lair {
       bookings: this.sql.exec('SELECT * FROM bookings WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToBooking(r)),
       games: this.sql.exec('SELECT * FROM games WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToGame(r)),
       blocks: this.sql.exec('SELECT * FROM blocks WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToBlock(r)),
+      openings: this.sql.exec('SELECT * FROM openings WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToOpening(r)),
     };
   }
 
@@ -195,7 +276,8 @@ export class Lair {
       SAVE_BOOKING,
       b.id, b.ref, b.kind, b.status, JSON.stringify(b.tables), b.room || null, b.start, b.end, b.people, b.name || null, b.email || null,
       b.phone || null, b.notes || null, b.activity || null, JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount || 0,
-      b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null, now, now,
+      b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null,
+      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, now, now,
     );
   }
 
@@ -204,7 +286,9 @@ export class Lair {
       SAVE_GAME,
       g.id, g.title, g.system, g.gm, g.gmCustomerId || null, g.gmEmail || null, g.level, g.age, JSON.stringify(g.tags || []),
       JSON.stringify(g.safety || []), g.pregens ? 1 : 0, g.blurb, JSON.stringify(g.tables), g.start, g.end, g.seats, g.status,
-      g.credited ?? null, now, now,
+      g.credited ?? null, g.schedule || 'one-shot', g.seriesId || null, g.gmFee ?? null, g.seatPrice ?? null, g.room || null,
+      g.characters || null, g.bring || null, g.contentNotes || null, g.sessionZero || null, g.gmBio || null, g.imageId || null,
+      g.feeApproved ? 1 : 0, now, now,
     );
   }
 
@@ -225,7 +309,10 @@ export class Lair {
   uniqueRef() {
     for (let i = 0; i < 20; i += 1) {
       const ref = makeRef();
-      if (!this.sql.exec('SELECT id FROM bookings WHERE ref = ?', ref).toArray().length) return ref;
+      if (
+        !this.sql.exec('SELECT id FROM bookings WHERE ref = ?', ref).toArray().length
+        && !this.sql.exec('SELECT id FROM event_joins WHERE ref = ?', ref).toArray().length
+      ) return ref;
     }
     throw new Error('Could not find a free booking reference');
   }
@@ -356,7 +443,9 @@ export class Lair {
       this.expireHolds(Date.now());
       const [a, b, c] = parts;
       if (a === 'internal') {
-        if (request.headers.get('X-Lair-Internal') !== '1' || request.method !== 'POST') return json({ error: 'Not found' }, 404);
+        if (request.headers.get('X-Lair-Internal') !== '1') return json({ error: 'Not found' }, 404);
+        if (request.method === 'GET' && b === 'img') return this.image(c);
+        if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
         if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true }));
@@ -369,21 +458,34 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && a === 'floor') || (request.method === 'POST' && ['bookings', 'games', 'blocks'].includes(a));
+        const known = (request.method === 'GET' && ['floor', 'me'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
+      if (request.method === 'GET' && a === 'me') return json(await this.me(who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
+      const d = parts[3];
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
       if (a === 'games' && c === 'update') return json(await this.updateGame(b, body, who));
       if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who));
+      if (a === 'games' && c === 'sessions') return json(await this.addSession(b, body, who));
+      if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
+      if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
       if (a === 'blocks' && !b) return json(await this.createBlock(body, who));
       if (a === 'blocks' && c === 'delete') return json(await this.removeBlock(b, who));
+      if (a === 'openings' && !b) return json(await this.createOpening(body, who));
+      if (a === 'openings' && c === 'delete') return json(await this.removeOpening(b, who));
+      if (a === 'checkin' && !b) return json(await this.checkIn(body, who));
+      if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
+      if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
+      if (a === 'contact' && !b) return json(await this.contact(body, who, client));
+      if (a === 'roll' && !b) return json(await this.roll(who, client));
       return json({ error: 'Not found' }, 404);
     } catch (error) {
       if (error instanceof RuleError) return json({ error: error.message }, error.status);
@@ -412,16 +514,30 @@ export class Lair {
       (g) => who.staff || ['open', 'full'].includes(g.status) || (who.customerId && g.gmCustomerId === who.customerId && g.status === 'pending'),
     );
     // Calendar events that hold tables, resolved exactly the way bookings are checked.
-    const eventHolds = blockingItems({ blocks: [] }, rules)
-      .filter((e) => e.tables.length && e.end > from && e.start < to)
-      .map((e) => ({ ...e, eventId: e.id.replace(/^ev-/, ''), type: 'event' }));
+    const eventHolds = blockingItems({ blocks: [] }, rules, from, to)
+      .filter((e) => e.tables.length)
+      .map((e) => ({ ...e, eventId: e.id.replace(/^ev-/, '').replace(/@.*$/, ''), occurrenceId: e.id.replace(/^ev-/, ''), type: 'event' }));
+    const joinRows = this.sql
+      .exec("SELECT * FROM event_joins WHERE ends_at > ? AND starts_at < ? AND status != 'cancelled'", from, to)
+      .toArray()
+      .map((r) => this.rowToJoin(r));
+    const eventJoins = {};
+    for (const j of joinRows) eventJoins[j.occurrenceId] = (eventJoins[j.occurrenceId] || 0) + j.people;
     return {
       now,
       bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
       blocks: who.staff ? st.blocks : st.blocks.map((bl) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
       eventHolds,
-      games: visibleGames.map((g) => publicGame(g, st)),
+      games: visibleGames.map((g) => {
+        const game = this.gameView(g, st, rules);
+        if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
+        return game;
+      }),
       events: [],
+      eventJoins,
+      ...(who.staff ? { joins: joinRows.map((j) => ({ id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, name: j.name, email: j.email, people: j.people, note: j.note, status: j.status, arrivedAt: j.arrivedAt })) } : {}),
+      shopTables: rules.shopTables || [],
+      openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: who.staff,
       features: { email: emailReady(this.env), payOnline: rules.payOnline && this.shopify.configured },
     };
@@ -443,7 +559,7 @@ export class Lair {
       game = seat.game;
       booking = {
         kind, gameId: game.id, tables: seat.tables, room: tableIndex(rules.rooms).get(seat.tables[0])?.roomObj.id, start: seat.start,
-        end: seat.end, people: seat.people, name: seat.name, email: seat.email, amount: seat.amount, activity: 'rpg',
+        end: seat.end, people: seat.people, name: seat.name, email: seat.email, amount: seat.amount, activity: 'rpg', party: seat.players,
       };
     } else {
       const checked = checkTableBooking(input, { state: st, rules, time, now, staff: who.staff });
@@ -468,7 +584,7 @@ export class Lair {
     let notice = wantsPayNow && !payNow ? "Online payment isn't available, so pay at the counter. Your booking is confirmed." : null;
     if (payNow) {
       try {
-        const unit = kind === 'gm-seat' ? rules.prices.gmSeat : tableIndex(rules.rooms).get(booking.tables[0]).roomObj.price;
+        const unit = kind === 'gm-seat' ? game.seatPrice || rules.prices.gmSeat : tableIndex(rules.rooms).get(booking.tables[0]).roomObj.price;
         const { draftOrderId, checkoutUrl } = await this.shopify.createCheckout({
           ref: booking.ref,
           title: kind === 'gm-seat' ? `GM game seat: ${game.title}` : `Lair table fee (${booking.tables.join(', ')})`,
@@ -509,8 +625,9 @@ export class Lair {
   /** Booking confirmation email. Returns whether one was sent (needs RESEND_API_KEY and FROM_EMAIL). */
   confirm(booking, rules, game = null) {
     if (!emailReady(this.env) || !isEmail(booking.email)) return false;
+    const names = booking.party?.length ? ` for ${booking.party.map((p) => (p.character ? `${p.name} (${p.character})` : p.name)).join(', ')}` : '';
     const what = game
-      ? `${booking.people} ${booking.people === 1 ? 'seat' : 'seats'} at ${game.title} (${game.system}, GM ${game.gm})`
+      ? `${booking.people} ${booking.people === 1 ? 'seat' : 'seats'} at ${game.title} (${game.system}, GM ${game.gm})${names}`
       : `${booking.people} ${booking.people === 1 ? 'person' : 'people'} at table${booking.tables.length > 1 ? 's' : ''} ${booking.tables.join(', ')}`;
     const fee = booking.paid ? `${dollars(booking.amount)}, paid. Thank you!` : `${dollars(booking.amount)}, pay at the counter.`;
     const changes = booking.paid
@@ -571,7 +688,8 @@ export class Lair {
     if (typeof patch.paid === 'boolean') next.paid = patch.paid;
     if (patch.people != null) {
       next.people = Math.max(1, Math.min(60, Math.floor(Number(patch.people)) || 1));
-      const unit = next.kind === 'gm-seat' ? rules.prices.gmSeat : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
+      const seatGame = next.kind === 'gm-seat' && next.gameId ? this.game(next.gameId) : null;
+      const unit = next.kind === 'gm-seat' ? seatGame?.seatPrice || rules.prices.gmSeat : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
       next.amount = unit * next.people;
     }
     let moveGame = null;
@@ -609,53 +727,186 @@ export class Lair {
     return { booking: next, refund };
   }
 
+  /** The details every session of a game shares, from one of its sessions */
+  gameDetails(g) {
+    return {
+      title: g.title, gm: g.gm, blurb: g.blurb, seats: g.seats, gmFee: g.gmFee ?? 500, schedule: g.schedule || 'one-shot',
+      characters: g.characters || '', system: g.system, level: g.level, age: g.age, tags: g.tags || [], safety: g.safety || [],
+      pregens: g.pregens, bring: g.bring || '', contentNotes: g.contentNotes || '', sessionZero: g.sessionZero || '', gmBio: g.gmBio || '',
+    };
+  }
+
+  /** Save one session of a game and the GM's hold on its tables. No awaits: call it after the checks. */
+  saveSession(base, session, now) {
+    const game = { id: makeId('gm'), ...base, ...session };
+    this.saveGame(game, now);
+    this.saveBooking({
+      id: makeId('bk'), ref: this.uniqueRef(), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
+      people: game.seats + 1, name: `GM ${game.gm}`, status: 'confirmed', pay: 'day', paid: true, amount: 0, activity: 'rpg', customerId: game.gmCustomerId,
+    }, now);
+    return game;
+  }
+
+  /**
+   * Add the missing weekly or fortnightly sessions of a series up to the booking horizon. A date whose tables are
+   * taken (or that breaks a rule) is skipped and reported. No awaits.
+   */
+  planSessions(row, rules, now, st) {
+    const step = row.schedule === 'weekly' ? 7 : row.schedule === 'fortnightly' ? 14 : 0;
+    if (!step) return { created: [], skipped: [] };
+    const time = new LairTime(rules.tz);
+    const details = parse(row.details, {});
+    const tables = parse(row.tables, []);
+    const have = new Set(this.sql.exec('SELECT starts_at FROM games WHERE series_id = ?', row.id).toArray().map((r) => time.key(r.starts_at)));
+    const lastKey = time.key(now + rules.horizonDays * 24 * HOUR);
+    const created = [];
+    const skipped = [];
+    const sample = this.sql.exec('SELECT * FROM games WHERE series_id = ? ORDER BY starts_at DESC LIMIT 1', row.id).toArray()[0];
+    const latest = sample ? this.rowToGame(sample) : null;
+    for (let key = row.first_day; key <= lastKey; key = addDays(key, step)) {
+      if (have.has(key)) continue;
+      const start = time.at(key, row.clock);
+      if (start <= now) continue;
+      const end = start + row.length;
+      try {
+        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, staff: Boolean(details.staffCreated) });
+        const base = {
+          ...details, gmCustomerId: row.gm_customer_id, gmEmail: details.gmEmail || null, seriesId: row.id, credited: null,
+          status: row.approved ? 'open' : 'pending', feeApproved: Boolean(row.approved) || details.gmFee <= 500,
+          imageId: row.image_id || latest?.imageId || null, gmBio: latest?.gmBio ?? details.gmBio,
+        };
+        created.push(this.saveSession(base, session, now));
+      } catch (error) {
+        if (!(error instanceof RuleError)) throw error;
+        skipped.push({ start, reason: error.message });
+      }
+    }
+    return { created, skipped };
+  }
+
+  /** Once a day, top up every weekly and fortnightly series so its sessions stay bookable as far ahead as anything else. */
+  extendSeries(rules, now) {
+    const day = new LairTime(rules.tz).key(now);
+    if (this.seriesDay === day) return [];
+    this.seriesDay = day;
+    const rows = this.sql.exec("SELECT * FROM series WHERE status = 'active' AND schedule IN ('weekly', 'fortnightly')").toArray();
+    if (!rows.length) return [];
+    const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
+    const report = [];
+    for (const row of rows) {
+      const { created, skipped } = this.planSessions(row, rules, now, st);
+      if (created.length || skipped.length) report.push({ series: row.id, created: created.length, skipped: skipped.length });
+      if (skipped.length) {
+        const details = parse(row.details, {});
+        this.notifyStaff(
+          `Game series needs a table: ${details.title}`,
+          `${details.gm}'s ${row.schedule} game ${details.title} couldn't get its tables on:\n${skipped.map((x) => `- ${new LairTime(rules.tz).label(x.start)}: ${x.reason}`).join('\n')}\n\nFind them another table on the staff page, or let the GM know.`,
+        );
+      }
+    }
+    return report;
+  }
+
   async createGame(input, who, client = '') {
-    if (!who.customerId && !who.staff) throw new RuleError('Log in first so we know who to pay your store credit to.', 401);
+    if (!who.customerId && !who.staff) throw new RuleError('Log in to run a game, so we know who to pay your store credit to.', 401);
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
     this.checkRate(who, client, now);
     const time = new LairTime(rules.tz);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
-    const g = checkGame(input, { state: st, rules, time, now, staff: who.staff });
-    const game = {
-      id: makeId('gm'), ...g, gmCustomerId: who.staff && input.gmCustomerId ? String(input.gmCustomerId) : who.customerId,
-      gmEmail: isEmail(input.email) ? String(input.email).trim().slice(0, 120) : null,
-      status: who.staff || who.gm ? 'open' : 'pending', credited: null,
-    };
-    this.saveGame(game, now);
-    const room = tableIndex(rules.rooms).get(game.tables[0])?.roomObj.id;
-    this.saveBooking({
-      id: makeId('bk'), ref: this.uniqueRef(), kind: 'gm', gameId: game.id, tables: game.tables, room, start: game.start, end: game.end,
-      people: game.seats + 1, name: `GM ${game.gm}`, status: 'confirmed', pay: 'day', paid: true, amount: 0, activity: 'rpg', customerId: game.gmCustomerId,
-    }, now);
-    if (game.status === 'pending') {
-      this.notifyStaff(`Game to approve: ${game.title}`, `${game.gm} wants to run ${game.title} (${game.system}), ${this.when(game, rules)}, tables ${game.tables.join(', ')}, ${game.seats} seats.\n\nApprove it on the staff page.`);
+    const details = checkGameDetails(input);
+    const first = checkGameSession(input, details, { state: st, rules, time, now, staff: who.staff });
+    const gmCustomerId = who.staff && input.gmCustomerId ? String(input.gmCustomerId) : who.customerId;
+    const gmEmail = isEmail(input.email) ? String(input.email).trim().slice(0, 120) : null;
+    // Staff and trusted GMs go straight on the board, unless the GM fee is above the standard $5 (a manager OKs that).
+    const approved = Boolean(who.staff || (who.gm && details.gmFee <= 500));
+    const feeApproved = Boolean(who.staff) || details.gmFee <= 500;
+    const seriesId = details.schedule === 'one-shot' ? null : makeId('sr');
+    if (seriesId) {
+      this.write(
+        `INSERT INTO series (id, schedule, gm_customer_id, details, tables, clock, length, first_day, status, approved, image_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)`,
+        seriesId, details.schedule, gmCustomerId, JSON.stringify({ ...details, gmEmail, staffCreated: Boolean(who.staff) }), JSON.stringify(first.tables),
+        time.minutesOf(first.start), first.end - first.start, time.key(first.start), approved ? 1 : 0, now, now,
+      );
     }
-    return { game: publicGame(game, this.state(game.start - 1, game.end + 1)), emailed: emailReady(this.env) && Boolean(game.gmEmail) };
+    const base = { ...details, gmCustomerId, gmEmail, status: approved ? 'open' : 'pending', credited: null, seriesId, feeApproved };
+    const game = this.saveSession(base, first, now);
+    let skipped = [];
+    let sessions = [game];
+    if (seriesId && ['weekly', 'fortnightly'].includes(details.schedule)) {
+      const row = this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).one();
+      const planned = this.planSessions(row, rules, now, st);
+      sessions = [game, ...planned.created];
+      skipped = planned.skipped.map((x) => ({ start: x.start, reason: x.reason }));
+    }
+    if (gmCustomerId && (details.gmBio || details.gm)) {
+      this.write(
+        'INSERT INTO gm_profiles (customer_id, name, bio, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(customer_id) DO UPDATE SET name = excluded.name, bio = CASE WHEN excluded.bio != \'\' THEN excluded.bio ELSE gm_profiles.bio END, updated_at = excluded.updated_at',
+        gmCustomerId, details.gm, details.gmBio || '', now,
+      );
+    }
+    if (!approved) {
+      const fee = details.gmFee > 500 ? `\nGM fee: ${dollars(details.gmFee)} a player (above the standard $5, so it needs your OK). Seats are ${dollars(first.seatPrice)}.` : '';
+      const repeat = details.schedule === 'one-shot' ? '' : `\nSchedule: ${details.schedule}, ${sessions.length} session${sessions.length === 1 ? '' : 's'} listed so far.`;
+      this.notifyStaff(
+        `Game to approve: ${game.title}`,
+        `${game.gm} wants to run ${game.title} (${game.system}), ${this.when(game, rules)}, tables ${game.tables.join(', ')}, ${game.seats} seats.${repeat}${fee}\n\nApprove it on the staff page.`,
+      );
+    }
+    const view = this.state(game.start - 1, game.end + 1);
+    return {
+      game: this.gameView(game, view, rules), sessions: sessions.map((g) => ({ id: g.id, start: g.start })), skipped, pending: !approved,
+      emailed: emailReady(this.env) && Boolean(gmEmail),
+    };
   }
 
-  async updateGame(id, patch, who) {
+  /** A GM (or staff) adds a date to a flexible or repeating game. A one-shot becomes a flexible series. */
+  async addSession(id, input, who) {
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     const own = who.customerId && game.gmCustomerId === who.customerId;
-    if (!who.staff) {
-      if (!own || patch.status !== 'cancelled') throw new RuleError('Only staff can change that game.', 403);
-      if (game.start <= now) throw new RuleError('This game has already started. Talk to staff at the counter.', 403);
+    if (!who.staff && !own) throw new RuleError('Only the GM or staff can add a session.', 403);
+    if (game.status === 'cancelled') throw new RuleError('That game was cancelled. List it again as a new game.', 409);
+    const time = new LairTime(rules.tz);
+    const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
+    const details = this.gameDetails(game);
+    const tables = Array.isArray(input.tables) && input.tables.length ? input.tables : game.tables;
+    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, staff: who.staff });
+    let seriesId = game.seriesId;
+    let series = seriesId ? this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).toArray()[0] : null;
+    if (!seriesId) {
+      seriesId = makeId('sr');
+      this.write(
+        `INSERT INTO series (id, schedule, gm_customer_id, details, tables, clock, length, first_day, status, approved, image_id, created_at, updated_at)
+         VALUES (?, 'flexible', ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+        seriesId, game.gmCustomerId, JSON.stringify({ ...details, schedule: 'flexible', gmEmail: game.gmEmail }), JSON.stringify(game.tables),
+        time.minutesOf(game.start), game.end - game.start, time.key(game.start), game.status === 'open' ? 1 : 0, game.imageId, now, now,
+      );
+      this.write("UPDATE games SET series_id = ?, schedule = 'flexible', updated_at = ? WHERE id = ?", seriesId, now, game.id);
+      series = this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).one();
     }
-    if (game.status === 'cancelled' && patch.status && patch.status !== 'cancelled') {
-      throw new RuleError('Cancelled games stay cancelled. List it again as a new game.', 409);
-    }
-    const before = game.status;
-    if (patch.status && ['open', 'pending', 'cancelled'].includes(patch.status)) game.status = patch.status;
-    this.saveGame(game, now);
+    const approved = Boolean(series?.approved) || game.status === 'open' || who.staff;
+    const base = {
+      ...details, schedule: game.seriesId ? game.schedule : 'flexible', gmCustomerId: game.gmCustomerId, gmEmail: game.gmEmail, seriesId,
+      status: approved ? 'open' : 'pending', credited: null, feeApproved: game.feeApproved || details.gmFee <= 500 || who.staff, imageId: game.imageId,
+    };
+    const created = this.saveSession(base, session, now);
+    if (!approved) this.notifyStaff(`Game to approve: ${created.title}`, `${created.gm} added a session of ${created.title}: ${this.when(created, rules)}, tables ${created.tables.join(', ')}.\n\nApprove it on the staff page.`);
+    return { game: this.gameView(created, this.state(created.start - 1, created.end + 1), rules) };
+  }
+
+  /** Cancel sessions, their seats and holds, and tell the players. No awaits. */
+  cancelSessions(games, rules, now) {
     let affected = 0;
-    if (game.status === 'cancelled' && before !== 'cancelled') {
-      const linked = this.gameBookings(id).filter((b) => ACTIVE.has(b.status));
-      this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND status IN ('held', 'confirmed', 'seated')", now, id);
+    for (const game of games) {
+      const linked = this.gameBookings(game.id).filter((b) => ACTIVE.has(b.status));
+      this.write("UPDATE games SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.id);
+      this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND status IN ('held', 'confirmed', 'seated')", now, game.id);
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
         affected += 1;
         this.dropDraft(seat);
@@ -668,14 +919,53 @@ export class Lair {
         }
       }
     }
+    return affected;
+  }
+
+  async updateGame(id, patch, who) {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const game = this.game(id);
+    if (!game) throw new RuleError('Game not found.', 404);
+    const own = who.customerId && game.gmCustomerId === who.customerId;
+    const scope = patch.scope === 'series' && game.seriesId ? 'series' : 'session';
+    if (!who.staff) {
+      if (!own || patch.status !== 'cancelled') throw new RuleError('Only staff can change that game.', 403);
+      if (scope === 'session' && game.start <= now) throw new RuleError('This game has already started. Talk to staff at the counter.', 403);
+    }
+    if (game.status === 'cancelled' && patch.status && patch.status !== 'cancelled') {
+      throw new RuleError('Cancelled games stay cancelled. List it again as a new game.', 409);
+    }
+    const before = game.status;
+    let affected = 0;
+    if (patch.status === 'cancelled') {
+      const targets = scope === 'series'
+        ? this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND starts_at > ?", game.seriesId, now).toArray().map((r) => this.rowToGame(r))
+        : before === 'cancelled' ? [] : [game];
+      if (scope === 'series') this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.seriesId);
+      affected = this.cancelSessions(targets, rules, now);
+      game.status = 'cancelled';
+    } else if (patch.status && ['open', 'pending'].includes(patch.status)) {
+      game.status = patch.status;
+      if (game.status === 'open') game.feeApproved = true;
+      this.saveGame(game, now);
+      // Approving one session of a series approves every waiting session of it (and the series' future ones).
+      if (game.seriesId && game.status === 'open') {
+        this.write("UPDATE games SET status = 'open', fee_approved = 1, updated_at = ? WHERE series_id = ? AND status = 'pending'", now, game.seriesId);
+        this.write('UPDATE series SET approved = 1, updated_at = ? WHERE id = ?', now, game.seriesId);
+      }
+    }
     if (before === 'pending' && game.status === 'open' && emailReady(this.env) && game.gmEmail) {
+      const credit = game.gmFee ?? rules.prices.gmCredit;
       this.later(this.mail({
         to: game.gmEmail,
         subject: `Your game is live: ${game.title}`,
-        text: `Kia ora ${game.gm},\n\n${game.title} on ${this.when(game, rules)} is now on the games board, tables ${game.tables.join(', ')}.\nYou earn ${dollars(rules.prices.gmCredit)} store credit for each paying player after the session.\n\nHappy GMing!\nDice Goblin`,
+        text: `Kia ora ${game.gm},\n\n${game.title} on ${this.when(game, rules)} is now on the games board, tables ${game.tables.join(', ')}.${game.seriesId ? ' Every session of it is approved.' : ''}\n${credit ? `You earn ${dollars(credit)} store credit for each paying player after the session.` : "You're covering your players' GM fee, so they pay just the table fee."}\n\nHappy GMing!\nDice Goblin`,
       }));
     }
-    return { game: publicGame(game, this.state(game.start - 1, game.end + 1)), affected };
+    const fresh = this.game(id);
+    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), affected };
   }
 
   async creditGm(id, who) {
@@ -691,10 +981,11 @@ export class Lair {
     const players = this.sql
       .exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 1 AND status NOT IN ('cancelled', 'noshow')", id)
       .one().n;
-    const amount = players * rules.prices.gmCredit;
+    // Each game's own GM fee: $0 (the GM covers their players), $5 standard, or more with a manager's OK.
+    const amount = players * (game.gmFee ?? rules.prices.gmCredit);
     this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
     let status = 'none';
-    let note = '';
+    let note = game.gmFee === 0 ? "This GM covers their players' fee, so there's no store credit to add." : '';
     try {
       if (amount > 0 && game.gmCustomerId && this.shopify.configured) {
         await this.shopify.creditCustomer(game.gmCustomerId, amount, this.env.CURRENCY || 'NZD');
@@ -713,6 +1004,52 @@ export class Lair {
       makeId('cr'), id, game.gmCustomerId, players, amount, status, note, Date.now(),
     );
     return { players, amount, status, note };
+  }
+
+  /** A GM's picture for their game (every session of a series). The browser shrinks it first. */
+  async gameImage(id, input, who) {
+    const now = Date.now();
+    const game = this.game(id);
+    if (!game) throw new RuleError('Game not found.', 404);
+    const own = who.customerId && game.gmCustomerId === who.customerId;
+    if (!who.staff && !own) throw new RuleError('Only the GM or staff can change the picture.', 403);
+    const match = String(input.dataUrl || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
+    if (!match) throw new RuleError('Pick a JPEG, PNG or WebP picture.');
+    const raw = atob(match[2].replace(/\s+/g, ''));
+    if (raw.length > IMAGE_LIMIT) throw new RuleError('That picture is too big. Try a smaller one.', 413);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    const imageId = `${makeId('img')}.${match[1].split('/')[1].replace('jpeg', 'jpg')}`;
+    this.write('INSERT INTO images (id, mime, data, owner, created_at) VALUES (?, ?, ?, ?, ?)', imageId, match[1], bytes, who.customerId || null, now);
+    if (game.seriesId) {
+      this.write('UPDATE games SET image_id = ?, updated_at = ? WHERE series_id = ?', imageId, now, game.seriesId);
+      this.write('UPDATE series SET image_id = ?, updated_at = ? WHERE id = ?', imageId, now, game.seriesId);
+    } else {
+      this.write('UPDATE games SET image_id = ?, updated_at = ? WHERE id = ?', imageId, now, game.id);
+    }
+    return { image: this.imageUrl(imageId) };
+  }
+
+  /** Serve a game picture (the Worker caches it) */
+  image(id) {
+    const row = this.sql.exec('SELECT mime, data FROM images WHERE id = ?', String(id || '')).toArray()[0];
+    if (!row) return new Response('Not found', { status: 404 });
+    return new Response(row.data, { headers: { 'Content-Type': row.mime, 'Cache-Control': 'public, max-age=31536000, immutable' } });
+  }
+
+  async saveGmProfile(input, who) {
+    if (!who.customerId) throw new RuleError('Log in to save your GM profile.', 401);
+    const name = String(input.name || '').trim().slice(0, 60);
+    const bio = String(input.bio || '').trim().slice(0, 600);
+    if (!name) throw new RuleError('Add the name players will see.');
+    const now = Date.now();
+    this.write(
+      'INSERT INTO gm_profiles (customer_id, name, bio, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(customer_id) DO UPDATE SET name = excluded.name, bio = excluded.bio, updated_at = excluded.updated_at',
+      who.customerId, name, bio, now,
+    );
+    // Upcoming games show the GM's latest profile.
+    this.write('UPDATE games SET gm = ?, gm_bio = ?, updated_at = ? WHERE gm_customer_id = ? AND starts_at > ?', name, bio, now, who.customerId, now);
+    return { profile: { name, bio } };
   }
 
   async createBlock(input, who) {
@@ -799,6 +1136,247 @@ export class Lair {
     return { updated };
   }
 
+  /* ---------------- shop tables ---------------- */
+  /** Managers open shop tables (T1-T3 by default) for public bookings for a while. */
+  async createOpening(input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    const now = Date.now();
+    const tables = (Array.isArray(input.tables) ? input.tables : parseTableList(input.tables, rules.rooms)).map(String);
+    const index = tableIndex(rules.rooms);
+    if (!tables.length || tables.some((t) => !index.has(t))) throw new RuleError('Pick tables that exist, like T1-T3.');
+    const start = Number(input.start);
+    const end = Number(input.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start)) throw new RuleError('The opening needs an end time after the start.');
+    const opening = { id: makeId('op'), tables, start, end, note: String(input.note || '').trim().slice(0, 120) };
+    this.write(
+      'INSERT INTO openings (id, tables, starts_at, ends_at, note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      opening.id, JSON.stringify(tables), start, end, opening.note, who.customerId, now,
+    );
+    return { opening };
+  }
+
+  async removeOpening(id, who) {
+    this.requireStaff(who);
+    this.write('DELETE FROM openings WHERE id = ?', id);
+    return { ok: true };
+  }
+
+  /* ---------------- check-in at the counter ---------------- */
+  /**
+   * Staff scan a ticket (or type its code). Scanners send the code with or without its dash, sometimes with other
+   * characters around it. Checks the booking or event sign-up in and says what's left to pay.
+   */
+  async checkIn(input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const time = new LairTime(rules.tz);
+    const raw = String(input.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const match = raw.match(/GOB([A-Z0-9]{6})/) || raw.match(/^([A-Z0-9]{6})$/);
+    if (!match) throw new RuleError("That doesn't look like a ticket code. They look like GOB-7K2QXM.", 404);
+    const ref = `GOB-${match[1]}`;
+    const force = input.force === true;
+    const today = (start, end) => now >= start - 3 * HOUR && now <= end;
+    const booking = this.booking(ref);
+    if (booking) {
+      const game = booking.gameId ? this.game(booking.gameId) : null;
+      const due = booking.paid ? 0 : booking.amount || 0;
+      const base = { found: true, kind: 'booking', booking: { ...booking, players: booking.party }, game: game ? this.gameView(game, this.state(game.start - 1, game.end + 1), rules) : null, due };
+      const who2 = `${booking.name}${booking.people ? `, ${booking.people} ${booking.people === 1 ? 'person' : 'people'}` : ''}${booking.tables.length ? ` at ${booking.tables.join(', ')}` : ''}`;
+      const pay = due ? ` Charge ${dollars(due)}.` : booking.paid ? ' Paid online.' : '';
+      if (['cancelled', 'noshow'].includes(booking.status) && !force) {
+        return { ...base, checkedIn: false, reason: 'cancelled', message: `This booking was ${booking.status === 'noshow' ? 'marked as a no-show' : 'cancelled'}: ${who2}.` };
+      }
+      if ((booking.status === 'seated' || booking.status === 'done' || booking.arrivedAt) && !force) {
+        return { ...base, checkedIn: true, reason: 'already', message: `Already checked in${booking.arrivedAt ? ` at ${new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, hour: 'numeric', minute: '2-digit' }).format(new Date(booking.arrivedAt))}` : ''}: ${who2}.${pay}` };
+      }
+      if (!today(booking.start, booking.end) && !force) {
+        return { ...base, checkedIn: false, reason: 'not-today', message: `This booking is for ${time.label(booking.start)}, not today: ${who2}.` };
+      }
+      booking.status = 'seated';
+      booking.arrivedAt = now;
+      booking.holdUntil = null;
+      this.saveBooking(booking, now);
+      return { ...base, booking: { ...booking, players: booking.party }, checkedIn: true, message: `Checked in: ${who2}.${pay}` };
+    }
+    const row = this.sql.exec('SELECT * FROM event_joins WHERE ref = ?', ref).toArray()[0];
+    if (!row) throw new RuleError(`No booking or sign-up with the code ${ref}.`, 404);
+    const join = this.rowToJoin(row);
+    const base = { found: true, kind: 'join', join, due: 0 };
+    const label = `${join.name}, ${join.people} ${join.people === 1 ? 'person' : 'people'} for ${join.title || 'the event'}`;
+    if (join.status === 'cancelled' && !force) return { ...base, checkedIn: false, reason: 'cancelled', message: `This sign-up was cancelled: ${label}.` };
+    if (join.arrivedAt && !force) return { ...base, checkedIn: true, reason: 'already', message: `Already checked in: ${label}.` };
+    if (!today(join.start, join.end) && !force) return { ...base, checkedIn: false, reason: 'not-today', message: `This sign-up is for ${time.label(join.start)}, not today: ${label}.` };
+    this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, updated_at = ? WHERE id = ?", now, now, join.id);
+    return { ...base, join: { ...join, status: 'attended', arrivedAt: now }, checkedIn: true, message: `Checked in: ${label}.` };
+  }
+
+  /* ---------------- events ---------------- */
+  async joinEvent(occurrenceId, input, who, client = '') {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const occurrence = findOccurrence(rules, occurrenceId);
+    if (!occurrence) throw new RuleError('That event date could not be found.', 404);
+    if (!occurrence.capacity) throw new RuleError("No need to sign up for this one. Just turn up!", 422);
+    if (occurrence.end <= now) throw new RuleError('That one has already finished.');
+    const people = Math.floor(Number(input.people));
+    if (!(people >= 1 && people <= 6)) throw new RuleError('Sign up between 1 and 6 people.');
+    const name = String(input.name || '').trim().slice(0, 80);
+    const email = String(input.email || '').trim().slice(0, 120);
+    if (!name) throw new RuleError('Add your name.');
+    if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
+    this.checkRate(who, client, now);
+    const taken = this.sql
+      .exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled'", occurrenceId)
+      .one().n;
+    const left = occurrence.capacity - taken;
+    if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'space' : 'spaces'} left.` : 'This one is full.', 409);
+    const join = {
+      id: makeId('ej'), ref: this.uniqueRef(), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
+      end: occurrence.end, people, name, email, note: String(input.note || '').trim().slice(0, 300), status: 'confirmed',
+    };
+    this.write(
+      `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
+      join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, who.customerId || null, now, now,
+    );
+    if (emailReady(this.env)) {
+      this.later(this.mail({
+        to: email,
+        subject: `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`,
+        text: `Kia ora ${name},\n\nYou're on the list for ${join.title} at the Dice Goblin Lair.\n\nWhen: ${this.when(join, rules)}\nPeople: ${people}\nSign-up: ${join.ref}\n\nShow ${join.ref} at the counter when you arrive.\nCan't make it? Reply to this email so someone else can have your spot.\n\nSee you there!\nDice Goblin`,
+      }));
+    }
+    return { join: { id: join.id, ref: join.ref, occurrenceId, people, name }, spacesLeft: left - people };
+  }
+
+  async cancelJoin(id, who) {
+    const now = Date.now();
+    const row = this.sql.exec('SELECT * FROM event_joins WHERE id = ? OR ref = ?', id, id).toArray()[0];
+    if (!row) throw new RuleError('Sign-up not found.', 404);
+    const join = this.rowToJoin(row);
+    const own = who.customerId && join.customerId === who.customerId;
+    if (!who.staff && !own) throw new RuleError('Only staff can change that sign-up.', 403);
+    this.write("UPDATE event_joins SET status = 'cancelled', updated_at = ? WHERE id = ?", now, join.id);
+    return { ok: true };
+  }
+
+  /** "Host your own event": the form goes to the team by email, with replies going straight to the person. */
+  async contact(input, who, client = '') {
+    const now = Date.now();
+    const name = String(input.name || '').trim().slice(0, 80);
+    const email = String(input.email || '').trim().slice(0, 120);
+    const details = String(input.details || '').trim().slice(0, 2000);
+    if (!name) throw new RuleError('Add your name.');
+    if (!isEmail(email)) throw new RuleError('Add your email so the team can reply.');
+    if (details.length < 10) throw new RuleError('Tell us a little about your event.');
+    if (!who.staff) {
+      const hits = (this.contactHits?.get(client) || []).filter((t) => now - t < HOUR);
+      if (hits.length >= 3) throw new RuleError("We've got your messages. The team will be in touch soon.", 429);
+      this.contactHits = this.contactHits || new Map();
+      this.contactHits.set(client, [...hits, now]);
+    }
+    if (!emailReady(this.env) || !this.env.STAFF_EMAIL) throw new RuleError("We can't send messages from here right now. Email or call us instead.", 503);
+    const line = (label, value) => (String(value || '').trim() ? `${label}: ${String(value).trim().slice(0, 200)}\n` : '');
+    const sent = await this.mail({
+      to: this.env.STAFF_EMAIL,
+      replyTo: email,
+      subject: `Event idea from ${name}${input.eventType ? `: ${String(input.eventType).slice(0, 60)}` : ''}`,
+      text: `Someone wants to host an event at the Lair. Reply to this email to answer them.\n\n${line('Name', name)}${line('Email', email)}${line('Phone', input.phone)}${line('Kind of event', input.eventType)}${line('When', input.when)}${line('How many people', input.people)}\n${details}\n`,
+    });
+    if (!sent.ok) throw new RuleError("That didn't send. Email or call us instead.", 502);
+    return { ok: true };
+  }
+
+  /* ---------------- the home page dice ---------------- */
+  /**
+   * A d20 rolled on the server. The first roll of the Lair day per visitor is the prize roll: a natural 20 is a
+   * personal 5% off code and a natural 1 is a free dice from the Dice Chest (both one use, for 24 hours).
+   */
+  async roll(who, client = '') {
+    const rules = await this.rules();
+    const now = Date.now();
+    const key = who.customerId ? `c:${who.customerId}` : client ? `ip:${client}` : '';
+    if (key) {
+      const hits = (this.rollHits?.get(key) || []).filter((t) => now - t < 10 * MIN);
+      if (hits.length >= 40) throw new RuleError('Easy, tiger. Give the dice a minute to cool down.', 429);
+      this.rollHits = this.rollHits || new Map();
+      if (this.rollHits.size > 5000) this.rollHits.clear();
+      this.rollHits.set(key, [...hits, now]);
+    }
+    const roll = (crypto.getRandomValues(new Uint32Array(1))[0] % 20) + 1;
+    const day = new LairTime(rules.tz).key(now);
+    const earlier = key ? this.sql.exec('SELECT * FROM rolls WHERE key = ? AND day = ?', key, day).toArray()[0] : null;
+    const prizeOf = (row) =>
+      row?.prize
+        ? { kind: row.prize, code: row.code || null, percent: row.prize === 'percent' ? 5 : undefined, variantId: row.prize === 'dice' ? DICE_CHEST.variantId : undefined, productUrl: row.prize === 'dice' ? '/products/dice-chest-prize' : undefined, expiresAt: row.expires_at }
+        : null;
+    if (!key || earlier) {
+      return { roll, prizeRoll: false, prize: prizeOf(earlier), message: 'Prizes are once a day. Come back tomorrow for another lucky roll.' };
+    }
+    const prize = roll === 20 ? 'percent' : roll === 1 ? 'dice' : null;
+    const expiresAt = now + 24 * HOUR;
+    // Claim today's prize roll before talking to Shopify, so two quick rolls can't both win.
+    this.write('INSERT OR IGNORE INTO rolls (key, day, roll, prize, code, expires_at, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?)', key, day, roll, prize, prize ? expiresAt : null, now);
+    if (!prize) return { roll, prizeRoll: true, prize: null, message: null };
+    const code = `${prize === 'percent' ? 'NAT20' : 'NAT1'}-${makeRef().slice(4)}`;
+    let made = false;
+    try {
+      if (this.shopify.configured) {
+        await this.shopify.createPrizeCode(
+          prize === 'percent'
+            ? { title: `Natural 20: 5% off (${code})`, code, percent: 0.05, endsAt: expiresAt, customerId: who.customerId || null }
+            : { title: `Natural 1: free Dice Chest dice (${code})`, code, percent: 1, variantId: DICE_CHEST.variantId, minSubtotalCents: Number(this.env.DICE_CHEST_PRICE || DICE_CHEST.price) + 1, endsAt: expiresAt, customerId: who.customerId || null },
+        );
+        made = true;
+      }
+    } catch (error) {
+      console.error('Lair: prize code failed', error);
+      this.note({ prizeError: { message: String(error.message || error).slice(0, 300), at: new Date().toISOString() } });
+    }
+    if (made) this.write('UPDATE rolls SET code = ? WHERE key = ? AND day = ?', code, key, day);
+    const row = this.sql.exec('SELECT * FROM rolls WHERE key = ? AND day = ?', key, day).one();
+    return { roll, prizeRoll: true, prize: prizeOf(row), message: made ? null : 'Show this screen at the counter to claim it.' };
+  }
+
+  /* ---------------- My Lair ---------------- */
+  async me(who) {
+    if (!who.customerId) throw new RuleError('Log in to see your bookings.', 401);
+    const rules = await this.rules();
+    const now = Date.now();
+    const since = now - 30 * 24 * HOUR;
+    const own = this.sql.exec('SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToBooking(r));
+    const view = (b) => ({
+      id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
+      paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [],
+    });
+    const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
+    const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
+    const seatGames = new Map();
+    for (const b of own.filter((x) => x.kind === 'gm-seat' && x.gameId)) if (!seatGames.has(b.gameId)) seatGames.set(b.gameId, this.game(b.gameId));
+    const profile = this.sql.exec('SELECT name, bio FROM gm_profiles WHERE customer_id = ?', who.customerId).toArray()[0] || null;
+    const credits = this.sql
+      .exec('SELECT c.*, g.title AS title FROM credits c LEFT JOIN games g ON g.id = c.game_id WHERE c.customer_id = ? ORDER BY c.created_at DESC LIMIT 20', who.customerId)
+      .toArray()
+      .map((c) => ({ gameId: c.game_id, title: c.title, players: c.players, amount: c.amount, status: c.status, at: c.created_at }));
+    const joins = this.sql.exec('SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToJoin(r));
+    return {
+      customer: { id: who.customerId, staff: who.staff, gm: who.gm },
+      gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
+      bookings: own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map(view),
+      seats: own.filter((b) => b.kind === 'gm-seat').map((b) => {
+        const g = seatGames.get(b.gameId);
+        return { ...view(b), gameId: b.gameId, gameTitle: g?.title || 'GM game', system: g?.system || '', gm: g?.gm || '', image: this.imageUrl(g?.imageId) };
+      }),
+      games: gameRows.map((g) => ({ ...this.gameView(g, span, rules), players: this.gamePlayers(span, g.id) })),
+      joins: joins.map((j) => ({ id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, status: j.status })),
+      credits,
+    };
+  }
+
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
   async checkConnection(webhookUrl, { force = false, testEmail = false } = {}) {
     if (force) this.rulesCache = null;
@@ -821,6 +1399,11 @@ export class Lair {
           (scope) => !info.scopes.includes(scope) && !(scope.startsWith('read_') && info.scopes.includes(scope.replace(/^read_/, 'write_'))),
         );
         if (result.missingScopes.length) result.advice = `Add these permissions to the app's version in the Dev Dashboard, release it, and approve the update in Shopify: ${result.missingScopes.join(', ')}`;
+        const missingFeatures = Object.keys(FEATURE_SCOPES).filter((scope) => !info.scopes.includes(scope));
+        if (missingFeatures.length) {
+          result.missingFeatureScopes = missingFeatures;
+          result.featureAdvice = `Optional permissions still to approve in Shopify admin (Apps → Dice Goblin Lair): ${missingFeatures.map((x) => `${x} (${FEATURE_SCOPES[x]})`).join(', ')}`;
+        }
       } catch (error) {
         result.shopifyLogin = String(error.message || error).slice(0, 300);
         result.advice = /app_not_installed/.test(result.shopifyLogin)
@@ -847,6 +1430,12 @@ export class Lair {
         });
         result.emailTest = { ok: sent.ok, to, status: sent.status, message: sent.message };
       }
+    }
+    try {
+      const extended = this.extendSeries(rules, Date.now());
+      if (extended.length) result.series = extended;
+    } catch (error) {
+      console.error('Lair: could not extend game series', error);
     }
     this.note({ connection: result });
     return result;

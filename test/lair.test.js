@@ -61,7 +61,7 @@ beforeEach(() => {
   Date.now = () => NOW;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD' });
   lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: id === 'gm' });
-  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS }, FALLBACK, [
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     { id: 'fnm', title: 'Friday Night Magic', start: at('2026-10-02', 18, 30), end: at('2026-10-02', 22), tables: 'T11-T20' },
   ]);
   lair.rulesLoadedAt = NOW + 10 * 365 * 24 * HOUR;
@@ -476,16 +476,25 @@ test('a booking reference clash fails loudly instead of replacing the other book
   assert.equal(lair.booking(first.data.booking.id).tables[0], 'T7');
 });
 
-test('online group limits: big groups call, and nobody grabs more tables than they need', async () => {
-  assert.equal((await call('POST', 'bookings', tableBooking({ people: 25, tables: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'] }))).status, 422);
-  assert.equal((await call('POST', 'bookings', tableBooking({ people: 1, tables: ['T1', 'T2', 'T3', 'T4'] }))).status, 422);
-  assert.equal((await call('POST', 'bookings', tableBooking({ people: 1, tables: ['T8', 'T9', 'T10'], extras: ['bigbox'], email: 'solo@example.com' }))).status, 200);
-  assert.equal((await call('POST', 'bookings', tableBooking({ people: 2, tables: ['T1', 'T2'], extras: ['wargame'] }))).status, 200);
+test('online group limits: 4 to a table, doubled for wargames and big box games, and big groups call', async () => {
+  const book = (over) => call('POST', 'bookings', tableBooking({ email: `p${Math.random()}@example.com`, ...over }));
+  assert.equal((await book({ people: 25, tables: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'] })).status, 422);
+  const tooMany = await book({ people: 4, tables: ['T1', 'T2'] });
+  assert.equal(tooMany.status, 422);
+  assert.match(tooMany.data.error, /We seat 4 at a table/);
+  assert.equal((await book({ people: 1, tables: ['T8', 'T9', 'T10'], extras: ['bigbox'] })).status, 422);
+  assert.equal((await book({ people: 1, tables: ['T8', 'T9'], extras: ['bigbox'] })).status, 200);
+  assert.equal((await book({ people: 2, tables: ['T1', 'T2'], extras: ['wargame'] })).status, 200);
+  assert.equal((await book({ people: 5, tables: ['T11', 'T12'] })).status, 200);
+  assert.equal((await book({ people: 6, tables: ['T13', 'T14', 'T15'] })).status, 422);
+  assert.equal((await book({ people: 6, tables: ['T13', 'T14', 'T15', 'T16'], extras: ['wargame', 'celebrating', 'kids'] })).status, 200);
+  const kept = lair.booking((await book({ people: 3, tables: ['T17'], extras: ['celebrating', 'teach', 'wargame'] })).data.booking.id);
+  assert.deepEqual(kept.extras.sort(), ['celebrating', 'wargame']);
   assert.equal((await call('POST', 'bookings', tableBooking({ people: 1, tables: ['T5', 'T6', 'T7'], name: 'Staff setup' }), 'staff')).status, 200);
 });
 
 test('late-night hours: a Friday 6pm-2am night can be booked at 1am Saturday', async () => {
-  lair.rulesCache = rulesFromSettings({ lair_hours: 'Thu 12:00-22:00\nFri 18:00-02:00' }, FALLBACK, []);
+  lair.rulesCache = rulesFromSettings({ lair_hours: 'Thu 12:00-22:00\nFri 18:00-02:00', lair_shop_tables: '' }, FALLBACK, []);
   const late = await call('POST', 'bookings', tableBooking({ start: at('2026-10-03', 1), end: at('2026-10-03', 2) }));
   assert.equal(late.status, 200, late.data.error);
   assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T4'], start: at('2026-10-03', 2), end: at('2026-10-03', 3) }))).status, 422);
@@ -535,7 +544,7 @@ test('the public sees what a hold is for, never the staff note', async () => {
 });
 
 test('the floor sends event holds the way the app checks them', async () => {
-  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS }, FALLBACK, [{ id: 'market', title: 'Bring and buy', start: at('2026-10-02', 18), end: at('2026-10-02', 21), tables: 'Side room 2' }]);
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [{ id: 'market', title: 'Bring and buy', start: at('2026-10-02', 18), end: at('2026-10-02', 21), tables: 'Side room 2' }]);
   const { eventHolds } = (await call('GET', 'floor')).data;
   assert.deepEqual(eventHolds.map((e) => [e.eventId, e.tables.join(',')]), [['market', 'B1,B2,B3,B4']]);
 });
@@ -688,7 +697,7 @@ test('the fancy room is one table for up to 12, for groups of 4 or more, at $15 
 });
 
 test('real opening hours: weekdays 4pm to midnight, Saturday 10am to midnight, Sunday 10am to 10pm', async () => {
-  lair.rulesCache = rulesFromSettings({}, FALLBACK, []);
+  lair.rulesCache = rulesFromSettings({ lair_shop_tables: '' }, FALLBACK, []);
   const book = (day, from, to, table) => call('POST', 'bookings', tableBooking({ tables: [table], start: at(day, from), end: to === 24 ? time.at(day, 24 * 60) : at(day, to), email: `${table}@example.com` }));
   assert.equal((await book('2026-10-05', 15, 16, 'T1')).status, 422); // Monday 3pm: not open yet
   assert.equal((await book('2026-10-05', 16, 17, 'T2')).status, 200); // Monday 4pm
@@ -933,4 +942,245 @@ test('status page: shows whether booking emails work once they are set up', asyn
   const failing = await page([connection(true), { key: 'email', value: JSON.stringify({ ok: false, status: 403, message: 'The domain is not verified.' }), at: 'x' }]);
   assert.match(failing, /Booking emails are failing: The domain is not verified\./);
   resetConfigCache();
+});
+
+/* ---------------- 3 Oct 2026: shop tables, check-in, events, GM series, prizes, My Lair ---------------- */
+
+test('shop tables: T1-T3 are closed to the public unless a manager opens them', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS }, FALLBACK, []);
+  const closed = await call('POST', 'bookings', tableBooking({ tables: ['T2'] }));
+  assert.equal(closed.status, 422);
+  assert.match(closed.data.error, /shop table/);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T2'], name: 'Manager game' }), 'staff')).status, 200);
+  assert.equal((await call('POST', 'openings', { tables: 'T1-T3', start: at('2026-10-01', 18), end: at('2026-10-01', 22) })).status, 403);
+  const opened = await call('POST', 'openings', { tables: 'T1-T3', start: at('2026-10-01', 18), end: at('2026-10-01', 22), note: 'Quiet night' }, 'staff');
+  assert.equal(opened.status, 200);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T3'], start: at('2026-10-01', 18), end: at('2026-10-01', 20) }))).status, 200);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T1'], start: at('2026-10-01', 21), end: at('2026-10-01', 23), email: 'x@example.com' }))).status, 422);
+  const floor = (await call('GET', 'floor')).data;
+  assert.deepEqual(floor.shopTables, ['T1', 'T2', 'T3']);
+  assert.equal(floor.openings.length, 1);
+  assert.equal(floor.openings[0].note, undefined);
+  assert.equal((await call('GET', 'floor', null, 'staff')).data.openings[0].note, 'Quiet night');
+  assert.equal((await call('POST', `openings/${opened.data.opening.id}/delete`, {}, 'staff')).status, 200);
+  assert.equal((await call('GET', 'floor')).data.openings.length, 0);
+});
+
+test('check-in: scanners send the code with or without its dash; not-today and repeat scans are flagged', async () => {
+  const today = (await call('POST', 'bookings', tableBooking({ tables: ['T5'], start: at('2026-10-01', 15), end: at('2026-10-01', 17) }))).data.booking;
+  const later = (await call('POST', 'bookings', tableBooking({ tables: ['T6'], start: at('2026-10-03', 15), end: at('2026-10-03', 17), email: 'later@example.com' }))).data.booking;
+  assert.equal((await call('POST', 'checkin', { code: today.ref })).status, 403);
+  const scanned = await call('POST', 'checkin', { code: `  ${today.ref.replace('-', '').toLowerCase()}\n` }, 'staff');
+  assert.equal(scanned.status, 200);
+  assert.equal(scanned.data.checkedIn, true);
+  assert.equal(scanned.data.due, 4000);
+  assert.match(scanned.data.message, /Checked in: Sam, 4 people at T5\. Charge \$40\.00\./);
+  assert.equal(lair.booking(today.id).status, 'seated');
+  const again = await call('POST', 'checkin', { code: today.ref }, 'staff');
+  assert.equal(again.data.reason, 'already');
+  const early = await call('POST', 'checkin', { code: later.ref }, 'staff');
+  assert.deepEqual([early.data.checkedIn, early.data.reason], [false, 'not-today']);
+  assert.match(early.data.message, /not today/);
+  assert.equal((await call('POST', 'checkin', { code: later.ref, force: true }, 'staff')).data.checkedIn, true);
+  assert.equal((await call('POST', 'checkin', { code: 'GOB-ZZZZZZ' }, 'staff')).status, 404);
+  assert.equal((await call('POST', 'checkin', { code: 'hello' }, 'staff')).status, 404);
+});
+
+test('events: repeating dates (weekly, monthly nth weekday, skips, until) and sign-ups with spaces', async () => {
+  const { eventOccurrences, findOccurrence } = await import('../src/core.js');
+  const events = [
+    { id: 'dnd-monday', title: 'Dungeons & Dragons', start: at('2026-10-05', 18), end: at('2026-10-05', 22), tables: '', repeat: 'weekly', skipDates: ['2026-10-26'], capacity: 6 },
+    { id: 'market', title: 'Oddity Alley Market', start: at('2026-10-17', 11), end: at('2026-10-17', 15), tables: 'B1-B4', repeat: 'monthly', repeatUntil: '2026-12-31' },
+    { id: 'launch', title: 'Launch party', start: at('2026-10-09', 18), end: at('2026-10-09', 21), tables: '' },
+  ];
+  const rules = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, events);
+  const dates = eventOccurrences(rules, at('2026-10-01', 0), at('2027-02-01', 0));
+  const monday = dates.filter((o) => o.eventId === 'dnd-monday').map((o) => o.id.split('@')[1]);
+  assert.deepEqual(monday.slice(0, 5), ['2026-10-05', '2026-10-12', '2026-10-19', '2026-11-02', '2026-11-09']);
+  assert.deepEqual(dates.filter((o) => o.eventId === 'market').map((o) => o.id.split('@')[1]), ['2026-10-17', '2026-11-21', '2026-12-19']);
+  assert.equal(dates.filter((o) => o.eventId === 'launch').length, 1);
+  // Daylight saving doesn't move the wall-clock time.
+  assert.equal(time.minutesOf(findOccurrence(rules, 'dnd-monday@2026-11-02').start), 18 * 60);
+  assert.equal(findOccurrence(rules, 'dnd-monday@2026-10-26'), null);
+
+  lair.rulesCache = rules;
+  // The market holds B1-B4 on its dates only.
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['B1'], start: at('2026-10-17', 12), end: at('2026-10-17', 13) }))).status, 409);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['B1'], start: at('2026-10-10', 12), end: at('2026-10-10', 13), email: 'b@example.com' }))).status, 200);
+
+  const join = (id, body) => call('POST', `events/${encodeURIComponent(id)}/join`, { name: 'Aroha', email: 'aroha@example.com', people: 2, ...body });
+  const first = await join('dnd-monday@2026-10-05', {});
+  assert.equal(first.status, 200);
+  assert.equal(first.data.spacesLeft, 4);
+  assert.match(first.data.join.ref, /^GOB-/);
+  assert.equal((await join('dnd-monday@2026-10-05', { people: 5, email: 'big@example.com' })).status, 409);
+  assert.equal((await join('dnd-monday@2026-10-05', { people: 4, email: 'four@example.com' })).data.spacesLeft, 0);
+  assert.equal((await join('dnd-monday@2026-10-26', {})).status, 404);
+  assert.equal((await join('launch@2026-10-09', {})).status, 422);
+  const floor = (await call('GET', 'floor', null, 'staff')).data;
+  assert.equal(floor.eventJoins['dnd-monday@2026-10-05'], 6);
+  assert.equal(floor.joins.length, 2);
+  assert.equal((await call('GET', 'floor')).data.joins, undefined);
+  // The sign-up's code checks in at the counter on the day.
+  Date.now = () => at('2026-10-05', 17, 30);
+  const checked = await call('POST', 'checkin', { code: first.data.join.ref }, 'staff');
+  assert.deepEqual([checked.data.kind, checked.data.checkedIn], ['join', true]);
+  assert.equal((await call('POST', `events/joins/${first.data.join.id}/cancel`, {}, 'staff')).status, 200);
+});
+
+test('GM games: weekly series, GM fees, seat names, approval for a whole series, and cancelling it', async () => {
+  const game = {
+    title: 'Weekly Pathfinder', system: 'Pathfinder 2e', gm: 'Tui', blurb: 'A long campaign.', seats: 4, tables: ['A1', 'A2'],
+    start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly', gmFee: 1000, gmBio: 'GMing since the 90s.', characters: 'bring',
+  };
+  // A booking already holds A1 on 15 October: that week is skipped.
+  await call('POST', 'bookings', tableBooking({ tables: ['A1'], start: at('2026-10-15', 18), end: at('2026-10-15', 19), email: 'clash@example.com' }));
+  const listed = await call('POST', 'games', game, 'gm');
+  assert.equal(listed.status, 200, listed.data.error);
+  assert.equal(listed.data.pending, true, 'a $10 GM fee needs a manager OK, even for a trusted GM');
+  assert.equal(listed.data.game.seatPrice, 2000);
+  assert.ok(listed.data.sessions.length >= 7);
+  assert.equal(listed.data.skipped.length, 1);
+  assert.equal(time.key(listed.data.skipped[0].start), '2026-10-15');
+  const seriesId = listed.data.game.seriesId;
+  assert.ok(seriesId);
+  assert.equal((await call('GET', 'floor')).data.games.length, 0);
+  const own = (await call('GET', 'floor', null, 'gm')).data.games;
+  assert.ok(own.length >= 1 && own.every((g) => g.status === 'pending'));
+
+  assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'open' }, 'staff')).status, 200);
+  const open = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId);
+  assert.ok(open.length >= 7 && open.every((g) => g.status === 'open' && g.gmFeeApproved));
+  assert.equal(open[0].gmBio, 'GMing since the 90s.');
+  assert.equal(open[0].players, undefined);
+
+  const seat = await call('POST', 'bookings', {
+    kind: 'gm-seat', gameId: open[0].id, people: 2, name: 'Mia', email: 'mia@example.com', pay: 'day',
+    players: [{ name: 'Mia', character: 'Valeros' }, { name: 'Leo', character: '' }],
+  });
+  assert.equal(seat.status, 200, seat.data.error);
+  assert.equal(seat.data.booking.amount, 4000);
+  assert.equal((await call('POST', 'bookings', { kind: 'gm-seat', gameId: open[0].id, people: 2, name: 'Kai', email: 'kai@example.com', players: [{ name: 'Kai' }, { name: '' }] })).status, 422);
+  const gmView = (await call('GET', 'floor', null, 'gm')).data.games.find((g) => g.id === open[0].id);
+  assert.deepEqual(gmView.players.map((p) => [p.name, p.character]), [['Mia', 'Valeros'], ['Leo', '']]);
+
+  await call('POST', `bookings/${seat.data.booking.id}/update`, { paid: true }, 'staff');
+  Date.now = () => at('2026-10-01', 21, 30);
+  const credit = await call('POST', `games/${open[0].id}/credit`, {}, 'staff');
+  assert.deepEqual([credit.data.players, credit.data.amount], [2, 2000]);
+
+  const cancelled = await call('POST', `games/${open[1].id}/update`, { status: 'cancelled', scope: 'series' }, 'gm');
+  assert.equal(cancelled.status, 200, cancelled.data.error);
+  assert.equal((await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId && g.start > Date.now()).length, 0);
+  assert.equal(lair.sql.exec('SELECT status FROM series WHERE id = ?', seriesId).one().status, 'cancelled');
+});
+
+test('GM games: $0 fee means players pay the table fee only; flexible games add dates; pictures and profiles', async () => {
+  const free = await call('POST', 'games', {
+    title: 'Free one-shot', system: 'Other', gm: 'Ana', blurb: 'On the house.', seats: 3, tables: ['F1'], start: at('2026-10-01', 18), end: at('2026-10-01', 21), gmFee: 0,
+  }, 'gm');
+  assert.equal(free.status, 200, free.data.error);
+  assert.equal(free.data.game.status, 'open');
+  assert.equal(free.data.game.seatPrice, 1500, 'the fancy room table fee only');
+  assert.equal((await call('POST', 'games', { ...free.data.game, title: 'Bad fee', tables: ['B4'], gmFee: 700 }, 'gm')).status, 422);
+
+  const flexible = await call('POST', 'games', {
+    title: 'Flexible campaign', system: 'Daggerheart', gm: 'Ana', blurb: 'When we can.', seats: 3, tables: ['B1'], start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'flexible',
+  }, 'gm');
+  assert.equal(flexible.data.sessions.length, 1);
+  assert.equal((await call('POST', `games/${flexible.data.game.id}/sessions`, { start: at('2026-10-08', 18), end: at('2026-10-08', 21) }, 'player9')).status, 403);
+  const added = await call('POST', `games/${flexible.data.game.id}/sessions`, { start: at('2026-10-08', 18), end: at('2026-10-08', 21) }, 'gm');
+  assert.equal(added.status, 200, added.data.error);
+  assert.equal(added.data.game.seriesId, flexible.data.game.seriesId);
+
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  assert.equal((await call('POST', `games/${flexible.data.game.id}/image`, { dataUrl: png }, 'player9')).status, 403);
+  assert.equal((await call('POST', `games/${flexible.data.game.id}/image`, { dataUrl: 'data:text/html;base64,PGI+' }, 'gm')).status, 422);
+  const pic = await call('POST', `games/${flexible.data.game.id}/image`, { dataUrl: png }, 'gm');
+  assert.equal(pic.status, 200, pic.data.error);
+  const imageId = pic.data.image.split('/img/')[1];
+  const served = await lair.fetch(new Request(`https://lair.test/internal/img/${imageId}`, { headers: { 'X-Lair-Internal': '1' } }));
+  assert.equal(served.headers.get('Content-Type'), 'image/png');
+  assert.equal((await served.arrayBuffer()).byteLength, 70);
+  const sessions = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === flexible.data.game.seriesId);
+  assert.ok(sessions.length === 2 && sessions.every((g) => g.image === pic.data.image));
+
+  assert.equal((await call('POST', 'gm-profile', { name: 'Ana', bio: 'Rules-light and story-heavy.' })).status, 401);
+  assert.equal((await call('POST', 'gm-profile', { name: 'Ana', bio: 'Rules-light and story-heavy.' }, 'gm')).status, 200);
+  const me = (await call('GET', 'me', null, 'gm')).data;
+  assert.equal(me.gmProfile.bio, 'Rules-light and story-heavy.');
+  assert.ok(me.games.some((g) => g.gmBio === 'Rules-light and story-heavy.'));
+  assert.equal((await call('GET', 'me')).status, 401);
+});
+
+test('My Lair: a customer sees their own bookings, seats and sign-ups', async () => {
+  const mine = await call('POST', 'bookings', tableBooking({ tables: ['T7'] }), 'cust1');
+  await call('POST', 'bookings', tableBooking({ tables: ['T8'], email: 'other@example.com' }), 'cust2');
+  const me = (await call('GET', 'me', null, 'cust1')).data;
+  assert.deepEqual(me.bookings.map((b) => b.ref), [mine.data.booking.ref]);
+  assert.equal(me.customer.id, 'cust1');
+  assert.deepEqual([me.seats, me.games, me.joins, me.credits].map((x) => x.length), [0, 0, 0, 0]);
+});
+
+test('host your own event: the form reaches the team by email, replies go to the person', async () => {
+  const sent = [];
+  lair.mail = async (message) => {
+    sent.push(message);
+    return { ok: true, attempted: true, status: 200 };
+  };
+  lair.baseEnv = { ...lair.baseEnv, RESEND_API_KEY: 're_x', FROM_EMAIL: 'Dice Goblin <bookings@dicegoblin.test>', STAFF_EMAIL: 'shop@dicegoblin.test' };
+  const form = { kind: 'host-event', name: 'Kiri', email: 'kiri@example.com', phone: '021 000', eventType: 'Tournament', when: 'Saturdays', people: '20', details: 'A monthly Lorcana tournament.' };
+  assert.equal((await call('POST', 'contact', { ...form, details: 'Hi' })).status, 422);
+  const ok = await lair.fetch(new Request('https://lair.test/contact', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Customer': '', 'X-Lair-Client': '203.0.113.5' }, body: JSON.stringify(form) }));
+  assert.equal(ok.status, 200);
+  assert.equal(sent[0].to, 'shop@dicegoblin.test');
+  assert.equal(sent[0].replyTo, 'kiri@example.com');
+  assert.match(sent[0].text, /monthly Lorcana tournament/);
+});
+
+test('dice roller: one prize roll a day; natural 20 and natural 1 make one-use codes; no code means claim at the counter', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true, configurable: true });
+  const codes = [];
+  lair.shopify.createPrizeCode = async (input) => {
+    codes.push(input);
+    return 'gid://shopify/DiscountCodeNode/1';
+  };
+  const rolls = [20, 1, 7];
+  const realRandom = crypto.getRandomValues.bind(crypto);
+  crypto.getRandomValues = (array) => {
+    if (array instanceof Uint32Array && rolls.length) {
+      array[0] = rolls.shift() - 1;
+      return array;
+    }
+    return realRandom(array);
+  };
+  const roll = (client, customer = '') => lair.fetch(new Request('https://lair.test/roll', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Customer': customer, 'X-Lair-Client': client }, body: '{}' })).then((r) => r.json());
+  try {
+    const nat20 = await roll('203.0.113.7', 'cust1');
+    assert.deepEqual([nat20.roll, nat20.prizeRoll, nat20.prize.kind, nat20.prize.percent], [20, true, 'percent', 5]);
+    assert.match(nat20.prize.code, /^NAT20-/);
+    assert.equal(codes[0].percent, 0.05);
+    assert.equal(codes[0].customerId, 'cust1');
+    assert.equal(codes[0].endsAt - NOW, 24 * HOUR);
+
+    const nat1 = await roll('203.0.113.8');
+    assert.deepEqual([nat1.roll, nat1.prize.kind, nat1.prize.variantId], [1, 'dice', '50363551023207']);
+    assert.equal(codes[1].percent, 1);
+    assert.equal(codes[1].minSubtotalCents, 501);
+
+    const second = await roll('203.0.113.7', 'cust1');
+    assert.deepEqual([second.roll, second.prizeRoll], [7, false]);
+    assert.equal(second.prize.code, nat20.prize.code, 'today’s prize comes back on later rolls');
+    assert.equal(codes.length, 2);
+
+    lair.shopify.createPrizeCode = async () => {
+      throw new Error('Access denied for discountCodeBasicCreate');
+    };
+    rolls.push(20);
+    const noScope = await roll('203.0.113.9');
+    assert.equal(noScope.prize.code, null);
+    assert.match(noScope.message, /counter/);
+  } finally {
+    crypto.getRandomValues = realRandom;
+  }
 });
