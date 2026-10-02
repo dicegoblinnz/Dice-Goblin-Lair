@@ -366,7 +366,11 @@ export class Lair {
       const origin = request.headers.get('X-Lair-Origin');
       if (origin) {
         this.later(this.ensureWebhook(`${origin}/webhooks/orders-paid`));
-        this.note({ proxy: { seen: true, day: new Date().toISOString().slice(0, 10) } });
+        // For the status page: did the website reach a booking route, and through which store address?
+        const day = new Date().toISOString().slice(0, 10);
+        const prefix = url.searchParams.get('path_prefix') || null;
+        const known = (request.method === 'GET' && a === 'floor') || (request.method === 'POST' && ['bookings', 'games', 'blocks'].includes(a));
+        this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';

@@ -63,7 +63,7 @@ Open `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Within 10 minutes of t
 
 - **Connected to the Shopify store:** the app can log in and has every permission it needs. If not, the `connection` row in the `status` table says why (wrong client ID or secret, app not installed, or `missingScopes`).
 - **Online payments are reported back:** Shopify will tell the app when someone pays online.
-- **The website has reached the app:** shows after the first visit to a booking page once the app proxy is set up.
+- **The website has reached the app:** shows after the first visit to a booking page in live mode once the app proxy is set up. To check the proxy by hand, open `www.dicegoblin.nz/apps/lair/floor`: a page of text starting with `{` means it works; the shop's "page not found" means Shopify isn't passing the address on yet.
 
 ### 4. Emails (optional)
 
@@ -116,6 +116,7 @@ afterwards), and check both show up on the staff page.
 
 ## If something isn't working
 
+- **Status page says "Waiting for the store link".** Shopify admin → Settings → Apps → Dice Goblin Lair should list an app proxy at `www.dicegoblin.nz/apps/lair`. If there's none, add it to a new app version in the Dev Dashboard (prefix `apps`, subpath `lair`, URL `https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy`) and release it. If the store shows a different address, use **Customize URL** there to set `apps` / `lair`, or change the theme setting **Lair app address** to match.
 - **Bookings say "The booking app only accepts JSON requests."** Shopify has stopped passing the request type through the app proxy. Add `JSON_ONLY` = `off` to the config table and tell whoever looks after the site.
 - **"Pay now" doesn't show on the booking page.** Check that "Let people pay online" is on in the theme settings, and that `/setup?key=…` shows `"shopify": true` and `"shopifyLogin": "ok"`.
 - **Online payments stay "unpaid" on the staff page.** Open `/setup?key=…` and check `paymentWebhook` is ok. Shopify retries a failed notification for a few hours, so a short outage sorts itself out.

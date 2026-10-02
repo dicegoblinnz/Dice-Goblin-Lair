@@ -821,3 +821,67 @@ test('the app\'s own address shows a plain status page instead of "Not found"', 
   assert.match(html, /Waiting for the store link/);
   resetConfigCache();
 });
+
+test('Worker: a proxy URL entered without /proxy still works, and only signed requests count as the store', async () => {
+  Date.now = realNow;
+  const { resetConfigCache } = await import('../src/config.js');
+  resetConfigCache();
+  const seen = [];
+  const env = {
+    SHOP: 'ep0qiq-rp.myshopify.com', SHOPIFY_CLIENT_SECRET: 'hush',
+    LAIR: { idFromName: () => 'id', get: () => ({ fetch: async (req) => { seen.push(new URL(req.url).pathname); return new Response('{}'); } }) },
+  };
+  const base = { shop: env.SHOP, path_prefix: '/apps/lair', timestamp: String(Math.floor(Date.now() / 1000)), logged_in_customer_id: '' };
+  const bare = await worker.fetch(new Request(await signedUrl('/floor', { ...base, from: '1' })), env);
+  assert.equal(bare.status, 200);
+  assert.equal(seen.at(-1), '/floor');
+  const root = await worker.fetch(new Request(await signedUrl('/', base)), env);
+  assert.equal(root.status, 200);
+  assert.equal(seen.at(-1), '/');
+  assert.doesNotMatch(root.headers.get('Content-Type') || '', /html/);
+  const before = seen.length;
+  const forged = await worker.fetch(new Request(`https://worker.test/floor?shop=${env.SHOP}&signature=abc&timestamp=1`), env);
+  assert.equal(forged.status, 401);
+  assert.equal((await worker.fetch(new Request('https://worker.test/floor'), env)).status, 404);
+  const page = await worker.fetch(new Request('https://worker.test/'), env);
+  assert.match(page.headers.get('Content-Type'), /text\/html/);
+  assert.equal(seen.length, before);
+  resetConfigCache();
+});
+
+test('status: a booking route marks the store link as working; any other address is recorded as a miss', async () => {
+  const db = fakeConfigDb({});
+  const probe = new Lair(fakeCtx(), { CONFIG: db, CURRENCY: 'NZD' });
+  probe.person = async () => ({ customerId: null, staff: false, gm: false });
+  const proxied = (path) => probe.fetch(new Request(`https://lair.test${path}?path_prefix=%2Fapps%2Flair&from=${NOW}&to=${NOW + 24 * HOUR}`, {
+    headers: { 'X-Lair-Origin': 'https://lair.example.workers.dev', 'X-Lair-Customer': '' },
+  }));
+  assert.equal((await proxied('/lair/floor')).status, 404);
+  assert.equal((await proxied('/floor')).status, 200);
+  await new Promise((r) => setTimeout(r, 10));
+  const proxy = JSON.parse(db.status.get('proxy').value);
+  assert.equal(proxy.seen, true);
+  assert.equal(proxy.prefix, '/apps/lair');
+  assert.equal(JSON.parse(db.status.get('proxyMiss').value).path, '/lair/floor');
+});
+
+test('status page: explains a wrong proxy address, and names the store address once it works', async () => {
+  const { resetConfigCache } = await import('../src/config.js');
+  const page = async (statusRows) => {
+    resetConfigCache();
+    const db = fakeConfigDb({});
+    db.prepare = (sql) => ({ all: async () => ({ results: /FROM status/.test(sql) ? statusRows : [] }) });
+    const res = await worker.fetch(new Request('https://lair.example.workers.dev/'), { CONFIG: db, SHOP: 'ep0qiq-rp.myshopify.com', PUBLIC_URL: 'https://lair.example.workers.dev' });
+    return res.text();
+  };
+  const connected = { key: 'connection', value: JSON.stringify({ shopifyLogin: 'ok', missingScopes: [], paymentWebhook: { ok: true }, checkedAt: '2026-10-02T05:00:00Z' }), at: '2026-10-02T05:00:00Z' };
+  const missed = await page([connected, { key: 'proxyMiss', value: JSON.stringify({ path: '/lair/floor', prefix: '/apps/lair' }), at: '2026-10-02T05:01:00Z' }]);
+  assert.match(missed, /at &quot;\/lair\/floor&quot; instead of a booking address/);
+  assert.match(missed, /https:\/\/lair\.example\.workers\.dev\/proxy/);
+  const waiting = await page([connected]);
+  assert.match(waiting, /Settings → Apps → Dice Goblin Lair should list an app proxy/);
+  const working = await page([connected, { key: 'proxy', value: JSON.stringify({ seen: true, prefix: '/apps/lair' }), at: '2026-10-02T05:02:00Z' }]);
+  assert.match(working, /class="ok"><span aria-hidden="true">✓<\/span>The website has reached the app through dicegoblin\.nz\/apps\/lair/);
+  assert.doesNotMatch(working, /should list an app proxy/);
+  resetConfigCache();
+});

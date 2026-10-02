@@ -1,5 +1,6 @@
 // Dice Goblin Lair — Cloudflare Worker entry point.
-//   /proxy/*                 Shopify app proxy (www.dicegoblin.nz/apps/lair/*), signature checked
+//   /proxy/*                 Shopify app proxy (www.dicegoblin.nz/apps/lair/*), signature checked. Signed requests
+//                            on other paths are served the same way, in case the proxy URL was entered without /proxy.
 //   /webhooks/orders-paid    Shopify webhook, HMAC checked
 //   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook
 //   /health                  uptime check
@@ -25,7 +26,7 @@ const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&a
 async function statusPage(env) {
   let rows = [];
   try {
-    if (env.CONFIG) rows = (await env.CONFIG.prepare("SELECT key, value, at FROM status WHERE key IN ('connection', 'proxy')").all()).results;
+    if (env.CONFIG) rows = (await env.CONFIG.prepare("SELECT key, value, at FROM status WHERE key IN ('connection', 'proxy', 'proxyMiss')").all()).results;
   } catch {
     rows = [];
   }
@@ -39,9 +40,16 @@ async function statusPage(env) {
   };
   const connection = read('connection');
   const proxy = read('proxy');
+  const proxyMiss = read('proxyMiss');
   const shopifyOk = connection?.shopifyLogin === 'ok' && !(connection.missingScopes || []).length;
   const webhookOk = Boolean(connection?.paymentWebhook?.ok);
+  const proxyOk = Boolean(proxy?.seen);
+  const proxyUrl = `${(env.PUBLIC_URL || 'https://dice-goblin-lair.dicegoblinnz.workers.dev').replace(/\/$/, '')}/proxy`;
+  const proxyHint = proxyMiss
+    ? `Shopify reached the app, but at "${proxyMiss.path}" instead of a booking address. In the Dev Dashboard, set the app proxy URL to ${proxyUrl} and release that version.`
+    : 'Shopify admin → Settings → Apps → Dice Goblin Lair should list an app proxy at www.dicegoblin.nz/apps/lair. This line turns green the first time a booking page loads in live mode.';
   const line = (ok, good, bad) => `<li class="${ok ? 'ok' : 'wait'}"><span aria-hidden="true">${ok ? '✓' : '…'}</span>${ok ? good : bad}</li>`;
+  const hint = (text) => `<li class="hint"><span aria-hidden="true"></span><small>${escapeHtml(text)}</small></li>`;
   const html = `<!doctype html><html lang="en-NZ"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dice Goblin booking app</title><meta name="robots" content="noindex">
 <style>
@@ -56,9 +64,10 @@ li span{display:inline-grid;place-items:center;width:1.4rem;height:1.4rem;border
 <ul>
 ${line(true, 'Booking app is running', '')}
 ${line(shopifyOk, 'Connected to the Shopify store', 'Waiting for the Shopify app to be installed with its permissions')}
-${!shopifyOk && connection?.advice ? `<li class="hint"><span aria-hidden="true"></span><small>${escapeHtml(connection.advice)}</small></li>` : ''}
+${!shopifyOk && connection?.advice ? hint(connection.advice) : ''}
 ${line(webhookOk, 'Online payments are reported back to the app', 'Payment notifications not set up yet')}
-${line(Boolean(proxy?.seen), 'The website has reached the app through dicegoblin.nz/apps/lair', 'Waiting for the store link (app proxy) to be set up')}
+${line(proxyOk, `The website has reached the app through dicegoblin.nz${escapeHtml(proxy?.prefix || '/apps/lair')}`, 'Waiting for the store link (app proxy) to be set up')}
+${!proxyOk && shopifyOk ? hint(proxyHint) : ''}
 </ul>
 <small>${connection?.checkedAt ? `Last checked ${new Date(connection.checkedAt).toLocaleString('en-NZ', { timeZone: 'Pacific/Auckland', dateStyle: 'medium', timeStyle: 'short' })}.` : 'Not checked yet; the app checks itself every 10 minutes.'}</small>
 </main></body></html>`;
@@ -76,9 +85,12 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ ok: true });
     const env = await withConfig(rawEnv);
-    if (url.pathname === '/' && request.method === 'GET') return statusPage(env);
 
-    if (url.pathname === '/proxy' || url.pathname.startsWith('/proxy/')) {
+    // Shopify signs every app proxy request. The proxy URL should end in /proxy, but a signed request on any other
+    // path is served the same way, so a proxy URL entered without "/proxy" still works.
+    const proxyPath = url.pathname === '/proxy' || url.pathname.startsWith('/proxy/');
+    const signed = url.searchParams.has('signature') && url.searchParams.has('shop');
+    if (proxyPath || signed) {
       const valid = await verifyProxySignature(url.searchParams, env.SHOPIFY_CLIENT_SECRET);
       if (!valid || url.searchParams.get('shop') !== env.SHOP) return json({ error: 'This request did not come through the Dice Goblin store.' }, 401);
       const customers = url.searchParams.getAll('logged_in_customer_id');
@@ -89,7 +101,7 @@ export default {
       if (request.method !== 'GET' && request.method !== 'HEAD' && !type.startsWith('application/json') && env.JSON_ONLY !== 'off') {
         return json({ error: 'The booking app only accepts JSON requests.' }, 415);
       }
-      const path = url.pathname.replace(/^\/proxy/, '') || '/';
+      const path = (proxyPath ? url.pathname.slice('/proxy'.length) : url.pathname) || '/';
       if (/^\/internal(\/|$)/.test(path)) return json({ error: 'Not found' }, 404);
       const inner = new URL(url);
       inner.pathname = path;
@@ -102,6 +114,8 @@ export default {
       const body = request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.text();
       return lair(env).fetch(new Request(inner.toString(), { method: request.method, headers, body }));
     }
+
+    if (url.pathname === '/' && request.method === 'GET') return statusPage(env);
 
     if (url.pathname === '/webhooks/orders-paid' && request.method === 'POST') {
       const raw = await request.text();
