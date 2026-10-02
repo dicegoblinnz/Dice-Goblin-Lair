@@ -1890,3 +1890,92 @@ test('GM messages: a session\'s players or a whole series, replies to the GM, 5 
     mail.restore();
   }
 });
+
+test('staff edit a game: details change for the series from this session on; time and tables move this session, its GM hold and seats, onto free tables', async () => {
+  const listed = await call('POST', 'games', {
+    title: 'Weekly Edit', system: 'Other', gm: 'Ellie', email: 'ellie@example.com', blurb: 'x', seats: 4, tables: ['A1'],
+    start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly',
+  }, 'gm');
+  const [first, second] = listed.data.sessions;
+  const mia = (await call('POST', 'bookings', { kind: 'gm-seat', gameId: first.id, people: 2, name: 'Mia', email: 'mia@example.com' }, 'mia')).data.booking;
+  const leo = (await call('POST', 'bookings', { kind: 'gm-seat', gameId: first.id, people: 1, name: 'Leo', email: 'leo@example.com' }, 'leo')).data.booking;
+  await call('POST', `bookings/${leo.id}/update`, { paid: true }, 'staff');
+  await call('POST', 'bookings', tableBooking({ tables: ['A2'], start: at('2026-10-01', 19), end: at('2026-10-01', 20), email: 'a2@example.com' }));
+  const edit = (body, who = 'staff') => call('POST', `games/${first.id}/edit`, body, who);
+  assert.equal((await edit({ title: 'Mine now' }, 'gm')).status, 403);
+  assert.equal((await edit({ tables: ['A2'] })).status, 409, 'A2 is taken at 7pm');
+  const tooFew = await edit({ seats: 2 });
+  assert.equal(tooFew.status, 409);
+  assert.match(tooFew.data.error, /already has 3 players/);
+
+  const mail = captureEmails();
+  try {
+    const moved = await edit({ title: 'Weekly Edit II', gmFee: 1000, start: at('2026-10-01', 19), end: at('2026-10-01', 22), tables: ['A3'] });
+    assert.equal(moved.status, 200, moved.data.error);
+    assert.equal(moved.data.sessions, listed.data.sessions.length);
+    assert.deepEqual([moved.data.game.title, moved.data.game.tables, moved.data.game.start, moved.data.game.seatPrice], ['Weekly Edit II', ['A3'], at('2026-10-01', 19), 2000]);
+    const held = lair.gameBookings(first.id).filter((b) => ACTIVE_STATUSES.includes(b.status));
+    assert.ok(held.length === 3 && held.every((b) => b.tables[0] === 'A3' && b.start === at('2026-10-01', 19) && b.end === at('2026-10-01', 22)));
+    assert.equal(lair.booking(mia.id).amount, 4000, 'unpaid seats follow the new price');
+    assert.equal(lair.booking(leo.id).amount, 1500, 'paid seats keep what they paid');
+    const later = lair.game(second.id);
+    assert.deepEqual([later.title, later.seatPrice, later.tables, later.start], ['Weekly Edit II', 2000, ['A1'], second.start], 'later sessions take the details but not the move');
+    assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['A1'], start: at('2026-10-01', 18), end: at('2026-10-01', 19), email: 'free@example.com' }))).status, 200, 'A1 is free again');
+    await settle();
+    const moves = mail.sent.filter((m) => /^New time: Weekly Edit II/.test(m.subject));
+    assert.deepEqual(moves.map((m) => m.to).sort(), ['leo@example.com', 'mia@example.com']);
+  } finally {
+    mail.restore();
+  }
+  Date.now = () => NOW + 7 * 24 * HOUR;
+  lair.seriesDay = null;
+  lair.extendSeries(lair.rulesCache, Date.now());
+  const newest = lair.sql.exec('SELECT title, gm_fee FROM games WHERE series_id = ? ORDER BY starts_at DESC LIMIT 1', listed.data.game.seriesId).one();
+  assert.deepEqual([newest.title, newest.gm_fee], ['Weekly Edit II', 1000], 'new sessions of the series get the new details');
+});
+const ACTIVE_STATUSES = ['held', 'confirmed', 'seated'];
+
+test('staff add players to a game: no payment, no rule but the seats left, linked to a member by email', async () => {
+  await call('POST', 'me/profile', { name: 'Sam Smith', email: 'sam@example.com' }, '1001');
+  const game = await call('POST', 'games', { title: 'Staff seats', system: 'Other', gm: 'Ellie', blurb: 'x', seats: 3, tables: ['B2'], start: at('2026-10-01', 15), end: at('2026-10-01', 18) }, 'gm');
+  const add = (body, who = 'staff') => call('POST', `games/${game.data.game.id}/players`, body, who);
+  assert.equal((await add({ name: 'Sam', people: 1 }, '1001')).status, 403);
+  const sam = await add({ name: 'Sam', email: 'SAM@example.com', people: 2, players: [{ name: 'Sam', character: 'Dax' }, { name: 'Jo' }] });
+  assert.equal(sam.status, 200, sam.data.error);
+  assert.deepEqual([sam.data.booking.customerId, sam.data.booking.amount, sam.data.booking.paid, sam.data.booking.status], ['1001', 3000, false, 'confirmed']);
+  assert.deepEqual(sam.data.booking.players.map((p) => p.name), ['Sam', 'Jo']);
+  assert.equal((await add({ name: 'Two more', people: 2 })).status, 409);
+  Date.now = () => at('2026-10-01', 16);
+  const late = await add({ name: 'Walk-up', people: 1, customerId: '4004' });
+  assert.equal(late.status, 200, 'staff can add someone after the start');
+  assert.equal(late.data.booking.customerId, '4004');
+  assert.equal(late.data.game.status, 'full');
+});
+
+test('staff list a game for a GM: gmEmail is matched to a member, gmCustomerId links directly, and an unknown GM gets a notice', async () => {
+  await call('POST', 'me/profile', { name: 'Ellie GM', email: 'ellie@example.com' }, '2001');
+  const base = { title: 'For a GM', system: 'Other', gm: 'Ellie', blurb: 'x', seats: 3, start: at('2026-10-01', 18), end: at('2026-10-01', 21) };
+  const mail = captureEmails();
+  try {
+    const matched = await call('POST', 'games', { ...base, tables: ['B1'], gmEmail: 'ELLIE@example.com' }, 'staff');
+    assert.equal(matched.status, 200, matched.data.error);
+    const game = lair.game(matched.data.game.id);
+    assert.deepEqual([game.gmCustomerId, game.gmEmail, game.status], ['2001', 'ELLIE@example.com', 'open']);
+    assert.equal(matched.data.notice, undefined);
+    await settle();
+    const live = mail.sent.find((m) => m.to === 'ELLIE@example.com');
+    assert.match(live.text, /listed and on the games board/);
+
+    const unknown = await call('POST', 'games', { ...base, tables: ['B2'], gmEmail: 'new.gm@example.com' }, 'staff');
+    assert.deepEqual([lair.game(unknown.data.game.id).gmCustomerId, lair.game(unknown.data.game.id).gmEmail], [null, 'new.gm@example.com']);
+    assert.match(unknown.data.notice, /isn't linked to their account/);
+    const byId = await call('POST', 'games', { ...base, tables: ['B3'], gmCustomerId: '3003' }, 'staff');
+    assert.equal(lair.game(byId.data.game.id).gmCustomerId, '3003');
+    const own = await call('POST', 'games', { ...base, tables: ['B4'] }, 'staff');
+    assert.equal(lair.game(own.data.game.id).gmCustomerId, 'staff');
+    const sneaky = await call('POST', 'games', { ...base, tables: ['A4'], gmEmail: 'ellie@example.com' }, 'gm');
+    assert.equal(lair.game(sneaky.data.game.id).gmCustomerId, 'gm', 'only staff can list a game for someone else');
+  } finally {
+    mail.restore();
+  }
+});

@@ -535,6 +535,8 @@ export class Lair {
       if (a === 'games' && c === 'sessions') return json(await this.addSession(b, body, who));
       if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
+      if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
+      if (a === 'games' && c === 'players') return json(await this.addPlayers(b, body, who));
       if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who));
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
@@ -988,8 +990,18 @@ export class Lair {
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = checkGameDetails(input);
     const first = checkGameSession(input, details, { state: st, rules, time, now, staff: who.staff });
-    const gmCustomerId = who.staff && input.gmCustomerId ? String(input.gmCustomerId) : who.customerId;
-    const gmEmail = isEmail(input.email) ? String(input.email).trim().slice(0, 120) : null;
+    // Staff can list a game for a GM: gmCustomerId, or gmEmail matched against members. A GM who isn't a member yet
+    // still gets the emails, but the game isn't linked to an account (their store credit is added by hand).
+    let gmCustomerId = who.customerId;
+    let gmEmail = isEmail(input.email) ? trimmed(input.email, 120) : null;
+    let notice = null;
+    const forGm = Boolean(who.staff && (input.gmCustomerId || input.gmEmail));
+    if (forGm) {
+      const byEmail = this.memberByEmail(input.gmEmail);
+      gmCustomerId = input.gmCustomerId ? trimmed(input.gmCustomerId, 40) : byEmail?.customer_id || null;
+      gmEmail = isEmail(input.gmEmail) ? trimmed(input.gmEmail, 120) : this.memberRow(gmCustomerId)?.email || gmEmail;
+      if (!gmCustomerId) notice = "No member has that email yet, so this game isn't linked to their account. Add their store credit in Shopify admin after each session.";
+    }
     // Staff and trusted GMs (tagged gm) go straight on the board; anyone else waits for a manager's OK. GM fees of
     // $0, $5 and $10 never need one.
     const approved = Boolean(who.staff || who.gm);
@@ -1030,11 +1042,133 @@ export class Lair {
         ],
       });
     }
+    if (forGm) this.tellGmLive(game, rules, { listedForThem: true });
     const view = this.state(game.start - 1, game.end + 1);
     return {
       game: this.gameView(game, view, rules), sessions: sessions.map((g) => ({ id: g.id, start: g.start })), skipped, pending: !approved,
-      emailed: emailReady(this.env) && Boolean(gmEmail),
+      emailed: emailReady(this.env) && Boolean(gmEmail), ...(notice ? { notice } : {}),
     };
+  }
+
+  /** "Your game is on the board": when staff approve a game, or list one for a GM. */
+  tellGmLive(game, rules, { listedForThem = false } = {}) {
+    if (!emailReady(this.env) || !isEmail(game.gmEmail)) return;
+    const credit = game.gmFee ?? rules.prices.gmCredit;
+    this.later(this.mail(this.letter(game.gmEmail, `Your game is live: ${game.title}`, {
+      title: 'Your game is on the board!',
+      intro: `Kia ora ${game.gm}, ${game.title} is ${listedForThem ? 'listed' : 'approved'} and on the games board.${game.seriesId && !listedForThem ? ' Every session of it is approved.' : ''} Time to start plotting, friend.`,
+      details: [
+        ['Game', game.title], [game.seriesId ? 'Next session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
+        ['Player seats', String(game.seats)],
+        ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+      ],
+      button: { label: 'See the games board', url: this.page('gm') },
+      signoff: 'Happy GMing!\nGobgob',
+    })));
+  }
+
+  /**
+   * POST /games/:id/edit (staff). The details (title, system, blurb, seats, level, age, tags, safety, characters,
+   * bring, contentNotes, sessionZero, gmFee) change for this session and every later session of its series. start,
+   * end and tables move this session only: its GM hold and every seat move with it, onto tables that are free.
+   * Unpaid seats follow a new price; paid ones keep what they paid. Players hear if the time changes.
+   */
+  async editGame(id, input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const game = this.game(id);
+    if (!game) throw new RuleError('Game not found.', 404);
+    if (game.status === 'cancelled') throw new RuleError('That game was cancelled. List it again as a new game.', 409);
+    const time = new LairTime(rules.tz);
+    const editable = ['title', 'system', 'blurb', 'seats', 'level', 'age', 'tags', 'safety', 'characters', 'bring', 'contentNotes', 'sessionZero', 'gmFee'];
+    const details = checkGameDetails({ ...this.gameDetails(game), ...Object.fromEntries(editable.filter((k) => input[k] !== undefined).map((k) => [k, input[k]])) });
+    const sessions = game.seriesId
+      ? this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND (id = ? OR starts_at > ?) ORDER BY starts_at", game.seriesId, game.id, game.start).toArray().map((r) => this.rowToGame(r))
+      : [game];
+    for (const session of sessions) {
+      const taken = this.takenSeats(session.id);
+      if (details.seats < taken) throw new RuleError(`${time.label(session.start)} already has ${taken} players. Remove some first, or keep ${taken} seats.`, 409);
+    }
+    const moving = input.start != null || input.end != null || (Array.isArray(input.tables) && input.tables.length > 0);
+    let place = { tables: game.tables, start: game.start, end: game.end, room: game.room };
+    if (moving) {
+      const tables = Array.isArray(input.tables) && input.tables.length ? input.tables.map(String) : game.tables;
+      const start = input.start != null ? Number(input.start) : game.start;
+      const end = input.end != null ? Number(input.end) : game.end;
+      const own = new Set(this.gameBookings(game.id).map((b) => b.id));
+      const st = this.state(Math.min(start, game.start) - 24 * HOUR, Math.max(end, game.end) + 24 * HOUR);
+      const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, staff: true, ignore: own });
+      place = { tables: moved.tables, start: moved.start, end: moved.end, room: moved.room };
+    }
+    const shared = {
+      title: details.title, system: details.system, blurb: details.blurb, seats: details.seats, level: details.level, age: details.age, tags: details.tags,
+      safety: details.safety, characters: details.characters, pregens: details.pregens, bring: details.bring, contentNotes: details.contentNotes,
+      sessionZero: details.sessionZero, gmFee: details.gmFee,
+    };
+    for (const session of sessions) {
+      const here = session.id === game.id ? place : session;
+      const room = rules.rooms.find((r) => r.id === here.room) || tableIndex(rules.rooms).get(here.tables[0])?.roomObj;
+      const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
+      this.saveGame({ ...session, ...shared, ...(session.id === game.id ? place : {}), seatPrice }, now);
+      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", seatPrice, now, session.id);
+    }
+    if (moving) {
+      this.write(
+        "UPDATE bookings SET tables = ?, starts_at = ?, ends_at = ?, room = ?, updated_at = ? WHERE game_id = ? AND status IN ('held', 'confirmed', 'seated')",
+        JSON.stringify(place.tables), place.start, place.end, place.room, now, game.id,
+      );
+    }
+    if (game.seriesId) {
+      const series = this.sql.exec('SELECT details FROM series WHERE id = ?', game.seriesId).toArray()[0];
+      if (series) this.write('UPDATE series SET details = ?, updated_at = ? WHERE id = ?', JSON.stringify({ ...parse(series.details, {}), ...shared }), now, game.seriesId);
+    }
+    const fresh = this.game(game.id);
+    if ((place.start !== game.start || place.end !== game.end) && emailReady(this.env)) {
+      const seats = this.gameBookings(game.id).filter((b) => b.kind === 'gm-seat' && ACTIVE.has(b.status) && isEmail(b.email));
+      this.later(this.mailMany(seats.map((seat) => this.letter(seat.email, `New time: ${fresh.title}, ${this.when(fresh, rules)}`, {
+        title: 'Your game has a new time',
+        intro: `Heads up, friend: ${fresh.title} has moved. Your seat moved with it.`,
+        details: [['Game', fresh.title], ['Now', this.when(fresh, rules)], ['Was', this.when(game, rules)], ['Where', `${fresh.tables.length > 1 ? 'Tables' : 'Table'} ${fresh.tables.join(', ')}`], ['Ticket', seat.ref]],
+        outro: "Can't make the new time? Cancel your seat in My Lair and Gobgob will let your GM know.",
+        button: { label: 'See it in My Lair', url: this.page('myLair') },
+      }))));
+    }
+    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), sessions: sessions.length };
+  }
+
+  /**
+   * POST /games/:id/players { name, email, people, players, customerId? } (staff): seat someone at a game, with no
+   * payment and no rule but the seats left. Their account is linked when customerId is given or their email matches
+   * a member.
+   */
+  async addPlayers(id, input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const game = this.game(id);
+    if (!game) throw new RuleError('Game not found.', 404);
+    if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
+    const people = Math.floor(Number(input.people ?? 1));
+    if (!(people >= 1 && people <= 8)) throw new RuleError('Add between 1 and 8 players.');
+    const left = game.seats - this.takenSeats(game.id);
+    if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'seat' : 'seats'} left.` : 'This table is full.', 409);
+    const name = trimmed(input.name, 80);
+    if (!name) throw new RuleError('Add their name.');
+    const email = trimmed(input.email, 120);
+    if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
+    const players = seatPlayers(input.players, people, name);
+    const customerId = trimmed(input.customerId, 40) || this.memberByEmail(email)?.customer_id || null;
+    const seat = {
+      id: makeId('bk'), ref: this.uniqueRef(name), kind: 'gm-seat', status: 'confirmed', gameId: game.id, tables: game.tables, room: game.room,
+      start: game.start, end: game.end, people, name, email, amount: (game.seatPrice || rules.prices.gmSeat) * people, pay: 'day', paid: false,
+      activity: 'rpg', party: players, customerId, notes: 'Added by staff',
+    };
+    this.saveBooking(seat, now);
+    const emailed = this.confirm(seat, rules, game);
+    return { booking: { ...this.ownView(seat), players, customerId }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed };
   }
 
   /** A GM (or staff) adds a date to a flexible or repeating game. A one-shot becomes a flexible series. */
@@ -1357,20 +1491,7 @@ export class Lair {
         this.write('UPDATE series SET approved = 1, updated_at = ? WHERE id = ?', now, game.seriesId);
       }
     }
-    if (before === 'pending' && game.status === 'open' && emailReady(this.env) && isEmail(game.gmEmail)) {
-      const credit = game.gmFee ?? rules.prices.gmCredit;
-      this.later(this.mail(this.letter(game.gmEmail, `Your game is live: ${game.title}`, {
-        title: 'Your game is on the board!',
-        intro: `Kia ora ${game.gm}, ${game.title} is approved and on the games board.${game.seriesId ? ' Every session of it is approved.' : ''} Time to start plotting, friend.`,
-        details: [
-          ['Game', game.title], [game.seriesId ? 'Next session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
-          ['Player seats', String(game.seats)],
-          ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
-        ],
-        button: { label: 'See the games board', url: this.page('gm') },
-        signoff: 'Happy GMing!\nGobgob',
-      })));
-    }
+    if (before === 'pending' && game.status === 'open') this.tellGmLive(game, rules);
     const fresh = this.game(id);
     return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), affected };
   }
