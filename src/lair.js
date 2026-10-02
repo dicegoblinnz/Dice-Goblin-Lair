@@ -195,12 +195,26 @@ const MIGRATIONS = [
       order_id TEXT, created_at INTEGER, updated_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS tabs_customer ON tabs (customer_id, day)',
   ],
+  // Round 4: split the bill. paid_amount is what's been paid so far; payments has a row for each order line that paid
+  // for a booking or sign-up, with who paid, and an order's line only ever counts once. split: the booker will split
+  // the bill at the counter. Anything already marked paid was paid in full, so its paid_amount is its amount.
+  [
+    `CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY, booking_id TEXT NOT NULL, kind TEXT NOT NULL, order_id TEXT NOT NULL, line_id TEXT NOT NULL, amount INTEGER NOT NULL,
+      customer_id TEXT, at INTEGER NOT NULL, UNIQUE (order_id, line_id))`,
+    'CREATE INDEX IF NOT EXISTS payments_booking ON payments (booking_id)',
+    'ALTER TABLE bookings ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE bookings ADD COLUMN split INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE event_joins ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0',
+    'UPDATE bookings SET paid_amount = amount WHERE paid = 1 AND amount > 0',
+    'UPDATE event_joins SET paid_amount = amount WHERE paid = 1 AND amount > 0',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
   'id', 'ref', 'kind', 'status', 'tables', 'room', 'starts_at', 'ends_at', 'people', 'name', 'email', 'phone', 'notes', 'activity',
   'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'party', 'arrived_at',
-  'refund', 'series_id', 'occurrence_id', 'pass_id', 'covered', 'created_at', 'updated_at',
+  'refund', 'series_id', 'occurrence_id', 'pass_id', 'covered', 'paid_amount', 'split', 'created_at', 'updated_at',
 ];
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
@@ -229,12 +243,19 @@ const dollars = (cents) => `$${(cents / 100).toFixed(2)}`;
 /** Short money for titles and notices: $10, or $12.50 */
 const money = (cents) => `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)}`;
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-/** What's still owed on a booking or sign-up: its amount less what passes covered. */
-const owing = (x) => Math.max(0, (x.amount || 0) - (x.covered || 0));
+/** What's still owed on a booking or sign-up: its amount less what passes covered and what's been paid. */
+const owing = (x) => Math.max(0, (x.amount || 0) - (x.covered || 0) - (x.paidAmount || 0));
 /** What's left to pay at the counter: nothing for a GM's own table, or once it's paid. */
 const dueOf = (x) => (x.paid || x.kind === 'gm' ? 0 : owing(x));
-/** paid, worked out again after a pass covers part of it: true once something was owed and nothing is left. */
+/** paid, worked out again after a payment or a pass: true once something was owed and nothing is left. */
 const settled = (x) => ((x.amount || 0) > 0 ? owing(x) === 0 : Boolean(x.paid));
+/** What an order line paid, in cents: its price times its quantity, less that line's discounts. */
+const lineAmount = (item) => {
+  const cents = (value) => Math.round(Number(value || 0) * 100) || 0;
+  const gross = cents(item.price ?? item.price_set?.shop_money?.amount) * Math.max(0, Math.floor(Number(item.quantity ?? 1)) || 0);
+  const discounts = (item.discount_allocations || []).reduce((sum, d) => sum + cents(d.amount ?? d.amount_set?.shop_money?.amount), 0);
+  return Math.max(0, gross - discounts);
+};
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
 const YEAR = 365 * 24 * HOUR;
@@ -313,6 +334,8 @@ export class Lair {
       refund: r.refund || null, seriesId: r.series_id || null, occurrenceId: r.occurrence_id || null,
       // passId: the session pass to use at check-in; covered: what passes have taken off it so far.
       passId: r.pass_id || null, covered: r.covered || 0,
+      // paidAmount: what's been paid so far (a split bill is paid in parts); split: the booker is splitting the bill.
+      paidAmount: r.paid_amount || 0, split: Boolean(r.split),
     };
   }
 
@@ -340,7 +363,7 @@ export class Lair {
       id: r.id, ref: r.ref, occurrenceId: r.occurrence_id, eventId: r.event_id, title: r.title, start: r.starts_at, end: r.ends_at,
       people: r.people, name: r.name, email: r.email, note: r.note || '', status: r.status, customerId: r.customer_id, arrivedAt: r.arrived_at || null,
       pay: r.pay || 'day', paid: Boolean(r.paid), amount: r.amount || 0, holdUntil: r.hold_until || null, draftOrderId: r.draft_order_id || null,
-      orderId: r.order_id || null, refund: r.refund || null,
+      orderId: r.order_id || null, refund: r.refund || null, paidAmount: r.paid_amount || 0,
     };
   }
 
@@ -357,14 +380,15 @@ export class Lair {
     return {
       id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, name: j.name, status: j.status,
       pay: j.pay, paid: j.paid, amount: j.amount, payment: j.pay === 'now' ? 'online' : 'store', refund: j.refund || null,
+      paidAmount: j.paidAmount || 0, due: dueOf(j),
     };
   }
 
-  /** A sign-up as staff see it */
-  staffJoinView(j) {
+  /** A sign-up as staff see it, with who paid what (payments: from a list's paymentsIn, or looked up) */
+  staffJoinView(j, payments = null) {
     return {
       ...this.joinView(j), email: j.email, note: j.note, arrivedAt: j.arrivedAt, customerId: j.customerId || null, orderId: j.orderId || null,
-      due: dueOf(j),
+      due: dueOf(j), payments: payments || this.paymentsOf('join', j.id),
     };
   }
 
@@ -416,7 +440,7 @@ export class Lair {
       b.phone || null, b.notes || null, b.activity || null, JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount || 0,
       b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null,
       b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, b.seriesId || null, b.occurrenceId || null,
-      b.passId || null, b.covered || 0, now, now,
+      b.passId || null, b.covered || 0, b.paidAmount || 0, b.split ? 1 : 0, now, now,
     );
   }
 
@@ -651,6 +675,7 @@ export class Lair {
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         if (b === 'pos' && c === 'checkin') return json(await this.posCheckIn(body));
         if (b === 'pos' && c === 'member') return json(await this.posMember(body));
+        if (b === 'pos' && c === 'share') return json(await this.posShare(body));
         if (b === 'pos' && c === 'tab' && parts[3] && parts[4] === 'added') return json(this.posTabAdded(decodeURIComponent(parts[3])));
         return json({ error: 'Not found' }, 404);
       }
@@ -727,9 +752,10 @@ export class Lair {
     const to = Math.min(Number(url.searchParams.get('to')) || now + rules.horizonDays * 24 * HOUR, now + 400 * 24 * HOUR);
     const st = this.cachedState(from, to);
     const memo = new Map();
+    const paid = who.staff ? { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) } : null;
     const view = (bk) => {
-      // Staff see everything, plus the saved pass, what passes covered, what's due and the refund state.
-      if (who.staff) return this.staffBooking(bk, memo);
+      // Staff see everything, plus the saved pass, what passes covered, what's due, the refund state and who paid.
+      if (who.staff) return this.staffBooking(bk, memo, paid.booking.get(bk.id) || []);
       if (who.customerId && bk.customerId === who.customerId) return { ...publicBooking(bk), ref: bk.ref, name: bk.name, people: bk.people, paid: bk.paid };
       return publicBooking(bk);
     };
@@ -764,7 +790,7 @@ export class Lair {
       events: [],
       eventJoins,
       eventSpots,
-      ...(who.staff ? { joins: joinRows.map((j) => this.staffJoinView(j)) } : {}),
+      ...(who.staff ? { joins: joinRows.map((j) => this.staffJoinView(j, paid.join.get(j.id) || [])) } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: who.staff,
@@ -805,9 +831,12 @@ export class Lair {
     const pass = input.usePass && ['table', 'gm-seat'].includes(kind) ? this.passForBooking(input.usePass, who, now) : null;
     // Tables, walk-ins and game seats are paid at the counter on the day (show the code, we ring it up): `pay` is ignored.
     const id = makeId('bk');
+    // A walk-in staff mark paid as they seat it was paid in full. split: the booker will split the bill at the counter.
+    const paidNow = kind === 'walkin' && Boolean(input.paid);
     Object.assign(booking, {
-      id, ref: this.newCode(trimmed(input.name, 80), 'booking', id, now), pay: 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
+      id, ref: this.newCode(trimmed(input.name, 80), 'booking', id, now), pay: 'day', paid: paidNow, paidAmount: paidNow ? booking.amount : 0,
       status: kind === 'walkin' ? 'seated' : 'confirmed', holdUntil: null, customerId: override ? null : who.customerId || null, passId: pass?.id || null,
+      split: kind === 'table' && input.split === true,
     });
     this.saveBooking(booking, now);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email }, now);
@@ -1001,7 +1030,7 @@ export class Lair {
     return {
       ...publicBooking(b), ref: b.ref, name: b.name, email: b.email, people: b.people, paid: b.paid, amount: b.amount, pay: b.pay, room: b.room,
       extras: b.extras || [], occurrenceId: b.occurrenceId || null, payment: b.pay === 'now' ? 'online' : 'store', refund: b.refund || null,
-      pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b),
+      pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0, split: Boolean(b.split),
     };
   }
 
@@ -1023,9 +1052,9 @@ export class Lair {
       if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
       // An event game spot paid online is locked in: cancelling frees the spot and staff decide on a refund. Anything
       // else paid online (from before everything moved to the counter) keeps the cancellation policy it was sold with.
-      const lockedIn = Boolean(booking.occurrenceId && booking.paid && booking.pay === 'now');
+      const lockedIn = Boolean(booking.occurrenceId && booking.paidAmount > 0 && booking.pay === 'now');
       const refund = lockedIn
-        ? { due: false, ask: true, amount: booking.amount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
+        ? { due: false, ask: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
         : refundFor(booking, rules, now);
       booking.status = 'cancelled';
       booking.holdUntil = null;
@@ -1047,11 +1076,6 @@ export class Lair {
     if (patch.status && ['confirmed', 'seated', 'done', 'cancelled', 'noshow'].includes(patch.status)) next.status = patch.status;
     if (next.status !== 'held') next.holdUntil = null;
     if (patch.status === 'done') next.end = Math.max(Math.min(next.end, now), next.start);
-    if (typeof patch.paid === 'boolean') next.paid = patch.paid;
-    if (typeof patch.refunded === 'boolean') {
-      if (patch.refunded && !next.paid) throw new RuleError('Only a paid booking can be marked as refunded.');
-      next.refund = patch.refunded ? 'done' : null;
-    }
     if (patch.people != null) {
       next.people = Math.max(1, Math.min(60, Math.floor(Number(patch.people)) || 1));
       const seatGame = next.kind === 'gm-seat' && next.gameId ? this.game(next.gameId) : null;
@@ -1060,6 +1084,18 @@ export class Lair {
         : next.occurrenceId && booking.people ? Math.round(booking.amount / booking.people)
           : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
       next.amount = unit * next.people;
+      // A bigger group owes more; a smaller one may be paid up already.
+      next.paid = settled(next);
+    }
+    if (typeof patch.paid === 'boolean') {
+      // Marked paid by hand (cash, or sorted out another way): what was owed counts as paid. Unmarked: only the
+      // payments the shop recorded count.
+      next.paid = patch.paid;
+      next.paidAmount = patch.paid ? Math.max(next.paidAmount || 0, (next.amount || 0) - (next.covered || 0)) : this.paidSoFar('booking', next.id);
+    }
+    if (typeof patch.refunded === 'boolean') {
+      if (patch.refunded && !next.paid && !(next.paidAmount > 0)) throw new RuleError('Only a paid booking can be marked as refunded.');
+      next.refund = patch.refunded ? 'done' : null;
     }
     let moveGame = null;
     if (Array.isArray(patch.tables) || patch.end != null) {
@@ -1084,9 +1120,9 @@ export class Lair {
     // Cancelled or a no-show: what's owed back, worked out before saving.
     const ending = ['cancelled', 'noshow'].includes(next.status) && booking.status !== next.status;
     let refund;
-    if (ending && next.status === 'cancelled' && booking.occurrenceId && booking.paid && booking.amount > 0) {
+    if (ending && next.status === 'cancelled' && booking.occurrenceId && booking.paidAmount > 0) {
       // Staff cancelling an event's game spot (the event's off, or they've sorted it out): what was paid comes back.
-      refund = { due: true, amount: booking.amount, orderId: booking.orderId || null, reason: 'cancelled by staff' };
+      refund = { due: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'cancelled by staff' };
       if (next.refund !== 'done') next.refund = 'due';
     } else if (ending && next.status === 'cancelled') {
       // Paid online and cancelled: the cancellation policy says whether the money goes back.
@@ -1094,7 +1130,7 @@ export class Lair {
       if (refund.due && next.refund !== 'done') next.refund = 'due';
     } else if (ending) {
       // A no-show is only recorded: no email and nothing charged. If they'd paid, a "Refund?" note lets staff decide.
-      const paid = Boolean(booking.paid && booking.amount > 0);
+      const paid = booking.paidAmount > 0;
       refund = { ...refundFor(booking, rules, Infinity), reason: 'no-show', ask: paid };
       if (paid && next.refund !== 'done') {
         next.refund = 'ask';
@@ -1113,18 +1149,24 @@ export class Lair {
       }
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
-    return { booking: this.booking(next.id), refund };
+    return { booking: this.staffBooking(this.booking(next.id)), refund };
   }
 
-  /** Staff: an event sign-up's { paid, refunded }. refunded: true is 'done', false clears the flag. No awaits. */
+  /**
+   * Staff: an event sign-up's { paid, refunded }. Marked paid by hand, what was owed counts as paid (unmarked, only
+   * recorded payments count); refunded: true is 'done', false clears the flag. No awaits.
+   */
   updateJoin(join, patch, now) {
-    let { paid, refund } = join;
-    if (typeof patch.paid === 'boolean') paid = patch.paid;
+    let { paid, refund, paidAmount } = join;
+    if (typeof patch.paid === 'boolean') {
+      paid = patch.paid;
+      paidAmount = paid ? Math.max(paidAmount || 0, join.amount || 0) : this.paidSoFar('join', join.id);
+    }
     if (typeof patch.refunded === 'boolean') {
-      if (patch.refunded && !paid) throw new RuleError('Only a paid sign-up can be marked as refunded.');
+      if (patch.refunded && !paid && !(paidAmount > 0)) throw new RuleError('Only a paid sign-up can be marked as refunded.');
       refund = patch.refunded ? 'done' : null;
     }
-    this.write('UPDATE event_joins SET paid = ?, refund = ?, updated_at = ? WHERE id = ?', paid ? 1 : 0, refund || null, now, join.id);
+    this.write('UPDATE event_joins SET paid = ?, paid_amount = ?, refund = ?, updated_at = ? WHERE id = ?', paid ? 1 : 0, paidAmount || 0, refund || null, now, join.id);
     return { join: this.staffJoinView(this.joinById(join.id)) };
   }
 
@@ -1669,10 +1711,11 @@ export class Lair {
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
         affected += 1;
         this.dropDraft(seat);
-        const refund = Boolean(seat.paid && seat.amount > 0);
+        // Whatever was paid for the seat comes back (a split bill may be part paid).
+        const refund = seat.paidAmount > 0;
         if (refund) {
           this.write("UPDATE bookings SET refund = 'due', updated_at = ? WHERE id = ? AND (refund IS NULL OR refund != 'done')", now, seat.id);
-          refunds.push([seat.ref, `${seat.name}: ${dollars(seat.amount)} for ${this.when(game, rules)}${seat.pay === 'now' ? ', paid online' : ', paid at the counter'}${seat.orderId ? ` (order ${String(seat.orderId).split('/').pop()})` : ''}`]);
+          refunds.push([seat.ref, `${seat.name}: ${dollars(seat.paidAmount)} for ${this.when(game, rules)}${seat.pay === 'now' ? ', paid online' : ', paid at the counter'}${seat.orderId ? ` (order ${String(seat.orderId).split('/').pop()})` : ''}`]);
         }
         if (!isEmail(seat.email)) continue;
         letters.push(this.letter(seat.email, `Cancelled: ${game.title}, ${this.when(game, rules)}`, {
@@ -1685,7 +1728,7 @@ export class Lair {
                 : "You've already paid, so you'll get all your money back. Pop in or reply to this email and the team will sort it."]
               : []),
           ],
-          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Ticket', seat.ref], ['Refund', refund ? dollars(seat.amount) : '']],
+          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Ticket', seat.ref], ['Refund', refund ? dollars(seat.paidAmount) : '']],
           button: { label: 'Find another game', url: this.page('gm') },
           signoff: 'Sorry again,\nGobgob',
         }));
@@ -1856,16 +1899,20 @@ export class Lair {
   }
 
   /**
-   * orders/paid webhook (signature already checked by the Worker). Two jobs:
+   * orders/paid webhook (signature already checked by the Worker). Three jobs:
    *
-   * Payments for bookings. Customers can put any text in a cart note or cart attribute, so an online order only counts
-   * when it came from a draft order (our checkouts; customers can't make those), and only for a booking that was sent
-   * to checkout: Shopify is asked which order the booking's draft became, and if the draft is gone (deleted as the
-   * hold ran out) or not linked yet, the draft-order source is the proof. POS orders are made by staff at the
-   * counter, so a POS line with a _booking property pays for that booking as it is.
+   * Payments for bookings and sign-ups. Customers can put any text in a cart note or cart attribute, so an online
+   * order only counts when it came from a draft order (our checkouts; customers can't make those), and only for a
+   * booking or sign-up that was sent to checkout: Shopify is asked which order its draft became, and if the draft is
+   * gone (deleted as the hold ran out) or not linked yet, the draft-order source is the proof. POS orders are made by
+   * staff at the counter, so a POS line with a _booking property pays for that booking. Each such line adds what it
+   * paid (price × quantity, less the line's discounts) to the booking's paidAmount, once per order line however often
+   * Shopify sends the webhook; a bill can be split between several orders. The order's customer is the payer.
+   *
+   * Tabs. A POS line with a _tab property marks that self-serve tab paid.
    *
    * Members' spend. Every paid order with a customer (online, draft or POS) adds its subtotal after discounts to that
-   * customer's spend, once per order: Shopify retries webhooks, and the order id is the key.
+   * customer's spend, once per order: the order id is the key.
    */
   async ordersPaid(order) {
     const orderId = order.admin_graphql_api_id || (order.id ? `gid://shopify/Order/${order.id}` : '');
@@ -1873,15 +1920,18 @@ export class Lair {
     const source = order.source_name || '';
     const pos = source === 'pos';
     const fromDraft = !source || source === 'shopify_draft_order';
-    const refs = new Set();
+    // The lines that pay for a booking or sign-up (its code in _booking), with what each paid; and tabs paid.
+    const lines = [];
     const tabs = new Set();
-    for (const item of order.line_items || []) {
-      for (const p of item.properties || []) {
-        if (p.name === '_booking' && p.value) refs.add(String(p.value).trim().toUpperCase());
-        // A self-serve tab's items, rung up at the counter. Only staff make POS orders, so only those count.
-        if (p.name === '_tab' && p.value && pos) tabs.add(String(p.value).trim());
-      }
-    }
+    (order.line_items || []).forEach((item, index) => {
+      const props = item.properties || [];
+      const booking = props.find((p) => p.name === '_booking' && p.value);
+      if (booking) lines.push({ ref: String(booking.value).trim().toUpperCase(), lineId: String(item.id ?? item.admin_graphql_api_id ?? `line-${index}`), amount: lineAmount(item) });
+      // A self-serve tab's items, rung up at the counter. Only staff make POS orders, so only those count.
+      const tab = props.find((p) => p.name === '_tab' && p.value);
+      if (tab && pos) tabs.add(String(tab.value).trim());
+    });
+    const refs = new Set(lines.map((l) => l.ref));
     if (fromDraft) {
       for (const a of order.note_attributes || []) if (a.name === '_booking' && a.value) refs.add(String(a.value).trim().toUpperCase());
       for (const match of String(order.note || '').matchAll(/\b(?:[A-Z]{2}-[A-Z]{3,9}-\d{1,2}|GOB-[A-Z0-9]{6})\b/g)) refs.add(match[0]);
@@ -1901,15 +1951,24 @@ export class Lair {
         if (linked === orderId || (linked === null && source === 'shopify_draft_order')) verified.push(item);
       }
     }
-    // --- no awaits from here on: read each booking or sign-up fresh and update it ---
-    const of = (type) => verified.filter((x) => x.type === type).map((x) => x.id);
-    const updated = [...this.markPaid(of('booking'), orderId, rules, { pos }), ...this.markJoinsPaid(of('join'), orderId, rules, { pos })];
-    const tabsPaid = this.markTabsPaid([...tabs].slice(0, 10), orderId, Date.now());
+    // --- no awaits from here on: read each booking or sign-up fresh and record what this order paid ---
+    const now = Date.now();
+    const paying = [];
+    for (const v of verified) {
+      const own = lines.filter((l) => this.bookingOrJoin(l.ref)?.item.id === v.id);
+      // A checkout found by its note (no line names it) paid what was left.
+      if (own.length) paying.push(...own.map((l) => ({ ...v, lineId: l.lineId, amount: l.amount })));
+      else paying.push({ ...v, lineId: `order:${v.id}`, amount: null });
+    }
+    const updated = this.recordPayments(paying, orderId, rules, { pos, now });
+    const tabsPaid = this.markTabsPaid([...tabs].slice(0, 10), orderId, now);
 
     // Payments are recorded, so if Shopify can't say who the customer is right now, failing the webhook (Shopify
     // sends it again) only repeats work that's already done.
     const spend = await this.orderSpend(orderId);
     // --- no awaits from here on ---
+    // The order's customer paid: a friend paying their share with their own member code attached is the payer.
+    if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
     let counted = 0;
     if (spend?.customerId && spend.amount > 0 && !this.sql.exec('SELECT 1 AS n FROM spend WHERE order_id = ?', orderId).toArray().length) {
       this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, spend.source || source || null, Date.now());
@@ -1918,96 +1977,145 @@ export class Lair {
     return { updated, tabs: tabsPaid, spend: counted };
   }
 
-  /** Bookings paid by an order: online through their checkout, or at the counter (pos). No awaits. */
-  markPaid(ids, orderId, rules, { pos = false } = {}) {
-    const now = Date.now();
+  /**
+   * What one order paid for bookings and sign-ups: [{ type, id, lineId, amount }] (amount null: what was left). Each
+   * order line counts once. paid becomes true when nothing is left to pay. A held booking or sign-up is confirmed, and
+   * one paid after its hold ran out keeps its place if it's still free (otherwise staff are told). Paying more than was
+   * owed is flagged for a refund. The first online payment sends the confirmation. No awaits. Returns the codes paid.
+   */
+  recordPayments(lines, orderId, rules, { pos = false, now = Date.now() } = {}) {
     const updated = [];
-    for (const id of ids) {
-      const booking = this.booking(id);
-      const firstTime = !booking.paid;
-      if (!firstTime && booking.orderId && booking.orderId !== orderId) {
-        // Already paid by another order: money to give back, never a second confirmation.
-        if (!(booking.notes || '').includes(orderId)) {
-          booking.notes = `${booking.notes ? `${booking.notes} ` : ''}[Paid twice: ${booking.orderId} and ${orderId}. Refund one.]`;
-          this.saveBooking(booking, now);
-          this.notifyStaff(`Paid twice: ${booking.ref}`, {
-            title: 'A booking was paid twice',
-            intro: `${booking.name}'s booking ${booking.ref} was paid by two orders. Refund one of them.`,
-            details: [['Booking', booking.ref], ['First order', booking.orderId], ['Second order', orderId], ['Amount', dollars(booking.amount)]],
-          });
-        }
-        updated.push(booking.ref);
-        continue;
+    const groups = new Map();
+    for (const l of lines) {
+      const key = `${l.type}:${l.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(l);
+    }
+    for (const group of groups.values()) {
+      const { type, id } = group[0];
+      const item = type === 'join' ? this.joinById(id) : this.booking(id);
+      if (!item) continue;
+      updated.push(item.ref);
+      const counted = (lineId) => this.sql.exec('SELECT 1 AS n FROM payments WHERE order_id = ? AND line_id = ?', orderId, lineId).toArray().length > 0;
+      const fresh = group.filter((l) => !counted(l.lineId));
+      // The first release marked a booking paid by this same order before payments were kept: that's counted already.
+      const legacy = item.orderId === orderId && !this.sql.exec('SELECT 1 AS n FROM payments WHERE order_id = ? AND booking_id = ?', orderId, item.id).toArray().length;
+      if (!fresh.length || legacy) continue;
+      const firstTime = !item.paid && !(item.paidAmount > 0);
+      const owedBefore = item.paid ? 0 : owing(item);
+      let added = 0;
+      for (const l of fresh) {
+        const amount = l.amount == null ? owedBefore : l.amount;
+        this.write(
+          'INSERT INTO payments (id, booking_id, kind, order_id, line_id, amount, customer_id, at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)',
+          makeId('pm'), item.id, type, orderId, l.lineId, amount, now,
+        );
+        added += amount;
       }
-      booking.paid = true;
-      booking.orderId = orderId;
-      if (booking.status === 'held') booking.status = 'confirmed';
-      if (booking.status === 'cancelled' && firstTime) {
-        // Paid after the hold ran out (or after a cancellation): take the spot back if it is still free.
-        const game = booking.gameId ? this.game(booking.gameId) : null;
-        let ok = false;
-        if (booking.holdUntil && (!game || game.status !== 'cancelled')) {
-          const st = this.state(booking.start - 1, booking.end + 1);
-          const free = booking.kind === 'gm-seat' || booking.tables.every((t) => isFree(st, rules, t, booking.start, booking.end, booking.id));
-          const seatsOk = booking.kind !== 'gm-seat' || (game && seatsTaken(st, game.id) + booking.people <= game.seats);
-          ok = free && seatsOk;
-        }
-        if (ok) {
-          booking.status = 'confirmed';
+      const next = { ...item, paidAmount: (item.paidAmount || 0) + added, orderId: item.orderId || orderId };
+      next.paid = Boolean(item.paid) || settled(next);
+      if (next.status === 'held') next.status = 'confirmed';
+      const notes = [];
+      if (item.status === 'cancelled' && firstTime) {
+        // Paid after the hold ran out (or after a cancellation): take the place back if it's still free.
+        if (item.holdUntil && this.placeStillFree(type, item, rules)) {
+          next.status = 'confirmed';
         } else {
-          booking.notes = `${booking.notes ? `${booking.notes} ` : ''}[Paid after it was cancelled or the spot was re-booked: refund or reseat]`;
-          this.notifyStaff(`Paid but cancelled: ${booking.ref}`, {
-            title: 'Paid for a cancelled booking',
-            intro: `${booking.name} paid for ${booking.ref}, but that booking was cancelled or its spot was re-booked. Refund the order or find them another spot.`,
-            details: [['Booking', booking.ref], ['Name', booking.name], ['Email', booking.email || 'none'], ['Was for', this.when(booking, rules)], ['Order', orderId]],
+          notes.push('[Paid after it was cancelled or the spot was re-booked: refund or reseat]');
+          this.notifyStaff(`Paid but cancelled: ${item.ref}`, {
+            title: type === 'join' ? 'Paid for a cancelled sign-up' : 'Paid for a cancelled booking',
+            intro: `${item.name} paid for ${item.ref}, but it was cancelled or its place was taken. Refund the order or find them another spot.`,
+            details: [['Code', item.ref], ['Name', item.name], ['Email', item.email || 'none'], ['Was for', `${item.title ? `${item.title}, ` : ''}${this.when(item, rules)}`], ['Order', orderId]],
           });
         }
       }
-      booking.holdUntil = null;
-      this.saveBooking(booking, now);
-      // Paying online confirms a held booking: that's when its confirmation goes out. Paying at the counter doesn't need one.
-      if (firstTime && !pos && booking.status === 'confirmed') this.confirm(booking, rules, booking.gameId ? this.game(booking.gameId) : null);
-      updated.push(booking.ref);
+      // Paid more than was owed: already paid in full, or this order paid more than was left.
+      const over = (item.amount || 0) > 0 ? Math.max(0, added - owedBefore) : 0;
+      if (over > 0) {
+        const twice = owedBefore === 0;
+        notes.push(twice ? `[Paid twice: ${item.orderId || 'an earlier order'} and ${orderId}. Refund one.]` : `[Overpaid ${dollars(over)} by ${orderId}: refund the difference.]`);
+        this.notifyStaff(`${twice ? 'Paid twice' : 'Overpaid'}: ${item.ref}`, {
+          title: twice ? `A ${type === 'join' ? 'sign-up' : 'booking'} was paid twice` : `A ${type === 'join' ? 'sign-up' : 'booking'} was overpaid`,
+          intro: twice
+            ? `${item.name}'s ${item.ref} was already paid, and another order paid for it again. Refund one of them.`
+            : `${item.name}'s ${item.ref} was paid ${dollars(over)} more than was left to pay. Refund the difference.`,
+          details: [['Code', item.ref], ['First order', item.orderId || ''], ['This order', orderId], ['Amount', dollars(item.amount || 0)], ['Paid so far', dollars(next.paidAmount)]],
+        });
+      }
+      if (type === 'join') {
+        this.write(
+          'UPDATE event_joins SET paid = ?, paid_amount = ?, order_id = ?, status = ?, hold_until = NULL, updated_at = ? WHERE id = ?',
+          next.paid ? 1 : 0, next.paidAmount, next.orderId, next.status, now, item.id,
+        );
+      } else {
+        const text = notes.filter((n) => !(item.notes || '').includes(n)).join(' ');
+        this.write(
+          'UPDATE bookings SET paid = ?, paid_amount = ?, order_id = ?, status = ?, hold_until = NULL, notes = ?, updated_at = ? WHERE id = ?',
+          next.paid ? 1 : 0, next.paidAmount, next.orderId, next.status, text ? `${item.notes ? `${item.notes} ` : ''}${text}` : item.notes || null, now, item.id,
+        );
+      }
+      // Paying online confirms a held booking or sign-up: that's when its confirmation goes out. The counter needs none.
+      if (firstTime && !pos && next.status === 'confirmed') {
+        if (type === 'join') this.confirmJoin(this.joinById(item.id), rules);
+        else this.confirm(this.booking(item.id), rules, item.gameId ? this.game(item.gameId) : null);
+      }
     }
     return updated;
   }
 
-  /** Event sign-ups paid by an order (their entry fee), online or at the counter. Like markPaid. No awaits. */
-  markJoinsPaid(ids, orderId, rules, { pos = false } = {}) {
-    const now = Date.now();
-    const updated = [];
-    for (const id of ids) {
-      const join = this.joinById(id);
-      const firstTime = !join.paid;
-      if (!firstTime && join.orderId && join.orderId !== orderId) {
-        this.notifyStaff(`Paid twice: ${join.ref}`, {
-          title: 'A sign-up was paid twice',
-          intro: `${join.name}'s sign-up ${join.ref} for ${join.title} was paid by two orders. Refund one of them.`,
-          details: [['Sign-up', join.ref], ['First order', join.orderId], ['Second order', orderId], ['Amount', dollars(join.amount)]],
-        });
-        updated.push(join.ref);
-        continue;
-      }
-      let status = join.status === 'held' ? 'confirmed' : join.status;
-      if (join.status === 'cancelled' && firstTime) {
-        // Paid after the hold ran out: keep the spot if the event still has room.
-        const occurrence = findOccurrence(rules, join.occurrenceId);
-        const others = this.sql.exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled' AND id != ?", join.occurrenceId, join.id).one().n;
-        if (join.holdUntil && occurrence?.capacity && others + join.people <= occurrence.capacity) {
-          status = 'confirmed';
-        } else {
-          this.notifyStaff(`Paid but cancelled: ${join.ref}`, {
-            title: 'Paid for a cancelled sign-up',
-            intro: `${join.name} paid the entry fee for ${join.ref}, but that sign-up was cancelled or the event filled up. Refund the order or find them a spot.`,
-            details: [['Sign-up', join.ref], ['Event', `${join.title}, ${this.when(join, rules)}`], ['Email', join.email || 'none'], ['Order', orderId]],
-          });
-        }
-      }
-      this.write('UPDATE event_joins SET paid = 1, order_id = ?, status = ?, hold_until = NULL, updated_at = ? WHERE id = ?', orderId, status, now, join.id);
-      if (firstTime && !pos && status === 'confirmed') this.confirmJoin({ ...join, paid: true, status }, rules);
-      updated.push(join.ref);
+  /** A booking or sign-up whose hold ran out, paid after all: is its place still free? No awaits. */
+  placeStillFree(type, item, rules) {
+    if (type === 'join') {
+      const occurrence = findOccurrence(rules, item.occurrenceId);
+      const others = this.sql.exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled' AND id != ?", item.occurrenceId, item.id).one().n;
+      return Boolean(occurrence?.capacity && others + item.people <= occurrence.capacity);
     }
-    return updated;
+    const game = item.gameId ? this.game(item.gameId) : null;
+    if (game && game.status === 'cancelled') return false;
+    const st = this.state(item.start - 1, item.end + 1);
+    const free = item.kind === 'gm-seat' || item.tables.every((t) => isFree(st, rules, t, item.start, item.end, item.id));
+    const seatsOk = item.kind !== 'gm-seat' || (game && seatsTaken(st, game.id) + item.people <= game.seats);
+    return Boolean(free && seatsOk);
+  }
+
+  /** What's been paid for a booking or sign-up through the shop so far, from its recorded payments */
+  paidSoFar(kind, id) {
+    return this.sql.exec('SELECT COALESCE(SUM(amount), 0) AS n FROM payments WHERE kind = ? AND booking_id = ?', kind, id).one().n;
+  }
+
+  /** A payment as staff and the POS see it: { amount, customerId, name, at } (name: the payer, when they're a member) */
+  paymentView(r) {
+    return { amount: r.amount, customerId: r.customer_id || null, name: r.payer || null, at: r.at };
+  }
+
+  /** One booking's or sign-up's payments, oldest first */
+  paymentsOf(kind, id) {
+    return this.sql
+      .exec(
+        `SELECT p.*, COALESCE(m.name, m.first_name) AS payer FROM payments p LEFT JOIN members m ON m.customer_id = p.customer_id
+         WHERE p.kind = ? AND p.booking_id = ? ORDER BY p.at, p.rowid`,
+        kind, id,
+      )
+      .toArray()
+      .map((r) => this.paymentView(r));
+  }
+
+  /** The payments of every booking (kind 'booking') or sign-up ('join') in [from, to), by its id, for lists */
+  paymentsIn(kind, from, to) {
+    const table = kind === 'join' ? 'event_joins' : 'bookings';
+    const byItem = new Map();
+    const rows = this.sql
+      .exec(
+        `SELECT p.*, COALESCE(m.name, m.first_name) AS payer FROM payments p JOIN ${table} x ON x.id = p.booking_id
+         LEFT JOIN members m ON m.customer_id = p.customer_id WHERE p.kind = ? AND x.ends_at > ? AND x.starts_at < ? ORDER BY p.at, p.rowid`,
+        kind, from, to,
+      )
+      .toArray();
+    for (const r of rows) {
+      if (!byItem.has(r.booking_id)) byItem.set(r.booking_id, []);
+      byItem.get(r.booking_id).push(this.paymentView(r));
+    }
+    return byItem;
   }
 
   /**
@@ -2171,9 +2279,15 @@ export class Lair {
     return result(fresh, { checkedIn: true, already, ...(already ? { reason: 'already' } : {}), message, notice });
   }
 
-  /** A booking as staff see it on the floor and at check-in: its saved pass, what passes covered, what's due and the refund */
-  staffBooking(b, memo = null) {
-    return { ...b, pass: this.savedPass(b, memo), covered: b.covered || 0, due: dueOf(b), refund: b.refund || null };
+  /**
+   * A booking as staff see it on the floor and at check-in: its saved pass, what passes covered, what's due, the refund,
+   * what's been paid (paidAmount) and by whom (payments). memo and payments: see savedPass and paymentsIn.
+   */
+  staffBooking(b, memo = null, payments = null) {
+    return {
+      ...b, pass: this.savedPass(b, memo), covered: b.covered || 0, due: dueOf(b), refund: b.refund || null, paidAmount: b.paidAmount || 0,
+      split: Boolean(b.split), payments: payments || this.paymentsOf('booking', b.id),
+    };
   }
 
   /** What a booking is, in a few words: the game, the event, or the tables */
@@ -2189,21 +2303,23 @@ export class Lair {
    * tables, start, end, status, arrivedAt, paid, amount, covered, due, customerId, pass, refund, note } plus kind, title,
    * players, gameId and occurrenceId. memo: see savedPass.
    */
-  bookingRow(b, rules, { memo = null, game } = {}) {
+  bookingRow(b, rules, { memo = null, game, payments = null } = {}) {
     const g = game !== undefined ? game : b.gameId ? this.game(b.gameId) : null;
     return {
       id: b.id, type: 'booking', kind: b.kind, ref: b.ref, name: b.name || '', people: b.people, tables: b.tables, start: b.start, end: b.end,
       status: b.status, arrivedAt: b.arrivedAt || null, paid: b.paid, amount: b.amount || 0, covered: b.covered || 0, due: dueOf(b),
+      paidAmount: b.paidAmount || 0, payments: payments || this.paymentsOf('booking', b.id), split: Boolean(b.split),
       customerId: b.customerId || null, pass: this.savedPass(b, memo), refund: b.refund || null, note: b.notes || '',
       title: this.rowTitle(b, rules, g), players: b.party || [], gameId: b.gameId || null, occurrenceId: b.occurrenceId || null,
     };
   }
 
-  /** An event sign-up as a check-in row. Its entry fee is never covered by a pass. */
-  joinRow(j) {
+  /** An event sign-up as a check-in row. Its entry fee is never covered by a pass. payments: see bookingRow. */
+  joinRow(j, { payments = null } = {}) {
     return {
       id: j.id, type: 'join', kind: 'join', ref: j.ref, name: j.name || '', people: j.people, tables: [], start: j.start, end: j.end,
       status: j.status, arrivedAt: j.arrivedAt || null, paid: j.paid, amount: j.amount || 0, covered: 0, due: dueOf(j),
+      paidAmount: j.paidAmount || 0, payments: payments || this.paymentsOf('join', j.id), split: false,
       customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
       gameId: null, occurrenceId: j.occurrenceId,
     };
@@ -2289,6 +2405,40 @@ export class Lair {
       if (result.checkedIn && result.due > 0) lines = [this.posLine(item, result.kind, result.due)];
     }
     return { ...result, lines, customer: customerId ? { id: customerId } : null };
+  }
+
+  /**
+   * POST /pos/share { id, type, amount? } (the POS): one custom sale for part of a bill, so friends can each pay their
+   * share. amount is in cents, capped at what's left; with none it's one person's share, ceil(amount ÷ people). The
+   * line carries _booking and _share, so paying it adds to the booking's paidAmount. Returns { row, line }.
+   */
+  async posShare(input) {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const id = String(input.id ?? '');
+    const booking = id && input.type !== 'join' ? this.booking(id) : null;
+    const join = !booking && id ? this.joinById(id) : null;
+    const item = booking || join;
+    if (!item) throw new RuleError('That booking could not be found. Refresh the list and try again.', 404);
+    if (item.status === 'cancelled') throw new RuleError("That booking was cancelled, so there's nothing to pay.", 409);
+    const due = dueOf(item);
+    if (due <= 0) throw new RuleError('Nothing is left to pay on this one.', 409);
+    let share;
+    if (input.amount != null && input.amount !== '') {
+      share = Math.round(Number(input.amount));
+      if (!Number.isFinite(share) || share < 1) throw new RuleError('Enter an amount more than $0.');
+    } else {
+      share = Math.ceil((item.amount || 0) / Math.max(1, item.people || 1));
+    }
+    share = Math.min(share, due);
+    const what = join ? 'Event entry' : item.kind === 'gm-seat' ? 'GM seat' : 'Table fee';
+    return {
+      row: join ? this.joinRow(item) : this.bookingRow(item, rules),
+      line: {
+        title: `${what} share: ${item.ref} (${money(share)} of ${money(due)} left)`, price: (share / 100).toFixed(2), quantity: 1, taxable: true,
+        properties: { _booking: item.ref, _share: '1' },
+      },
+    };
   }
 
   /** One custom sale for the POS cart */
@@ -2475,17 +2625,17 @@ export class Lair {
     const own = who.customerId && join.customerId === who.customerId;
     if (!who.staff && !own) throw new RuleError('Only staff can change that sign-up.', 403);
     if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
-    const paid = Boolean(join.paid && join.amount > 0);
+    const paid = join.paidAmount > 0;
     let refund;
     let flag = join.refund;
     let notice = null;
     if (who.staff) {
       // Staff cancelling (the event's off, or they've sorted it out with the person): what was paid comes back.
-      refund = paid ? { due: true, amount: join.amount, orderId: join.orderId || null, reason: 'cancelled by staff' } : { due: false, amount: 0, reason: 'nothing paid' };
+      refund = paid ? { due: true, amount: join.paidAmount, orderId: join.orderId || null, reason: 'cancelled by staff' } : { due: false, amount: 0, reason: 'nothing paid' };
       if (paid && flag !== 'done') flag = 'due';
     } else if (paid && join.pay === 'now') {
       // Paid online means locked in: the space is freed, and staff decide on a refund.
-      refund = { due: false, ask: true, amount: join.amount, orderId: join.orderId || null, reason: 'paid online, so staff decide' };
+      refund = { due: false, ask: true, amount: join.paidAmount, orderId: join.orderId || null, reason: 'paid online, so staff decide' };
       if (flag !== 'done') flag = 'ask';
       notice = LOCKED_IN;
     } else {
@@ -3317,7 +3467,8 @@ export class Lair {
     const view = (b) => ({
       id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
       paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
-      payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b),
+      payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0,
+      split: Boolean(b.split),
     });
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;

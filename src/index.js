@@ -40,7 +40,7 @@ const withCors = (response) => {
 async function posRoute(request, env, url) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: POS_CORS });
   const route = url.pathname.slice('/pos/'.length);
-  if (request.method !== 'POST' || !['checkin', 'member'].includes(route)) return withCors(json({ error: 'Not found' }, 404));
+  if (request.method !== 'POST' || !['checkin', 'member', 'share'].includes(route)) return withCors(json({ error: 'Not found' }, 404));
   const token = (request.headers.get('Authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1];
   const claims = token ? await verifySessionToken(token, { secret: env.SHOPIFY_CLIENT_SECRET, clientId: env.SHOPIFY_CLIENT_ID, shop: env.SHOP }) : null;
   if (!claims) return withCors(json({ error: 'Sign in to Shopify POS to use this.' }, 401));

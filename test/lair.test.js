@@ -767,7 +767,8 @@ test('refunds: a table booking paid online before v4, cancelled 24+ hours ahead,
   const pay = async (over) => {
     const { data } = await call('POST', 'bookings', tableBooking(over));
     n += 1;
-    lair.saveBooking({ ...lair.booking(data.booking.id), pay: 'now', paid: true, orderId: `gid://shopify/Order/9${n}`, draftOrderId: `gid://shopify/DraftOrder/9${n}` }, NOW);
+    const row = lair.booking(data.booking.id);
+    lair.saveBooking({ ...row, pay: 'now', paid: true, paidAmount: row.amount, orderId: `gid://shopify/Order/9${n}`, draftOrderId: `gid://shopify/DraftOrder/9${n}` }, NOW);
     return data.booking;
   };
   const early = await pay({ tables: ['T1'], start: at('2026-10-03', 14), end: at('2026-10-03', 16), email: 'early@example.com' });
@@ -1525,7 +1526,7 @@ test('a player dropping their own seat emails the GM, and paid cancellations ahe
       kind: 'gm-seat', gameId: listed.data.game.id, people: 2, name: 'Mia', email: 'mia@example.com', pay: 'day', players: [{ name: 'Mia', character: 'Valeros' }, { name: 'Leo' }],
     }, 'mia');
     // As if Mia had paid online through the checkout.
-    lair.saveBooking({ ...lair.booking(seat.data.booking.id), paid: true, pay: 'now', orderId: 'gid://shopify/Order/55' }, NOW);
+    lair.saveBooking({ ...lair.booking(seat.data.booking.id), paid: true, paidAmount: seat.data.booking.amount, pay: 'now', orderId: 'gid://shopify/Order/55' }, NOW);
     await settle();
     mail.sent.length = 0;
     assert.equal((await call('POST', `bookings/${seat.data.booking.id}/update`, { status: 'cancelled' }, 'leo')).status, 403);
@@ -2116,7 +2117,7 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
     const checked = await call('POST', 'checkin', { code: counter.data.join.ref }, 'staff');
     assert.deepEqual([checked.data.due, checked.data.checkedIn], [2000, true]);
     assert.match(checked.data.message, /Charge \$20\.00/);
-    const pos = await internal('orders-paid', { id: 90, admin_graphql_api_id: 'gid://shopify/Order/90', source_name: 'pos', line_items: [{ properties: [{ name: '_booking', value: counter.data.join.ref }] }] });
+    const pos = await internal('orders-paid', { id: 90, admin_graphql_api_id: 'gid://shopify/Order/90', source_name: 'pos', line_items: [{ id: 9001, quantity: 1, price: '20.00', properties: [{ name: '_booking', value: counter.data.join.ref }] }] });
     assert.deepEqual(pos.data.updated, [counter.data.join.ref]);
     assert.equal(lair.joinById(counter.data.join.id).paid, true);
     Date.now = () => NOW;
@@ -2403,7 +2404,7 @@ test('POS check-in: the fee still to pay as cart lines with the ticket code, the
 
   // The POS order pays them; the next scan has nothing left to charge.
   Object.defineProperty(lair.shopify, 'configured', { value: true });
-  await internal('orders-paid', { id: 990, admin_graphql_api_id: 'gid://shopify/Order/990', source_name: 'pos', line_items: card.data.lines.map((l) => ({ properties: [{ name: '_booking', value: l.properties._booking }] })) });
+  await internal('orders-paid', { id: 990, admin_graphql_api_id: 'gid://shopify/Order/990', source_name: 'pos', line_items: card.data.lines.map((l, i) => ({ id: 99000 + i, quantity: l.quantity, price: l.price, properties: [{ name: '_booking', value: l.properties._booking }] })) });
   assert.deepEqual((await pos('checkin', { code: memberCode })).data.lines, []);
 
   await call('GET', 'me', null, '1001');
@@ -2719,4 +2720,131 @@ test('the self-serve tab: today\'s tab in My Lair, checked and merged; at the co
   // Tomorrow is a new day: yesterday's tab isn't today's.
   Date.now = () => NOW + 24 * HOUR;
   assert.equal((await call('GET', 'me', null, '1001')).data.tab, null);
+});
+
+/** A POS order line that pays (part of) a booking or sign-up */
+const payLine = (id, price, ref, extra = {}) => ({ id, quantity: 1, price, properties: [{ name: '_booking', value: ref }, { name: '_share', value: '1' }], ...extra });
+const posOrder = (n, lines) => ({ id: n, admin_graphql_api_id: `gid://shopify/Order/${n}`, source_name: 'pos', line_items: lines });
+
+test('split the bill: friends pay shares at the counter; each order line counts once; each payer is recorded and earns their own spend', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const payers = { 'gid://shopify/Order/801': '2001', 'gid://shopify/Order/802': '2002' };
+  lair.shopify.orderSpend = async (id) => ({ customerId: payers[id] || null, amount: 1000, source: 'pos' });
+  await call('POST', 'me/profile', { name: 'Kiri Smith' }, '2001');
+  await call('POST', 'me/profile', { name: 'Leo Brown' }, '2002');
+  const booking = (await call('POST', 'bookings', tableBooking({ split: true }), '1001')).data.booking;
+  assert.deepEqual([booking.split, booking.amount, booking.paidAmount, booking.due], [true, 4000, 0, 4000]);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T4'], split: 'yes', email: 'x@example.com' }), '1001')).data.booking.split, false, 'only true splits');
+
+  // One person's share by default, or any amount up to what's left.
+  const share = await pos('share', { id: booking.id, type: 'booking' });
+  assert.equal(share.status, 200, share.data.error);
+  assert.deepEqual(share.data.line, { title: `Table fee share: ${booking.ref} ($10 of $40 left)`, price: '10.00', quantity: 1, taxable: true, properties: { _booking: booking.ref, _share: '1' } });
+  assert.deepEqual([share.data.row.id, share.data.row.due, share.data.row.split, share.data.row.payments], [booking.id, 4000, true, []]);
+  assert.equal((await pos('share', { id: booking.id, type: 'booking', amount: 2550 })).data.line.title, `Table fee share: ${booking.ref} ($25.50 of $40 left)`);
+  assert.equal((await pos('share', { id: booking.id, type: 'booking', amount: 99999 })).data.line.price, '40.00', 'capped at what\'s left');
+  assert.deepEqual([(await pos('share', { id: booking.id, type: 'booking', amount: 0 })).status, (await pos('share', { id: 'bk_nope' })).status], [422, 404]);
+
+  // Kiri pays a $10 share with her member code on the order; Shopify sends the webhook twice.
+  const kiri = posOrder(801, [payLine(8011, '10.00', booking.ref)]);
+  assert.deepEqual((await internal('orders-paid', kiri)).data.updated, [booking.ref]);
+  await internal('orders-paid', kiri);
+  let row = (await pos('share', { id: booking.id, type: 'booking' })).data.row;
+  assert.deepEqual([row.paidAmount, row.due, row.paid], [1000, 3000, false], 'the repeat counts nothing');
+  assert.deepEqual(row.payments, [{ amount: 1000, customerId: '2001', name: 'Kiri Smith', at: NOW }]);
+  // Leo pays from a $20 line with $5 off: $15 counts. Then the last $15 comes as 3 x $5 on an order with no customer.
+  await internal('orders-paid', posOrder(802, [payLine(8021, '20.00', booking.ref.toLowerCase(), { discount_allocations: [{ amount: '5.00', discount_application_index: 0 }] })]));
+  row = (await pos('share', { id: booking.id, type: 'booking' })).data.row;
+  assert.deepEqual([row.paidAmount, row.due, row.paid], [2500, 1500, false]);
+  assert.equal((await pos('share', { id: booking.id, type: 'booking' })).data.line.title, `Table fee share: ${booking.ref} ($10 of $15 left)`);
+  await internal('orders-paid', posOrder(803, [payLine(8031, '5.00', booking.ref, { quantity: 3 })]));
+  const paid = lair.booking(booking.id);
+  assert.deepEqual([paid.paidAmount, paid.paid, paid.orderId, paid.status], [4000, true, 'gid://shopify/Order/801', 'confirmed']);
+  assert.deepEqual((await pos('share', { id: booking.id, type: 'booking' })).status, 409, 'nothing left to pay');
+  // Each payer's spend counts for them, so a friend who pays with their member code earns their own dice rolls.
+  assert.deepEqual([lair.spendOf('2001', NOW).total, lair.spendOf('2002', NOW).total, lair.spendOf('1001', NOW).total], [1000, 1000, 0]);
+
+  // Staff see who paid; the booker sees what's paid; friends don't get a copy.
+  const floor = (await call('GET', 'floor', null, 'staff')).data.bookings.find((b) => b.id === booking.id);
+  assert.deepEqual([floor.paidAmount, floor.due, floor.split], [4000, 0, true]);
+  assert.deepEqual(floor.payments.map((p) => [p.amount, p.customerId, p.name]), [[1000, '2001', 'Kiri Smith'], [1500, '2002', 'Leo Brown'], [1500, null, null]]);
+  const mine = (await call('GET', 'me', null, '1001')).data.bookings.find((b) => b.id === booking.id);
+  assert.deepEqual([mine.paidAmount, mine.due, mine.split, mine.payments], [4000, 0, true, undefined]);
+  assert.deepEqual((await call('GET', 'me', null, '2001')).data.bookings, []);
+  // Checking in shows nothing more to charge.
+  const checked = await call('POST', 'checkin', { code: booking.ref }, 'staff');
+  assert.deepEqual([checked.data.due, checked.data.row.paidAmount], [0, 4000]);
+  assert.match(checked.data.message, /Paid\.$/);
+
+  // Paying again once it's paid is flagged for a refund.
+  const mail = captureEmails();
+  try {
+    await internal('orders-paid', posOrder(804, [payLine(8041, '10.00', booking.ref)]));
+    assert.match(lair.booking(booking.id).notes, /\[Paid twice: gid:\/\/shopify\/Order\/801 and gid:\/\/shopify\/Order\/804\. Refund one\.\]/);
+    await settle();
+    assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /^Paid twice/.test(m.subject)));
+  } finally {
+    mail.restore();
+  }
+});
+
+test('split the bill: shares for game seats and event entry; the payer is filled in when Shopify answers late; paid by hand counts what was owed', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20, entryFee: 750 },
+  ]);
+  const game = await call('POST', 'games', { title: 'Curse of Strahd', system: 'D&D 5e', gm: 'Ana', blurb: 'x', seats: 4, tables: ['A1'], start: at('2026-10-01', 18), end: at('2026-10-01', 21) }, 'gm');
+  const seat = (await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.data.game.id, people: 3, name: 'Mia', email: 'mia@example.com' }, 'mia')).data.booking;
+  assert.equal((await pos('share', { id: seat.id, type: 'booking' })).data.line.title, `GM seat share: ${seat.ref} ($15 of $45 left)`);
+  const join = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Sam', email: 'sam@example.com', people: 2 })).data.join;
+  const entry = await pos('share', { id: join.id, type: 'join' });
+  assert.deepEqual([entry.data.line.title, entry.data.row.type, entry.data.row.due], [`Event entry share: ${join.ref} ($7.50 of $15 left)`, 'join', 1500]);
+
+  // Shopify can't say who the customer is yet: the payment counts, and the payer is filled in when the webhook comes again.
+  let down = true;
+  lair.shopify.orderSpend = async () => {
+    if (down) throw new Error('Shopify API error 503');
+    return { customerId: '3003', amount: 750, source: 'pos' };
+  };
+  const order = posOrder(901, [payLine(9011, '7.50', join.ref)]);
+  assert.equal((await internal('orders-paid', order)).status, 500, 'Shopify sends it again later');
+  assert.deepEqual([lair.joinById(join.id).paidAmount, lair.joinById(join.id).paid], [750, false]);
+  assert.deepEqual(lair.paymentsOf('join', join.id).map((p) => p.customerId), [null]);
+  down = false;
+  await internal('orders-paid', order);
+  assert.deepEqual([lair.joinById(join.id).paidAmount, lair.paymentsOf('join', join.id).map((p) => p.customerId)], [750, ['3003']]);
+  assert.equal(lair.spendOf('3003', NOW).total, 750);
+  const staffJoin = (await call('GET', 'floor', null, 'staff')).data.joins.find((j) => j.id === join.id);
+  assert.deepEqual([staffJoin.paidAmount, staffJoin.due, staffJoin.payments.length], [750, 750, 1]);
+
+  // Staff mark the seat paid by hand (cash): what was owed counts as paid. Unmarked, only recorded payments count.
+  const marked = await call('POST', `bookings/${seat.id}/update`, { paid: true }, 'staff');
+  assert.deepEqual([marked.data.booking.paid, marked.data.booking.paidAmount, marked.data.booking.due], [true, 4500, 0]);
+  const unmarked = await call('POST', `bookings/${seat.id}/update`, { paid: false }, 'staff');
+  assert.deepEqual([unmarked.data.booking.paid, unmarked.data.booking.paidAmount, unmarked.data.booking.due], [false, 0, 4500]);
+  // One more player joins a paid table: they owe for one.
+  const table = (await call('POST', 'bookings', tableBooking({ tables: ['T8'], people: 2, email: 't@example.com' }))).data.booking;
+  await call('POST', `bookings/${table.id}/update`, { paid: true }, 'staff');
+  const bigger = await call('POST', `bookings/${table.id}/update`, { people: 3 }, 'staff');
+  assert.deepEqual([bigger.data.booking.amount, bigger.data.booking.paid, bigger.data.booking.due], [3000, false, 1000]);
+});
+
+test('split the bill: a part-paid seat in a cancelled game gets back what was paid, and can be marked refunded', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const game = await call('POST', 'games', { title: 'Short notice', system: 'Other', gm: 'Ana', blurb: 'x', seats: 4, tables: ['A1'], start: at('2026-10-01', 18), end: at('2026-10-01', 21) }, 'gm');
+  const seat = (await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.data.game.id, people: 2, name: 'Mia', email: 'mia@example.com' }, 'mia')).data.booking;
+  await internal('orders-paid', posOrder(950, [payLine(9501, '15.00', seat.ref)]));
+  assert.deepEqual([lair.booking(seat.id).paidAmount, lair.booking(seat.id).paid], [1500, false]);
+  const mail = captureEmails();
+  try {
+    await call('POST', `games/${game.data.game.id}/update`, { status: 'cancelled' }, 'gm');
+    assert.equal(lair.booking(seat.id).refund, 'due');
+    await settle();
+    assert.match(mail.sent.find((m) => m.to === 'staff@dicegoblin.test' && /Refunds due/.test(m.subject)).text, /Mia: \$15\.00 for/);
+    assert.match(mail.sent.find((m) => m.to === 'mia@example.com').text, /Refund: +\$15\.00/);
+  } finally {
+    mail.restore();
+  }
+  const done = await call('POST', `bookings/${seat.id}/update`, { refunded: true }, 'staff');
+  assert.deepEqual([done.status, done.data.booking.refund], [200, 'done']);
 });
