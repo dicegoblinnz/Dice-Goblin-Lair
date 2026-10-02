@@ -1,0 +1,26 @@
+{
+  "name": "dice-goblin-lair-pos",
+  "version": "1.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Shopify app config and the Lair check-in POS extension for Dice Goblin.",
+  "workspaces": [
+    "extensions/*"
+  ],
+  "scripts": {
+    "shopify": "shopify",
+    "dev": "shopify app dev",
+    "build": "shopify app build",
+    "check": "tsc -p extensions/lair-checkin",
+    "test": "node --test test/*.test.mjs",
+    "deploy": "shopify app deploy --allow-updates",
+    "info": "shopify app info"
+  },
+  "devDependencies": {
+    "@shopify/cli": "4.8.4",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

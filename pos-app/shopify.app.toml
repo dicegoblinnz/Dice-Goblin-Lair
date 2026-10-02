@@ -1,0 +1,40 @@
+# Dice Goblin Lair: the Shopify app's settings.
+#
+# Every deploy (the "Deploy POS app" GitHub Action, or `shopify app deploy`) uploads this file and REPLACES
+# the app's settings in the Dev Dashboard (dev.shopify.com → Apps → Dice Goblin Lair). Change settings here,
+# not in the Dashboard, or the next deploy will undo the Dashboard change.
+# Reference: https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration
+
+client_id = "5abf430e736ab6e57728d151d8da9d78"
+name = "Dice Goblin Lair"
+handle = "dice-goblin-lair"
+# The Cloudflare Worker in this repository (src/). Opening it shows a plain status page.
+application_url = "https://dice-goblin-lair.dicegoblinnz.workers.dev"
+embedded = false
+
+[build]
+# Never let `shopify app dev` swap the live addresses for a temporary tunnel.
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts"
+use_legacy_install_flow = false
+
+[auth]
+# The Worker logs in with the client credentials grant, so there is no OAuth redirect.
+redirect_urls = []
+
+[webhooks]
+# The orders/paid webhook is registered by the Worker itself (/setup), not here.
+api_version = "2026-10"
+
+[app_proxy]
+# www.dicegoblin.nz/apps/liar/* → the Worker. "liar" is the live subpath: the theme calls it, so don't rename it.
+url = "https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy"
+subpath = "liar"
+prefix = "apps"
+
+[pos]
+# The app itself doesn't open inside POS; only the Lair check-in tile (extensions/lair-checkin) does.
+embedded = false

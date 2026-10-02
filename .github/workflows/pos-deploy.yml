@@ -1,0 +1,73 @@
+# Deploys the Shopify app in pos-app/: the "Lair check-in" POS tile and the app settings in shopify.app.toml.
+#
+# It only runs on GitHub, only for changes under pos-app/ (or when started by hand), and never touches the
+# Cloudflare Worker: Cloudflare builds and deploys the Worker from the repository root on its own.
+# One-time setup (the SHOPIFY_APP_AUTOMATION_TOKEN secret) is in pos-app/README.md.
+name: Deploy POS app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pos-app/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push waits for the running one instead of cancelling it halfway.
+concurrency:
+  group: pos-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Shopify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: pos-app
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check the Shopify deploy key is set
+        env:
+          SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
+        run: |
+          if [ -z "$SHOPIFY_APP_AUTOMATION_TOKEN" ]; then
+            echo "::error title=Shopify deploy key missing::Add the SHOPIFY_APP_AUTOMATION_TOKEN secret in GitHub (Settings > Secrets and variables > Actions). The steps are in pos-app/README.md, under 'One-time setup'."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pos-app/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: |
+          npm test
+          npm run check
+
+      - name: Deploy to Shopify
+        env:
+          SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
+          SHOPIFY_CLI_NO_ANALYTICS: '1'
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message || 'Deployed by hand from GitHub Actions' }}
+        run: |
+          message="$(printf '%s' "$COMMIT_MESSAGE" | head -n 1 | cut -c 1-100)"
+          npx shopify app deploy \
+            --config shopify.app.toml \
+            --allow-updates \
+            --source-control-url "$COMMIT_URL" \
+            --message "$message"
