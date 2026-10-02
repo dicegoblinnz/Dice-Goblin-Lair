@@ -5,8 +5,8 @@
 // with no `await` in between. Where a Shopify call has to come after a write (checkouts, store credit), the
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
-  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, PRIZE_CODE_DAYS, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, blockingItems, checkGameDetails,
-  checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId, makeRef,
+  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, PRIZE_CODE_DAYS, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, checkGameDetails,
+  checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId, makeRef,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rollPrize, rulesFromSettings,
   seatPlayers, seatsTaken, tableIndex, uniqueCode,
 } from './core.js';
@@ -688,10 +688,9 @@ export class Lair {
     const visibleGames = st.games.filter(
       (g) => who.staff || ['open', 'full'].includes(g.status) || (who.customerId && g.gmCustomerId === who.customerId && g.status === 'pending'),
     );
-    // Calendar events that hold tables, resolved exactly the way bookings are checked.
-    const eventHolds = blockingItems({ blocks: [] }, rules, from, to)
-      .filter((e) => e.tables.length)
-      .map((e) => ({ ...e, eventId: e.id.replace(/^ev-/, '').replace(/@.*$/, ''), occurrenceId: e.id.replace(/^ev-/, ''), type: 'event' }));
+    // Calendar events' tables: soft (marked for the event, still bookable) unless the event locks them. Bookings
+    // and games are checked against the locked ones only.
+    const holds = eventHolds(rules, from, to);
     const joinRows = this.sql
       .exec("SELECT * FROM event_joins WHERE ends_at > ? AND starts_at < ? AND status != 'cancelled'", from, to)
       .toArray()
@@ -708,7 +707,7 @@ export class Lair {
       now,
       bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
       blocks: who.staff ? st.blocks : st.blocks.map((bl) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
-      eventHolds,
+      eventHolds: holds,
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules);
         if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
@@ -1020,7 +1019,8 @@ export class Lair {
       const ignore = new Set(together.map((b) => b.id));
       const from = Math.max(now, next.start);
       for (const t of tables) {
-        if (end > from && !isFree(st, rules, t, from, end, ignore)) throw new RuleError(`Table ${t} is taken then.`, 409);
+        // Staff moves skip locked event tables (blocked for everyone except staff).
+        if (end > from && !isFree(st, rules, t, from, end, ignore, { staff: true })) throw new RuleError(`Table ${t} is taken then.`, 409);
       }
       next.tables = tables;
       next.end = end;

@@ -395,13 +395,37 @@ export function findOccurrence(rules, occurrenceId) {
 }
 
 /* ---------- availability ---------- */
-/** Staff holds plus the event dates that hold tables, overlapping [from, to) */
-export function blockingItems(state, rules, from = -Infinity, to = Infinity) {
+/**
+ * Event dates' table holds overlapping [from, to), the way the floor sends eventHolds (and the theme works them
+ * out). An event's "Tables reserved" (tables) are soft: marked for the event on the booking page but bookable by
+ * anyone, unless the event locks them (lockTables), which makes them hard holds. Its game-spot tables
+ * (game_tables) are soft-reserved for it too. Each item: { id, eventId, occurrenceId, tables, start, end, label,
+ * title, type: 'event', soft, spots? }, with id ev-<occurrence id> for the event's tables and ev-<occurrence id>-spots
+ * for its game-spot tables.
+ */
+export function eventHolds(rules, from, to) {
+  const out = [];
+  const events = (rules.events || []).filter((e) => e.tables || e.gameTables);
+  for (const o of eventOccurrences({ ...rules, events }, from, to)) {
+    const tables = parseTableList(o.tables, rules.rooms);
+    const base = { eventId: o.eventId, occurrenceId: o.id, start: o.start, end: o.end, label: o.title, title: o.title, type: 'event' };
+    if (tables.length) out.push({ ...base, id: `ev-${o.id}`, tables, soft: !o.lockTables });
+    const spots = [...new Set(parseSpots(o.gameTables, rules.rooms).flat())].filter((t) => !(o.lockTables && tables.includes(t)));
+    if (spots.length) out.push({ ...base, id: `ev-${o.id}-spots`, tables: spots, soft: true, spots: true });
+  }
+  return out;
+}
+
+/**
+ * What makes a table unavailable over [from, to): staff holds, and the tables of events that lock them. Soft holds
+ * never block. staff: true (the staff page's walk-ins, overrides and moves, and games staff list) skips locked event
+ * tables too: those are blocked for everyone except staff.
+ */
+export function blockingItems(state, rules, from = -Infinity, to = Infinity, { staff = false } = {}) {
   const lo = Number.isFinite(from) ? from : Date.now() - 31 * 24 * HOUR;
   const hi = Number.isFinite(to) ? to : Date.now() + 400 * 24 * HOUR;
-  const fromEvents = eventOccurrences({ ...rules, events: (rules.events || []).filter((e) => e.tables) }, lo, hi)
-    .map((o) => ({ id: `ev-${o.id}`, tables: parseTableList(o.tables, rules.rooms), start: o.start, end: o.end, label: o.title }));
-  return [...state.blocks.filter((b) => overlaps(b.start, b.end, lo, hi)), ...fromEvents];
+  const locked = staff ? [] : eventHolds(rules, lo, hi).filter((h) => !h.soft);
+  return [...state.blocks.filter((b) => overlaps(b.start, b.end, lo, hi)), ...locked];
 }
 
 /** Shop tables (staff only) are open to everyone while an opening covers the whole time. */
@@ -409,10 +433,13 @@ export function shopTableOpen(state, tableId, start, end) {
   return (state.openings || []).some((o) => o.tables.includes(tableId) && o.start <= start && o.end >= end);
 }
 
-/** ignore: a booking id, or a Set of ids (a GM game's own bookings when moving the game, or an event's own hold, ev-<occurrence id>) */
-export function isFree(state, rules, tableId, start, end, ignore = null) {
+/**
+ * ignore: a booking id, or a Set of ids (a GM game's own bookings when moving the game, or an event's own hold,
+ * ev-<occurrence id>). staff: skip locked event tables (see blockingItems).
+ */
+export function isFree(state, rules, tableId, start, end, ignore = null, { staff = false } = {}) {
   const skip = ignore instanceof Set ? ignore : new Set(ignore ? [ignore] : []);
-  for (const b of blockingItems(state, rules, start, end)) {
+  for (const b of blockingItems(state, rules, start, end, { staff })) {
     if (skip.has(b.id)) continue;
     if (b.tables.includes(tableId) && overlaps(start, end, b.start, b.end)) return false;
   }
@@ -494,7 +521,7 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   }
 
   for (const id of tables) {
-    if (!isFree(state, rules, id, start, end, input.ignoreBookingId)) throw new RuleError(`Table ${id} is already taken then. Pick another.`, 409);
+    if (!isFree(state, rules, id, start, end, input.ignoreBookingId, { staff })) throw new RuleError(`Table ${id} is already taken then. Pick another.`, 409);
   }
 
   const name = clean(input.name, 80);

@@ -151,10 +151,18 @@ test('fancy room is $15 a person', async () => {
   assert.equal(data.booking.amount, 7500);
 });
 
-test('events that hold tables block bookings', async () => {
-  const held = await call('POST', 'bookings', tableBooking({ tables: ['T12'], start: at('2026-10-02', 18), end: at('2026-10-02', 20) }));
-  assert.equal(held.status, 409);
-  const fine = await call('POST', 'bookings', tableBooking({ tables: ['T2'], start: at('2026-10-02', 18), end: at('2026-10-02', 20) }));
+test('an event\'s tables are soft reserves anyone can book; only an event that locks them blocks bookings (staff excepted)', async () => {
+  const soft = await call('POST', 'bookings', tableBooking({ tables: ['T12'], start: at('2026-10-02', 18), end: at('2026-10-02', 20) }));
+  assert.equal(soft.status, 200, 'Friday Night Magic reserves T11-T20, but it doesn\'t lock them');
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'fnm', title: 'Friday Night Magic', start: at('2026-10-02', 18, 30), end: at('2026-10-02', 22), tables: 'T11-T20', lockTables: true },
+  ]);
+  const locked = await call('POST', 'bookings', tableBooking({ tables: ['T13'], start: at('2026-10-02', 18), end: at('2026-10-02', 20), email: 'b@example.com' }));
+  assert.deepEqual([locked.status, locked.data.error], [409, 'Table T13 is already taken then. Pick another.']);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T13'], start: at('2026-10-02', 18), end: at('2026-10-02', 20), email: 'c@example.com' }), 'staff')).status, 409, 'the public page holds staff to the rules');
+  const override = await call('POST', 'bookings', tableBooking({ tables: ['T13'], start: at('2026-10-02', 18), end: at('2026-10-02', 20), staffOverride: true }), 'staff');
+  assert.equal(override.status, 200, 'locked tables are blocked for everyone except staff');
+  const fine = await call('POST', 'bookings', tableBooking({ tables: ['T2'], start: at('2026-10-02', 18), end: at('2026-10-02', 20), email: 'd@example.com' }));
   assert.equal(fine.status, 200);
 });
 
@@ -560,10 +568,34 @@ test('the public sees what a hold is for, never the staff note', async () => {
   assert.deepEqual(staff, ['Aroha Smith 021 555 0199', 'Pokémon league']);
 });
 
-test('the floor sends event holds the way the app checks them', async () => {
-  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [{ id: 'market', title: 'Bring and buy', start: at('2026-10-02', 18), end: at('2026-10-02', 21), tables: 'Side room 2' }]);
+test('the floor sends event holds the way the app checks them: soft unless the event locks its tables, game-spot tables always soft', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'market', title: 'Bring and buy', start: at('2026-10-02', 18), end: at('2026-10-02', 21), tables: 'Side room 2' },
+    { id: 'tourney', title: 'Tournament', start: at('2026-10-03', 12), end: at('2026-10-03', 18), tables: 'T1-T4', lockTables: true, gameTables: 'T3+T4, T5+T6' },
+  ]);
   const { eventHolds } = (await call('GET', 'floor')).data;
-  assert.deepEqual(eventHolds.map((e) => [e.eventId, e.tables.join(',')]), [['market', 'B1,B2,B3,B4']]);
+  assert.deepEqual(eventHolds.map((e) => [e.id, e.eventId, e.occurrenceId, e.tables.join(','), e.soft, e.title, e.label, e.type, e.spots || false]), [
+    ['ev-market@2026-10-02', 'market', 'market@2026-10-02', 'B1,B2,B3,B4', true, 'Bring and buy', 'Bring and buy', 'event', false],
+    ['ev-tourney@2026-10-03', 'tourney', 'tourney@2026-10-03', 'T1,T2,T3,T4', false, 'Tournament', 'Tournament', 'event', false],
+    ['ev-tourney@2026-10-03-spots', 'tourney', 'tourney@2026-10-03', 'T5,T6', true, 'Tournament', 'Tournament', 'event', true],
+  ]);
+  assert.deepEqual([eventHolds[1].start, eventHolds[1].end], [at('2026-10-03', 12), at('2026-10-03', 18)]);
+});
+
+test('soft reserves: GMs and the public can book an event\'s soft tables; locked ones block games too, except games staff list', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'wh', title: 'Warhammer & other wargames', start: at('2026-10-01', 17), end: at('2026-10-01', 21), tables: 'T14', gameTables: 'T15+T16' },
+    { id: 'paint', title: 'Painting tables', start: at('2026-10-01', 17), end: at('2026-10-01', 21), tables: 'A1-A2', lockTables: true },
+  ]);
+  const game = (tables, who = 'gm') => call('POST', 'games', { title: 'Soft game', system: 'Other', gm: 'Ana', blurb: 'x', seats: 3, tables, start: at('2026-10-01', 18), end: at('2026-10-01', 20) }, who);
+  assert.equal((await game(['T14'])).status, 200, "a soft-reserved table");
+  assert.equal((await game(['T15'])).status, 200, 'a game-spot table is soft too');
+  assert.equal((await game(['A1'])).status, 409, 'a locked table');
+  assert.equal((await game(['A2'], 'staff')).status, 200, 'staff can list a game on a locked table');
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T16'], start: at('2026-10-01', 18), end: at('2026-10-01', 19) }))).status, 200);
+  // A staff move onto a locked table is fine; a walk-in too.
+  const walkin = await call('POST', 'bookings', { kind: 'walkin', tables: ['A1'], start: at('2026-10-01', 17), end: at('2026-10-01', 19), people: 2 }, 'staff');
+  assert.equal(walkin.status, 200, walkin.data.error);
 });
 
 test('a payment that lands while staff are mid-update is kept (fresh read after waiting on Shopify)', async () => {
@@ -1010,7 +1042,7 @@ test('events: repeating dates (weekly, monthly nth weekday, skips, until) and si
   const { eventOccurrences, findOccurrence } = await import('../src/core.js');
   const events = [
     { id: 'dnd-monday', title: 'Dungeons & Dragons', start: at('2026-10-05', 18), end: at('2026-10-05', 22), tables: '', repeat: 'weekly', skipDates: ['2026-10-26'], capacity: 6 },
-    { id: 'market', title: 'Oddity Alley Market', start: at('2026-10-17', 11), end: at('2026-10-17', 15), tables: 'B1-B4', repeat: 'monthly', repeatUntil: '2026-12-31' },
+    { id: 'market', title: 'Oddity Alley Market', start: at('2026-10-17', 11), end: at('2026-10-17', 15), tables: 'B1-B4', lockTables: true, repeat: 'monthly', repeatUntil: '2026-12-31' },
     { id: 'launch', title: 'Launch party', start: at('2026-10-09', 18), end: at('2026-10-09', 21), tables: '' },
   ];
   const rules = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, events);
@@ -1024,7 +1056,7 @@ test('events: repeating dates (weekly, monthly nth weekday, skips, until) and si
   assert.equal(findOccurrence(rules, 'dnd-monday@2026-10-26'), null);
 
   lair.rulesCache = rules;
-  // The market holds B1-B4 on its dates only.
+  // The market locks B1-B4 on its dates only.
   assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['B1'], start: at('2026-10-17', 12), end: at('2026-10-17', 13) }))).status, 409);
   assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['B1'], start: at('2026-10-10', 12), end: at('2026-10-10', 13), email: 'b@example.com' }))).status, 200);
 
@@ -2133,7 +2165,7 @@ test('event game spots: the first free spot is booked as a wargame table for the
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     warhammer(),
     { id: 'painting', title: 'Paint night', start: at('2026-10-02', 18), end: at('2026-10-02', 21), tables: 'T11-T12', capacity: 8 },
-    { id: 'tourney', title: 'Tournament', start: at('2026-10-04', 12), end: at('2026-10-04', 18), tables: 'T1-T4', gameTables: 'T1+T2, T3+T4' },
+    { id: 'tourney', title: 'Tournament', start: at('2026-10-04', 12), end: at('2026-10-04', 18), tables: 'T1-T4', lockTables: true, gameTables: 'T1+T2, T3+T4' },
   ]);
   const reserve = (id, body = {}) => call('POST', `events/${id}/reserve`, { name: 'Sam Smith', email: 'sam@example.com', people: 2, pay: 'day', ...body });
   // Someone books T14 through the booking page: those tables stay bookable by anyone.
@@ -2157,7 +2189,7 @@ test('event game spots: the first free spot is booked as a wargame table for the
   assert.equal(full.status, 409);
   assert.deepEqual((await call('GET', 'floor')).data.eventSpots['warhammer@2026-10-03'], { total: 3, taken: 3 });
   assert.equal((await reserve('painting@2026-10-02')).status, 422, 'no game tables, nothing to reserve');
-  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T20'], start: at('2026-10-03', 19), end: at('2026-10-03', 20), email: 'hold@example.com' }))).status, 409, 'tables still means held');
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T20'], start: at('2026-10-03', 19), end: at('2026-10-03', 20), email: 'hold@example.com' }))).status, 200, 'tables reserved for the event stay bookable');
   const tourney = await reserve('tourney@2026-10-04', { name: 'Ana', email: 'ana@example.com' });
   assert.deepEqual(tourney.data.booking?.tables, ['T1', 'T2'], "an event's own table hold doesn't block its game spots");
   Date.now = () => at('2026-10-03', 17, 45);
