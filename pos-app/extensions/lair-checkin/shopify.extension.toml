@@ -1,0 +1,20 @@
+# Lair check-in: a POS home tile that opens a scanner for Lair tickets and member cards.
+# Reference: https://shopify.dev/docs/api/pos-ui-extensions/2026-07
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+name = "Lair check-in"
+handle = "lair-checkin"
+# Generated the same way `shopify app generate extension` does. Never change it: Shopify uses it to recognise
+# this extension, and a new uid would replace the tile (staff would have to add it to the POS home screen again).
+uid = "be070eb3-eb98-e77a-224e-1d41ae7c81f4acc98dd1"
+description = "Scan a Lair booking or member card, check people in and put the table fee in the cart."
+
+[[extensions.targeting]]
+module = "./src/Tile.jsx"
+target = "pos.home.tile.render"
+
+[[extensions.targeting]]
+module = "./src/Modal.jsx"
+target = "pos.home.modal.render"
