@@ -1687,3 +1687,71 @@ test('dice: when Shopify can\'t give the prize it\'s kept as owed, the member sh
     mail.restore();
   }
 });
+
+test('birthdays: once a day after 9am, members with a birthday in the next 7 days get a code tiered by spend; once a year; staff get a list', async () => {
+  const { nextBirthday } = await import('../src/core.js');
+  assert.equal(nextBirthday('02-29', '2026-10-01'), '2027-02-28');
+  assert.equal(nextBirthday('02-29', '2027-10-01'), '2028-02-29');
+  assert.equal(nextBirthday('01-03', '2026-12-30'), '2027-01-03');
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  lair.shopify.appInfo = async () => ({ app: 'Dice Goblin Lair', shop: 'Dice Goblin', scopes: [] });
+  lair.shopify.webhookUris = async () => ['https://lair.test/webhooks/orders-paid'];
+  const codes = [];
+  lair.shopify.createPrizeCode = async (input) => codes.push(input);
+  const member = (id, name, email, birthday, spend) => {
+    lair.write('INSERT INTO members (customer_id, name, first_name, email, birthday, last_seen) VALUES (?, ?, ?, ?, ?, ?)', id, name, name.split(' ')[0], email, birthday, NOW);
+    if (spend) lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', `o-${id}`, id, spend, 'pos', NOW - 30 * 24 * HOUR);
+  };
+  member('2001', 'Ana Small', 'ana@example.com', '10-04', 5000); // in 3 days, $50 → 10%
+  member('2002', 'Ben Middle', 'ben@example.com', '10-07', 25000); // in 6 days, $250 → 15%
+  member('2003', 'Cat Later', 'cat@example.com', '10-11', 90000); // in 10 days: not yet
+  member('2004', 'Dee Today', 'dee@example.com', '10-01', 60000); // today, $600 → 20%
+  member('2005', 'Eru Noemail', null, '10-03', 0); // no email: the code still shows in My Lair
+  const mail = captureEmails();
+  try {
+    Date.now = () => at('2026-10-01', 8, 50);
+    assert.equal(await lair.birthdays(lair.rulesCache, Date.now()), null, 'nothing before 9am');
+    Date.now = () => NOW;
+    const run = await internal('maintenance', { webhookUrl: 'https://lair.test/webhooks/orders-paid' });
+    assert.deepEqual(run.data.birthdays, { sent: 4, codes: 4 });
+    assert.deepEqual(codes.map((c) => [c.customerId, c.percent]), [['2004', 0.2], ['2005', 0.1], ['2001', 0.1], ['2002', 0.15]]);
+    assert.ok(codes.every((c) => /^BDAY-/.test(c.code) && c.endsAt === NOW + 14 * 24 * HOUR && !c.combinesWith.orderDiscounts && !c.combinesWith.productDiscounts));
+    await settle();
+    const toMembers = mail.sent.filter((m) => m.to !== 'staff@dicegoblin.test');
+    assert.deepEqual(toMembers.map((m) => m.to).sort(), ['ana@example.com', 'ben@example.com', 'dee@example.com']);
+    const ben = toMembers.find((m) => m.to === 'ben@example.com');
+    assert.match(ben.subject, /Happy birthday, Ben!/);
+    assert.match(ben.text, /15% off one order/);
+    assert.match(ben.text, new RegExp(codes[3].code));
+    const summary = mail.sent.find((m) => m.to === 'staff@dicegoblin.test');
+    assert.match(summary.subject, /Birthday codes: 4 sent/);
+    assert.match(summary.text, /Eru Noemail: +10% off, BDAY-.*No email/);
+    assert.equal((await call('GET', 'me', null, '2002')).data.prizes[0].source, 'birthday');
+
+    // Later runs that day, the next day, or after editing a birthday: no second code.
+    assert.equal(await lair.birthdays(lair.rulesCache, NOW + HOUR), null);
+    await call('POST', 'me/profile', { birthday: '10-05' }, '2001');
+    Date.now = () => NOW + 24 * HOUR;
+    assert.deepEqual(await lair.birthdays(lair.rulesCache, Date.now()), { sent: 0 });
+    assert.equal(codes.length, 4);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('GET /members/birthdays (staff): the next 30 days, soonest first, with spend and the code each gets', async () => {
+  const member = (id, name, birthday, spend) => {
+    lair.write('INSERT INTO members (customer_id, name, first_name, email, birthday, last_seen) VALUES (?, ?, ?, ?, ?, ?)', id, name, name, `${id}@example.com`, birthday, NOW);
+    if (spend) lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', `o-${id}`, id, spend, 'web', NOW);
+  };
+  member('3001', 'Later', '10-25', 12000);
+  member('3002', 'Soon', '10-02', 0);
+  member('3003', 'Too far', '11-15', 0);
+  member('3004', 'Nobody knows', null, 0);
+  assert.equal((await call('GET', 'members/birthdays', null, '3001')).status, 403);
+  const list = (await call('GET', 'members/birthdays', null, 'staff')).data;
+  assert.deepEqual(list.map((m) => [m.customerId, m.date, m.days, m.percent, m.sent, m.spendYear]), [
+    ['3002', '2026-10-02', 1, 10, false, 0],
+    ['3001', '2026-10-25', 24, 15, false, 12000],
+  ]);
+});

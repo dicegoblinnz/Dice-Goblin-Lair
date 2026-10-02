@@ -515,6 +515,22 @@ export function parseBirthday(value) {
   return `${m[1]}-${m[2]}`;
 }
 
+/** Birthday codes follow spend over the last 12 months: under $100 is 10% off, $100-$499 15%, $500 and up 20%. */
+export const birthdayPercent = (spendYear) => (spendYear >= 50000 ? 20 : spendYear >= 10000 ? 15 : 10);
+export const BIRTHDAY_CODE_DAYS = 14;
+
+/** The next date (YYYY-MM-DD, fromKey or later) a 'MM-DD' birthday falls on. 29 February is the 28th in other years. */
+export function nextBirthday(mmdd, fromKey) {
+  if (!/^\d{2}-\d{2}$/.test(String(mmdd || ''))) return null;
+  const year = Number(fromKey.slice(0, 4));
+  for (const y of [year, year + 1]) {
+    const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+    const date = `${y}-${mmdd === '02-29' && !leap ? '02-28' : mmdd}`;
+    if (date >= fromKey) return date;
+  }
+  return null;
+}
+
 /** Spend earns a bonus dice roll every $20. */
 export const ROLL_EVERY = 2000;
 /** Prize codes from the dice last 30 days. */

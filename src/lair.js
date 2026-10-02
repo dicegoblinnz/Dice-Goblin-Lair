@@ -5,8 +5,8 @@
 // with no `await` in between. Where a Shopify call has to come after a write (checkouts, store credit), the
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
-  ACTIVE, HOUR, MIN, LairTime, RuleError, addDays, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
-  PRIZE_CODE_DAYS, ROLL_EVERY, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, oneRoom, parseBirthday, parseTableList, parseTicketCode,
+  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, LairTime, RuleError, addDays, birthdayPercent, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
+  PRIZE_CODE_DAYS, ROLL_EVERY, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, nextBirthday, oneRoom, parseBirthday, parseTableList, parseTicketCode,
   publicBooking, publicGame, readSettingsData, refName, refundFor, rollPrize, rulesFromSettings, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
@@ -122,6 +122,10 @@ const MIGRATIONS = [
       id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, amount INTEGER, percent INTEGER, code TEXT,
       expires_at INTEGER, status TEXT NOT NULL, period TEXT, note TEXT, created_at INTEGER, updated_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS prizes_customer ON prizes (customer_id, created_at)',
+  ],
+  // Birthday codes are prizes too (source 'birthday', period = the birthday's year): one per member per birthday.
+  [
+    "CREATE UNIQUE INDEX IF NOT EXISTS prizes_birthday ON prizes (customer_id, period) WHERE source = 'birthday'",
   ],
 ];
 
@@ -504,6 +508,7 @@ export class Lair {
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who));
       if (request.method === 'GET' && a === 'members' && !b) return json(this.members(url, who));
+      if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
@@ -1814,6 +1819,107 @@ export class Lair {
       .map((r) => this.memberView(r, now));
   }
 
+  /* ---------------- birthdays ---------------- */
+  /** Members whose birthday falls from today to `days` days ahead, soonest first */
+  upcomingBirthdays(rules, now, days) {
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    const until = addDays(today, days);
+    return this.sql
+      .exec("SELECT * FROM members WHERE birthday IS NOT NULL AND birthday != ''")
+      .toArray()
+      .map((row) => {
+        const date = nextBirthday(row.birthday, today);
+        return date && date <= until ? { row, date, days: time.daysBetween(today, date) } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.days - b.days || String(a.row.name || '').localeCompare(String(b.row.name || '')));
+  }
+
+  /**
+   * The daily birthday run, from the 10-minute maintenance once it's past 9am at the Lair: members with a birthday in
+   * the next 7 days get a personal code, by email, and staff get a list. The discount follows spend over the last 12
+   * months (birthdayPercent) and the code lasts 14 days. One code per member per birthday, and none within 300 days
+   * of the last (a birthday can be edited). Codes are claimed in the database before Shopify is asked, so a second
+   * run can't double up.
+   */
+  async birthdays(rules, now) {
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    if (this.birthdayDay === today || time.parts(now).h < 9) return null;
+    this.birthdayDay = today;
+    const claimed = [];
+    for (const { row, date } of this.upcomingBirthdays(rules, now, 7)) {
+      const had = this.sql
+        .exec("SELECT 1 AS n FROM prizes WHERE customer_id = ? AND source = 'birthday' AND (period = ? OR created_at > ?)", row.customer_id, date.slice(0, 4), now - 300 * 24 * HOUR)
+        .toArray().length;
+      if (had) continue;
+      const prize = {
+        id: makeId('pz'), row, date, code: `BDAY-${makeRef().slice(4)}`, percent: birthdayPercent(this.spendOf(row.customer_id, now).year),
+        expiresAt: now + BIRTHDAY_CODE_DAYS * 24 * HOUR, problem: null,
+      };
+      this.write(
+        "INSERT INTO prizes (id, customer_id, source, kind, percent, expires_at, status, period, created_at, updated_at) VALUES (?, ?, 'birthday', 'percent', ?, ?, 'pending', ?, ?, ?)",
+        prize.id, row.customer_id, prize.percent, prize.expiresAt, date.slice(0, 4), now, now,
+      );
+      claimed.push(prize);
+    }
+    if (!claimed.length) return { sent: 0 };
+    // --- claimed: now ask Shopify for the codes ---
+    for (const prize of claimed) {
+      try {
+        if (!this.shopify.configured) throw new Error('Shopify is not connected.');
+        await this.shopify.createPrizeCode({
+          title: `Birthday ${prize.percent}% off: ${prize.row.name || `DGC-${prize.row.customer_id}`} (${prize.code})`, code: prize.code, percent: prize.percent / 100,
+          endsAt: prize.expiresAt, customerId: prize.row.customer_id, combinesWith: { productDiscounts: false, orderDiscounts: false, shippingDiscounts: false },
+        });
+      } catch (error) {
+        prize.problem = String(error.message || error).slice(0, 300);
+        console.error('Lair: birthday code failed', error);
+      }
+    }
+    // --- no awaits from here on: only these prizes' own rows change ---
+    const later = Date.now();
+    for (const p of claimed) this.write('UPDATE prizes SET status = ?, code = ?, note = ?, updated_at = ? WHERE id = ?', p.problem ? 'owed' : 'given', p.problem ? null : p.code, p.problem, later, p.id);
+    const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(time.at(key, 12 * 60)));
+    const until = (ms) => new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, day: 'numeric', month: 'long' }).format(new Date(ms));
+    const letters = claimed.filter((p) => isEmail(p.row.email)).map((p) => {
+      const first = p.row.first_name || String(p.row.name || '').split(/\s+/)[0] || 'friend';
+      return this.letter(p.row.email, `Happy birthday, ${first}! A present from Dice Goblin`, {
+        title: `Happy birthday, ${first}!`,
+        intro: p.problem
+          ? `Gobgob heard your birthday's coming up (${day(p.date)}), so here's a present: ${p.percent}% off one order. Show this email at the counter to use it.`
+          : `Gobgob heard your birthday's coming up (${day(p.date)}), so here's a present: ${p.percent}% off one order, in the shop or online.`,
+        details: [
+          ['Your code', p.problem ? 'Show this email at the counter' : p.code], ['Discount', `${p.percent}% off one order`], ['Use it by', until(p.expiresAt)],
+          ['Online', p.problem ? '' : 'Log in, then enter the code at checkout'],
+        ],
+        outro: "It's just for you, works once, and doesn't combine with other discounts.",
+        button: { label: 'Treat yourself', url: this.link('/') },
+        signoff: 'Have a great one, friend!\nGobgob',
+      });
+    });
+    if (letters.length && emailReady(this.env)) this.later(this.mailMany(letters));
+    this.notifyStaff(`Birthday codes: ${claimed.length} sent`, {
+      title: 'Birthday codes went out',
+      intro: `${claimed.length} ${claimed.length === 1 ? 'member has' : 'members have'} a birthday in the next week, so Gobgob sent ${claimed.length === 1 ? 'a code' : 'codes'}.${claimed.some((p) => p.problem) ? " Shopify couldn't make some of them: those members will show their email at the counter." : ''}`,
+      details: claimed.map((p) => [p.row.name || `DGC-${p.row.customer_id}`, `${p.percent}% off, ${p.problem ? 'give it at the counter' : p.code}. Birthday ${day(p.date)}.${isEmail(p.row.email) ? '' : ' No email, so it shows in My Lair only.'}`]),
+    });
+    return { sent: claimed.length, codes: claimed.filter((p) => !p.problem).length };
+  }
+
+  /** GET /members/birthdays (staff): the next 30 days of birthdays, with spend and the code each gets (or got). */
+  async birthdayList(who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    const now = Date.now();
+    return this.upcomingBirthdays(rules, now, 30).map(({ row, date, days }) => {
+      const view = this.memberView(row, now);
+      const given = this.sql.exec("SELECT * FROM prizes WHERE customer_id = ? AND source = 'birthday' AND period = ?", row.customer_id, date.slice(0, 4)).toArray()[0];
+      return { ...view, date, days, percent: given?.percent ?? birthdayPercent(view.spendYear), code: given?.code || null, sent: Boolean(given) };
+    });
+  }
+
   /* ---------------- My Lair ---------------- */
   async me(who) {
     if (!who.customerId) throw new RuleError('Log in to see your bookings.', 401);
@@ -1918,6 +2024,13 @@ export class Lair {
       if (extended.length) result.series = extended;
     } catch (error) {
       console.error('Lair: could not extend game series', error);
+    }
+    // The same daily maintenance sends birthday codes (once a day, after 9am).
+    try {
+      const birthdays = await this.birthdays(rules, Date.now());
+      if (birthdays) result.birthdays = birthdays;
+    } catch (error) {
+      console.error('Lair: birthday codes failed', error);
     }
     this.note({ connection: result });
     return result;
