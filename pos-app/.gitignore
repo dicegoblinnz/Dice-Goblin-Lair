@@ -1,0 +1,13 @@
+node_modules/
+
+# Shopify CLI working files and build output
+.shopify/
+.shopify.lock
+extensions/*/dist/
+extensions/*/manifest.json
+
+# Local secrets and logs
+.env
+.env.*
+*.log
+.DS_Store
