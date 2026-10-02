@@ -62,7 +62,7 @@ const DOUBLE_EXTRAS = new Set(['wargame', 'bigbox']);
  */
 export const maxOnlineTables = (people, seatsPerTable = 4, extras = []) =>
   Math.min(ONLINE_LIMITS.tables, Math.max(1, Math.ceil(people / Math.max(1, seatsPerTable))) * (extras.some((x) => DOUBLE_EXTRAS.has(x)) ? 2 : 1));
-/** GM games may take enough tables for the players and GM, and always at least 2 (a GM decides their own setup). */
+/** GM games may take enough tables for the players, and always at least 2 (a GM decides their own setup). The GM isn't counted. */
 export const maxGameTables = (people, seatsPerTable = 4) => Math.min(ONLINE_LIMITS.tables, Math.max(2, Math.ceil(people / Math.max(1, seatsPerTable))));
 export const makeId = (prefix) => `${prefix}_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 export const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && bStart < aEnd;
@@ -427,23 +427,30 @@ export function checkSeatBooking(input, { state, rules, now }) {
   if (!game || !['open', 'full'].includes(game.status)) throw new RuleError('That game is not open for players.', 404);
   if (game.end <= now) throw new RuleError('That game has finished.');
   const people = Math.floor(Number(input.people));
-  if (!(people >= 1 && people <= 4)) throw new RuleError('Book between 1 and 4 seats.');
+  if (!(people >= 1 && people <= 8)) throw new RuleError('Book between 1 and 8 seats.');
   const left = game.seats - seatsTaken(state, game.id);
-  if (people > left) throw new RuleError(left > 0 ? `Only ${left} seats left.` : 'This table is full.', 409);
+  if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'seat' : 'seats'} left.` : 'This table is full.', 409);
   const name = clean(input.name, 80);
   const email = clean(input.email, 120);
   if (!name) throw new RuleError('Add your name.');
   if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
-  // One name per seat (the GM sees who's coming), each with an optional character name. The booking page always
-  // sends them; an older page that doesn't gets the booker's name on every seat.
-  const given = Array.isArray(input.players) ? input.players : null;
-  const players = Array.from({ length: people }, (_, i) => ({
-    name: given ? clean(given[i]?.name, 60) || (i === 0 ? name : '') : i === 0 ? name : `${name} +${i}`,
-    character: given ? clean(given[i]?.character, 60) : '',
-  }));
-  if (players.some((p) => !p.name)) throw new RuleError('Add a name for every seat.');
+  const players = seatPlayers(input.players, people, name);
   const unit = game.seatPrice || rules.prices.gmSeat;
   return { game, people, name, email, players, tables: game.tables, start: game.start, end: game.end, amount: unit * people };
+}
+
+/**
+ * One name per seat (the GM sees who's coming), each with an optional character name. The booking page always
+ * sends them; an older page that doesn't gets the booker's name on every seat.
+ */
+export function seatPlayers(given, people, name) {
+  const list = Array.isArray(given) ? given : null;
+  const players = Array.from({ length: people }, (_, i) => ({
+    name: list ? clean(list[i]?.name, 60) || (i === 0 ? name : '') : i === 0 ? name : `${name} +${i}`,
+    character: list ? clean(list[i]?.character, 60) : '',
+  }));
+  if (players.some((p) => !p.name)) throw new RuleError('Add a name for every seat.');
+  return players;
 }
 
 export function seatsTaken(state, gameId) {
@@ -478,10 +485,13 @@ export function checkGameDetails(input) {
   };
 }
 
-/** One session's tables and time, checked like a table booking for the GM plus every seat. */
-export function checkGameSession(input, details, { state, rules, time, now, staff = false }) {
+/**
+ * One session's tables and time, checked like a table booking for its players: they must fit at the tables (the GM
+ * isn't counted). ignore: the game's own bookings, when a session moves.
+ */
+export function checkGameSession(input, details, { state, rules, time, now, staff = false, ignore = null }) {
   const booking = checkTableBooking(
-    { tables: input.tables, start: input.start, end: input.end, people: details.seats + 1, name: `GM ${details.gm}`, email: 'gm@lair.local', game: true },
+    { tables: input.tables, start: input.start, end: input.end, people: details.seats, name: `GM ${details.gm}`, email: 'gm@lair.local', game: true, ignoreBookingId: ignore },
     { state, rules, time, now, staff },
   );
   const room = tableIndex(rules.rooms).get(booking.tables[0]).roomObj;
@@ -507,7 +517,9 @@ export function publicGame(g, state, rules = null) {
     status: g.status === 'open' && taken >= g.seats ? 'full' : g.status, campaign: g.campaign || null, credited: g.credited ?? null,
     schedule: g.schedule || 'one-shot', seriesId: g.seriesId || null, gmFee, seatPrice: g.seatPrice || rules?.prices.gmSeat || 1500,
     room: g.room || null, characters: g.characters || (g.pregens ? 'pregens' : ''), bring: g.bring || '', contentNotes: g.contentNotes || '',
-    sessionZero: g.sessionZero || '', gmBio: g.gmBio || '', image: g.image || null, gmFeeApproved: Boolean(g.feeApproved) || gmFee <= 500,
+    sessionZero: g.sessionZero || '', gmBio: g.gmBio || '', image: g.image || null,
+    // No GM fee needs a manager's OK any more ($0, $5 and $10 are all fine).
+    gmFeeApproved: true,
   };
 }
 

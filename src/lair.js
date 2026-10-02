@@ -99,12 +99,17 @@ const MIGRATIONS = [
       key TEXT NOT NULL, day TEXT NOT NULL, roll INTEGER NOT NULL, prize TEXT, code TEXT, expires_at INTEGER, created_at INTEGER,
       PRIMARY KEY (key, day))`,
   ],
+  // 3 Oct 2026, round 3: money owed back is flagged on the booking: 'due' (refund it), 'ask' (a paid no-show: staff
+  // decide) or 'done' (refunded).
+  [
+    'ALTER TABLE bookings ADD COLUMN refund TEXT',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
   'id', 'ref', 'kind', 'status', 'tables', 'room', 'starts_at', 'ends_at', 'people', 'name', 'email', 'phone', 'notes', 'activity',
   'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'party', 'arrived_at',
-  'created_at', 'updated_at',
+  'refund', 'created_at', 'updated_at',
 ];
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
@@ -202,6 +207,7 @@ export class Lair {
       people: r.people, name: r.name, email: r.email, phone: r.phone, notes: r.notes, activity: r.activity, extras: parse(r.extras, []),
       pay: r.pay, paid: Boolean(r.paid), amount: r.amount, gameId: r.game_id, customerId: r.customer_id, holdUntil: r.hold_until,
       draftOrderId: r.draft_order_id, orderId: r.order_id, party: parse(r.party, []), arrivedAt: r.arrived_at || null,
+      refund: r.refund || null, refundDue: r.refund === 'due', refunded: r.refund === 'done',
     };
   }
 
@@ -278,7 +284,7 @@ export class Lair {
       b.id, b.ref, b.kind, b.status, JSON.stringify(b.tables), b.room || null, b.start, b.end, b.people, b.name || null, b.email || null,
       b.phone || null, b.notes || null, b.activity || null, JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount || 0,
       b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null,
-      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, now, now,
+      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, now, now,
     );
   }
 
@@ -553,6 +559,7 @@ export class Lair {
   }
 
   async createBooking(input, who, client = '') {
+    if (input.kind === 'gm-seat' && !who.customerId) throw new RuleError('Log in to join a game.', 401);
     const rules = await this.rules();
     // --- no awaits from here until the booking is saved ---
     const now = Date.now();
@@ -744,9 +751,11 @@ export class Lair {
       const own = who.customerId && booking.customerId === who.customerId;
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
+      if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
       const refund = refundFor(booking, rules, now);
       booking.status = 'cancelled';
       booking.holdUntil = null;
+      if (refund.due) booking.refund = 'due';
       this.saveBooking(booking, now);
       this.dropDraft(booking);
       if (refund.due) {
@@ -756,7 +765,8 @@ export class Lair {
           details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
         });
       }
-      return { booking: this.ownView(booking), refund };
+      if (booking.kind === 'gm-seat') this.tellGmSeatDropped(booking, rules);
+      return { booking: this.ownView(this.booking(booking.id)), refund };
     }
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const next = { ...booking };
@@ -764,6 +774,10 @@ export class Lair {
     if (next.status !== 'held') next.holdUntil = null;
     if (patch.status === 'done') next.end = Math.max(Math.min(next.end, now), next.start);
     if (typeof patch.paid === 'boolean') next.paid = patch.paid;
+    if (typeof patch.refunded === 'boolean') {
+      if (patch.refunded && !next.paid) throw new RuleError('Only a paid booking can be marked as refunded.');
+      next.refund = patch.refunded ? 'done' : null;
+    }
     if (patch.people != null) {
       next.people = Math.max(1, Math.min(60, Math.floor(Number(patch.people)) || 1));
       const seatGame = next.kind === 'gm-seat' && next.gameId ? this.game(next.gameId) : null;
@@ -789,6 +803,24 @@ export class Lair {
       next.room = room.id;
       if (game) moveGame = { game, together, tables, end, room: room.id };
     }
+    // Cancelled or a no-show: what's owed back, worked out before saving.
+    const ending = ['cancelled', 'noshow'].includes(next.status) && booking.status !== next.status;
+    let refund;
+    if (ending && next.status === 'cancelled') {
+      // Paid online and cancelled: the cancellation policy says whether the money goes back.
+      refund = refundFor(booking, rules, now);
+      if (refund.due && next.refund !== 'done') next.refund = 'due';
+    } else if (ending) {
+      // A no-show is only recorded: no email and nothing charged. If they'd paid, a "Refund?" note lets staff decide.
+      const paid = Boolean(booking.paid && booking.amount > 0);
+      refund = { ...refundFor(booking, rules, Infinity), reason: 'no-show', ask: paid };
+      if (paid && next.refund !== 'done') {
+        next.refund = 'ask';
+        if (!(next.notes || '').includes('[Refund?]')) next.notes = `${next.notes ? `${next.notes} ` : ''}[Refund?] Paid, then didn't come: refund it or keep the fee.`;
+      }
+    }
+    // Back on (staff undid a cancellation or a no-show): nothing is owed any more.
+    if (['due', 'ask'].includes(next.refund) && !['cancelled', 'noshow'].includes(next.status)) next.refund = null;
     this.saveBooking(next, now);
     if (moveGame) {
       const { game, together, tables, end, room } = moveGame;
@@ -799,10 +831,21 @@ export class Lair {
       }
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
-    // Paid online and cancelled: tell staff whether the policy gives the money back. No-shows keep the fee.
-    const ending = ['cancelled', 'noshow'].includes(next.status) && booking.status !== next.status;
-    const refund = ending ? (next.status === 'cancelled' ? refundFor(booking, rules, now) : { ...refundFor(booking, rules, Infinity), reason: 'no-show' }) : undefined;
-    return { booking: next, refund };
+    return { booking: this.booking(next.id), refund };
+  }
+
+  /** A player dropped their own seat: the GM hears about it. */
+  tellGmSeatDropped(seat, rules) {
+    const game = seat.gameId ? this.game(seat.gameId) : null;
+    if (!game || !emailReady(this.env) || !isEmail(game.gmEmail)) return;
+    const taken = seatsTaken(this.state(game.start - 1, game.end + 1), game.id);
+    this.later(this.mail(this.letter(game.gmEmail, `Seat dropped: ${game.title}, ${this.when(game, rules)}`, {
+      title: 'A player dropped out',
+      intro: `Kia ora ${game.gm}, ${seat.name} dropped ${seat.people === 1 ? 'their seat' : `their ${seat.people} seats`} at ${game.title}. The spot's back on the games board for someone else.`,
+      details: [['Game', game.title], ['When', this.when(game, rules)], ['Players', this.partyLine(seat.party)], ['Seats taken', `${taken} of ${game.seats}`]],
+      button: { label: 'See the games board', url: this.page('gm') },
+      signoff: 'Gobgob',
+    })));
   }
 
   /** The details every session of a game shares, from one of its sessions */
@@ -850,7 +893,7 @@ export class Lair {
         const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, staff: Boolean(details.staffCreated) });
         const base = {
           ...details, gmCustomerId: row.gm_customer_id, gmEmail: details.gmEmail || null, seriesId: row.id, credited: null,
-          status: row.approved ? 'open' : 'pending', feeApproved: Boolean(row.approved) || details.gmFee <= 500,
+          status: row.approved ? 'open' : 'pending', feeApproved: true,
           imageId: row.image_id || latest?.imageId || null, gmBio: latest?.gmBio ?? details.gmBio,
         };
         created.push(this.saveSession(base, session, now));
@@ -898,9 +941,10 @@ export class Lair {
     const first = checkGameSession(input, details, { state: st, rules, time, now, staff: who.staff });
     const gmCustomerId = who.staff && input.gmCustomerId ? String(input.gmCustomerId) : who.customerId;
     const gmEmail = isEmail(input.email) ? String(input.email).trim().slice(0, 120) : null;
-    // Staff and trusted GMs go straight on the board, unless the GM fee is above the standard $5 (a manager OKs that).
-    const approved = Boolean(who.staff || (who.gm && details.gmFee <= 500));
-    const feeApproved = Boolean(who.staff) || details.gmFee <= 500;
+    // Staff and trusted GMs (tagged gm) go straight on the board; anyone else waits for a manager's OK. GM fees of
+    // $0, $5 and $10 never need one.
+    const approved = Boolean(who.staff || who.gm);
+    const feeApproved = true;
     const seriesId = details.schedule === 'one-shot' ? null : makeId('sr');
     if (seriesId) {
       this.write(
@@ -975,7 +1019,7 @@ export class Lair {
     const approved = Boolean(series?.approved) || game.status === 'open' || who.staff;
     const base = {
       ...details, schedule: game.seriesId ? game.schedule : 'flexible', gmCustomerId: game.gmCustomerId, gmEmail: game.gmEmail, seriesId,
-      status: approved ? 'open' : 'pending', credited: null, feeApproved: game.feeApproved || details.gmFee <= 500 || who.staff, imageId: game.imageId,
+      status: approved ? 'open' : 'pending', credited: null, feeApproved: true, imageId: game.imageId,
     };
     const created = this.saveSession(base, session, now);
     if (!approved) {
@@ -988,10 +1032,15 @@ export class Lair {
     return { game: this.gameView(created, this.state(created.start - 1, created.end + 1), rules) };
   }
 
-  /** Cancel sessions, their seats and holds, and tell the players. No awaits. */
+  /**
+   * Cancel sessions with their seats and GM holds, and email every player. A seat that was paid for is flagged
+   * "refund due" (a cancelled game is always refunded, whatever the cut-off) and staff get one list of refunds to
+   * make. No awaits.
+   */
   cancelSessions(games, rules, now) {
     let affected = 0;
     const letters = [];
+    const refunds = [];
     for (const game of games) {
       const linked = this.gameBookings(game.id).filter((b) => ACTIVE.has(b.status));
       this.write("UPDATE games SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.id);
@@ -999,20 +1048,36 @@ export class Lair {
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
         affected += 1;
         this.dropDraft(seat);
+        const refund = Boolean(seat.paid && seat.amount > 0);
+        if (refund) {
+          this.write("UPDATE bookings SET refund = 'due', updated_at = ? WHERE id = ? AND (refund IS NULL OR refund != 'done')", now, seat.id);
+          refunds.push([seat.ref, `${seat.name}: ${dollars(seat.amount)} for ${this.when(game, rules)}${seat.pay === 'now' ? ', paid online' : ', paid at the counter'}${seat.orderId ? ` (order ${String(seat.orderId).split('/').pop()})` : ''}`]);
+        }
         if (!isEmail(seat.email)) continue;
         letters.push(this.letter(seat.email, `Cancelled: ${game.title}, ${this.when(game, rules)}`, {
           title: "Your game's been cancelled",
           intro: [
             `Sorry, friend: ${game.title} on ${this.when(game, rules)} has been cancelled, so your seat is cancelled too.`,
-            ...(seat.paid ? ["You paid online, so you'll get your money back. The team will sort the refund in the next few days."] : []),
+            ...(refund
+              ? [seat.pay === 'now'
+                ? "You paid online, so you'll get all your money back. The team will refund your card in the next few days."
+                : "You've already paid, so you'll get all your money back. Pop in or reply to this email and the team will sort it."]
+              : []),
           ],
-          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Ticket', seat.ref]],
+          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Ticket', seat.ref], ['Refund', refund ? dollars(seat.amount) : '']],
           button: { label: 'Find another game', url: this.page('gm') },
           signoff: 'Sorry again,\nGobgob',
         }));
       }
     }
     if (letters.length && emailReady(this.env)) this.later(this.mailMany(letters));
+    if (refunds.length) {
+      this.notifyStaff(`Refunds due: ${games[0].title}`, {
+        title: 'Refunds due for a cancelled game',
+        intro: `${games[0].title} was cancelled, so these players get their money back. Refund them in Shopify (or at the counter), then mark each booking refunded.`,
+        details: refunds,
+      });
+    }
     return affected;
   }
 
@@ -1024,9 +1089,11 @@ export class Lair {
     if (!game) throw new RuleError('Game not found.', 404);
     const own = who.customerId && game.gmCustomerId === who.customerId;
     const scope = patch.scope === 'series' && game.seriesId ? 'series' : 'session';
+    // GMs can cancel a session until an hour after it starts (the group didn't show, the GM is sick).
+    const cancellable = (g) => now <= g.start + HOUR;
     if (!who.staff) {
       if (!own || patch.status !== 'cancelled') throw new RuleError('Only staff can change that game.', 403);
-      if (scope === 'session' && game.start <= now) throw new RuleError('This game has already started. Talk to staff at the counter.', 403);
+      if (scope === 'session' && !cancellable(game)) throw new RuleError('This session started more than an hour ago. Talk to staff at the counter.', 403);
     }
     if (game.status === 'cancelled' && patch.status && patch.status !== 'cancelled') {
       throw new RuleError('Cancelled games stay cancelled. List it again as a new game.', 409);
@@ -1034,8 +1101,10 @@ export class Lair {
     const before = game.status;
     let affected = 0;
     if (patch.status === 'cancelled') {
+      // A series: every future session, and this one too while it can still be cancelled.
       const targets = scope === 'series'
-        ? this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND starts_at > ?", game.seriesId, now).toArray().map((r) => this.rowToGame(r))
+        ? this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND (starts_at > ? OR (id = ? AND starts_at >= ?))", game.seriesId, now, game.id, now - HOUR)
+          .toArray().map((r) => this.rowToGame(r))
         : before === 'cancelled' ? [] : [game];
       if (scope === 'series') this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.seriesId);
       affected = this.cancelSessions(targets, rules, now);
