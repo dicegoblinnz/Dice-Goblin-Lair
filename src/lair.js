@@ -6,7 +6,7 @@
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
   ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, LairTime, RuleError, addDays, birthdayPercent, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
-  PRIZE_CODE_DAYS, ROLL_EVERY, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, nextBirthday, oneRoom, parseBirthday, parseTableList, parseTicketCode,
+  PRIZE_CODE_DAYS, ROLL_EVERY, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, parseTicketCode,
   publicBooking, publicGame, readSettingsData, refName, refundFor, rollPrize, rulesFromSettings, seatPlayers, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
@@ -142,12 +142,27 @@ const MIGRATIONS = [
       sender TEXT, created_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS messages_limit ON messages (limit_key, created_at)',
   ],
+  // Events: entry fees paid online or at the counter (sign-ups get the same payment columns as bookings), and game
+  // spots booked as tables linked to the event date.
+  [
+    'ALTER TABLE event_joins ADD COLUMN pay TEXT',
+    'ALTER TABLE event_joins ADD COLUMN paid INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE event_joins ADD COLUMN amount INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE event_joins ADD COLUMN hold_until INTEGER',
+    'ALTER TABLE event_joins ADD COLUMN draft_order_id TEXT',
+    'ALTER TABLE event_joins ADD COLUMN order_id TEXT',
+    'ALTER TABLE event_joins ADD COLUMN refund TEXT',
+    'CREATE INDEX IF NOT EXISTS event_joins_hold ON event_joins (status, hold_until)',
+    'CREATE INDEX IF NOT EXISTS event_joins_customer ON event_joins (customer_id, ends_at)',
+    'ALTER TABLE bookings ADD COLUMN occurrence_id TEXT',
+    'CREATE INDEX IF NOT EXISTS bookings_occurrence ON bookings (occurrence_id)',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
   'id', 'ref', 'kind', 'status', 'tables', 'room', 'starts_at', 'ends_at', 'people', 'name', 'email', 'phone', 'notes', 'activity',
   'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'party', 'arrived_at',
-  'refund', 'series_id', 'created_at', 'updated_at',
+  'refund', 'series_id', 'occurrence_id', 'created_at', 'updated_at',
 ];
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
@@ -248,6 +263,7 @@ export class Lair {
       pay: r.pay, paid: Boolean(r.paid), amount: r.amount, gameId: r.game_id, customerId: r.customer_id, holdUntil: r.hold_until,
       draftOrderId: r.draft_order_id, orderId: r.order_id, party: parse(r.party, []), arrivedAt: r.arrived_at || null,
       refund: r.refund || null, refundDue: r.refund === 'due', refunded: r.refund === 'done', seriesId: r.series_id || null,
+      occurrenceId: r.occurrence_id || null,
     };
   }
 
@@ -274,7 +290,19 @@ export class Lair {
     return {
       id: r.id, ref: r.ref, occurrenceId: r.occurrence_id, eventId: r.event_id, title: r.title, start: r.starts_at, end: r.ends_at,
       people: r.people, name: r.name, email: r.email, note: r.note || '', status: r.status, customerId: r.customer_id, arrivedAt: r.arrived_at || null,
+      pay: r.pay || 'day', paid: Boolean(r.paid), amount: r.amount || 0, holdUntil: r.hold_until || null, draftOrderId: r.draft_order_id || null,
+      orderId: r.order_id || null, refund: r.refund || null, refundDue: r.refund === 'due', refunded: r.refund === 'done',
     };
+  }
+
+  joinById(id) {
+    const row = this.sql.exec('SELECT * FROM event_joins WHERE id = ? OR ref = ?', id, id).toArray()[0];
+    return row ? this.rowToJoin(row) : null;
+  }
+
+  /** A sign-up as its owner sees it */
+  joinView(j) {
+    return { id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, name: j.name, status: j.status, pay: j.pay, paid: j.paid, amount: j.amount };
   }
 
   /** A game picture's public address (pictures are served by the Worker at /img/<id>) */
@@ -324,7 +352,7 @@ export class Lair {
       b.id, b.ref, b.kind, b.status, JSON.stringify(b.tables), b.room || null, b.start, b.end, b.people, b.name || null, b.email || null,
       b.phone || null, b.notes || null, b.activity || null, JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount || 0,
       b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null,
-      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, b.seriesId || null, now, now,
+      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, b.seriesId || null, b.occurrenceId || null, now, now,
     );
   }
 
@@ -389,6 +417,12 @@ export class Lair {
     for (const row of expired) {
       this.write("UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now, row.id);
       this.dropDraft(this.rowToBooking(row));
+    }
+    // Event sign-ups waiting for their entry fee lapse the same way.
+    const lapsed = this.sql.exec("SELECT * FROM event_joins WHERE status = 'held' AND hold_until < ?", now).toArray();
+    for (const row of lapsed) {
+      this.write("UPDATE event_joins SET status = 'cancelled', updated_at = ? WHERE id = ?", now, row.id);
+      this.dropDraft(this.rowToJoin(row));
     }
   }
 
@@ -547,6 +581,7 @@ export class Lair {
       if (a === 'checkin' && !b) return json(await this.checkIn(body, who));
       if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
+      if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
       if (a === 'contact' && !b) return json(await this.contact(body, who, client));
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
       return json({ error: 'Not found' }, 404);
@@ -586,6 +621,12 @@ export class Lair {
       .map((r) => this.rowToJoin(r));
     const eventJoins = {};
     for (const j of joinRows) eventJoins[j.occurrenceId] = (eventJoins[j.occurrenceId] || 0) + j.people;
+    // Event dates with game spots: how many there are and how many are taken (by anyone, through any booking).
+    const eventSpots = {};
+    for (const o of eventOccurrences(rules, from, to)) {
+      const total = parseSpots(o.gameTables, rules.rooms).length;
+      if (total) eventSpots[o.id] = { total, taken: total - this.freeSpots(o, rules, st).length };
+    }
     return {
       now,
       bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
@@ -598,7 +639,13 @@ export class Lair {
       }),
       events: [],
       eventJoins,
-      ...(who.staff ? { joins: joinRows.map((j) => ({ id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, name: j.name, email: j.email, people: j.people, note: j.note, status: j.status, arrivedAt: j.arrivedAt })) } : {}),
+      eventSpots,
+      ...(who.staff ? {
+        joins: joinRows.map((j) => ({
+          id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, name: j.name, email: j.email, people: j.people,
+          note: j.note, status: j.status, arrivedAt: j.arrivedAt, pay: j.pay, paid: j.paid, amount: j.amount, refund: j.refund,
+        })),
+      } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: who.staff,
@@ -633,12 +680,7 @@ export class Lair {
       const checked = checkTableBooking(input, { state: st, rules, time, now, staff: override });
       booking = { kind, ...checked };
     }
-    if (!who.staff && booking.email) {
-      const active = this.sql
-        .exec("SELECT COUNT(*) AS n FROM bookings WHERE lower(email) = lower(?) AND ends_at > ? AND status IN ('held', 'confirmed') AND series_id IS NULL", booking.email, now)
-        .one().n;
-      if (active >= LIMITS.activePerEmail) throw new RuleError(`You already have ${active} bookings coming up. Call us to book more.`, 429);
-    }
+    if (!who.staff) this.checkEmailLimit(booking.email, now);
     const wantsPayNow = input.pay === 'now' && kind !== 'walkin';
     const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
     Object.assign(booking, {
@@ -650,13 +692,31 @@ export class Lair {
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email }, now);
     // --- saved: the table is ours ---
 
+    return this.payOrConfirm(booking, rules, { game, wantsPayNow, payNow });
+  }
+
+  /** At most 6 upcoming bookings per email for anyone but staff (seats from "join every session" don't count). */
+  checkEmailLimit(email, now) {
+    if (!email) return;
+    const active = this.sql
+      .exec("SELECT COUNT(*) AS n FROM bookings WHERE lower(email) = lower(?) AND ends_at > ? AND status IN ('held', 'confirmed') AND series_id IS NULL", email, now)
+      .one().n;
+    if (active >= LIMITS.activePerEmail) throw new RuleError(`You already have ${active} bookings coming up. Call us to book more.`, 429);
+  }
+
+  /**
+   * After a booking is saved: send it to checkout (pay now) or email the confirmation. If Shopify can't make the
+   * checkout, the booking stays, to be paid at the counter.
+   */
+  async payOrConfirm(saved, rules, { game = null, wantsPayNow = false, payNow = false, title = null } = {}) {
+    let booking = saved;
     let notice = wantsPayNow && !payNow ? "Online payment isn't available, so pay at the counter. Your booking is confirmed." : null;
     if (payNow) {
       try {
-        const unit = kind === 'gm-seat' ? game.seatPrice || rules.prices.gmSeat : tableIndex(rules.rooms).get(booking.tables[0]).roomObj.price;
+        const unit = booking.kind === 'gm-seat' ? game.seatPrice || rules.prices.gmSeat : tableIndex(rules.rooms).get(booking.tables[0]).roomObj.price;
         const { draftOrderId, checkoutUrl } = await this.shopify.createCheckout({
           ref: booking.ref,
-          title: kind === 'gm-seat' ? `GM game seat: ${game.title}` : `Lair table fee (${booking.tables.join(', ')})`,
+          title: title || (booking.kind === 'gm-seat' ? `GM game seat: ${game.title}` : `Lair table fee (${booking.tables.join(', ')})`),
           unitPrice: unit,
           quantity: booking.people,
           email: booking.email,
@@ -681,7 +741,7 @@ export class Lair {
         notice = "Online payment isn't working right now, so pay at the counter. Your booking is confirmed.";
       }
     }
-    const emailed = kind !== 'walkin' && booking.status === 'confirmed' && this.confirm(booking, rules, game);
+    const emailed = booking.kind !== 'walkin' && booking.status === 'confirmed' && this.confirm(booking, rules, game);
     return { booking: this.ownView(booking), notice, emailed };
   }
 
@@ -1633,18 +1693,21 @@ export class Lair {
     const rules = await this.rules();
     const verified = [];
     for (const ref of [...refs].slice(0, 10)) {
-      const candidate = this.booking(ref);
+      const booking = this.booking(ref);
+      const candidate = booking || this.joinById(ref);
       if (!candidate) continue;
+      const item = { type: booking ? 'booking' : 'join', id: candidate.id };
       if (pos) {
-        verified.push(candidate.id);
+        verified.push(item);
       } else if (fromDraft && candidate.draftOrderId) {
         // If Shopify can't answer, this throws: the webhook gets a 500 and Shopify sends it again later.
         const linked = await this.shopify.draftOrderOrderId(candidate.draftOrderId);
-        if (linked === orderId || (linked === null && source === 'shopify_draft_order')) verified.push(candidate.id);
+        if (linked === orderId || (linked === null && source === 'shopify_draft_order')) verified.push(item);
       }
     }
-    // --- no awaits from here on: read each booking fresh and update it ---
-    const updated = this.markPaid(verified, orderId, rules, { pos });
+    // --- no awaits from here on: read each booking or sign-up fresh and update it ---
+    const of = (type) => verified.filter((x) => x.type === type).map((x) => x.id);
+    const updated = [...this.markPaid(of('booking'), orderId, rules, { pos }), ...this.markJoinsPaid(of('join'), orderId, rules, { pos })];
 
     // Payments are recorded, so if Shopify can't say who the customer is right now, failing the webhook (Shopify
     // sends it again) only repeats work that's already done.
@@ -1708,6 +1771,44 @@ export class Lair {
       // Paying online confirms a held booking: that's when its confirmation goes out. Paying at the counter doesn't need one.
       if (firstTime && !pos && booking.status === 'confirmed') this.confirm(booking, rules, booking.gameId ? this.game(booking.gameId) : null);
       updated.push(booking.ref);
+    }
+    return updated;
+  }
+
+  /** Event sign-ups paid by an order (their entry fee), online or at the counter. Like markPaid. No awaits. */
+  markJoinsPaid(ids, orderId, rules, { pos = false } = {}) {
+    const now = Date.now();
+    const updated = [];
+    for (const id of ids) {
+      const join = this.joinById(id);
+      const firstTime = !join.paid;
+      if (!firstTime && join.orderId && join.orderId !== orderId) {
+        this.notifyStaff(`Paid twice: ${join.ref}`, {
+          title: 'A sign-up was paid twice',
+          intro: `${join.name}'s sign-up ${join.ref} for ${join.title} was paid by two orders. Refund one of them.`,
+          details: [['Sign-up', join.ref], ['First order', join.orderId], ['Second order', orderId], ['Amount', dollars(join.amount)]],
+        });
+        updated.push(join.ref);
+        continue;
+      }
+      let status = join.status === 'held' ? 'confirmed' : join.status;
+      if (join.status === 'cancelled' && firstTime) {
+        // Paid after the hold ran out: keep the spot if the event still has room.
+        const occurrence = findOccurrence(rules, join.occurrenceId);
+        const others = this.sql.exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled' AND id != ?", join.occurrenceId, join.id).one().n;
+        if (join.holdUntil && occurrence?.capacity && others + join.people <= occurrence.capacity) {
+          status = 'confirmed';
+        } else {
+          this.notifyStaff(`Paid but cancelled: ${join.ref}`, {
+            title: 'Paid for a cancelled sign-up',
+            intro: `${join.name} paid the entry fee for ${join.ref}, but that sign-up was cancelled or the event filled up. Refund the order or find them a spot.`,
+            details: [['Sign-up', join.ref], ['Event', `${join.title}, ${this.when(join, rules)}`], ['Email', join.email || 'none'], ['Order', orderId]],
+          });
+        }
+      }
+      this.write('UPDATE event_joins SET paid = 1, order_id = ?, status = ?, hold_until = NULL, updated_at = ? WHERE id = ?', orderId, status, now, join.id);
+      if (firstTime && !pos && status === 'confirmed') this.confirmJoin({ ...join, paid: true, status }, rules);
+      updated.push(join.ref);
     }
     return updated;
   }
@@ -1818,7 +1919,7 @@ export class Lair {
     if (join.status === 'cancelled' && !force) return { ...base, checkedIn: false, reason: 'cancelled', message: `This sign-up was cancelled: ${label}.` };
     if (join.arrivedAt && !force) return { ...base, checkedIn: true, reason: 'already', message: `Already checked in: ${label}.${pay}` };
     if (!(now >= join.start - 3 * HOUR && now <= join.end) && !force) return { ...base, checkedIn: false, reason: 'not-today', message: `This sign-up is for ${time.label(join.start)}, not today: ${label}.` };
-    this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, updated_at = ? WHERE id = ?", now, now, join.id);
+    this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, hold_until = NULL, updated_at = ? WHERE id = ?", now, now, join.id);
     return { ...base, join: { ...join, status: 'attended', arrivedAt: now }, checkedIn: true, message: `Checked in: ${label}.${pay}` };
   }
 
@@ -1885,18 +1986,107 @@ export class Lair {
       .one().n;
     const left = occurrence.capacity - taken;
     if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'space' : 'spaces'} left.` : 'This one is full.', 409);
+    // An entry fee is paid now (online, held for 30 minutes like a booking) or on the day. No fee, no paying.
+    const fee = occurrence.entryFee || 0;
+    const wantsPayNow = fee > 0 && input.pay === 'now';
+    const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
     const join = {
       id: makeId('ej'), ref: this.uniqueRef(name), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
-      end: occurrence.end, people, name, email, note: String(input.note || '').trim().slice(0, 300), status: 'confirmed',
+      end: occurrence.end, people, name, email, note: String(input.note || '').trim().slice(0, 300), status: payNow ? 'held' : 'confirmed',
+      pay: payNow ? 'now' : 'day', paid: false, amount: fee * people, holdUntil: payNow ? now + HOLD_MINUTES * MIN : null,
     };
     this.write(
-      `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
-      join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, who.customerId || null, now, now,
+      `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, pay, paid, amount,
+         hold_until, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+      join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, join.status, who.customerId || null,
+      join.pay, join.amount, join.holdUntil, now, now,
     );
     this.touchMember(who.customerId, { name, email }, now);
-    this.confirmJoin(join, rules);
-    return { join: { id: join.id, ref: join.ref, occurrenceId, people, name }, spacesLeft: left - people };
+    // --- saved: the spaces are ours ---
+    return { ...(await this.payOrConfirmJoin(join, rules, { wantsPayNow, payNow })), spacesLeft: left - people };
+  }
+
+  /** After a sign-up is saved: send it to checkout (pay now) or email the confirmation. Like payOrConfirm. */
+  async payOrConfirmJoin(join, rules, { wantsPayNow = false, payNow = false } = {}) {
+    let notice = wantsPayNow && !payNow ? "Online payment isn't available, so pay at the counter. You're on the list." : null;
+    if (payNow) {
+      try {
+        const { draftOrderId, checkoutUrl } = await this.shopify.createCheckout({
+          ref: join.ref,
+          title: `Event entry: ${join.title}`,
+          unitPrice: join.amount / join.people,
+          quantity: join.people,
+          email: join.email,
+          currency: this.env.CURRENCY || 'NZD',
+          attributes: {
+            Booking: join.ref, When: this.when(join, rules), Event: join.title, Name: join.name,
+            Cancelling: `Full refund if you cancel at least ${rules.refundHours} hours before`,
+          },
+        });
+        this.write('UPDATE event_joins SET draft_order_id = ?, updated_at = ? WHERE id = ?', draftOrderId, Date.now(), join.id);
+        const fresh = this.joinById(join.id);
+        if (fresh.status === 'held') return { join: this.joinView(fresh), checkoutUrl, holdMinutes: HOLD_MINUTES };
+        this.dropDraft(fresh);
+        return { join: this.joinView(fresh), notice: 'This sign-up changed while we set up payment. Please call us.' };
+      } catch (error) {
+        console.error('Lair: checkout could not be created', error);
+        this.write(
+          "UPDATE event_joins SET pay = 'day', status = CASE WHEN status = 'held' THEN 'confirmed' ELSE status END, hold_until = NULL, updated_at = ? WHERE id = ?",
+          Date.now(), join.id,
+        );
+        notice = "Online payment isn't working right now, so pay at the counter. You're on the list.";
+      }
+    }
+    const fresh = this.joinById(join.id);
+    const emailed = fresh.status === 'confirmed' && this.confirmJoin(fresh, rules);
+    return { join: this.joinView(fresh), notice, emailed };
+  }
+
+  /**
+   * POST /events/:id/reserve { name, email, people (1-2), pay } books the first free game spot of that event date
+   * (its game_tables, like T14+T15) as a normal table booking for the event's time: a wargame setup at the table fee,
+   * linked to the date. The same tables stay bookable through the booking page. Returns { booking, spotsLeft, checkoutUrl? }.
+   */
+  async reserveSpot(occurrenceId, input, who, client = '') {
+    const rules = await this.rules();
+    // --- no awaits until the booking is saved ---
+    const now = Date.now();
+    const occurrence = findOccurrence(rules, occurrenceId);
+    if (!occurrence) throw new RuleError('That event date could not be found.', 404);
+    if (occurrence.end <= now) throw new RuleError('That one has already finished.');
+    const spots = parseSpots(occurrence.gameTables, rules.rooms);
+    if (!spots.length) throw new RuleError("This event doesn't have game tables to book.", 422);
+    const people = Math.floor(Number(input.people));
+    if (!(people >= 1 && people <= 2)) throw new RuleError('A game table is for 1 or 2 people.');
+    const name = trimmed(input.name, 80);
+    const email = trimmed(input.email, 120);
+    if (!name) throw new RuleError('Add a name for the booking.');
+    if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
+    this.checkRate(who, client, now);
+    if (!who.staff) this.checkEmailLimit(email, now);
+    const free = this.freeSpots(occurrence, rules, this.state(occurrence.start - 1, occurrence.end + 1));
+    if (!free.length) throw new RuleError('All the game tables are taken for this one. Try another date.', 409);
+    const { room } = oneRoom(free[0], rules);
+    const wantsPayNow = input.pay === 'now';
+    const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
+    const booking = {
+      id: makeId('bk'), ref: this.uniqueRef(name), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
+      name, email, phone: trimmed(input.phone, 40), notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: room.price * people,
+      occurrenceId: occurrence.id, pay: payNow ? 'now' : 'day', paid: false, status: payNow ? 'held' : 'confirmed',
+      holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null,
+    };
+    this.saveBooking(booking, now);
+    this.touchMember(who.customerId, { name, email }, now);
+    // --- saved: the spot is ours ---
+    const result = await this.payOrConfirm(booking, rules, { wantsPayNow, payNow, title: `Game table at ${occurrence.title} (${free[0].join(', ')})` });
+    return { ...result, spotsLeft: free.length - 1 };
+  }
+
+  /** An event date's game spots that are free for its whole time (the event's own table hold doesn't count against them) */
+  freeSpots(occurrence, rules, st) {
+    const ignore = new Set([`ev-${occurrence.id}`]);
+    return parseSpots(occurrence.gameTables, rules.rooms).filter((spot) => spot.every((t) => isFree(st, rules, t, occurrence.start, occurrence.end, ignore)));
   }
 
   /** "You're on the list" email for an event sign-up */
@@ -1914,14 +2104,26 @@ export class Lair {
   }
 
   async cancelJoin(id, who) {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
     const now = Date.now();
-    const row = this.sql.exec('SELECT * FROM event_joins WHERE id = ? OR ref = ?', id, id).toArray()[0];
-    if (!row) throw new RuleError('Sign-up not found.', 404);
-    const join = this.rowToJoin(row);
+    const join = this.joinById(id);
+    if (!join) throw new RuleError('Sign-up not found.', 404);
     const own = who.customerId && join.customerId === who.customerId;
     if (!who.staff && !own) throw new RuleError('Only staff can change that sign-up.', 403);
-    this.write("UPDATE event_joins SET status = 'cancelled', updated_at = ? WHERE id = ?", now, join.id);
-    return { ok: true };
+    if (join.status === 'cancelled') return { ok: true };
+    // An entry fee paid online comes back when the sign-up is cancelled ahead of the cut-off, like a booking.
+    const refund = refundFor(join, rules, now);
+    this.write("UPDATE event_joins SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund.due ? 'due' : join.refund, now, join.id);
+    this.dropDraft(join);
+    if (refund.due) {
+      this.notifyStaff(`Refund due: ${join.ref}`, {
+        title: 'Refund due',
+        intro: `${join.name}'s sign-up ${join.ref} for ${join.title} was cancelled more than ${rules.refundHours} hours ahead, so they get their entry fee back. Refund it in Shopify.`,
+        details: [['Sign-up', join.ref], ['Event', `${join.title}, ${this.when(join, rules)}`], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
+      });
+    }
+    return { ok: true, refund };
   }
 
   /** "Host your own event": the form goes to the team by email, with replies going straight to the person. */
@@ -2285,7 +2487,7 @@ export class Lair {
         };
       }),
       games: gameRows.map((g) => ({ ...this.gameView(g, span, rules), players: this.gamePlayers(span, g.id) })),
-      joins: joins.map((j) => ({ id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, status: j.status })),
+      joins: joins.map((j) => this.joinView(j)),
       credits,
       member: {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,

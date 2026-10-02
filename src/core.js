@@ -222,6 +222,18 @@ export function parseTableList(spec, rooms) {
   return [...ids].filter((id) => all.includes(id));
 }
 
+/**
+ * An event's game spots: "T14+T15, T16+T17" is two spots of two tables each. Unknown tables are dropped, and a spot
+ * has to stay in one room.
+ */
+export function parseSpots(spec, rooms) {
+  const index = tableIndex(rooms);
+  return String(spec || '')
+    .split(/[,;\n]+/)
+    .map((part) => [...new Set(part.split('+').map((t) => t.trim().toUpperCase()).filter((t) => index.has(t)))])
+    .filter((spot) => spot.length && spot.every((t) => index.get(t).roomObj.id === index.get(spot[0]).roomObj.id));
+}
+
 export function tableIndex(rooms) {
   const map = new Map();
   for (const room of rooms) for (const t of room.tables) map.set(t.id, { ...t, roomObj: room });
@@ -290,6 +302,7 @@ export function eventOccurrences(rules, from, to) {
       out.push({
         id: `${e.id}@${key}`, eventId: e.id, title: e.title, start, end: start + length, tables: e.tables || '',
         capacity: Number(e.capacity) > 0 ? Math.floor(Number(e.capacity)) : null,
+        entryFee: Number(e.entryFee) > 0 ? Math.round(Number(e.entryFee)) : 0, gameTables: e.gameTables || '',
       });
     }
   }
@@ -322,10 +335,11 @@ export function shopTableOpen(state, tableId, start, end) {
   return (state.openings || []).some((o) => o.tables.includes(tableId) && o.start <= start && o.end >= end);
 }
 
-/** ignore: a booking id, or a Set of ids (a GM game's own bookings when moving the game) */
+/** ignore: a booking id, or a Set of ids (a GM game's own bookings when moving the game, or an event's own hold, ev-<occurrence id>) */
 export function isFree(state, rules, tableId, start, end, ignore = null) {
   const skip = ignore instanceof Set ? ignore : new Set(ignore ? [ignore] : []);
   for (const b of blockingItems(state, rules, start, end)) {
+    if (skip.has(b.id)) continue;
     if (b.tables.includes(tableId) && overlaps(start, end, b.start, b.end)) return false;
   }
   for (const b of state.bookings) {

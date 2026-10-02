@@ -158,9 +158,12 @@ export class ShopifyAdmin {
       .map((n) => {
         const f = fields(n);
         const start = Date.parse(f.starts_at);
+        const fee = Math.round(Number(f.entry_fee || 0) * 100);
         return {
           id: n.handle, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '',
           repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: list(f.skip_dates), capacity: f.capacity ? Number(f.capacity) : null,
+          // entry_fee: NZD a person (cents here). game_tables: bookable game spots like "T14+T15, T16+T17" (tables still holds tables).
+          entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
         };
       })
       .filter((e) => Number.isFinite(e.start));
