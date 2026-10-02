@@ -136,7 +136,8 @@ export function buildRooms(rawRooms, defaultPrice) {
       return {
         id: r.id || `room-${i + 1}`, name: r.name || `Room ${i + 1}`, code, seats,
         price: r.price ? Math.round(Number(r.price) * 100) : defaultPrice,
-        bookable: r.bookable !== false, tables: tables.map((t) => ({ ...t, room: r.id || `room-${i + 1}` })),
+        bookable: r.bookable !== false, minPeople: Math.max(0, Math.floor(Number(r.minPeople ?? r.min_people) || 0)),
+        tables: tables.map((t) => ({ ...t, room: r.id || `room-${i + 1}` })),
       };
     });
 }
@@ -243,6 +244,7 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   const seats = known.reduce((sum, t) => sum + (t.seats || room.seats), 0);
   if (!staff) {
     if (people > ONLINE_LIMITS.people) throw new RuleError(`For groups over ${ONLINE_LIMITS.people}, give us a call and we'll set it up.`);
+    if (room.minPeople && people < room.minPeople) throw new RuleError(`${room.name} is for groups of ${room.minPeople} or more.`);
     if (people > seats) throw new RuleError(`${people} people need more tables (these seat ${seats}).`);
     if (tables.length > maxOnlineTables(people)) throw new RuleError('That is more tables than your group needs. Call us for bigger setups.');
   }
@@ -320,6 +322,20 @@ export function publicGame(g, state) {
 }
 
 /* ---------- settings from the theme's settings_data.json ---------- */
+/** The Lair's opening hours (also the theme's default): weekdays 4pm to midnight, Saturday 10am to midnight, Sunday 10am to 10pm. */
+export const DEFAULT_HOURS = 'Mon 16:00-24:00\nTue 16:00-24:00\nWed 16:00-24:00\nThu 16:00-24:00\nFri 16:00-24:00\nSat 10:00-24:00\nSun 10:00-22:00';
+
+/**
+ * Cancellation policy: a booking paid online gets a refund when it is cancelled at least `refundHours`
+ * before it starts. Later cancellations and no-shows keep the fee. Paying at the counter has nothing to refund.
+ */
+export function refundFor(booking, rules, cancelledAt) {
+  if (!booking.paid || booking.pay !== 'now' || !booking.amount) return { due: false, amount: 0, reason: 'nothing paid online' };
+  const cutoff = booking.start - rules.refundHours * HOUR;
+  if (cancelledAt <= cutoff) return { due: true, amount: booking.amount, orderId: booking.orderId || null, reason: `cancelled more than ${rules.refundHours} hours ahead` };
+  return { due: false, amount: 0, orderId: booking.orderId || null, reason: `cancelled less than ${rules.refundHours} hours before the start` };
+}
+
 export function rulesFromSettings(settings = {}, rooms = [], events = []) {
   const prices = {
     table: Math.round(Number(settings.price_table ?? 10) * 100),
@@ -328,11 +344,12 @@ export function rulesFromSettings(settings = {}, rooms = [], events = []) {
   };
   return {
     tz: settings.lair_timezone || 'Pacific/Auckland',
-    hours: parseHours(settings.lair_hours || 'Mon closed\nTue 12:00-22:00\nWed 12:00-22:00\nThu 12:00-22:00\nFri 12:00-23:00\nSat 10:00-23:00\nSun 10:00-20:00'),
+    hours: parseHours(settings.lair_hours || DEFAULT_HOURS),
     leadMinutes: Number(settings.lair_lead_minutes ?? 60),
     horizonDays: Number(settings.lair_horizon_days ?? 60),
     maxHours: Number(settings.lair_max_hours ?? 8),
     payOnline: settings.lair_pay_online !== false,
+    refundHours: Number(settings.lair_refund_hours ?? 24),
     prices,
     rooms: buildRooms(rooms, prices.table),
     events,

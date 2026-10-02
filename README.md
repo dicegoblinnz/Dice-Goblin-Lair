@@ -24,79 +24,49 @@ One Durable Object with a small SQLite database  (src/lair.js: bookings, games, 
 - The app re-reads those every 5 minutes, so changes in Shopify show up on their own.
 - Staff and trusted GMs are Shopify customers tagged `staff` or `gm`.
 
-## What you need
+## Where things live
 
-- A Cloudflare account. The free plan is enough for a shop this size.
-- The Shopify Dev Dashboard (dev.shopify.com), logged in as the store owner. The app has to live in the same Shopify organization as the store.
-- Optional: a [Resend](https://resend.com) account if you want booking emails.
+- **Code:** GitHub, `dicegoblinnz/Dice-Goblin-Lair`. Every push to `main` is built and deployed by Cloudflare Workers Builds (the Worker is `dice-goblin-lair` on the dicegoblinnz Cloudflare account).
+- **Address:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Open it for a plain status page; the website reaches the app through `www.dicegoblin.nz/apps/lair`.
+- **Keys and settings:** the D1 database `dice-goblin-lair-config`, table `config` (Cloudflare → Storage & databases → D1). Changes there apply within a minute, no redeploy needed. A Worker variable or secret with the same name overrides the database.
+- **Health:** the same database's `status` table. Every 10 minutes the app checks its Shopify login, permissions, payment webhook, rooms and hours and writes the result there (`connection`, `rules`, `proxy`, `lastError`).
+
+| Config key | What it is |
+| --- | --- |
+| `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` | the Shopify app's credentials (Dev Dashboard → app → Settings) |
+| `SETUP_KEY` | key for `/setup?key=…`, which re-runs the health check and the payment webhook set-up on demand |
+| `THEME_ID` | the theme to read Lair settings from while it's unpublished; leave empty to use the live theme |
+| `RESEND_API_KEY`, `FROM_EMAIL`, `REPLY_TO`, `STAFF_EMAIL` | booking emails through Resend (optional) |
 
 ## Set up
 
-Allow about 30 minutes. Do the steps in order.
+### 1. Cloudflare (done)
 
-### 1. Put the app on Cloudflare
-
-**Without a terminal (GitHub):**
-
-1. Put this folder in a GitHub repository. Private is fine.
-2. In the Cloudflare dashboard go to **Workers & Pages → Create → Import a repository**, pick the repository and deploy. Keep the name `dice-goblin-lair`.
-3. Write down the address it gives you, like `https://dice-goblin-lair.yourname.workers.dev`.
-
-**With a terminal** (Node.js 22 or newer):
-
-```sh
-npm install
-npx wrangler login
-npx wrangler deploy
-```
-
-Check it: open `https://dice-goblin-lair.yourname.workers.dev/health`. You should see `{"ok":true}`.
+The Worker is connected to the GitHub repository and the keys are in the config database. If you ever start again from scratch: create the Worker by importing this repository (Workers & Pages → Create → Import a repository), keep the name `dice-goblin-lair`, and create the D1 database with the `config` and `status` tables (see `src/config.js`).
 
 ### 2. Create the Shopify app
 
 1. Go to dev.shopify.com → **Apps → Create app**. Call it `Dice Goblin Lair`.
 2. Create a version with:
-   - **App URL:** your workers.dev address. Embedding in the Shopify admin: off.
+   - **App URL:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Embedding in the Shopify admin: off.
    - **Access scopes:**
      `read_customers, read_metaobjects, read_themes, read_orders, write_draft_orders, write_store_credit_account_transactions, write_app_proxy`
-   - **App proxy:** prefix `apps`, subpath `lair`, URL `https://dice-goblin-lair.yourname.workers.dev/proxy`
+   - **App proxy:** prefix `apps`, subpath `lair`, URL `https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy`
 3. Release the version, then **install** the app on the Dice Goblin store.
 4. If Shopify asks about protected customer data, request it with the reason "store management". The app reads customer tags and paid orders; it doesn't need the name, email, phone or address fields.
-5. Open the app's **Settings** and copy the **Client ID** and **Client secret**.
+5. The app's **Client ID** and **Client secret** (app → Settings) go in the config table as `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` (already done for the current app).
 
-### 3. Add the secrets in Cloudflare
+### 3. Check the connection
 
-**Workers & Pages → dice-goblin-lair → Settings → Variables and Secrets → Add**, type **Secret**:
+Open `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Within 10 minutes of the app being installed all four lines should be ticked:
 
-| Name | Value |
-| --- | --- |
-| `SHOPIFY_CLIENT_ID` | from step 2 |
-| `SHOPIFY_CLIENT_SECRET` | from step 2 |
-| `SETUP_KEY` | make up a long random password; you use it once to check the connection |
+- **Connected to the Shopify store:** the app can log in and has every permission it needs. If not, the `connection` row in the `status` table says why (wrong client ID or secret, app not installed, or `missingScopes`).
+- **Online payments are reported back:** Shopify will tell the app when someone pays online.
+- **The website has reached the app:** shows after the first visit to a booking page once the app proxy is set up.
 
-Optional, for emails (verify `dicegoblin.nz` in Resend first):
+### 4. Emails (optional)
 
-| Name | Value |
-| --- | --- |
-| `RESEND_API_KEY` | from Resend |
-| `FROM_EMAIL` | `Dice Goblin <bookings@dicegoblin.nz>` |
-| `REPLY_TO` | the shop inbox, so replies reach you |
-| `STAFF_EMAIL` | gets "game waiting for approval" and "paid but cancelled" alerts |
-
-With a terminal it's `npx wrangler secret put SHOPIFY_CLIENT_ID`, and so on.
-
-The ordinary settings (`SHOP`, `CURRENCY`, `API_VERSION`, `THEME_ID`) are in `wrangler.toml`. `THEME_ID` points the app
-at the new theme while it's unpublished; it keeps working after you publish that theme, because publishing keeps the ID.
-
-### 4. Check the connection
-
-Open `https://dice-goblin-lair.yourname.workers.dev/setup?key=YOUR_SETUP_KEY`. You should see:
-
-- `"shopify": true` and `"shopifyLogin": "ok"`: the app can talk to the store.
-- `"paymentWebhook": { "ok": true }`: Shopify will tell the app when someone pays. The app also sets this up by itself the first time someone uses the booking pages.
-- your rooms with their prices, for example `Fancy room: 2 tables (F1…), $15.00 per person`.
-
-If `shopifyLogin` shows an error, the client ID or secret is wrong, or the app isn't installed on the store.
+Booking emails go through [Resend](https://resend.com); the free plan (3,000 emails a month, 100 a day) is plenty. Add the domain `dicegoblin.nz` in Resend, add the DNS records it shows at Crazy Domains (where dicegoblin.nz's DNS is managed), create an API key, and put it in the config table as `RESEND_API_KEY` with `FROM_EMAIL` = `Dice Goblin <bookings@dicegoblin.nz>`, `REPLY_TO` = the shop inbox and `STAFF_EMAIL` = whoever should get approval and refund alerts.
 
 ### 5. Tag staff and GMs
 
@@ -121,7 +91,7 @@ afterwards), and check both show up on the staff page.
 ## Day to day
 
 - **Rooms and tables:** Content → Metaobjects → Lair rooms (number of tables, seats per table, price per person, bookable online or not).
-- **Events that need tables:** Content → Metaobjects → Lair events. In "Tables" write things like `T11-T20`, `Side room 2` or `all`. Those tables can't be booked during the event.
+- **Events that need tables:** Content → Metaobjects → Lair events. In "Tables" write things like `T14-T21`, `Gaming room` or `all`. Those tables can't be booked during the event.
 - **Quick holds** (a market, an impromptu tournament): staff page → Hold tables.
 - **Online payments** show up in Orders, tagged `lair-booking`, with the booking reference (like `GOB-7K2QXM`). Refund in Shopify as usual, then cancel the booking on the staff page.
 - **GM store credit:** after the session, staff page → the game → Credit GM. It counts players marked as paid, and Shopify emails the GM about the credit.
@@ -131,7 +101,10 @@ afterwards), and check both show up on the staff page.
 
 - Bookings are in one-hour blocks, start on the hour and stay inside opening hours. Longest booking, booking lead time and how far ahead people can book come from the theme settings (defaults: 8 hours, 1 hour, 60 days).
 - Nothing inside the lead time: at 1pm the first slot you can book is 2pm. Walk-ins are for anything sooner.
-- Table fee is per person for the whole day ($10, or the room's own price, like $15 in the fancy room). All tables in a booking are in one room, and everyone has to fit at them.
+- Table fee is per person for the whole day: $10 everywhere except the Fancy room, which is $15. All tables in a booking are in one room, and everyone has to fit at them.
+- The Fancy room is one big table for up to 12, booked by groups of 4 or more (a room's minimum is the "Minimum people" field on its Lair rooms entry).
+- Opening hours come from the theme setting: weekdays 4pm to midnight, Saturday 10am to midnight, Sunday 10am to 10pm.
+- Cancelling: a booking paid online is refunded if it's cancelled at least 24 hours before it starts (theme setting "Refund cut-off"); later cancellations and no-shows keep the fee. When staff cancel a paid booking, the staff page says whether a refund is due and for which order.
 - A table can't be double-booked; bookings, staff holds and events that list tables all count.
 - Online bookings are for up to 24 people, and take at most one table more than the group size (at least 3, so one person can still set up a big-box game). Bigger groups call the shop; staff can book anything.
 - GM games: 2 to 8 player seats, $15 a seat, up to 4 seats per booking. Store credit ($5 per paying player) is paid once, after the game starts. A GM can cancel their own game until it starts; after that it's a staff job. Moving or extending a game on the staff page moves its players with it.
@@ -142,7 +115,7 @@ afterwards), and check both show up on the staff page.
 
 ## If something isn't working
 
-- **Bookings say "The booking app only accepts JSON requests."** Shopify has stopped passing the request type through the app proxy. Add a plain variable `JSON_ONLY` = `off` in Cloudflare (Settings → Variables and Secrets) and tell whoever looks after the site.
+- **Bookings say "The booking app only accepts JSON requests."** Shopify has stopped passing the request type through the app proxy. Add `JSON_ONLY` = `off` to the config table and tell whoever looks after the site.
 - **"Pay now" doesn't show on the booking page.** Check that "Let people pay online" is on in the theme settings, and that `/setup?key=…` shows `"shopify": true` and `"shopifyLogin": "ok"`.
 - **Online payments stay "unpaid" on the staff page.** Open `/setup?key=…` and check `paymentWebhook` is ok. Shopify retries a failed notification for a few hours, so a short outage sorts itself out.
 - **Staff page says "Staff only".** The person needs the `staff` tag on their customer account and must be logged in on the website; tags take up to 5 minutes.
@@ -155,7 +128,7 @@ npm test                 # rules, payments, security and race checks (Node 22+, 
 npx wrangler dev         # run locally; put SHOPIFY_CLIENT_SECRET and SETUP_KEY in a .dev.vars file
 ```
 
-Without `SHOPIFY_CLIENT_ID` the app runs on its built-in room list (T1–T20, A1–A4, B1–B4, F1–F2) and default hours, and
+Without `SHOPIFY_CLIENT_ID` the app runs on its built-in room list (main room T1–T21, party room P1–P4, gaming room G1–G4, fancy room F1) and default hours, and
 "pay now" falls back to paying at the counter.
 
 Routes (all JSON):

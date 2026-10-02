@@ -6,16 +6,19 @@
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
   ACTIVE, HOUR, MIN, LairTime, RuleError, blockingItems, checkGame, checkSeatBooking, checkTableBooking, isFree, makeId,
-  makeRef, oneRoom, parseTableList, publicBooking, publicGame, readSettingsData, rulesFromSettings, seatsTaken, tableIndex,
+  makeRef, oneRoom, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail } from './shopify.js';
+import { recordStatus, withConfig } from './config.js';
 
 const FALLBACK_ROOMS = [
-  { id: 'common-room', name: 'Common room', code: 'T', tables: 20, seats: 4, order: 1 },
-  { id: 'side-room-1', name: 'Side room 1', code: 'A', tables: 4, seats: 4, order: 2 },
-  { id: 'side-room-2', name: 'Side room 2', code: 'B', tables: 4, seats: 4, order: 3 },
-  { id: 'fancy-room', name: 'Fancy room', code: 'F', tables: 2, seats: 6, price: 15, order: 4 },
+  { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
+  { id: 'party-room', name: 'Party room', code: 'P', tables: 4, seats: 4, order: 2 },
+  { id: 'gaming-room', name: 'Gaming room', code: 'G', tables: 4, seats: 4, order: 3 },
+  { id: 'fancy-room', name: 'Fancy room', code: 'F', tables: 1, seats: 12, price: 15, minPeople: 4, order: 4 },
 ];
+/** Permissions the Shopify app needs (checked by the health check) */
+const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions'];
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
 const PERSON_TTL = 5 * MIN;
@@ -85,9 +88,12 @@ const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim())
 export class Lair {
   constructor(ctx, env) {
     this.ctx = ctx;
+    this.baseEnv = env;
     this.env = env;
     this.sql = ctx.storage.sql;
     this.shopify = new ShopifyAdmin(env, ctx.storage);
+    this.credentials = [env.SHOP, env.SHOPIFY_CLIENT_ID, env.SHOPIFY_CLIENT_SECRET].join('|');
+    this.statusSeen = {};
     this.rulesCache = null;
     this.rulesLoadedAt = 0;
     this.people = new Map();
@@ -96,6 +102,34 @@ export class Lair {
     this.version = 0;
     this.stateCache = new Map();
     this.migrate();
+  }
+
+  /* ---------------- settings from the config database ---------------- */
+  /** Pick up config changes (new Shopify credentials, email keys) without a redeploy. */
+  async useConfig() {
+    const env = await withConfig(this.baseEnv);
+    const credentials = [env.SHOP, env.SHOPIFY_CLIENT_ID, env.SHOPIFY_CLIENT_SECRET].join('|');
+    if (credentials !== this.credentials) {
+      this.shopify = new ShopifyAdmin(env, this.ctx.storage);
+      this.credentials = credentials;
+      this.people.clear();
+      this.rulesCache = null;
+      this.webhookRetryAt = 0;
+    }
+    this.env = env;
+  }
+
+  /** Write to the status table only when something changed, so the health check costs almost nothing. */
+  note(entries) {
+    const changed = {};
+    for (const [key, value] of Object.entries(entries)) {
+      const text = JSON.stringify(value);
+      if (this.statusSeen[key] !== text) {
+        this.statusSeen[key] = text;
+        changed[key] = value;
+      }
+    }
+    if (Object.keys(changed).length) this.later(recordStatus(this.env, changed));
   }
 
   /* ---------------- storage ---------------- */
@@ -261,6 +295,18 @@ export class Lair {
     if (rules || !this.rulesCache) this.rulesCache = rules || rulesFromSettings({}, FALLBACK_ROOMS, []);
     // After a failed load, keep what we had and try again in a minute rather than on every request.
     this.rulesLoadedAt = rules || !this.shopify.configured ? Date.now() : Date.now() - RULES_TTL + MIN;
+    const r = this.rulesCache;
+    this.note({
+      rules: {
+        source: rules ? 'shopify' : 'built-in defaults',
+        timezone: r.tz,
+        rooms: r.rooms.map((room) => `${room.name}: ${room.tables.length} × ${room.seats} seats, $${room.price / 100}${room.minPeople ? `, min ${room.minPeople} people` : ''}${room.bookable ? '' : ', not bookable online'}`),
+        hours: Object.entries(r.hours).map(([day, h]) => `${day} ${h ? `${String(Math.floor(h[0] / 60)).padStart(2, '0')}:${String(h[0] % 60).padStart(2, '0')}-${String(Math.floor(h[1] / 60)).padStart(2, '0')}:${String(h[1] % 60).padStart(2, '0')}` : 'closed'}`),
+        payOnline: r.payOnline,
+        refundHours: r.refundHours,
+        events: r.events.length,
+      },
+    });
     return this.rulesCache;
   }
 
@@ -300,17 +346,22 @@ export class Lair {
     const url = new URL(request.url);
     const parts = url.pathname.split('/').filter(Boolean);
     try {
+      await this.useConfig();
       this.expireHolds(Date.now());
       const [a, b, c] = parts;
       if (a === 'internal') {
         if (request.headers.get('X-Lair-Internal') !== '1' || request.method !== 'POST') return json({ error: 'Not found' }, 404);
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
-        if (b === 'setup') return json(await this.setup(body));
+        if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true }));
+        if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false }));
         return json({ error: 'Not found' }, 404);
       }
       const origin = request.headers.get('X-Lair-Origin');
-      if (origin) this.later(this.ensureWebhook(`${origin}/webhooks/orders-paid`));
+      if (origin) {
+        this.later(this.ensureWebhook(`${origin}/webhooks/orders-paid`));
+        this.note({ proxy: { seen: true, day: new Date().toISOString().slice(0, 10) } });
+      }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
@@ -327,6 +378,7 @@ export class Lair {
     } catch (error) {
       if (error instanceof RuleError) return json({ error: error.message }, error.status);
       console.error('Lair error', error);
+      this.note({ lastError: { message: String(error.message || error).slice(0, 300), path: url.pathname, at: new Date().toISOString() } });
       return json({ error: 'Something went wrong on our side. Please try again or call us.' }, 500);
     }
   }
@@ -414,7 +466,10 @@ export class Lair {
           quantity: booking.people,
           email: booking.email,
           currency: this.env.CURRENCY || 'NZD',
-          attributes: { Booking: booking.ref, When: this.when(booking, rules), Tables: booking.tables.join(', '), Name: booking.name },
+          attributes: {
+            Booking: booking.ref, When: this.when(booking, rules), Tables: booking.tables.join(', '), Name: booking.name,
+            Cancelling: `Full refund if you cancel at least ${rules.refundHours} hours before`,
+          },
         });
         this.write('UPDATE bookings SET draft_order_id = ?, updated_at = ? WHERE id = ?', draftOrderId, Date.now(), booking.id);
         const fresh = this.booking(booking.id);
@@ -448,11 +503,14 @@ export class Lair {
       ? `${booking.people} ${booking.people === 1 ? 'seat' : 'seats'} at ${game.title} (${game.system}, GM ${game.gm})`
       : `${booking.people} ${booking.people === 1 ? 'person' : 'people'} at table${booking.tables.length > 1 ? 's' : ''} ${booking.tables.join(', ')}`;
     const fee = booking.paid ? `${dollars(booking.amount)}, paid. Thank you!` : `${dollars(booking.amount)}, pay at the counter.`;
+    const changes = booking.paid
+      ? `Need to cancel? Reply to this email or call us at least ${rules.refundHours} hours before your booking and we'll refund you. After that the fee can't be refunded.`
+      : 'Plans changed? Reply to this email or give us a call so we can free up the table.';
     this.later(
       sendEmail(this.env, {
         to: booking.email,
         subject: `Booked: ${this.when(booking, rules)} (${booking.ref})`,
-        text: `Kia ora ${booking.name},\n\nYou're booked at the Dice Goblin Lair.\n\nWhen: ${this.when(booking, rules)}\nWhat: ${what}\nFee: ${fee}\nBooking: ${booking.ref}\n\nShow ${booking.ref} at the counter when you arrive.\nPlans changed? Reply to this email or give us a call.\n\nSee you at the Lair!\nDice Goblin`,
+        text: `Kia ora ${booking.name},\n\nYou're booked at the Dice Goblin Lair.\n\nWhen: ${this.when(booking, rules)}\nWhat: ${what}\nFee: ${fee}\nBooking: ${booking.ref}\n\nShow ${booking.ref} at the counter when you arrive.\n${changes}\n\nSee you at the Lair!\nDice Goblin`,
       }),
     );
     return true;
@@ -477,11 +535,13 @@ export class Lair {
       const own = who.customerId && booking.customerId === who.customerId;
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
+      const refund = refundFor(booking, rules, now);
       booking.status = 'cancelled';
       booking.holdUntil = null;
       this.saveBooking(booking, now);
       this.dropDraft(booking);
-      return { booking: this.ownView(booking) };
+      if (refund.due) this.notifyStaff(`Refund due: ${booking.ref}`, `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead. Refund ${dollars(refund.amount)} in Shopify (order ${refund.orderId || 'see Orders'}).`);
+      return { booking: this.ownView(booking), refund };
     }
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const next = { ...booking };
@@ -523,7 +583,10 @@ export class Lair {
       }
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
-    return { booking: next };
+    // Paid online and cancelled: tell staff whether the policy gives the money back. No-shows keep the fee.
+    const ending = ['cancelled', 'noshow'].includes(next.status) && booking.status !== next.status;
+    const refund = ending ? (next.status === 'cancelled' ? refundFor(booking, rules, now) : { ...refundFor(booking, rules, Infinity), reason: 'no-show' }) : undefined;
+    return { booking: next, refund };
   }
 
   async createGame(input, who, client = '') {
@@ -716,10 +779,12 @@ export class Lair {
     return { updated };
   }
 
-  async setup({ webhookUrl }) {
-    this.rulesCache = null;
+  /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
+  async checkConnection(webhookUrl, { force = false } = {}) {
+    if (force) this.rulesCache = null;
     const rules = await this.rules();
     const result = {
+      checkedAt: new Date().toISOString(),
       shopify: this.shopify.configured,
       email: emailReady(this.env),
       payOnline: rules.payOnline,
@@ -728,13 +793,19 @@ export class Lair {
     };
     if (this.shopify.configured) {
       try {
-        await this.shopify.accessToken();
+        const info = await this.shopify.appInfo();
         result.shopifyLogin = 'ok';
+        result.app = info.app;
+        result.shop = info.shop;
+        result.missingScopes = REQUIRED_SCOPES.filter(
+          (scope) => !info.scopes.includes(scope) && !(scope.startsWith('read_') && info.scopes.includes(scope.replace(/^read_/, 'write_'))),
+        );
       } catch (error) {
-        result.shopifyLogin = String(error.message || error);
+        result.shopifyLogin = String(error.message || error).slice(0, 300);
       }
-      result.paymentWebhook = await this.ensureWebhook(webhookUrl, { force: true });
+      result.paymentWebhook = await this.ensureWebhook(webhookUrl, { force });
     }
+    this.note({ connection: result });
     return result;
   }
 }

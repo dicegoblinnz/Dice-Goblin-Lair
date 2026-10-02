@@ -1,4 +1,5 @@
-# Dice Goblin Lair booking backend (Cloudflare Workers, free plan is enough)
+# Dice Goblin Lair booking backend (Cloudflare Workers; the free plan is enough).
+# Every push to main is built and deployed by Cloudflare Workers Builds.
 name = "dice-goblin-lair"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
@@ -11,21 +12,23 @@ class_name = "Lair"
 tag = "v1"
 new_sqlite_classes = ["Lair"]
 
+# Settings and keys that change without a code change (Shopify client ID and secret, setup key, theme ID,
+# email keys) live in this database's `config` table; the app writes its health check to `status`.
+# A Worker variable or secret with the same name overrides the database value.
+[[d1_databases]]
+binding = "CONFIG"
+database_name = "dice-goblin-lair-config"
+database_id = "8d004701-239f-4805-886b-c1a09d6e3a64"
+
+# Health check every 10 minutes (Shopify login, permissions, payment webhook, rooms and hours).
+[triggers]
+crons = ["*/10 * * * *"]
+
 [vars]
 SHOP = "ep0qiq-rp.myshopify.com"
 API_VERSION = "2026-07"
 CURRENCY = "NZD"
-# While the new theme is unpublished, read the Lair settings from it instead of the live theme:
-THEME_ID = "166589005927"
+PUBLIC_URL = "https://dice-goblin-lair.dicegoblinnz.workers.dev"
 
 [observability]
 enabled = true
-
-# Secrets — set with `npx wrangler secret put NAME`, never commit them:
-#   SHOPIFY_CLIENT_ID      from the app's settings in the Shopify Dev Dashboard
-#   SHOPIFY_CLIENT_SECRET  same place
-#   SETUP_KEY              any long random string, used once for /setup
-#   RESEND_API_KEY         optional, for booking emails (resend.com)
-#   FROM_EMAIL             optional, e.g. "Dice Goblin <bookings@dicegoblin.nz>"
-#   STAFF_EMAIL            optional, gets "game to approve" and "paid but cancelled" alerts
-#   REPLY_TO               optional, where customer replies go (e.g. the shop inbox)

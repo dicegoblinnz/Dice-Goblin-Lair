@@ -62,7 +62,7 @@ export class ShopifyAdmin {
   async accessToken() {
     if (this.token && Date.now() < this.tokenExpires - 5 * 60_000) return this.token;
     const saved = await this.storage?.get?.('admin-token');
-    if (saved && Date.now() < saved.expires - 5 * 60_000) {
+    if (saved && saved.clientId === this.clientId && Date.now() < saved.expires - 5 * 60_000) {
       this.token = saved.token;
       this.tokenExpires = saved.expires;
       return this.token;
@@ -76,7 +76,7 @@ export class ShopifyAdmin {
     const { access_token: token, expires_in: expiresIn } = await response.json();
     this.token = token;
     this.tokenExpires = Date.now() + (expiresIn || 86399) * 1000;
-    await this.storage?.put?.('admin-token', { token, expires: this.tokenExpires });
+    await this.storage?.put?.('admin-token', { token, expires: this.tokenExpires, clientId: this.clientId });
     return token;
   }
 
@@ -128,6 +128,7 @@ export class ShopifyAdmin {
       return {
         id: n.handle, name: f.name, code: f.code, tables: Number(f.table_count || 0), seats: Number(f.seats || 4),
         price: f.price ? Number(f.price) : null, order: Number(f.sort_order || 0), bookable: f.bookable !== 'false', layout: f.layout || null,
+        minPeople: Number(f.min_people || 0),
       };
     });
     const events = data.events.nodes
@@ -139,6 +140,17 @@ export class ShopifyAdmin {
       })
       .filter((e) => Number.isFinite(e.start));
     return { rooms, events, settingsText };
+  }
+
+  /** Which permissions the store granted the app, for the health check. */
+  async appInfo() {
+    const data = await this.graphql('query Scopes { currentAppInstallation { accessScopes { handle } app { title } } shop { name ianaTimezone } }');
+    return {
+      app: data.currentAppInstallation?.app?.title || null,
+      scopes: (data.currentAppInstallation?.accessScopes || []).map((s) => s.handle),
+      shop: data.shop?.name || null,
+      shopTimezone: data.shop?.ianaTimezone || null,
+    };
   }
 
   async customerTags(customerId) {

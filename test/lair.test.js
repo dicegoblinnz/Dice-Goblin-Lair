@@ -35,8 +35,10 @@ const FALLBACK = [
   { id: 'common-room', name: 'Common room', code: 'T', tables: 20, seats: 4, order: 1 },
   { id: 'side-room-1', name: 'Side room 1', code: 'A', tables: 4, seats: 4, order: 2 },
   { id: 'side-room-2', name: 'Side room 2', code: 'B', tables: 4, seats: 4, order: 3 },
-  { id: 'fancy-room', name: 'Fancy room', code: 'F', tables: 2, seats: 6, price: 15, order: 4 },
+  { id: 'fancy-room', name: 'Fancy room', code: 'F', tables: 1, seats: 12, price: 15, minPeople: 4, order: 4 },
 ];
+// Most tests were written against these hours (open from midday); the real hours have their own test.
+const TEST_HOURS = 'Mon closed\nTue 12:00-22:00\nWed 12:00-22:00\nThu 12:00-22:00\nFri 12:00-23:00\nSat 10:00-23:00\nSun 10:00-20:00';
 
 let lair;
 async function call(method, path, body, customer = '', extraHeaders = {}) {
@@ -59,7 +61,7 @@ beforeEach(() => {
   Date.now = () => NOW;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD' });
   lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: id === 'gm' });
-  lair.rulesCache = rulesFromSettings({}, FALLBACK, [
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS }, FALLBACK, [
     { id: 'fnm', title: 'Friday Night Magic', start: at('2026-10-02', 18, 30), end: at('2026-10-02', 22), tables: 'T11-T20' },
   ]);
   lair.rulesLoadedAt = NOW + 10 * 365 * 24 * HOUR;
@@ -100,7 +102,7 @@ test('Auckland time and daylight saving (27 Sep 2026)', () => {
   assert.equal(new Date(win.open).toISOString(), '2026-09-26T21:00:00.000Z'); // 10:00 NZDT
   const before = openWindow(rules, time, '2026-09-26');
   assert.equal(new Date(before.open).toISOString(), '2026-09-25T22:00:00.000Z'); // 10:00 NZST
-  assert.equal(openWindow(rules, time, '2026-09-28'), null); // Monday closed
+  assert.equal(new Date(openWindow(rules, time, '2026-09-28').open).toISOString(), '2026-09-28T03:00:00.000Z'); // Monday 4pm NZDT
 });
 
 test('table numbering and table lists match the theme', () => {
@@ -108,7 +110,7 @@ test('table numbering and table lists match the theme', () => {
   assert.deepEqual(rooms[0].tables.slice(0, 3).map((t) => t.id), ['T1', 'T2', 'T3']);
   assert.equal(rooms[3].price, 1500);
   assert.deepEqual(parseTableList('T11-T13, Side room 2', rooms), ['T11', 'T12', 'T13', 'B1', 'B2', 'B3', 'B4']);
-  assert.equal(parseTableList('all', rooms).length, 30);
+  assert.equal(parseTableList('all', rooms).length, 29);
 });
 
 test('book a table: pay on the day', async () => {
@@ -411,6 +413,7 @@ test('the payment webhook registers itself once, accepts "already taken", and ba
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.customerTags = async () => [];
   lair.shopify.accessToken = async () => 'test-token';
+  lair.shopify.appInfo = async () => ({ app: 'Dice Goblin Lair', shop: 'Dice Goblin', scopes: ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders'] });
   lair.shopify.loadLairData = async () => ({ rooms: [], events: [], settingsText: null });
   const calls = [];
   let reply = { userErrors: [] };
@@ -435,6 +438,7 @@ test('the payment webhook registers itself once, accepts "already taken", and ba
   assert.equal(again.reason, 'Waiting to retry.');
   const forced = await internal('setup', { webhookUrl: 'https://third.example/webhooks/orders-paid' });
   assert.equal(forced.data.shopifyLogin, 'ok');
+  assert.deepEqual(forced.data.missingScopes, ['write_store_credit_account_transactions']);
   assert.equal(forced.data.paymentWebhook.ok, false);
   assert.match(forced.data.paymentWebhook.reason, /Access denied/);
 });
@@ -531,7 +535,7 @@ test('the public sees what a hold is for, never the staff note', async () => {
 });
 
 test('the floor sends event holds the way the app checks them', async () => {
-  lair.rulesCache = rulesFromSettings({}, FALLBACK, [{ id: 'market', title: 'Bring and buy', start: at('2026-10-02', 18), end: at('2026-10-02', 21), tables: 'Side room 2' }]);
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS }, FALLBACK, [{ id: 'market', title: 'Bring and buy', start: at('2026-10-02', 18), end: at('2026-10-02', 21), tables: 'Side room 2' }]);
   const { eventHolds } = (await call('GET', 'floor')).data;
   assert.deepEqual(eventHolds.map((e) => [e.eventId, e.tables.join(',')]), [['market', 'B1,B2,B3,B4']]);
 });
@@ -610,7 +614,7 @@ test('a payment that lands as the hold runs out still counts, even if the checko
 
 test('Shopify helper: refreshes the token after ACCESS_DENIED, and never deletes a paid checkout', async () => {
   const { ShopifyAdmin } = await import('../src/shopify.js');
-  const kv = new Map([['admin-token', { token: 'old', expires: Date.now() + 10 * HOUR }]]);
+  const kv = new Map([['admin-token', { token: 'old', expires: Date.now() + 10 * HOUR, clientId: 'id' }]]);
   const storage = { get: async (k) => kv.get(k), put: async (k, v) => kv.set(k, v), delete: async (k) => kv.delete(k) };
   const admin = new ShopifyAdmin({ SHOP: 'shop.test', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret' }, storage);
   const seen = [];
@@ -633,4 +637,149 @@ test('Shopify helper: refreshes the token after ACCESS_DENIED, and never deletes
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('the fancy room is one table for up to 12, for groups of 4 or more, at $15 a person', async () => {
+  const three = await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 3 }));
+  assert.equal(three.status, 422);
+  assert.match(three.data.error, /groups of 4 or more/);
+  const twelve = await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 12, email: 'party@example.com' }));
+  assert.equal(twelve.status, 200);
+  assert.equal(twelve.data.booking.amount, 18000);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 13, start: at('2026-10-01', 18), end: at('2026-10-01', 19) }))).status, 422);
+  const staffPair = await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 2, start: at('2026-10-01', 18), end: at('2026-10-01', 19) }), 'staff');
+  assert.equal(staffPair.status, 200);
+});
+
+test('real opening hours: weekdays 4pm to midnight, Saturday 10am to midnight, Sunday 10am to 10pm', async () => {
+  lair.rulesCache = rulesFromSettings({}, FALLBACK, []);
+  const book = (day, from, to, table) => call('POST', 'bookings', tableBooking({ tables: [table], start: at(day, from), end: to === 24 ? time.at(day, 24 * 60) : at(day, to), email: `${table}@example.com` }));
+  assert.equal((await book('2026-10-05', 15, 16, 'T1')).status, 422); // Monday 3pm: not open yet
+  assert.equal((await book('2026-10-05', 16, 17, 'T2')).status, 200); // Monday 4pm
+  assert.equal((await book('2026-10-05', 23, 24, 'T3')).status, 200); // Monday 11pm to midnight
+  assert.equal((await book('2026-10-03', 10, 11, 'T4')).status, 200); // Saturday 10am
+  assert.equal((await book('2026-10-04', 21, 22, 'T5')).status, 200); // Sunday 9pm to 10pm
+  assert.equal((await book('2026-10-04', 22, 23, 'T6')).status, 422); // Sunday after 10pm
+});
+
+test('refunds: paid online and cancelled 24+ hours ahead is refunded; later, or a no-show, keeps the fee', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  let n = 0;
+  lair.shopify.createCheckout = async () => { n += 1; return { draftOrderId: `gid://shopify/DraftOrder/9${n}`, checkoutUrl: 'https://checkout.test/9' }; };
+  lair.shopify.draftOrderOrderId = async (id) => id.replace('DraftOrder', 'Order');
+  lair.shopify.deleteDraftIfOpen = async () => false;
+  const pay = async (over) => {
+    const { data } = await call('POST', 'bookings', tableBooking({ pay: 'now', ...over }));
+    const orderId = `gid://shopify/Order/9${n}`;
+    await internal('orders-paid', { id: 1, admin_graphql_api_id: orderId, source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: data.booking.ref }] });
+    return data.booking;
+  };
+  const early = await pay({ tables: ['T1'], start: at('2026-10-03', 14), end: at('2026-10-03', 16), email: 'early@example.com' });
+  const late = await pay({ tables: ['T2'], start: at('2026-10-02', 12), end: at('2026-10-02', 13), email: 'late@example.com' });
+  const noshow = await pay({ tables: ['T3'], start: at('2026-10-01', 15), end: at('2026-10-01', 16), email: 'noshow@example.com' });
+  const a = await call('POST', `bookings/${early.id}/update`, { status: 'cancelled' }, 'staff');
+  assert.equal(a.data.refund.due, true);
+  assert.equal(a.data.refund.amount, 4000);
+  assert.equal(a.data.refund.orderId, 'gid://shopify/Order/91');
+  const b = await call('POST', `bookings/${late.id}/update`, { status: 'cancelled' }, 'staff');
+  assert.equal(b.data.refund.due, false);
+  const c = await call('POST', `bookings/${noshow.id}/update`, { status: 'noshow' }, 'staff');
+  assert.equal(c.data.refund.due, false);
+  assert.equal(c.data.refund.reason, 'no-show');
+  const counter = await call('POST', 'bookings', tableBooking({ tables: ['T4'], email: 'counter@example.com' }));
+  const d = await call('POST', `bookings/${counter.data.booking.id}/update`, { status: 'cancelled' }, 'staff');
+  assert.equal(d.data.refund.due, false);
+});
+
+function fakeConfigDb(rows) {
+  const status = new Map();
+  return {
+    status,
+    rows,
+    prepare(sql) {
+      return {
+        sql,
+        all: async () => ({ results: Object.entries(rows).map(([key, value]) => ({ key, value })) }),
+        bind: (...args) => ({ sql, args }),
+      };
+    },
+    batch: async (statements) => { for (const st of statements) status.set(st.args[0], { value: st.args[1], at: st.args[2] }); return []; },
+  };
+}
+
+test('config: keys come from the config database, Worker variables win, and the app picks up changes without a redeploy', async () => {
+  const { withConfig, resetConfigCache } = await import('../src/config.js');
+  resetConfigCache();
+  const db = fakeConfigDb({ SHOPIFY_CLIENT_ID: 'from-db', SHOPIFY_CLIENT_SECRET: 'db-secret', THEME_ID: '42', NOT_ALLOWED: 'x' });
+  const merged = await withConfig({ CONFIG: db, SHOP: 'shop.test', SHOPIFY_CLIENT_ID: 'from-env' });
+  assert.equal(merged.SHOPIFY_CLIENT_ID, 'from-env');
+  assert.equal(merged.SHOPIFY_CLIENT_SECRET, 'db-secret');
+  assert.equal(merged.THEME_ID, '42');
+  assert.equal(merged.NOT_ALLOWED, undefined);
+
+  resetConfigCache();
+  const fresh = new Lair(fakeCtx(), { CONFIG: db, SHOP: 'shop.test', CURRENCY: 'NZD' });
+  assert.equal(fresh.shopify.configured, false);
+  await fresh.useConfig();
+  assert.equal(fresh.shopify.configured, true);
+  assert.equal(fresh.shopify.clientSecret, 'db-secret');
+  const before = fresh.shopify;
+  await fresh.useConfig();
+  assert.equal(fresh.shopify, before);
+  resetConfigCache();
+});
+
+test('health check: the cron run records Shopify login, missing permissions and rooms in the status table', async () => {
+  const { resetConfigCache } = await import('../src/config.js');
+  resetConfigCache();
+  const db = fakeConfigDb({ SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret' });
+  const seen = [];
+  const env = {
+    CONFIG: db, SHOP: 'ep0qiq-rp.myshopify.com', PUBLIC_URL: 'https://lair.example.workers.dev',
+    LAIR: { idFromName: () => 'id', get: () => ({ fetch: async (req) => { seen.push([new URL(req.url).pathname, req.headers.get('X-Lair-Internal'), await req.text()]); return new Response('{}'); } }) },
+  };
+  const waits = [];
+  await worker.scheduled({}, env, { waitUntil: (p) => waits.push(p) });
+  await Promise.all(waits);
+  assert.deepEqual(seen, [['/internal/maintenance', '1', JSON.stringify({ webhookUrl: 'https://lair.example.workers.dev/webhooks/orders-paid' })]]);
+
+  const probe = new Lair(fakeCtx(), { CONFIG: db, SHOP: 'shop.test', CURRENCY: 'NZD' });
+  await probe.useConfig();
+  probe.shopify.loadLairData = async () => ({ rooms: FALLBACK, events: [], settingsText: null });
+  probe.shopify.appInfo = async () => ({ app: 'Dice Goblin Lair', shop: 'Dice Goblin', scopes: ['read_customers', 'read_metaobjects', 'read_themes', 'write_orders', 'write_draft_orders', 'write_store_credit_account_transactions'] });
+  probe.shopify.webhookUris = async () => ['https://lair.example.workers.dev/webhooks/orders-paid'];
+  const response = await probe.fetch(new Request('https://lair.example.workers.dev/internal/maintenance', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: JSON.stringify({ webhookUrl: 'https://lair.example.workers.dev/webhooks/orders-paid' }),
+  }));
+  const result = await response.json();
+  assert.equal(result.shopifyLogin, 'ok');
+  assert.deepEqual(result.missingScopes, []);
+  assert.equal(result.paymentWebhook.ok, true);
+  await new Promise((r) => setTimeout(r, 10));
+  const connection = JSON.parse(db.status.get('connection').value);
+  assert.equal(connection.shopifyLogin, 'ok');
+  const rules = JSON.parse(db.status.get('rules').value);
+  assert.equal(rules.source, 'shopify');
+  assert.ok(rules.rooms.some((r) => r.startsWith('Fancy room: 1 × 12 seats, $15, min 4 people')));
+  assert.ok(rules.hours.includes('mon 16:00-24:00'));
+  resetConfigCache();
+});
+
+test('the app\'s own address shows a plain status page instead of "Not found"', async () => {
+  const { resetConfigCache } = await import('../src/config.js');
+  resetConfigCache();
+  const db = fakeConfigDb({});
+  db.prepare = (sql) => ({
+    all: async () => (/FROM status/.test(sql)
+      ? { results: [{ key: 'connection', value: JSON.stringify({ shopifyLogin: 'ok', missingScopes: [], paymentWebhook: { ok: false }, checkedAt: '2026-10-02T00:30:00Z' }), at: '2026-10-02T00:30:00Z' }] }
+      : { results: [] }),
+  });
+  const res = await worker.fetch(new Request('https://lair.example.workers.dev/'), { CONFIG: db, SHOP: 'ep0qiq-rp.myshopify.com' });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /Dice Goblin booking app/);
+  assert.match(html, /class="ok"><span aria-hidden="true">✓<\/span>Connected to the Shopify store/);
+  assert.match(html, /Payment notifications not set up yet/);
+  assert.match(html, /Waiting for the store link/);
+  resetConfigCache();
 });
