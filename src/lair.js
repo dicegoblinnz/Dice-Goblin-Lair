@@ -171,12 +171,28 @@ const MIGRATIONS = [
     "INSERT OR IGNORE INTO codes (key, code, kind, target_id, created_at) SELECT replace(upper(ref), '-', ''), ref, 'join', id, created_at FROM event_joins",
     'ALTER TABLE members ADD COLUMN code TEXT',
   ],
+  // Round 4: session passes ("Warhammer league: 10 sessions"). A use is recorded at check-in, so a no-show never
+  // burns a session; covered is what passes have taken off a booking, and pass_id the pass saved for its check-in.
+  [
+    `CREATE TABLE IF NOT EXISTS passes (
+      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, label TEXT NOT NULL, sessions_total INTEGER NOT NULL, sessions_used INTEGER NOT NULL DEFAULT 0,
+      cover INTEGER NOT NULL, customer_id TEXT, holder_name TEXT, holder_email TEXT, note TEXT, price_paid INTEGER, created_at INTEGER, created_by TEXT,
+      expires_at INTEGER, status TEXT NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS passes_customer ON passes (customer_id)',
+    `CREATE TABLE IF NOT EXISTS pass_uses (
+      id TEXT PRIMARY KEY, pass_id TEXT NOT NULL, booking_id TEXT NOT NULL, people INTEGER NOT NULL, covered INTEGER NOT NULL, at INTEGER NOT NULL, by TEXT,
+      undone_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS pass_uses_pass ON pass_uses (pass_id)',
+    'CREATE INDEX IF NOT EXISTS pass_uses_booking ON pass_uses (booking_id)',
+    'ALTER TABLE bookings ADD COLUMN pass_id TEXT',
+    'ALTER TABLE bookings ADD COLUMN covered INTEGER NOT NULL DEFAULT 0',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
   'id', 'ref', 'kind', 'status', 'tables', 'room', 'starts_at', 'ends_at', 'people', 'name', 'email', 'phone', 'notes', 'activity',
   'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'party', 'arrived_at',
-  'refund', 'series_id', 'occurrence_id', 'created_at', 'updated_at',
+  'refund', 'series_id', 'occurrence_id', 'pass_id', 'covered', 'created_at', 'updated_at',
 ];
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
@@ -202,6 +218,15 @@ const parse = (text, fallback) => {
 };
 
 const dollars = (cents) => `$${(cents / 100).toFixed(2)}`;
+/** Short money for titles and notices: $10, or $12.50 */
+const money = (cents) => `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)}`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+/** What's still owed on a booking or sign-up: its amount less what passes covered. */
+const owing = (x) => Math.max(0, (x.amount || 0) - (x.covered || 0));
+/** What's left to pay at the counter: nothing for a GM's own table, or once it's paid. */
+const dueOf = (x) => (x.paid || x.kind === 'gm' ? 0 : owing(x));
+/** paid, worked out again after a pass covers part of it: true once something was owed and nothing is left. */
+const settled = (x) => ((x.amount || 0) > 0 ? owing(x) === 0 : Boolean(x.paid));
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
 const YEAR = 365 * 24 * HOUR;
@@ -278,6 +303,8 @@ export class Lair {
       draftOrderId: r.draft_order_id, orderId: r.order_id, party: parse(r.party, []), arrivedAt: r.arrived_at || null,
       // refund: null, 'ask' (staff decide), 'due' (refund it) or 'done' (refunded): one field everywhere.
       refund: r.refund || null, seriesId: r.series_id || null, occurrenceId: r.occurrence_id || null,
+      // passId: the session pass to use at check-in; covered: what passes have taken off it so far.
+      passId: r.pass_id || null, covered: r.covered || 0,
     };
   }
 
@@ -329,7 +356,7 @@ export class Lair {
   staffJoinView(j) {
     return {
       ...this.joinView(j), email: j.email, note: j.note, arrivedAt: j.arrivedAt, customerId: j.customerId || null, orderId: j.orderId || null,
-      due: j.paid ? 0 : j.amount || 0,
+      due: dueOf(j),
     };
   }
 
@@ -380,7 +407,8 @@ export class Lair {
       b.id, b.ref, b.kind, b.status, JSON.stringify(b.tables), b.room || null, b.start, b.end, b.people, b.name || null, b.email || null,
       b.phone || null, b.notes || null, b.activity || null, JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount || 0,
       b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null,
-      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, b.seriesId || null, b.occurrenceId || null, now, now,
+      b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, b.seriesId || null, b.occurrenceId || null,
+      b.passId || null, b.covered || 0, now, now,
     );
   }
 
@@ -458,7 +486,7 @@ export class Lair {
       return member && codeKey(member.code) === row.key ? { type: 'member', item: member } : null;
     }
     if (row.kind === 'pass') {
-      const found = this.sql.exec('SELECT * FROM passes WHERE id = ?', row.target_id).toArray()[0];
+      const found = this.passRow(row.target_id);
       return found ? { type: 'pass', item: found } : null;
     }
     return null;
@@ -623,8 +651,8 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && ['floor', 'me', 'members'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members'].includes(a));
+        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
@@ -634,9 +662,15 @@ export class Lair {
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who));
       if (request.method === 'GET' && a === 'members' && !b) return json(this.members(url, who));
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
+      if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
+      if (a === 'me' && b === 'passes' && c === 'claim') return json(await this.claimPass(body, who));
+      if (a === 'passes' && !b) return json(await this.createPass(body, who));
+      if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
+      if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
+      if (a === 'passes' && b && c === 'apply') return json(await this.applyPass(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
@@ -680,8 +714,10 @@ export class Lair {
     const from = Math.max(Number(url.searchParams.get('from')) || now - 24 * HOUR, now - 31 * 24 * HOUR);
     const to = Math.min(Number(url.searchParams.get('to')) || now + rules.horizonDays * 24 * HOUR, now + 400 * 24 * HOUR);
     const st = this.cachedState(from, to);
+    const memo = new Map();
     const view = (bk) => {
-      if (who.staff) return bk;
+      // Staff see everything, plus the saved pass, what passes covered, what's due and the refund state.
+      if (who.staff) return this.staffBooking(bk, memo);
       if (who.customerId && bk.customerId === who.customerId) return { ...publicBooking(bk), ref: bk.ref, name: bk.name, people: bk.people, paid: bk.paid };
       return publicBooking(bk);
     };
@@ -753,11 +789,13 @@ export class Lair {
       booking = { kind, ...checked };
     }
     if (!who.staff) this.checkEmailLimit(booking.email, now);
+    // usePass: the member's own session pass (staff may use any active one), saved for the check-in.
+    const pass = input.usePass && ['table', 'gm-seat'].includes(kind) ? this.passForBooking(input.usePass, who, now) : null;
     // Tables, walk-ins and game seats are paid at the counter on the day (show the code, we ring it up): `pay` is ignored.
     const id = makeId('bk');
     Object.assign(booking, {
       id, ref: this.newCode(trimmed(input.name, 80), 'booking', id, now), pay: 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
-      status: kind === 'walkin' ? 'seated' : 'confirmed', holdUntil: null, customerId: override ? null : who.customerId || null,
+      status: kind === 'walkin' ? 'seated' : 'confirmed', holdUntil: null, customerId: override ? null : who.customerId || null, passId: pass?.id || null,
     });
     this.saveBooking(booking, now);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email }, now);
@@ -943,11 +981,15 @@ export class Lair {
     return result;
   }
 
-  /** A booking as the person who made it sees it. payment and refund as in joinView. */
+  /**
+   * A booking as the person who made it sees it. payment and refund as in joinView; pass is the session pass saved
+   * for its check-in ({ code, label, sessionsLeft }), covered what passes took off, and due what's left to pay.
+   */
   ownView(b) {
     return {
       ...publicBooking(b), ref: b.ref, name: b.name, email: b.email, people: b.people, paid: b.paid, amount: b.amount, pay: b.pay, room: b.room,
       extras: b.extras || [], occurrenceId: b.occurrenceId || null, payment: b.pay === 'now' ? 'online' : 'store', refund: b.refund || null,
+      pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b),
     };
   }
 
@@ -1992,107 +2034,215 @@ export class Lair {
 
   /* ---------------- check-in at the counter ---------------- */
   /**
-   * Staff scan a code or type it: SJ-OWLBEAR-17 however it's typed, or the first release's GOB-7K2QXM. A booking's or
-   * sign-up's code checks it in and the reply says what's left to pay; a member code lists that person's bookings and
-   * sign-ups for today, for staff to pick from.
+   * POST /checkin (staff). { code } is whatever the scanner typed: SJ-OWLBEAR-17 however it's typed, or the first
+   * release's GOB-7K2QXM. A booking's, seat's or sign-up's code checks it in; a member code lists that member's day
+   * (nothing is checked in until staff pick a row), and a pass code shows the pass. { id, type } checks in one row,
+   * from a member's list, or again to apply a pass after all. pass: a pass code, 'none', or left out for the
+   * booking's saved pass. force: check in a cancelled booking or one for another day. Returns { row, pass, notice,
+   * customer, due } and the round 3 fields (found, kind, booking or join, game, checkedIn, reason, message).
    */
   async checkIn(input, who) {
     this.requireStaff(who);
     const rules = await this.rules();
     // --- no awaits from here on ---
-    return this.ticketCheckIn(input, rules, Date.now());
+    return this.ticketCheckIn(input, rules, Date.now(), who.customerId ? `staff:${who.customerId}` : 'staff');
   }
 
-  /** The check-in itself, shared by the staff page and the POS. No awaits. */
-  ticketCheckIn(input, rules, now) {
+  /** The check-in itself, shared by the staff page and the POS. by: who did it, kept with any pass use. No awaits. */
+  ticketCheckIn(input, rules, now, by = null) {
+    const options = { force: input.force === true, pass: input.pass, by };
+    if (input.id != null && input.id !== '') {
+      const id = String(input.id);
+      const booking = input.type === 'join' ? null : this.booking(id);
+      const join = booking ? null : this.joinById(id);
+      if (booking) return this.checkInBooking(booking, rules, now, options);
+      if (join) return this.checkInJoin(join, rules, now, options);
+      throw new RuleError('That booking could not be found. Refresh the list and try again.', 404);
+    }
     const found = this.findCode(input.code);
     if (!found) throw new RuleError('No booking, member or pass with that code.', 404);
     if (found.type === 'member') return this.memberCard(found.item.customer_id, rules, now);
-    const force = input.force === true;
-    if (found.type === 'booking') return this.checkInBooking(found.item, rules, now, force);
-    if (found.type === 'join') return this.checkInJoin(found.item, rules, now, force);
-    throw new RuleError('No booking, member or pass with that code.', 404);
+    if (found.type === 'pass') {
+      const pass = this.passView(found.item, { now });
+      return {
+        found: true, kind: 'pass', type: 'pass', checkedIn: false, row: null, pass, notice: null, due: 0,
+        customer: found.item.customerId ? { id: found.item.customerId } : null,
+        message: `${pass.label}: ${plural(pass.sessionsLeft, 'session', 'sessions')} left of ${pass.sessionsTotal}.`,
+      };
+    }
+    if (found.type === 'booking') return this.checkInBooking(found.item, rules, now, options);
+    return this.checkInJoin(found.item, rules, now, options);
   }
 
   clock(ms, rules) {
     return new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
   }
 
-  checkInBooking(booking, rules, now, force) {
+  /** The end of a check-in message: what to charge, or that it's paid */
+  payWords(item) {
+    const due = dueOf(item);
+    if (due) return ` Charge ${dollars(due)}.`;
+    if (item.paid && (item.amount || 0) > 0) return item.pay === 'now' ? ' Paid online.' : ' Paid.';
+    return '';
+  }
+
+  /**
+   * Check in a booking or game seat: it's seated and arrived, and a pass is used (usePassAtCheckIn). Someone already
+   * in stays in, and a pass can still be applied. A cancelled booking, a no-show or another day's booking comes back
+   * unchecked with a reason unless force is set. No awaits.
+   */
+  checkInBooking(booking, rules, now, { force = false, pass: choice, by = null } = {}) {
     const time = new LairTime(rules.tz);
     const game = booking.gameId ? this.game(booking.gameId) : null;
-    const due = booking.paid ? 0 : booking.amount || 0;
-    const base = { found: true, kind: 'booking', booking: { ...booking, players: booking.party }, game: game ? this.gameView(game, this.state(game.start - 1, game.end + 1), rules) : null, due };
-    const who = `${booking.name}${booking.people ? `, ${booking.people} ${booking.people === 1 ? 'person' : 'people'}` : ''}${booking.tables.length ? ` at ${booking.tables.join(', ')}` : ''}`;
-    const pay = due ? ` Charge ${dollars(due)}.` : booking.paid ? ' Paid online.' : '';
+    const base = {
+      found: true, kind: 'booking', type: 'booking', game: game ? this.gameView(game, this.state(game.start - 1, game.end + 1), rules) : null,
+      customer: booking.customerId ? { id: booking.customerId } : null,
+    };
+    const result = (item, extra) => {
+      const row = this.bookingRow(item, rules);
+      return { ...base, booking: { ...this.staffBooking(item), players: item.party }, row, due: row.due, ...extra };
+    };
+    const who = (item) => `${item.name}${item.people ? `, ${plural(item.people, 'person', 'people')}` : ''}${item.tables.length ? ` at ${item.tables.join(', ')}` : ''}`;
     if (['cancelled', 'noshow'].includes(booking.status) && !force) {
-      return { ...base, checkedIn: false, reason: 'cancelled', message: `This booking was ${booking.status === 'noshow' ? 'marked as a no-show' : 'cancelled'}: ${who}.` };
+      const message = `This booking was ${booking.status === 'noshow' ? 'marked as a no-show' : 'cancelled'}: ${who(booking)}.`;
+      return result(booking, { checkedIn: false, reason: 'cancelled', message, notice: message, pass: null });
     }
-    if ((booking.status === 'seated' || booking.status === 'done' || booking.arrivedAt) && !force) {
-      return { ...base, checkedIn: true, reason: 'already', message: `Already checked in${booking.arrivedAt ? ` at ${this.clock(booking.arrivedAt, rules)}` : ''}: ${who}.${pay}` };
+    const already = !force && (booking.status === 'seated' || booking.status === 'done' || Boolean(booking.arrivedAt));
+    if (!already && !force && !(now >= booking.start - 3 * HOUR && now <= booking.end)) {
+      const message = `This booking is for ${time.label(booking.start)}, not today: ${who(booking)}.`;
+      return result(booking, { checkedIn: false, reason: 'not-today', message, notice: message, pass: null });
     }
-    if (!(now >= booking.start - 3 * HOUR && now <= booking.end) && !force) {
-      return { ...base, checkedIn: false, reason: 'not-today', message: `This booking is for ${time.label(booking.start)}, not today: ${who}.` };
+    if (!already) {
+      booking.status = 'seated';
+      booking.arrivedAt = now;
+      booking.holdUntil = null;
+      this.saveBooking(booking, now);
     }
-    booking.status = 'seated';
-    booking.arrivedAt = now;
-    booking.holdUntil = null;
-    this.saveBooking(booking, now);
-    return { ...base, booking: { ...booking, players: booking.party }, checkedIn: true, message: `Checked in: ${who}.${pay}` };
+    const used = this.usePassAtCheckIn(this.booking(booking.id), choice, rules, now, by);
+    const fresh = this.booking(booking.id);
+    const message = already
+      ? `Already checked in${fresh.arrivedAt ? ` at ${this.clock(fresh.arrivedAt, rules)}` : ''}: ${who(fresh)}.${this.payWords(fresh)}`
+      : `Checked in: ${who(fresh)}.${this.payWords(fresh)}`;
+    return result(fresh, { checkedIn: true, already, ...(already ? { reason: 'already' } : {}), message, notice: used.notice, pass: used.pass });
   }
 
-  checkInJoin(join, rules, now, force) {
+  /** Check in an event sign-up. Passes never cover event entry. Like checkInBooking. No awaits. */
+  checkInJoin(join, rules, now, { force = false, pass: choice } = {}) {
     const time = new LairTime(rules.tz);
-    const due = join.paid ? 0 : join.amount || 0;
-    const base = { found: true, kind: 'join', join, due };
-    const label = `${join.name}, ${join.people} ${join.people === 1 ? 'person' : 'people'} for ${join.title || 'the event'}`;
-    const pay = due ? ` Charge ${dollars(due)}.` : join.paid ? ' Paid online.' : '';
-    if (join.status === 'cancelled' && !force) return { ...base, checkedIn: false, reason: 'cancelled', message: `This sign-up was cancelled: ${label}.` };
-    if (join.arrivedAt && !force) return { ...base, checkedIn: true, reason: 'already', message: `Already checked in: ${label}.${pay}` };
-    if (!(now >= join.start - 3 * HOUR && now <= join.end) && !force) return { ...base, checkedIn: false, reason: 'not-today', message: `This sign-up is for ${time.label(join.start)}, not today: ${label}.` };
-    this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, hold_until = NULL, updated_at = ? WHERE id = ?", now, now, join.id);
-    return { ...base, join: { ...join, status: 'attended', arrivedAt: now }, checkedIn: true, message: `Checked in: ${label}.${pay}` };
+    const base = { found: true, kind: 'join', type: 'join', customer: join.customerId ? { id: join.customerId } : null, pass: null };
+    const result = (item, extra) => {
+      const row = this.joinRow(item);
+      return { ...base, join: this.staffJoinView(item), row, due: row.due, ...extra };
+    };
+    const label = (item) => `${item.name}, ${plural(item.people, 'person', 'people')} for ${item.title || 'the event'}`;
+    if (join.status === 'cancelled' && !force) {
+      const message = `This sign-up was cancelled: ${label(join)}.`;
+      return result(join, { checkedIn: false, reason: 'cancelled', message, notice: message });
+    }
+    const already = !force && Boolean(join.arrivedAt);
+    if (!already && !force && !(now >= join.start - 3 * HOUR && now <= join.end)) {
+      const message = `This sign-up is for ${time.label(join.start)}, not today: ${label(join)}.`;
+      return result(join, { checkedIn: false, reason: 'not-today', message, notice: message });
+    }
+    if (!already) this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, hold_until = NULL, updated_at = ? WHERE id = ?", now, now, join.id);
+    const fresh = this.joinById(join.id);
+    const notice = choice && choice !== 'none' ? "Passes don't cover event entry, so no pass was used." : null;
+    const message = already ? `Already checked in: ${label(fresh)}.${this.payWords(fresh)}` : `Checked in: ${label(fresh)}.${this.payWords(fresh)}`;
+    return result(fresh, { checkedIn: true, already, ...(already ? { reason: 'already' } : {}), message, notice });
   }
 
-  /** One of a member's bookings or sign-ups today, as the counter sees it */
-  dayItem(item, rules, type) {
-    if (type === 'join') {
-      return {
-        kind: 'join', id: item.id, ref: item.ref, title: item.title || 'Event', start: item.start, end: item.end, people: item.people, tables: [],
-        status: item.status, checkedIn: Boolean(item.arrivedAt), due: item.paid ? 0 : item.amount || 0, occurrenceId: item.occurrenceId,
-      };
-    }
-    const game = item.gameId ? this.game(item.gameId) : null;
-    const where = `${item.tables.length > 1 ? 'Tables' : 'Table'} ${item.tables.join(', ')}`;
-    const title = item.kind === 'gm-seat' ? game?.title || 'GM game' : item.kind === 'gm' ? `Running ${game?.title || 'a game'}` : where;
+  /** A booking as staff see it on the floor and at check-in: its saved pass, what passes covered, what's due and the refund */
+  staffBooking(b, memo = null) {
+    return { ...b, pass: this.savedPass(b, memo), covered: b.covered || 0, due: dueOf(b), refund: b.refund || null };
+  }
+
+  /** What a booking is, in a few words: the game, the event, or the tables */
+  rowTitle(b, rules, game = null) {
+    if (b.kind === 'gm-seat') return game?.title || 'GM game';
+    if (b.kind === 'gm') return `Running ${game?.title || 'a game'}`;
+    if (b.occurrenceId) return findOccurrence(rules, b.occurrenceId)?.title || 'Event game spot';
+    return `${b.tables.length > 1 ? 'Tables' : 'Table'} ${b.tables.join(', ')}`;
+  }
+
+  /**
+   * A booking or game seat as a check-in row (POST /checkin, the POS and its Today list): { id, type, ref, name, people,
+   * tables, start, end, status, arrivedAt, paid, amount, covered, due, customerId, pass, refund, note } plus kind, title,
+   * players, gameId and occurrenceId. memo: see savedPass.
+   */
+  bookingRow(b, rules, { memo = null, game } = {}) {
+    const g = game !== undefined ? game : b.gameId ? this.game(b.gameId) : null;
     return {
-      kind: 'booking', id: item.id, ref: item.ref, title, start: item.start, end: item.end, people: item.people, tables: item.tables, status: item.status,
-      checkedIn: Boolean(item.arrivedAt) || ['seated', 'done'].includes(item.status), due: item.paid ? 0 : item.amount || 0, gameId: item.gameId || null,
+      id: b.id, type: 'booking', kind: b.kind, ref: b.ref, name: b.name || '', people: b.people, tables: b.tables, start: b.start, end: b.end,
+      status: b.status, arrivedAt: b.arrivedAt || null, paid: b.paid, amount: b.amount || 0, covered: b.covered || 0, due: dueOf(b),
+      customerId: b.customerId || null, pass: this.savedPass(b, memo), refund: b.refund || null, note: b.notes || '',
+      title: this.rowTitle(b, rules, g), players: b.party || [], gameId: b.gameId || null, occurrenceId: b.occurrenceId || null,
     };
   }
 
-  /** A member card at the counter: that person's bookings and sign-ups today (none are checked in until staff pick one). */
-  memberCard(customerId, rules, now) {
+  /** An event sign-up as a check-in row. Its entry fee is never covered by a pass. */
+  joinRow(j) {
+    return {
+      id: j.id, type: 'join', kind: 'join', ref: j.ref, name: j.name || '', people: j.people, tables: [], start: j.start, end: j.end,
+      status: j.status, arrivedAt: j.arrivedAt || null, paid: j.paid, amount: j.amount || 0, covered: 0, due: dueOf(j),
+      customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
+      gameId: null, occurrenceId: j.occurrenceId,
+    };
+  }
+
+  /** The Lair day `now` falls in: its key and [midnight, next midnight) */
+  dayWindow(rules, now) {
     const time = new LairTime(rules.tz);
-    const today = time.key(now);
-    const from = time.at(today, 0);
-    const to = time.at(addDays(today, 1), 0);
+    const day = time.key(now);
+    return { day, from: time.at(day, 0), to: time.at(addDays(day, 1), 0) };
+  }
+
+  /**
+   * A member's bookings, game seats and sign-ups today, cancelled ones left out: theirs by account, or by their email.
+   * A GM's own table isn't one (the GM isn't a row). Returns { member, bookings, joins }.
+   */
+  memberToday(customerId, rules, now) {
+    const { from, to } = this.dayWindow(rules, now);
+    const member = this.memberRow(customerId);
+    const email = member?.email || '';
     const bookings = this.sql
-      .exec("SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? AND starts_at < ? AND status NOT IN ('cancelled', 'noshow') ORDER BY starts_at", customerId, from, to)
+      .exec(
+        `SELECT * FROM bookings WHERE (customer_id = ? OR (? != '' AND lower(email) = lower(?))) AND kind != 'gm' AND ends_at > ? AND starts_at < ?
+           AND status != 'cancelled' ORDER BY starts_at`,
+        String(customerId), email, email, from, to,
+      )
       .toArray().map((r) => this.rowToBooking(r));
     const joins = this.sql
-      .exec("SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? AND starts_at < ? AND status != 'cancelled' ORDER BY starts_at", customerId, from, to)
+      .exec(
+        `SELECT * FROM event_joins WHERE (customer_id = ? OR (? != '' AND lower(email) = lower(?))) AND ends_at > ? AND starts_at < ? AND status != 'cancelled'
+         ORDER BY starts_at`,
+        String(customerId), email, email, from, to,
+      )
       .toArray().map((r) => this.rowToJoin(r));
-    const member = this.memberRow(customerId);
+    return { member, bookings, joins };
+  }
+
+  /**
+   * A member code at the counter: that member's rows today (each with what's left to pay) and their active passes.
+   * Nothing is checked in until staff pick a row. bookings is the round 3 list of the same day.
+   */
+  memberCard(customerId, rules, now) {
+    const { member, bookings, joins } = this.memberToday(customerId, rules, now);
     if (!member && !bookings.length && !joins.length) throw new RuleError('No booking, member or pass with that code.', 404);
-    const items = [...bookings.map((b) => this.dayItem(b, rules, 'booking')), ...joins.map((j) => this.dayItem(j, rules, 'join'))].sort((a, b) => a.start - b.start);
+    const memo = new Map();
+    const rows = [...bookings.map((b) => this.bookingRow(b, rules, { memo })), ...joins.map((j) => this.joinRow(j))].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
     const name = member?.name || member?.first_name || bookings[0]?.name || joins[0]?.name || member?.code || 'This member';
-    const due = items.reduce((sum, x) => sum + x.due, 0);
-    const list = items.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${x.checkedIn ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
+    const due = rows.reduce((sum, x) => sum + x.due, 0);
+    const here = (x) => Boolean(x.arrivedAt) || ['seated', 'done', 'attended'].includes(x.status);
+    const list = rows.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${here(x) ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
     return {
-      found: true, kind: 'member', member: { customerId, name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null }, customer: { id: customerId },
-      bookings: items, checkedIn: false, due,
-      message: items.length ? `${name} has ${items.length} ${items.length === 1 ? 'booking' : 'bookings'} today. ${list}.` : `${name} has nothing booked today.`,
+      found: true, kind: 'member', type: 'member', checkedIn: false, customer: { id: String(customerId) },
+      member: { customerId: String(customerId), name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null },
+      rows, passes: this.activePasses(customerId, now), due,
+      bookings: rows.map((x) => ({
+        kind: x.type, id: x.id, ref: x.ref, title: x.title, start: x.start, end: x.end, people: x.people, tables: x.tables, status: x.status,
+        checkedIn: here(x), due: x.due, gameId: x.gameId, occurrenceId: x.occurrenceId,
+      })),
+      message: rows.length ? `${name} has ${plural(rows.length, 'booking', 'bookings')} today. ${list}.` : `${name} has nothing booked today.`,
     };
   }
 
@@ -2109,6 +2259,7 @@ export class Lair {
     const result = this.ticketCheckIn(input, rules, Date.now());
     let lines = [];
     let customerId = null;
+    if (result.kind === 'pass') return { ...result, lines };
     if (result.kind === 'member') {
       customerId = result.customer.id;
       lines = result.bookings.filter((x) => x.due > 0).map((x) => this.posLine(x.kind === 'join' ? this.joinById(x.id) : this.booking(x.id), x.kind, x.due));
@@ -2259,12 +2410,14 @@ export class Lair {
     const unit = occurrence.entryFee || room.price;
     const plan = this.paymentPlan(unit > 0 ? occurrence.payment : 'store', input.pay);
     const { payNow } = plan;
+    // usePass: a session pass covers a game spot's price a person at check-in, like a table.
+    const pass = input.usePass ? this.passForBooking(input.usePass, who, now) : null;
     const spotId = makeId('bk');
     const booking = {
       id: spotId, ref: this.newCode(name, 'booking', spotId, now), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
       name, email, phone: trimmed(input.phone, 40), notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: unit * people,
       occurrenceId: occurrence.id, pay: payNow ? 'now' : 'day', paid: false, status: payNow ? 'held' : 'confirmed',
-      holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null,
+      holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null, passId: pass?.id || null,
     };
     this.saveBooking(booking, now);
     this.touchMember(who.customerId, { name, email }, now);
@@ -2466,6 +2619,342 @@ export class Lair {
       kind: p.kind, source: p.source, ...(p.kind === 'credit' ? { amount: p.amount } : { percent: p.percent, code: p.code || null, expiresAt: p.expires_at }),
       at: p.created_at, owed: p.status !== 'given',
     };
+  }
+
+  /* ---------------- session passes ---------------- */
+  rowToPass(r) {
+    return {
+      id: r.id, code: r.code, label: r.label, sessionsTotal: r.sessions_total, sessionsUsed: r.sessions_used, cover: r.cover,
+      customerId: r.customer_id || null, holderName: r.holder_name || '', holderEmail: r.holder_email || '', note: r.note || '',
+      pricePaid: r.price_paid || 0, createdAt: r.created_at, createdBy: r.created_by || null, expiresAt: r.expires_at || null, status: r.status,
+    };
+  }
+
+  passRow(id) {
+    const row = id ? this.sql.exec('SELECT * FROM passes WHERE id = ?', String(id)).toArray()[0] : null;
+    return row ? this.rowToPass(row) : null;
+  }
+
+  /** A pass by its code, however it's typed */
+  passByCode(code) {
+    const found = String(code ?? '').trim() ? this.findCode(code) : null;
+    return found?.type === 'pass' ? found.item : null;
+  }
+
+  /** 'void' (staff cancelled it), 'expired', 'used' (no sessions left) or 'active' */
+  passStatus(p, now = Date.now()) {
+    if (p.status === 'void') return 'void';
+    if (p.expiresAt && p.expiresAt < now) return 'expired';
+    if (p.sessionsTotal - p.sessionsUsed <= 0) return 'used';
+    return 'active';
+  }
+
+  /** A pass as its holder sees it (GET /me, claiming one) */
+  memberPassView(p, now = Date.now()) {
+    return {
+      code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), cover: p.cover,
+      expiresAt: p.expiresAt, status: this.passStatus(p, now),
+    };
+  }
+
+  /** A pass as staff see it, with its uses (newest first) unless uses is false */
+  passView(p, { uses = true, now = Date.now() } = {}) {
+    const view = {
+      id: p.id, code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsUsed: p.sessionsUsed, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed),
+      cover: p.cover, holder: { customerId: p.customerId, name: p.holderName, email: p.holderEmail }, note: p.note, pricePaid: p.pricePaid,
+      expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt,
+    };
+    if (uses) {
+      view.uses = this.sql
+        .exec('SELECT u.*, b.ref AS ref FROM pass_uses u LEFT JOIN bookings b ON b.id = u.booking_id WHERE u.pass_id = ? ORDER BY u.at DESC', p.id)
+        .toArray()
+        .map((u) => ({ id: u.id, bookingId: u.booking_id, ref: u.ref || '', people: u.people, covered: u.covered, at: u.at, undone: u.undone_at || null }));
+    }
+    return view;
+  }
+
+  /** A booking's saved pass as staff and the POS see it: { code, label, left }. memo: a Map that saves lookups in lists. */
+  savedPass(b, memo = null) {
+    if (!b?.passId) return null;
+    let p = memo?.get(b.passId);
+    if (p === undefined) {
+      p = this.passRow(b.passId);
+      memo?.set(b.passId, p);
+    }
+    return p ? { code: p.code, label: p.label, left: Math.max(0, p.sessionsTotal - p.sessionsUsed) } : null;
+  }
+
+  /** A booking's saved pass as the person who booked sees it: { code, label, sessionsLeft } */
+  ownPass(b) {
+    const p = this.savedPass(b);
+    return p ? { code: p.code, label: p.label, sessionsLeft: p.left } : null;
+  }
+
+  /** A member's passes for My Lair: active ones, and ones used up in the last 30 days */
+  memberPasses(customerId, now) {
+    return this.sql
+      .exec(
+        `SELECT p.*, (SELECT MAX(u.at) FROM pass_uses u WHERE u.pass_id = p.id AND u.undone_at IS NULL) AS last_used
+         FROM passes p WHERE p.customer_id = ? AND p.status = 'active' ORDER BY p.created_at DESC, p.rowid DESC`,
+        String(customerId),
+      )
+      .toArray()
+      .filter((r) => {
+        const status = this.passStatus(this.rowToPass(r), now);
+        return status === 'active' || (status === 'used' && (r.last_used || 0) > now - 30 * 24 * HOUR);
+      })
+      .map((r) => this.memberPassView(this.rowToPass(r), now));
+  }
+
+  /** A member's passes that can be used now, as staff see them (the POS shows them when it scans a member code) */
+  activePasses(customerId, now) {
+    return this.sql.exec("SELECT * FROM passes WHERE customer_id = ? AND status = 'active' ORDER BY created_at DESC, rowid DESC", String(customerId)).toArray()
+      .map((r) => this.rowToPass(r))
+      .filter((p) => this.passStatus(p, now) === 'active')
+      .map((p) => this.passView(p, { uses: false, now }));
+  }
+
+  /** The last moment of a Lair day ('YYYY-MM-DD'): a pass that expires that day works until midnight. */
+  endOfDay(key, rules) {
+    const text = String(key || '').trim();
+    const real = /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T00:00:00Z`)) && new Date(`${text}T00:00:00Z`).toISOString().slice(0, 10) === text;
+    if (!real) throw new RuleError('Pick the expiry date from the calendar.');
+    return new LairTime(rules.tz).at(addDays(text, 1), 0) - 1;
+  }
+
+  /**
+   * A staff form's pass fields (creating and updating share the rules). Only what was sent is returned. A holder email
+   * that matches a member links them; a pass needs a member or a holder's name. No awaits.
+   */
+  passFields(input, rules, now, existing = null) {
+    const out = {};
+    if (input.label != null || !existing) {
+      out.label = trimmed(input.label, 80);
+      if (!out.label) throw new RuleError('Add a label, like "Warhammer league: 10 sessions".');
+    }
+    if (input.sessions != null || !existing) {
+      const sessions = Math.floor(Number(input.sessions));
+      if (!(sessions >= 1 && sessions <= 100)) throw new RuleError('A pass has 1 to 100 sessions.');
+      if (existing && sessions < existing.sessionsUsed) {
+        throw new RuleError(`This pass has used ${plural(existing.sessionsUsed, 'session', 'sessions')}, so it can't have fewer than ${existing.sessionsUsed}.`);
+      }
+      out.sessionsTotal = sessions;
+    }
+    if (input.note != null) out.note = trimmed(input.note, 300);
+    if (input.expires != null) {
+      out.expiresAt = input.expires ? this.endOfDay(input.expires, rules) : null;
+      if (out.expiresAt && out.expiresAt < now) throw new RuleError('That expiry date has already passed.');
+    }
+    if (input.status != null) {
+      if (!['active', 'void'].includes(input.status)) throw new RuleError('A pass is active or void.');
+      out.status = input.status;
+    }
+    if (input.pricePaid != null && input.pricePaid !== '') {
+      const value = Number(input.pricePaid);
+      if (!(value >= 0 && value <= 10000)) throw new RuleError('Check the price paid.');
+      out.pricePaid = Math.round(value * 100);
+    }
+    if (input.cover != null && input.cover !== '') {
+      const value = Number(input.cover);
+      if (!(value > 0 && value <= 1000)) throw new RuleError('Check how much a session covers.');
+      out.cover = Math.round(value * 100);
+    }
+    const email = input.holderEmail != null ? trimmed(input.holderEmail, 120) : null;
+    if (email && !isEmail(email)) throw new RuleError("Check the holder's email address.");
+    const wanted = input.customerId != null && input.customerId !== '' ? trimmed(input.customerId, 40) : null;
+    const member = (wanted && this.memberRow(wanted)) || (email && this.memberByEmail(email)) || null;
+    if (wanted && !member) throw new RuleError('That member could not be found.', 404);
+    if (member) {
+      Object.assign(out, { customerId: member.customer_id, holderName: trimmed(input.holderName, 80) || member.name || member.first_name || '', holderEmail: email || member.email || '' });
+    } else {
+      if (input.customerId === null || input.customerId === '') out.customerId = null;
+      if (input.holderName != null) out.holderName = trimmed(input.holderName, 80);
+      if (email != null) out.holderEmail = email;
+    }
+    const holderName = out.holderName ?? existing?.holderName ?? '';
+    const customerId = out.customerId !== undefined ? out.customerId : existing?.customerId ?? null;
+    if (!customerId && !holderName) throw new RuleError("Add the holder's name, or find them in the members.");
+    return out;
+  }
+
+  /**
+   * POST /passes (staff): { label, sessions (1-100), customerId?, holderName?, holderEmail?, note?, pricePaid? (dollars),
+   * expires? ('YYYY-MM-DD'), cover? (dollars) }. Each session covers one person's table fee up to cover, the standard
+   * table price unless it says otherwise. The code comes from the holder's name (DG with none). Returns { pass }.
+   */
+  async createPass(input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const f = this.passFields(input, rules, now);
+    const id = makeId('ps');
+    const code = this.newCode(f.holderName || '', 'pass', id, now);
+    this.write(
+      `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
+         created_by, expires_at, status) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      id, code, f.label, f.sessionsTotal, f.cover ?? rules.prices.table, f.customerId || null, f.holderName || null, f.holderEmail || null, f.note || null,
+      f.pricePaid || 0, now, who.customerId || 'staff', f.expiresAt || null,
+    );
+    return { pass: this.passView(this.passRow(id), { now }) };
+  }
+
+  /** GET /passes?q=&status=active|void|all (staff): newest first, up to 100. q looks in the label, holder and code. */
+  listPasses(url, who) {
+    this.requireStaff(who);
+    const now = Date.now();
+    const q = trimmed(url.searchParams.get('q'), 80).toLowerCase();
+    const key = codeKey(q);
+    const wanted = url.searchParams.get('status');
+    const status = ['active', 'void', 'all'].includes(wanted) ? wanted : 'active';
+    const rows = status === 'all'
+      ? this.sql.exec('SELECT * FROM passes ORDER BY created_at DESC, rowid DESC').toArray()
+      : this.sql.exec('SELECT * FROM passes WHERE status = ? ORDER BY created_at DESC, rowid DESC', status).toArray();
+    const matches = (r) => !q || [r.label, r.holder_name, r.holder_email].some((v) => String(v || '').toLowerCase().includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key));
+    return { passes: rows.filter(matches).slice(0, 100).map((r) => this.passView(this.rowToPass(r), { now })) };
+  }
+
+  /** POST /passes/:id/update (staff): label, sessions (never below the sessions used), note, expires, status or holder. */
+  async updatePass(id, input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const p = this.passRow(id);
+    if (!p) throw new RuleError('That pass could not be found.', 404);
+    const f = this.passFields(input, rules, now, p);
+    const columns = {
+      label: 'label', sessionsTotal: 'sessions_total', note: 'note', expiresAt: 'expires_at', status: 'status', pricePaid: 'price_paid', cover: 'cover',
+      customerId: 'customer_id', holderName: 'holder_name', holderEmail: 'holder_email',
+    };
+    const keys = Object.keys(f).filter((k) => columns[k]);
+    if (keys.length) this.write(`UPDATE passes SET ${keys.map((k) => `${columns[k]} = ?`).join(', ')} WHERE id = ?`, ...keys.map((k) => (f[k] === '' ? null : f[k] ?? null)), p.id);
+    return { pass: this.passView(this.passRow(p.id), { now }) };
+  }
+
+  /** POST /passes/:id/apply { bookingId } (staff): save the pass on a booking, to be used when they check in. */
+  async applyPass(id, input, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const p = this.passRow(id);
+    if (!p) throw new RuleError('That pass could not be found.', 404);
+    const bookingId = trimmed(input.bookingId, 80);
+    const booking = bookingId ? this.booking(bookingId) : null;
+    if (!booking) {
+      if (bookingId && this.joinById(bookingId)) throw new RuleError('Passes cover table sessions, not event entry.');
+      throw new RuleError('That booking could not be found.', 404);
+    }
+    if (booking.kind === 'gm') throw new RuleError("The GM's own table has nothing to pay.");
+    this.write('UPDATE bookings SET pass_id = ?, updated_at = ? WHERE id = ?', p.id, now, booking.id);
+    return { booking: this.staffBooking(this.booking(booking.id)), pass: this.passView(p, { now }) };
+  }
+
+  /** POST /passes/uses/:useId/undo (staff): the sessions go back on the pass, and the booking owes what the pass covered. */
+  async undoPassUse(useId, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const use = this.sql.exec('SELECT * FROM pass_uses WHERE id = ?', String(useId)).toArray()[0];
+    if (!use) throw new RuleError('That pass use could not be found.', 404);
+    if (!use.undone_at) {
+      this.write('UPDATE pass_uses SET undone_at = ? WHERE id = ?', now, use.id);
+      this.write('UPDATE passes SET sessions_used = MAX(0, sessions_used - ?) WHERE id = ?', use.people, use.pass_id);
+      const booking = this.booking(use.booking_id);
+      if (booking) {
+        const next = { ...booking, covered: Math.max(0, booking.covered - use.covered) };
+        this.write('UPDATE bookings SET covered = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, settled(next) ? 1 : 0, now, booking.id);
+      }
+    }
+    const booking = this.booking(use.booking_id);
+    return { pass: this.passView(this.passRow(use.pass_id), { now }), row: booking ? this.bookingRow(booking, rules) : null };
+  }
+
+  /** POST /me/passes/claim { code } (logged in): link a pass nobody has claimed yet to this member. */
+  async claimPass(input, who) {
+    if (!who.customerId) throw new RuleError('Log in to add a pass to your account.', 401);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const p = this.passByCode(input.code);
+    if (!p || p.status === 'void') throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
+    const me = String(who.customerId);
+    if (p.customerId && p.customerId !== me) throw new RuleError('That pass already belongs to someone. Ask us at the counter.', 409);
+    if (!p.customerId) {
+      const member = this.memberRow(me);
+      this.write(
+        'UPDATE passes SET customer_id = ?, holder_name = COALESCE(holder_name, ?), holder_email = COALESCE(holder_email, ?) WHERE id = ? AND customer_id IS NULL',
+        me, member?.name || null, member?.email || null, p.id,
+      );
+    }
+    return { pass: this.memberPassView(this.passRow(p.id), now) };
+  }
+
+  /**
+   * usePass on POST /bookings and POST /events/:id/reserve: the code of a pass linked to the logged-in member, saved on
+   * the booking for its check-in. Staff may use any active pass; anyone else's is a 403. No awaits.
+   */
+  passForBooking(code, who, now) {
+    const p = this.passByCode(code);
+    if (!p && who.staff) throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
+    if (!p || (!who.staff && (!who.customerId || p.customerId !== String(who.customerId)))) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
+    const status = this.passStatus(p, now);
+    if (status === 'void') throw new RuleError('That pass has been cancelled. Ask us at the counter.', 409);
+    if (status === 'expired') throw new RuleError('That pass has expired. Ask us at the counter about a new one.', 409);
+    if (status === 'used') throw new RuleError('That pass has no sessions left. Book without it, friend, or ask us about a new one.', 409);
+    return p;
+  }
+
+  /**
+   * One person's part of a booking a pass can cover: the table fee (tables and walk-ins pay the room price), a GM
+   * seat's table part (its price less the game's GM fee, which is still paid), or a game spot's price a person.
+   */
+  coverablePerPerson(b, rules) {
+    const unit = Math.round((b.amount || 0) / Math.max(1, b.people || 1));
+    if (b.kind !== 'gm-seat') return unit;
+    const game = b.gameId ? this.game(b.gameId) : null;
+    return Math.max(0, unit - (game?.gmFee ?? rules.prices.gmCredit));
+  }
+
+  /**
+   * A pass at check-in. choice: a pass code, 'none', or left out for the booking's saved pass. One session covers one
+   * person's coverable part up to the pass's cover; sessions used = the people not covered or paid yet, up to the
+   * sessions left. Nothing already paid is covered, and a void or expired pass is skipped with a notice. Returns
+   * { pass: { code, label, used, left, covered, useId } | null, notice }. No awaits.
+   */
+  usePassAtCheckIn(booking, choice, rules, now, by = null) {
+    if (choice === 'none') return { pass: null, notice: null };
+    const explicit = typeof choice === 'string' && choice.trim() !== '';
+    const p = explicit ? this.passByCode(choice) : this.passRow(booking.passId);
+    if (!p) return { pass: null, notice: explicit ? 'No pass with that code, so no pass was used. Check the code and try again.' : null };
+    if (booking.kind === 'gm') return { pass: null, notice: explicit ? "The GM's own table has nothing to pay, so no pass was used." : null };
+    if (dueOf(booking) <= 0) {
+      return { pass: null, notice: explicit ? `${booking.paid ? 'This booking is already paid' : 'Nothing is left to pay on this booking'}, so no pass was used.` : null };
+    }
+    const status = this.passStatus(p, now);
+    if (status === 'void') return { pass: null, notice: `Pass ${p.code} is void, so it wasn't used.` };
+    if (status === 'expired') {
+      const day = new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(p.expiresAt));
+      return { pass: null, notice: `Pass ${p.code} expired on ${day}, so it wasn't used.` };
+    }
+    const left = Math.max(0, p.sessionsTotal - p.sessionsUsed);
+    const owed = owing(booking);
+    const unit = Math.max(1, Math.round((booking.amount || 0) / Math.max(1, booking.people || 1)));
+    const coveredPeople = this.sql.exec('SELECT COALESCE(SUM(people), 0) AS n FROM pass_uses WHERE booking_id = ? AND undone_at IS NULL', booking.id).one().n;
+    const unpaid = Math.min(Math.max(0, (booking.people || 1) - coveredPeople), Math.ceil(owed / unit));
+    if (unpaid <= 0) return { pass: null, notice: null };
+    if (!left) return { pass: null, notice: `Pass ${p.code} has no sessions left, so it wasn't used.` };
+    const per = Math.min(p.cover, this.coverablePerPerson(booking, rules));
+    if (per <= 0) return { pass: null, notice: explicit ? "There's no table fee on this booking for a pass to cover, so no pass was used." : null };
+    const sessions = Math.min(unpaid, left);
+    const covered = Math.min(sessions * per, owed);
+    const useId = makeId('pu');
+    this.write('INSERT INTO pass_uses (id, pass_id, booking_id, people, covered, at, by, undone_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)', useId, p.id, booking.id, sessions, covered, now, by);
+    this.write('UPDATE passes SET sessions_used = sessions_used + ? WHERE id = ?', sessions, p.id);
+    const next = { ...booking, covered: (booking.covered || 0) + covered };
+    this.write('UPDATE bookings SET covered = ?, pass_id = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, explicit ? p.id : booking.passId, settled(next) ? 1 : 0, now, booking.id);
+    const notice = sessions < unpaid ? `Pass ${p.code} had ${plural(left, 'session', 'sessions')} left, so it covered ${sessions} of ${plural(unpaid, 'person', 'people')}.` : null;
+    return { pass: { code: p.code, label: p.label, used: sessions, left: left - sessions, covered, useId }, notice };
   }
 
   /* ---------------- members ---------------- */
@@ -2687,7 +3176,7 @@ export class Lair {
     const view = (b) => ({
       id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
       paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
-      payment: b.pay === 'now' ? 'online' : 'store',
+      payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b),
     });
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
@@ -2724,6 +3213,8 @@ export class Lair {
         .map((m) => ({ seriesId: m.series_id, title: parse(m.details, {}).title || 'GM game', people: m.people, players: parse(m.players, []) })),
       rolls: this.rollsState(who.customerId, now, new LairTime(rules.tz).key(now)),
       prizes: this.sql.exec('SELECT * FROM prizes WHERE customer_id = ? ORDER BY created_at DESC LIMIT 10', who.customerId).toArray().map((p) => this.prizeView(p)),
+      // Session passes: active ones, and ones used up in the last 30 days
+      passes: this.memberPasses(who.customerId, now),
     };
   }
 

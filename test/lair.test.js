@@ -2421,3 +2421,239 @@ test('POS check-in: the fee still to pay as cart lines with the ticket code, the
   assert.equal((await pos('member', { code: 'ZZ-GOBLIN-77' })).status, 404);
   assert.equal((await pos('member', { code: table.ref })).status, 404);
 });
+
+/* ---------------- 3 Oct 2026, round 4 ---------------- */
+
+/** POST /passes as staff; returns the pass */
+async function makePass(body = {}) {
+  const res = await call('POST', 'passes', { label: 'Warhammer league: 10 sessions', sessions: 10, holderName: 'Sam Jones', ...body }, 'staff');
+  assert.equal(res.status, 200, res.data.error);
+  return res.data.pass;
+}
+const passNamed = async (code) => (await call('GET', `passes?status=all&q=${encodeURIComponent(code)}`, null, 'staff')).data.passes[0];
+
+test('passes: staff make, find and change them; the code comes from the holder; a holder email links the member', async () => {
+  assert.equal((await call('POST', 'passes', { label: 'x', sessions: 1, holderName: 'Sam' }, '1001')).status, 403);
+  assert.equal((await call('GET', 'passes', null, '1001')).status, 403);
+  const pass = await makePass({ note: 'Paid cash', pricePaid: 80, expires: '2026-12-31' });
+  assert.match(pass.code, /^SJ-[A-Z]{3,9}-([1-9]|1\d|20)$/);
+  assert.deepEqual(
+    [pass.label, pass.sessionsTotal, pass.sessionsUsed, pass.sessionsLeft, pass.cover, pass.pricePaid, pass.status, pass.note, pass.holder, pass.uses, pass.createdAt],
+    ['Warhammer league: 10 sessions', 10, 0, 10, 1000, 8000, 'active', 'Paid cash', { customerId: null, name: 'Sam Jones', email: '' }, [], NOW],
+  );
+  assert.equal(pass.expiresAt, at('2027-01-01', 0) - 1, 'it works until midnight on its last day');
+  const { codeKey } = await import('../src/core.js');
+  assert.deepEqual({ ...lair.sql.exec('SELECT kind, target_id FROM codes WHERE key = ?', codeKey(pass.code)).one() }, { kind: 'pass', target_id: pass.id });
+  assert.match((await makePass({ holderName: '李雷', label: 'Door prize' })).code, /^DG-/, 'no usable letters: DG');
+
+  const refused = async (body, status, error) => {
+    const res = await call('POST', 'passes', { label: 'Gift pack', sessions: 5, holderName: 'Ana', ...body }, 'staff');
+    assert.deepEqual([res.status, res.data.error], [status, error], JSON.stringify(body));
+  };
+  await refused({ label: ' ' }, 422, 'Add a label, like "Warhammer league: 10 sessions".');
+  await refused({ sessions: 0 }, 422, 'A pass has 1 to 100 sessions.');
+  await refused({ sessions: 101 }, 422, 'A pass has 1 to 100 sessions.');
+  await refused({ holderName: '' }, 422, "Add the holder's name, or find them in the members.");
+  await refused({ expires: '2026-09-30' }, 422, 'That expiry date has already passed.');
+  await refused({ expires: '2026-02-30' }, 422, 'Pick the expiry date from the calendar.');
+  await refused({ customerId: '4040' }, 404, 'That member could not be found.');
+  await refused({ holderEmail: 'not an email' }, 422, "Check the holder's email address.");
+
+  // A holder email that matches a member links them, with their name; cover is in dollars.
+  await call('POST', 'bookings', tableBooking({ name: 'Kiri Smith', email: 'kiri@example.com' }), '2002');
+  const gift = await makePass({ label: 'Gift pack: 10 sessions', holderName: '', holderEmail: 'KIRI@example.com', cover: 15 });
+  assert.deepEqual([gift.holder, gift.cover], [{ customerId: '2002', name: 'Kiri Smith', email: 'KIRI@example.com' }, 1500]);
+  assert.match(gift.code, /^KS-/);
+
+  // Newest first; q looks in the label, the holder and the code (any way it's typed).
+  const list = async (query) => (await call('GET', `passes${query}`, null, 'staff')).data.passes.map((p) => p.code);
+  assert.equal((await list('')).length, 3);
+  assert.equal((await list(''))[0], gift.code);
+  assert.deepEqual(await list('?q=kiri'), [gift.code]);
+  assert.deepEqual(await list(`?q=${pass.code.toLowerCase().replace(/-/g, ' ')}`), [pass.code]);
+  assert.deepEqual(await list('?q=LEAGUE'), [pass.code]);
+  // Changing a pass: void ones drop out of the default list.
+  const changed = await call('POST', `passes/${pass.id}/update`, { label: 'League: 12 sessions', sessions: 12, note: '', status: 'void', expires: '' }, 'staff');
+  assert.deepEqual([changed.data.pass.label, changed.data.pass.sessionsTotal, changed.data.pass.note, changed.data.pass.status, changed.data.pass.expiresAt], ['League: 12 sessions', 12, '', 'void', null]);
+  assert.equal(changed.data.pass.code, pass.code, 'codes never change');
+  assert.deepEqual(await list('?q=league'), []);
+  assert.deepEqual(await list('?q=league&status=void'), [pass.code]);
+  assert.equal((await list('?status=all')).length, 3);
+  assert.equal((await call('POST', 'passes/ps_nope/update', { label: 'x' }, 'staff')).status, 404);
+  assert.equal((await call('POST', `passes/${pass.id}/update`, { status: 'lost' }, 'staff')).status, 422);
+});
+
+test('passes at check-in: a $10 table is fully covered, the $15 room pays $5 a person, and a GM seat still pays its GM fee', async () => {
+  const pass = await makePass({ sessions: 20 });
+  const one = (await call('POST', 'bookings', tableBooking({ tables: ['T5'], people: 1 }))).data.booking;
+  const res = await call('POST', 'checkin', { code: one.ref, pass: pass.code.toLowerCase() }, 'staff');
+  assert.equal(res.status, 200, res.data.error);
+  const { useId, ...used } = res.data.pass;
+  assert.match(useId, /^pu_/);
+  assert.deepEqual(used, { code: pass.code, label: pass.label, used: 1, left: 19, covered: 1000 });
+  assert.deepEqual([res.data.checkedIn, res.data.due, res.data.notice], [true, 0, null]);
+  assert.deepEqual([res.data.row.type, res.data.row.ref, res.data.row.amount, res.data.row.covered, res.data.row.due, res.data.row.paid], ['booking', one.ref, 1000, 1000, 0, true]);
+  assert.deepEqual(res.data.row.pass, { code: pass.code, label: pass.label, left: 19 }, 'the pass is saved on the booking');
+  assert.doesNotMatch(res.data.message, /Charge/);
+
+  const fancy = (await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 4, email: 'f@example.com' }))).data.booking;
+  const room = await call('POST', 'checkin', { code: fancy.ref, pass: pass.code }, 'staff');
+  assert.deepEqual([room.data.pass.used, room.data.pass.covered, room.data.row.amount, room.data.due], [4, 4000, 6000, 2000], '$15 a person: the pass covers $10 of each');
+  assert.match(room.data.message, /Charge \$20\.00\./);
+
+  const game = await call('POST', 'games', { title: 'Curse of Strahd', system: 'D&D 5e', gm: 'Ana', blurb: 'x', seats: 4, tables: ['A1'], start: at('2026-10-01', 15), end: at('2026-10-01', 18) }, 'gm');
+  const seat = (await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.data.game.id, people: 2, name: 'Mia', email: 'mia@example.com' }, 'mia')).data.booking;
+  const gm = await call('POST', 'checkin', { code: seat.ref, pass: pass.code }, 'staff');
+  assert.deepEqual([gm.data.row.amount, gm.data.pass.used, gm.data.pass.covered, gm.data.due], [3000, 2, 2000, 1000], 'a $15 seat: $10 table part covered, the $5 GM fee is still paid');
+  const free = await call('POST', 'games', { title: 'Free GM', system: 'Other', gm: 'Bo', blurb: 'x', seats: 4, tables: ['A2'], gmFee: 0, start: at('2026-10-01', 15), end: at('2026-10-01', 18) }, 'gm');
+  const freeSeat = (await call('POST', 'bookings', { kind: 'gm-seat', gameId: free.data.game.id, people: 1, name: 'Leo', email: 'leo@example.com' }, 'leo')).data.booking;
+  assert.deepEqual((await call('POST', 'checkin', { code: freeSeat.ref, pass: pass.code }, 'staff')).data.due, 0, 'no GM fee: the $10 seat is covered');
+
+  // Checking in again uses nothing more; the floor shows the pass, what it covered and what's due.
+  const again = await call('POST', 'checkin', { code: fancy.ref, pass: pass.code }, 'staff');
+  assert.deepEqual([again.data.reason, again.data.pass, again.data.due], ['already', null, 2000]);
+  assert.equal((await passNamed(pass.code)).sessionsUsed, 8);
+  const floor = (await call('GET', 'floor', null, 'staff')).data.bookings.find((b) => b.id === fancy.id);
+  assert.deepEqual([floor.covered, floor.due, floor.pass, floor.refund], [4000, 2000, { code: pass.code, label: pass.label, left: 12 }, null]);
+  assert.equal((await call('GET', 'floor')).data.bookings.find((b) => b.id === fancy.id).covered, undefined, 'the public floor shows none of it');
+  // An event entry fee is never covered.
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 15), end: at('2026-10-01', 17), tables: '', capacity: 20, entryFee: 500 },
+  ]);
+  const quiz = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Sam', email: 'sam@example.com', people: 2 })).data.join;
+  const entry = await call('POST', 'checkin', { code: quiz.ref, pass: pass.code }, 'staff');
+  assert.deepEqual([entry.data.kind, entry.data.pass, entry.data.due, entry.data.notice], ['join', null, 1000, "Passes don't cover event entry, so no pass was used."]);
+});
+
+test('passes at check-in: 3 people with 2 sessions left pay for one; void and expired passes are skipped with a notice; undo gives sessions back', async () => {
+  const pass = await makePass({ sessions: 2 });
+  const three = (await call('POST', 'bookings', tableBooking({ tables: ['T5'], people: 3 }))).data.booking;
+  const res = await call('POST', 'checkin', { code: three.ref, pass: pass.code }, 'staff');
+  assert.deepEqual([res.data.pass.used, res.data.pass.left, res.data.pass.covered, res.data.due], [2, 0, 2000, 1000]);
+  assert.equal(res.data.notice, `Pass ${pass.code} had 2 sessions left, so it covered 2 of 3 people.`);
+  const listed = await passNamed(pass.code);
+  assert.deepEqual([listed.status, listed.sessionsLeft], ['used', 0]);
+  assert.deepEqual(listed.uses.map((u) => [u.id, u.bookingId, u.ref, u.people, u.covered, u.at, u.undone]), [[res.data.pass.useId, three.id, three.ref, 2, 2000, NOW, null]]);
+  const another = (await call('POST', 'bookings', tableBooking({ tables: ['T6'], email: 'x@example.com' }))).data.booking;
+  const empty = await call('POST', 'checkin', { code: another.ref, pass: pass.code }, 'staff');
+  assert.deepEqual([empty.data.checkedIn, empty.data.pass, empty.data.due, empty.data.notice], [true, null, 4000, `Pass ${pass.code} has no sessions left, so it wasn't used.`]);
+  const fewer = await call('POST', `passes/${pass.id}/update`, { sessions: 1 }, 'staff');
+  assert.deepEqual([fewer.status, fewer.data.error], [422, "This pass has used 2 sessions, so it can't have fewer than 2."]);
+
+  // Undo: the sessions go back and the booking owes the fee again. Twice is fine.
+  assert.equal((await call('POST', `passes/uses/${res.data.pass.useId}/undo`, {}, '1001')).status, 403);
+  const undone = await call('POST', `passes/uses/${res.data.pass.useId}/undo`, {}, 'staff');
+  assert.equal(undone.status, 200, undone.data.error);
+  assert.deepEqual([undone.data.pass.sessionsLeft, undone.data.pass.status, undone.data.pass.uses[0].undone, undone.data.row.covered, undone.data.row.due, undone.data.row.paid], [2, 'active', NOW, 0, 3000, false]);
+  assert.equal((await call('POST', `passes/uses/${res.data.pass.useId}/undo`, {}, 'staff')).data.pass.sessionsLeft, 2);
+  assert.equal((await call('POST', 'passes/uses/pu_nope/undo', {}, 'staff')).status, 404);
+
+  // { id, type } checks one row in again, to apply a pass after all; 'none' skips the booking's saved pass.
+  assert.equal((await call('POST', 'checkin', { id: three.id, type: 'booking', pass: 'none' }, 'staff')).data.due, 3000);
+  const after = await call('POST', 'checkin', { id: three.id, type: 'booking' }, 'staff');
+  assert.deepEqual([after.data.pass.used, after.data.due], [2, 1000], 'left out: the pass saved on the booking');
+  await call('POST', `passes/uses/${after.data.pass.useId}/undo`, {}, 'staff');
+  // Void and expired passes are skipped with a notice; the check-in still happens.
+  await call('POST', `passes/${pass.id}/update`, { status: 'void' }, 'staff');
+  const voided = await call('POST', 'checkin', { id: three.id, type: 'booking' }, 'staff');
+  assert.deepEqual([voided.data.checkedIn, voided.data.pass, voided.data.notice, voided.data.due], [true, null, `Pass ${pass.code} is void, so it wasn't used.`, 3000]);
+  const old = await makePass({ holderName: 'Old Timer' });
+  lair.write('UPDATE passes SET expires_at = ? WHERE id = ?', NOW - 1, old.id);
+  const expired = await call('POST', 'checkin', { id: another.id, type: 'booking', pass: old.code }, 'staff');
+  assert.deepEqual([expired.data.pass, expired.data.notice, expired.data.due], [null, `Pass ${old.code} expired on 1 October 2026, so it wasn't used.`, 4000]);
+  const typo = await call('POST', 'checkin', { id: another.id, type: 'booking', pass: 'ZZ-NOPE-4' }, 'staff');
+  assert.deepEqual([typo.data.checkedIn, typo.data.notice], [true, 'No pass with that code, so no pass was used. Check the code and try again.']);
+  assert.equal((await call('POST', 'checkin', { id: 'bk_nope', type: 'booking' }, 'staff')).status, 404);
+  // A pass code at check-in shows the pass.
+  const shown = await call('POST', 'checkin', { code: old.code }, 'staff');
+  assert.deepEqual([shown.data.type, shown.data.checkedIn, shown.data.row, shown.data.pass.code, shown.data.message], ['pass', false, null, old.code, 'Warhammer league: 10 sessions: 10 sessions left of 10.']);
+});
+
+test('usePass: members save their own pass on a booking for check-in; someone else\'s is a 403; staff may use any active pass', async () => {
+  await call('POST', 'me/profile', { name: 'Sam Jones' }, '1001');
+  const mine = await makePass({ customerId: '1001', holderName: '' });
+  assert.deepEqual([mine.holder.customerId, mine.holder.name], ['1001', 'Sam Jones']);
+  const theirs = await makePass({ holderName: 'Someone Else' });
+  const booked = await call('POST', 'bookings', tableBooking({ usePass: mine.code.toLowerCase() }), '1001');
+  assert.equal(booked.status, 200, booked.data.error);
+  assert.deepEqual([booked.data.booking.pass, booked.data.booking.covered, booked.data.booking.due], [{ code: mine.code, label: mine.label, sessionsLeft: 10 }, 0, 4000]);
+  assert.equal((await passNamed(mine.code)).sessionsUsed, 0, 'nothing is used until check-in, so a no-show keeps the session');
+
+  const notYours = await call('POST', 'bookings', tableBooking({ tables: ['T6'], usePass: theirs.code, email: 'x@example.com' }), '1001');
+  assert.deepEqual([notYours.status, notYours.data.error], [403, "That pass isn't yours. Ask us at the counter."]);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T6'], usePass: mine.code, email: 'y@example.com' }))).status, 403, 'logged out');
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T6'], usePass: 'ZZ-NOPE-1', email: 'z@example.com' }), '1001')).status, 403, "a code that isn't a pass");
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM bookings WHERE tables LIKE '%T6%'").one().n, 0, 'nothing was booked');
+
+  const forPal = await call('POST', 'bookings', tableBooking({ tables: ['T7'], usePass: theirs.code, name: 'Pal', email: 'pal@example.com' }), 'staff');
+  assert.equal(forPal.data.booking.pass.code, theirs.code, 'staff may use any active pass');
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T8'], usePass: 'ZZ-NOPE-1', email: 'q@example.com' }), 'staff')).status, 404);
+  await call('POST', `passes/${theirs.id}/update`, { status: 'void' }, 'staff');
+  const cancelled = await call('POST', 'bookings', tableBooking({ tables: ['T8'], usePass: theirs.code, email: 'q@example.com' }), 'staff');
+  assert.deepEqual([cancelled.status, cancelled.data.error], [409, 'That pass has been cancelled. Ask us at the counter.']);
+
+  // Game seats and game spots take a pass too.
+  const game = await call('POST', 'games', { title: 'Pass game', system: 'Other', gm: 'Ana', blurb: 'x', seats: 4, tables: ['A1'], start: at('2026-10-01', 15), end: at('2026-10-01', 18) }, 'gm');
+  const seat = await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.data.game.id, people: 1, name: 'Sam', email: 'sam@example.com', usePass: mine.code }, '1001');
+  assert.equal(seat.data.booking.pass.code, mine.code);
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [warhammer()]);
+  const spot = await call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Sam', email: 'sam@example.com', people: 1, usePass: mine.code }, '1001');
+  assert.deepEqual([spot.status, spot.data.booking.pass?.code], [200, mine.code]);
+  assert.equal((await call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Sam', email: 'sam@example.com', people: 1, usePass: theirs.code }, '1001')).status, 403);
+
+  // At check-in the saved pass is used without being named.
+  const checked = await call('POST', 'checkin', { code: booked.data.booking.ref }, 'staff');
+  assert.deepEqual([checked.data.pass.used, checked.data.pass.covered, checked.data.due], [4, 4000, 0]);
+  const me = (await call('GET', 'me', null, '1001')).data;
+  assert.deepEqual(me.passes, [{ code: mine.code, label: mine.label, sessionsTotal: 10, sessionsLeft: 6, cover: 1000, expiresAt: null, status: 'active' }]);
+  const mineBooked = me.bookings.find((b) => b.id === booked.data.booking.id);
+  assert.deepEqual([mineBooked.pass, mineBooked.covered, mineBooked.due, mineBooked.payment, mineBooked.refund], [{ code: mine.code, label: mine.label, sessionsLeft: 6 }, 4000, 0, 'store', null]);
+  assert.deepEqual([me.seats[0].pass.code, me.seats[0].covered], [mine.code, 0]);
+});
+
+test('claiming a pass: an unclaimed one joins the member\'s passes; someone else\'s is a 409 and an unknown code a 404', async () => {
+  const gift = await makePass({ label: 'Gift pack: 10 sessions', holderName: 'Gift Voucher', sessions: 1 });
+  assert.equal((await call('POST', 'me/passes/claim', { code: gift.code })).status, 401);
+  const unknown = await call('POST', 'me/passes/claim', { code: 'ZZ-NOPE-3' }, '1001');
+  assert.deepEqual([unknown.status, unknown.data.error], [404, 'No pass with that code. Check it and try again, friend.']);
+  const ticket = (await call('POST', 'bookings', tableBooking())).data.booking;
+  assert.equal((await call('POST', 'me/passes/claim', { code: ticket.ref }, '1001')).status, 404, "a booking's code isn't a pass");
+  const claimed = await call('POST', 'me/passes/claim', { code: gift.code.toLowerCase().replace(/-/g, ' ') }, '1001');
+  assert.equal(claimed.status, 200, claimed.data.error);
+  assert.deepEqual(claimed.data.pass, { code: gift.code, label: 'Gift pack: 10 sessions', sessionsTotal: 1, sessionsLeft: 1, cover: 1000, expiresAt: null, status: 'active' });
+  assert.equal((await passNamed(gift.code)).holder.customerId, '1001');
+  assert.equal((await call('POST', 'me/passes/claim', { code: gift.code }, '1001')).status, 200, 'your own again is fine');
+  const taken = await call('POST', 'me/passes/claim', { code: gift.code }, '2002');
+  assert.deepEqual([taken.status, taken.data.error], [409, 'That pass already belongs to someone. Ask us at the counter.']);
+  const voided = await makePass({ holderName: 'Gone' });
+  await call('POST', `passes/${voided.id}/update`, { status: 'void' }, 'staff');
+  assert.equal((await call('POST', 'me/passes/claim', { code: voided.code }, '1001')).status, 404);
+
+  // Used up: My Lair keeps showing it for 30 days after its last session.
+  await call('POST', 'checkin', { code: ticket.ref, pass: gift.code }, 'staff');
+  assert.deepEqual((await call('GET', 'me', null, '1001')).data.passes.map((p) => [p.code, p.status, p.sessionsLeft]), [[gift.code, 'used', 0]]);
+  Date.now = () => NOW + 31 * 24 * HOUR;
+  assert.deepEqual((await call('GET', 'me', null, '1001')).data.passes, []);
+});
+
+test('staff apply a pass to a booking for its check-in; not to a sign-up or a GM\'s own table', async () => {
+  const pass = await makePass({ holderName: 'League Player' });
+  const booking = (await call('POST', 'bookings', tableBooking({ people: 2 }))).data.booking;
+  assert.equal((await call('POST', `passes/${pass.id}/apply`, { bookingId: booking.id }, '1001')).status, 403);
+  const applied = await call('POST', `passes/${pass.id}/apply`, { bookingId: booking.id }, 'staff');
+  assert.equal(applied.status, 200, applied.data.error);
+  assert.deepEqual([applied.data.booking.id, applied.data.booking.pass, applied.data.booking.due, applied.data.pass.code], [booking.id, { code: pass.code, label: pass.label, left: 10 }, 2000, pass.code]);
+  const checked = await call('POST', 'checkin', { code: booking.ref }, 'staff');
+  assert.deepEqual([checked.data.pass.used, checked.data.due], [2, 0]);
+  assert.equal((await call('POST', 'passes/ps_nope/apply', { bookingId: booking.id }, 'staff')).status, 404);
+  assert.equal((await call('POST', `passes/${pass.id}/apply`, { bookingId: 'bk_nope' }, 'staff')).status, 404);
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20, entryFee: 500 },
+  ]);
+  const join = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Sam', email: 'sam@example.com', people: 1 })).data.join;
+  const entry = await call('POST', `passes/${pass.id}/apply`, { bookingId: join.id }, 'staff');
+  assert.deepEqual([entry.status, entry.data.error], [422, 'Passes cover table sessions, not event entry.']);
+  const game = await call('POST', 'games', { title: 'Held', system: 'Other', gm: 'Ana', blurb: 'x', seats: 3, tables: ['A1'], start: at('2026-10-01', 18), end: at('2026-10-01', 21) }, 'gm');
+  const hold = lair.gameBookings(game.data.game.id).find((b) => b.kind === 'gm');
+  assert.equal((await call('POST', `passes/${pass.id}/apply`, { bookingId: hold.id }, 'staff')).status, 422);
+});
