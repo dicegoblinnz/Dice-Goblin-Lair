@@ -264,10 +264,11 @@ export class ShopifyAdmin {
   }
 
   /**
-   * A one-use discount code for a dice roller prize, valid for 24 hours.
-   * percent: 0-1 off everything, or 1 off the given variant only (the Dice Chest dice), with an optional minimum subtotal.
+   * A one-use discount code (dice prizes, birthday codes), valid until endsAt. percent: 0-1 off everything, or 1 off
+   * the given variant only, with an optional minimum subtotal. customerId makes it that customer's own code.
+   * combinesWith: { productDiscounts, orderDiscounts, shippingDiscounts }; all false means it works on its own only.
    */
-  async createPrizeCode({ title, code, percent, variantId = null, minSubtotalCents = 0, endsAt, customerId = null }) {
+  async createPrizeCode({ title, code, percent, variantId = null, minSubtotalCents = 0, endsAt, customerId = null, combinesWith = null }) {
     const data = await this.graphql(
       `mutation Prize($discount: DiscountCodeBasicInput!) {
         discountCodeBasicCreate(basicCodeDiscount: $discount) { codeDiscountNode { id } userErrors { field message code } }
@@ -282,7 +283,7 @@ export class ShopifyAdmin {
             items: variantId ? { products: { productVariantsToAdd: [`gid://shopify/ProductVariant/${variantId}`] } } : { all: true },
           },
           ...(minSubtotalCents > 0 ? { minimumRequirement: { subtotal: { greaterThanOrEqualToSubtotal: (minSubtotalCents / 100).toFixed(2) } } } : {}),
-          combinesWith: { productDiscounts: true, orderDiscounts: false, shippingDiscounts: true },
+          combinesWith: combinesWith || { productDiscounts: true, orderDiscounts: false, shippingDiscounts: true },
         },
       },
     );

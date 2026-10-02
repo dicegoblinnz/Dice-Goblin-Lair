@@ -517,6 +517,22 @@ export function parseBirthday(value) {
 
 /** Spend earns a bonus dice roll every $20. */
 export const ROLL_EVERY = 2000;
+/** Prize codes from the dice last 30 days. */
+export const PRIZE_CODE_DAYS = 30;
+
+/**
+ * What a member's prize roll wins. daily: a natural 1 is $1 store credit and a natural 20 a personal 10% off code.
+ * bonus: any face with a 1 in it (1, 10-19) is $1 store credit, 11 is $2, and a 20 is the 10% code.
+ */
+export function rollPrize(kind, roll) {
+  if (roll === 20) return { kind: 'percent', percent: 10 };
+  if (kind === 'daily') return roll === 1 ? { kind: 'credit', amount: 100 } : null;
+  if (kind === 'bonus') {
+    if (roll === 11) return { kind: 'credit', amount: 200 };
+    if (String(roll).includes('1')) return { kind: 'credit', amount: 100 };
+  }
+  return null;
+}
 
 /* ---------- what the public may see ---------- */
 export function publicBooking(b) {

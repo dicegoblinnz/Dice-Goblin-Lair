@@ -1150,50 +1150,32 @@ test('host your own event: the form reaches the team by email, replies go to the
   assert.match(sent[0].text, /monthly Lorcana tournament/);
 });
 
-test('dice roller: one prize roll a day; natural 20 and natural 1 make one-use codes; no code means claim at the counter', async () => {
-  Object.defineProperty(lair.shopify, 'configured', { value: true, configurable: true });
-  const codes = [];
-  lair.shopify.createPrizeCode = async (input) => {
-    codes.push(input);
-    return 'gid://shopify/DiscountCodeNode/1';
-  };
-  const rolls = [20, 1, 7];
+/** The next d20 rolls, in order (the server rolls with crypto.getRandomValues). Call the result to put it back. */
+function loadDice(rolls) {
   const realRandom = crypto.getRandomValues.bind(crypto);
   crypto.getRandomValues = (array) => {
-    if (array instanceof Uint32Array && rolls.length) {
+    if (array instanceof Uint32Array && array.length === 1 && rolls.length) {
       array[0] = rolls.shift() - 1;
       return array;
     }
     return realRandom(array);
   };
-  const roll = (client, customer = '') => lair.fetch(new Request('https://lair.test/roll', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Customer': customer, 'X-Lair-Client': client }, body: '{}' })).then((r) => r.json());
-  try {
-    const nat20 = await roll('203.0.113.7', 'cust1');
-    assert.deepEqual([nat20.roll, nat20.prizeRoll, nat20.prize.kind, nat20.prize.percent], [20, true, 'percent', 5]);
-    assert.match(nat20.prize.code, /^NAT20-/);
-    assert.equal(codes[0].percent, 0.05);
-    assert.equal(codes[0].customerId, 'cust1');
-    assert.equal(codes[0].endsAt - NOW, 24 * HOUR);
-
-    const nat1 = await roll('203.0.113.8');
-    assert.deepEqual([nat1.roll, nat1.prize.kind, nat1.prize.variantId], [1, 'dice', '50363551023207']);
-    assert.equal(codes[1].percent, 1);
-    assert.equal(codes[1].minSubtotalCents, 501);
-
-    const second = await roll('203.0.113.7', 'cust1');
-    assert.deepEqual([second.roll, second.prizeRoll], [7, false]);
-    assert.equal(second.prize.code, nat20.prize.code, 'today’s prize comes back on later rolls');
-    assert.equal(codes.length, 2);
-
-    lair.shopify.createPrizeCode = async () => {
-      throw new Error('Access denied for discountCodeBasicCreate');
-    };
-    rolls.push(20);
-    const noScope = await roll('203.0.113.9');
-    assert.equal(noScope.prize.code, null);
-    assert.match(noScope.message, /counter/);
-  } finally {
+  return () => {
     crypto.getRandomValues = realRandom;
+  };
+}
+const roll = (body, customer = '', client = '203.0.113.7') => lair
+  .fetch(new Request('https://lair.test/roll', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Customer': customer, 'X-Lair-Client': client }, body: JSON.stringify(body) }))
+  .then(async (r) => ({ status: r.status, data: await r.json() }));
+
+test('dice: a fun roll (no body, kind fun, or logged out) is just the roll, never a prize', async () => {
+  const unload = loadDice([20, 1, 20]);
+  try {
+    assert.deepEqual((await roll({})).data, { roll: 20 });
+    assert.deepEqual((await roll({ kind: 'fun' }, '1001')).data, { roll: 1 });
+    assert.deepEqual((await roll({ kind: 'daily' })).data, { roll: 20 }, 'logged out: always fun');
+  } finally {
+    unload();
   }
 });
 
@@ -1599,6 +1581,109 @@ test('POS: a counter order with a _booking line pays that booking as it is; an o
     await settle();
     assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /Paid twice/.test(m.subject)));
   } finally {
+    mail.restore();
+  }
+});
+
+test('dice: the daily roll is once per Lair day; a 1 is $1 store credit and a 20 a personal 10% code for 30 days that combines with nothing', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const credits = [];
+  const codes = [];
+  lair.shopify.creditCustomer = async (customerId, cents) => credits.push([customerId, cents]);
+  lair.shopify.createPrizeCode = async (input) => codes.push(input);
+  const unload = loadDice([1, 5, 20, 7]);
+  try {
+    const one = await roll({ kind: 'daily' }, '1001');
+    assert.deepEqual([one.data.roll, one.data.kind, one.data.prize], [1, 'daily', { kind: 'credit', source: 'daily', amount: 100, at: NOW, owed: false }]);
+    assert.match(one.data.message, /\$1 store credit/);
+    assert.deepEqual(one.data.rolls, { daily: false, bonus: 0, toNext: 2000 });
+    assert.deepEqual(credits, [['1001', 100]]);
+    const again = await roll({ kind: 'daily' }, '1001');
+    assert.equal(again.status, 409);
+    assert.match(again.data.error, /today's free roll/);
+
+    Date.now = () => NOW + 24 * HOUR;
+    const nothing = await roll({ kind: 'daily' }, '1001');
+    assert.deepEqual([nothing.data.roll, nothing.data.prize], [5, null]);
+    assert.match(nothing.data.message, /next free roll is tomorrow/);
+    const twenty = await roll({ kind: 'daily' }, '1002');
+    assert.equal(twenty.data.prize.kind, 'percent');
+    assert.equal(twenty.data.prize.percent, 10);
+    assert.match(twenty.data.prize.code, /^NAT20-/);
+    assert.equal(twenty.data.prize.expiresAt, NOW + 24 * HOUR + 30 * 24 * HOUR);
+    assert.deepEqual(
+      [codes[0].code, codes[0].percent, codes[0].customerId, codes[0].endsAt, codes[0].combinesWith],
+      [twenty.data.prize.code, 0.1, '1002', twenty.data.prize.expiresAt, { productDiscounts: false, orderDiscounts: false, shippingDiscounts: false }],
+    );
+    const me = (await call('GET', 'me', null, '1002')).data;
+    assert.deepEqual(me.rolls, { daily: false, bonus: 0, toNext: 2000 });
+    assert.deepEqual(me.prizes.map((p) => [p.kind, p.code, p.owed]), [['percent', twenty.data.prize.code, false]]);
+  } finally {
+    unload();
+  }
+});
+
+test('dice: bonus rolls, one per $20 of spend: a 1 in the face is $1, 11 is $2, 20 the code; two quick taps can\'t spend one roll twice', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const credits = [];
+  lair.shopify.creditCustomer = async (customerId, cents) => {
+    await new Promise((r) => setTimeout(r, 5));
+    credits.push([customerId, cents]);
+  };
+  lair.shopify.createPrizeCode = async () => {};
+  const spend = (n, cents) => lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', `gid://shopify/Order/${n}`, '1001', cents, 'pos', NOW);
+  spend(9, 4550);
+  const unload = loadDice([11, 14, 3, 20]);
+  try {
+    assert.deepEqual((await call('GET', 'me', null, '1001')).data.rolls, { daily: true, bonus: 2, toNext: 1450 });
+    const eleven = await roll({ kind: 'bonus' }, '1001');
+    assert.deepEqual([eleven.data.roll, eleven.data.prize.amount, eleven.data.rolls.bonus], [11, 200, 1]);
+    // One roll left and two taps at once (Shopify is slow): only one of them gets it.
+    const [a, b] = await Promise.all([roll({ kind: 'bonus' }, '1001'), roll({ kind: 'bonus' }, '1001')]);
+    assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+    assert.equal([a, b].find((r) => r.status === 200).data.prize.amount, 100, 'a 14 has a 1 in it');
+    const none = await roll({ kind: 'bonus' }, '1001');
+    assert.equal(none.status, 409);
+    assert.match(none.data.error, /Spend \$14\.50 more/);
+    assert.deepEqual(credits, [['1001', 200], ['1001', 100]]);
+    const member = (await call('GET', 'members?q=1001', null, 'staff')).data[0];
+    assert.deepEqual([member.rollsFromSpend, member.rollsUsed], [2, 2]);
+    spend(10, 1450);
+    const three = await roll({ kind: 'bonus' }, '1001');
+    assert.deepEqual([three.data.roll, three.data.prize], [3, null]);
+    assert.match(three.data.message, /No prize this time\. Every \$20/);
+    spend(11, 2000);
+    assert.equal((await roll({ kind: 'bonus' }, '1001')).data.prize.kind, 'percent');
+  } finally {
+    unload();
+  }
+});
+
+test('dice: when Shopify can\'t give the prize it\'s kept as owed, the member shows the screen at the counter, and staff get an email', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  lair.shopify.createPrizeCode = async () => {
+    throw new Error('Access denied for discountCodeBasicCreate field. Required access: `write_discounts` access scope.');
+  };
+  lair.shopify.creditCustomer = async () => {
+    throw new Error('Shopify API error 502');
+  };
+  const mail = captureEmails();
+  const unload = loadDice([20, 1]);
+  try {
+    const twenty = await roll({ kind: 'daily' }, '1001');
+    assert.equal(twenty.status, 200);
+    assert.deepEqual([twenty.data.prize.code, twenty.data.prize.owed, twenty.data.message], [null, true, 'Show this screen at the counter to claim it.']);
+    Date.now = () => NOW + 24 * HOUR;
+    const one = await roll({ kind: 'daily' }, '1001');
+    assert.deepEqual([one.data.prize.kind, one.data.prize.amount, one.data.prize.owed], ['credit', 100, true]);
+    await settle();
+    const alerts = mail.sent.filter((m) => m.to === 'staff@dicegoblin.test');
+    assert.equal(alerts.length, 2);
+    assert.match(alerts[0].text, /10% off one order/);
+    assert.match(alerts[1].text, /\$1\.00 store credit/);
+    assert.deepEqual((await call('GET', 'me', null, '1001')).data.prizes.map((p) => p.owed), [true, true]);
+  } finally {
+    unload();
     mail.restore();
   }
 });
