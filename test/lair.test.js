@@ -1184,3 +1184,95 @@ test('dice roller: one prize roll a day; natural 20 and natural 1 make one-use c
     crypto.getRandomValues = realRandom;
   }
 });
+
+/* ---------------- 3 Oct 2026, round 3 ---------------- */
+
+/** Turn on emails for `target` and catch everything sent to Resend (single and batch). Call restore() when done. */
+function captureEmails(target = lair) {
+  target.baseEnv = { ...target.baseEnv, RESEND_API_KEY: 're_test', FROM_EMAIL: 'Dice Goblin <bookings@dicegoblin.test>', STAFF_EMAIL: 'staff@dicegoblin.test' };
+  const sent = [];
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(String(url));
+    for (const m of Array.isArray(body) ? body : [body]) sent.push({ ...m, to: m.to[0], batch: Array.isArray(body) });
+    return new Response(JSON.stringify(Array.isArray(body) ? { data: body.map((_, i) => ({ id: `e${i}` })) } : { id: 'e1' }), { status: 200 });
+  };
+  return { sent, calls, restore: () => { globalThis.fetch = realFetch; } };
+}
+const settle = () => new Promise((r) => setTimeout(r, 10));
+
+test('emails: one layout with a big title, a details table, a button and a footer, plus a plain-text copy', async () => {
+  const { renderEmail, hoursSummary } = await import('../src/email.js');
+  const { parseHours, DEFAULT_HOURS } = await import('../src/core.js');
+  const hours = hoursSummary(parseHours(DEFAULT_HOURS));
+  assert.equal(hours, 'Mon–Fri 4pm–midnight, Sat 10am–midnight, Sun 10am–10pm');
+  assert.equal(hoursSummary(parseHours('Mon closed\nTue 12:00-22:30')), 'Mon closed, Tue midday–10:30pm, Wed–Sun closed');
+  const { html, text } = renderEmail({
+    title: "You're booked in!",
+    intro: 'Kia ora <Sam>, see you soon.',
+    details: [['When', 'Friday 2 October, 6:00 pm'], ['Setup', ''], ['Ticket', 'SAM-4821']],
+    button: { label: 'See it in My Lair', url: 'https://www.dicegoblin.nz/pages/my-lair' },
+    footer: { name: 'Dice Goblin Lair', address: '1 Goblin Lane, Auckland 1010', phone: '021 159 6894', hours },
+  });
+  assert.match(html, /<h1[^>]*>You&#39;re booked in!<\/h1>/);
+  assert.match(html, />Dice Goblin<\/td>/);
+  assert.match(html, /Kia ora &lt;Sam&gt;/);
+  assert.match(html, /font:700[^"]*">When<\/td><td[^>]*>Friday 2 October/);
+  assert.doesNotMatch(html, />Setup</, 'empty rows are left out');
+  assert.match(html, /href="https:\/\/www\.dicegoblin\.nz\/pages\/my-lair"/);
+  assert.match(html, /1 Goblin Lane, Auckland 1010<br>021 159 6894 · Mon–Fri 4pm–midnight/);
+  assert.match(html, /name="viewport"/);
+  assert.match(text, /^YOU'RE BOOKED IN!/);
+  assert.match(text, /Ticket: +SAM-4821/);
+  assert.match(text, /See it in My Lair: https:\/\/www\.dicegoblin\.nz\/pages\/my-lair/);
+  assert.match(text, /Gobgob/);
+  assert.match(text, /--\nDice Goblin Lair\n1 Goblin Lane/);
+  const sneaky = renderEmail({ title: 'x', button: { label: 'Click', url: 'javascript:alert(1)' } });
+  assert.doesNotMatch(sneaky.html, /javascript:/);
+});
+
+test('emails: a booking confirmation goes out as HTML and text, with the shop address, phone and hours', async () => {
+  const mail = captureEmails();
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '', store_phone: '021 159 6894' }, FALLBACK, [], { address: '1 Goblin Lane, Auckland 1010' });
+  try {
+    const { data } = await call('POST', 'bookings', tableBooking());
+    assert.equal(data.emailed, true);
+    await settle();
+    assert.equal(mail.sent.length, 1);
+    const [email] = mail.sent;
+    assert.equal(email.to, 'sam@example.com');
+    assert.match(email.subject, new RegExp(data.booking.ref));
+    assert.match(email.html, /You&#39;re booked in!/);
+    assert.match(email.html, /1 Goblin Lane, Auckland 1010<br>021 159 6894 · Mon closed, Tue–Thu midday–10pm/);
+    assert.match(email.text, /When: +Thursday,? 1 October/);
+    assert.match(email.text, /Fee: +\$40\.00, pay at the counter/);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('emails: several at once go to Resend as one batch call', async () => {
+  const { sendEmails } = await import('../src/shopify.js');
+  const env = { RESEND_API_KEY: 're_test', FROM_EMAIL: 'Dice Goblin <bookings@dicegoblin.test>', REPLY_TO: 'shop@dicegoblin.test' };
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push([String(url), JSON.parse(init.body)]);
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    const three = await sendEmails(env, [1, 2, 3].map((n) => ({ to: `p${n}@example.com`, subject: 'Hi', text: 'Hello', html: '<p>Hello</p>' })));
+    assert.deepEqual([three.ok, three.sent], [true, 3]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'https://api.resend.com/emails/batch');
+    assert.deepEqual(calls[0][1].map((m) => [m.to[0], m.html, m.reply_to]), [1, 2, 3].map((n) => [`p${n}@example.com`, '<p>Hello</p>', 'shop@dicegoblin.test']));
+    const one = await sendEmails(env, [{ to: 'solo@example.com', subject: 'Hi', text: 'Hello' }]);
+    assert.equal(one.sent, 1);
+    assert.equal(calls[1][0], 'https://api.resend.com/emails');
+    assert.equal((await sendEmails({}, [{ to: 'x@example.com' }])).attempted, false);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

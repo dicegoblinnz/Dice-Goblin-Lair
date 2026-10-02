@@ -126,6 +126,7 @@ export class ShopifyAdmin {
       rooms: metaobjects(type: "lair_room", first: 50) { nodes { handle capabilities { publishable { status } } fields { key value } } }
       events: metaobjects(type: "lair_event", first: 250, sortKey: "id", reverse: true) { nodes { handle capabilities { publishable { status } } fields { key value } } }
       main: themes(roles: [MAIN], first: 1) { nodes { id name ${settingsFile} } }
+      shop { name shopAddress { address1 address2 city zip } }
       ${previewQuery}
     }`);
     // Entries saved as drafts don't show on the website, so they don't count here either.
@@ -163,7 +164,10 @@ export class ShopifyAdmin {
         };
       })
       .filter((e) => Number.isFinite(e.start));
-    return { rooms, events, settingsText, theme };
+    // The store address (Settings → Store details), the same one the theme's footer shows: for email footers.
+    const a = data.shop?.shopAddress || {};
+    const address = [a.address1, a.address2, [a.city, a.zip].filter(Boolean).join(' ')].map((x) => String(x || '').trim()).filter(Boolean).join(', ');
+    return { rooms, events, settingsText, theme, shop: { name: data.shop?.name || null, address } };
   }
 
   /** Which permissions the store granted the app, for the health check. */
@@ -292,20 +296,23 @@ export class ShopifyAdmin {
 /** Optional emails through Resend (set RESEND_API_KEY and FROM_EMAIL; STAFF_EMAIL gets staff alerts). */
 export const emailReady = (env) => Boolean(env.RESEND_API_KEY && env.FROM_EMAIL);
 
-/** Send one email through Resend. Never throws; returns { ok, attempted, status, message }. */
-export async function sendEmail(env, { to, subject, text, replyTo = null }) {
-  if (!emailReady(env) || !to) return { ok: false, attempted: false, status: 0, message: 'Email is not set up.' };
+/** One email as Resend wants it: an HTML version and a plain-text copy. */
+const resendEmail = (env, { to, subject, text, html = null, replyTo = null }) => ({
+  from: env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(replyTo || env.REPLY_TO ? { reply_to: replyTo || env.REPLY_TO } : {}),
+});
+
+async function postToResend(env, path, body) {
   try {
-    const response = await fetch('https://api.resend.com/emails', {
+    const response = await fetch(`https://api.resend.com/${path}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: env.FROM_EMAIL, to: [to], subject, text, ...(replyTo || env.REPLY_TO ? { reply_to: replyTo || env.REPLY_TO } : {}) }),
+      body: JSON.stringify(body),
     });
     if (response.ok) return { ok: true, attempted: true, status: response.status, message: 'Sent.' };
-    const body = await response.text().catch(() => '');
-    let message = body.slice(0, 300);
+    const text = await response.text().catch(() => '');
+    let message = text.slice(0, 300);
     try {
-      message = JSON.parse(body).message || message;
+      message = JSON.parse(text).message || message;
     } catch {
       // not JSON: keep the raw text
     }
@@ -315,4 +322,34 @@ export async function sendEmail(env, { to, subject, text, replyTo = null }) {
     console.error('Lair: email failed', error);
     return { ok: false, attempted: true, status: 0, message: String(error.message || error).slice(0, 300) };
   }
+}
+
+/** Send one email through Resend. Never throws; returns { ok, attempted, status, message }. */
+export async function sendEmail(env, message) {
+  if (!emailReady(env) || !message?.to) return { ok: false, attempted: false, status: 0, message: 'Email is not set up.' };
+  return postToResend(env, 'emails', resendEmail(env, message));
+}
+
+/**
+ * Send several emails (players of a cancelled game, a GM's message) in one call to Resend's batch endpoint, up to
+ * 100 at a time, so a big send doesn't trip Resend's limit of a couple of requests a second. Never throws; returns
+ * { ok, attempted, status, message, sent }.
+ */
+export async function sendEmails(env, messages) {
+  const todo = (messages || []).filter((m) => m?.to);
+  if (!emailReady(env)) return { ok: false, attempted: false, status: 0, message: 'Email is not set up.', sent: 0 };
+  if (!todo.length) return { ok: true, attempted: false, status: 0, message: 'Nobody to email.', sent: 0 };
+  if (todo.length === 1) {
+    const result = await sendEmail(env, todo[0]);
+    return { ...result, sent: result.ok ? 1 : 0 };
+  }
+  let sent = 0;
+  let last = null;
+  for (let i = 0; i < todo.length; i += 100) {
+    const chunk = todo.slice(i, i + 100);
+    const result = await postToResend(env, 'emails/batch', chunk.map((m) => resendEmail(env, m)));
+    if (result.ok) sent += chunk.length;
+    else last = result;
+  }
+  return last ? { ...last, sent } : { ok: true, attempted: true, status: 200, message: 'Sent.', sent };
 }

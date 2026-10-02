@@ -9,8 +9,9 @@ import {
   eventOccurrences, findOccurrence, isFree, makeId, makeRef, oneRoom, parseTableList, publicBooking, publicGame, readSettingsData, refundFor,
   rulesFromSettings, seatsTaken, tableIndex,
 } from './core.js';
-import { ShopifyAdmin, emailReady, sendEmail } from './shopify.js';
+import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
+import { hoursSummary, renderEmail } from './email.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -373,9 +374,9 @@ export class Lair {
     let source = 'built-in defaults';
     if (this.shopify.configured) {
       try {
-        const { rooms, events, settingsText, theme } = await this.shopify.loadLairData(this.env.THEME_ID);
+        const { rooms, events, settingsText, theme, shop } = await this.shopify.loadLairData(this.env.THEME_ID);
         const settings = settingsText ? readSettingsData(settingsText) : {};
-        rules = rulesFromSettings(settings, rooms.length ? rooms : FALLBACK_ROOMS, events);
+        rules = rulesFromSettings(settings, rooms.length ? rooms : FALLBACK_ROOMS, events, shop || {});
         const hasLair = Object.keys(settings).some((key) => key.startsWith('lair_'));
         source = theme && hasLair ? `theme "${theme.name}" (${theme.id}${theme.live ? ', live' : ', preview'})` : 'Shopify rooms, default rules (no theme has the booking settings)';
       } catch (error) {
@@ -622,39 +623,98 @@ export class Lair {
     return `${time.label(booking.start)} to ${clock.format(new Date(booking.end))}`;
   }
 
-  /** Booking confirmation email. Returns whether one was sent (needs RESEND_API_KEY and FROM_EMAIL). */
+  /* ---------------- email ---------------- */
+  /** A link into the website, for email buttons */
+  link(path) {
+    return `${String(this.env.STORE_URL || 'https://www.dicegoblin.nz').replace(/\/$/, '')}${path || '/'}`;
+  }
+
+  /** A finished email: the layout with the shop's address, phone and hours in the footer. */
+  letter(to, subject, content, extra = {}) {
+    const rules = this.rulesCache || rulesFromSettings({}, FALLBACK_ROOMS, []);
+    const footer = { name: 'Dice Goblin Lair', address: rules.contact?.address, phone: rules.contact?.phone, hours: hoursSummary(rules.hours) };
+    return { to, subject, ...renderEmail({ ...content, footer }), ...extra };
+  }
+
+  /** Where a page lives on the website (theme settings, with the theme's defaults) */
+  page(name) {
+    return this.link((this.rulesCache?.pages || rulesFromSettings({}, [], []).pages)[name]);
+  }
+
+  /** "Mia (Valeros), Leo" */
+  partyLine(party) {
+    return (party || []).map((p) => (p.character ? `${p.name} (${p.character})` : p.name)).join(', ');
+  }
+
+  /** Booking confirmation email: tables, game seats and event game spots. Returns whether one was sent (needs RESEND_API_KEY and FROM_EMAIL). */
   confirm(booking, rules, game = null) {
     if (!emailReady(this.env) || !isEmail(booking.email)) return false;
-    const names = booking.party?.length ? ` for ${booking.party.map((p) => (p.character ? `${p.name} (${p.character})` : p.name)).join(', ')}` : '';
-    const what = game
-      ? `${booking.people} ${booking.people === 1 ? 'seat' : 'seats'} at ${game.title} (${game.system}, GM ${game.gm})${names}`
-      : `${booking.people} ${booking.people === 1 ? 'person' : 'people'} at table${booking.tables.length > 1 ? 's' : ''} ${booking.tables.join(', ')}`;
-    const fee = booking.paid ? `${dollars(booking.amount)}, paid. Thank you!` : `${dollars(booking.amount)}, pay at the counter.`;
-    const changes = booking.paid
-      ? `Need to cancel? Reply to this email or call us at least ${rules.refundHours} hours before your booking and we'll refund you. After that the fee can't be refunded.`
-      : 'Plans changed? Reply to this email or give us a call so we can free up the table.';
-    this.later(
-      this.mail({
-        to: booking.email,
-        subject: `Booked: ${this.when(booking, rules)} (${booking.ref})`,
-        text: `Kia ora ${booking.name},\n\nYou're booked at the Dice Goblin Lair.\n\nWhen: ${this.when(booking, rules)}\nWhat: ${what}\nFee: ${fee}\nBooking: ${booking.ref}\n\nShow ${booking.ref} at the counter when you arrive.\n${changes}\n\nSee you at the Lair!\nDice Goblin`,
-      }),
-    );
+    const when = this.when(booking, rules);
+    const fee = !booking.amount ? 'Nothing to pay' : booking.paid ? `${dollars(booking.amount)}, paid. Thank you!` : `${dollars(booking.amount)}, pay at the counter`;
+    const show = `Show ${booking.ref} at the counter when you arrive (the QR code in My Lair works too).`;
+    const changes = booking.paid && booking.pay === 'now'
+      ? `Need to cancel? Do it in My Lair or call us at least ${rules.refundHours} hours before, and you'll get your money back. After that the fee can't be refunded.`
+      : null;
+    const tables = `${booking.tables.length > 1 ? 'Tables' : 'Table'} ${booking.tables.join(', ')}`;
+    const event = booking.occurrenceId ? findOccurrence(rules, booking.occurrenceId) : null;
+    let subject;
+    let content;
+    if (game) {
+      subject = `Seat saved: ${game.title}, ${when} (${booking.ref})`;
+      content = {
+        title: 'Your seat is saved!',
+        intro: `Kia ora ${booking.name}, you're in for ${game.title}${game.gm ? ` with GM ${game.gm}` : ''}. Gobgob has pulled up a chair for you.`,
+        details: [
+          ['Game', `${game.title}${game.system ? ` (${game.system})` : ''}`], ['When', when], ['Players', this.partyLine(booking.party)], ['Where', tables],
+          ['Fee', fee], ['Ticket', booking.ref],
+        ],
+        outro: [show, changes || "Can't make it after all? Drop your seat in My Lair and Gobgob will let your GM know."],
+      };
+    } else {
+      const extras = { wargame: 'Wargame (double tables)', bigbox: 'Big box game (double tables)', celebrating: 'Celebrating something' };
+      subject = `${event ? `Game spot booked: ${event.title}` : "You're booked"}: ${when} (${booking.ref})`;
+      content = {
+        title: event ? 'Your game spot is booked!' : "You're booked in!",
+        intro: event
+          ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Gobgob's guarding your tables.`
+          : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
+        details: [
+          ['When', when], ['Where', tables], ['People', String(booking.people)],
+          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', fee], ['Ticket', booking.ref],
+        ],
+        outro: [show, changes || 'Plans changed? Cancel in My Lair or give us a call, so someone else can have the table.'],
+      };
+    }
+    this.later(this.mail(this.letter(booking.email, subject, { ...content, button: { label: 'See it in My Lair', url: this.page('myLair') } })));
     return true;
   }
 
-  notifyStaff(subject, text) {
+  /** An alert for the team (STAFF_EMAIL). content: { title, intro, details, outro }. */
+  notifyStaff(subject, content) {
     if (!emailReady(this.env) || !this.env.STAFF_EMAIL) return;
-    this.later(this.mail({ to: this.env.STAFF_EMAIL, subject, text }));
+    this.later(this.mail(this.letter(this.env.STAFF_EMAIL, subject, {
+      button: { label: 'Open the staff page', url: this.page('staff') }, signoff: 'Gobgob, keeping an eye on the Lair', ...content,
+    })));
   }
 
-  /** Send an email and keep the outcome in the status table, so a wrong key or an unverified domain shows up there. */
+  /** Record an email result in the status table, so a wrong key or an unverified domain shows up there. */
+  noteEmail(result) {
+    if (!result.attempted) return;
+    const day = new Date().toISOString().slice(0, 10);
+    this.note({ email: result.ok ? { ok: true, day } : { ok: false, status: result.status, message: result.message, day } });
+  }
+
+  /** Send one email */
   async mail(message) {
     const result = await sendEmail(this.env, message);
-    if (result.attempted) {
-      const day = new Date().toISOString().slice(0, 10);
-      this.note({ email: result.ok ? { ok: true, day } : { ok: false, status: result.status, message: result.message, day } });
-    }
+    this.noteEmail(result);
+    return result;
+  }
+
+  /** Send many emails in one go (Resend's batch endpoint). Returns { ok, sent, … }. */
+  async mailMany(messages) {
+    const result = await sendEmails(this.env, messages);
+    this.noteEmail(result);
     return result;
   }
 
@@ -677,7 +737,13 @@ export class Lair {
       booking.holdUntil = null;
       this.saveBooking(booking, now);
       this.dropDraft(booking);
-      if (refund.due) this.notifyStaff(`Refund due: ${booking.ref}`, `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead. Refund ${dollars(refund.amount)} in Shopify (order ${refund.orderId || 'see Orders'}).`);
+      if (refund.due) {
+        this.notifyStaff(`Refund due: ${booking.ref}`, {
+          title: 'Refund due',
+          intro: `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
+          details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
+        });
+      }
       return { booking: this.ownView(booking), refund };
     }
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
@@ -798,10 +864,11 @@ export class Lair {
       if (created.length || skipped.length) report.push({ series: row.id, created: created.length, skipped: skipped.length });
       if (skipped.length) {
         const details = parse(row.details, {});
-        this.notifyStaff(
-          `Game series needs a table: ${details.title}`,
-          `${details.gm}'s ${row.schedule} game ${details.title} couldn't get its tables on:\n${skipped.map((x) => `- ${new LairTime(rules.tz).label(x.start)}: ${x.reason}`).join('\n')}\n\nFind them another table on the staff page, or let the GM know.`,
-        );
+        this.notifyStaff(`Game series needs a table: ${details.title}`, {
+          title: 'A game series needs a table',
+          intro: `${details.gm}'s ${row.schedule} game ${details.title} couldn't get its tables on these dates. Find them another table on the staff page, or let the GM know.`,
+          details: skipped.map((x) => [new LairTime(rules.tz).label(x.start), x.reason]),
+        });
       }
     }
     return report;
@@ -848,12 +915,15 @@ export class Lair {
       );
     }
     if (!approved) {
-      const fee = details.gmFee > 500 ? `\nGM fee: ${dollars(details.gmFee)} a player (above the standard $5, so it needs your OK). Seats are ${dollars(first.seatPrice)}.` : '';
-      const repeat = details.schedule === 'one-shot' ? '' : `\nSchedule: ${details.schedule}, ${sessions.length} session${sessions.length === 1 ? '' : 's'} listed so far.`;
-      this.notifyStaff(
-        `Game to approve: ${game.title}`,
-        `${game.gm} wants to run ${game.title} (${game.system}), ${this.when(game, rules)}, tables ${game.tables.join(', ')}, ${game.seats} seats.${repeat}${fee}\n\nApprove it on the staff page.`,
-      );
+      this.notifyStaff(`Game to approve: ${game.title}`, {
+        title: 'A game to approve',
+        intro: `${game.gm} wants to run ${game.title}. Approve it on the staff page and it goes on the games board.`,
+        details: [
+          ['Game', `${game.title} (${game.system})`], ['GM', game.gm], [details.schedule === 'one-shot' ? 'When' : 'First session', this.when(game, rules)],
+          ['Schedule', details.schedule === 'one-shot' ? '' : `${details.schedule}, ${sessions.length} session${sessions.length === 1 ? '' : 's'} listed so far`],
+          ['Tables', game.tables.join(', ')], ['Player seats', String(game.seats)], ['GM fee', `${dollars(details.gmFee)} a player (seats are ${dollars(first.seatPrice)})`],
+        ],
+      });
     }
     const view = this.state(game.start - 1, game.end + 1);
     return {
@@ -896,13 +966,20 @@ export class Lair {
       status: approved ? 'open' : 'pending', credited: null, feeApproved: game.feeApproved || details.gmFee <= 500 || who.staff, imageId: game.imageId,
     };
     const created = this.saveSession(base, session, now);
-    if (!approved) this.notifyStaff(`Game to approve: ${created.title}`, `${created.gm} added a session of ${created.title}: ${this.when(created, rules)}, tables ${created.tables.join(', ')}.\n\nApprove it on the staff page.`);
+    if (!approved) {
+      this.notifyStaff(`Game to approve: ${created.title}`, {
+        title: 'A session to approve',
+        intro: `${created.gm} added a session of ${created.title}. Approve it on the staff page and it goes on the games board.`,
+        details: [['Game', created.title], ['When', this.when(created, rules)], ['Tables', created.tables.join(', ')]],
+      });
+    }
     return { game: this.gameView(created, this.state(created.start - 1, created.end + 1), rules) };
   }
 
   /** Cancel sessions, their seats and holds, and tell the players. No awaits. */
   cancelSessions(games, rules, now) {
     let affected = 0;
+    const letters = [];
     for (const game of games) {
       const linked = this.gameBookings(game.id).filter((b) => ACTIVE.has(b.status));
       this.write("UPDATE games SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.id);
@@ -910,15 +987,20 @@ export class Lair {
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
         affected += 1;
         this.dropDraft(seat);
-        if (emailReady(this.env) && isEmail(seat.email)) {
-          this.later(this.mail({
-            to: seat.email,
-            subject: `Cancelled: ${game.title}, ${this.when(game, rules)}`,
-            text: `Kia ora ${seat.name},\n\nSorry, ${game.title} on ${this.when(game, rules)} has been cancelled.${seat.paid ? ' You paid online, so we will refund you.' : ''}\nBooking: ${seat.ref}\n\nCheck the games board for another session.\nDice Goblin`,
-          }));
-        }
+        if (!isEmail(seat.email)) continue;
+        letters.push(this.letter(seat.email, `Cancelled: ${game.title}, ${this.when(game, rules)}`, {
+          title: "Your game's been cancelled",
+          intro: [
+            `Sorry, friend: ${game.title} on ${this.when(game, rules)} has been cancelled, so your seat is cancelled too.`,
+            ...(seat.paid ? ["You paid online, so you'll get your money back. The team will sort the refund in the next few days."] : []),
+          ],
+          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Ticket', seat.ref]],
+          button: { label: 'Find another game', url: this.page('gm') },
+          signoff: 'Sorry again,\nGobgob',
+        }));
       }
     }
+    if (letters.length && emailReady(this.env)) this.later(this.mailMany(letters));
     return affected;
   }
 
@@ -956,13 +1038,19 @@ export class Lair {
         this.write('UPDATE series SET approved = 1, updated_at = ? WHERE id = ?', now, game.seriesId);
       }
     }
-    if (before === 'pending' && game.status === 'open' && emailReady(this.env) && game.gmEmail) {
+    if (before === 'pending' && game.status === 'open' && emailReady(this.env) && isEmail(game.gmEmail)) {
       const credit = game.gmFee ?? rules.prices.gmCredit;
-      this.later(this.mail({
-        to: game.gmEmail,
-        subject: `Your game is live: ${game.title}`,
-        text: `Kia ora ${game.gm},\n\n${game.title} on ${this.when(game, rules)} is now on the games board, tables ${game.tables.join(', ')}.${game.seriesId ? ' Every session of it is approved.' : ''}\n${credit ? `You earn ${dollars(credit)} store credit for each paying player after the session.` : "You're covering your players' GM fee, so they pay just the table fee."}\n\nHappy GMing!\nDice Goblin`,
-      }));
+      this.later(this.mail(this.letter(game.gmEmail, `Your game is live: ${game.title}`, {
+        title: 'Your game is on the board!',
+        intro: `Kia ora ${game.gm}, ${game.title} is approved and on the games board.${game.seriesId ? ' Every session of it is approved.' : ''} Time to start plotting, friend.`,
+        details: [
+          ['Game', game.title], [game.seriesId ? 'Next session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
+          ['Player seats', String(game.seats)],
+          ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+        ],
+        button: { label: 'See the games board', url: this.page('gm') },
+        signoff: 'Happy GMing!\nGobgob',
+      })));
     }
     const fresh = this.game(id);
     return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), affected };
@@ -1125,7 +1213,11 @@ export class Lair {
           booking.status = 'confirmed';
         } else {
           booking.notes = `${booking.notes ? `${booking.notes} ` : ''}[Paid after it was cancelled or the spot was re-booked: refund or reseat]`;
-          this.notifyStaff(`Paid but cancelled: ${booking.ref}`, `${booking.name} (${booking.email || 'no email'}) paid for ${booking.ref}, but that booking was cancelled or its spot was re-booked. Refund the order or find them another spot.`);
+          this.notifyStaff(`Paid but cancelled: ${booking.ref}`, {
+            title: 'Paid for a cancelled booking',
+            intro: `${booking.name} paid for ${booking.ref}, but that booking was cancelled or its spot was re-booked. Refund the order or find them another spot.`,
+            details: [['Booking', booking.ref], ['Name', booking.name], ['Email', booking.email || 'none'], ['Was for', this.when(booking, rules)], ['Order', orderId]],
+          });
         }
       }
       booking.holdUntil = null;
@@ -1243,14 +1335,22 @@ export class Lair {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
       join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, who.customerId || null, now, now,
     );
-    if (emailReady(this.env)) {
-      this.later(this.mail({
-        to: email,
-        subject: `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`,
-        text: `Kia ora ${name},\n\nYou're on the list for ${join.title} at the Dice Goblin Lair.\n\nWhen: ${this.when(join, rules)}\nPeople: ${people}\nSign-up: ${join.ref}\n\nShow ${join.ref} at the counter when you arrive.\nCan't make it? Reply to this email so someone else can have your spot.\n\nSee you there!\nDice Goblin`,
-      }));
-    }
+    this.confirmJoin(join, rules);
     return { join: { id: join.id, ref: join.ref, occurrenceId, people, name }, spacesLeft: left - people };
+  }
+
+  /** "You're on the list" email for an event sign-up */
+  confirmJoin(join, rules) {
+    if (!emailReady(this.env) || !isEmail(join.email)) return false;
+    const fee = !join.amount ? '' : join.paid ? `${dollars(join.amount)}, paid. Thank you!` : `${dollars(join.amount)}, pay at the counter`;
+    this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`, {
+      title: "You're on the list!",
+      intro: `Kia ora ${join.name}, you're signed up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
+      details: [['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Entry', fee], ['Ticket', join.ref]],
+      outro: [`Show ${join.ref} at the counter when you arrive (the QR code in My Lair works too).`, "Can't make it? Cancel in My Lair or reply to this email, so someone else can have your spot."],
+      button: { label: 'See it in My Lair', url: this.page('myLair') },
+    })));
+    return true;
   }
 
   async cancelJoin(id, who) {
@@ -1280,13 +1380,15 @@ export class Lair {
       this.contactHits.set(client, [...hits, now]);
     }
     if (!emailReady(this.env) || !this.env.STAFF_EMAIL) throw new RuleError("We can't send messages from here right now. Email or call us instead.", 503);
-    const line = (label, value) => (String(value || '').trim() ? `${label}: ${String(value).trim().slice(0, 200)}\n` : '');
-    const sent = await this.mail({
-      to: this.env.STAFF_EMAIL,
-      replyTo: email,
-      subject: `Event idea from ${name}${input.eventType ? `: ${String(input.eventType).slice(0, 60)}` : ''}`,
-      text: `Someone wants to host an event at the Lair. Reply to this email to answer them.\n\n${line('Name', name)}${line('Email', email)}${line('Phone', input.phone)}${line('Kind of event', input.eventType)}${line('When', input.when)}${line('How many people', input.people)}\n${details}\n`,
-    });
+    const field = (value) => String(value ?? '').trim().slice(0, 200);
+    const sent = await this.mail(this.letter(this.env.STAFF_EMAIL, `Event idea from ${name}${input.eventType ? `: ${String(input.eventType).slice(0, 60)}` : ''}`, {
+      title: 'Someone wants to host an event',
+      intro: `${name} wants to host an event at the Lair. Reply to this email to answer them.`,
+      details: [['Name', name], ['Email', email], ['Phone', field(input.phone)], ['Kind of event', field(input.eventType)], ['When', field(input.when)], ['How many people', field(input.people)]],
+      quote: details,
+      button: null,
+      signoff: 'Gobgob, passing it on',
+    }, { replyTo: email }));
     if (!sent.ok) throw new RuleError("That didn't send. Email or call us instead.", 502);
     return { ok: true };
   }
@@ -1423,11 +1525,13 @@ export class Lair {
       if (!emailReady(this.env)) result.emailTest = { ok: false, message: 'Add RESEND_API_KEY and FROM_EMAIL to the config table first.' };
       else if (!isEmail(to)) result.emailTest = { ok: false, message: 'Add STAFF_EMAIL to the config table to receive the test.' };
       else {
-        const sent = await this.mail({
-          to,
-          subject: 'Dice Goblin booking emails are working',
-          text: `Kia ora,\n\nThis is a test from the Dice Goblin booking app. Booking confirmations go out from ${this.env.FROM_EMAIL}${this.env.REPLY_TO ? `, and replies come back to ${this.env.REPLY_TO}` : ''}.\n\nDice Goblin`,
-        });
+        const sent = await this.mail(this.letter(to, 'Dice Goblin booking emails are working', {
+          title: 'Booking emails are working',
+          intro: [
+            'Kia ora! This is a test from the Dice Goblin booking app. If you can read this, Gobgob can send emails.',
+            `Booking emails go out from ${this.env.FROM_EMAIL}${this.env.REPLY_TO ? `, and replies come back to ${this.env.REPLY_TO}` : ''}.`,
+          ],
+        }));
         result.emailTest = { ok: sent.ok, to, status: sent.status, message: sent.message };
       }
     }

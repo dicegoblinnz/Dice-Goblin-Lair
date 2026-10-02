@@ -486,14 +486,22 @@ export function refundFor(booking, rules, cancelledAt) {
   return { due: false, amount: 0, orderId: booking.orderId || null, reason: `cancelled less than ${rules.refundHours} hours before the start` };
 }
 
-export function rulesFromSettings(settings = {}, rooms = [], events = []) {
+export function rulesFromSettings(settings = {}, rooms = [], events = [], shop = {}) {
   const prices = {
     table: Math.round(Number(settings.price_table ?? 10) * 100),
     gmSeat: Math.round(Number(settings.price_gm_seat ?? 15) * 100),
     gmCredit: Math.round(Number(settings.gm_credit ?? 5) * 100),
   };
   const builtRooms = buildRooms(rooms, prices.table);
+  // Page settings hold a page handle; the theme's defaults are used until they're set.
+  const page = (value, fallback) => `/pages/${String(value || '').trim().replace(/^\/?(pages\/)?/, '') || fallback}`;
   return {
+    // For email footers and buttons: the theme's phone setting and the store address from Shopify.
+    contact: { phone: String(settings.store_phone || '').trim(), address: String(shop.address || '').trim() },
+    pages: {
+      book: page(settings.page_book, 'book-a-table'), gm: page(settings.page_gm, 'gm-games'), events: page(settings.page_events, 'events-calendar'),
+      staff: page(settings.page_staff, 'lair-staff'), myLair: '/pages/my-lair',
+    },
     tz: settings.lair_timezone || 'Pacific/Auckland',
     hours: parseHours(settings.lair_hours || DEFAULT_HOURS),
     // The shop's own tables (managers run games there): closed to the public unless a manager opens them.
