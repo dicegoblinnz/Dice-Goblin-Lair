@@ -3013,3 +3013,207 @@ test('POS check-in-member: every row a member has today is checked in (passes ap
   assert.equal((await pos('checkin-member', { customerId: '4040' })).status, 404);
   assert.equal((await pos('checkin-member', {})).status, 404);
 });
+
+/* ---------------- live data: the database the live app (round 8, main at adf6ad2) has ---------------- */
+
+/** The live app has run these two migrations. Copied word for word from adf6ad2 (git show adf6ad2:src/lair.js). */
+const LIVE_MIGRATIONS = [
+  [
+    `CREATE TABLE IF NOT EXISTS bookings (
+      id TEXT PRIMARY KEY, ref TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, status TEXT NOT NULL, tables TEXT NOT NULL,
+      room TEXT, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL, people INTEGER NOT NULL, name TEXT, email TEXT,
+      phone TEXT, notes TEXT, activity TEXT, extras TEXT, pay TEXT, paid INTEGER NOT NULL DEFAULT 0, amount INTEGER NOT NULL DEFAULT 0,
+      game_id TEXT, customer_id TEXT, hold_until INTEGER, draft_order_id TEXT, order_id TEXT, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS bookings_time ON bookings (ends_at, starts_at)',
+    'CREATE INDEX IF NOT EXISTS bookings_game ON bookings (game_id)',
+    `CREATE TABLE IF NOT EXISTS games (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, system TEXT, gm TEXT, gm_customer_id TEXT, gm_email TEXT, level TEXT, age TEXT,
+      tags TEXT, safety TEXT, pregens INTEGER, blurb TEXT, tables TEXT NOT NULL, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL,
+      seats INTEGER NOT NULL, status TEXT NOT NULL, credited INTEGER, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS games_time ON games (ends_at, starts_at)',
+    `CREATE TABLE IF NOT EXISTS blocks (
+      id TEXT PRIMARY KEY, tables TEXT NOT NULL, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL, label TEXT, type TEXT,
+      created_by TEXT, created_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS blocks_time ON blocks (ends_at, starts_at)',
+    `CREATE TABLE IF NOT EXISTS credits (
+      id TEXT PRIMARY KEY, game_id TEXT NOT NULL, customer_id TEXT, players INTEGER NOT NULL, amount INTEGER NOT NULL,
+      status TEXT NOT NULL, note TEXT, created_at INTEGER)`,
+    // Hold expiry and the per-email limit run often; these keep them from reading the whole table.
+    'CREATE INDEX IF NOT EXISTS bookings_hold ON bookings (status, hold_until)',
+    'CREATE INDEX IF NOT EXISTS bookings_email_lower ON bookings (lower(email), ends_at)',
+  ],
+  // 3 Oct 2026: GM game series and fees, seat names, check-in, shop table openings, event sign-ups, GM profiles,
+  // game pictures and the dice roller.
+  [
+    'ALTER TABLE games ADD COLUMN schedule TEXT',
+    'ALTER TABLE games ADD COLUMN series_id TEXT',
+    'ALTER TABLE games ADD COLUMN gm_fee INTEGER',
+    'ALTER TABLE games ADD COLUMN seat_price INTEGER',
+    'ALTER TABLE games ADD COLUMN room TEXT',
+    'ALTER TABLE games ADD COLUMN characters TEXT',
+    'ALTER TABLE games ADD COLUMN bring TEXT',
+    'ALTER TABLE games ADD COLUMN content_notes TEXT',
+    'ALTER TABLE games ADD COLUMN session_zero TEXT',
+    'ALTER TABLE games ADD COLUMN gm_bio TEXT',
+    'ALTER TABLE games ADD COLUMN image_id TEXT',
+    'ALTER TABLE games ADD COLUMN fee_approved INTEGER',
+    'CREATE INDEX IF NOT EXISTS games_series ON games (series_id)',
+    'ALTER TABLE bookings ADD COLUMN party TEXT',
+    'ALTER TABLE bookings ADD COLUMN arrived_at INTEGER',
+    'CREATE INDEX IF NOT EXISTS bookings_customer ON bookings (customer_id, ends_at)',
+    `CREATE TABLE IF NOT EXISTS series (
+      id TEXT PRIMARY KEY, schedule TEXT NOT NULL, gm_customer_id TEXT, details TEXT NOT NULL, tables TEXT NOT NULL, clock INTEGER NOT NULL,
+      length INTEGER NOT NULL, first_day TEXT NOT NULL, status TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0, image_id TEXT,
+      created_at INTEGER, updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS openings (
+      id TEXT PRIMARY KEY, tables TEXT NOT NULL, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL, note TEXT, created_by TEXT, created_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS openings_time ON openings (ends_at, starts_at)',
+    `CREATE TABLE IF NOT EXISTS event_joins (
+      id TEXT PRIMARY KEY, ref TEXT NOT NULL UNIQUE, occurrence_id TEXT NOT NULL, event_id TEXT NOT NULL, title TEXT, starts_at INTEGER NOT NULL,
+      ends_at INTEGER NOT NULL, people INTEGER NOT NULL, name TEXT, email TEXT, note TEXT, status TEXT NOT NULL, customer_id TEXT,
+      arrived_at INTEGER, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS event_joins_occurrence ON event_joins (occurrence_id)',
+    'CREATE INDEX IF NOT EXISTS event_joins_time ON event_joins (ends_at, starts_at)',
+    'CREATE TABLE IF NOT EXISTS gm_profiles (customer_id TEXT PRIMARY KEY, name TEXT, bio TEXT, updated_at INTEGER)',
+    'CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL, owner TEXT, created_at INTEGER)',
+    `CREATE TABLE IF NOT EXISTS rolls (
+      key TEXT NOT NULL, day TEXT NOT NULL, roll INTEGER NOT NULL, prize TEXT, code TEXT, expires_at INTEGER, created_at INTEGER,
+      PRIMARY KEY (key, day))`,
+  ],
+];
+
+/** Round 8's rows, the way its code wrote them (every column it had) */
+function liveRows(sql) {
+  const booking = (b) => sql.exec(
+    `INSERT INTO bookings (id, ref, kind, status, tables, room, starts_at, ends_at, people, name, email, phone, notes, activity, extras, pay, paid, amount,
+       game_id, customer_id, hold_until, draft_order_id, order_id, party, arrived_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    b.id, b.ref, b.kind, b.status, JSON.stringify(b.tables), b.room, b.start, b.end, b.people, b.name, b.email || null, null, b.notes || null, b.activity || 'board',
+    JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount, b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null,
+    b.orderId || null, b.party ? JSON.stringify(b.party) : null, null, NOW - 2 * 24 * HOUR, NOW - 2 * 24 * HOUR,
+  );
+  booking({ id: 'bk_live1', ref: 'GOB-7K2QXM', kind: 'table', status: 'confirmed', tables: ['T5'], room: 'common-room', start: at('2026-10-01', 15), end: at('2026-10-01', 17), people: 4, name: 'Sam Jones', email: 'sam@example.com', amount: 4000, customerId: '1001' });
+  booking({ id: 'bk_live2', ref: 'GOB-PA7D22', kind: 'table', status: 'confirmed', tables: ['T6'], room: 'common-room', start: at('2026-10-01', 16), end: at('2026-10-01', 18), people: 3, name: 'Sam Jones', email: 'sam@example.com', pay: 'now', paid: true, amount: 3000, customerId: '1001', draftOrderId: 'gid://shopify/DraftOrder/50', orderId: 'gid://shopify/Order/500' });
+  booking({ id: 'bk_live3', ref: 'GOB-HE7D33', kind: 'table', status: 'held', tables: ['T7'], room: 'common-room', start: at('2026-10-02', 15), end: at('2026-10-02', 17), people: 4, name: 'Aroha', email: 'aroha@example.com', pay: 'now', amount: 4000, holdUntil: NOW + 10 * 60_000, draftOrderId: 'gid://shopify/DraftOrder/51' });
+  sql.exec(
+    `INSERT INTO games (id, title, system, gm, gm_customer_id, gm_email, level, age, tags, safety, pregens, blurb, tables, starts_at, ends_at, seats, status, credited,
+       schedule, series_id, gm_fee, seat_price, room, characters, bring, content_notes, session_zero, gm_bio, image_id, fee_approved, created_at, updated_at)
+     VALUES ('gm_live1', 'Lost Mine', 'D&D 5e', 'Ana', 'gm', 'ana@example.com', 'new', 'All ages', '[]', '[]', 1, 'Goblins!', '["A1"]', ?, ?, 4, 'open', NULL,
+       'weekly', 'sr_live1', 500, 1500, 'side-room-1', 'pregens', '', '', '', 'Runs a good table', NULL, 1, ?, ?)`,
+    at('2026-10-01', 18), at('2026-10-01', 21), NOW - 5 * 24 * HOUR, NOW - 5 * 24 * HOUR,
+  );
+  sql.exec(
+    `INSERT INTO series (id, schedule, gm_customer_id, details, tables, clock, length, first_day, status, approved, image_id, created_at, updated_at)
+     VALUES ('sr_live1', 'weekly', 'gm', ?, '["A1"]', 1080, 10800000, '2026-10-01', 'active', 1, NULL, ?, ?)`,
+    JSON.stringify({ title: 'Lost Mine', gm: 'Ana', blurb: 'Goblins!', seats: 4, gmFee: 500, schedule: 'weekly', system: 'D&D 5e', gmEmail: 'ana@example.com' }), NOW, NOW,
+  );
+  booking({ id: 'bk_gm1', ref: 'GOB-GMH9DX', kind: 'gm', status: 'confirmed', tables: ['A1'], room: 'side-room-1', start: at('2026-10-01', 18), end: at('2026-10-01', 21), people: 5, name: 'GM Ana', paid: true, amount: 0, gameId: 'gm_live1', customerId: 'gm', activity: 'rpg' });
+  booking({ id: 'bk_seat1', ref: 'GOB-SEAT77', kind: 'gm-seat', status: 'confirmed', tables: ['A1'], room: 'side-room-1', start: at('2026-10-01', 18), end: at('2026-10-01', 21), people: 2, name: 'Mia', email: 'mia@example.com', amount: 3000, gameId: 'gm_live1', customerId: 'mia', activity: 'rpg', party: [{ name: 'Mia', character: 'Valeros' }, { name: 'Kai', character: '' }] });
+  booking({ id: 'bk_seat2', ref: 'GOB-SEAT22', kind: 'gm-seat', status: 'confirmed', tables: ['A1'], room: 'side-room-1', start: at('2026-10-01', 18), end: at('2026-10-01', 21), people: 1, name: 'Leo', email: 'leo@example.com', pay: 'now', paid: true, amount: 1500, gameId: 'gm_live1', customerId: 'leo', activity: 'rpg', party: [{ name: 'Leo', character: 'Merisiel' }], orderId: 'gid://shopify/Order/502', draftOrderId: 'gid://shopify/DraftOrder/52' });
+  sql.exec(
+    `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, arrived_at, created_at, updated_at)
+     VALUES ('ej_live1', 'GOB-J9N22K', 'quiz@2026-10-01', 'quiz', 'Trivia night', ?, ?, 2, 'Bo', 'bo@example.com', 'Team Goblins', 'confirmed', '1001', NULL, ?, ?)`,
+    at('2026-10-01', 18), at('2026-10-01', 20), NOW, NOW,
+  );
+  sql.exec("INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at) VALUES ('cr_live1', 'gm_live1', 'gm', 3, 1500, 'credited', '', ?)", NOW - 7 * 24 * HOUR);
+  sql.exec("INSERT INTO rolls (key, day, roll, prize, code, expires_at, created_at) VALUES ('ip:203.0.113.7', '2026-09-30', 20, 'percent', 'NAT20-7K2QXM', ?, ?)", NOW + HOUR, NOW - 24 * HOUR);
+  sql.exec("INSERT INTO blocks (id, tables, starts_at, ends_at, label, type, created_by, created_at) VALUES ('bl_live1', '[\"T15\"]', ?, ?, 'Pokémon league', 'tournament', 'staff', ?)", at('2026-10-01', 18), at('2026-10-01', 22), NOW);
+  sql.exec("INSERT INTO openings (id, tables, starts_at, ends_at, note, created_by, created_at) VALUES ('op_live1', '[\"T1\"]', ?, ?, 'Quiet night', 'staff', ?)", at('2026-10-01', 12), at('2026-10-01', 23), NOW);
+  sql.exec("INSERT INTO gm_profiles (customer_id, name, bio, updated_at) VALUES ('gm', 'Ana', 'Runs a good table', ?)", NOW);
+}
+
+test('live data: the live app\'s database (round 8) moves to round 4, and its bookings, games and sign-ups still read, list, check in and take payments', async () => {
+  const { MIGRATIONS } = await import('../src/lair.js');
+  assert.deepEqual(MIGRATIONS.slice(0, LIVE_MIGRATIONS.length), LIVE_MIGRATIONS, 'the migrations the live app has run are never edited');
+  const ctx = fakeCtx();
+  const { sql } = ctx.storage;
+  sql.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
+  for (const statement of LIVE_MIGRATIONS.flat()) sql.exec(statement);
+  sql.exec("INSERT INTO meta (key, value) VALUES ('schema', ?)", String(LIVE_MIGRATIONS.length));
+  liveRows(sql);
+  const counts = () => Object.fromEntries(['bookings', 'games', 'event_joins', 'credits', 'rolls', 'blocks', 'openings', 'series', 'gm_profiles'].map((t) => [t, sql.exec(`SELECT COUNT(*) AS n FROM ${t}`).one().n]));
+  const before = counts();
+
+  // Deploying round 4: its code opens the same database, and every migration since runs once.
+  const open = () => {
+    lair = new Lair(ctx, { CURRENCY: 'NZD' });
+    lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: id === 'gm' });
+    lair.shopify.orderSpend = async () => null;
+    lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+      { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20 },
+    ]);
+    lair.rulesLoadedAt = NOW + 10 * 365 * 24 * HOUR;
+  };
+  open();
+  assert.equal(sql.exec("SELECT value FROM meta WHERE key = 'schema'").one().value, String(MIGRATIONS.length));
+  assert.deepEqual(counts(), before, 'no rows lost or added');
+
+  // The old rows read as before, with the new fields filled in sensibly.
+  const sam = lair.booking('bk_live1');
+  assert.deepEqual([sam.ref, sam.status, sam.tables, sam.amount, sam.paid, sam.paidAmount, sam.covered, sam.passId, sam.refund, sam.split, sam.occurrenceId], ['GOB-7K2QXM', 'confirmed', ['T5'], 4000, false, 0, 0, null, null, false, null]);
+  const online = lair.booking('bk_live2');
+  assert.deepEqual([online.paid, online.paidAmount, online.pay, online.orderId], [true, 3000, 'now', 'gid://shopify/Order/500'], 'paid in full online: paidAmount is its amount');
+  const join = lair.joinById('ej_live1');
+  assert.deepEqual([join.ref, join.status, join.pay, join.paid, join.amount, join.paidAmount, join.refund, join.note], ['GOB-J9N22K', 'confirmed', 'day', false, 0, 0, null, 'Team Goblins']);
+  assert.deepEqual([lair.game('gm_live1').title, lair.game('gm_live1').seriesId], ['Lost Mine', 'sr_live1']);
+  // Every old ref is in the codes table, so a new code can never be the same.
+  assert.deepEqual(sql.exec('SELECT key, kind, target_id FROM codes ORDER BY key').toArray().map((r) => [r.key, r.kind, r.target_id]), [
+    ['GOBGMH9DX', 'booking', 'bk_gm1'], ['GOBHE7D33', 'booking', 'bk_live3'], ['GOBJ9N22K', 'join', 'ej_live1'], ['GOBPA7D22', 'booking', 'bk_live2'],
+    ['GOBSEAT77', 'booking', 'bk_seat1'], ['GOBSEAT22', 'booking', 'bk_seat2'], ['GOB7K2QXM', 'booking', 'bk_live1'],
+  ].sort((a, b) => a[0].localeCompare(b[0])));
+
+  // They list: the staff floor, the public floor, My Lair and the POS Today list.
+  const floor = (await call('GET', 'floor', null, 'staff')).data;
+  const onFloor = (id) => floor.bookings.find((b) => b.id === id);
+  assert.deepEqual([onFloor('bk_live1').due, onFloor('bk_live2').due, onFloor('bk_live2').paidAmount, onFloor('bk_live3').status, onFloor('bk_seat1').party.length], [4000, 0, 3000, 'held', 2]);
+  assert.deepEqual(floor.games.find((g) => g.id === 'gm_live1').players.map((p) => p.name), ['Mia', 'Kai', 'Leo']);
+  assert.deepEqual(floor.joins.map((j) => [j.ref, j.due, j.payment]), [['GOB-J9N22K', 0, 'store']]);
+  assert.equal(floor.blocks[0].label, 'Pokémon league');
+  assert.equal((await call('GET', 'floor')).data.bookings.find((b) => b.id === 'bk_live1').ref, undefined, 'the public still sees no names or codes');
+  const me = (await call('GET', 'me', null, '1001')).data;
+  assert.deepEqual(me.bookings.map((b) => [b.ref, b.payment, b.due]), [['GOB-7K2QXM', 'store', 4000], ['GOB-PA7D22', 'online', 0]]);
+  assert.deepEqual(me.joins.map((j) => j.ref), ['GOB-J9N22K']);
+  assert.match(me.member.code, /^[A-Z]{2}-[A-Z]{3,9}-\d{1,2}$/, 'a member record and code are made the first time');
+  assert.deepEqual((await call('GET', 'me', null, 'gm')).data.games.map((g) => [g.title, g.players.length]), [['Lost Mine', 3]]);
+  const today = await pos('today');
+  assert.deepEqual(today.data.groups.map((g) => [g.key, g.rows.map((r) => r.ref)]), [
+    ['tables', ['GOB-7K2QXM', 'GOB-PA7D22']], ['game:gm_live1', ['GOB-SEAT22', 'GOB-SEAT77']], ['event:quiz@2026-10-01', ['GOB-J9N22K']],
+  ]);
+
+  // They check in, with or without the dash, at the staff page and the POS.
+  const checked = await call('POST', 'checkin', { code: 'gob7k2qxm' }, 'staff');
+  assert.deepEqual([checked.status, checked.data.checkedIn, checked.data.row.ref, checked.data.due], [200, true, 'GOB-7K2QXM', 4000]);
+  assert.match(checked.data.message, /Checked in: Sam Jones, 4 people at T5\. Charge \$40\.00\./);
+  assert.deepEqual((await call('POST', 'checkin', { code: 'GOB-PA7D22' }, 'staff')).data.due, 0);
+  Date.now = () => at('2026-10-01', 17, 30);
+  const seat = await pos('checkin', { code: 'GOB-SEAT77' });
+  assert.deepEqual(seat.data.lines, [{ title: 'GM seat: Lost Mine (GOB-SEAT77)', price: '30.00', quantity: 1, taxable: true, properties: { _booking: 'GOB-SEAT77' } }]);
+  assert.deepEqual((await pos('checkin', { code: 'gob seat22' })).data.lines, [], 'paid online in round 8: nothing to pay');
+  const quiz = await call('POST', 'checkin', { code: 'GOB-J9N22K' }, 'staff');
+  assert.deepEqual([quiz.data.kind, quiz.data.checkedIn, quiz.data.due], ['join', true, 0]);
+  Date.now = () => NOW;
+
+  // Payments: Shopify sending round 8's payment again counts nothing; a hold paid after the deploy is recorded.
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  lair.shopify.draftOrderOrderId = async (id) => ({ 'gid://shopify/DraftOrder/50': 'gid://shopify/Order/500', 'gid://shopify/DraftOrder/51': 'gid://shopify/Order/501' })[id] || null;
+  const line = (id, qty, price, ref) => ({ id, quantity: qty, price, properties: [{ name: '_booking', value: ref }] });
+  await internal('orders-paid', { id: 500, admin_graphql_api_id: 'gid://shopify/Order/500', source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: 'GOB-PA7D22' }], line_items: [line(5001, 3, '10.00', 'GOB-PA7D22')] });
+  assert.deepEqual([lair.booking('bk_live2').paidAmount, lair.booking('bk_live2').notes], [3000, null], 'not paid twice');
+  await internal('orders-paid', { id: 501, admin_graphql_api_id: 'gid://shopify/Order/501', source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: 'GOB-HE7D33' }], line_items: [line(5011, 4, '10.00', 'GOB-HE7D33')] });
+  const held = lair.booking('bk_live3');
+  assert.deepEqual([held.status, held.paid, held.paidAmount, held.orderId], ['confirmed', true, 4000, 'gid://shopify/Order/501']);
+  // The counter pays the rest of a round 8 booking.
+  await internal('orders-paid', { id: 503, admin_graphql_api_id: 'gid://shopify/Order/503', source_name: 'pos', line_items: [line(5031, 1, '40.00', 'GOB-7K2QXM')] });
+  assert.deepEqual([lair.booking('bk_live1').paid, lair.booking('bk_live1').paidAmount], [true, 4000]);
+
+  // New codes look like SJ-OWLBEAR-17.
+  const fresh = await call('POST', 'bookings', tableBooking({ tables: ['T9'], name: 'New Person', email: 'new@example.com' }));
+  assert.match(fresh.data.booking.ref, /^NP-[A-Z]{3,9}-\d{1,2}$/);
+
+  // Opening the database again runs nothing twice.
+  const after = counts();
+  open();
+  assert.equal(sql.exec("SELECT value FROM meta WHERE key = 'schema'").one().value, String(MIGRATIONS.length));
+  assert.deepEqual(counts(), after);
+  assert.equal(lair.booking('bk_live2').paidAmount, 3000);
+});

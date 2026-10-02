@@ -44,7 +44,7 @@ const LOCKED_IN_EMAIL = "You paid online, so you're locked in. Can't make it aft
 const SPLIT = 'Splitting the bill? Each friend can pay their share at the counter.';
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
-const MIGRATIONS = [
+export const MIGRATIONS = [
   [
     `CREATE TABLE IF NOT EXISTS bookings (
       id TEXT PRIMARY KEY, ref TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, status TEXT NOT NULL, tables TEXT NOT NULL,
