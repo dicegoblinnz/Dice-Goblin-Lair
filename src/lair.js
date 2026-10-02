@@ -5,7 +5,7 @@
 // with no `await` in between. Where a Shopify call has to come after a write (checkouts, store credit), the
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
-  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, PRIZE_CODE_DAYS, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, checkGameDetails,
+  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, checkGameDetails,
   checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId, makeRef,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rollPrize, rulesFromSettings,
   seatPlayers, seatsTaken, tableIndex, uniqueCode,
@@ -23,7 +23,7 @@ const FALLBACK_ROOMS = [
 /** Permissions the Shopify app needs (checked by the health check) */
 const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions'];
 /** Permissions only some features need: everything else works without them */
-const FEATURE_SCOPES = { write_discounts: 'dice prize and birthday codes' };
+const FEATURE_SCOPES = { write_discounts: 'birthday codes' };
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -695,6 +695,7 @@ export class Lair {
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
       if (a === 'contact' && !b) return json(await this.contact(body, who, client));
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
+      if (a === 'prizes' && b && c === 'done') return json(await this.prizeDone(decodeURIComponent(b), who));
       return json({ error: 'Not found' }, 404);
     } catch (error) {
       if (error instanceof RuleError) return json({ error: error.message }, error.status);
@@ -2289,7 +2290,7 @@ export class Lair {
     const row = found.item;
     return {
       customerId: row.customer_id, name: row.name || row.first_name || '', code: row.code,
-      rolls: this.rollsState(row.customer_id, now, new LairTime(rules.tz).key(now)),
+      rolls: this.rollsState(row.customer_id, now),
     };
   }
 
@@ -2516,12 +2517,12 @@ export class Lair {
   /**
    * POST /roll: a d20 rolled on the server.
    *   fun (no body, { kind: 'fun' }, or not logged in): just the roll, never a prize. The home page uses this.
-   *   daily (logged in, once per Lair day): a natural 1 is $1 store credit and a natural 20 a personal 10% off code.
-   *   bonus (logged in, one of the rolls their spend has earned, one per $20): 1 and 10-19 are $1 store credit, 11 is
-   *     $2, and 20 is the 10% code.
+   *   spend ('bonus' is the old name; logged in): uses one of the rolls their spend has earned, one per $20. Each "1"
+   *     on the face is $1 store credit (11 is $2) and a natural 20 is $20.
+   *   daily: retired (410).
    * The roll is claimed in the database before Shopify is asked for anything, so two quick taps can't spend one roll
-   * twice. If Shopify can't give the prize, it's kept as owed: the member shows the screen at the counter and staff
-   * get an email.
+   * twice. If Shopify can't add the store credit, the prize is kept as pending: the member shows the screen at the
+   * counter, staff get an email and mark it done (POST /prizes/:id/done).
    */
   async roll(input, who, client = '') {
     const rules = await this.rules();
@@ -2536,89 +2537,102 @@ export class Lair {
       this.rollHits.set(key, [...hits, now]);
     }
     const d20 = () => (crypto.getRandomValues(new Uint32Array(1))[0] % 20) + 1;
-    const kind = who.customerId && ['daily', 'bonus'].includes(input?.kind) ? input.kind : 'fun';
-    if (kind === 'fun') return { roll: d20() };
-    const day = new LairTime(rules.tz).key(now);
-    const before = this.rollsState(who.customerId, now, day);
-    if (kind === 'daily' && !before.daily) throw new RuleError("You've had today's free roll. Come back tomorrow!", 409);
-    if (kind === 'bonus' && before.bonus < 1) throw new RuleError(`No bonus rolls yet. Spend ${dollars(before.toNext)} more in the shop for your next one.`, 409);
+    const asked = input?.kind;
+    if (!who.customerId || !['spend', 'bonus', 'daily'].includes(asked)) return { roll: d20() };
+    if (asked === 'daily') throw new RuleError('The daily roll has retired. Every $20 you spend earns a roll.', 410);
+    if (this.rollsState(who.customerId, now).available < 1) throw new RuleError('No rolls yet, friend. Every $20 you spend earns one.', 409);
     const roll = d20();
-    const won = rollPrize(kind, roll);
+    const won = rollPrize(roll);
     const prizeId = won ? makeId('pz') : null;
-    const code = won?.kind === 'percent' ? `NAT20-${makeRef().slice(4)}` : null;
-    const expiresAt = won?.kind === 'percent' ? now + PRIZE_CODE_DAYS * 24 * HOUR : null;
-    this.write('INSERT INTO member_rolls (id, customer_id, kind, day, roll, prize_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', makeId('rl'), who.customerId, kind, day, roll, prizeId, now);
+    this.write(
+      "INSERT INTO member_rolls (id, customer_id, kind, day, roll, prize_id, created_at) VALUES (?, ?, 'spend', ?, ?, ?, ?)",
+      makeId('rl'), who.customerId, new LairTime(rules.tz).key(now), roll, prizeId, now,
+    );
     if (won) {
       this.write(
-        "INSERT INTO prizes (id, customer_id, source, kind, amount, percent, code, expires_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'pending', ?, ?)",
-        prizeId, who.customerId, kind, won.kind, won.amount || null, won.percent || null, expiresAt, now, now,
+        "INSERT INTO prizes (id, customer_id, source, kind, amount, status, created_at, updated_at) VALUES (?, ?, 'spend', 'credit', ?, 'pending', ?, ?)",
+        prizeId, who.customerId, won.amount, now, now,
       );
     }
     this.touchMember(who.customerId, {}, now);
     // --- claimed ---
-    if (!won) return { roll, kind, prize: null, message: this.noPrizeMessage(kind, this.rollsState(who.customerId, now, day)), rolls: this.rollsState(who.customerId, now, day) };
+    if (!won) return { roll, kind: 'spend', prize: null, message: 'No ones this time. Spend $20 for another go.', rolls: this.rollsState(who.customerId, now) };
     let problem = null;
     try {
       if (!this.shopify.configured) throw new Error('Shopify is not connected.');
-      if (won.kind === 'credit') {
-        await this.shopify.creditCustomer(who.customerId, won.amount, this.env.CURRENCY || 'NZD');
-      } else {
-        await this.shopify.createPrizeCode({
-          title: `Natural 20: 10% off (${code})`, code, percent: won.percent / 100, endsAt: expiresAt, customerId: who.customerId,
-          combinesWith: { productDiscounts: false, orderDiscounts: false, shippingDiscounts: false },
-        });
-      }
+      await this.shopify.creditCustomer(who.customerId, won.amount, this.env.CURRENCY || 'NZD');
     } catch (error) {
       problem = String(error.message || error).slice(0, 300);
       console.error('Lair: dice prize failed', error);
       this.note({ prizeError: { message: problem, at: new Date().toISOString() } });
     }
     // --- no awaits from here on: only this prize's own row changes ---
-    this.write('UPDATE prizes SET status = ?, code = ?, note = ?, updated_at = ? WHERE id = ?', problem ? 'owed' : 'given', problem ? null : code, problem, Date.now(), prizeId);
-    const prize = this.prizeView(this.sql.exec('SELECT * FROM prizes WHERE id = ?', prizeId).one());
+    this.write("UPDATE prizes SET status = ?, note = ?, updated_at = ? WHERE id = ? AND status = 'pending'", problem ? 'pending' : 'added', problem, Date.now(), prizeId);
+    const prize = this.prizeRow(prizeId);
     if (problem) {
       const member = this.memberRow(who.customerId);
       this.notifyStaff(`Prize to give at the counter: ${member?.name || member?.code || 'a member'}`, {
         title: 'A dice prize to give at the counter',
-        intro: "Shopify couldn't hand over a dice prize, so the member will show their screen at the counter. Give it to them there.",
-        details: [
-          ['Member', `${member?.name || 'Unknown'}${member?.code ? ` (${member.code})` : ''}`], ['Roll', `${roll} on a ${kind} roll`],
-          ['Prize', won.kind === 'credit' ? `${dollars(won.amount)} store credit` : `${won.percent}% off one order`], ['Why', problem],
-        ],
+        intro: "Shopify couldn't add a dice prize to a member's account, so they'll show their screen at the counter. Add the store credit there, then mark the prize done on the staff page.",
+        details: [['Member', `${member?.name || 'Unknown'}${member?.code ? ` (${member.code})` : ''}`], ['Roll', String(roll)], ['Prize', `${dollars(won.amount)} store credit`], ['Why', problem]],
       });
     }
     return {
-      roll, kind, prize, message: problem ? 'Show this screen at the counter to claim it.' : this.prizeMessage(kind, roll, won),
-      rolls: this.rollsState(who.customerId, Date.now(), day),
+      roll, kind: 'spend', prize: { id: prize.id, kind: 'credit', amount: prize.amount, status: prize.status },
+      message: `${this.prizeMessage(roll)}${problem ? ' Show this screen at the counter to claim it.' : ''}`,
+      rolls: this.rollsState(who.customerId, Date.now()),
     };
   }
 
-  prizeMessage(kind, roll, won) {
-    if (won.kind === 'percent') return `Natural 20! Your own 10% off code is ready. Use it within ${PRIZE_CODE_DAYS} days; it doesn't combine with other discounts.`;
-    if (kind === 'daily') return "Natural 1, and Gobgob's feeling generous: $1 store credit is on your account.";
-    if (roll === 11) return 'Double 1s! That\'s $2 store credit on your account.';
-    return `A ${roll} has a 1 in it, so $1 store credit is on your account.`;
+  /** What Gobgob says about a winning roll */
+  prizeMessage(roll) {
+    if (roll === 20) return 'Natural 20! $20 store credit is yours.';
+    if (roll === 11) return 'Two ones! $2 store credit, friend.';
+    return 'A 1 on the face: $1 store credit.';
   }
 
-  noPrizeMessage(kind, rolls) {
-    if (kind === 'daily') return 'No prize this time. Your next free roll is tomorrow.';
-    return rolls.bonus ? `No prize this time. You've got ${rolls.bonus} bonus ${rolls.bonus === 1 ? 'roll' : 'rolls'} left.` : 'No prize this time. Every $20 you spend in the shop earns another roll.';
-  }
-
-  /** A member's rolls: whether today's free roll is still there, bonus rolls banked from spend, and spend until the next one. */
-  rollsState(customerId, now, day) {
+  /** A member's rolls: available (earned from spend, one per $20, less those used), toNext (spend until the next) and per. bonus mirrors available. */
+  rollsState(customerId, now = Date.now()) {
     const spend = this.spendOf(customerId, now);
-    const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'bonus'", String(customerId)).one().n;
-    const rolledToday = this.sql.exec("SELECT 1 AS n FROM member_rolls WHERE customer_id = ? AND kind = 'daily' AND day = ?", String(customerId), day).toArray().length > 0;
-    return { daily: !rolledToday, bonus: Math.max(0, Math.floor(spend.total / ROLL_EVERY) - used), toNext: ROLL_EVERY - (spend.total % ROLL_EVERY) };
+    const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind IN ('spend', 'bonus')", String(customerId)).one().n;
+    const available = Math.max(0, Math.floor(spend.total / ROLL_EVERY) - used);
+    return { available, toNext: ROLL_EVERY - (spend.total % ROLL_EVERY), per: ROLL_EVERY, bonus: available };
   }
 
-  /** A prize as My Lair shows it. owed: Shopify couldn't hand it over yet, so it's claimed at the counter. */
+  /** One prize with its roll, or null */
+  prizeRow(id) {
+    return this.sql.exec('SELECT p.*, r.roll AS roll FROM prizes p LEFT JOIN member_rolls r ON r.prize_id = p.id WHERE p.id = ?', String(id)).toArray()[0] || null;
+  }
+
+  /**
+   * A dice prize as My Lair and staff see it: { id, kind: 'credit', amount, status, roll, at }. status: 'added' (on
+   * their account), 'pending' (to give at the counter) or 'done' (staff gave it).
+   */
   prizeView(p) {
-    return {
-      kind: p.kind, source: p.source, ...(p.kind === 'credit' ? { amount: p.amount } : { percent: p.percent, code: p.code || null, expiresAt: p.expires_at }),
-      at: p.created_at, owed: p.status !== 'given',
-    };
+    return { id: p.id, kind: p.kind, amount: p.amount || 0, status: p.status, roll: p.roll ?? null, at: p.created_at };
+  }
+
+  /** A member's last 10 dice prizes (birthday codes are emailed, so they aren't in this list), or only the pending ones */
+  memberPrizes(customerId, { pending = false } = {}) {
+    return this.sql
+      .exec(
+        `SELECT p.*, r.roll AS roll FROM prizes p LEFT JOIN member_rolls r ON r.prize_id = p.id
+         WHERE p.customer_id = ? AND p.source != 'birthday' ${pending ? "AND p.status = 'pending'" : ''} ORDER BY p.created_at DESC, p.rowid DESC LIMIT 10`,
+        String(customerId),
+      )
+      .toArray()
+      .map((p) => this.prizeView(p));
+  }
+
+  /** POST /prizes/:id/done (staff): a dice prize waiting at the counter has been given. */
+  async prizeDone(id, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const prize = this.prizeRow(id);
+    if (!prize || prize.source === 'birthday') throw new RuleError('That prize could not be found.', 404);
+    if (prize.status === 'added') throw new RuleError('That store credit is on their account already, so there is nothing to give.', 409);
+    if (prize.status === 'pending') this.write("UPDATE prizes SET status = 'done', updated_at = ? WHERE id = ? AND status = 'pending'", Date.now(), prize.id);
+    return { prize: this.prizeView(this.prizeRow(prize.id)) };
   }
 
   /* ---------------- session passes ---------------- */
@@ -3014,8 +3028,10 @@ export class Lair {
     return {
       customerId: row.customer_id, name: row.name || '', firstName: row.first_name || '', email: row.email || '', birthday: row.birthday || '',
       spendYear: spend.year, spendTotal: spend.total, rollsFromSpend: Math.floor(spend.total / ROLL_EVERY),
-      rollsUsed: this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'bonus'", row.customer_id).one().n,
+      rollsUsed: this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind IN ('spend', 'bonus')", row.customer_id).one().n,
       lastSeen: row.last_seen || null, code: row.code || null,
+      // Dice prizes Shopify couldn't add: staff give them at the counter (POST /prizes/:id/done)
+      pendingPrizes: this.memberPrizes(row.customer_id, { pending: true }),
     };
   }
 
@@ -3124,7 +3140,8 @@ export class Lair {
     }
     // --- no awaits from here on: only these prizes' own rows change ---
     const later = Date.now();
-    for (const p of claimed) this.write('UPDATE prizes SET status = ?, code = ?, note = ?, updated_at = ? WHERE id = ?', p.problem ? 'owed' : 'given', p.problem ? null : p.code, p.problem, later, p.id);
+    // added: the code was made; pending: Shopify couldn't make it, so it's given at the counter.
+    for (const p of claimed) this.write('UPDATE prizes SET status = ?, code = ?, note = ?, updated_at = ? WHERE id = ?', p.problem ? 'pending' : 'added', p.problem ? null : p.code, p.problem, later, p.id);
     const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(time.at(key, 12 * 60)));
     const until = (ms) => new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, day: 'numeric', month: 'long' }).format(new Date(ms));
     const letters = claimed.filter((p) => isEmail(p.row.email)).map((p) => {
@@ -3147,7 +3164,7 @@ export class Lair {
     this.notifyStaff(`Birthday codes: ${claimed.length} sent`, {
       title: 'Birthday codes went out',
       intro: `${claimed.length} ${claimed.length === 1 ? 'member has' : 'members have'} a birthday in the next week, so Gobgob sent ${claimed.length === 1 ? 'a code' : 'codes'}.${claimed.some((p) => p.problem) ? " Shopify couldn't make some of them: those members will show their email at the counter." : ''}`,
-      details: claimed.map((p) => [p.row.name || p.row.code || p.row.customer_id, `${p.percent}% off, ${p.problem ? 'give it at the counter' : p.code}. Birthday ${day(p.date)}.${isEmail(p.row.email) ? '' : ' No email, so it shows in My Lair only.'}`]),
+      details: claimed.map((p) => [p.row.name || p.row.code || p.row.customer_id, `${p.percent}% off, ${p.problem ? 'give it at the counter' : p.code}. Birthday ${day(p.date)}.${isEmail(p.row.email) ? '' : ' No email on file, so let them know at the counter.'}`]),
     });
     return { sent: claimed.length, codes: claimed.filter((p) => !p.problem).length };
   }
@@ -3211,8 +3228,9 @@ export class Lair {
         .exec("SELECT m.*, s.details AS details FROM series_members m JOIN series s ON s.id = m.series_id WHERE m.customer_id = ? AND m.status = 'active' AND s.status = 'active'", who.customerId)
         .toArray()
         .map((m) => ({ seriesId: m.series_id, title: parse(m.details, {}).title || 'GM game', people: m.people, players: parse(m.players, []) })),
-      rolls: this.rollsState(who.customerId, now, new LairTime(rules.tz).key(now)),
-      prizes: this.sql.exec('SELECT * FROM prizes WHERE customer_id = ? ORDER BY created_at DESC LIMIT 10', who.customerId).toArray().map((p) => this.prizeView(p)),
+      // Dice: rolls earned from spend ({ available, toNext, per }, bonus mirrors available) and the last 10 prizes
+      rolls: this.rollsState(who.customerId, now),
+      prizes: this.memberPrizes(who.customerId),
       // Session passes: active ones, and ones used up in the last 30 days
       passes: this.memberPasses(who.customerId, now),
     };

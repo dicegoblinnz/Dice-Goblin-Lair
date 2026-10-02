@@ -1687,103 +1687,92 @@ test('POS: a counter order with a _booking line pays that booking as it is; an o
   }
 });
 
-test('dice: the daily roll is once per Lair day; a 1 is $1 store credit and a 20 a personal 10% code for 30 days that combines with nothing', async () => {
-  Object.defineProperty(lair.shopify, 'configured', { value: true });
-  const credits = [];
-  const codes = [];
-  lair.shopify.creditCustomer = async (customerId, cents) => credits.push([customerId, cents]);
-  lair.shopify.createPrizeCode = async (input) => codes.push(input);
-  const unload = loadDice([1, 5, 20, 7]);
+test('dice: the daily roll has retired (410); spend rolls need rolls earned (409); logged out or fun is just a roll', async () => {
+  const unload = loadDice([7, 7]);
   try {
-    const one = await roll({ kind: 'daily' }, '1001');
-    assert.deepEqual([one.data.roll, one.data.kind, one.data.prize], [1, 'daily', { kind: 'credit', source: 'daily', amount: 100, at: NOW, owed: false }]);
-    assert.match(one.data.message, /\$1 store credit/);
-    assert.deepEqual(one.data.rolls, { daily: false, bonus: 0, toNext: 2000 });
-    assert.deepEqual(credits, [['1001', 100]]);
-    const again = await roll({ kind: 'daily' }, '1001');
-    assert.equal(again.status, 409);
-    assert.match(again.data.error, /today's free roll/);
-
-    Date.now = () => NOW + 24 * HOUR;
-    const nothing = await roll({ kind: 'daily' }, '1001');
-    assert.deepEqual([nothing.data.roll, nothing.data.prize], [5, null]);
-    assert.match(nothing.data.message, /next free roll is tomorrow/);
-    const twenty = await roll({ kind: 'daily' }, '1002');
-    assert.equal(twenty.data.prize.kind, 'percent');
-    assert.equal(twenty.data.prize.percent, 10);
-    assert.match(twenty.data.prize.code, /^NAT20-/);
-    assert.equal(twenty.data.prize.expiresAt, NOW + 24 * HOUR + 30 * 24 * HOUR);
-    assert.deepEqual(
-      [codes[0].code, codes[0].percent, codes[0].customerId, codes[0].endsAt, codes[0].combinesWith],
-      [twenty.data.prize.code, 0.1, '1002', twenty.data.prize.expiresAt, { productDiscounts: false, orderDiscounts: false, shippingDiscounts: false }],
-    );
-    const me = (await call('GET', 'me', null, '1002')).data;
-    assert.deepEqual(me.rolls, { daily: false, bonus: 0, toNext: 2000 });
-    assert.deepEqual(me.prizes.map((p) => [p.kind, p.code, p.owed]), [['percent', twenty.data.prize.code, false]]);
+    const daily = await roll({ kind: 'daily' }, '1001');
+    assert.deepEqual([daily.status, daily.data.error], [410, 'The daily roll has retired. Every $20 you spend earns a roll.']);
+    const none = await roll({ kind: 'spend' }, '1001');
+    assert.deepEqual([none.status, none.data.error], [409, 'No rolls yet, friend. Every $20 you spend earns one.']);
+    assert.deepEqual((await roll({ kind: 'spend' })).data, { roll: 7 }, 'logged out: always fun');
+    assert.deepEqual((await roll({}, '1001')).data, { roll: 7 });
+    const me = (await call('GET', 'me', null, '1001')).data;
+    assert.deepEqual([me.rolls, me.prizes], [{ available: 0, toNext: 2000, per: 2000, bonus: 0 }, []]);
   } finally {
     unload();
   }
 });
 
-test('dice: bonus rolls, one per $20 of spend: a 1 in the face is $1, 11 is $2, 20 the code; two quick taps can\'t spend one roll twice', async () => {
+test('dice: one roll per $20 spent, stacking; every face pays as the table says ($1 a "1", $2 for 11, $20 for a natural 20); two quick taps can\'t spend one roll twice', async () => {
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   const credits = [];
   lair.shopify.creditCustomer = async (customerId, cents) => {
     await new Promise((r) => setTimeout(r, 5));
     credits.push([customerId, cents]);
   };
-  lair.shopify.createPrizeCode = async () => {};
+  lair.shopify.createPrizeCode = async () => assert.fail('the dice never make discount codes');
   const spend = (n, cents) => lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', `gid://shopify/Order/${n}`, '1001', cents, 'pos', NOW);
-  spend(9, 4550);
-  const unload = loadDice([11, 14, 3, 20]);
+  spend(1, 20 * 2000 + 550);
+  const faces = Array.from({ length: 20 }, (_, i) => i + 1);
+  const pays = { 1: 100, 10: 100, 11: 200, 12: 100, 13: 100, 14: 100, 15: 100, 16: 100, 17: 100, 18: 100, 19: 100, 20: 2000 };
+  const messages = { 100: 'A 1 on the face: $1 store credit.', 200: 'Two ones! $2 store credit, friend.', 2000: 'Natural 20! $20 store credit is yours.' };
+  const unload = loadDice([...faces, 5, 5]);
   try {
-    assert.deepEqual((await call('GET', 'me', null, '1001')).data.rolls, { daily: true, bonus: 2, toNext: 1450 });
-    const eleven = await roll({ kind: 'bonus' }, '1001');
-    assert.deepEqual([eleven.data.roll, eleven.data.prize.amount, eleven.data.rolls.bonus], [11, 200, 1]);
+    assert.deepEqual((await call('GET', 'me', null, '1001')).data.rolls, { available: 20, toNext: 1450, per: 2000, bonus: 20 });
+    for (const face of faces) {
+      const res = await roll({ kind: face % 2 ? 'spend' : 'bonus' }, '1001');
+      assert.equal(res.status, 200, res.data.error);
+      const amount = pays[face] || 0;
+      assert.deepEqual([res.data.roll, res.data.kind, res.data.prize?.amount ?? 0], [face, 'spend', amount], `face ${face}`);
+      if (amount) assert.deepEqual([res.data.prize.kind, res.data.prize.status, res.data.message], ['credit', 'added', messages[amount]], `face ${face}`);
+      else assert.deepEqual([res.data.prize, res.data.message], [null, 'No ones this time. Spend $20 for another go.'], `face ${face}`);
+      assert.deepEqual(res.data.rolls, { available: 20 - face, toNext: 1450, per: 2000, bonus: 20 - face });
+    }
+    assert.equal(credits.reduce((sum, [, cents]) => sum + cents, 0), 100 * 10 + 200 + 2000);
+    const me = (await call('GET', 'me', null, '1001')).data;
+    assert.equal(me.prizes.length, 10, 'the last 10');
+    assert.deepEqual(me.prizes[0], { id: me.prizes[0].id, kind: 'credit', amount: 2000, status: 'added', roll: 20, at: NOW });
+    assert.equal((await roll({ kind: 'spend' }, '1001')).status, 409);
     // One roll left and two taps at once (Shopify is slow): only one of them gets it.
-    const [a, b] = await Promise.all([roll({ kind: 'bonus' }, '1001'), roll({ kind: 'bonus' }, '1001')]);
+    spend(2, 1450);
+    const [a, b] = await Promise.all([roll({ kind: 'spend' }, '1001'), roll({ kind: 'spend' }, '1001')]);
     assert.deepEqual([a.status, b.status].sort(), [200, 409]);
-    assert.equal([a, b].find((r) => r.status === 200).data.prize.amount, 100, 'a 14 has a 1 in it');
-    const none = await roll({ kind: 'bonus' }, '1001');
-    assert.equal(none.status, 409);
-    assert.match(none.data.error, /Spend \$14\.50 more/);
-    assert.deepEqual(credits, [['1001', 200], ['1001', 100]]);
     const member = (await call('GET', 'members?q=1001', null, 'staff')).data[0];
-    assert.deepEqual([member.rollsFromSpend, member.rollsUsed], [2, 2]);
-    spend(10, 1450);
-    const three = await roll({ kind: 'bonus' }, '1001');
-    assert.deepEqual([three.data.roll, three.data.prize], [3, null]);
-    assert.match(three.data.message, /No prize this time\. Every \$20/);
-    spend(11, 2000);
-    assert.equal((await roll({ kind: 'bonus' }, '1001')).data.prize.kind, 'percent');
+    assert.deepEqual([member.rollsFromSpend, member.rollsUsed, member.pendingPrizes], [21, 21, []]);
   } finally {
     unload();
   }
 });
 
-test('dice: when Shopify can\'t give the prize it\'s kept as owed, the member shows the screen at the counter, and staff get an email', async () => {
+test('dice: when Shopify can\'t add the store credit, the prize is kept as pending to claim at the counter; staff see it and mark it done', async () => {
   Object.defineProperty(lair.shopify, 'configured', { value: true });
-  lair.shopify.createPrizeCode = async () => {
-    throw new Error('Access denied for discountCodeBasicCreate field. Required access: `write_discounts` access scope.');
-  };
   lair.shopify.creditCustomer = async () => {
     throw new Error('Shopify API error 502');
   };
+  lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', 'gid://shopify/Order/1', '1001', 4000, 'pos', NOW);
+  await call('POST', 'me/profile', { name: 'Aroha Smith' }, '1001');
   const mail = captureEmails();
-  const unload = loadDice([20, 1]);
+  const unload = loadDice([11, 20]);
   try {
-    const twenty = await roll({ kind: 'daily' }, '1001');
-    assert.equal(twenty.status, 200);
-    assert.deepEqual([twenty.data.prize.code, twenty.data.prize.owed, twenty.data.message], [null, true, 'Show this screen at the counter to claim it.']);
-    Date.now = () => NOW + 24 * HOUR;
-    const one = await roll({ kind: 'daily' }, '1001');
-    assert.deepEqual([one.data.prize.kind, one.data.prize.amount, one.data.prize.owed], ['credit', 100, true]);
+    const eleven = await roll({ kind: 'spend' }, '1001');
+    assert.equal(eleven.status, 200, eleven.data.error);
+    assert.deepEqual([eleven.data.prize.amount, eleven.data.prize.status, eleven.data.message], [200, 'pending', 'Two ones! $2 store credit, friend. Show this screen at the counter to claim it.']);
+    const twenty = await roll({ kind: 'spend' }, '1001');
+    assert.deepEqual([twenty.data.prize.amount, twenty.data.prize.status], [2000, 'pending']);
+    assert.match(twenty.data.message, /^Natural 20! \$20 store credit is yours\. Show this screen at the counter to claim it\.$/);
     await settle();
     const alerts = mail.sent.filter((m) => m.to === 'staff@dicegoblin.test');
     assert.equal(alerts.length, 2);
-    assert.match(alerts[0].text, /10% off one order/);
-    assert.match(alerts[1].text, /\$1\.00 store credit/);
-    assert.deepEqual((await call('GET', 'me', null, '1001')).data.prizes.map((p) => p.owed), [true, true]);
+    assert.match(alerts[0].text, /\$2\.00 store credit/);
+    assert.match(alerts[1].subject, /Prize to give at the counter: Aroha Smith/);
+    const found = (await call('GET', 'members?q=aroha', null, 'staff')).data[0];
+    assert.deepEqual(found.pendingPrizes.map((p) => [p.kind, p.amount, p.status, p.roll]), [['credit', 2000, 'pending', 20], ['credit', 200, 'pending', 11]]);
+    assert.equal((await call('POST', `prizes/${eleven.data.prize.id}/done`, {}, '1001')).status, 403);
+    const done = await call('POST', `prizes/${eleven.data.prize.id}/done`, {}, 'staff');
+    assert.deepEqual(done.data.prize, { id: eleven.data.prize.id, kind: 'credit', amount: 200, status: 'done', roll: 11, at: NOW });
+    assert.equal((await call('POST', 'prizes/pz_nope/done', {}, 'staff')).status, 404);
+    assert.deepEqual((await call('GET', 'members?q=aroha', null, 'staff')).data[0].pendingPrizes.map((p) => p.amount), [2000]);
+    assert.deepEqual((await call('GET', 'me', null, '1001')).data.prizes.map((p) => p.status), ['pending', 'done']);
   } finally {
     unload();
     mail.restore();
@@ -1828,7 +1817,9 @@ test('birthdays: once a day after 9am, members with a birthday in the next 7 day
     const summary = mail.sent.find((m) => m.to === 'staff@dicegoblin.test');
     assert.match(summary.subject, /Birthday codes: 4 sent/);
     assert.match(summary.text, /Eru Noemail: +10% off, BDAY-.*No email/);
-    assert.equal((await call('GET', 'me', null, '2002')).data.prizes[0].source, 'birthday');
+    // Birthday codes are emailed; My Lair's prizes list is the dice.
+    assert.deepEqual((await call('GET', 'me', null, '2002')).data.prizes, []);
+    assert.equal(lair.sql.exec("SELECT status FROM prizes WHERE customer_id = '2002' AND source = 'birthday'").one().status, 'added');
 
     // Later runs that day, the next day, or after editing a birthday: no second code.
     assert.equal(await lair.birthdays(lair.rulesCache, NOW + HOUR), null);
@@ -2417,7 +2408,7 @@ test('POS check-in: the fee still to pay as cart lines with the ticket code, the
 
   await call('GET', 'me', null, '1001');
   const member = await pos('member', { code: memberCode.toLowerCase().replace(/-/g, '') });
-  assert.deepEqual([member.status, member.data.customerId, member.data.name, member.data.rolls.daily], [200, '1001', 'Sam', true]);
+  assert.deepEqual([member.status, member.data.customerId, member.data.name, member.data.rolls.available], [200, '1001', 'Sam', 0]);
   assert.equal((await pos('member', { code: 'ZZ-GOBLIN-77' })).status, 404);
   assert.equal((await pos('member', { code: table.ref })).status, 404);
 });

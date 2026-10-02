@@ -646,23 +646,17 @@ export function nextBirthday(mmdd, fromKey) {
   return null;
 }
 
-/** Spend earns a bonus dice roll every $20. */
+/** Spend earns a dice roll every $20. Rolls stack and never expire. */
 export const ROLL_EVERY = 2000;
-/** Prize codes from the dice last 30 days. */
-export const PRIZE_CODE_DAYS = 30;
 
 /**
- * What a member's prize roll wins. daily: a natural 1 is $1 store credit and a natural 20 a personal 10% off code.
- * bonus: any face with a 1 in it (1, 10-19) is $1 store credit, 11 is $2, and a 20 is the 10% code.
+ * What a spend roll wins, in store credit: $1 for each "1" on the face (1, 10 and 12-19 pay $1, 11 pays $2), and a
+ * natural 20 pays $20. Anything else wins nothing. The dice never give discount codes.
  */
-export function rollPrize(kind, roll) {
-  if (roll === 20) return { kind: 'percent', percent: 10 };
-  if (kind === 'daily') return roll === 1 ? { kind: 'credit', amount: 100 } : null;
-  if (kind === 'bonus') {
-    if (roll === 11) return { kind: 'credit', amount: 200 };
-    if (String(roll).includes('1')) return { kind: 'credit', amount: 100 };
-  }
-  return null;
+export function rollPrize(roll) {
+  if (roll === 20) return { kind: 'credit', amount: 2000 };
+  const ones = [...String(roll)].filter((c) => c === '1').length;
+  return ones ? { kind: 'credit', amount: ones * 100 } : null;
 }
 
 /* ---------- what the public may see ---------- */
