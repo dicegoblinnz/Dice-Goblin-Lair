@@ -1910,8 +1910,10 @@ test('staff edit a game: details change for the series from this session on; tim
 
   const mail = captureEmails();
   try {
-    const moved = await edit({ title: 'Weekly Edit II', gmFee: 1000, start: at('2026-10-01', 19), end: at('2026-10-01', 22), tables: ['A3'] });
+    const moved = await edit({ title: 'Weekly Edit II', gmFee: 1000, seats: 6, start: at('2026-10-01', 19), end: at('2026-10-01', 22), tables: ['A3'] });
     assert.equal(moved.status, 200, moved.data.error);
+    assert.equal(lair.gameBookings(second.id).find((b) => b.kind === 'gm').people, 7, "the GM's hold keeps up with the seats");
+    assert.equal(lair.game(second.id).seats, 6);
     assert.equal(moved.data.sessions, listed.data.sessions.length);
     assert.deepEqual([moved.data.game.title, moved.data.game.tables, moved.data.game.start, moved.data.game.seatPrice], ['Weekly Edit II', ['A3'], at('2026-10-01', 19), 2000]);
     const held = lair.gameBookings(first.id).filter((b) => ACTIVE_STATUSES.includes(b.status));
@@ -2069,6 +2071,7 @@ test('event game spots: the first free spot is booked as a wargame table for the
     ['table', ['T16', 'T17'], ['wargame'], 'warhammer@2026-10-03', at('2026-10-03', 18), at('2026-10-03', 22), 2000, 1],
   );
   assert.match(booking.ref, /^SAM-\d{4}$/);
+  assert.deepEqual([first.data.booking.occurrenceId, first.data.booking.extras], ['warhammer@2026-10-03', ['wargame']]);
   const second = await reserve('warhammer@2026-10-03', { name: 'Kai', email: 'kai@example.com' });
   assert.deepEqual([second.data.booking.tables, second.data.spotsLeft], [['T18', 'T19'], 0]);
   const full = await reserve('warhammer@2026-10-03', { name: 'Leo', email: 'leo@example.com' });

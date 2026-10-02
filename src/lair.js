@@ -5,9 +5,10 @@
 // with no `await` in between. Where a Shopify call has to come after a write (checkouts, store credit), the
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
-  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, LairTime, RuleError, addDays, birthdayPercent, blockingItems, checkGameDetails, checkGameSession, checkSeatBooking, checkTableBooking,
-  PRIZE_CODE_DAYS, ROLL_EVERY, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, parseTicketCode,
-  publicBooking, publicGame, readSettingsData, refName, refundFor, rollPrize, rulesFromSettings, seatPlayers, seatsTaken, tableIndex,
+  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, PRIZE_CODE_DAYS, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, blockingItems, checkGameDetails,
+  checkGameSession, checkSeatBooking, checkTableBooking, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, nextBirthday, oneRoom,
+  parseBirthday, parseSpots, parseTableList, parseTicketCode, publicBooking, publicGame, readSettingsData, refName, refundFor, rollPrize, rulesFromSettings,
+  seatPlayers, seatsTaken, tableIndex,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -850,7 +851,10 @@ export class Lair {
   }
 
   ownView(b) {
-    return { ...publicBooking(b), ref: b.ref, name: b.name, email: b.email, people: b.people, paid: b.paid, amount: b.amount, pay: b.pay, room: b.room };
+    return {
+      ...publicBooking(b), ref: b.ref, name: b.name, email: b.email, people: b.people, paid: b.paid, amount: b.amount, pay: b.pay, room: b.room,
+      extras: b.extras || [], occurrenceId: b.occurrenceId || null,
+    };
   }
 
   async updateBooking(id, patch, who) {
@@ -1176,6 +1180,7 @@ export class Lair {
       const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
       this.saveGame({ ...session, ...shared, ...(session.id === game.id ? place : {}), seatPrice }, now);
       this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", seatPrice, now, session.id);
+      this.write("UPDATE bookings SET people = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", details.seats + 1, now, session.id);
     }
     if (moving) {
       this.write(
@@ -2510,7 +2515,7 @@ export class Lair {
     const own = this.sql.exec('SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToBooking(r));
     const view = (b) => ({
       id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
-      paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [],
+      paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
     });
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
