@@ -158,20 +158,42 @@ test('events that hold tables block bookings', async () => {
   assert.equal(fine.status, 200);
 });
 
-test('pay now without Shopify connected falls back to paying at the counter', async () => {
-  const { status, data } = await call('POST', 'bookings', tableBooking({ pay: 'now' }));
-  assert.equal(status, 200);
-  assert.equal(data.booking.status, 'confirmed');
-  assert.equal(data.booking.pay, 'day');
-  assert.ok(data.notice);
+test('tables, walk-ins and game seats are paid at the counter: pay is ignored and there\'s never a checkout', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  let checkouts = 0;
+  lair.shopify.createCheckout = async () => { checkouts += 1; return { draftOrderId: 'gid://shopify/DraftOrder/1', checkoutUrl: 'https://checkout.test/1' }; };
+  const table = await call('POST', 'bookings', tableBooking({ pay: 'now' }));
+  assert.equal(table.status, 200);
+  assert.deepEqual([table.data.booking.status, table.data.booking.pay, table.data.booking.payment, table.data.checkoutUrl, table.data.notice], ['confirmed', 'day', 'store', undefined, null]);
+  const game = await call('POST', 'games', { title: 'Counter game', system: 'Other', gm: 'Ana', blurb: 'x', seats: 3, tables: ['A1'], start: at('2026-10-01', 18), end: at('2026-10-01', 21) }, 'gm');
+  const seat = await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.data.game.id, people: 1, name: 'Mia', email: 'mia@example.com', pay: 'now' }, 'mia');
+  assert.deepEqual([seat.data.booking.status, seat.data.booking.pay, seat.data.checkoutUrl], ['confirmed', 'day', undefined]);
+  const walkin = await call('POST', 'bookings', { kind: 'walkin', tables: ['T8'], start: NOW, end: NOW + HOUR, people: 2, pay: 'now' }, 'staff');
+  assert.deepEqual([walkin.data.booking.status, walkin.data.booking.pay], ['seated', 'day']);
+  assert.equal(checkouts, 0);
+  // The old "let people pay online" theme setting doesn't matter any more; payOnline only says Shopify checkout works.
+  lair.rulesCache = { ...lair.rulesCache, payOnline: false };
+  assert.deepEqual((await call('GET', 'floor')).data.features, { email: false, payOnline: true });
 });
 
+/** An event whose game spots are paid online: checkouts, holds and the payment webhook are tested with these. */
+const onlineNight = (over = {}) => ({
+  id: 'online-night', title: 'Online night', start: at('2026-10-01', 15), end: at('2026-10-01', 17), tables: '', gameTables: 'T3, T4, T5, T6, T7',
+  payment: 'online', ...over,
+});
+const useOnlineNight = (over = {}) => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [onlineNight(over)]);
+};
+/** A game spot at the online night (T3 first, then T4, …): 2 people at the $10 table fee */
+const spot = (body = {}, who = '') => call('POST', 'events/online-night@2026-10-01/reserve', { name: 'Sam', email: 'sam@example.com', people: 2, ...body }, who);
+
 test('orders/paid confirms a held booking; unpaid holds lapse after 30 minutes', async () => {
+  useOnlineNight();
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/1', checkoutUrl: 'https://checkout.test/1' });
   lair.shopify.deleteDraftOrder = async () => {};
   lair.shopify.draftOrderOrderId = async (id) => (id === 'gid://shopify/DraftOrder/1' ? 'gid://shopify/Order/9' : null);
-  const first = await call('POST', 'bookings', tableBooking({ pay: 'now' }));
+  const first = await spot();
   assert.equal(first.data.checkoutUrl, 'https://checkout.test/1');
   assert.equal(first.data.booking.status, 'held');
   const paid = await internal('orders-paid', { id: 9, admin_graphql_api_id: 'gid://shopify/Order/9', note_attributes: [{ name: '_booking', value: first.data.booking.ref }] });
@@ -181,7 +203,7 @@ test('orders/paid confirms a held booking; unpaid holds lapse after 30 minutes',
   assert.equal(saved.status, 'confirmed');
   assert.equal(saved.paid, true);
 
-  const second = await call('POST', 'bookings', tableBooking({ tables: ['T4'], pay: 'now' }));
+  const second = await spot({ email: 'second@example.com' });
   assert.equal(second.data.booking.status, 'held');
   Date.now = () => NOW + 31 * 60_000;
   const later = await call('GET', 'floor', null, 'staff');
@@ -327,11 +349,12 @@ test('Worker: webhooks need a valid HMAC from this shop', async () => {
 });
 
 test('only the booking\'s own checkout can pay for it: a cheap order with the ref in a note does nothing', async () => {
+  useOnlineNight();
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/2', checkoutUrl: 'https://checkout.test/2' });
   lair.shopify.draftOrderOrderId = async (id) => (id === 'gid://shopify/DraftOrder/2' ? 'gid://shopify/Order/10' : null);
-  const onTheDay = await call('POST', 'bookings', tableBooking({ tables: ['T7'] }));
-  const online = await call('POST', 'bookings', tableBooking({ pay: 'now' }));
+  const onTheDay = await call('POST', 'bookings', tableBooking({ tables: ['T9'] }));
+  const online = await spot();
   const forged = { id: 99, admin_graphql_api_id: 'gid://shopify/Order/99', note: `Lair booking ${onTheDay.data.booking.ref} ${online.data.booking.ref}`, note_attributes: [{ name: '_booking', value: online.data.booking.ref }] };
   assert.deepEqual((await internal('orders-paid', forged)).data.updated, []);
   const real = { id: 10, admin_graphql_api_id: 'gid://shopify/Order/10', note: `Lair booking ${online.data.booking.ref}` };
@@ -346,16 +369,18 @@ test('only the booking\'s own checkout can pay for it: a cheap order with the re
 });
 
 test('paid after the hold ran out: spot kept if free, flagged if someone else took it', async () => {
+  useOnlineNight();
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   let n = 0;
   lair.shopify.createCheckout = async () => { n += 1; return { draftOrderId: `gid://shopify/DraftOrder/3${n}`, checkoutUrl: 'https://checkout.test/3' }; };
   lair.shopify.deleteDraftOrder = async () => {};
   lair.shopify.draftOrderOrderId = async (id) => ({ 'gid://shopify/DraftOrder/31': 'gid://shopify/Order/12', 'gid://shopify/DraftOrder/32': 'gid://shopify/Order/13' })[id] || null;
-  const a = await call('POST', 'bookings', tableBooking({ tables: ['T5'], pay: 'now' }));
-  const b = await call('POST', 'bookings', tableBooking({ tables: ['T6'], pay: 'now', email: 'b@example.com' }));
+  const a = await spot();
+  const b = await spot({ email: 'b@example.com' });
+  assert.deepEqual([a.data.booking.tables, b.data.booking.tables], [['T3'], ['T4']]);
   Date.now = () => NOW + 31 * 60_000;
   await call('GET', 'floor');
-  await call('POST', 'bookings', tableBooking({ tables: ['T6'], email: 'c@example.com' }));
+  await call('POST', 'bookings', tableBooking({ tables: ['T4'], email: 'c@example.com' }));
   await internal('orders-paid', { id: 12, admin_graphql_api_id: 'gid://shopify/Order/12', note_attributes: [{ name: '_booking', value: a.data.booking.ref }] });
   await internal('orders-paid', { id: 13, admin_graphql_api_id: 'gid://shopify/Order/13', note_attributes: [{ name: '_booking', value: b.data.booking.ref }] });
   const all = (await call('GET', 'floor', null, 'staff')).data.bookings;
@@ -364,19 +389,6 @@ test('paid after the hold ran out: spot kept if free, flagged if someone else to
   assert.equal(late.status, 'cancelled');
   assert.equal(late.paid, true);
   assert.match(late.notes, /refund or reseat/);
-});
-
-test('pay online can be switched off in the theme settings', async () => {
-  Object.defineProperty(lair.shopify, 'configured', { value: true });
-  let called = false;
-  lair.shopify.createCheckout = async () => { called = true; return {}; };
-  lair.rulesCache = { ...lair.rulesCache, payOnline: false };
-  const { data } = await call('POST', 'bookings', tableBooking({ pay: 'now' }));
-  assert.equal(called, false);
-  assert.equal(data.booking.pay, 'day');
-  assert.ok(data.notice);
-  const floor = await call('GET', 'floor');
-  assert.deepEqual(floor.data.features, { email: false, payOnline: false });
 });
 
 test('one email cannot hog the floor', async () => {
@@ -555,17 +567,18 @@ test('the floor sends event holds the way the app checks them', async () => {
 });
 
 test('a payment that lands while staff are mid-update is kept (fresh read after waiting on Shopify)', async () => {
+  useOnlineNight();
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/7', checkoutUrl: 'https://checkout.test/7' });
   lair.shopify.draftOrderOrderId = async () => 'gid://shopify/Order/70';
-  const held = await call('POST', 'bookings', tableBooking({ pay: 'now' }));
+  const held = await spot();
   let release;
   const gate = new Promise((r) => { release = r; });
   let loads = 0;
   lair.shopify.loadLairData = async () => {
     loads += 1;
     if (loads === 1) await gate;
-    return { rooms: FALLBACK, events: [], settingsText: null };
+    return { rooms: FALLBACK, events: [onlineNight()], settingsText: null };
   };
   lair.rulesLoadedAt = 0;
   const checkIn = call('POST', `bookings/${held.data.booking.id}/update`, { status: 'seated' }, 'staff');
@@ -608,12 +621,13 @@ test('when Shopify is down, rules come from the last good copy and are retried a
 });
 
 test('a payment that lands as the hold runs out still counts, even if the checkout link was already removed', async () => {
+  useOnlineNight();
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/8', checkoutUrl: 'https://checkout.test/8' });
   let lookups = 0;
   lair.shopify.draftOrderOrderId = async () => { lookups += 1; return null; };
   lair.shopify.deleteDraftIfOpen = async () => true;
-  const held = await call('POST', 'bookings', tableBooking({ pay: 'now' }));
+  const held = await spot();
   Date.now = () => NOW + 31 * 60_000;
   await call('GET', 'floor');
   const web = { id: 81, admin_graphql_api_id: 'gid://shopify/Order/81', source_name: 'web', note_attributes: [{ name: '_booking', value: held.data.booking.ref }] };
@@ -714,16 +728,14 @@ test('real opening hours: weekdays 4pm to midnight, Saturday 10am to midnight, S
   assert.equal((await book('2026-10-04', 22, 23, 'T6')).status, 422); // Sunday after 10pm
 });
 
-test('refunds: paid online and cancelled 24+ hours ahead is refunded; later, or a no-show, keeps the fee', async () => {
-  Object.defineProperty(lair.shopify, 'configured', { value: true });
-  let n = 0;
-  lair.shopify.createCheckout = async () => { n += 1; return { draftOrderId: `gid://shopify/DraftOrder/9${n}`, checkoutUrl: 'https://checkout.test/9' }; };
-  lair.shopify.draftOrderOrderId = async (id) => id.replace('DraftOrder', 'Order');
+test('refunds: a table booking paid online before v4, cancelled 24+ hours ahead, is refunded; later, or a no-show, keeps the fee', async () => {
   lair.shopify.deleteDraftIfOpen = async () => false;
+  let n = 0;
+  // Tables are paid at the counter now; these are like the first release's bookings that were paid online.
   const pay = async (over) => {
-    const { data } = await call('POST', 'bookings', tableBooking({ pay: 'now', ...over }));
-    const orderId = `gid://shopify/Order/9${n}`;
-    await internal('orders-paid', { id: 1, admin_graphql_api_id: orderId, source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: data.booking.ref }] });
+    const { data } = await call('POST', 'bookings', tableBooking(over));
+    n += 1;
+    lair.saveBooking({ ...lair.booking(data.booking.id), pay: 'now', paid: true, orderId: `gid://shopify/Order/9${n}`, draftOrderId: `gid://shopify/DraftOrder/9${n}` }, NOW);
     return data.booking;
   };
   const early = await pay({ tables: ['T1'], start: at('2026-10-03', 14), end: at('2026-10-03', 16), email: 'early@example.com' });
@@ -1459,7 +1471,7 @@ test('GM cancelling: up to an hour after the start, or a whole series; every pla
     assert.equal(res.data.affected, 3);
     assert.ok(lair.sql.exec('SELECT status FROM games WHERE series_id = ?', listed.data.game.seriesId).toArray().every((r) => r.status === 'cancelled'));
     assert.deepEqual([lair.booking(mia.id).refund, lair.booking(leo.id).refund], ['due', null]);
-    assert.equal(lair.booking(mia.id).refundDue, true);
+    assert.equal(lair.booking(mia.id).refundDue, undefined, 'one field, refund, everywhere');
     await settle();
     const players = mail.sent.filter((m) => m.batch);
     assert.deepEqual(players.map((m) => m.to).sort(), ['kai@example.com', 'leo@example.com', 'mia@example.com']);
@@ -1520,7 +1532,7 @@ test('no-shows: an unpaid one is just recorded; a paid one gets a Refund? note; 
     assert.match(b.data.booking.notes, /\[Refund\?\]/);
     assert.equal((await call('POST', `bookings/${paid.id}/update`, { refunded: true }, 'someone')).status, 403);
     const c = await call('POST', `bookings/${paid.id}/update`, { refunded: true }, 'staff');
-    assert.deepEqual([c.data.booking.refund, c.data.booking.refunded, c.data.booking.paid], ['done', true, true]);
+    assert.deepEqual([c.data.booking.refund, c.data.booking.refunded, c.data.booking.paid], ['done', undefined, true]);
     await settle();
     assert.equal(mail.sent.length, 0, 'no-shows send no email');
   } finally {
@@ -1611,12 +1623,13 @@ test('spend: every paid order with a customer adds its subtotal once, even when 
 });
 
 test('POS: a counter order with a _booking line pays that booking as it is; an online order can\'t, and paying twice is flagged', async () => {
+  useOnlineNight();
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.draftOrderOrderId = async () => 'gid://shopify/Order/700';
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/70', checkoutUrl: 'https://checkout.test/70' });
   const mail = captureEmails();
   try {
-    const counter = (await call('POST', 'bookings', tableBooking({ tables: ['T5'] }))).data.booking;
+    const counter = (await call('POST', 'bookings', tableBooking({ tables: ['T9'] }))).data.booking;
     const line = (ref) => ({ title: 'Table fee', quantity: 1, price: '40.00', properties: [{ name: '_booking', value: ref }] });
     await settle();
     mail.sent.length = 0;
@@ -1629,7 +1642,7 @@ test('POS: a counter order with a _booking line pays that booking as it is; an o
     await settle();
     assert.equal(mail.sent.length, 0, 'paying at the counter sends no second confirmation');
 
-    const online = (await call('POST', 'bookings', tableBooking({ tables: ['T6'], pay: 'now', email: 'online@example.com' }))).data.booking;
+    const online = (await spot({ email: 'online@example.com' })).data.booking;
     await internal('orders-paid', { id: 700, admin_graphql_api_id: 'gid://shopify/Order/700', source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: online.ref }] });
     await internal('orders-paid', { id: 701, admin_graphql_api_id: 'gid://shopify/Order/701', source_name: 'pos', line_items: [line(online.ref)] });
     const twice = lair.booking(online.id);
@@ -2046,7 +2059,7 @@ const warhammer = (over = {}) => ({
 
 test('event entry fees: paid online (held for 30 minutes, confirmed by the webhook) or at the counter; no fee, nothing to pay', async () => {
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
-    warhammer(), { id: 'quiz', title: 'Trivia night', start: at('2026-10-03', 18), end: at('2026-10-03', 20), tables: '', capacity: 20 },
+    warhammer({ payment: 'either' }), { id: 'quiz', title: 'Trivia night', start: at('2026-10-03', 18), end: at('2026-10-03', 20), tables: '', capacity: 20, payment: 'either' },
   ]);
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   let n = 0;
@@ -2096,13 +2109,21 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
     assert.equal(lair.joinById(lapsing.data.join.id).status, 'cancelled', 'an unpaid hold lapses after 30 minutes');
     assert.equal((await call('GET', 'floor')).data.eventJoins['warhammer@2026-10-03'], 3);
 
+    // Paid online means locked in: cancelling frees the spaces, and staff decide on a refund.
     mail.sent.length = 0;
-    const refunded = await call('POST', `events/joins/${online.data.join.id}/cancel`, {}, '1001');
-    assert.equal(refunded.status, 200);
-    assert.equal(refunded.data.refund.due, true);
-    assert.equal(lair.joinById(online.data.join.id).refund, 'due');
+    const cancelled = await call('POST', `events/joins/${online.data.join.id}/cancel`, {}, '1001');
+    assert.equal(cancelled.status, 200);
+    assert.deepEqual([cancelled.data.refund.due, cancelled.data.refund.ask, cancelled.data.join.refund], [false, true, 'ask']);
+    assert.equal(cancelled.data.notice, 'Your spot is cancelled. You paid online, so have a chat with us about a refund.');
+    assert.equal(lair.joinById(online.data.join.id).refund, 'ask');
+    assert.equal((await call('GET', 'floor')).data.eventJoins['warhammer@2026-10-03'], 1, 'the place is freed');
     await settle();
-    assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /Refund due/.test(m.subject)));
+    assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /^Refund\?/.test(m.subject)), 'the refund alert asks staff to decide');
+    // Staff cancelling (the event's off) means the money goes back: refund 'due'.
+    const staffOff = await call('POST', `events/joins/${counter.data.join.id}/cancel`, {}, 'staff');
+    assert.deepEqual([staffOff.data.refund.due, lair.joinById(counter.data.join.id).refund], [true, 'due'], 'paid at the counter, cancelled by staff');
+    const marked = await call('POST', `bookings/${counter.data.join.id}/update`, { refunded: true }, 'staff');
+    assert.deepEqual([marked.status, marked.data.join.refund], [200, 'done']);
   } finally {
     mail.restore();
   }
@@ -2123,9 +2144,10 @@ test('event game spots: the first free spot is booked as a wargame table for the
   const first = await reserve('warhammer@2026-10-03');
   assert.equal(first.status, 200, first.data.error);
   const booking = lair.booking(first.data.booking.id);
+  // A spot costs the event's entry fee a person ($20 here), paid at the counter: the event is paid in store.
   assert.deepEqual(
-    [booking.kind, booking.tables, booking.extras, booking.occurrenceId, booking.start, booking.end, booking.amount, first.data.spotsLeft],
-    ['table', ['T16', 'T17'], ['wargame'], 'warhammer@2026-10-03', at('2026-10-03', 18), at('2026-10-03', 22), 2000, 1],
+    [booking.kind, booking.tables, booking.extras, booking.occurrenceId, booking.start, booking.end, booking.amount, booking.status, booking.pay, first.data.spotsLeft],
+    ['table', ['T16', 'T17'], ['wargame'], 'warhammer@2026-10-03', at('2026-10-03', 18), at('2026-10-03', 22), 4000, 'confirmed', 'day', 1],
   );
   assert.match(booking.ref, /^SS-[A-Z]{3,9}-\d{1,2}$/);
   assert.deepEqual([first.data.booking.occurrenceId, first.data.booking.extras], ['warhammer@2026-10-03', ['wargame']]);
@@ -2140,11 +2162,11 @@ test('event game spots: the first free spot is booked as a wargame table for the
   assert.deepEqual(tourney.data.booking?.tables, ['T1', 'T2'], "an event's own table hold doesn't block its game spots");
   Date.now = () => at('2026-10-03', 17, 45);
   const checkedIn = await call('POST', 'checkin', { code: first.data.booking.ref }, 'staff');
-  assert.deepEqual([checkedIn.data.kind, checkedIn.data.checkedIn, checkedIn.data.due], ['booking', true, 2000]);
+  assert.deepEqual([checkedIn.data.kind, checkedIn.data.checkedIn, checkedIn.data.due], ['booking', true, 4000]);
 });
 
 test('event game spots: paying online goes through checkout, and the confirmation names the event', async () => {
-  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [warhammer()]);
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [warhammer({ payment: 'either' })]);
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.createCheckout = async (input) => ({ draftOrderId: 'gid://shopify/DraftOrder/95', checkoutUrl: `https://checkout.test/${input.ref}` });
   lair.shopify.draftOrderOrderId = async () => 'gid://shopify/Order/95';
@@ -2166,6 +2188,73 @@ test('event game spots: paying online goes through checkout, and the confirmatio
   }
 });
 
+test('events say how they\'re paid: in store ignores pay, either lets people choose, online always checks out and is refused (503) when it can\'t', async () => {
+  const event = (id, payment, over = {}) => ({
+    id, title: `${id} night`, start: at('2026-10-03', 18), end: at('2026-10-03', 22), tables: '', capacity: 10, entryFee: 1500, payment, ...over,
+  });
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    event('store', 'store', { gameTables: 'T14+T15' }), event('either', 'either', { gameTables: 'T16+T17' }),
+    event('online', 'online', { gameTables: 'T18+T19, T5+T6' }), event('free', 'online', { entryFee: 0 }),
+  ]);
+  const DOWN = "Online payment isn't working right now. Call us and we'll hold you a spot.";
+  const join = (id, body = {}) => call('POST', `events/${id}@2026-10-03/join`, { name: 'Aroha', email: 'aroha@example.com', people: 2, ...body }, '1001');
+  const reserve = (id, body = {}) => call('POST', `events/${id}@2026-10-03/reserve`, { name: 'Aroha', email: 'aroha@example.com', people: 2, ...body }, '1001');
+
+  // Shopify isn't connected: an online-only event is refused, "either" falls back to the counter.
+  const offline = await join('online');
+  assert.deepEqual([offline.status, offline.data.error], [503, DOWN]);
+  assert.deepEqual([(await reserve('online')).status, (await reserve('online')).data.error], [503, DOWN]);
+  const either = await join('either', { pay: 'now' });
+  assert.deepEqual([either.data.join.status, either.data.join.pay, either.data.join.payment, either.data.checkoutUrl], ['confirmed', 'day', 'store', undefined]);
+  assert.match(either.data.notice, /pay at the counter/);
+  let floor = (await call('GET', 'floor')).data;
+  assert.equal(floor.eventJoins['online@2026-10-03'], undefined, 'nothing is saved for a refused sign-up');
+  assert.deepEqual(floor.eventSpots['online@2026-10-03'], { total: 2, taken: 0 });
+  assert.equal(floor.features.payOnline, false, 'payOnline only says Shopify checkout works');
+
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  let broken = false;
+  let n = 0;
+  lair.shopify.createCheckout = async ({ ref }) => {
+    if (broken) throw new Error('Shopify is having a moment');
+    n += 1;
+    return { draftOrderId: `gid://shopify/DraftOrder/6${n}`, checkoutUrl: `https://checkout.test/${ref}` };
+  };
+  lair.shopify.deleteDraftIfOpen = async () => true;
+  // In store: confirmed straight away, paid at the counter, whatever pay says. Spots too.
+  const store = await join('store', { pay: 'now' });
+  assert.deepEqual([store.data.join.status, store.data.join.pay, store.data.join.payment, store.data.join.amount, store.data.checkoutUrl], ['confirmed', 'day', 'store', 3000, undefined]);
+  const storeSpot = await reserve('store', { pay: 'now' });
+  assert.deepEqual([storeSpot.data.booking.status, storeSpot.data.booking.payment, storeSpot.data.booking.amount, storeSpot.data.checkoutUrl], ['confirmed', 'store', 3000, undefined]);
+  // Either: at the counter unless they ask to pay now.
+  const day = await join('either', { email: 'kai@example.com' });
+  assert.deepEqual([day.data.join.status, day.data.join.payment, day.data.checkoutUrl], ['confirmed', 'store', undefined], "pay defaults to 'day'");
+  const now = await join('either', { pay: 'now', email: 'mia@example.com' });
+  assert.deepEqual([now.data.join.status, now.data.join.payment, now.data.holdMinutes, now.data.checkoutUrl], ['held', 'online', 30, `https://checkout.test/${now.data.join.ref}`]);
+  // Online: always held with a checkout, whatever pay says. Game spots follow the event too.
+  const online = await join('online', { pay: 'day', email: 'leo@example.com' });
+  assert.deepEqual([online.data.join.status, online.data.join.pay, online.data.join.payment, online.data.checkoutUrl], ['held', 'now', 'online', `https://checkout.test/${online.data.join.ref}`]);
+  const onlineSpot = await reserve('online', { pay: 'day', email: 'leo@example.com' });
+  assert.deepEqual([onlineSpot.data.booking.status, onlineSpot.data.booking.amount, onlineSpot.data.checkoutUrl], ['held', 3000, `https://checkout.test/${onlineSpot.data.booking.ref}`]);
+
+  // The checkout can't be made: online-only is refused and its place let go; either is confirmed for the counter.
+  broken = true;
+  const refused = await join('online', { email: 'zoe@example.com' });
+  assert.deepEqual([refused.status, refused.data.error], [503, DOWN]);
+  const refusedSpot = await reserve('online', { email: 'zoe@example.com' });
+  assert.deepEqual([refusedSpot.status, refusedSpot.data.error], [503, DOWN]);
+  floor = (await call('GET', 'floor')).data;
+  assert.equal(floor.eventJoins['online@2026-10-03'], 2, "only Leo's held sign-up takes places");
+  assert.deepEqual(floor.eventSpots['online@2026-10-03'], { total: 2, taken: 1 });
+  assert.equal(floor.features.payOnline, true);
+  const fallback = await join('either', { pay: 'now', email: 'ana@example.com' });
+  assert.deepEqual([fallback.status, fallback.data.join.status, fallback.data.join.pay], [200, 'confirmed', 'day']);
+  assert.match(fallback.data.notice, /pay at the counter/);
+  // No entry fee: nothing to pay, whatever the event says.
+  const free = await join('free', { email: 'free@example.com', pay: 'now' });
+  assert.deepEqual([free.status, free.data.join.status, free.data.join.amount, free.data.join.payment, free.data.checkoutUrl], [200, 'confirmed', 0, 'store', undefined]);
+});
+
 test('Shopify: lair_event entry_fee and game_tables are read, and the store address for email footers', async () => {
   const { ShopifyAdmin } = await import('../src/shopify.js');
   const admin = new ShopifyAdmin({ SHOP: 'shop.test', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret' }, null);
@@ -2173,16 +2262,32 @@ test('Shopify: lair_event entry_fee and game_tables are read, and the store addr
   admin.graphql = async () => ({
     rooms: { nodes: [] },
     events: {
-      nodes: [{
-        handle: 'warhammer', capabilities: { publishable: { status: 'ACTIVE' } },
-        fields: [field('title', 'Warhammer night'), field('starts_at', '2026-10-03T05:00:00Z'), field('entry_fee', '12.50'), field('game_tables', 'T14+T15, T16+T17'), field('tables', 'T20-T21')],
-      }],
+      nodes: [
+        {
+          handle: 'warhammer', capabilities: { publishable: { status: 'ACTIVE' } },
+          fields: [
+            field('title', 'Warhammer night'), field('starts_at', '2026-10-03T05:00:00Z'), field('entry_fee', '12.50'), field('game_tables', 'T14+T15, T16+T17'),
+            field('tables', 'T20-T21'), field('payment', 'Online or in store'), field('lock_tables', 'true'),
+          ],
+        },
+        { handle: 'league', capabilities: { publishable: { status: 'ACTIVE' } }, fields: [field('title', 'League'), field('starts_at', '2026-10-04T05:00:00Z'), field('payment', 'Online')] },
+        { handle: 'paint', capabilities: { publishable: { status: 'ACTIVE' } }, fields: [field('title', 'Paint night'), field('starts_at', '2026-10-05T05:00:00Z'), field('payment', 'In store'), field('lock_tables', 'false')] },
+        { handle: 'open', capabilities: { publishable: { status: 'ACTIVE' } }, fields: [field('title', 'Open play'), field('starts_at', '2026-10-06T05:00:00Z')] },
+      ],
     },
     main: { nodes: [] },
     shop: { name: 'Dice Goblin', shopAddress: { address1: 'Shop 7', address2: '12 Goblin Lane', city: 'Auckland', zip: '1010' } },
   });
   const data = await admin.loadLairData();
   assert.deepEqual([data.events[0].entryFee, data.events[0].gameTables, data.events[0].tables], [1250, 'T14+T15, T16+T17', 'T20-T21']);
+  // payment: "Online or in store" is either, "Online" is online, anything else (or empty) is paid in store.
+  // lock_tables: only true locks the event's tables; empty is false.
+  assert.deepEqual(data.events.map((e) => [e.id, e.payment, e.lockTables]), [['warhammer', 'either', true], ['league', 'online', false], ['paint', 'store', false], ['open', 'store', false]]);
+  const { eventPayment } = await import('../src/core.js');
+  assert.deepEqual(
+    ['Online or in store', 'ONLINE OR IN STORE', ' Online ', 'online', 'In store', '', null, 'Online only please', 'either', 'store'].map(eventPayment),
+    ['either', 'either', 'online', 'online', 'store', 'store', 'store', 'store', 'either', 'store'],
+  );
   assert.deepEqual(data.shop, { name: 'Dice Goblin', address: 'Shop 7, 12 Goblin Lane, Auckland 1010' });
   const { parseSpots, buildRooms } = await import('../src/core.js');
   const rooms = buildRooms(FALLBACK, 1000);

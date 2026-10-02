@@ -1,4 +1,5 @@
 // Dice Goblin Lair — talking to Shopify: request signatures, Admin API token and GraphQL calls.
+import { eventPayment } from './core.js';
 
 const enc = new TextEncoder();
 
@@ -195,8 +196,11 @@ export class ShopifyAdmin {
         return {
           id: n.handle, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '',
           repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: list(f.skip_dates), capacity: f.capacity ? Number(f.capacity) : null,
-          // entry_fee: NZD a person (cents here). game_tables: bookable game spots like "T14+T15, T16+T17" (tables still holds tables).
+          // entry_fee: NZD a person (cents here). game_tables: bookable game spots like "T14+T15, T16+T17".
           entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
+          // payment: "In store" (or empty), "Online" or "Online or in store". tables ("Tables reserved") are only marked
+          // for the event unless lock_tables ("Lock these tables") is on.
+          payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
         };
       })
       .filter((e) => Number.isFinite(e.start));

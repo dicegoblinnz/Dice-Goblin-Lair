@@ -33,6 +33,10 @@ const STATE_TTL = 60_000;
 const LIMITS = { perClientPer10Min: 20, activePerEmail: 6, messagesPerGamePerDay: 5 };
 /** What the public sees for a staff hold (staff labels can hold names or notes) */
 const PUBLIC_HOLD = { tournament: 'Tournament', market: 'Market', event: 'Event', maintenance: 'Out of action' };
+/** An event that's paid online only, when Shopify can't make the checkout */
+const ONLINE_DOWN = "Online payment isn't working right now. Call us and we'll hold you a spot.";
+/** Cancelling a sign-up or game spot that was paid online: it's locked in, so staff decide on a refund */
+const LOCKED_IN = 'Your spot is cancelled. You paid online, so have a chat with us about a refund.';
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 const MIGRATIONS = [
@@ -272,8 +276,8 @@ export class Lair {
       people: r.people, name: r.name, email: r.email, phone: r.phone, notes: r.notes, activity: r.activity, extras: parse(r.extras, []),
       pay: r.pay, paid: Boolean(r.paid), amount: r.amount, gameId: r.game_id, customerId: r.customer_id, holdUntil: r.hold_until,
       draftOrderId: r.draft_order_id, orderId: r.order_id, party: parse(r.party, []), arrivedAt: r.arrived_at || null,
-      refund: r.refund || null, refundDue: r.refund === 'due', refunded: r.refund === 'done', seriesId: r.series_id || null,
-      occurrenceId: r.occurrence_id || null,
+      // refund: null, 'ask' (staff decide), 'due' (refund it) or 'done' (refunded): one field everywhere.
+      refund: r.refund || null, seriesId: r.series_id || null, occurrenceId: r.occurrence_id || null,
     };
   }
 
@@ -301,7 +305,7 @@ export class Lair {
       id: r.id, ref: r.ref, occurrenceId: r.occurrence_id, eventId: r.event_id, title: r.title, start: r.starts_at, end: r.ends_at,
       people: r.people, name: r.name, email: r.email, note: r.note || '', status: r.status, customerId: r.customer_id, arrivedAt: r.arrived_at || null,
       pay: r.pay || 'day', paid: Boolean(r.paid), amount: r.amount || 0, holdUntil: r.hold_until || null, draftOrderId: r.draft_order_id || null,
-      orderId: r.order_id || null, refund: r.refund || null, refundDue: r.refund === 'due', refunded: r.refund === 'done',
+      orderId: r.order_id || null, refund: r.refund || null,
     };
   }
 
@@ -310,9 +314,23 @@ export class Lair {
     return row ? this.rowToJoin(row) : null;
   }
 
-  /** A sign-up as its owner sees it */
+  /**
+   * A sign-up as its owner sees it. payment: how it is or will be paid ('online' once it went to checkout, otherwise
+   * 'store', at the counter). refund: null, 'ask' (staff decide), 'due' or 'done'.
+   */
   joinView(j) {
-    return { id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, name: j.name, status: j.status, pay: j.pay, paid: j.paid, amount: j.amount };
+    return {
+      id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, name: j.name, status: j.status,
+      pay: j.pay, paid: j.paid, amount: j.amount, payment: j.pay === 'now' ? 'online' : 'store', refund: j.refund || null,
+    };
+  }
+
+  /** A sign-up as staff see it */
+  staffJoinView(j) {
+    return {
+      ...this.joinView(j), email: j.email, note: j.note, arrivedAt: j.arrivedAt, customerId: j.customerId || null, orderId: j.orderId || null,
+      due: j.paid ? 0 : j.amount || 0,
+    };
   }
 
   /** A game picture's public address (pictures are served by the Worker at /img/<id>) */
@@ -540,7 +558,6 @@ export class Lair {
         timezone: r.tz,
         rooms: r.rooms.map((room) => `${room.name}: ${room.tables.length} × ${room.seats} seats, $${room.price / 100}${room.minPeople ? `, min ${room.minPeople} people` : ''}${room.bookable ? '' : ', not bookable online'}`),
         hours: Object.entries(r.hours).map(([day, h]) => `${day} ${h ? `${String(Math.floor(h[0] / 60)).padStart(2, '0')}:${String(h[0] % 60).padStart(2, '0')}-${String(Math.floor(h[1] / 60)).padStart(2, '0')}:${String(h[1] % 60).padStart(2, '0')}` : 'closed'}`),
-        payOnline: r.payOnline,
         refundHours: r.refundHours,
         events: r.events.length,
       },
@@ -700,16 +717,12 @@ export class Lair {
       events: [],
       eventJoins,
       eventSpots,
-      ...(who.staff ? {
-        joins: joinRows.map((j) => ({
-          id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, name: j.name, email: j.email, people: j.people,
-          note: j.note, status: j.status, arrivedAt: j.arrivedAt, pay: j.pay, paid: j.paid, amount: j.amount, refund: j.refund,
-        })),
-      } : {}),
+      ...(who.staff ? { joins: joinRows.map((j) => this.staffJoinView(j)) } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: who.staff,
-      features: { email: emailReady(this.env), payOnline: rules.payOnline && this.shopify.configured },
+      // payOnline: Shopify checkout works, for events paid online. Tables, seats and walk-ins are paid at the counter.
+      features: { email: emailReady(this.env), payOnline: this.shopify.configured },
     };
   }
 
@@ -741,19 +754,17 @@ export class Lair {
       booking = { kind, ...checked };
     }
     if (!who.staff) this.checkEmailLimit(booking.email, now);
-    const wantsPayNow = input.pay === 'now' && kind !== 'walkin';
-    const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
+    // Tables, walk-ins and game seats are paid at the counter on the day (show the code, we ring it up): `pay` is ignored.
     const id = makeId('bk');
     Object.assign(booking, {
-      id, ref: this.newCode(trimmed(input.name, 80), 'booking', id, now), pay: payNow ? 'now' : 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
-      status: kind === 'walkin' ? 'seated' : payNow ? 'held' : 'confirmed', holdUntil: payNow ? now + HOLD_MINUTES * MIN : null,
-      customerId: override ? null : who.customerId || null,
+      id, ref: this.newCode(trimmed(input.name, 80), 'booking', id, now), pay: 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
+      status: kind === 'walkin' ? 'seated' : 'confirmed', holdUntil: null, customerId: override ? null : who.customerId || null,
     });
     this.saveBooking(booking, now);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email }, now);
     // --- saved: the table is ours ---
 
-    return this.payOrConfirm(booking, rules, { game, wantsPayNow, payNow });
+    return this.payOrConfirm(booking, rules, { game });
   }
 
   /** At most 6 upcoming bookings per email for anyone but staff (seats from "join every session" don't count). */
@@ -766,25 +777,36 @@ export class Lair {
   }
 
   /**
-   * After a booking is saved: send it to checkout (pay now) or email the confirmation. If Shopify can't make the
-   * checkout, the booking stays, to be paid at the counter.
+   * How an event sells its entry or a game spot (the event's `payment`): 'store' at the counter; 'online' always
+   * through checkout, refused with a 503 when Shopify can't make one; 'either' online when they ask (pay: 'now'), at
+   * the counter otherwise. No awaits.
    */
-  async payOrConfirm(saved, rules, { game = null, wantsPayNow = false, payNow = false, title = null } = {}) {
+  paymentPlan(payment, pay) {
+    const online = payment === 'online' || (payment === 'either' && pay === 'now');
+    if (payment === 'online' && !this.shopify.configured) throw new RuleError(ONLINE_DOWN, 503);
+    return { wantsPayNow: online, payNow: online && this.shopify.configured, required: payment === 'online' };
+  }
+
+  /**
+   * After a booking is saved: send it to checkout (an event game spot paid online) or email the confirmation. If
+   * Shopify can't make the checkout, the booking stays, to be paid at the counter; unless online is the only way
+   * (required), and then it's taken back and refused.
+   */
+  async payOrConfirm(saved, rules, { game = null, wantsPayNow = false, payNow = false, required = false, title = null } = {}) {
     let booking = saved;
     let notice = wantsPayNow && !payNow ? "Online payment isn't available, so pay at the counter. Your booking is confirmed." : null;
     if (payNow) {
       try {
-        const unit = booking.kind === 'gm-seat' ? game.seatPrice || rules.prices.gmSeat : tableIndex(rules.rooms).get(booking.tables[0]).roomObj.price;
         const { draftOrderId, checkoutUrl } = await this.shopify.createCheckout({
           ref: booking.ref,
           title: title || (booking.kind === 'gm-seat' ? `GM game seat: ${game.title}` : `Lair table fee (${booking.tables.join(', ')})`),
-          unitPrice: unit,
+          unitPrice: Math.round(booking.amount / booking.people),
           quantity: booking.people,
           email: booking.email,
           currency: this.env.CURRENCY || 'NZD',
           attributes: {
             Booking: booking.ref, When: this.when(booking, rules), Tables: booking.tables.join(', '), Name: booking.name,
-            Cancelling: `Full refund if you cancel at least ${rules.refundHours} hours before`,
+            Cancelling: "Paid online, so you're locked in. Have a chat with us if plans change.",
           },
         });
         this.write('UPDATE bookings SET draft_order_id = ?, updated_at = ? WHERE id = ?', draftOrderId, Date.now(), booking.id);
@@ -794,6 +816,11 @@ export class Lair {
         return { booking: this.ownView(fresh), notice: 'This booking changed while we set up payment. Please call us.' };
       } catch (error) {
         console.error('Lair: checkout could not be created', error);
+        if (required) {
+          // --- only this booking's own row changes: it was never confirmed, so it goes ---
+          this.write("DELETE FROM bookings WHERE id = ? AND status = 'held' AND paid = 0", booking.id);
+          throw new RuleError(ONLINE_DOWN, 503);
+        }
         this.write(
           "UPDATE bookings SET pay = 'day', status = CASE WHEN status = 'held' THEN 'confirmed' ELSE status END, hold_until = NULL, updated_at = ? WHERE id = ?",
           Date.now(), booking.id,
@@ -886,6 +913,16 @@ export class Lair {
     })));
   }
 
+  /** Someone cancelled a sign-up or game spot they'd paid online: it was locked in, so staff decide on a refund. */
+  askAboutRefund(item, rules, what) {
+    const event = item.title || (item.occurrenceId ? findOccurrence(rules, item.occurrenceId)?.title : null);
+    this.notifyStaff(`Refund? ${item.ref}`, {
+      title: 'A refund to decide',
+      intro: `${item.name} cancelled their ${what} ${item.ref}${event ? ` for ${event}` : ''}. They paid online, so it was locked in: it's your call whether to refund it. Have a chat with them, then mark it refunded if you do.`,
+      details: [['Code', item.ref], ['Was for', this.when(item, rules)], ['Paid', dollars(item.amount)], ['Order', item.orderId || 'See Orders in Shopify']],
+    });
+  }
+
   /** Record an email result in the status table, so a wrong key or an unverified domain shows up there. */
   noteEmail(result) {
     if (!result.attempted) return;
@@ -907,10 +944,11 @@ export class Lair {
     return result;
   }
 
+  /** A booking as the person who made it sees it. payment and refund as in joinView. */
   ownView(b) {
     return {
       ...publicBooking(b), ref: b.ref, name: b.name, email: b.email, people: b.people, paid: b.paid, amount: b.amount, pay: b.pay, room: b.room,
-      extras: b.extras || [], occurrenceId: b.occurrenceId || null,
+      extras: b.extras || [], occurrenceId: b.occurrenceId || null, payment: b.pay === 'now' ? 'online' : 'store', refund: b.refund || null,
     };
   }
 
@@ -919,16 +957,26 @@ export class Lair {
     // --- no awaits from here on ---
     const now = Date.now();
     const booking = this.booking(id);
-    if (!booking) throw new RuleError('Booking not found.', 404);
+    if (!booking) {
+      // An event sign-up: staff mark its entry fee paid or refunded here too (cancelling is POST /events/joins/:id/cancel).
+      const join = who.staff ? this.joinById(id) : null;
+      if (join) return this.updateJoin(join, patch, now);
+      throw new RuleError('Booking not found.', 404);
+    }
     if (!who.staff) {
       const own = who.customerId && booking.customerId === who.customerId;
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
       if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
-      const refund = refundFor(booking, rules, now);
+      // An event game spot paid online is locked in: cancelling frees the spot and staff decide on a refund. Anything
+      // else paid online (from before everything moved to the counter) keeps the cancellation policy it was sold with.
+      const lockedIn = Boolean(booking.occurrenceId && booking.paid && booking.pay === 'now');
+      const refund = lockedIn
+        ? { due: false, ask: true, amount: booking.amount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
+        : refundFor(booking, rules, now);
       booking.status = 'cancelled';
       booking.holdUntil = null;
-      if (refund.due) booking.refund = 'due';
+      if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
       this.saveBooking(booking, now);
       this.dropDraft(booking);
       if (refund.due) {
@@ -937,9 +985,9 @@ export class Lair {
           intro: `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
           details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
         });
-      }
+      } else if (lockedIn) this.askAboutRefund(booking, rules, 'game spot');
       if (booking.kind === 'gm-seat') this.tellGmSeatDropped(booking, rules);
-      return { booking: this.ownView(this.booking(booking.id)), refund };
+      return { booking: this.ownView(this.booking(booking.id)), refund, ...(lockedIn ? { notice: LOCKED_IN } : {}) };
     }
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const next = { ...booking };
@@ -954,7 +1002,10 @@ export class Lair {
     if (patch.people != null) {
       next.people = Math.max(1, Math.min(60, Math.floor(Number(patch.people)) || 1));
       const seatGame = next.kind === 'gm-seat' && next.gameId ? this.game(next.gameId) : null;
-      const unit = next.kind === 'gm-seat' ? seatGame?.seatPrice || rules.prices.gmSeat : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
+      // A game spot keeps its price a person (the event's entry fee, or the table fee).
+      const unit = next.kind === 'gm-seat' ? seatGame?.seatPrice || rules.prices.gmSeat
+        : next.occurrenceId && booking.people ? Math.round(booking.amount / booking.people)
+          : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
       next.amount = unit * next.people;
     }
     let moveGame = null;
@@ -979,7 +1030,11 @@ export class Lair {
     // Cancelled or a no-show: what's owed back, worked out before saving.
     const ending = ['cancelled', 'noshow'].includes(next.status) && booking.status !== next.status;
     let refund;
-    if (ending && next.status === 'cancelled') {
+    if (ending && next.status === 'cancelled' && booking.occurrenceId && booking.paid && booking.amount > 0) {
+      // Staff cancelling an event's game spot (the event's off, or they've sorted it out): what was paid comes back.
+      refund = { due: true, amount: booking.amount, orderId: booking.orderId || null, reason: 'cancelled by staff' };
+      if (next.refund !== 'done') next.refund = 'due';
+    } else if (ending && next.status === 'cancelled') {
       // Paid online and cancelled: the cancellation policy says whether the money goes back.
       refund = refundFor(booking, rules, now);
       if (refund.due && next.refund !== 'done') next.refund = 'due';
@@ -1005,6 +1060,18 @@ export class Lair {
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
     return { booking: this.booking(next.id), refund };
+  }
+
+  /** Staff: an event sign-up's { paid, refunded }. refunded: true is 'done', false clears the flag. No awaits. */
+  updateJoin(join, patch, now) {
+    let { paid, refund } = join;
+    if (typeof patch.paid === 'boolean') paid = patch.paid;
+    if (typeof patch.refunded === 'boolean') {
+      if (patch.refunded && !paid) throw new RuleError('Only a paid sign-up can be marked as refunded.');
+      refund = patch.refunded ? 'done' : null;
+    }
+    this.write('UPDATE event_joins SET paid = ?, refund = ?, updated_at = ? WHERE id = ?', paid ? 1 : 0, refund || null, now, join.id);
+    return { join: this.staffJoinView(this.joinById(join.id)) };
   }
 
   /** A player dropped their own seat: the GM hears about it. */
@@ -2096,10 +2163,11 @@ export class Lair {
       .one().n;
     const left = occurrence.capacity - taken;
     if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'space' : 'spaces'} left.` : 'This one is full.', 409);
-    // An entry fee is paid now (online, held for 30 minutes like a booking) or on the day. No fee, no paying.
+    // The entry fee is paid the way the event says (paymentPlan): at the counter, online (held for 30 minutes until
+    // it's paid), or either. No fee, nothing to pay.
     const fee = occurrence.entryFee || 0;
-    const wantsPayNow = fee > 0 && input.pay === 'now';
-    const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
+    const plan = this.paymentPlan(fee > 0 ? occurrence.payment : 'store', input.pay);
+    const { payNow } = plan;
     const joinId = makeId('ej');
     const join = {
       id: joinId, ref: this.newCode(name, 'join', joinId, now), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
@@ -2115,11 +2183,14 @@ export class Lair {
     );
     this.touchMember(who.customerId, { name, email }, now);
     // --- saved: the spaces are ours ---
-    return { ...(await this.payOrConfirmJoin(join, rules, { wantsPayNow, payNow })), spacesLeft: left - people };
+    return { ...(await this.payOrConfirmJoin(join, rules, plan)), spacesLeft: left - people };
   }
 
-  /** After a sign-up is saved: send it to checkout (pay now) or email the confirmation. Like payOrConfirm. */
-  async payOrConfirmJoin(join, rules, { wantsPayNow = false, payNow = false } = {}) {
+  /**
+   * After a sign-up is saved: send it to checkout (paying online) or email the confirmation. Like payOrConfirm: when
+   * online is the only way and Shopify can't make the checkout, the sign-up is taken back and refused.
+   */
+  async payOrConfirmJoin(join, rules, { wantsPayNow = false, payNow = false, required = false } = {}) {
     let notice = wantsPayNow && !payNow ? "Online payment isn't available, so pay at the counter. You're on the list." : null;
     if (payNow) {
       try {
@@ -2132,7 +2203,7 @@ export class Lair {
           currency: this.env.CURRENCY || 'NZD',
           attributes: {
             Booking: join.ref, When: this.when(join, rules), Event: join.title, Name: join.name,
-            Cancelling: `Full refund if you cancel at least ${rules.refundHours} hours before`,
+            Cancelling: "Paid online, so you're locked in. Have a chat with us if plans change.",
           },
         });
         this.write('UPDATE event_joins SET draft_order_id = ?, updated_at = ? WHERE id = ?', draftOrderId, Date.now(), join.id);
@@ -2142,6 +2213,11 @@ export class Lair {
         return { join: this.joinView(fresh), notice: 'This sign-up changed while we set up payment. Please call us.' };
       } catch (error) {
         console.error('Lair: checkout could not be created', error);
+        if (required) {
+          // --- only this sign-up's own row changes: it was never confirmed, so it goes ---
+          this.write("DELETE FROM event_joins WHERE id = ? AND status = 'held' AND paid = 0", join.id);
+          throw new RuleError(ONLINE_DOWN, 503);
+        }
         this.write(
           "UPDATE event_joins SET pay = 'day', status = CASE WHEN status = 'held' THEN 'confirmed' ELSE status END, hold_until = NULL, updated_at = ? WHERE id = ?",
           Date.now(), join.id,
@@ -2156,8 +2232,9 @@ export class Lair {
 
   /**
    * POST /events/:id/reserve { name, email, people (1-2), pay } books the first free game spot of that event date
-   * (its game_tables, like T14+T15) as a normal table booking for the event's time: a wargame setup at the table fee,
-   * linked to the date. The same tables stay bookable through the booking page. Returns { booking, spotsLeft, checkoutUrl? }.
+   * (its game_tables, like T14+T15) as a normal table booking for the event's time: a wargame setup, linked to the
+   * date. It costs the event's entry fee a person when it has one, otherwise the table fee, paid the way the event
+   * says (paymentPlan). The same tables stay bookable through the booking page. Returns { booking, spotsLeft, checkoutUrl? }.
    */
   async reserveSpot(occurrenceId, input, who, client = '') {
     const rules = await this.rules();
@@ -2179,19 +2256,20 @@ export class Lair {
     const free = this.freeSpots(occurrence, rules, this.state(occurrence.start - 1, occurrence.end + 1));
     if (!free.length) throw new RuleError('All the game tables are taken for this one. Try another date.', 409);
     const { room } = oneRoom(free[0], rules);
-    const wantsPayNow = input.pay === 'now';
-    const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
+    const unit = occurrence.entryFee || room.price;
+    const plan = this.paymentPlan(unit > 0 ? occurrence.payment : 'store', input.pay);
+    const { payNow } = plan;
     const spotId = makeId('bk');
     const booking = {
       id: spotId, ref: this.newCode(name, 'booking', spotId, now), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
-      name, email, phone: trimmed(input.phone, 40), notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: room.price * people,
+      name, email, phone: trimmed(input.phone, 40), notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: unit * people,
       occurrenceId: occurrence.id, pay: payNow ? 'now' : 'day', paid: false, status: payNow ? 'held' : 'confirmed',
       holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null,
     };
     this.saveBooking(booking, now);
     this.touchMember(who.customerId, { name, email }, now);
     // --- saved: the spot is ours ---
-    const result = await this.payOrConfirm(booking, rules, { wantsPayNow, payNow, title: `Game table at ${occurrence.title} (${free[0].join(', ')})` });
+    const result = await this.payOrConfirm(booking, rules, { ...plan, title: `Game spot at ${occurrence.title} (${free[0].join(', ')})` });
     return { ...result, spotsLeft: free.length - 1 };
   }
 
@@ -2223,19 +2301,33 @@ export class Lair {
     if (!join) throw new RuleError('Sign-up not found.', 404);
     const own = who.customerId && join.customerId === who.customerId;
     if (!who.staff && !own) throw new RuleError('Only staff can change that sign-up.', 403);
-    if (join.status === 'cancelled') return { ok: true };
-    // An entry fee paid online comes back when the sign-up is cancelled ahead of the cut-off, like a booking.
-    const refund = refundFor(join, rules, now);
-    this.write("UPDATE event_joins SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund.due ? 'due' : join.refund, now, join.id);
+    if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
+    const paid = Boolean(join.paid && join.amount > 0);
+    let refund;
+    let flag = join.refund;
+    let notice = null;
+    if (who.staff) {
+      // Staff cancelling (the event's off, or they've sorted it out with the person): what was paid comes back.
+      refund = paid ? { due: true, amount: join.amount, orderId: join.orderId || null, reason: 'cancelled by staff' } : { due: false, amount: 0, reason: 'nothing paid' };
+      if (paid && flag !== 'done') flag = 'due';
+    } else if (paid && join.pay === 'now') {
+      // Paid online means locked in: the space is freed, and staff decide on a refund.
+      refund = { due: false, ask: true, amount: join.amount, orderId: join.orderId || null, reason: 'paid online, so staff decide' };
+      if (flag !== 'done') flag = 'ask';
+      notice = LOCKED_IN;
+    } else {
+      refund = { due: false, amount: 0, reason: 'nothing paid online' };
+    }
+    this.write("UPDATE event_joins SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", flag || null, now, join.id);
     this.dropDraft(join);
     if (refund.due) {
       this.notifyStaff(`Refund due: ${join.ref}`, {
         title: 'Refund due',
-        intro: `${join.name}'s sign-up ${join.ref} for ${join.title} was cancelled more than ${rules.refundHours} hours ahead, so they get their entry fee back. Refund it in Shopify.`,
+        intro: `${join.name}'s sign-up ${join.ref} for ${join.title} was cancelled, so they get their entry fee back. Refund it in Shopify (or at the counter), then mark it refunded.`,
         details: [['Sign-up', join.ref], ['Event', `${join.title}, ${this.when(join, rules)}`], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
       });
-    }
-    return { ok: true, refund };
+    } else if (refund.ask) this.askAboutRefund(join, rules, 'sign-up');
+    return { ok: true, join: this.joinView(this.joinById(join.id)), refund, ...(notice ? { notice } : {}) };
   }
 
   /** "Host your own event": the form goes to the team by email, with replies going straight to the person. */
@@ -2595,6 +2687,7 @@ export class Lair {
     const view = (b) => ({
       id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
       paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
+      payment: b.pay === 'now' ? 'online' : 'store',
     });
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
@@ -2642,7 +2735,6 @@ export class Lair {
       checkedAt: new Date().toISOString(),
       shopify: this.shopify.configured,
       email: emailReady(this.env),
-      payOnline: rules.payOnline,
       timezone: rules.tz,
       rooms: rules.rooms.map((r) => `${r.name}: ${r.tables.length} ${r.tables.length === 1 ? 'table' : 'tables'} (${r.tables[0]?.id || '-'}…), ${dollars(r.price)} per person`),
     };

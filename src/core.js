@@ -347,6 +347,18 @@ function eventDates(e, time, fromKey, toKey) {
   return keys.filter((key) => key >= fromKey && !skip.has(key));
 }
 
+/**
+ * How an event's entry fee (and its game spots) are paid, from the lair_event "payment" field: "Online or in store" is
+ * 'either', "Online" is 'online', and anything else (empty, "In store") is 'store', paid at the counter.
+ */
+export function eventPayment(value) {
+  const text = String(value ?? '').trim();
+  if (['store', 'online', 'either'].includes(text)) return text;
+  if (/^online or/i.test(text)) return 'either';
+  if (/^online$/i.test(text)) return 'online';
+  return 'store';
+}
+
 /** Every date of the Lair's events that overlaps [from, to) */
 export function eventOccurrences(rules, from, to) {
   const time = lairTime(rules.tz);
@@ -364,6 +376,7 @@ export function eventOccurrences(rules, from, to) {
         id: `${e.id}@${key}`, eventId: e.id, title: e.title, start, end: start + length, tables: e.tables || '',
         capacity: Number(e.capacity) > 0 ? Math.floor(Number(e.capacity)) : null,
         entryFee: Number(e.entryFee) > 0 ? Math.round(Number(e.entryFee)) : 0, gameTables: e.gameTables || '',
+        payment: eventPayment(e.payment), lockTables: e.lockTables === true,
       });
     }
   }
@@ -683,6 +696,8 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     leadMinutes: Number(settings.lair_lead_minutes ?? 60),
     horizonDays: Number(settings.lair_horizon_days ?? 60),
     maxHours: Number(settings.lair_max_hours ?? 8),
+    // The old "let people pay online" setting: nothing reads it any more (tables, seats and walk-ins are paid at the
+    // counter; each event says how it's paid).
     payOnline: settings.lair_pay_online !== false,
     refundHours: Number(settings.lair_refund_hours ?? 24),
     prices,
