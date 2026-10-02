@@ -539,6 +539,9 @@ export class Lair {
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
         if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true }));
         if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false }));
+        // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
+        if (b === 'pos' && c === 'checkin') return json(await this.posCheckIn(body));
+        if (b === 'pos' && c === 'member') return json(await this.posMember(body));
         return json({ error: 'Not found' }, 404);
       }
       const origin = request.headers.get('X-Lair-Origin');
@@ -1963,6 +1966,50 @@ export class Lair {
       bookings: items, checkedIn: false, due,
       message: items.length ? `${name} has ${items.length} ${items.length === 1 ? 'booking' : 'bookings'} today. ${list}.` : `${name} has nothing booked today.`,
     };
+  }
+
+  /* ---------------- the POS at the counter ---------------- */
+  /**
+   * POST /pos/checkin { code, force? } from the POS extension: the same as /checkin, plus `lines` (the fee still to pay,
+   * ready to add to the POS cart as custom sales; each carries its ticket code in _booking, so paying the order marks
+   * it paid) and `customer` (to attach to the cart, so the spend counts). A member card's lines cover everything
+   * still to pay today.
+   */
+  async posCheckIn(input) {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const result = this.ticketCheckIn(input, rules, Date.now());
+    let lines = [];
+    let customerId = null;
+    if (result.kind === 'member') {
+      customerId = result.customer.id;
+      lines = result.bookings.filter((x) => x.due > 0).map((x) => this.posLine(x.kind === 'join' ? this.joinById(x.id) : this.booking(x.id), x.kind, x.due));
+    } else {
+      const item = result.kind === 'join' ? result.join : result.booking;
+      customerId = item.customerId || null;
+      if (result.checkedIn && result.due > 0) lines = [this.posLine(item, result.kind, result.due)];
+    }
+    return { ...result, lines, customer: customerId ? { id: customerId } : null };
+  }
+
+  /** One custom sale for the POS cart */
+  posLine(item, type, due) {
+    let title;
+    if (type === 'join') title = `Event entry: ${item.title || 'event'} (${item.ref})`;
+    else if (item.kind === 'gm-seat') title = `GM game seat: ${this.game(item.gameId)?.title || 'game'} (${item.ref})`;
+    else title = `Table fee: ${item.ref} (${item.tables.join(', ')}, ${item.people} ${item.people === 1 ? 'person' : 'people'})`;
+    return { title: title.slice(0, 120), price: (due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: item.ref } };
+  }
+
+  /** POST /pos/member { code: 'DGC-123' } from the POS extension: who a member card belongs to, to attach them to the cart. */
+  async posMember(input) {
+    const rules = await this.rules();
+    const now = Date.now();
+    const code = parseTicketCode(input.code);
+    if (!code?.card) throw new RuleError("That isn't a member card. Member cards look like DGC- and a number.", 404);
+    const row = this.memberRow(code.card);
+    if (!row) throw new RuleError(`No member with the card DGC-${code.card}. They can open My Lair on the website to get set up.`, 404);
+    return { customerId: row.customer_id, name: row.name || row.first_name || '', rolls: this.rollsState(row.customer_id, now, new LairTime(rules.tz).key(now)) };
   }
 
   /* ---------------- events ---------------- */

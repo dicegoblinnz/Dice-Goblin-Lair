@@ -2128,3 +2128,98 @@ test('Shopify: lair_event entry_fee and game_tables are read, and the store addr
   const rooms = buildRooms(FALLBACK, 1000);
   assert.deepEqual(parseSpots('T14+T15, t16 + t17; T99, T4+A1, T20', rooms), [['T14', 'T15'], ['T16', 'T17'], ['T20']], 'unknown tables and spots across rooms are dropped');
 });
+
+/** A POS session token like Shopify POS makes: a JWT signed HS256 with the app's client secret. */
+async function posToken(claims, { secret = 'hush', alg = 'HS256' } = {}) {
+  const { createHmac } = await import('node:crypto');
+  const part = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const body = `${part({ alg, typ: 'JWT' })}.${part(claims)}`;
+  return `${body}.${createHmac('sha256', secret).update(body).digest('base64url')}`;
+}
+const posClaims = (over = {}) => ({
+  iss: 'https://ep0qiq-rp.myshopify.com/admin', dest: 'https://ep0qiq-rp.myshopify.com', aud: 'client-id', sub: '42',
+  exp: Math.floor(NOW / 1000) + 60, nbf: Math.floor(NOW / 1000) - 5, iat: Math.floor(NOW / 1000) - 5, jti: 'x', ...over,
+});
+
+test('POS session tokens: HS256 with the client secret, aud is the client ID, dest is the shop, exp and nbf with 60 seconds of leeway', async () => {
+  const { verifySessionToken } = await import('../src/shopify.js');
+  const opts = { secret: 'hush', clientId: 'client-id', shop: 'ep0qiq-rp.myshopify.com', now: NOW };
+  const check = async (claims, tokenOpts) => verifySessionToken(await posToken(claims, tokenOpts), opts);
+  assert.equal((await check(posClaims())).sub, '42');
+  assert.equal(await check(posClaims(), { secret: 'wrong' }), null);
+  assert.equal(await check(posClaims({ aud: 'another-app' })), null);
+  assert.equal(await check(posClaims({ dest: 'https://evil.myshopify.com' })), null);
+  assert.ok(await check(posClaims({ exp: Math.floor(NOW / 1000) - 30 })), 'just expired is inside the leeway');
+  assert.equal(await check(posClaims({ exp: Math.floor(NOW / 1000) - 90 })), null);
+  assert.equal(await check(posClaims({ nbf: Math.floor(NOW / 1000) + 120 })), null);
+  assert.equal(await check(posClaims({ exp: undefined })), null);
+  assert.equal(await check(posClaims(), { alg: 'none' }), null);
+  assert.equal(await verifySessionToken('not.a.token', opts), null);
+  assert.equal(await verifySessionToken(await posToken(posClaims()), { ...opts, secret: '' }), null);
+});
+
+test('Worker: POS routes answer CORS preflights, need a valid POS session token, and go to the Lair as staff', async () => {
+  Date.now = realNow;
+  const { resetConfigCache } = await import('../src/config.js');
+  resetConfigCache();
+  const seen = [];
+  const env = {
+    SHOP: 'ep0qiq-rp.myshopify.com', SHOPIFY_CLIENT_SECRET: 'hush', SHOPIFY_CLIENT_ID: 'client-id',
+    LAIR: { idFromName: () => 'id', get: () => ({ fetch: async (req) => { seen.push({ path: new URL(req.url).pathname, internal: req.headers.get('X-Lair-Internal'), user: req.headers.get('X-Lair-Pos-User'), body: await req.text() }); return new Response('{"found":true}'); } }) },
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const token = await posToken(posClaims({ exp: now + 60, nbf: now - 5 }));
+  const preflight = await worker.fetch(new Request('https://worker.test/pos/checkin', { method: 'OPTIONS', headers: { Origin: 'https://extensions.shopifycdn.com', 'Access-Control-Request-Headers': 'authorization' } }), env);
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), '*');
+  assert.match(preflight.headers.get('Access-Control-Allow-Headers'), /Authorization/);
+  assert.match(preflight.headers.get('Access-Control-Allow-Methods'), /POST/);
+  const anonymous = await worker.fetch(new Request('https://worker.test/pos/checkin', { method: 'POST', body: '{"code":"SAM-1234"}' }), env);
+  assert.equal(anonymous.status, 401);
+  assert.equal(anonymous.headers.get('Access-Control-Allow-Origin'), '*');
+  const signedLikeProxy = await worker.fetch(new Request(await signedUrl('/pos/checkin', { shop: env.SHOP, timestamp: String(now), logged_in_customer_id: '' }), { method: 'POST', body: '{}' }), env);
+  assert.equal(signedLikeProxy.status, 401, 'the app proxy signature is no way in');
+  assert.equal(seen.length, 0);
+  const ok = await worker.fetch(new Request('https://worker.test/pos/checkin', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: '{"code":"SAM-1234"}' }), env);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get('Access-Control-Allow-Origin'), '*');
+  assert.deepEqual(seen[0], { path: '/internal/pos/checkin', internal: '1', user: '42', body: '{"code":"SAM-1234"}' });
+  await worker.fetch(new Request('https://worker.test/pos/member', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: '{"code":"DGC-1"}' }), env);
+  assert.equal(seen[1].path, '/internal/pos/member');
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/other', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }), env)).status, 404);
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/checkin', { headers: { Authorization: `Bearer ${token}` } }), env)).status, 404);
+  resetConfigCache();
+});
+
+test('POS check-in: the fee still to pay as cart lines with the ticket code, the customer to attach, and member cards', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20, entryFee: 500 },
+  ]);
+  const pos = (path, body) => lair.fetch(new Request(`https://lair.test/internal/pos/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: JSON.stringify(body) })).then(async (r) => ({ status: r.status, data: await r.json() }));
+  const table = (await call('POST', 'bookings', tableBooking({ tables: ['T5'] }), '1001')).data.booking;
+  const quiz = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Sam', email: 'sam@example.com', people: 2 }, '1001')).data.join;
+  const later = (await call('POST', 'bookings', tableBooking({ tables: ['T6'], start: at('2026-10-02', 15), end: at('2026-10-02', 16), email: 'later@example.com' }))).data.booking;
+
+  const one = await pos('checkin', { code: table.ref.replace('-', '') });
+  assert.equal(one.status, 200, one.data.error);
+  assert.deepEqual([one.data.kind, one.data.checkedIn, one.data.due, one.data.customer], ['booking', true, 4000, { id: '1001' }]);
+  assert.deepEqual(one.data.lines, [{ title: `Table fee: ${table.ref} (T5, 4 people)`, price: '40.00', quantity: 1, taxable: true, properties: { _booking: table.ref } }]);
+  const early = await pos('checkin', { code: later.ref });
+  assert.deepEqual([early.data.reason, early.data.lines, early.data.customer], ['not-today', [], null], 'nothing to charge for another day');
+
+  const card = await pos('checkin', { code: 'DGC-1001' });
+  assert.deepEqual([card.data.kind, card.data.customer], ['member', { id: '1001' }]);
+  assert.deepEqual(card.data.lines.map((l) => [l.price, l.properties._booking]), [['40.00', table.ref], ['10.00', quiz.ref]]);
+  assert.equal(card.data.lines[1].title, `Event entry: Trivia night (${quiz.ref})`);
+
+  // The POS order pays them; the next scan has nothing left to charge.
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  await internal('orders-paid', { id: 990, admin_graphql_api_id: 'gid://shopify/Order/990', source_name: 'pos', line_items: card.data.lines.map((l) => ({ properties: [{ name: '_booking', value: l.properties._booking }] })) });
+  assert.deepEqual((await pos('checkin', { code: 'DGC-1001' })).data.lines, []);
+
+  await call('GET', 'me', null, '1001');
+  const member = await pos('member', { code: 'dgc1001' });
+  assert.deepEqual([member.status, member.data.customerId, member.data.name, member.data.rolls.daily], [200, '1001', 'Sam', true]);
+  assert.equal((await pos('member', { code: 'DGC-77' })).status, 404);
+  assert.equal((await pos('member', { code: table.ref })).status, 404);
+});

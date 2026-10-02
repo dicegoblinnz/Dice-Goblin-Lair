@@ -43,6 +43,39 @@ export async function verifyWebhook(rawBody, header, secret) {
   return safeEqual(toBase64(await hmac(secret, rawBody)), header);
 }
 
+const fromBase64Url = (text) => {
+  const b64 = String(text).replace(/=+$/, '').replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
+};
+
+/**
+ * A Shopify POS session token (the JWT the POS extension gets from shopify.session.getSessionToken()), signed HS256
+ * with the app's client secret. Returns its claims when the signature checks out, aud is the app's client ID, dest is
+ * the shop, and it's inside exp and nbf (with 60 seconds' leeway for clock drift). Anything else is null.
+ */
+export async function verifySessionToken(token, { secret, clientId, shop, now = Date.now(), leeway = 60 } = {}) {
+  if (!secret || !clientId || !shop || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts.some((p) => !/^[A-Za-z0-9_-]+={0,2}$/.test(p))) return null;
+  let header;
+  let claims;
+  try {
+    header = JSON.parse(new TextDecoder().decode(fromBase64Url(parts[0])));
+    claims = JSON.parse(new TextDecoder().decode(fromBase64Url(parts[1])));
+  } catch {
+    return null;
+  }
+  if (header?.alg !== 'HS256' || !claims || typeof claims !== 'object') return null;
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+  if (!(await crypto.subtle.verify('HMAC', key, fromBase64Url(parts[2]), enc.encode(`${parts[0]}.${parts[1]}`)))) return null;
+  const seconds = now / 1000;
+  if (typeof claims.exp !== 'number' || seconds > claims.exp + leeway) return null;
+  if (claims.nbf != null && (typeof claims.nbf !== 'number' || seconds < claims.nbf - leeway)) return null;
+  if (!(Array.isArray(claims.aud) ? claims.aud : [claims.aud]).includes(clientId)) return null;
+  if (String(claims.dest || '').replace(/\/+$/, '').toLowerCase() !== `https://${String(shop).toLowerCase()}`) return null;
+  return claims;
+}
+
 export class ShopifyAdmin {
   constructor(env, storage) {
     this.shop = env.SHOP;

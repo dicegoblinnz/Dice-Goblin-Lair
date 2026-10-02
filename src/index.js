@@ -1,13 +1,14 @@
 // Dice Goblin Lair — Cloudflare Worker entry point.
 //   /proxy/*                 Shopify app proxy (www.dicegoblin.nz/apps/lair/*), signature checked. Signed requests
 //                            on other paths are served the same way, in case the proxy URL was entered without /proxy.
+//   /pos/checkin, /pos/member the POS extension on the counter iPad: a Shopify POS session token, CORS for its origin
 //   /webhooks/orders-paid    Shopify webhook, HMAC checked
 //   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook
 //   /img/<id>                a GM's game picture (public, cached)
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
 import { Lair } from './lair.js';
-import { safeEqual, verifyProxySignature, verifyWebhook } from './shopify.js';
+import { safeEqual, verifyProxySignature, verifySessionToken, verifyWebhook } from './shopify.js';
 import { withConfig } from './config.js';
 
 export { Lair };
@@ -18,8 +19,34 @@ const json = (data, status = 200) =>
 const lair = (env) => env.LAIR.get(env.LAIR.idFromName('dice-goblin'));
 
 /** Requests from the Worker itself to the Lair's internal routes. The public proxy can never set this header. */
-const internalCall = (env, origin, path, body) =>
-  lair(env).fetch(new Request(`${origin}/internal/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body }));
+const internalCall = (env, origin, path, body, headers = {}) =>
+  lair(env).fetch(new Request(`${origin}/internal/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1', ...headers }, body }));
+
+/** The POS extension runs on Shopify's own extension origin, so its routes answer CORS (the session token is the proof, not cookies). */
+const POS_CORS = {
+  'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Max-Age': '86400',
+};
+const withCors = (response) => {
+  const out = new Response(response.body, response);
+  for (const [key, value] of Object.entries(POS_CORS)) out.headers.set(key, value);
+  return out;
+};
+
+/**
+ * POST /pos/checkin and /pos/member, from the POS extension. Staff are signed in to Shopify POS, and its session
+ * token (Authorization: Bearer …) proves the request came from this shop's POS for this app.
+ */
+async function posRoute(request, env, url) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: POS_CORS });
+  const route = url.pathname.slice('/pos/'.length);
+  if (request.method !== 'POST' || !['checkin', 'member'].includes(route)) return withCors(json({ error: 'Not found' }, 404));
+  const token = (request.headers.get('Authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1];
+  const claims = token ? await verifySessionToken(token, { secret: env.SHOPIFY_CLIENT_SECRET, clientId: env.SHOPIFY_CLIENT_ID, shop: env.SHOP }) : null;
+  if (!claims) return withCors(json({ error: 'Sign in to Shopify POS to use this.' }, 401));
+  const body = await request.text();
+  return withCors(await internalCall(env, url.origin, `pos/${route}`, body || '{}', { 'X-Lair-Pos-User': String(claims.sub || '') }));
+}
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -100,6 +127,8 @@ export default {
       if (res.ok && cache) ctx?.waitUntil?.(cache.put(request, res.clone()));
       return res;
     }
+
+    if (url.pathname.startsWith('/pos/')) return posRoute(request, env, url);
 
     // Shopify signs every app proxy request. The proxy URL should end in /proxy, but a signed request on any other
     // path is served the same way, so a proxy URL entered without "/proxy" still works.
