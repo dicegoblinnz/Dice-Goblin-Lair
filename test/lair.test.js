@@ -61,6 +61,8 @@ beforeEach(() => {
   Date.now = () => NOW;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD' });
   lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: id === 'gm' });
+  // Paid orders are looked up for members' spend; tests that care replace this.
+  lair.shopify.orderSpend = async () => null;
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     { id: 'fnm', title: 'Friday Night Magic', start: at('2026-10-02', 18, 30), end: at('2026-10-02', 22), tables: 'T11-T20' },
   ]);
@@ -1536,4 +1538,67 @@ test('GET /members?q= (staff): search by name, email or card, with spend over th
   assert.deepEqual((await call('GET', 'members?q=dgc-1002', null, 'staff')).data.map((m) => m.customerId), ['1002']);
   assert.deepEqual((await call('GET', 'members?q=100%25', null, 'staff')).data, [], 'a % is searched for, not a wildcard');
   assert.equal((await call('GET', 'members', null, 'staff')).data.length, 2);
+});
+
+test('spend: every paid order with a customer adds its subtotal once, even when Shopify sends the webhook again', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const orders = {
+    'gid://shopify/Order/501': { customerId: '1001', amount: 4550, source: 'web' },
+    'gid://shopify/Order/502': { customerId: null, amount: 9900, source: 'web' },
+    'gid://shopify/Order/503': { customerId: '1001', amount: 2000, source: 'pos' },
+  };
+  const asked = [];
+  lair.shopify.orderSpend = async (id) => {
+    asked.push(id);
+    return orders[id] || null;
+  };
+  const paid = (n, source = 'web') => internal('orders-paid', { id: n, admin_graphql_api_id: `gid://shopify/Order/${n}`, source_name: source, line_items: [] });
+  assert.equal((await paid(501)).data.spend, 4550);
+  assert.equal((await paid(501)).data.spend, 0, 'the same order again counts nothing');
+  assert.equal((await paid(502)).data.spend, 0, 'no customer, no spend');
+  assert.equal((await paid(503, 'pos')).data.spend, 2000);
+  assert.deepEqual(asked, ['gid://shopify/Order/501', 'gid://shopify/Order/501', 'gid://shopify/Order/502', 'gid://shopify/Order/503']);
+  assert.deepEqual(lair.spendOf('1001', NOW), { total: 6550, year: 6550 });
+
+  lair.shopify.orderSpend = async () => {
+    throw new Error('Shopify API: Access denied for order field. Required access: `read_orders` access scope.');
+  };
+  const denied = await paid(504);
+  assert.equal(denied.status, 200, 'a missing permission is noted, not retried forever');
+  lair.shopify.orderSpend = async () => {
+    throw new Error('Shopify API error 503');
+  };
+  assert.equal((await paid(505)).status, 500, 'Shopify being down fails the webhook so Shopify sends it again');
+});
+
+test('POS: a counter order with a _booking line pays that booking as it is; an online order can\'t, and paying twice is flagged', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  lair.shopify.draftOrderOrderId = async () => 'gid://shopify/Order/700';
+  lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/70', checkoutUrl: 'https://checkout.test/70' });
+  const mail = captureEmails();
+  try {
+    const counter = (await call('POST', 'bookings', tableBooking({ tables: ['T5'] }))).data.booking;
+    const line = (ref) => ({ title: 'Table fee', quantity: 1, price: '40.00', properties: [{ name: '_booking', value: ref }] });
+    await settle();
+    mail.sent.length = 0;
+    const web = await internal('orders-paid', { id: 601, admin_graphql_api_id: 'gid://shopify/Order/601', source_name: 'web', line_items: [line(counter.ref)] });
+    assert.deepEqual(web.data.updated, []);
+    const pos = await internal('orders-paid', { id: 602, admin_graphql_api_id: 'gid://shopify/Order/602', source_name: 'pos', line_items: [line(counter.ref.toLowerCase())] });
+    assert.deepEqual(pos.data.updated, [counter.ref]);
+    const saved = lair.booking(counter.id);
+    assert.deepEqual([saved.paid, saved.pay, saved.status, saved.orderId], [true, 'day', 'confirmed', 'gid://shopify/Order/602']);
+    await settle();
+    assert.equal(mail.sent.length, 0, 'paying at the counter sends no second confirmation');
+
+    const online = (await call('POST', 'bookings', tableBooking({ tables: ['T6'], pay: 'now', email: 'online@example.com' }))).data.booking;
+    await internal('orders-paid', { id: 700, admin_graphql_api_id: 'gid://shopify/Order/700', source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: online.ref }] });
+    await internal('orders-paid', { id: 701, admin_graphql_api_id: 'gid://shopify/Order/701', source_name: 'pos', line_items: [line(online.ref)] });
+    const twice = lair.booking(online.id);
+    assert.equal(twice.orderId, 'gid://shopify/Order/700', 'the first payment is kept');
+    assert.match(twice.notes, /Paid twice/);
+    await settle();
+    assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /Paid twice/.test(m.subject)));
+  } finally {
+    mail.restore();
+  }
 });

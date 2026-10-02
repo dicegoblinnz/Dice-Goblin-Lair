@@ -214,6 +214,25 @@ export class ShopifyAdmin {
     return { draftOrderId: result.draftOrder.id, checkoutUrl: result.draftOrder.invoiceUrl };
   }
 
+  /**
+   * Who paid for an order and its subtotal after discounts (in cents), for members' spend. customerId is null when
+   * the order has no customer.
+   */
+  async orderSpend(orderId) {
+    const data = await this.graphql(
+      'query OrderSpend($id: ID!) { order(id: $id) { id sourceName customer { id } currentSubtotalPriceSet { shopMoney { amount currencyCode } } } }',
+      { id: orderId },
+    );
+    const order = data.order;
+    if (!order) return null;
+    const amount = Math.round(Number(order.currentSubtotalPriceSet?.shopMoney?.amount || 0) * 100);
+    return {
+      customerId: order.customer?.id ? String(order.customer.id).split('/').pop() : null,
+      amount: Number.isFinite(amount) ? amount : 0,
+      source: order.sourceName || null,
+    };
+  }
+
   /** The order a draft order turned into once it was paid (null while unpaid). */
   async draftOrderOrderId(id) {
     const data = await this.graphql('query DraftStatus($id: ID!) { draftOrder(id: $id) { id status order { id } } }', { id });

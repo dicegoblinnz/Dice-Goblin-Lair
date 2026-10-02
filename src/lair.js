@@ -1263,35 +1263,78 @@ export class Lair {
   }
 
   /**
-   * orders/paid webhook (signature already checked by the Worker). Customers can put any text in a cart note or
-   * cart attribute, so only orders that came from a draft order (our checkouts; customers can't make those) count,
-   * and only for bookings that were sent to checkout. Shopify is asked which order the booking's draft became; if
-   * the draft is gone (deleted as the hold ran out) or not linked yet, the draft-order source is the proof.
+   * orders/paid webhook (signature already checked by the Worker). Two jobs:
+   *
+   * Payments for bookings. Customers can put any text in a cart note or cart attribute, so an online order only counts
+   * when it came from a draft order (our checkouts; customers can't make those), and only for a booking that was sent
+   * to checkout: Shopify is asked which order the booking's draft became, and if the draft is gone (deleted as the
+   * hold ran out) or not linked yet, the draft-order source is the proof. POS orders are made by staff at the
+   * counter, so a POS line with a _booking property pays for that booking as it is.
+   *
+   * Members' spend. Every paid order with a customer (online, draft or POS) adds its subtotal after discounts to that
+   * customer's spend, once per order: Shopify retries webhooks, and the order id is the key.
    */
   async ordersPaid(order) {
     const orderId = order.admin_graphql_api_id || (order.id ? `gid://shopify/Order/${order.id}` : '');
-    const source = order.source_name;
-    if (!orderId || !this.shopify.configured || (source && source !== 'shopify_draft_order')) return { updated: [] };
+    if (!orderId || !this.shopify.configured) return { updated: [] };
+    const source = order.source_name || '';
+    const pos = source === 'pos';
+    const fromDraft = !source || source === 'shopify_draft_order';
     const refs = new Set();
-    for (const a of order.note_attributes || []) if (a.name === '_booking' && a.value) refs.add(String(a.value));
-    for (const item of order.line_items || []) for (const p of item.properties || []) if (p.name === '_booking' && p.value) refs.add(String(p.value));
-    for (const match of String(order.note || '').matchAll(/\b(?:[A-Z]{2,10}-\d{4}|GOB-[A-Z0-9]{6})\b/g)) refs.add(match[0]);
-    if (!refs.size) return { updated: [] };
+    for (const item of order.line_items || []) for (const p of item.properties || []) if (p.name === '_booking' && p.value) refs.add(String(p.value).trim().toUpperCase());
+    if (fromDraft) {
+      for (const a of order.note_attributes || []) if (a.name === '_booking' && a.value) refs.add(String(a.value).trim().toUpperCase());
+      for (const match of String(order.note || '').matchAll(/\b(?:[A-Z]{2,10}-\d{4}|GOB-[A-Z0-9]{6})\b/g)) refs.add(match[0]);
+    }
     const rules = await this.rules();
     const verified = [];
-    for (const ref of [...refs].slice(0, 5)) {
+    for (const ref of [...refs].slice(0, 10)) {
       const candidate = this.booking(ref);
-      if (!candidate?.draftOrderId) continue;
-      // If Shopify can't answer, this throws: the webhook gets a 500 and Shopify sends it again later.
-      const linked = await this.shopify.draftOrderOrderId(candidate.draftOrderId);
-      if (linked === orderId || (linked === null && source === 'shopify_draft_order')) verified.push(candidate.id);
+      if (!candidate) continue;
+      if (pos) {
+        verified.push(candidate.id);
+      } else if (fromDraft && candidate.draftOrderId) {
+        // If Shopify can't answer, this throws: the webhook gets a 500 and Shopify sends it again later.
+        const linked = await this.shopify.draftOrderOrderId(candidate.draftOrderId);
+        if (linked === orderId || (linked === null && source === 'shopify_draft_order')) verified.push(candidate.id);
+      }
     }
     // --- no awaits from here on: read each booking fresh and update it ---
+    const updated = this.markPaid(verified, orderId, rules, { pos });
+
+    // Payments are recorded, so if Shopify can't say who the customer is right now, failing the webhook (Shopify
+    // sends it again) only repeats work that's already done.
+    const spend = await this.orderSpend(orderId);
+    // --- no awaits from here on ---
+    let counted = 0;
+    if (spend?.customerId && spend.amount > 0 && !this.sql.exec('SELECT 1 AS n FROM spend WHERE order_id = ?', orderId).toArray().length) {
+      this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, spend.source || source || null, Date.now());
+      counted = spend.amount;
+    }
+    return { updated, spend: counted };
+  }
+
+  /** Bookings paid by an order: online through their checkout, or at the counter (pos). No awaits. */
+  markPaid(ids, orderId, rules, { pos = false } = {}) {
     const now = Date.now();
     const updated = [];
-    for (const id of verified) {
+    for (const id of ids) {
       const booking = this.booking(id);
       const firstTime = !booking.paid;
+      if (!firstTime && booking.orderId && booking.orderId !== orderId) {
+        // Already paid by another order: money to give back, never a second confirmation.
+        if (!(booking.notes || '').includes(orderId)) {
+          booking.notes = `${booking.notes ? `${booking.notes} ` : ''}[Paid twice: ${booking.orderId} and ${orderId}. Refund one.]`;
+          this.saveBooking(booking, now);
+          this.notifyStaff(`Paid twice: ${booking.ref}`, {
+            title: 'A booking was paid twice',
+            intro: `${booking.name}'s booking ${booking.ref} was paid by two orders. Refund one of them.`,
+            details: [['Booking', booking.ref], ['First order', booking.orderId], ['Second order', orderId], ['Amount', dollars(booking.amount)]],
+          });
+        }
+        updated.push(booking.ref);
+        continue;
+      }
       booking.paid = true;
       booking.orderId = orderId;
       if (booking.status === 'held') booking.status = 'confirmed';
@@ -1318,10 +1361,27 @@ export class Lair {
       }
       booking.holdUntil = null;
       this.saveBooking(booking, now);
-      if (firstTime && booking.status === 'confirmed') this.confirm(booking, rules, booking.gameId ? this.game(booking.gameId) : null);
+      // Paying online confirms a held booking: that's when its confirmation goes out. Paying at the counter doesn't need one.
+      if (firstTime && !pos && booking.status === 'confirmed') this.confirm(booking, rules, booking.gameId ? this.game(booking.gameId) : null);
       updated.push(booking.ref);
     }
-    return { updated };
+    return updated;
+  }
+
+  /**
+   * An order's customer and subtotal after discounts. A missing permission (or protected customer data not
+   * approved) is noted on the status page and skipped, so it can't block the webhook; anything else, like Shopify
+   * being down, throws and Shopify sends the webhook again later.
+   */
+  async orderSpend(orderId) {
+    try {
+      return await this.shopify.orderSpend(orderId);
+    } catch (error) {
+      const message = String(error.message || error);
+      if (!/access denied|access_denied|not approved|protected customer|doesn't exist|cannot query/i.test(message)) throw error;
+      this.note({ spendError: { message: message.slice(0, 300), at: new Date().toISOString() } });
+      return null;
+    }
   }
 
   /* ---------------- shop tables ---------------- */
