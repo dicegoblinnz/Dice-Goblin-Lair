@@ -26,7 +26,7 @@ const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&a
 async function statusPage(env) {
   let rows = [];
   try {
-    if (env.CONFIG) rows = (await env.CONFIG.prepare("SELECT key, value, at FROM status WHERE key IN ('connection', 'proxy', 'proxyMiss')").all()).results;
+    if (env.CONFIG) rows = (await env.CONFIG.prepare("SELECT key, value, at FROM status WHERE key IN ('connection', 'proxy', 'proxyMiss', 'email')").all()).results;
   } catch {
     rows = [];
   }
@@ -41,6 +41,8 @@ async function statusPage(env) {
   const connection = read('connection');
   const proxy = read('proxy');
   const proxyMiss = read('proxyMiss');
+  const email = read('email');
+  const emailOn = Boolean(connection?.email);
   const shopifyOk = connection?.shopifyLogin === 'ok' && !(connection.missingScopes || []).length;
   const webhookOk = Boolean(connection?.paymentWebhook?.ok);
   const proxyOk = Boolean(proxy?.seen);
@@ -68,6 +70,7 @@ ${!shopifyOk && connection?.advice ? hint(connection.advice) : ''}
 ${line(webhookOk, 'Online payments are reported back to the app', 'Payment notifications not set up yet')}
 ${line(proxyOk, `The website has reached the app through dicegoblin.nz${escapeHtml(proxy?.prefix || '/apps/lair')}`, 'Waiting for the store link (app proxy) to be set up')}
 ${!proxyOk && shopifyOk ? hint(proxyHint) : ''}
+${emailOn ? line(!email || email.ok, 'Booking confirmation emails are on', `Booking emails are failing: ${escapeHtml(email?.message || 'unknown error')}`) : ''}
 </ul>
 <small>${connection?.checkedAt ? `Last checked ${new Date(connection.checkedAt).toLocaleString('en-NZ', { timeZone: 'Pacific/Auckland', dateStyle: 'medium', timeStyle: 'short' })}.` : 'Not checked yet; the app checks itself every 10 minutes.'}</small>
 </main></body></html>`;
@@ -128,7 +131,8 @@ export default {
       // Open https://<worker>/setup?key=<SETUP_KEY> in a browser, or POST with "Authorization: Bearer <SETUP_KEY>".
       const key = url.searchParams.get('key') || (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
       if (!env.SETUP_KEY || !safeEqual(key, env.SETUP_KEY)) return json({ error: 'Not allowed' }, 403);
-      return internalCall(env, url.origin, 'setup', JSON.stringify({ webhookUrl: `${url.origin}/webhooks/orders-paid` }));
+      const testEmail = url.searchParams.get('email') === 'test';
+      return internalCall(env, url.origin, 'setup', JSON.stringify({ webhookUrl: `${url.origin}/webhooks/orders-paid`, testEmail }));
     }
 
     return json({ error: 'Not found' }, 404);

@@ -885,3 +885,52 @@ test('status page: explains a wrong proxy address, and names the store address o
   assert.doesNotMatch(working, /should list an app proxy/);
   resetConfigCache();
 });
+
+test('emails: a Resend error lands in the status table, and /setup can send a test email to the staff inbox', async () => {
+  const db = fakeConfigDb({});
+  const probe = new Lair(fakeCtx(), { CONFIG: db, CURRENCY: 'NZD', RESEND_API_KEY: 're_test', FROM_EMAIL: 'Dice Goblin <bookings@dicegoblin.test>', REPLY_TO: 'shop@dicegoblin.test', STAFF_EMAIL: 'shop@dicegoblin.test' });
+  probe.shopify.loadLairData = async () => ({ rooms: FALLBACK, events: [], settingsText: null });
+  const sent = [];
+  let reply = { status: 403, body: { statusCode: 403, message: 'The dicegoblin.test domain is not verified.' } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    sent.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response(JSON.stringify(reply.body), { status: reply.status });
+  };
+  try {
+    const failed = await probe.mail({ to: 'sam@example.com', subject: 'Hi', text: 'Hello' });
+    assert.deepEqual([failed.ok, failed.status, failed.message], [false, 403, 'The dicegoblin.test domain is not verified.']);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(JSON.parse(db.status.get('email').value).ok, false);
+
+    reply = { status: 200, body: { id: 'email-1' } };
+    const res = await probe.fetch(new Request('https://lair.test/internal/setup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: JSON.stringify({ testEmail: true }),
+    }));
+    const result = await res.json();
+    assert.deepEqual([result.emailTest.ok, result.emailTest.to], [true, 'shop@dicegoblin.test']);
+    assert.equal(sent.at(-1).url, 'https://api.resend.com/emails');
+    assert.deepEqual(sent.at(-1).body.to, ['shop@dicegoblin.test']);
+    assert.equal(sent.at(-1).body.reply_to, 'shop@dicegoblin.test');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(JSON.parse(db.status.get('email').value).ok, true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('status page: shows whether booking emails work once they are set up', async () => {
+  const { resetConfigCache } = await import('../src/config.js');
+  const page = async (statusRows) => {
+    resetConfigCache();
+    const db = fakeConfigDb({});
+    db.prepare = (sql) => ({ all: async () => ({ results: /FROM status/.test(sql) ? statusRows : [] }) });
+    return (await worker.fetch(new Request('https://lair.example.workers.dev/'), { CONFIG: db, SHOP: 'ep0qiq-rp.myshopify.com' })).text();
+  };
+  const connection = (email) => ({ key: 'connection', value: JSON.stringify({ shopifyLogin: 'ok', missingScopes: [], paymentWebhook: { ok: true }, email, checkedAt: '2026-10-02T05:00:00Z' }), at: 'x' });
+  assert.doesNotMatch(await page([connection(false)]), /Booking (confirmation )?emails/);
+  assert.match(await page([connection(true)]), /✓<\/span>Booking confirmation emails are on/);
+  const failing = await page([connection(true), { key: 'email', value: JSON.stringify({ ok: false, status: 403, message: 'The domain is not verified.' }), at: 'x' }]);
+  assert.match(failing, /Booking emails are failing: The domain is not verified\./);
+  resetConfigCache();
+});

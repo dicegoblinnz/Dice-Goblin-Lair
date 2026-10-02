@@ -253,13 +253,27 @@ export class ShopifyAdmin {
 /** Optional emails through Resend (set RESEND_API_KEY and FROM_EMAIL; STAFF_EMAIL gets staff alerts). */
 export const emailReady = (env) => Boolean(env.RESEND_API_KEY && env.FROM_EMAIL);
 
+/** Send one email through Resend. Never throws; returns { ok, attempted, status, message }. */
 export async function sendEmail(env, { to, subject, text }) {
-  if (!emailReady(env) || !to) return false;
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.FROM_EMAIL, to: [to], subject, text, ...(env.REPLY_TO ? { reply_to: env.REPLY_TO } : {}) }),
-  });
-  if (!response.ok) console.error('Lair: email failed', response.status, await response.text().catch(() => ''));
-  return response.ok;
+  if (!emailReady(env) || !to) return { ok: false, attempted: false, status: 0, message: 'Email is not set up.' };
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: env.FROM_EMAIL, to: [to], subject, text, ...(env.REPLY_TO ? { reply_to: env.REPLY_TO } : {}) }),
+    });
+    if (response.ok) return { ok: true, attempted: true, status: response.status, message: 'Sent.' };
+    const body = await response.text().catch(() => '');
+    let message = body.slice(0, 300);
+    try {
+      message = JSON.parse(body).message || message;
+    } catch {
+      // not JSON: keep the raw text
+    }
+    console.error('Lair: email failed', response.status, message);
+    return { ok: false, attempted: true, status: response.status, message };
+  } catch (error) {
+    console.error('Lair: email failed', error);
+    return { ok: false, attempted: true, status: 0, message: String(error.message || error).slice(0, 300) };
+  }
 }

@@ -67,7 +67,7 @@ Open `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Within 10 minutes of t
 
 ### 4. Emails (optional)
 
-Booking emails go through [Resend](https://resend.com); the free plan (3,000 emails a month, 100 a day) is plenty. Add the domain `dicegoblin.nz` in Resend, add the DNS records it shows at Crazy Domains (where dicegoblin.nz's DNS is managed), create an API key, and put it in the config table as `RESEND_API_KEY` with `FROM_EMAIL` = `Dice Goblin <bookings@dicegoblin.nz>`, `REPLY_TO` = the shop inbox and `STAFF_EMAIL` = whoever should get approval and refund alerts.
+Booking emails go through [Resend](https://resend.com); the free plan (3,000 emails a month, 100 a day) is plenty. Add the domain `dicegoblin.nz` in Resend, add the DNS records it shows at Crazy Domains (where dicegoblin.nz's DNS is managed), create an API key, and put it in the config table as `RESEND_API_KEY` with `FROM_EMAIL` = `Dice Goblin <bookings@dicegoblin.nz>`, `REPLY_TO` = the shop inbox and `STAFF_EMAIL` = whoever should get approval and refund alerts. To check it works, open `/setup?key=YOUR_SETUP_KEY&email=test`: it sends a test email to `STAFF_EMAIL` and shows Resend's answer under `emailTest`. The status page also shows a line for booking emails, and the `email` row in the `status` table keeps the last result.
 
 ### 5. Tag staff and GMs
 

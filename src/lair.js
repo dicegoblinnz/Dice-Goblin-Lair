@@ -359,7 +359,7 @@ export class Lair {
         if (request.headers.get('X-Lair-Internal') !== '1' || request.method !== 'POST') return json({ error: 'Not found' }, 404);
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
-        if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true }));
+        if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true }));
         if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false }));
         return json({ error: 'Not found' }, 404);
       }
@@ -517,7 +517,7 @@ export class Lair {
       ? `Need to cancel? Reply to this email or call us at least ${rules.refundHours} hours before your booking and we'll refund you. After that the fee can't be refunded.`
       : 'Plans changed? Reply to this email or give us a call so we can free up the table.';
     this.later(
-      sendEmail(this.env, {
+      this.mail({
         to: booking.email,
         subject: `Booked: ${this.when(booking, rules)} (${booking.ref})`,
         text: `Kia ora ${booking.name},\n\nYou're booked at the Dice Goblin Lair.\n\nWhen: ${this.when(booking, rules)}\nWhat: ${what}\nFee: ${fee}\nBooking: ${booking.ref}\n\nShow ${booking.ref} at the counter when you arrive.\n${changes}\n\nSee you at the Lair!\nDice Goblin`,
@@ -528,7 +528,17 @@ export class Lair {
 
   notifyStaff(subject, text) {
     if (!emailReady(this.env) || !this.env.STAFF_EMAIL) return;
-    this.later(sendEmail(this.env, { to: this.env.STAFF_EMAIL, subject, text }));
+    this.later(this.mail({ to: this.env.STAFF_EMAIL, subject, text }));
+  }
+
+  /** Send an email and keep the outcome in the status table, so a wrong key or an unverified domain shows up there. */
+  async mail(message) {
+    const result = await sendEmail(this.env, message);
+    if (result.attempted) {
+      const day = new Date().toISOString().slice(0, 10);
+      this.note({ email: result.ok ? { ok: true, day } : { ok: false, status: result.status, message: result.message, day } });
+    }
+    return result;
   }
 
   ownView(b) {
@@ -650,7 +660,7 @@ export class Lair {
         affected += 1;
         this.dropDraft(seat);
         if (emailReady(this.env) && isEmail(seat.email)) {
-          this.later(sendEmail(this.env, {
+          this.later(this.mail({
             to: seat.email,
             subject: `Cancelled: ${game.title}, ${this.when(game, rules)}`,
             text: `Kia ora ${seat.name},\n\nSorry, ${game.title} on ${this.when(game, rules)} has been cancelled.${seat.paid ? ' You paid online, so we will refund you.' : ''}\nBooking: ${seat.ref}\n\nCheck the games board for another session.\nDice Goblin`,
@@ -659,7 +669,7 @@ export class Lair {
       }
     }
     if (before === 'pending' && game.status === 'open' && emailReady(this.env) && game.gmEmail) {
-      this.later(sendEmail(this.env, {
+      this.later(this.mail({
         to: game.gmEmail,
         subject: `Your game is live: ${game.title}`,
         text: `Kia ora ${game.gm},\n\n${game.title} on ${this.when(game, rules)} is now on the games board, tables ${game.tables.join(', ')}.\nYou earn ${dollars(rules.prices.gmCredit)} store credit for each paying player after the session.\n\nHappy GMing!\nDice Goblin`,
@@ -790,7 +800,7 @@ export class Lair {
   }
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
-  async checkConnection(webhookUrl, { force = false } = {}) {
+  async checkConnection(webhookUrl, { force = false, testEmail = false } = {}) {
     if (force) this.rulesCache = null;
     const rules = await this.rules();
     const result = {
@@ -823,6 +833,20 @@ export class Lair {
       if (!result.paymentWebhook.ok && /Shopify login failed/.test(result.paymentWebhook.reason || '')) result.paymentWebhook.reason = 'Waiting for the Shopify login to work.';
     } else {
       result.advice = 'Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to the config table.';
+    }
+    if (testEmail) {
+      // /setup?key=…&email=test sends one email to the staff inbox, to prove the Resend key and domain work.
+      const to = this.env.STAFF_EMAIL || this.env.REPLY_TO;
+      if (!emailReady(this.env)) result.emailTest = { ok: false, message: 'Add RESEND_API_KEY and FROM_EMAIL to the config table first.' };
+      else if (!isEmail(to)) result.emailTest = { ok: false, message: 'Add STAFF_EMAIL to the config table to receive the test.' };
+      else {
+        const sent = await this.mail({
+          to,
+          subject: 'Dice Goblin booking emails are working',
+          text: `Kia ora,\n\nThis is a test from the Dice Goblin booking app. Booking confirmations go out from ${this.env.FROM_EMAIL}${this.env.REPLY_TO ? `, and replies come back to ${this.env.REPLY_TO}` : ''}.\n\nDice Goblin`,
+        });
+        result.emailTest = { ok: sent.ok, to, status: sent.status, message: sent.message };
+      }
     }
     this.note({ connection: result });
     return result;
