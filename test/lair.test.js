@@ -1846,3 +1846,47 @@ test('join every session: a date the GM adds seats members and tells them; skipp
     mail.restore();
   }
 });
+
+test('GM messages: a session\'s players or a whole series, replies to the GM, 5 a game a day (staff aren\'t limited)', async () => {
+  const listed = await call('POST', 'games', {
+    title: 'Weekly Mothership', system: 'Mothership', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Space horror.', seats: 4, tables: ['A1'],
+    start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly',
+  }, 'gm');
+  const [first, second] = listed.data.sessions;
+  const msg = (gameId, body, who = 'gm') => call('POST', `games/${gameId}/message`, body, who);
+  assert.equal((await msg(first.id, { text: 'Hi all' })).status, 503, 'needs email');
+  const mail = captureEmails();
+  try {
+    await call('POST', 'bookings', { kind: 'gm-seat', gameId: first.id, people: 1, name: 'Kai', email: 'kai@example.com' }, 'kai');
+    await call('POST', 'bookings', { kind: 'gm-seat', gameId: second.id, people: 1, name: 'Ana', email: 'ana@example.com' }, 'ana');
+    await call('POST', `games/${first.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia');
+    await settle();
+    mail.sent.length = 0;
+    assert.equal((await msg(first.id, { text: 'Hi' }, 'kai')).status, 403);
+    assert.equal((await msg(first.id, { text: '   ' })).status, 422);
+
+    const session = await msg(first.id, { text: 'Bring a pencil!\nAnd snacks.', scope: 'session' });
+    assert.deepEqual(session.data, { sent: 2 });
+    assert.deepEqual(mail.sent.map((m) => m.to).sort(), ['kai@example.com', 'mia@example.com']);
+    const toKai = mail.sent.find((m) => m.to === 'kai@example.com');
+    assert.equal(toKai.reply_to, 'ellie@example.com');
+    assert.match(toKai.subject, /Weekly Mothership: a message from Ellie/);
+    assert.match(toKai.text, /> Bring a pencil!\n> And snacks\./);
+    assert.match(toKai.html, /Bring a pencil!<br>And snacks\./);
+
+    mail.sent.length = 0;
+    const series = await msg(second.id, { text: 'No game on the 22nd.', scope: 'series' });
+    assert.equal(series.data.sent, 3, 'Mia is a member and has seats, but gets one email');
+    assert.deepEqual(mail.sent.map((m) => m.to).sort(), ['ana@example.com', 'kai@example.com', 'mia@example.com']);
+
+    for (let i = 0; i < 3; i += 1) assert.equal((await msg(first.id, { text: `Note ${i}` })).status, 200);
+    const sixth = await msg(second.id, { text: 'One more' });
+    assert.equal(sixth.status, 429, 'five a day for the whole series');
+    assert.equal((await msg(second.id, { text: 'From the team' }, 'staff')).status, 200);
+    assert.match(mail.sent.at(-1).subject, /a message from the Lair team/);
+    Date.now = () => NOW + 25 * HOUR;
+    assert.equal((await msg(second.id, { text: 'Next day' })).status, 200);
+  } finally {
+    mail.restore();
+  }
+});

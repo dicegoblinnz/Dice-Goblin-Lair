@@ -29,7 +29,7 @@ const RULES_TTL = 5 * MIN;
 const PERSON_TTL = 5 * MIN;
 const STATE_TTL = 60_000;
 /** Abuse limits for people who are not staff */
-const LIMITS = { perClientPer10Min: 20, activePerEmail: 6 };
+const LIMITS = { perClientPer10Min: 20, activePerEmail: 6, messagesPerGamePerDay: 5 };
 /** What the public sees for a staff hold (staff labels can hold names or notes) */
 const PUBLIC_HOLD = { tournament: 'Tournament', market: 'Market', event: 'Event', maintenance: 'Out of action' };
 
@@ -134,6 +134,13 @@ const MIGRATIONS = [
       created_at INTEGER, updated_at INTEGER, PRIMARY KEY (series_id, customer_id))`,
     'ALTER TABLE bookings ADD COLUMN series_id TEXT',
     'CREATE INDEX IF NOT EXISTS bookings_series ON bookings (series_id, customer_id)',
+  ],
+  // Messages from a GM (or staff) to a game's players: kept for the daily limit and the record.
+  [
+    `CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY, game_id TEXT NOT NULL, limit_key TEXT NOT NULL, scope TEXT NOT NULL, text TEXT NOT NULL, recipients INTEGER, sent INTEGER,
+      sender TEXT, created_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS messages_limit ON messages (limit_key, created_at)',
   ],
 ];
 
@@ -527,6 +534,7 @@ export class Lair {
       if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who));
       if (a === 'games' && c === 'sessions') return json(await this.addSession(b, body, who));
       if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
+      if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
       if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who));
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
@@ -1204,6 +1212,62 @@ export class Lair {
       })));
     }
     return { ok: true, cancelled: seats.length };
+  }
+
+  /* ---------------- messages to players ---------------- */
+  /**
+   * POST /games/:id/message { text, scope: 'session'|'series' } (the game's GM, or staff). Emails everyone with a seat
+   * at that session, or for 'series' every member of the series and everyone with a seat at an upcoming session.
+   * Replies go to the GM. A game (a whole series counts as one) can send 5 a day; staff aren't limited. Returns { sent }.
+   */
+  async messagePlayers(gameId, input, who) {
+    const rules = await this.rules();
+    // --- no awaits until the message is recorded ---
+    const now = Date.now();
+    const game = this.game(gameId);
+    if (!game) throw new RuleError('Game not found.', 404);
+    const own = Boolean(who.customerId && game.gmCustomerId === who.customerId);
+    if (!who.staff && !own) throw new RuleError('Only the GM or staff can message the players.', 403);
+    const text = String(input.text ?? '').trim().slice(0, 2000);
+    if (!text) throw new RuleError('Write a message first.');
+    const scope = input.scope === 'series' && game.seriesId ? 'series' : 'session';
+    if (!emailReady(this.env)) throw new RuleError("Emails aren't set up yet, so messages can't go out. Call the shop instead.", 503);
+    const limitKey = game.seriesId || game.id;
+    if (!who.staff) {
+      const recent = this.sql.exec('SELECT COUNT(*) AS n FROM messages WHERE limit_key = ? AND created_at > ?', limitKey, now - 24 * HOUR).one().n;
+      if (recent >= LIMITS.messagesPerGamePerDay) throw new RuleError("That's 5 messages for this game today. Try again tomorrow, or ask the team to pass it on.", 429);
+    }
+    const active = "status IN ('held', 'confirmed', 'seated')";
+    const people = scope === 'series'
+      ? [
+        ...this.sql.exec("SELECT name, email FROM series_members WHERE series_id = ? AND status = 'active'", game.seriesId).toArray(),
+        ...this.sql.exec(`SELECT b.name, b.email FROM bookings b JOIN games g ON g.id = b.game_id WHERE g.series_id = ? AND b.kind = 'gm-seat' AND b.${active} AND b.ends_at > ?`, game.seriesId, now).toArray(),
+      ]
+      : this.sql.exec(`SELECT name, email FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND ${active}`, game.id).toArray();
+    const recipients = new Map();
+    for (const p of people) if (isEmail(p.email) && !recipients.has(p.email.trim().toLowerCase())) recipients.set(p.email.trim().toLowerCase(), p);
+    if (!recipients.size) return { sent: 0 };
+    const id = makeId('ms');
+    this.write(
+      'INSERT INTO messages (id, game_id, limit_key, scope, text, recipients, sent, sender, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)',
+      id, game.id, limitKey, scope, text, recipients.size, who.staff && !own ? 'staff' : 'gm', now,
+    );
+    const next = scope === 'series'
+      ? this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status = 'open' AND ends_at > ? ORDER BY starts_at LIMIT 1", game.seriesId, now).toArray().map((r) => this.rowToGame(r))[0] || game
+      : game;
+    const replyTo = own && isEmail(game.gmEmail) ? game.gmEmail : null;
+    const letters = [...recipients.values()].map((p) => this.letter(p.email, `${game.title}: a message from ${own ? game.gm : 'the Lair team'}`, {
+      title: own ? 'A message from your GM' : 'A message from the Lair team',
+      intro: `Kia ora ${p.name || 'friend'}, ${own ? `${game.gm}, your GM for ${game.title},` : 'the Dice Goblin team'} sent this to everyone playing${scope === 'series' ? '' : ` on ${this.when(game, rules)}`}:`,
+      quote: text,
+      details: [['Game', game.title], [scope === 'series' ? 'Next session' : 'When', this.when(next, rules)]],
+      outro: replyTo ? `Reply to this email to answer ${game.gm}.` : 'Reply to this email to answer the team.',
+      button: { label: 'See your games in My Lair', url: this.page('myLair') },
+    }, { replyTo }));
+    const result = await this.mailMany(letters);
+    // --- only this message's own row changes ---
+    this.write('UPDATE messages SET sent = ? WHERE id = ?', result.sent, id);
+    return { sent: result.sent };
   }
 
   /**
