@@ -3311,6 +3311,12 @@ export class Lair {
     if (!who.customerId) throw new RuleError('Log in to add a pass to your account.', 401);
     // --- no awaits from here on ---
     const now = Date.now();
+    // Codes are easy to read out, so they're easy to guess: 10 tries in 10 minutes per member.
+    const tries = (this.claimHits?.get(who.customerId) || []).filter((t) => now - t < 10 * MIN);
+    if (tries.length >= 10) throw new RuleError('Too many tries in a row. Give it ten minutes, or ask us at the counter.', 429);
+    this.claimHits = this.claimHits || new Map();
+    if (this.claimHits.size > 2000) this.claimHits.clear();
+    this.claimHits.set(who.customerId, [...tries, now]);
     const p = this.passByCode(input.code);
     if (!p || p.status === 'void') throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
     const me = String(who.customerId);

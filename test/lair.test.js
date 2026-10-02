@@ -2644,6 +2644,15 @@ test('claiming a pass: an unclaimed one joins the member\'s passes; someone else
   await call('POST', `passes/${voided.id}/update`, { status: 'void' }, 'staff');
   assert.equal((await call('POST', 'me/passes/claim', { code: voided.code }, '1001')).status, 404);
 
+  // Codes are easy to guess, so a member gets 10 tries in 10 minutes.
+  for (let i = 0; i < 5; i += 1) await call('POST', 'me/passes/claim', { code: `ZZ-GUESS-${i + 1}` }, '3003');
+  for (let i = 0; i < 5; i += 1) assert.equal((await call('POST', 'me/passes/claim', { code: `ZZ-GUESS-${i + 6}` }, '3003')).status, 404);
+  const slow = await call('POST', 'me/passes/claim', { code: gift.code }, '3003');
+  assert.deepEqual([slow.status, slow.data.error], [429, 'Too many tries in a row. Give it ten minutes, or ask us at the counter.']);
+  Date.now = () => NOW + 11 * 60_000;
+  assert.equal((await call('POST', 'me/passes/claim', { code: gift.code }, '3003')).status, 409, 'ten minutes later, another go');
+  Date.now = () => NOW;
+
   // Used up: My Lair keeps showing it for 30 days after its last session.
   await call('POST', 'checkin', { code: ticket.ref, pass: gift.code }, 'staff');
   assert.deepEqual((await call('GET', 'me', null, '1001')).data.passes.map((p) => [p.code, p.status, p.sessionsLeft]), [[gift.code, 'used', 0]]);
