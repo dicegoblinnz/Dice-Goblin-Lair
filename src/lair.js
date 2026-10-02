@@ -37,6 +37,11 @@ const PUBLIC_HOLD = { tournament: 'Tournament', market: 'Market', event: 'Event'
 const ONLINE_DOWN = "Online payment isn't working right now. Call us and we'll hold you a spot.";
 /** Cancelling a sign-up or game spot that was paid online: it's locked in, so staff decide on a refund */
 const LOCKED_IN = 'Your spot is cancelled. You paid online, so have a chat with us about a refund.';
+/** Email wording: paying at the counter, being locked in after paying online, and splitting the bill */
+const COUNTER = "Pay at the counter when you arrive. Show your code and we'll ring it up.";
+const SHOW_CODE = 'Show your code at the counter when you arrive. Its QR code is in My Lair too.';
+const LOCKED_IN_EMAIL = "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.";
+const SPLIT = 'Splitting the bill? Each friend can pay their share at the counter.';
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 const MIGRATIONS = [
@@ -948,9 +953,12 @@ export class Lair {
   confirm(booking, rules, game = null) {
     if (!emailReady(this.env) || !isEmail(booking.email)) return false;
     const when = this.when(booking, rules);
-    const fee = !booking.amount ? 'Nothing to pay' : booking.paid ? `${dollars(booking.amount)}, paid. Thank you!` : `${dollars(booking.amount)}, pay at the counter`;
-    const show = `Show ${booking.ref} at the counter when you arrive (the QR code in My Lair works too).`;
-    const changes = booking.paid && booking.pay === 'now'
+    const online = Boolean(booking.paid && booking.pay === 'now');
+    const fee = !booking.amount ? 'Nothing to pay' : booking.paid ? `${dollars(booking.amount)}, paid${online ? ' online' : ''}. Thank you!` : `${dollars(booking.amount)}, pay at the counter`;
+    const pay = dueOf(booking) > 0 ? COUNTER : SHOW_CODE;
+    // A game spot paid online is locked in. A table the first release took payment for online keeps its old policy.
+    const lockedIn = online && Boolean(booking.occurrenceId);
+    const changes = lockedIn ? LOCKED_IN_EMAIL : online
       ? `Need to cancel? Do it in My Lair or call us at least ${rules.refundHours} hours before, and you'll get your money back. After that the fee can't be refunded.`
       : null;
     const tables = `${booking.tables.length > 1 ? 'Tables' : 'Table'} ${booking.tables.join(', ')}`;
@@ -964,23 +972,23 @@ export class Lair {
         intro: `Kia ora ${booking.name}, you're in for ${game.title}${game.gm ? ` with GM ${game.gm}` : ''}. Gobgob has pulled up a chair for you.`,
         details: [
           ['Game', `${game.title}${game.system ? ` (${game.system})` : ''}`], ['When', when], ['Players', this.partyLine(booking.party)], ['Where', tables],
-          ['Fee', fee], ['Ticket', booking.ref],
+          ['Fee', fee], ['Your code', booking.ref],
         ],
-        outro: [show, changes || "Can't make it after all? Drop your seat in My Lair and Gobgob will let your GM know."],
+        outro: [pay, changes || "Can't make it after all? Drop your seat in My Lair and Gobgob will let your GM know."],
       };
     } else {
       const extras = { wargame: 'Wargame (double tables)', bigbox: 'Big box game (double tables)', celebrating: 'Celebrating something' };
       subject = `${event ? `Game spot booked: ${event.title}` : "You're booked"}: ${when} (${booking.ref})`;
       content = {
-        title: event ? 'Your game spot is booked!' : "You're booked in!",
+        title: lockedIn ? "You're locked in!" : event ? 'Your game spot is booked!' : "You're booked in!",
         intro: event
           ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Gobgob's guarding your tables.`
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
           ['When', when], ['Where', tables], ['People', String(booking.people)],
-          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', fee], ['Ticket', booking.ref],
+          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', fee], ['Your code', booking.ref],
         ],
-        outro: [show, changes || 'Plans changed? Cancel in My Lair or give us a call, so someone else can have the table.'],
+        outro: [pay, ...(booking.split ? [SPLIT] : []), changes || 'Plans changed? Cancel in My Lair or give us a call, so someone else can have the table.'],
       };
     }
     this.later(this.mail(this.letter(booking.email, subject, { ...content, button: { label: 'See it in My Lair', url: this.page('myLair') } })));
@@ -1423,7 +1431,7 @@ export class Lair {
       this.later(this.mailMany(seats.map((seat) => this.letter(seat.email, `New time: ${fresh.title}, ${this.when(fresh, rules)}`, {
         title: 'Your game has a new time',
         intro: `Heads up, friend: ${fresh.title} has moved. Your seat moved with it.`,
-        details: [['Game', fresh.title], ['Now', this.when(fresh, rules)], ['Was', this.when(game, rules)], ['Where', `${fresh.tables.length > 1 ? 'Tables' : 'Table'} ${fresh.tables.join(', ')}`], ['Ticket', seat.ref]],
+        details: [['Game', fresh.title], ['Now', this.when(fresh, rules)], ['Was', this.when(game, rules)], ['Where', `${fresh.tables.length > 1 ? 'Tables' : 'Table'} ${fresh.tables.join(', ')}`], ['Your code', seat.ref]],
         outro: "Can't make the new time? Cancel your seat in My Lair and Gobgob will let your GM know.",
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       }))));
@@ -1504,8 +1512,8 @@ export class Lair {
       this.later(this.mailMany(seated.filter((x) => isEmail(x.member.email)).map(({ member, result }) => this.letter(member.email, `New session: ${created.title}, ${this.when(created, rules)}`, {
         title: 'New session, same seat',
         intro: `Kia ora ${member.name}, ${created.gm} added a session of ${created.title}, and Gobgob saved your seat.`,
-        details: [['When', this.when(created, rules)], ['Players', this.partyLine(result.seat.party)], ['Fee', `${dollars(result.seat.amount)}, pay at the counter`], ['Ticket', result.seat.ref]],
-        outro: "Can't make this one? Cancel it in My Lair and your other sessions stay booked.",
+        details: [['When', this.when(created, rules)], ['Players', this.partyLine(result.seat.party)], ['Fee', `${dollars(result.seat.amount)}, pay at the counter`], ['Your code', result.seat.ref]],
+        outro: [COUNTER, "Can't make this one? Cancel it in My Lair and your other sessions stay booked."],
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       }))));
     }
@@ -1606,7 +1614,7 @@ export class Lair {
           ['Game', game.title], ['Players', this.partyLine(players)], ['Booked', dates(booked)], ['Already full', dates(full)],
           ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, paid at the counter`],
         ],
-        outro: ["Pay at the counter each session: show that session's code, or your member code from My Lair, and we'll ring it up.", "Skipping one? Cancel that session's seat in My Lair. To stop coming altogether, leave the game in My Lair."],
+        outro: ["Pay at the counter each session when you arrive. Show that session's code, or your member code from My Lair, and we'll ring it up.", "Skipping one? Cancel that session's seat in My Lair. To stop coming altogether, leave the game in My Lair."],
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       })));
     }
@@ -1728,11 +1736,11 @@ export class Lair {
             `Sorry, friend: ${game.title} on ${this.when(game, rules)} has been cancelled, so your seat is cancelled too.`,
             ...(refund
               ? [seat.pay === 'now'
-                ? "You paid online, so you'll get all your money back. The team will refund your card in the next few days."
-                : "You've already paid, so you'll get all your money back. Pop in or reply to this email and the team will sort it."]
+                ? "You paid online, so you'll get your money back. The team will refund your card in the next few days."
+                : "You've paid already, so you'll get your money back. Pop in or reply to this email and the team will sort it."]
               : []),
           ],
-          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Ticket', seat.ref], ['Refund', refund ? dollars(seat.paidAmount) : '']],
+          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Your code', seat.ref], ['Refund', refund ? dollars(seat.paidAmount) : '']],
           button: { label: 'Find another game', url: this.page('gm') },
           signoff: 'Sorry again,\nGobgob',
         }));
@@ -2737,15 +2745,19 @@ export class Lair {
     return parseSpots(occurrence.gameTables, rules.rooms).filter((spot) => spot.every((t) => isFree(st, rules, t, occurrence.start, occurrence.end, ignore)));
   }
 
-  /** "You're on the list" email for an event sign-up */
+  /** "You're on the list" email for an event sign-up ("You're locked in" once it's paid online) */
   confirmJoin(join, rules) {
     if (!emailReady(this.env) || !isEmail(join.email)) return false;
-    const fee = !join.amount ? '' : join.paid ? `${dollars(join.amount)}, paid. Thank you!` : `${dollars(join.amount)}, pay at the counter`;
+    const online = Boolean(join.paid && join.pay === 'now');
+    const fee = !join.amount ? '' : join.paid ? `${dollars(join.amount)}, paid${online ? ' online' : ''}. Thank you!` : `${dollars(join.amount)}, pay at the counter`;
     this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`, {
-      title: "You're on the list!",
+      title: online ? "You're locked in!" : "You're on the list!",
       intro: `Kia ora ${join.name}, you're signed up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
-      details: [['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Entry', fee], ['Ticket', join.ref]],
-      outro: [`Show ${join.ref} at the counter when you arrive (the QR code in My Lair works too).`, "Can't make it? Cancel in My Lair or reply to this email, so someone else can have your spot."],
+      details: [['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Entry', fee], ['Your code', join.ref]],
+      outro: [
+        dueOf(join) > 0 ? COUNTER : SHOW_CODE,
+        online ? LOCKED_IN_EMAIL : "Can't make it? Cancel in My Lair or reply to this email, so someone else can have your spot.",
+      ],
       button: { label: 'See it in My Lair', url: this.page('myLair') },
     })));
     return true;

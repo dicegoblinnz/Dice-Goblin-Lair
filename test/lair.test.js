@@ -1251,7 +1251,7 @@ test('emails: one layout with a big title, a details table, a button and a foote
   const { html, text } = renderEmail({
     title: "You're booked in!",
     intro: 'Kia ora <Sam>, see you soon.',
-    details: [['When', 'Friday 2 October, 6:00 pm'], ['Setup', ''], ['Ticket', 'SAM-4821']],
+    details: [['When', 'Friday 2 October, 6:00 pm'], ['Setup', ''], ['Your code', 'SJ-OWLBEAR-17']],
     button: { label: 'See it in My Lair', url: 'https://www.dicegoblin.nz/pages/my-lair' },
     footer: { name: 'Dice Goblin Lair', address: '1 Goblin Lane, Auckland 1010', phone: '021 159 6894', hours },
   });
@@ -1264,7 +1264,7 @@ test('emails: one layout with a big title, a details table, a button and a foote
   assert.match(html, /1 Goblin Lane, Auckland 1010<br>021 159 6894 · Mon–Fri 4pm–midnight/);
   assert.match(html, /name="viewport"/);
   assert.match(text, /^YOU'RE BOOKED IN!/);
-  assert.match(text, /Ticket: +SAM-4821/);
+  assert.match(text, /Your code: +SJ-OWLBEAR-17/);
   assert.match(text, /See it in My Lair: https:\/\/www\.dicegoblin\.nz\/pages\/my-lair/);
   assert.match(text, /Gobgob/);
   assert.match(text, /--\nDice Goblin Lair\n1 Goblin Lane/);
@@ -1287,6 +1287,12 @@ test('emails: a booking confirmation goes out as HTML and text, with the shop ad
     assert.match(email.html, /1 Goblin Lane, Auckland 1010<br>021 159 6894 · Mon closed, Tue–Thu midday–10pm/);
     assert.match(email.text, /When: +Thursday,? 1 October/);
     assert.match(email.text, /Fee: +\$40\.00, pay at the counter/);
+    assert.match(email.text, /Pay at the counter when you arrive\. Show your code and we'll ring it up\./);
+    assert.match(email.text, /Your code: +SA-[A-Z]{3,9}-\d{1,2}/);
+    assert.doesNotMatch(email.text, /Splitting the bill/);
+    await call('POST', 'bookings', tableBooking({ tables: ['T4'], split: true, email: 'split@example.com' }));
+    await settle();
+    assert.match(mail.sent.find((m) => m.to === 'split@example.com').text, /Splitting the bill\? Each friend can pay their share at the counter\./);
   } finally {
     mail.restore();
   }
@@ -1508,7 +1514,7 @@ test('GM cancelling: up to an hour after the start, or a whole series; every pla
     await settle();
     const players = mail.sent.filter((m) => m.batch);
     assert.deepEqual(players.map((m) => m.to).sort(), ['kai@example.com', 'leo@example.com', 'mia@example.com']);
-    assert.match(players.find((m) => m.to === 'mia@example.com').text, /get all your money back/);
+    assert.match(players.find((m) => m.to === 'mia@example.com').text, /you'll get your money back/);
     assert.doesNotMatch(players.find((m) => m.to === 'leo@example.com').text, /money back/);
     const staff = mail.sent.find((m) => m.to === 'staff@dicegoblin.test');
     assert.match(staff.subject, /Refunds due: Cancel me/);
@@ -2109,7 +2115,11 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
     const saved = lair.joinById(online.data.join.id);
     assert.deepEqual([saved.status, saved.paid, saved.orderId], ['confirmed', true, 'gid://shopify/Order/81']);
     await settle();
-    assert.match(mail.sent.find((m) => m.to === 'aroha@example.com').text, /Entry: +\$40\.00, paid\. Thank you!/);
+    const lockedIn = mail.sent.find((m) => m.to === 'aroha@example.com').text;
+    assert.match(lockedIn, /^YOU'RE LOCKED IN!/);
+    assert.match(lockedIn, /Entry: +\$40\.00, paid online\. Thank you!/);
+    assert.match(lockedIn, /Your code: +[A-Z]{2}-[A-Z]{3,9}-\d{1,2}/);
+    assert.match(lockedIn, /You paid online, so you're locked in\. Can't make it after all\? Cancel in My Lair and have a chat with us about a refund\./);
 
     const counter = await join({ pay: 'day', email: 'kai@example.com', name: 'Kai', people: 1 });
     assert.deepEqual([counter.data.join.status, counter.data.join.amount, counter.data.join.paid, counter.data.checkoutUrl], ['confirmed', 2000, false, undefined]);
