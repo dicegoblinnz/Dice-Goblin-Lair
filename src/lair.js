@@ -673,9 +673,13 @@ export class Lair {
         if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true }));
         if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false }));
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
-        if (b === 'pos' && c === 'checkin') return json(await this.posCheckIn(body));
-        if (b === 'pos' && c === 'member') return json(await this.posMember(body));
+        const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
+        if (b === 'pos' && c === 'today') return json(await this.posToday());
+        if (b === 'pos' && c === 'scan') return json(await this.posScan(body));
+        if (b === 'pos' && c === 'checkin') return json(await this.posCheckIn(body, by));
+        if (b === 'pos' && c === 'checkin-member') return json(await this.posCheckInMember(body, by));
         if (b === 'pos' && c === 'share') return json(await this.posShare(body));
+        if (b === 'pos' && c === 'member') return json(await this.posMember(body));
         if (b === 'pos' && c === 'tab' && parts[3] && parts[4] === 'added') return json(this.posTabAdded(decodeURIComponent(parts[3])));
         return json({ error: 'Not found' }, 404);
       }
@@ -2219,7 +2223,7 @@ export class Lair {
    * in stays in, and a pass can still be applied. A cancelled booking, a no-show or another day's booking comes back
    * unchecked with a reason unless force is set. No awaits.
    */
-  checkInBooking(booking, rules, now, { force = false, pass: choice, by = null } = {}) {
+  checkInBooking(booking, rules, now, { force = false, pass: choice, by = null, sameDay = false } = {}) {
     const time = new LairTime(rules.tz);
     const game = booking.gameId ? this.game(booking.gameId) : null;
     const base = {
@@ -2236,7 +2240,7 @@ export class Lair {
       return result(booking, { checkedIn: false, reason: 'cancelled', message, notice: message, pass: null });
     }
     const already = !force && (booking.status === 'seated' || booking.status === 'done' || Boolean(booking.arrivedAt));
-    if (!already && !force && !(now >= booking.start - 3 * HOUR && now <= booking.end)) {
+    if (!already && !force && !sameDay && !(now >= booking.start - 3 * HOUR && now <= booking.end)) {
       const message = `This booking is for ${time.label(booking.start)}, not today: ${who(booking)}.`;
       return result(booking, { checkedIn: false, reason: 'not-today', message, notice: message, pass: null });
     }
@@ -2255,7 +2259,7 @@ export class Lair {
   }
 
   /** Check in an event sign-up. Passes never cover event entry. Like checkInBooking. No awaits. */
-  checkInJoin(join, rules, now, { force = false, pass: choice } = {}) {
+  checkInJoin(join, rules, now, { force = false, pass: choice, sameDay = false } = {}) {
     const time = new LairTime(rules.tz);
     const base = { found: true, kind: 'join', type: 'join', customer: join.customerId ? { id: join.customerId } : null, pass: null };
     const result = (item, extra) => {
@@ -2268,7 +2272,7 @@ export class Lair {
       return result(join, { checkedIn: false, reason: 'cancelled', message, notice: message });
     }
     const already = !force && Boolean(join.arrivedAt);
-    if (!already && !force && !(now >= join.start - 3 * HOUR && now <= join.end)) {
+    if (!already && !force && !sameDay && !(now >= join.start - 3 * HOUR && now <= join.end)) {
       const message = `This sign-up is for ${time.label(join.start)}, not today: ${label(join)}.`;
       return result(join, { checkedIn: false, reason: 'not-today', message, notice: message });
     }
@@ -2383,34 +2387,175 @@ export class Lair {
   }
 
   /* ---------------- the POS at the counter ---------------- */
+  // The POS extension's routes. The Worker checks its session token first, so these act for staff; `by` names the POS
+  // user for pass uses.
+
   /**
-   * POST /pos/checkin { code, force? } from the POS extension: the same as /checkin, plus `lines` (the fee still to pay,
-   * ready to add to the POS cart as custom sales; each carries its ticket code in _booking, so paying the order marks
-   * it paid) and `customer` (to attach to the cart, so the spend counts). A member card's lines cover everything
-   * still to pay today.
+   * GET /pos/today: everything booked today, grouped for the counter. { day, now, groups }; each group { key, kind,
+   * title, start, end, tables, rows }:
+   *   game    one per GM game session today ("Curse of Strahd · GM Ana"); its rows are the seats (the GM isn't one)
+   *   event   one per event date today; its rows are sign-ups and the event's game-spot bookings
+   *   tables  "Table bookings": every other table booking and walk-in today
+   * Groups are in start order and rows in start, then name order. Cancelled rows are left out; no-shows stay.
    */
-  async posCheckIn(input) {
+  async posToday() {
     const rules = await this.rules();
     // --- no awaits from here on ---
-    const result = this.ticketCheckIn(input, rules, Date.now());
-    let lines = [];
-    let customerId = null;
-    if (result.kind === 'pass') return { ...result, lines };
-    if (result.kind === 'member') {
-      customerId = result.customer.id;
-      lines = result.bookings.filter((x) => x.due > 0).map((x) => this.posLine(x.kind === 'join' ? this.joinById(x.id) : this.booking(x.id), x.kind, x.due));
-    } else {
-      const item = result.kind === 'join' ? result.join : result.booking;
-      customerId = item.customerId || null;
-      if (result.checkedIn && result.due > 0) lines = [this.posLine(item, result.kind, result.due)];
+    const now = Date.now();
+    const { day, from, to } = this.dayWindow(rules, now);
+    const st = this.state(from, to);
+    const memo = new Map();
+    const paid = { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) };
+    const games = new Map(st.games.map((g) => [g.id, g]));
+    const rowOf = (b) => this.bookingRow(b, rules, { memo, game: b.gameId ? games.get(b.gameId) ?? undefined : null, payments: paid.booking.get(b.id) || [] });
+    const groups = new Map();
+    const group = (key, make) => {
+      if (!groups.has(key)) groups.set(key, { ...make(), rows: [] });
+      return groups.get(key);
+    };
+    for (const g of st.games.filter((x) => x.status !== 'cancelled')) {
+      group(`game:${g.id}`, () => ({ key: `game:${g.id}`, kind: 'game', title: `${g.title} · GM ${g.gm}`, start: g.start, end: g.end, tables: g.tables }));
     }
-    return { ...result, lines, customer: customerId ? { id: customerId } : null };
+    for (const o of eventOccurrences(rules, from, to)) {
+      const tables = [...new Set([...parseTableList(o.tables, rules.rooms), ...parseSpots(o.gameTables, rules.rooms).flat()])];
+      group(`event:${o.id}`, () => ({ key: `event:${o.id}`, kind: 'event', title: o.title, start: o.start, end: o.end, tables }));
+    }
+    const live = st.bookings.filter((b) => b.status !== 'cancelled' && b.kind !== 'gm');
+    for (const b of live) {
+      if (b.kind === 'gm-seat' && b.gameId) {
+        const g = games.get(b.gameId) || this.game(b.gameId);
+        group(`game:${b.gameId}`, () => ({ key: `game:${b.gameId}`, kind: 'game', title: g ? `${g.title} · GM ${g.gm}` : 'GM game', start: b.start, end: b.end, tables: b.tables })).rows.push(rowOf(b));
+      } else if (b.occurrenceId) {
+        group(`event:${b.occurrenceId}`, () => ({ key: `event:${b.occurrenceId}`, kind: 'event', title: findOccurrence(rules, b.occurrenceId)?.title || 'Event', start: b.start, end: b.end, tables: b.tables })).rows.push(rowOf(b));
+      } else {
+        group('tables', () => ({ key: 'tables', kind: 'tables', title: 'Table bookings', start: b.start, end: b.end, tables: [] })).rows.push(rowOf(b));
+      }
+    }
+    const joins = this.sql.exec("SELECT * FROM event_joins WHERE ends_at > ? AND starts_at < ? AND status != 'cancelled'", from, to).toArray().map((r) => this.rowToJoin(r));
+    for (const j of joins) {
+      group(`event:${j.occurrenceId}`, () => ({ key: `event:${j.occurrenceId}`, kind: 'event', title: j.title || 'Event', start: j.start, end: j.end, tables: [] }))
+        .rows.push(this.joinRow(j, { payments: paid.join.get(j.id) || [] }));
+    }
+    const tables = groups.get('tables');
+    if (tables) {
+      tables.start = Math.min(...tables.rows.map((r) => r.start));
+      tables.end = Math.max(...tables.rows.map((r) => r.end));
+      tables.tables = [...new Set(tables.rows.flatMap((r) => r.tables))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+    }
+    const order = { game: 0, event: 1, tables: 2 };
+    for (const g of groups.values()) g.rows.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+    return { day, now, groups: [...groups.values()].sort((a, b) => a.start - b.start || order[a.kind] - order[b.kind] || a.title.localeCompare(b.title)) };
+  }
+
+  /** The Today group a booking or sign-up belongs to: { key, kind, title, start } */
+  groupOf(type, item, rules) {
+    if (type === 'join' || item.occurrenceId) {
+      const o = findOccurrence(rules, item.occurrenceId);
+      return { key: `event:${item.occurrenceId}`, kind: 'event', title: o?.title || item.title || 'Event', start: o?.start ?? item.start };
+    }
+    if (item.gameId) {
+      const g = this.game(item.gameId);
+      return { key: `game:${item.gameId}`, kind: 'game', title: g ? `${g.title} · GM ${g.gm}` : 'GM game', start: g?.start ?? item.start };
+    }
+    const { from, to } = this.dayWindow(rules, item.start);
+    const first = this.sql
+      .exec("SELECT MIN(starts_at) AS start FROM bookings WHERE kind IN ('table', 'walkin') AND occurrence_id IS NULL AND status != 'cancelled' AND ends_at > ? AND starts_at < ?", from, to)
+      .one().start;
+    return { key: 'tables', kind: 'tables', title: 'Table bookings', start: first ?? item.start };
   }
 
   /**
-   * POST /pos/share { id, type, amount? } (the POS): one custom sale for part of a bill, so friends can each pay their
-   * share. amount is in cents, capped at what's left; with none it's one person's share, ceil(amount ÷ people). The
-   * line carries _booking and _share, so paying it adds to the booking's paidAmount. Returns { row, line }.
+   * POST /pos/scan { code }: what a code is, without checking anyone in. A booking or sign-up: { type, row, group }. A
+   * member: { type: 'member', member: { customerId, name, code }, rows (theirs today), tab (today's), passes (active) }.
+   * A pass: { type: 'pass', pass }. The first release's GOB- codes work too.
+   */
+  async posScan(input) {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const found = this.findCode(input.code);
+    if (!found) throw new RuleError('No booking, member or pass with that code.', 404);
+    if (found.type === 'pass') return { type: 'pass', pass: this.passView(found.item, { now }) };
+    if (found.type === 'member') {
+      const customerId = found.item.customer_id;
+      const { member, bookings, joins } = this.memberToday(customerId, rules, now);
+      const memo = new Map();
+      const rows = [...bookings.map((b) => this.bookingRow(b, rules, { memo })), ...joins.map((j) => this.joinRow(j))].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+      return {
+        type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
+        rows, tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
+      };
+    }
+    const row = found.type === 'join' ? this.joinRow(found.item) : this.bookingRow(found.item, rules);
+    return { type: found.type, row, group: this.groupOf(found.type, found.item, rules) };
+  }
+
+  /**
+   * POST /pos/checkin { id, type, pass?, force? } (or { code }): check one person in, the same as /checkin, plus `lines`:
+   * what's left to pay, ready to add to the POS cart as a custom sale carrying its code in _booking (paying the order
+   * marks it paid), or none when nothing is due. customer: the account to attach to the cart, so the spend counts.
+   * Checking in someone already here gives the same lines. A member code ({ code }, as in round 3) checks nothing in
+   * and gives lines for everything still to pay today.
+   */
+  async posCheckIn(input, by = 'pos') {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const result = this.ticketCheckIn(input, rules, Date.now(), by);
+    if (result.kind === 'pass') return { ...result, lines: [] };
+    if (result.kind === 'member') return { ...result, lines: result.rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r)) };
+    const { row } = result;
+    return { ...result, lines: result.checkedIn && row.due > 0 ? [this.posLine(row)] : [], customer: row.customerId ? { id: row.customerId } : null };
+  }
+
+  /**
+   * POST /pos/checkin-member { customerId }: check in all of that member's rows today (their saved passes apply), with
+   * lines for everything left to pay. Returns { rows, lines, customer, notices }.
+   */
+  async posCheckInMember(input, by = 'pos') {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const customerId = trimmed(input.customerId, 40);
+    const { member, bookings, joins } = customerId ? this.memberToday(customerId, rules, now) : {};
+    if (!customerId || (!member && !bookings.length && !joins.length)) throw new RuleError('No member with that customer ID.', 404);
+    const notices = [];
+    const rows = [];
+    const take = (result) => {
+      rows.push(result.row);
+      if (result.notice && result.checkedIn) notices.push(result.notice);
+    };
+    for (const b of bookings) {
+      if (b.status === 'noshow') {
+        notices.push(`${b.ref} was marked as a no-show, so it wasn't checked in.`);
+        rows.push(this.bookingRow(b, rules));
+      } else {
+        take(this.checkInBooking(b, rules, now, { by, sameDay: true }));
+      }
+    }
+    for (const j of joins) take(this.checkInJoin(j, rules, now, { sameDay: true }));
+    rows.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+    return { rows, lines: rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r)), customer: { id: customerId }, notices };
+  }
+
+  /**
+   * One custom sale for the POS cart, from a row: what's left to pay for it. "Table fee: SJ-OWLBEAR-17 (T4, 3 people)",
+   * "GM seat: Curse of Strahd (SJ-OWLBEAR-17)", "Game spot: Warhammer night (SJ-OWLBEAR-17)" or "Event entry: Pokémon
+   * TCG league (SJ-OWLBEAR-17)", plus "(pass covered $20)" when a pass took some off.
+   */
+  posLine(row) {
+    let title;
+    if (row.type === 'join') title = `Event entry: ${row.title} (${row.ref})`;
+    else if (row.kind === 'gm-seat') title = `GM seat: ${row.title} (${row.ref})`;
+    else if (row.occurrenceId) title = `Game spot: ${row.title} (${row.ref})`;
+    else title = `Table fee: ${row.ref} (${row.tables.join(', ')}, ${plural(row.people, 'person', 'people')})`;
+    if (row.covered > 0) title += ` (pass covered ${money(row.covered)})`;
+    return { title: title.slice(0, 120), price: (row.due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: row.ref } };
+  }
+
+  /**
+   * POST /pos/share { id, type, amount? }: one custom sale for part of a bill, so friends can each pay their share.
+   * amount is in cents, capped at what's left; with none it's one person's share, ceil(amount ÷ people). The line
+   * carries _booking and _share, so paying it adds to the booking's paidAmount. Returns { row, line }.
    */
   async posShare(input) {
     const rules = await this.rules();
@@ -2441,26 +2586,16 @@ export class Lair {
     };
   }
 
-  /** One custom sale for the POS cart */
-  posLine(item, type, due) {
-    let title;
-    if (type === 'join') title = `Event entry: ${item.title || 'event'} (${item.ref})`;
-    else if (item.kind === 'gm-seat') title = `GM game seat: ${this.game(item.gameId)?.title || 'game'} (${item.ref})`;
-    else title = `Table fee: ${item.ref} (${item.tables.join(', ')}, ${item.people} ${item.people === 1 ? 'person' : 'people'})`;
-    return { title: title.slice(0, 120), price: (due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: item.ref } };
-  }
-
-  /** POST /pos/member { code } from the POS extension: who a member code belongs to, to attach them to the cart. */
+  /**
+   * POST /pos/member { code }: the round 3 route, now /pos/scan for member codes only. Returns the scan plus round 3's
+   * customerId, name, code and rolls.
+   */
   async posMember(input) {
-    const rules = await this.rules();
-    const now = Date.now();
     const found = this.findCode(input.code);
     if (found?.type !== 'member') throw new RuleError("That isn't a member code. Members find theirs in My Lair on the website.", 404);
-    const row = found.item;
-    return {
-      customerId: row.customer_id, name: row.name || row.first_name || '', code: row.code,
-      rolls: this.rollsState(row.customer_id, now),
-    };
+    const scan = await this.posScan(input);
+    // --- no awaits from here on ---
+    return { ...scan, customerId: scan.member.customerId, name: scan.member.name, code: scan.member.code, rolls: this.rollsState(scan.member.customerId) };
   }
 
   /* ---------------- events ---------------- */

@@ -1,7 +1,8 @@
 // Dice Goblin Lair — Cloudflare Worker entry point.
 //   /proxy/*                 Shopify app proxy (www.dicegoblin.nz/apps/lair/*), signature checked. Signed requests
 //                            on other paths are served the same way, in case the proxy URL was entered without /proxy.
-//   /pos/checkin, /pos/member the POS extension on the counter iPad: a Shopify POS session token, CORS for its origin
+//   /pos/*                   the POS extension on the counter iPad (today, scan, checkin, checkin-member, share,
+//                            tab/:id/added, member): a Shopify POS session token, CORS for its origin
 //   /webhooks/orders-paid    Shopify webhook, HMAC checked
 //   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook
 //   /img/<id>                a GM's game picture (public, cached)
@@ -24,9 +25,11 @@ const internalCall = (env, origin, path, body, headers = {}) =>
 
 /** The POS extension runs on Shopify's own extension origin, so its routes answer CORS (the session token is the proof, not cookies). */
 const POS_CORS = {
-  'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type',
   'Access-Control-Max-Age': '86400',
 };
+/** The POS routes: GET /pos/today, and POST for the rest. /pos/member is round 3's name for scanning a member code. */
+const POS_ROUTES = /^(?:today|scan|checkin|checkin-member|share|member|tab\/[A-Za-z0-9_-]{1,64}\/added)$/;
 const withCors = (response) => {
   const out = new Response(response.body, response);
   for (const [key, value] of Object.entries(POS_CORS)) out.headers.set(key, value);
@@ -34,17 +37,17 @@ const withCors = (response) => {
 };
 
 /**
- * POST /pos/checkin and /pos/member, from the POS extension. Staff are signed in to Shopify POS, and its session
- * token (Authorization: Bearer …) proves the request came from this shop's POS for this app.
+ * The POS extension's routes (POS_ROUTES). Staff are signed in to Shopify POS, and its session token (Authorization:
+ * Bearer …) proves the request came from this shop's POS for this app.
  */
 async function posRoute(request, env, url) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: POS_CORS });
   const route = url.pathname.slice('/pos/'.length);
-  if (request.method !== 'POST' || !['checkin', 'member', 'share'].includes(route)) return withCors(json({ error: 'Not found' }, 404));
+  if (!POS_ROUTES.test(route) || request.method !== (route === 'today' ? 'GET' : 'POST')) return withCors(json({ error: 'Not found' }, 404));
   const token = (request.headers.get('Authorization') || '').match(/^Bearer\s+(\S+)$/i)?.[1];
   const claims = token ? await verifySessionToken(token, { secret: env.SHOPIFY_CLIENT_SECRET, clientId: env.SHOPIFY_CLIENT_ID, shop: env.SHOP }) : null;
   if (!claims) return withCors(json({ error: 'Sign in to Shopify POS to use this.' }, 401));
-  const body = await request.text();
+  const body = request.method === 'GET' ? '{}' : await request.text();
   return withCors(await internalCall(env, url.origin, `pos/${route}`, body || '{}', { 'X-Lair-Pos-User': String(claims.sub || '') }));
 }
 

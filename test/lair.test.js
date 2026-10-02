@@ -2362,7 +2362,7 @@ test('Worker: POS routes answer CORS preflights, need a valid POS session token,
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), '*');
   assert.match(preflight.headers.get('Access-Control-Allow-Headers'), /Authorization/);
-  assert.match(preflight.headers.get('Access-Control-Allow-Methods'), /POST/);
+  assert.match(preflight.headers.get('Access-Control-Allow-Methods'), /GET, POST/);
   const anonymous = await worker.fetch(new Request('https://worker.test/pos/checkin', { method: 'POST', body: '{"code":"SAM-1234"}' }), env);
   assert.equal(anonymous.status, 401);
   assert.equal(anonymous.headers.get('Access-Control-Allow-Origin'), '*');
@@ -2375,8 +2375,21 @@ test('Worker: POS routes answer CORS preflights, need a valid POS session token,
   assert.deepEqual(seen[0], { path: '/internal/pos/checkin', internal: '1', user: '42', body: '{"code":"SAM-1234"}' });
   await worker.fetch(new Request('https://worker.test/pos/member', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: '{"code":"DGC-1"}' }), env);
   assert.equal(seen[1].path, '/internal/pos/member');
-  assert.equal((await worker.fetch(new Request('https://worker.test/pos/other', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }), env)).status, 404);
-  assert.equal((await worker.fetch(new Request('https://worker.test/pos/checkin', { headers: { Authorization: `Bearer ${token}` } }), env)).status, 404);
+  // Round 4: GET /pos/today, and POST for scan, checkin-member, share and a tab in the cart.
+  const auth = { Authorization: `Bearer ${token}` };
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/today', { headers: auth }), env)).status, 200);
+  for (const route of ['scan', 'checkin-member', 'share', 'tab/tb_0123abcd/added']) {
+    assert.equal((await worker.fetch(new Request(`https://worker.test/pos/${route}`, { method: 'POST', headers: auth, body: '{"x":1}' }), env)).status, 200, route);
+  }
+  assert.deepEqual(seen.slice(2).map((s) => [s.path, s.body, s.user]), [
+    ['/internal/pos/today', '{}', '42'], ['/internal/pos/scan', '{"x":1}', '42'], ['/internal/pos/checkin-member', '{"x":1}', '42'],
+    ['/internal/pos/share', '{"x":1}', '42'], ['/internal/pos/tab/tb_0123abcd/added', '{"x":1}', '42'],
+  ]);
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/today'), env)).status, 401, 'today needs the token too');
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/today', { method: 'POST', headers: auth }), env)).status, 404, 'today is a GET');
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/tab/../../internal/setup/added', { method: 'POST', headers: auth }), env)).status, 404);
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/other', { method: 'POST', headers: auth }), env)).status, 404);
+  assert.equal((await worker.fetch(new Request('https://worker.test/pos/checkin', { headers: auth }), env)).status, 404);
   resetConfigCache();
 });
 
@@ -2847,4 +2860,146 @@ test('split the bill: a part-paid seat in a cancelled game gets back what was pa
   }
   const done = await call('POST', `bookings/${seat.id}/update`, { refunded: true }, 'staff');
   assert.deepEqual([done.status, done.data.booking.refund], [200, 'done']);
+});
+
+/** A day at the Lair for the POS tests: a GM game, two events, table bookings and a walk-in, all on Thursday 1 October */
+async function busyDay() {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20, entryFee: 500 },
+    { id: 'wh', title: 'Warhammer night', start: at('2026-10-01', 17), end: at('2026-10-01', 21), tables: 'T20', gameTables: 'T16+T17, T18+T19' },
+    { id: 'later', title: 'Saturday league', start: at('2026-10-03', 12), end: at('2026-10-03', 16), tables: '', capacity: 10 },
+  ]);
+  const game = (await call('POST', 'games', { title: 'Curse of Strahd', system: 'D&D 5e', gm: 'Ana', blurb: 'x', seats: 4, tables: ['A1'], start: at('2026-10-01', 15), end: at('2026-10-01', 18) }, 'gm')).data.game;
+  const seat = (who, name, people) => call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people, name, email: `${name.toLowerCase()}@example.com` }, who).then((r) => r.data.booking);
+  const mia = await seat('mia', 'Mia', 2);
+  const leo = await seat('leo', 'Leo', 1);
+  const gone = await seat('zed', 'Zed', 1);
+  await call('POST', `bookings/${gone.id}/update`, { status: 'cancelled' }, 'zed');
+  const sam = (await call('POST', 'bookings', tableBooking({ tables: ['T5'], name: 'Sam', email: 'sam@example.com' }), '1001')).data.booking;
+  const kai = (await call('POST', 'bookings', tableBooking({ tables: ['T6'], start: at('2026-10-01', 16), end: at('2026-10-01', 18), people: 2, name: 'Kai', email: 'kai@example.com' }))).data.booking;
+  await call('POST', `bookings/${kai.id}/update`, { status: 'noshow' }, 'staff');
+  const cancelled = (await call('POST', 'bookings', tableBooking({ tables: ['T7'], name: 'Gone', email: 'gone@example.com' }))).data.booking;
+  await call('POST', `bookings/${cancelled.id}/update`, { status: 'cancelled' }, 'staff');
+  const walkin = (await call('POST', 'bookings', { kind: 'walkin', tables: ['T8'], start: NOW, end: NOW + HOUR, people: 2, name: 'Walk In' }, 'staff')).data.booking;
+  const spot = (await call('POST', 'events/wh@2026-10-01/reserve', { name: 'Aroha', email: 'aroha@example.com', people: 2 })).data.booking;
+  const quizSam = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Sam', email: 'sam@example.com', people: 2 }, '1001')).data.join;
+  const quizBo = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Bo', email: 'bo@example.com', people: 1 })).data.join;
+  await call('POST', 'bookings', tableBooking({ tables: ['T9'], start: at('2026-10-02', 15), end: at('2026-10-02', 17), email: 'tomorrow@example.com' }));
+  return { game, mia, leo, sam, kai, walkin, spot, quizSam, quizBo };
+}
+
+test('POS today: games, events and table bookings for today, grouped and in order; cancelled rows left out, no-shows kept', async () => {
+  const day = await busyDay();
+  const res = await call('GET', 'floor', null, 'staff');
+  assert.equal(res.status, 200);
+  const today = await pos('today');
+  assert.equal(today.status, 200, today.data.error);
+  assert.deepEqual([today.data.day, today.data.now], ['2026-10-01', NOW]);
+  const groups = today.data.groups;
+  assert.deepEqual(groups.map((g) => [g.key, g.kind, g.title, g.start, g.end, g.tables]), [
+    ['tables', 'tables', 'Table bookings', NOW, at('2026-10-01', 18), ['T5', 'T6', 'T8']],
+    [`game:${day.game.id}`, 'game', 'Curse of Strahd · GM Ana', at('2026-10-01', 15), at('2026-10-01', 18), ['A1']],
+    ['event:wh@2026-10-01', 'event', 'Warhammer night', at('2026-10-01', 17), at('2026-10-01', 21), ['T20', 'T16', 'T17', 'T18', 'T19']],
+    ['event:quiz@2026-10-01', 'event', 'Trivia night', at('2026-10-01', 18), at('2026-10-01', 20), []],
+  ]);
+  assert.deepEqual(groups.map((g) => g.rows.map((r) => [r.type, r.name, r.status])), [
+    [['booking', 'Walk In', 'seated'], ['booking', 'Sam', 'confirmed'], ['booking', 'Kai', 'noshow']],
+    [['booking', 'Leo', 'confirmed'], ['booking', 'Mia', 'confirmed']],
+    [['booking', 'Aroha', 'confirmed']],
+    [['join', 'Bo', 'confirmed'], ['join', 'Sam', 'confirmed']],
+  ]);
+  const sam = groups[0].rows[1];
+  assert.deepEqual(sam, {
+    id: day.sam.id, type: 'booking', kind: 'table', ref: day.sam.ref, name: 'Sam', people: 4, tables: ['T5'], start: at('2026-10-01', 15), end: at('2026-10-01', 17),
+    status: 'confirmed', arrivedAt: null, paid: false, amount: 4000, covered: 0, due: 4000, paidAmount: 0, payments: [], split: false, customerId: '1001', pass: null,
+    refund: null, note: '', title: 'Table T5', players: [], gameId: null, occurrenceId: null,
+  });
+  assert.deepEqual(groups[1].rows[1].players, [{ name: 'Mia', character: '' }, { name: 'Mia +1', character: '' }]);
+  assert.deepEqual([groups[3].rows[1].id, groups[3].rows[1].due, groups[3].rows[1].title, groups[3].rows[1].occurrenceId], [day.quizSam.id, 1000, 'Trivia night', 'quiz@2026-10-01']);
+  // An empty day still answers.
+  Date.now = () => at('2026-10-05', 13);
+  assert.deepEqual((await pos('today')).data, { day: '2026-10-05', now: at('2026-10-05', 13), groups: [] });
+});
+
+test('POS scan: a booking, seat, game spot or sign-up shows its row and group; a member their day, tab and passes; a pass itself; anything else is a 404', async () => {
+  const day = await busyDay();
+  const pass = await makePass({ customerId: '1001', holderName: 'Sam Jones' });
+  const scan = (code) => pos('scan', { code });
+  const booking = await scan(day.sam.ref.toLowerCase().replace(/-/g, ' '));
+  assert.deepEqual([booking.status, booking.data.type, booking.data.row.id, booking.data.group], [200, 'booking', day.sam.id, { key: 'tables', kind: 'tables', title: 'Table bookings', start: NOW }]);
+  assert.equal(lair.booking(day.sam.id).status, 'confirmed', 'scanning checks nobody in');
+  assert.deepEqual((await scan(day.mia.ref)).data.group, { key: `game:${day.game.id}`, kind: 'game', title: 'Curse of Strahd · GM Ana', start: at('2026-10-01', 15) });
+  assert.deepEqual((await scan(day.spot.ref)).data.group, { key: 'event:wh@2026-10-01', kind: 'event', title: 'Warhammer night', start: at('2026-10-01', 17) });
+  const join = await scan(day.quizBo.ref);
+  assert.deepEqual([join.data.type, join.data.row.type, join.data.row.due, join.data.group], ['join', 'join', 500, { key: 'event:quiz@2026-10-01', kind: 'event', title: 'Trivia night', start: at('2026-10-01', 18) }]);
+  // A member: their rows today across every group, today's tab and their active passes.
+  await call('POST', 'tab', { items: [{ variantId: '123', title: 'Flat white', variantTitle: '', price: 550, qty: 1 }] }, '1001');
+  const member = await scan(lair.memberRow('1001').code);
+  assert.deepEqual([member.data.type, member.data.member], ['member', { customerId: '1001', name: 'Sam', code: lair.memberRow('1001').code }]);
+  assert.deepEqual(member.data.rows.map((r) => [r.type, r.ref]), [['booking', day.sam.ref], ['join', day.quizSam.ref]]);
+  assert.deepEqual([member.data.tab.total, member.data.tab.status], [550, 'open']);
+  assert.deepEqual(member.data.passes.map((p) => [p.code, p.sessionsLeft, p.uses]), [[pass.code, 10, undefined]]);
+  const shown = await scan(pass.code);
+  assert.deepEqual([shown.data.type, shown.data.pass.code, shown.data.pass.uses], ['pass', pass.code, []]);
+  // The first release's GOB codes, and codes nobody has.
+  lair.saveBooking({ ...lair.booking(day.kai.id), id: 'bk_old', ref: 'GOB-7K2QXM', tables: ['T9'], status: 'confirmed' }, NOW);
+  assert.deepEqual([(await scan('gob7k2qxm')).data.row.ref], ['GOB-7K2QXM']);
+  for (const code of ['ZZ-NOPE-1', 'hello', '']) assert.deepEqual([(await scan(code)).status, (await scan(code)).data.error], [404, 'No booking, member or pass with that code.'], code);
+  // Round 3's /pos/member answers for member codes only.
+  const old = await pos('member', { code: lair.memberRow('1001').code });
+  assert.deepEqual([old.data.type, old.data.customerId, old.data.name, old.data.rolls.available], ['member', '1001', 'Sam', 0]);
+  assert.equal((await pos('member', { code: day.sam.ref })).status, 404);
+});
+
+test('POS check-in: lines say what they\'re for and what\'s left after a pass; nothing due, no lines; checking in again gives the same lines', async () => {
+  const day = await busyDay();
+  const pass = await makePass({ sessions: 2, holderName: 'League' });
+  const checkin = (body) => pos('checkin', body);
+  const table = await checkin({ id: day.sam.id, type: 'booking', pass: pass.code });
+  assert.equal(table.status, 200, table.data.error);
+  assert.deepEqual(table.data.lines, [{ title: `Table fee: ${day.sam.ref} (T5, 4 people) (pass covered $20)`, price: '20.00', quantity: 1, taxable: true, properties: { _booking: day.sam.ref } }]);
+  assert.deepEqual([table.data.row.arrivedAt, table.data.row.status, table.data.customer, table.data.pass.covered, table.data.notice], [NOW, 'seated', { id: '1001' }, 2000, `Pass ${pass.code} had 2 sessions left, so it covered 2 of 4 people.`]);
+  assert.equal(lair.sql.exec('SELECT by FROM pass_uses').one().by, 'pos:', 'the POS user is kept with the use');
+  const again = await checkin({ id: day.sam.id, type: 'booking' });
+  assert.deepEqual([again.data.already, again.data.lines], [true, table.data.lines], 'the same lines, and the pass is not used twice');
+  const seat = await checkin({ code: day.mia.ref });
+  assert.deepEqual(seat.data.lines.map((l) => [l.title, l.price]), [[`GM seat: Curse of Strahd (${day.mia.ref})`, '30.00']]);
+  assert.deepEqual(seat.data.customer, { id: 'mia' });
+  Date.now = () => at('2026-10-01', 17, 30);
+  const spot = await checkin({ id: day.spot.id, type: 'booking' });
+  assert.deepEqual(spot.data.lines.map((l) => [l.title, l.price]), [[`Game spot: Warhammer night (${day.spot.ref})`, '20.00']]);
+  const entry = await checkin({ id: day.quizBo.id, type: 'join' });
+  assert.deepEqual([entry.data.row.type, entry.data.lines.map((l) => [l.title, l.price])], ['join', [[`Event entry: Trivia night (${day.quizBo.ref})`, '5.00']]]);
+  // Nothing due, no lines: a walk-in marked paid, then a booking a pass covers in full.
+  const walkin = (await call('POST', 'bookings', { kind: 'walkin', tables: ['T10'], start: Date.now(), end: Date.now() + HOUR, people: 1, paid: true }, 'staff')).data.booking;
+  assert.deepEqual((await checkin({ id: walkin.id, type: 'booking' })).data.lines, []);
+  const solo = (await call('POST', 'bookings', tableBooking({ tables: ['T11'], start: at('2026-10-01', 19), end: at('2026-10-01', 20), people: 1, email: 'solo@example.com' }))).data.booking;
+  const covered = await checkin({ id: solo.id, type: 'booking', pass: (await makePass({ holderName: 'Solo' })).code });
+  assert.deepEqual([covered.data.row.due, covered.data.lines], [0, []]);
+  // Refused: the no-show and another day's booking give no lines.
+  const noshow = await checkin({ id: day.kai.id, type: 'booking' });
+  assert.deepEqual([noshow.data.checkedIn, noshow.data.reason, noshow.data.lines, noshow.data.notice], [false, 'cancelled', [], `This booking was marked as a no-show: Kai, 2 people at T6.`]);
+  assert.equal((await checkin({ id: 'bk_nope', type: 'booking' })).status, 404);
+});
+
+test('POS check-in-member: every row a member has today is checked in (passes apply), with lines for what\'s left and notices', async () => {
+  const day = await busyDay();
+  await call('POST', 'me/profile', { name: 'Sam Jones' }, '1001');
+  const pass = await makePass({ customerId: '1001', holderName: '', sessions: 1 });
+  await call('POST', `passes/${pass.id}/apply`, { bookingId: day.sam.id }, 'staff');
+  const res = await pos('checkin-member', { customerId: '1001' });
+  assert.equal(res.status, 200, res.data.error);
+  assert.deepEqual(res.data.rows.map((r) => [r.type, r.ref, Boolean(r.arrivedAt), r.due]), [['booking', day.sam.ref, true, 3000], ['join', day.quizSam.ref, true, 1000]], "the quiz is later today, and still checked in");
+  assert.deepEqual(res.data.lines.map((l) => [l.title, l.price]), [[`Table fee: ${day.sam.ref} (T5, 4 people) (pass covered $10)`, '30.00'], [`Event entry: Trivia night (${day.quizSam.ref})`, '10.00']]);
+  assert.deepEqual([res.data.customer, res.data.notices], [{ id: '1001' }, [`Pass ${pass.code} had 1 session left, so it covered 1 of 4 people.`]]);
+  assert.equal(lair.joinById(day.quizSam.id).status, 'attended');
+  // Again: the same rows and lines; the saved pass has nothing left to give. A no-show is left alone with a notice.
+  const again = await pos('checkin-member', { customerId: '1001' });
+  assert.deepEqual([again.data.lines.map((l) => l.price), again.data.notices], [['30.00', '10.00'], [`Pass ${pass.code} has no sessions left, so it wasn't used.`]]);
+  lair.write("UPDATE bookings SET customer_id = '1001' WHERE id = ?", day.kai.id);
+  const withNoShow = await pos('checkin-member', { customerId: '1001' });
+  assert.ok(withNoShow.data.notices.includes(`${day.kai.ref} was marked as a no-show, so it wasn't checked in.`));
+  assert.equal(lair.booking(day.kai.id).status, 'noshow');
+  assert.equal((await pos('checkin-member', { customerId: '4040' })).status, 404);
+  assert.equal((await pos('checkin-member', {})).status, 404);
 });
