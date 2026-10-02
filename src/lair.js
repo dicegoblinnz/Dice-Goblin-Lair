@@ -6,9 +6,9 @@
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
   ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, PRIZE_CODE_DAYS, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, blockingItems, checkGameDetails,
-  checkGameSession, checkSeatBooking, checkTableBooking, eventOccurrences, findOccurrence, isFree, makeId, makeNameRef, makeRef, nextBirthday, oneRoom,
-  parseBirthday, parseSpots, parseTableList, parseTicketCode, publicBooking, publicGame, readSettingsData, refName, refundFor, rollPrize, rulesFromSettings,
-  seatPlayers, seatsTaken, tableIndex,
+  checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId, makeRef,
+  nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rollPrize, rulesFromSettings,
+  seatPlayers, seatsTaken, tableIndex, uniqueCode,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -157,6 +157,15 @@ const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS event_joins_customer ON event_joins (customer_id, ends_at)',
     'ALTER TABLE bookings ADD COLUMN occurrence_id TEXT',
     'CREATE INDEX IF NOT EXISTS bookings_occurrence ON bookings (occurrence_id)',
+  ],
+  // Round 4: one table of every code (SJ-OWLBEAR-17) for bookings, sign-ups, members and session passes, so no code
+  // is ever used twice. The refs already given out (the first release's GOB-7K2QXM) go in too, so a new code can't
+  // clash with one. Members keep the code they were first given.
+  [
+    'CREATE TABLE IF NOT EXISTS codes (key TEXT PRIMARY KEY, code TEXT, kind TEXT, target_id TEXT, created_at INTEGER)',
+    "INSERT OR IGNORE INTO codes (key, code, kind, target_id, created_at) SELECT replace(upper(ref), '-', ''), ref, 'booking', id, created_at FROM bookings",
+    "INSERT OR IGNORE INTO codes (key, code, kind, target_id, created_at) SELECT replace(upper(ref), '-', ''), ref, 'join', id, created_at FROM event_joins",
+    'ALTER TABLE members ADD COLUMN code TEXT',
   ],
 ];
 
@@ -382,23 +391,69 @@ export class Lair {
     return this.sql.exec('SELECT * FROM bookings WHERE game_id = ?', gameId).toArray().map((r) => this.rowToBooking(r));
   }
 
+  /* ---------------- codes (SJ-OWLBEAR-17) ---------------- */
+  codeTaken(key) {
+    return this.sql.exec('SELECT 1 AS n FROM codes WHERE key = ?', key).toArray().length > 0;
+  }
+
   /**
-   * A ticket code nobody has used, booking or event sign-up: SAM-4821 from the booker's first name. If that name's
-   * 10,000 codes are nearly all used, GOB-4821, and after that the first release's GOB-7K2QXM style.
+   * A new code for a booking ('booking'), event sign-up ('join'), member or pass, from the person's name. It goes in
+   * the codes table straight away, so it's never given out again. No awaits.
    */
-  uniqueRef(name = '') {
-    const used = (ref) => this.sql.exec('SELECT 1 AS n FROM bookings WHERE ref = ? UNION ALL SELECT 1 AS n FROM event_joins WHERE ref = ?', ref, ref).toArray().length > 0;
-    for (const prefix of [...new Set([refName(name), 'GOB'])]) {
-      for (let i = 0; i < 25; i += 1) {
-        const ref = makeNameRef(prefix);
-        if (!used(ref)) return ref;
-      }
+  newCode(name, kind, targetId, now = Date.now()) {
+    const code = uniqueCode(name, (key) => this.codeTaken(key));
+    this.write('INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, ?, ?, ?)', codeKey(code), code, kind, String(targetId), now);
+    return code;
+  }
+
+  /**
+   * What a scanned or typed code belongs to: { type: 'booking'|'join'|'member'|'pass', item }, or null. Case, spaces,
+   * dashes, dots and underscores don't matter. A member's old code (staff gave them a new one) no longer counts. The
+   * first release's GOB-7K2QXM refs are matched on the booking or sign-up itself, with or without the dash.
+   */
+  findCode(text) {
+    for (const key of codeKeys(text)) {
+      const row = this.sql.exec('SELECT * FROM codes WHERE key = ?', key).toArray()[0];
+      const found = row ? this.codeTarget(row) : null;
+      if (found) return found;
     }
-    for (let i = 0; i < 20; i += 1) {
-      const ref = makeRef();
-      if (!used(ref)) return ref;
+    for (const ref of legacyRefs(text)) {
+      const booking = this.sql.exec('SELECT * FROM bookings WHERE ref = ?', ref).toArray()[0];
+      if (booking) return { type: 'booking', item: this.rowToBooking(booking) };
+      const join = this.sql.exec('SELECT * FROM event_joins WHERE ref = ?', ref).toArray()[0];
+      if (join) return { type: 'join', item: this.rowToJoin(join) };
     }
-    throw new Error('Could not find a free booking reference');
+    return null;
+  }
+
+  codeTarget(row) {
+    if (row.kind === 'booking') {
+      const found = this.sql.exec('SELECT * FROM bookings WHERE id = ?', row.target_id).toArray()[0];
+      return found ? { type: 'booking', item: this.rowToBooking(found) } : null;
+    }
+    if (row.kind === 'join') {
+      const found = this.sql.exec('SELECT * FROM event_joins WHERE id = ?', row.target_id).toArray()[0];
+      return found ? { type: 'join', item: this.rowToJoin(found) } : null;
+    }
+    if (row.kind === 'member') {
+      const member = this.memberRow(row.target_id);
+      return member && codeKey(member.code) === row.key ? { type: 'member', item: member } : null;
+    }
+    if (row.kind === 'pass') {
+      const found = this.sql.exec('SELECT * FROM passes WHERE id = ?', row.target_id).toArray()[0];
+      return found ? { type: 'pass', item: found } : null;
+    }
+    return null;
+  }
+
+  /** A booking or event sign-up by its id or code (an order's _booking property, a staff link) */
+  bookingOrJoin(ref) {
+    const booking = this.booking(ref);
+    if (booking) return { type: 'booking', item: booking };
+    const join = this.joinById(ref);
+    if (join) return { type: 'join', item: join };
+    const found = this.findCode(ref);
+    return found && ['booking', 'join'].includes(found.type) ? found : null;
   }
 
   later(promise) {
@@ -552,7 +607,7 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (request.method === 'GET' && ['floor', 'me', 'members'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me'].includes(a));
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
@@ -565,6 +620,7 @@ export class Lair {
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
+      if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
@@ -687,8 +743,9 @@ export class Lair {
     if (!who.staff) this.checkEmailLimit(booking.email, now);
     const wantsPayNow = input.pay === 'now' && kind !== 'walkin';
     const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
+    const id = makeId('bk');
     Object.assign(booking, {
-      id: makeId('bk'), ref: this.uniqueRef(input.name), pay: payNow ? 'now' : 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
+      id, ref: this.newCode(trimmed(input.name, 80), 'booking', id, now), pay: payNow ? 'now' : 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
       status: kind === 'walkin' ? 'seated' : payNow ? 'held' : 'confirmed', holdUntil: payNow ? now + HOLD_MINUTES * MIN : null,
       customerId: override ? null : who.customerId || null,
     });
@@ -977,8 +1034,9 @@ export class Lair {
   saveSession(base, session, now) {
     const game = { id: makeId('gm'), ...base, ...session };
     this.saveGame(game, now);
+    const holdId = makeId('bk');
     this.saveBooking({
-      id: makeId('bk'), ref: this.uniqueRef(game.gm), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
+      id: holdId, ref: this.newCode(game.gm, 'booking', holdId, now), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
       people: game.seats + 1, name: `GM ${game.gm}`, status: 'confirmed', pay: 'day', paid: true, amount: 0, activity: 'rpg', customerId: game.gmCustomerId,
     }, now);
     return game;
@@ -1229,8 +1287,9 @@ export class Lair {
     if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
     const players = seatPlayers(input.players, people, name);
     const customerId = trimmed(input.customerId, 40) || this.memberByEmail(email)?.customer_id || null;
+    const seatId = makeId('bk');
     const seat = {
-      id: makeId('bk'), ref: this.uniqueRef(name), kind: 'gm-seat', status: 'confirmed', gameId: game.id, tables: game.tables, room: game.room,
+      id: seatId, ref: this.newCode(name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: game.id, tables: game.tables, room: game.room,
       start: game.start, end: game.end, people, name, email, amount: (game.seatPrice || rules.prices.gmSeat) * people, pay: 'day', paid: false,
       activity: 'rpg', party: players, customerId, notes: 'Added by staff',
     };
@@ -1313,8 +1372,9 @@ export class Lair {
       .toArray()[0];
     if (existing) return { seat: this.rowToBooking(existing), created: false };
     if (session.seats - this.takenSeats(session.id) < member.people) return null;
+    const seatId = makeId('bk');
     const seat = {
-      id: makeId('bk'), ref: this.uniqueRef(member.name), kind: 'gm-seat', status: 'confirmed', gameId: session.id, seriesId: session.seriesId,
+      id: seatId, ref: this.newCode(member.name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: session.id, seriesId: session.seriesId,
       tables: session.tables, room: session.room, start: session.start, end: session.end, people: member.people, name: member.name, email: member.email,
       amount: (session.seatPrice || rules.prices.gmSeat) * member.people, pay: 'day', paid: false, activity: 'rpg', party: parse(member.players, []),
       customerId: member.customer_id,
@@ -1379,7 +1439,7 @@ export class Lair {
           ['Game', game.title], ['Players', this.partyLine(players)], ['Booked', dates(booked)], ['Already full', dates(full)],
           ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, paid at the counter`],
         ],
-        outro: ['Show your ticket code or your member card at the counter each session.', "Skipping one? Cancel that session's seat in My Lair. To stop coming altogether, leave the game in My Lair."],
+        outro: ["Pay at the counter each session: show that session's code, or your member code from My Lair, and we'll ring it up.", "Skipping one? Cancel that session's seat in My Lair. To stop coming altogether, leave the game in My Lair."],
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       })));
     }
@@ -1696,15 +1756,15 @@ export class Lair {
     for (const item of order.line_items || []) for (const p of item.properties || []) if (p.name === '_booking' && p.value) refs.add(String(p.value).trim().toUpperCase());
     if (fromDraft) {
       for (const a of order.note_attributes || []) if (a.name === '_booking' && a.value) refs.add(String(a.value).trim().toUpperCase());
-      for (const match of String(order.note || '').matchAll(/\b(?:[A-Z]{2,10}-\d{4}|GOB-[A-Z0-9]{6})\b/g)) refs.add(match[0]);
+      for (const match of String(order.note || '').matchAll(/\b(?:[A-Z]{2}-[A-Z]{3,9}-\d{1,2}|GOB-[A-Z0-9]{6})\b/g)) refs.add(match[0]);
     }
     const rules = await this.rules();
     const verified = [];
     for (const ref of [...refs].slice(0, 10)) {
-      const booking = this.booking(ref);
-      const candidate = booking || this.joinById(ref);
-      if (!candidate) continue;
-      const item = { type: booking ? 'booking' : 'join', id: candidate.id };
+      const found = this.bookingOrJoin(ref);
+      if (!found || verified.some((x) => x.id === found.item.id)) continue;
+      const candidate = found.item;
+      const item = { type: found.type, id: candidate.id };
       if (pos) {
         verified.push(item);
       } else if (fromDraft && candidate.draftOrderId) {
@@ -1865,9 +1925,9 @@ export class Lair {
 
   /* ---------------- check-in at the counter ---------------- */
   /**
-   * Staff scan a ticket or type its code: SAM-4821 (with or without the dash), the first release's GOB-7K2QXM, or a
-   * member card DGC-<customer id>. A ticket is checked in and the reply says what's left to pay; a member card lists
-   * that person's bookings and sign-ups for today, for staff to pick from.
+   * Staff scan a code or type it: SJ-OWLBEAR-17 however it's typed, or the first release's GOB-7K2QXM. A booking's or
+   * sign-up's code checks it in and the reply says what's left to pay; a member code lists that person's bookings and
+   * sign-ups for today, for staff to pick from.
    */
   async checkIn(input, who) {
     this.requireStaff(who);
@@ -1878,17 +1938,13 @@ export class Lair {
 
   /** The check-in itself, shared by the staff page and the POS. No awaits. */
   ticketCheckIn(input, rules, now) {
-    const code = parseTicketCode(input.code);
-    if (!code) throw new RuleError("That doesn't look like a ticket code. They look like SAM-4821, or DGC- and a number on a member card.", 404);
-    if (code.card) return this.memberCard(code.card, rules, now);
+    const found = this.findCode(input.code);
+    if (!found) throw new RuleError('No booking, member or pass with that code.', 404);
+    if (found.type === 'member') return this.memberCard(found.item.customer_id, rules, now);
     const force = input.force === true;
-    for (const ref of code.refs) {
-      const booking = this.booking(ref);
-      if (booking) return this.checkInBooking(booking, rules, now, force);
-      const row = this.sql.exec('SELECT * FROM event_joins WHERE ref = ?', ref).toArray()[0];
-      if (row) return this.checkInJoin(this.rowToJoin(row), rules, now, force);
-    }
-    throw new RuleError(`No booking or sign-up with the code ${code.refs[0]}.`, 404);
+    if (found.type === 'booking') return this.checkInBooking(found.item, rules, now, force);
+    if (found.type === 'join') return this.checkInJoin(found.item, rules, now, force);
+    throw new RuleError('No booking, member or pass with that code.', 404);
   }
 
   clock(ms, rules) {
@@ -1961,13 +2017,13 @@ export class Lair {
       .exec("SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? AND starts_at < ? AND status != 'cancelled' ORDER BY starts_at", customerId, from, to)
       .toArray().map((r) => this.rowToJoin(r));
     const member = this.memberRow(customerId);
-    if (!member && !bookings.length && !joins.length) throw new RuleError(`No member with the card DGC-${customerId}.`, 404);
+    if (!member && !bookings.length && !joins.length) throw new RuleError('No booking, member or pass with that code.', 404);
     const items = [...bookings.map((b) => this.dayItem(b, rules, 'booking')), ...joins.map((j) => this.dayItem(j, rules, 'join'))].sort((a, b) => a.start - b.start);
-    const name = member?.name || bookings[0]?.name || joins[0]?.name || `DGC-${customerId}`;
+    const name = member?.name || member?.first_name || bookings[0]?.name || joins[0]?.name || member?.code || 'This member';
     const due = items.reduce((sum, x) => sum + x.due, 0);
     const list = items.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${x.checkedIn ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
     return {
-      found: true, kind: 'member', member: { customerId, name, firstName: member?.first_name || '', email: member?.email || '' }, customer: { id: customerId },
+      found: true, kind: 'member', member: { customerId, name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null }, customer: { id: customerId },
       bookings: items, checkedIn: false, due,
       message: items.length ? `${name} has ${items.length} ${items.length === 1 ? 'booking' : 'bookings'} today. ${list}.` : `${name} has nothing booked today.`,
     };
@@ -2006,15 +2062,17 @@ export class Lair {
     return { title: title.slice(0, 120), price: (due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: item.ref } };
   }
 
-  /** POST /pos/member { code: 'DGC-123' } from the POS extension: who a member card belongs to, to attach them to the cart. */
+  /** POST /pos/member { code } from the POS extension: who a member code belongs to, to attach them to the cart. */
   async posMember(input) {
     const rules = await this.rules();
     const now = Date.now();
-    const code = parseTicketCode(input.code);
-    if (!code?.card) throw new RuleError("That isn't a member card. Member cards look like DGC- and a number.", 404);
-    const row = this.memberRow(code.card);
-    if (!row) throw new RuleError(`No member with the card DGC-${code.card}. They can open My Lair on the website to get set up.`, 404);
-    return { customerId: row.customer_id, name: row.name || row.first_name || '', rolls: this.rollsState(row.customer_id, now, new LairTime(rules.tz).key(now)) };
+    const found = this.findCode(input.code);
+    if (found?.type !== 'member') throw new RuleError("That isn't a member code. Members find theirs in My Lair on the website.", 404);
+    const row = found.item;
+    return {
+      customerId: row.customer_id, name: row.name || row.first_name || '', code: row.code,
+      rolls: this.rollsState(row.customer_id, now, new LairTime(rules.tz).key(now)),
+    };
   }
 
   /* ---------------- events ---------------- */
@@ -2042,8 +2100,9 @@ export class Lair {
     const fee = occurrence.entryFee || 0;
     const wantsPayNow = fee > 0 && input.pay === 'now';
     const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
+    const joinId = makeId('ej');
     const join = {
-      id: makeId('ej'), ref: this.uniqueRef(name), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
+      id: joinId, ref: this.newCode(name, 'join', joinId, now), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
       end: occurrence.end, people, name, email, note: String(input.note || '').trim().slice(0, 300), status: payNow ? 'held' : 'confirmed',
       pay: payNow ? 'now' : 'day', paid: false, amount: fee * people, holdUntil: payNow ? now + HOLD_MINUTES * MIN : null,
     };
@@ -2122,8 +2181,9 @@ export class Lair {
     const { room } = oneRoom(free[0], rules);
     const wantsPayNow = input.pay === 'now';
     const payNow = wantsPayNow && rules.payOnline && this.shopify.configured;
+    const spotId = makeId('bk');
     const booking = {
-      id: makeId('bk'), ref: this.uniqueRef(name), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
+      id: spotId, ref: this.newCode(name, 'booking', spotId, now), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
       name, email, phone: trimmed(input.phone, 40), notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: room.price * people,
       occurrenceId: occurrence.id, pay: payNow ? 'now' : 'day', paid: false, status: payNow ? 'held' : 'confirmed',
       holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null,
@@ -2273,11 +2333,11 @@ export class Lair {
     const prize = this.prizeView(this.sql.exec('SELECT * FROM prizes WHERE id = ?', prizeId).one());
     if (problem) {
       const member = this.memberRow(who.customerId);
-      this.notifyStaff(`Prize to give at the counter: ${member?.name || `DGC-${who.customerId}`}`, {
+      this.notifyStaff(`Prize to give at the counter: ${member?.name || member?.code || 'a member'}`, {
         title: 'A dice prize to give at the counter',
         intro: "Shopify couldn't hand over a dice prize, so the member will show their screen at the counter. Give it to them there.",
         details: [
-          ['Member', `${member?.name || 'Unknown'} (DGC-${who.customerId})`], ['Roll', `${roll} on a ${kind} roll`],
+          ['Member', `${member?.name || 'Unknown'}${member?.code ? ` (${member.code})` : ''}`], ['Roll', `${roll} on a ${kind} roll`],
           ['Prize', won.kind === 'credit' ? `${dollars(won.amount)} store credit` : `${won.percent}% off one order`], ['Why', problem],
         ],
       });
@@ -2329,18 +2389,34 @@ export class Lair {
 
   /**
    * A logged-in customer booked, joined or opened My Lair: remember them. A booking only fills in a name or email we
-   * don't have yet (people book for friends and groups); My Lair's profile form sets them. No awaits.
+   * don't have yet (people book for friends and groups); My Lair's profile form sets them. A new member gets their
+   * code here, from the name we have (DG with none), and keeps it: renaming themselves doesn't change it. No awaits.
    */
   touchMember(customerId, { name, email } = {}, now = Date.now()) {
     if (!customerId) return;
     const full = trimmed(name, 80) || null;
     const first = full ? full.split(/\s+/)[0].slice(0, 40) : null;
+    const row = this.memberRow(customerId);
+    const code = row?.code || this.newCode(row?.name || full || '', 'member', customerId, now);
     this.write(
-      `INSERT INTO members (customer_id, name, first_name, email, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO members (customer_id, name, first_name, email, code, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(customer_id) DO UPDATE SET name = COALESCE(members.name, excluded.name), first_name = COALESCE(members.first_name, excluded.first_name),
-         email = COALESCE(members.email, excluded.email), last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
-      String(customerId), full, first, isEmail(email) ? trimmed(email, 120) : null, now, now, now,
+         email = COALESCE(members.email, excluded.email), code = COALESCE(members.code, excluded.code), last_seen = excluded.last_seen,
+         updated_at = excluded.updated_at`,
+      String(customerId), full, first, isEmail(email) ? trimmed(email, 120) : null, code, now, now, now,
     );
+  }
+
+  /** POST /members/:customerId/new-code (staff): a fresh member code (a lost or shared one). The old one stops working. */
+  async newMemberCode(customerId, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const row = this.memberRow(trimmed(customerId, 40));
+    if (!row) throw new RuleError('No member with that customer ID.', 404);
+    const code = this.newCode(row.name || row.first_name || '', 'member', row.customer_id, now);
+    this.write('UPDATE members SET code = ?, updated_at = ? WHERE customer_id = ?', code, now, row.customer_id);
+    return { code };
   }
 
   /** Spend from paid orders: all of it, and the last 12 months */
@@ -2358,7 +2434,7 @@ export class Lair {
       customerId: row.customer_id, name: row.name || '', firstName: row.first_name || '', email: row.email || '', birthday: row.birthday || '',
       spendYear: spend.year, spendTotal: spend.total, rollsFromSpend: Math.floor(spend.total / ROLL_EVERY),
       rollsUsed: this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'bonus'", row.customer_id).one().n,
-      lastSeen: row.last_seen || null, card: `DGC-${row.customer_id}`,
+      lastSeen: row.last_seen || null, code: row.code || null,
     };
   }
 
@@ -2376,28 +2452,31 @@ export class Lair {
       if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
     }
     const birthday = has('birthday') ? parseBirthday(input.birthday) : row.birthday || null;
+    const code = row.code || this.newCode(name || firstName || '', 'member', who.customerId, now);
     this.write(
-      `INSERT INTO members (customer_id, name, first_name, email, birthday, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO members (customer_id, name, first_name, email, birthday, code, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(customer_id) DO UPDATE SET name = excluded.name, first_name = excluded.first_name, email = excluded.email,
-         birthday = excluded.birthday, last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
-      who.customerId, name, firstName, email, birthday, now, now, now,
+         birthday = excluded.birthday, code = COALESCE(members.code, excluded.code), last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
+      who.customerId, name, firstName, email, birthday, code, now, now, now,
     );
     return { member: this.memberView(this.memberRow(who.customerId), now) };
   }
 
-  /** GET /members?q= (staff): find members by name, email or card number. */
+  /** GET /members?q= (staff): find members by name, email, member code (any way it's typed) or customer ID. */
   members(url, who) {
     this.requireStaff(who);
     const now = Date.now();
     const q = trimmed(url.searchParams.get('q'), 80).toLowerCase();
     if (!q) return this.sql.exec('SELECT * FROM members ORDER BY last_seen DESC LIMIT 25').toArray().map((r) => this.memberView(r, now));
-    const card = parseTicketCode(q)?.card || (/^\d{3,20}$/.test(q) ? q : '');
+    const found = this.findCode(q);
+    const id = found?.type === 'member' ? found.item.customer_id : /^\d{3,20}$/.test(q) ? q : '';
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
     return this.sql
       .exec(
         `SELECT * FROM members WHERE customer_id = ? OR lower(name) LIKE ? ESCAPE '\\' OR lower(first_name) LIKE ? ESCAPE '\\' OR lower(email) LIKE ? ESCAPE '\\'
-         ORDER BY last_seen DESC LIMIT 25`,
-        card, like, like, like,
+           OR lower(code) LIKE ? ESCAPE '\\'
+         ORDER BY customer_id = ? DESC, last_seen DESC LIMIT 25`,
+        id, like, like, like, like, id,
       )
       .toArray()
       .map((r) => this.memberView(r, now));
@@ -2454,7 +2533,7 @@ export class Lair {
       try {
         if (!this.shopify.configured) throw new Error('Shopify is not connected.');
         await this.shopify.createPrizeCode({
-          title: `Birthday ${prize.percent}% off: ${prize.row.name || `DGC-${prize.row.customer_id}`} (${prize.code})`, code: prize.code, percent: prize.percent / 100,
+          title: `Birthday ${prize.percent}% off: ${prize.row.name || prize.row.code || prize.row.customer_id} (${prize.code})`, code: prize.code, percent: prize.percent / 100,
           endsAt: prize.expiresAt, customerId: prize.row.customer_id, combinesWith: { productDiscounts: false, orderDiscounts: false, shippingDiscounts: false },
         });
       } catch (error) {
@@ -2487,7 +2566,7 @@ export class Lair {
     this.notifyStaff(`Birthday codes: ${claimed.length} sent`, {
       title: 'Birthday codes went out',
       intro: `${claimed.length} ${claimed.length === 1 ? 'member has' : 'members have'} a birthday in the next week, so Gobgob sent ${claimed.length === 1 ? 'a code' : 'codes'}.${claimed.some((p) => p.problem) ? " Shopify couldn't make some of them: those members will show their email at the counter." : ''}`,
-      details: claimed.map((p) => [p.row.name || `DGC-${p.row.customer_id}`, `${p.percent}% off, ${p.problem ? 'give it at the counter' : p.code}. Birthday ${day(p.date)}.${isEmail(p.row.email) ? '' : ' No email, so it shows in My Lair only.'}`]),
+      details: claimed.map((p) => [p.row.name || p.row.code || p.row.customer_id, `${p.percent}% off, ${p.problem ? 'give it at the counter' : p.code}. Birthday ${day(p.date)}.${isEmail(p.row.email) ? '' : ' No email, so it shows in My Lair only.'}`]),
     });
     return { sent: claimed.length, codes: claimed.filter((p) => !p.problem).length };
   }
@@ -2543,7 +2622,7 @@ export class Lair {
       credits,
       member: {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
-        spendTotal: member.spendTotal, card: member.card,
+        spendTotal: member.spendTotal, code: member.code,
       },
       // Games they're seated at every session of (POST /series/:id/leave stops it)
       series: this.sql

@@ -6,50 +6,111 @@ const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const REF_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const ACTIVE = new Set(['held', 'confirmed', 'seated']);
 
-/** The first release's references, like GOB-7K2QXM: 6 characters, no look-alikes (0/O, 1/I/L). Still valid at the counter. */
+/**
+ * 6 random characters with no look-alikes (0/O, 1/I/L), like 7K2QXM. Birthday discount codes use them (BDAY-7K2QXM),
+ * and the first release's booking refs looked like GOB-7K2QXM; those still check in.
+ */
 export const makeRef = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
   return `GOB-${Array.from(bytes, (b) => REF_CHARS[b % REF_CHARS.length]).join('')}`;
 };
 
+/* ---------- codes: SJ-OWLBEAR-17 ----------
+   One format for tickets, game seats, event sign-ups, member codes and session passes: the person's initials, a
+   random word and a d20 roll. The same text is the QR code, the words printed under it and what staff type in.
+   Matching ignores case, spaces, dashes, dots and underscores: the lookup key is the code reduced to [A-Z0-9]. The
+   theme's lair-core.js has the same word list and rules. */
+export const CODE_WORDS = [
+  'GOBLIN','KOBOLD','OWLBEAR','MIMIC','GOLEM','WYVERN','DRAGON','DRAKE','HYDRA','KRAKEN','GRIFFIN','PHOENIX',
+  'UNICORN','PEGASUS','BASILISK','CHIMERA','SPHINX','TROLL','OGRE','GNOME','PIXIE','SPRITE','FAERIE','BROWNIE',
+  'IMP','GREMLIN','BUGBEAR','HOBGOBLIN','YETI','GHOST','BANSHEE','WISP','DJINN','GENIE','SELKIE','KELPIE',
+  'SATYR','CENTAUR','MINOTAUR','CYCLOPS','HARPY','GORGON','KITSUNE','TANUKI','KAPPA','TENGU','DRYAD','TREANT',
+  'WEREWOLF','MUMMY','ZOMBIE','SKELETON','SLIME','OOZE','BLOB',
+  'BADGER','OTTER','FERRET','HEDGEHOG','RACCOON','WOMBAT','PLATYPUS','AXOLOTL','NEWT','TOAD','FROG','GECKO',
+  'BEETLE','MOTH','SNAIL','CRAB','SQUID','OCTOPUS','NARWHAL','WALRUS','PENGUIN','PUFFIN','RAVEN','MAGPIE',
+  'OWL','BAT','FOX','WOLF','BEAR','BOAR','STAG','HARE','LLAMA','ALPACA','CAPYBARA','PANDA','YAK','GOAT',
+  'MOOSE','LOBSTER','TORTOISE','TURTLE','LEMUR','SLOTH','KOALA','QUOKKA','MEERKAT','KITTEN','PUPPY',
+  'KIWI','KEA','KAKA','TUI','WETA','MOA','TUATARA','KAKAPO','PUKEKO','TAKAHE','KOKAKO','FANTAIL','MOREPORK',
+  'RURU','KERERU','WEKA','PAUA','KUMARA','PAVLOVA','JANDAL','LAMINGTON','FEIJOA','PIKELET',
+  'MEEPLE','DICE','POTION','SCROLL','WAND','STAFF','SWORD','SHIELD','LANTERN','TORCH','MAP','COMPASS','CROWN',
+  'GOBLET','CHEST','RUNE','TOME','AMULET','RING','CLOAK','BOOTS','HELM','AXE','BOW','ARROW','DAGGER','HAMMER',
+  'LUTE','HARP','DRUM','QUILL','INKPOT','CANDLE','KEY','ROPE','BACKPACK','CAULDRON','BROOM','MIRROR','ORB',
+  'GEM','RUBY','OPAL','AMBER','JADE','PEARL','TOPAZ','GARNET','COIN','DOUBLOON','TREASURE','BANNER','TOKEN',
+  'PAWN','ROOK','KNIGHT','BISHOP','QUEEN','KING',
+  'PIE','PRETZEL','MUFFIN','SCONE','CRUMPET','PANCAKE','WAFFLE','DUMPLING','NOODLE','PICKLE','TURNIP','RADISH',
+  'CARROT','MUSHROOM','TRUFFLE','CHEESE','BISCUIT','COOKIE','TOFFEE','FUDGE','NOUGAT','TOASTIE','NACHO','TACO',
+  'BAGEL','DONUT','CUPCAKE','PUDDING','JELLY','CUSTARD',
+  'QUEST','SAGA','LEGEND','RIDDLE','SPELL','HEX','CHARM','JINX','OMEN','LOOT','CRIT','BOSS','DUNGEON','TAVERN',
+  'CASTLE','TOWER','CAVE','LAIR','PORTAL','MAZE','VAULT','CRYPT','SWAMP','FOREST','MEADOW','GROTTO','ISLAND',
+  'VOLCANO','GLACIER',
+  'EMBER','SPARK','FROST','THUNDER','STORM','GUST','MIST','SHADOW','STAR','MOON','COMET','NOVA','AURORA',
+  'ECLIPSE','RAINBOW','BLIZZARD',
+];
+
 /**
- * The name part of a ticket code: the booker's first name in capitals, A–Z only (Tūī → TUI), cut to 10 letters.
- * GOB when there are fewer than 2 letters to use. Never DGC, which is kept for member cards.
+ * A code's initials: the first letters of the first and last words, accents stripped ("Zoë van der Berg" → ZB),
+ * the first two letters of a single word ("Sam" → SA), or DG when there's nothing to go on.
  */
-export function refName(name) {
-  const first = String(name || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').trim().split(/\s+/)[0] || '';
-  const letters = first.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 10);
-  return letters.length >= 2 && letters !== 'DGC' ? letters : 'GOB';
+export function initialsOf(name) {
+  const words = String(name ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase()
+    .split(/\s+/).map((w) => w.replace(/[^A-Z]/g, '')).filter(Boolean);
+  if (!words.length) return 'DG';
+  if (words.length === 1) return words[0].length >= 2 ? words[0].slice(0, 2) : 'DG';
+  return `${words[0][0]}${words[words.length - 1][0]}`;
 }
 
-/** Ticket codes like SAM-4821: the booker's first name and 4 digits. Callers check they're unused. */
-export const makeNameRef = (name) => `${refName(name)}-${String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, '0')}`;
+/** n random 32-bit numbers. Two per code, so a test's loaded d20 (one number at a time) is never used up by a code. */
+const randomNumbers = (n) => crypto.getRandomValues(new Uint32Array(n));
+
+/** A fresh code like SJ-OWLBEAR-17. big: a number from 21 to 99, for when the d20 numbers are taken. */
+export function makeCode(name, { big = false, random = randomNumbers } = {}) {
+  const [w, r] = random(2);
+  return `${initialsOf(name)}-${CODE_WORDS[w % CODE_WORDS.length]}-${big ? 21 + (r % 79) : 1 + (r % 20)}`;
+}
+
+/** What a code is matched on: letters and digits only, in capitals ("sj owlbear 17" → SJOWLBEAR17) */
+export const codeKey = (code) => String(code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/** A code nobody has had (taken(key) says): 40 tries with a d20, then numbers from 21 to 99. */
+export function uniqueCode(name, taken, { random = randomNumbers } = {}) {
+  for (let i = 0; i < 40; i += 1) {
+    const code = makeCode(name, { random });
+    if (!taken(codeKey(code))) return code;
+  }
+  for (let i = 0; i < 2000; i += 1) {
+    const code = makeCode(name, { big: true, random });
+    if (!taken(codeKey(code))) return code;
+  }
+  throw new Error('Could not find a free code');
+}
 
 /**
- * What staff scanned or typed at the counter. Scanners send a code with or without its dash, sometimes with other
- * characters around it. Returns { card: customerId } for a member card (DGC-<customer id>), { refs } with every
- * ticket code it could be (GOBAB2345 could be GOB-AB2345 or GOBAB-2345; the caller looks each up), or null.
+ * The keys a scan or typed code could be, most likely first: the whole text, then any SJ-OWLBEAR-17 inside it (a
+ * scanner can send other characters around the code).
  */
-export function parseTicketCode(text) {
-  const upper = String(text || '').toUpperCase();
+export function codeKeys(text) {
+  const upper = String(text ?? '').toUpperCase();
+  const keys = [];
+  const add = (key) => {
+    if (key && !keys.includes(key)) keys.push(key);
+  };
+  add(codeKey(upper));
+  for (const m of upper.matchAll(/(?:^|[^A-Z0-9])([A-Z]{2})[\s._-]+([A-Z]{3,9})[\s._-]+(\d{1,2})(?![0-9])/g)) add(`${m[1]}${m[2]}${m[3]}`);
+  return keys;
+}
+
+/** The first release's refs a scan could hold (GOB-7K2QXM, with or without its dash), matched on the booking itself. */
+export function legacyRefs(text) {
+  const upper = String(text ?? '').toUpperCase();
   const bare = upper.replace(/[^A-Z0-9]/g, '');
-  const card = bare.match(/^DGC(\d{1,20})$/);
-  if (card) return { card: card[1], refs: [] };
   const refs = [];
   const add = (ref) => {
     if (!refs.includes(ref)) refs.push(ref);
   };
-  for (const m of upper.matchAll(/(?:^|[^A-Z])([A-Z]{2,10})-(\d{4})(?!\d)/g)) add(`${m[1]}-${m[2]}`);
   for (const m of upper.matchAll(/GOB-([A-Z0-9]{6})(?![A-Z0-9])/g)) add(`GOB-${m[1]}`);
-  if (refs.length) return { card: null, refs };
-  // No dash: every way the letters and digits could split.
-  let m = bare.match(/^([A-Z]{2,10})(\d{4})$/);
-  if (m) add(`${m[1]}-${m[2]}`);
-  m = bare.match(/GOB([A-Z0-9]{6})/);
-  if (m) add(`GOB-${m[1]}`);
-  m = bare.match(/^([A-Z0-9]{6})$/);
-  if (m) add(`GOB-${m[1]}`);
-  return refs.length ? { card: null, refs } : null;
+  const joined = bare.match(/^GOB([A-Z0-9]{6})$/) || bare.match(/^([A-Z0-9]{6})$/);
+  if (joined) add(`GOB-${joined[1]}`);
+  return refs;
 }
 /** Online bookings (not staff) can't be bigger than this; bigger groups call the shop. */
 export const ONLINE_LIMITS = { people: 24, tables: 10 };
