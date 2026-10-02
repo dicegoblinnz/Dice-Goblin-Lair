@@ -12,6 +12,7 @@
     "dev": "shopify app dev",
     "build": "shopify app build",
     "check": "tsc -p extensions/lair-checkin",
+    "test": "node --test test/*.test.mjs",
     "deploy": "shopify app deploy --allow-updates",
     "info": "shopify app info"
   },
