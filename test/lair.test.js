@@ -2648,3 +2648,75 @@ test('staff apply a pass to a booking for its check-in; not to a sign-up or a GM
   const hold = lair.gameBookings(game.data.game.id).find((b) => b.kind === 'gm');
   assert.equal((await call('POST', `passes/${pass.id}/apply`, { bookingId: hold.id }, 'staff')).status, 422);
 });
+
+/** A POS route on the Lair (the Worker has already checked the POS session token) */
+const pos = (path, body = {}) => lair
+  .fetch(new Request(`https://lair.test/internal/pos/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: JSON.stringify(body) }))
+  .then(async (r) => ({ status: r.status, data: await r.json() }));
+
+test('the self-serve tab: today\'s tab in My Lair, checked and merged; at the counter it can\'t change; paying it at the POS marks it paid', async () => {
+  const coffee = { variantId: '44100000000001', title: 'Flat white', variantTitle: 'Regular', price: 550, qty: 1 };
+  const chips = { variantId: 44100000000002, title: `Chips ${'x'.repeat(100)}`, variantTitle: '', price: 300, qty: 2 };
+  assert.equal((await call('POST', 'tab', { items: [coffee] })).status, 401);
+  const saved = await call('POST', 'tab', { items: [coffee, chips, { ...coffee, qty: 2 }] }, '1001');
+  assert.equal(saved.status, 200, saved.data.error);
+  const tab = saved.data.tab;
+  assert.match(tab.id, /^tb_/);
+  assert.deepEqual([tab.day, tab.status, tab.total, tab.updatedAt], ['2026-10-01', 'open', 3 * 550 + 2 * 300, NOW]);
+  assert.deepEqual(tab.items.map((x) => [x.variantId, x.qty, x.price, x.title.length]), [['44100000000001', 3, 550, 10], ['44100000000002', 2, 300, 80]], 'the same variant is one line; titles are cut at 80');
+  assert.deepEqual((await call('GET', 'me', null, '1001')).data.tab, tab);
+
+  const refused = async (items, error) => {
+    const res = await call('POST', 'tab', { items }, '1001');
+    assert.deepEqual([res.status, res.data.error], [422, error], JSON.stringify(items).slice(0, 80));
+  };
+  await refused([{ ...coffee, variantId: 'gid://shopify/ProductVariant/1' }], "Gobgob doesn't know that one. Pick it from the menu instead.");
+  await refused([{ ...coffee, variantId: '1'.repeat(21) }], "Gobgob doesn't know that one. Pick it from the menu instead.");
+  await refused([{ ...coffee, qty: 0 }], 'Pick 1 to 20 of each thing.');
+  await refused([{ ...coffee, qty: 21 }], 'Pick 1 to 20 of each thing.');
+  await refused([{ ...coffee, qty: 1.5 }], 'Pick 1 to 20 of each thing.');
+  await refused([{ ...coffee, qty: 15 }, { ...coffee, qty: 6 }], 'Pick 1 to 20 of each thing.');
+  await refused([{ ...coffee, price: -1 }], "That price doesn't look right. Pick it from the menu again.");
+  await refused([{ ...coffee, price: 100001 }], "That price doesn't look right. Pick it from the menu again.");
+  await refused(Array.from({ length: 31 }, (_, i) => ({ ...coffee, variantId: String(1000 + i) })), 'A tab holds up to 30 different things. Pay for this lot, then start a fresh one.');
+  await refused('coffee', "Something on your tab didn't look right. Pick it from the menu again.");
+  assert.equal((await call('POST', 'tab', { items: Array.from({ length: 30 }, (_, i) => ({ ...coffee, variantId: String(1000 + i), price: 100000 })) }, '1001')).status, 200, '30 lines at the top price');
+
+  // Replacing the items keeps the same tab; an empty list deletes it; clear does too.
+  const replaced = await call('POST', 'tab', { items: [chips] }, '1001');
+  assert.deepEqual([replaced.data.tab.id, replaced.data.tab.total], [tab.id, 600]);
+  assert.deepEqual((await call('POST', 'tab', { items: [] }, '1001')).data.tab, null);
+  assert.equal((await call('GET', 'me', null, '1001')).data.tab, null);
+  const again = (await call('POST', 'tab', { items: [coffee] }, '1001')).data.tab;
+  assert.deepEqual((await call('POST', 'tab/clear', {}, '1001')).data.tab, null);
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM tabs WHERE id = ?', again.id).one().n, 0);
+
+  // At the counter: the POS puts it in the cart, and it can't change until it's paid.
+  const counter = (await call('POST', 'tab', { items: [coffee, chips] }, '1001')).data.tab;
+  const added = await pos(`tab/${counter.id}/added`);
+  assert.deepEqual([added.status, added.data.tab.status, added.data.tab.total], [200, 'in-cart', 1150]);
+  const locked = await call('POST', 'tab', { items: [coffee] }, '1001');
+  assert.deepEqual([locked.status, locked.data.error], [409, 'Your tab is at the counter already. Pay for that one, then start a fresh one.']);
+  assert.equal((await call('POST', 'tab/clear', {}, '1001')).status, 409);
+  assert.equal((await pos('tab/tb_nope/added')).status, 404);
+
+  // An online order can't pay a tab; a counter order with _tab lines does (once, however often Shopify sends it).
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const line = (variant) => ({ id: Number(variant.variantId.slice(-3)), variant_id: Number(variant.variantId), quantity: 1, price: '5.50', properties: [{ name: '_tab', value: counter.id }] });
+  await internal('orders-paid', { id: 500, admin_graphql_api_id: 'gid://shopify/Order/500', source_name: 'web', line_items: [line(coffee)] });
+  assert.equal((await call('GET', 'me', null, '1001')).data.tab.status, 'in-cart');
+  const paid = await internal('orders-paid', { id: 501, admin_graphql_api_id: 'gid://shopify/Order/501', source_name: 'pos', line_items: [line(coffee), line({ ...chips, variantId: String(chips.variantId) })] });
+  assert.deepEqual(paid.data.tabs, [counter.id]);
+  assert.deepEqual((await internal('orders-paid', { id: 501, admin_graphql_api_id: 'gid://shopify/Order/501', source_name: 'pos', line_items: [line(coffee)] })).data.tabs, [counter.id]);
+  assert.equal(lair.sql.exec('SELECT order_id FROM tabs WHERE id = ?', counter.id).one().order_id, 'gid://shopify/Order/501');
+  const me = (await call('GET', 'me', null, '1001')).data.tab;
+  assert.deepEqual([me.id, me.status], [counter.id, 'paid'], "today's tab, paid");
+  assert.equal((await pos(`tab/${counter.id}/added`)).status, 409);
+  // Once it's paid, a new tab starts.
+  const fresh = (await call('POST', 'tab', { items: [coffee] }, '1001')).data.tab;
+  assert.notEqual(fresh.id, counter.id);
+  assert.deepEqual([fresh.status, fresh.total], ['open', 550]);
+  // Tomorrow is a new day: yesterday's tab isn't today's.
+  Date.now = () => NOW + 24 * HOUR;
+  assert.equal((await call('GET', 'me', null, '1001')).data.tab, null);
+});

@@ -187,6 +187,14 @@ const MIGRATIONS = [
     'ALTER TABLE bookings ADD COLUMN pass_id TEXT',
     'ALTER TABLE bookings ADD COLUMN covered INTEGER NOT NULL DEFAULT 0',
   ],
+  // Round 4: the self-serve tab. A member adds drinks and snacks in My Lair; at the counter the POS puts them in the
+  // cart ('in-cart') and the paid order marks the tab 'paid'. One open tab a member a Lair day.
+  [
+    `CREATE TABLE IF NOT EXISTS tabs (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, day TEXT NOT NULL, items TEXT NOT NULL, total INTEGER NOT NULL, status TEXT NOT NULL,
+      order_id TEXT, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS tabs_customer ON tabs (customer_id, day)',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -643,6 +651,7 @@ export class Lair {
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         if (b === 'pos' && c === 'checkin') return json(await this.posCheckIn(body));
         if (b === 'pos' && c === 'member') return json(await this.posMember(body));
+        if (b === 'pos' && c === 'tab' && parts[3] && parts[4] === 'added') return json(this.posTabAdded(decodeURIComponent(parts[3])));
         return json({ error: 'Not found' }, 404);
       }
       const origin = request.headers.get('X-Lair-Origin');
@@ -696,6 +705,8 @@ export class Lair {
       if (a === 'contact' && !b) return json(await this.contact(body, who, client));
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
       if (a === 'prizes' && b && c === 'done') return json(await this.prizeDone(decodeURIComponent(b), who));
+      if (a === 'tab' && !b) return json(await this.saveTab(body, who));
+      if (a === 'tab' && b === 'clear') return json(await this.clearTab(who));
       return json({ error: 'Not found' }, 404);
     } catch (error) {
       if (error instanceof RuleError) return json({ error: error.message }, error.status);
@@ -1863,7 +1874,14 @@ export class Lair {
     const pos = source === 'pos';
     const fromDraft = !source || source === 'shopify_draft_order';
     const refs = new Set();
-    for (const item of order.line_items || []) for (const p of item.properties || []) if (p.name === '_booking' && p.value) refs.add(String(p.value).trim().toUpperCase());
+    const tabs = new Set();
+    for (const item of order.line_items || []) {
+      for (const p of item.properties || []) {
+        if (p.name === '_booking' && p.value) refs.add(String(p.value).trim().toUpperCase());
+        // A self-serve tab's items, rung up at the counter. Only staff make POS orders, so only those count.
+        if (p.name === '_tab' && p.value && pos) tabs.add(String(p.value).trim());
+      }
+    }
     if (fromDraft) {
       for (const a of order.note_attributes || []) if (a.name === '_booking' && a.value) refs.add(String(a.value).trim().toUpperCase());
       for (const match of String(order.note || '').matchAll(/\b(?:[A-Z]{2}-[A-Z]{3,9}-\d{1,2}|GOB-[A-Z0-9]{6})\b/g)) refs.add(match[0]);
@@ -1886,6 +1904,7 @@ export class Lair {
     // --- no awaits from here on: read each booking or sign-up fresh and update it ---
     const of = (type) => verified.filter((x) => x.type === type).map((x) => x.id);
     const updated = [...this.markPaid(of('booking'), orderId, rules, { pos }), ...this.markJoinsPaid(of('join'), orderId, rules, { pos })];
+    const tabsPaid = this.markTabsPaid([...tabs].slice(0, 10), orderId, Date.now());
 
     // Payments are recorded, so if Shopify can't say who the customer is right now, failing the webhook (Shopify
     // sends it again) only repeats work that's already done.
@@ -1896,7 +1915,7 @@ export class Lair {
       this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, spend.source || source || null, Date.now());
       counted = spend.amount;
     }
-    return { updated, spend: counted };
+    return { updated, tabs: tabsPaid, spend: counted };
   }
 
   /** Bookings paid by an order: online through their checkout, or at the counter (pos). No awaits. */
@@ -2635,6 +2654,111 @@ export class Lair {
     return { prize: this.prizeView(this.prizeRow(prize.id)) };
   }
 
+  /* ---------------- the self-serve tab ---------------- */
+  /** A tab as My Lair and the POS see it: { id, day, items: [{ variantId, title, variantTitle, price, qty }], total, status, updatedAt } */
+  tabView(r) {
+    return r ? { id: r.id, day: r.day, items: parse(r.items, []), total: r.total, status: r.status, updatedAt: r.updated_at } : null;
+  }
+
+  /** Today's tab row: the one still open or at the counter, or else the last one paid today; null when there's none */
+  todayTabRow(customerId, rules, now) {
+    const day = new LairTime(rules.tz).key(now);
+    const rows = this.sql.exec('SELECT * FROM tabs WHERE customer_id = ? AND day = ? ORDER BY created_at DESC, rowid DESC', String(customerId), day).toArray();
+    return rows.find((r) => r.status !== 'paid') || rows[0] || null;
+  }
+
+  /**
+   * A tab's items from My Lair, checked: up to 30 lines, 1 to 20 of each, numeric Shopify variant ids, prices from 0 to
+   * 100000 cents and titles up to 80 characters. The same variant twice is one line. No awaits.
+   */
+  tabItems(list) {
+    if (!Array.isArray(list) || list.length > 100) throw new RuleError("Something on your tab didn't look right. Pick it from the menu again.");
+    const lines = new Map();
+    for (const raw of list) {
+      const variantId = String(raw?.variantId ?? '').trim();
+      if (!/^\d{1,20}$/.test(variantId)) throw new RuleError("Gobgob doesn't know that one. Pick it from the menu instead.");
+      const qty = Number(raw.qty);
+      if (!Number.isInteger(qty) || qty < 1 || qty > 20) throw new RuleError('Pick 1 to 20 of each thing.');
+      const price = Number(raw.price);
+      if (!Number.isFinite(price) || price < 0 || price > 100000) throw new RuleError("That price doesn't look right. Pick it from the menu again.");
+      const line = lines.get(variantId);
+      if (line) {
+        line.qty += qty;
+        if (line.qty > 20) throw new RuleError('Pick 1 to 20 of each thing.');
+      } else {
+        lines.set(variantId, { variantId, title: trimmed(raw.title, 80), variantTitle: trimmed(raw.variantTitle, 80), price: Math.round(price), qty });
+      }
+    }
+    if (lines.size > 30) throw new RuleError('A tab holds up to 30 different things. Pay for this lot, then start a fresh one.');
+    return [...lines.values()];
+  }
+
+  /**
+   * POST /tab { items } (logged in): save today's tab, replacing its items. Empty items deletes the open tab. A tab at
+   * the counter can't change (409); once today's tab is paid, a new one starts. Returns { tab }.
+   */
+  async saveTab(input, who) {
+    if (!who.customerId) throw new RuleError('Log in to start a tab.', 401);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const items = this.tabItems(input.items);
+    const current = this.todayTabRow(who.customerId, rules, now);
+    const open = current && current.status !== 'paid' ? current : null;
+    if (open?.status === 'in-cart') throw new RuleError('Your tab is at the counter already. Pay for that one, then start a fresh one.', 409);
+    if (!items.length) {
+      if (open) this.write("DELETE FROM tabs WHERE id = ? AND status = 'open'", open.id);
+      return { tab: this.tabView(this.todayTabRow(who.customerId, rules, now)) };
+    }
+    const total = items.reduce((sum, x) => sum + x.price * x.qty, 0);
+    let id = open?.id;
+    if (open) {
+      this.write("UPDATE tabs SET items = ?, total = ?, updated_at = ? WHERE id = ? AND status = 'open'", JSON.stringify(items), total, now, id);
+    } else {
+      id = makeId('tb');
+      this.write(
+        "INSERT INTO tabs (id, customer_id, day, items, total, status, order_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'open', NULL, ?, ?)",
+        id, String(who.customerId), new LairTime(rules.tz).key(now), JSON.stringify(items), total, now, now,
+      );
+    }
+    this.touchMember(who.customerId, {}, now);
+    return { tab: this.tabView(this.sql.exec('SELECT * FROM tabs WHERE id = ?', id).one()) };
+  }
+
+  /** POST /tab/clear (logged in): delete today's open tab. Returns { tab } (null, or one already paid today). */
+  async clearTab(who) {
+    if (!who.customerId) throw new RuleError('Log in to see your tab.', 401);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const current = this.todayTabRow(who.customerId, rules, now);
+    if (current?.status === 'in-cart') throw new RuleError('Your tab is at the counter already. Pay for that one, then start a fresh one.', 409);
+    if (current?.status === 'open') this.write("DELETE FROM tabs WHERE id = ? AND status = 'open'", current.id);
+    return { tab: this.tabView(this.todayTabRow(who.customerId, rules, now)) };
+  }
+
+  /** POST /pos/tab/:id/added (the POS): the tab's items are in the cart, so it can't change while they pay. Returns { tab }. */
+  posTabAdded(id) {
+    // --- no awaits ---
+    const row = this.sql.exec('SELECT * FROM tabs WHERE id = ?', String(id)).toArray()[0];
+    if (!row) throw new RuleError('That tab is gone. Scan their member code again.', 404);
+    if (row.status === 'paid') throw new RuleError('That tab is paid already.', 409);
+    if (row.status === 'open') this.write("UPDATE tabs SET status = 'in-cart', updated_at = ? WHERE id = ? AND status = 'open'", Date.now(), row.id);
+    return { tab: this.tabView(this.sql.exec('SELECT * FROM tabs WHERE id = ?', row.id).one()) };
+  }
+
+  /** Tabs paid by a counter order (its lines carry _tab). No awaits. */
+  markTabsPaid(ids, orderId, now) {
+    const paid = [];
+    for (const id of ids) {
+      const row = this.sql.exec('SELECT * FROM tabs WHERE id = ?', id).toArray()[0];
+      if (!row) continue;
+      if (row.status !== 'paid') this.write("UPDATE tabs SET status = 'paid', order_id = ?, updated_at = ? WHERE id = ?", orderId, now, row.id);
+      paid.push(row.id);
+    }
+    return paid;
+  }
+
   /* ---------------- session passes ---------------- */
   rowToPass(r) {
     return {
@@ -3233,6 +3357,8 @@ export class Lair {
       prizes: this.memberPrizes(who.customerId),
       // Session passes: active ones, and ones used up in the last 30 days
       passes: this.memberPasses(who.customerId, now),
+      // Today's self-serve tab, or null
+      tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
     };
   }
 
