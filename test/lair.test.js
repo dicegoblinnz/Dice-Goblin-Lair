@@ -490,7 +490,9 @@ test('online group limits: 4 to a table, doubled for wargames and big box games,
   assert.equal((await book({ people: 6, tables: ['T13', 'T14', 'T15', 'T16'], extras: ['wargame', 'celebrating', 'kids'] })).status, 200);
   const kept = lair.booking((await book({ people: 3, tables: ['T17'], extras: ['celebrating', 'teach', 'wargame'] })).data.booking.id);
   assert.deepEqual(kept.extras.sort(), ['celebrating', 'wargame']);
-  assert.equal((await call('POST', 'bookings', tableBooking({ people: 1, tables: ['T5', 'T6', 'T7'], name: 'Staff setup' }), 'staff')).status, 200);
+  // Staff on the public page get the same rules; the staff page sends staffOverride.
+  assert.equal((await call('POST', 'bookings', tableBooking({ people: 1, tables: ['T5', 'T6', 'T7'], name: 'Staff setup' }), 'staff')).status, 422);
+  assert.equal((await call('POST', 'bookings', tableBooking({ people: 1, tables: ['T5', 'T6', 'T7'], name: 'Staff setup', staffOverride: true }), 'staff')).status, 200);
 });
 
 test('late-night hours: a Friday 6pm-2am night can be booked at 1am Saturday', async () => {
@@ -692,7 +694,9 @@ test('the fancy room is one table for up to 12, for groups of 4 or more, at $15 
   assert.equal(twelve.status, 200);
   assert.equal(twelve.data.booking.amount, 18000);
   assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 13, start: at('2026-10-01', 18), end: at('2026-10-01', 19) }))).status, 422);
-  const staffPair = await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 2, start: at('2026-10-01', 18), end: at('2026-10-01', 19) }), 'staff');
+  const pair = tableBooking({ tables: ['F1'], people: 2, start: at('2026-10-01', 18), end: at('2026-10-01', 19) });
+  assert.equal((await call('POST', 'bookings', pair, 'staff')).status, 422);
+  const staffPair = await call('POST', 'bookings', { ...pair, staffOverride: true }, 'staff');
   assert.equal(staffPair.status, 200);
 });
 
@@ -951,7 +955,8 @@ test('shop tables: T1-T3 are closed to the public unless a manager opens them', 
   const closed = await call('POST', 'bookings', tableBooking({ tables: ['T2'] }));
   assert.equal(closed.status, 422);
   assert.match(closed.data.error, /shop table/);
-  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T2'], name: 'Manager game' }), 'staff')).status, 200);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T2'], name: 'Manager game' }), 'staff')).status, 422);
+  assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T2'], name: 'Manager game', staffOverride: true }), 'staff')).status, 200);
   assert.equal((await call('POST', 'openings', { tables: 'T1-T3', start: at('2026-10-01', 18), end: at('2026-10-01', 22) })).status, 403);
   const opened = await call('POST', 'openings', { tables: 'T1-T3', start: at('2026-10-01', 18), end: at('2026-10-01', 22), note: 'Quiet night' }, 'staff');
   assert.equal(opened.status, 200);
@@ -1347,4 +1352,23 @@ test('check-in: new codes with or without the dash, old GOB codes, and member ca
   const old = await call('POST', 'checkin', { code: 'gob7k2qxm' }, 'staff');
   assert.deepEqual([old.data.booking.ref, old.data.checkedIn], ['GOB-7K2QXM', true]);
   assert.equal((await call('POST', 'checkin', { code: 'DGC-1' }, 'staff')).data.bookings.length, 0);
+});
+
+test('the public booking page applies the house rules to staff too; walk-ins can take several tables', async () => {
+  const tooSoon = tableBooking({ start: at('2026-10-01', 13, 30), end: at('2026-10-01', 14, 30), name: 'Staff pal' });
+  const refused = await call('POST', 'bookings', tooSoon, 'staff');
+  assert.equal(refused.status, 422);
+  assert.match(refused.data.error, /too soon/);
+  assert.equal((await call('POST', 'bookings', { ...tooSoon, staffOverride: 'yes' }, 'staff')).status, 422, 'only a real true skips the rules');
+  assert.equal((await call('POST', 'bookings', { ...tooSoon, staffOverride: true }, 'someone')).status, 422, 'customers cannot skip them');
+  const overridden = await call('POST', 'bookings', { ...tooSoon, staffOverride: true }, 'staff');
+  assert.equal(overridden.status, 200);
+  assert.equal(lair.booking(overridden.data.booking.id).customerId, null, 'made for someone else, so not linked to the staff account');
+  const own = await call('POST', 'bookings', tableBooking({ tables: ['T9'], name: 'Staff pal' }), 'staff');
+  assert.equal(lair.booking(own.data.booking.id).customerId, 'staff', 'a staff member booking for themselves keeps it');
+
+  const walkin = await call('POST', 'bookings', { kind: 'walkin', tables: ['T11', 'T12', 'T13'], start: NOW, end: NOW + 2 * HOUR, people: 9, name: 'Big group' }, 'staff');
+  assert.equal(walkin.status, 200, walkin.data.error);
+  assert.deepEqual(walkin.data.booking.tables, ['T11', 'T12', 'T13']);
+  assert.equal(walkin.data.booking.status, 'seated');
 });

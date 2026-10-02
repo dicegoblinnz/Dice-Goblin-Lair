@@ -560,6 +560,10 @@ export class Lair {
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const kind = input.kind === 'gm-seat' ? 'gm-seat' : input.kind === 'walkin' ? 'walkin' : 'table';
     if (kind === 'walkin') this.requireStaff(who);
+    // The public booking page applies the house rules to everyone, staff included. Only the staff page skips them:
+    // walk-ins, and table bookings sent with staffOverride. Those are made for someone else, so they aren't linked
+    // to the staff member's own account.
+    const override = Boolean(who.staff) && (kind === 'walkin' || (kind === 'table' && input.staffOverride === true));
     this.checkRate(who, client, now);
     let booking;
     let game = null;
@@ -571,7 +575,7 @@ export class Lair {
         end: seat.end, people: seat.people, name: seat.name, email: seat.email, amount: seat.amount, activity: 'rpg', party: seat.players,
       };
     } else {
-      const checked = checkTableBooking(input, { state: st, rules, time, now, staff: who.staff });
+      const checked = checkTableBooking(input, { state: st, rules, time, now, staff: override });
       booking = { kind, ...checked };
     }
     if (!who.staff && booking.email) {
@@ -585,7 +589,7 @@ export class Lair {
     Object.assign(booking, {
       id: makeId('bk'), ref: this.uniqueRef(input.name), pay: payNow ? 'now' : 'day', paid: kind === 'walkin' ? Boolean(input.paid) : false,
       status: kind === 'walkin' ? 'seated' : payNow ? 'held' : 'confirmed', holdUntil: payNow ? now + HOLD_MINUTES * MIN : null,
-      customerId: who.customerId || null,
+      customerId: override ? null : who.customerId || null,
     });
     this.saveBooking(booking, now);
     // --- saved: the table is ours ---
