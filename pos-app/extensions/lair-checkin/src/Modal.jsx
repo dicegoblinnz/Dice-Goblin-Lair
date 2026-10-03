@@ -24,15 +24,21 @@ import {
   nextScreen,
   NO_PASS,
   notALairCode,
+  openUseIds,
+  passChange,
+  passInUse,
+  passOptions,
   passParam,
   passProblem,
   personScreen,
+  recordUses,
   scanPurpose,
   stackAfterPerson,
+  undoNote,
   withGroups,
   wrongScan,
 } from './flow.js';
-import { checkIn, checkInMember, getToday, LairError, problemFor, scanCode, shareBill, tabAdded } from './lair.js';
+import { checkIn, checkInMember, getToday, LairError, problemFor, scanCode, shareBill, tabAdded, undoPassUse } from './lair.js';
 import { addedToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, shareLines, tabToast } from './lines.js';
 import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState } from './split.js';
 import { loadPending, savePending, saveTileEntry } from './store.js';
@@ -387,20 +393,97 @@ function CheckIn() {
     if (!screen) return;
     const row = currentRow(screen, todayNow.current);
     const pass = passParam(screen.choice, row);
+    run(force ? 'Checking in anyway…' : 'Checking in…', () => checkInPerson(row, { pass, force }), () => doCheckIn(force));
+  }
+
+  /**
+   * POST /pos/checkin for the person on screen, then their row, any pass use it made (so it can be undone) and the
+   * answer on screen.
+   * @param {Row} row
+   * @param {{ pass?: string, force?: boolean }} options
+   */
+  async function checkInPerson(row, { pass, force = false }) {
+    const answer = await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass, force });
+    if (answer?.row) setRows([answer.row]);
+    const outcome = checkinOutcome(answer);
+    updatePerson((current) => {
+      if (rowKey(current.row) !== rowKey(row)) return current;
+      const fresh = answer?.row ? { ...current.row, ...answer.row } : current.row;
+      const uses = recordUses(current.uses, answer);
+      const choice = outcome.arrived ? passOptions(fresh, current.passes, passInUse(fresh, uses)).picked : current.choice;
+      return { ...current, row: fresh, result: answer, uses, note: null, choice };
+    });
+    if (outcome.arrived && !outcome.total) toast(NOTHING_TO_PAY);
+  }
+
+  /**
+   * Gives back every pass use on this booking (POST /pos/pass-undo): the ones this screen saw at check-in, or else
+   * the open ones on the booking's own pass (POST /pos/scan of the pass lists its uses). Says so and returns null when
+   * there are none to find.
+   * @param {PersonScreen} screen
+   * @param {Row} row
+   * @returns {Promise<{ answers: any[], row: Row } | null>}
+   */
+  async function undoUses(screen, row) {
+    let ids = screen.uses.map((use) => use.useId);
+    if (!ids.length && row.pass?.code) {
+      const found = await scanCode(String(row.pass.code));
+      if (found?.type === 'pass') ids = openUseIds(found.pass, row.id);
+    }
+    if (!ids.length) {
+      say("Couldn't find that pass use", 'Undo it on the staff page, under Passes.');
+      return null;
+    }
+    const answers = [];
+    for (const id of ids) answers.push(await undoPassUse(id));
+    /** @type {Row | null} */
+    const fresh = [...answers].reverse().find((answer) => answer?.row)?.row || null;
+    if (fresh) setRows([fresh]);
+    const after = fresh ? { ...row, ...fresh } : row;
+    updatePerson((current) => (rowKey(current.row) === rowKey(row) ? { ...current, row: after, uses: [], result: null, choice: null } : current));
+    return { answers, row: after };
+  }
+
+  /** "Undo pass": the sessions go back on the pass, and the screen shows what's to pay now. */
+  function undoPass() {
+    const screen = topPerson();
+    if (!screen) return;
+    const row = currentRow(screen, todayNow.current);
     run(
-      force ? 'Checking in anyway…' : 'Checking in…',
+      'Undoing the pass…',
       async () => {
-        const answer = await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass, force });
-        if (answer?.row) setRows([answer.row]);
-        const outcome = checkinOutcome(answer);
-        updatePerson((current) =>
-          rowKey(current.row) === rowKey(row)
-            ? { ...current, row: answer?.row ? { ...current.row, ...answer.row } : current.row, result: answer, choice: outcome.arrived ? null : current.choice }
-            : current,
-        );
-        if (outcome.arrived && !outcome.total) toast(NOTHING_TO_PAY);
+        const undone = await undoUses(screen, row);
+        if (!undone) return;
+        const note = undoNote(undone.answers, undone.row);
+        updatePerson((current) => (rowKey(current.row) === rowKey(row) ? { ...current, note } : current));
       },
-      () => doCheckIn(force),
+      undoPass,
+    );
+  }
+
+  /**
+   * The pass button once they're here (passChange): "Use this pass" checks in again with it for what's left;
+   * "Switch to this pass" and "Check in again without a pass" undo the pass in use first, then check in again with
+   * the new choice.
+   */
+  function changePass() {
+    const screen = topPerson();
+    if (!screen) return;
+    const row = currentRow(screen, todayNow.current);
+    const change = passChange(passInUse(row, screen.uses), screen.choice);
+    if (change.action === 'none') return;
+    run(
+      change.action === 'switch' ? 'Switching the pass…' : 'Checking in with the pass…',
+      async () => {
+        let current = row;
+        if (change.action === 'switch') {
+          const undone = await undoUses(screen, row);
+          if (!undone) return;
+          current = undone.row;
+        }
+        await checkInPerson(current, { pass: change.pass });
+      },
+      changePass,
     );
   }
 
@@ -682,7 +765,8 @@ function CheckIn() {
       openRow: (row, group, passes) => push(personScreen(row, { groupKey: group?.key ?? null, groupTitle: group?.title ?? '', passes: passes || [] })),
       checkIn: (force) => doCheckIn(force),
       setChoice: (choice) => updatePerson((screen) => ({ ...screen, choice })),
-      usePass: () => doCheckIn(false),
+      changePass,
+      undoPass,
       addToCart,
       done: () => {
         const screen = topPerson();

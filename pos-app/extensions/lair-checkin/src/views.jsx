@@ -2,7 +2,19 @@
 // every button calls back into Modal.jsx (`ctx.act`).
 import '@shopify/ui-extensions/preact';
 import { useState } from 'preact/hooks';
-import { checkinOutcome, codeInQuery, currentRow, memberPlan, passOptions, passProblem, personPlan, tabPlan, withGroups } from './flow.js';
+import {
+  checkinOutcome,
+  codeInQuery,
+  currentRow,
+  memberPlan,
+  passChange,
+  passInUse,
+  passOptions,
+  passProblem,
+  personPlan,
+  tabPlan,
+  withGroups,
+} from './flow.js';
 import { customerIdNumber, dateLabel, firstName, longDay, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
 import { tabItems } from './lines.js';
 import {
@@ -65,7 +77,8 @@ import {
  *   openRow: (row: Row, group: { key?: string, title?: string } | null, passes?: PassLike[]) => void,
  *   checkIn: (force: boolean) => void,
  *   setChoice: (choice: string | null) => void,
- *   usePass: () => void,
+ *   changePass: () => void,
+ *   undoPass: () => void,
  *   addToCart: () => void,
  *   done: () => void,
  *   setSplit: (patch: Partial<SplitState>) => void,
@@ -243,12 +256,18 @@ function PersonView({ screen, ctx }) {
   const outcome = screen.result ? checkinOutcome(screen.result) : null;
   const ref = String(row.ref || '');
   const inCart = Boolean(ref) && cart.bookings.includes(ref);
-  const note = ctx.pending[rowKey(row)] || null;
-  const pending = pendingState(note, row, cart.shares, ctx.now);
+  const share = ctx.pending[rowKey(row)] || null;
+  const pending = pendingState(share, row, cart.shares, ctx.now);
   const holding = pending === 'in-cart' || pending === 'waiting';
   const due = dueOf(row);
-  const choices = passOptions(row, screen.passes);
-  const showPasses = row.type !== 'join' && !screen.split.open && !holding && (plan.stage === 'check-in' || (plan.stage === 'pay' && !inCart));
+  const inUse = passInUse(row, screen.uses);
+  const choices = passOptions(row, screen.passes, inUse);
+  const showPasses =
+    row.type !== 'join' &&
+    !screen.split.open &&
+    !holding &&
+    !inCart &&
+    (plan.stage === 'check-in' || plan.stage === 'pay' || (plan.stage === 'done' && Boolean(inUse)));
   const paying = plan.stage === 'pay' && !inCart && !holding;
   const busyNow = Boolean(busy);
   return (
@@ -271,25 +290,24 @@ function PersonView({ screen, ctx }) {
       ) : null}
       {outcome?.arrived ? (
         <s-banner tone="success" heading={outcome.text}>
-          {[
-            outcome.passText ? `${outcome.passText}.` : '',
-            outcome.notice,
-            // The POS can't give a session back; the staff page can.
-            outcome.passText ? 'Wrong pass? Undo it on the staff page, under Passes.' : '',
-          ]
-            .filter(Boolean)
-            .join(' ') || (outcome.total ? 'Add it to the cart, then take payment on the Verifone.' : 'All done.')}
+          {[outcome.passText ? `${outcome.passText}.` : '', outcome.notice].filter(Boolean).join(' ') ||
+            (outcome.total ? 'Add it to the cart, then take payment on the Verifone.' : 'All done.')}
         </s-banner>
       ) : null}
-      {pending === 'in-cart' && note ? (
-        <s-banner tone="info" heading={`A ${money(note.amount)} share is in the cart`}>
+      {screen.note ? (
+        <s-banner tone="success" heading={screen.note.heading}>
+          {screen.note.body}
+        </s-banner>
+      ) : null}
+      {pending === 'in-cart' && share ? (
+        <s-banner tone="info" heading={`A ${money(share.amount)} share is in the cart`}>
           Take payment on the Verifone. Their share shows here once it's paid.
         </s-banner>
       ) : null}
-      {pending === 'waiting' && note ? (
+      {pending === 'waiting' && share ? (
         <s-stack direction="block" gap="small">
           <s-banner tone="info" heading={WAITING}>
-            {`The ${money(note.amount)} share left the cart. It shows here as paid once the payment reaches the Lair app, usually within a minute.`}
+            {`The ${money(share.amount)} share left the cart. It shows here as paid once the payment reaches the Lair app, usually within a minute.`}
           </s-banner>
           <s-stack direction="inline" gap="small">
             <s-button disabled={busyNow} onClick={act.refreshRow}>
@@ -303,11 +321,11 @@ function PersonView({ screen, ctx }) {
       ) : null}
       {inCart && plan.stage === 'pay' && pending !== 'in-cart' ? (
         <s-banner tone="info" heading="It's in the cart">
-          Take payment on the Verifone. To pay it another way, take that line off the sale first.
+          Take payment on the Verifone. To change the pass or pay another way, take that line off the sale first.
         </s-banner>
       ) : null}
 
-      {showPasses ? <PassChoice screen={screen} options={choices.options} stage={plan.stage} ctx={ctx} /> : null}
+      {showPasses ? <PassChoice row={row} screen={screen} options={choices.options} inUse={inUse} stage={plan.stage} ctx={ctx} /> : null}
 
       {screen.split.open && plan.stage === 'pay' && !holding && !inCart ? <SplitPanel row={row} split={screen.split} ctx={ctx} /> : null}
 
@@ -376,13 +394,17 @@ function PayButtons({ row, due, busy, act }) {
 }
 
 /**
- * Pick a session pass before check-in (the saved one, another of theirs, or none), or one for what's left after.
- * @param {{ screen: PersonScreen, options: { value: string, label: string }[], stage: string, ctx: Ctx }} props
+ * The session pass. Before check-in: pick the saved one, another of theirs, or none. Once they're here: the pass in
+ * use with "Undo pass", or another one to switch to ("Switch to this pass", "Check in again without a pass"), or a
+ * pass to cover what's left ("Use this pass").
+ * @param {{ row: Row, screen: PersonScreen, options: { value: string, label: string }[],
+ *   inUse: { code: string, label: string } | null, stage: string, ctx: Ctx }} props
  */
-function PassChoice({ screen, options, stage, ctx }) {
+function PassChoice({ row, screen, options, inUse, stage, ctx }) {
   const { act, busy } = ctx;
   const here = stage !== 'check-in';
-  if (!options.length) {
+  const change = here ? passChange(inUse, screen.choice) : null;
+  if (!options.length && !inUse) {
     return (
       <s-stack direction="inline" gap="small" alignItems="center">
         <s-text color="subdued">Got a session pass?</s-text>
@@ -393,18 +415,26 @@ function PassChoice({ screen, options, stage, ctx }) {
     );
   }
   return (
-    <s-section heading={here ? 'Use a pass for what’s left?' : 'Session pass'}>
+    <s-section heading={here && !inUse ? 'Use a pass for what’s left?' : 'Session pass'}>
       <s-stack direction="block" gap="small">
-        <s-choice-list values={screen.choice ? [screen.choice] : []} onChange={(event) => act.setChoice(event.currentTarget.values?.[0] ?? null)}>
-          {options.map((option) => (
-            <s-choice key={option.value} value={option.value}>
-              {option.label}
-            </s-choice>
-          ))}
-        </s-choice-list>
-        {here ? (
-          <s-button disabled={Boolean(busy) || !screen.choice} onClick={act.usePass}>
-            Use this pass
+        {here && inUse ? <s-text>{`${inUse.label} covered ${money(row.covered)}.`}</s-text> : null}
+        {options.length ? (
+          <s-choice-list values={screen.choice ? [screen.choice] : []} onChange={(event) => act.setChoice(event.currentTarget.values?.[0] ?? null)}>
+            {options.map((option) => (
+              <s-choice key={option.value} value={option.value}>
+                {option.label}
+              </s-choice>
+            ))}
+          </s-choice-list>
+        ) : null}
+        {change && change.action !== 'none' ? (
+          <s-button disabled={Boolean(busy)} onClick={act.changePass}>
+            {change.label}
+          </s-button>
+        ) : null}
+        {here && inUse ? (
+          <s-button variant="secondary" disabled={Boolean(busy)} onClick={act.undoPass}>
+            Undo pass
           </s-button>
         ) : null}
         <s-button variant="secondary" disabled={Boolean(busy)} onClick={() => act.scan('pass')}>
