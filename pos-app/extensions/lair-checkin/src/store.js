@@ -26,7 +26,7 @@ export async function savePending(pending) {
   }
 }
 
-/** Today's numbers for the tile. @param {{ at: number, text: string }} entry */
+/** Today's numbers for the tile. @param {{ at: number, day: string, text: string }} entry */
 export async function saveTileEntry(entry) {
   try {
     await shopify.storage.set(TILE_KEY, entry);

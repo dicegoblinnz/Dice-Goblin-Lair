@@ -12,11 +12,13 @@ import {
   notALairCode,
   passOptions,
   passParam,
+  passProblem,
   personPlan,
   personScreen,
   scanPurpose,
   stackAfterPerson,
   tabPlan,
+  withGroups,
   wrongScan,
 } from '../extensions/lair-checkin/src/flow.js';
 
@@ -183,17 +185,28 @@ test('a scanned code goes where staff expect', () => {
     title: "That's not a Lair code",
     message: '"9421234567890" isn\'t a booking, member or pass code. They look like SJ-OWLBEAR-17.',
   });
+  assert.equal(passProblem({ code: 'P', status: 'active', sessionsLeft: 2 }), '');
+  assert.equal(passProblem({ code: 'P', status: 'void', sessionsLeft: 2 }), 'It was cancelled on the staff page.');
+  assert.equal(passProblem({ code: 'P', status: 'expired', sessionsLeft: 2, expiresAt: Date.UTC(2026, 11, 31, 10) }), 'It expired on 31 Dec 2026.');
+  assert.equal(passProblem({ code: 'P', status: 'used', sessionsLeft: 0 }), 'It has no sessions left.');
   assert.equal(codeInQuery('sj owlbear 17'), 'SJ-OWLBEAR-17');
   assert.equal(codeInQuery('gob7k2qxm'), 'GOB-7K2QXM');
   assert.equal(codeInQuery('Sam'), null);
 });
 
-test('the member view: check in everyone while anyone is still to come or still owes', () => {
-  assert.deepEqual(memberPlan([row]), { canCheckIn: true, waiting: 1, due: 4500 });
-  assert.deepEqual(memberPlan([{ ...row, status: 'seated', arrivedAt: 1, due: 0 }]), { canCheckIn: false, waiting: 0, due: 0 });
-  assert.deepEqual(memberPlan([{ ...row, status: 'seated', arrivedAt: 1, due: 1500 }]), { canCheckIn: true, waiting: 0, due: 1500 });
-  assert.deepEqual(memberPlan([{ ...row, status: 'noshow' }]), { canCheckIn: false, waiting: 0, due: 0 });
-  assert.deepEqual(memberPlan([]), { canCheckIn: false, waiting: 0, due: 0 });
+test('the member view: check in everyone while anyone is still to come, else add what they owe', () => {
+  const here = { ...row, status: 'seated', arrivedAt: 1, due: 1500 };
+  assert.deepEqual(memberPlan([row]), { canCheckIn: true, waiting: 1, due: 4500, owing: [] });
+  assert.deepEqual(memberPlan([{ ...here, due: 0 }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  assert.deepEqual(memberPlan([here]), { canCheckIn: true, waiting: 0, due: 1500, owing: [here] });
+  assert.deepEqual(memberPlan([here], ['SJ-OWLBEAR-17']), { canCheckIn: false, waiting: 0, due: 0, owing: [] }, 'already in the cart');
+  assert.deepEqual(memberPlan([{ ...row, status: 'noshow' }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  assert.deepEqual(memberPlan([]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  const today = { groups: [{ key: 'tables', title: 'Table bookings', rows: [here] }] };
+  assert.deepEqual(withGroups([row, { id: 'x', type: 'join' }], today).map((x) => [x.row.status, x.group?.key ?? null]), [
+    ['seated', 'tables'],
+    [undefined, null],
+  ]);
 });
 
 test('the member view: their tab', () => {

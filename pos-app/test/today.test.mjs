@@ -7,6 +7,7 @@ import {
   findRow,
   groupDetails,
   groupSummary,
+  mergeRows,
   newerTileText,
   passCandidates,
   passSummary,
@@ -22,6 +23,7 @@ import {
   sortRows,
   tileEntry,
   tileSubheading,
+  whatLabel,
 } from '../extensions/lair-checkin/src/today.js';
 
 // 3 Oct 2026 is NZDT (UTC+13): 05:00 UTC is 6pm in Auckland.
@@ -150,6 +152,12 @@ test('rows say who, how many, where and when', () => {
   assert.deepEqual(playerNames(fixture().groups[0].rows[2]), ['Ana (Grog)', 'Jo']);
   assert.deepEqual(playerNames({ id: 1, party: ['Sam', { name: 'Alex', character: '' }] }), ['Sam', 'Alex']);
   assert.equal(areYou(tables.rows[0]), 'Are you Sam?');
+  assert.equal(areYou({ id: 1, name: '' }), 'Who is this?');
+  assert.equal(whatLabel({ id: 1, type: 'booking', kind: 'gm-seat', title: 'Curse of Strahd' }), 'GM seat: Curse of Strahd');
+  assert.equal(whatLabel({ id: 1, type: 'booking', kind: 'table', occurrenceId: 'ev@2026-10-03', title: 'Warhammer night' }), 'Game spot: Warhammer night');
+  assert.equal(whatLabel({ id: 1, type: 'join', kind: 'join', title: 'Pokémon TCG league' }), 'Event entry: Pokémon TCG league');
+  assert.equal(whatLabel({ id: 1, type: 'booking', kind: 'walkin', title: 'Table T2' }), 'Walk-in');
+  assert.equal(whatLabel({ id: 1, type: 'booking', kind: 'table', title: 'Table T4' }), 'Table booking');
   assert.equal(rowKey({ id: 'ej_jo', type: 'join' }), 'join:ej_jo');
   assert.equal(rowKey({ id: 'bk_1' }), 'booking:bk_1');
 });
@@ -185,6 +193,10 @@ test('finds and refreshes rows after a check-in', () => {
   assert.equal(sam?.name, 'Sam Jones', 'keeps the fields the answer left out');
   assert.equal(findRow(today, 'bk_sam', 'booking')?.row.status, 'confirmed', "doesn't change the old roster");
   assert.equal(replaceRows(null, []), null);
+  const samRow = findRow(today, 'bk_sam', 'booking')?.row;
+  const anaRow = findRow(today, 'bk_ana', 'booking')?.row;
+  const merged = mergeRows([samRow, anaRow], [{ id: 'bk_ana', type: 'booking', status: 'seated' }, { id: 'ej_new', type: 'join', name: 'New' }]);
+  assert.deepEqual(merged.map((r) => [r.id, r.status ?? null]), [['bk_sam', 'confirmed'], ['bk_ana', 'seated'], ['ej_new', null]], 'keeps the rest');
 });
 
 test('passes: what they say, and whether they can be used now', () => {
@@ -211,12 +223,13 @@ test('a pass can be used on table bookings, seats and game spots with something 
   assert.deepEqual(passCandidates(null, pass), []);
 });
 
-test('the tile picks up newer numbers the check-in screen saved', () => {
+test('the tile picks up newer numbers the check-in screen saved today', () => {
   const entry = tileEntry(fixture(), 5000);
-  assert.deepEqual(entry, { at: 5000, text: '13 today · 5 here' });
-  assert.equal(newerTileText(entry, 1000), '13 today · 5 here');
-  assert.equal(newerTileText(entry, 5000), null, 'not newer than what the tile shows');
-  assert.equal(newerTileText(undefined, 0), null);
-  assert.equal(newerTileText({ at: 9000 }, 0), null);
-  assert.equal(newerTileText({ at: 'soon', text: 'x' }, 0), null);
+  assert.deepEqual(entry, { at: 5000, day: '2026-10-03', text: '13 today · 5 here' });
+  assert.equal(newerTileText(entry, 1000, '2026-10-03'), '13 today · 5 here');
+  assert.equal(newerTileText(entry, 5000, '2026-10-03'), null, 'not newer than what the tile shows');
+  assert.equal(newerTileText(entry, 1000, '2026-10-04'), null, "yesterday's numbers");
+  assert.equal(newerTileText(undefined, 0, '2026-10-03'), null);
+  assert.equal(newerTileText({ at: 9000, day: '2026-10-03' }, 0, '2026-10-03'), null);
+  assert.equal(newerTileText({ at: 'soon', day: '2026-10-03', text: 'x' }, 0, '2026-10-03'), null);
 });

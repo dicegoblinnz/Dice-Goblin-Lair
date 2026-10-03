@@ -161,6 +161,20 @@ export function tileSubheading(today) {
   return people ? `${people} today · ${arrived} here` : 'Nothing booked today';
 }
 
+/**
+ * What they booked, in a few words: "GM seat: Curse of Strahd", "Game spot: Warhammer night", "Event entry: Pokémon
+ * TCG league", "Walk-in" or "Table booking".
+ * @param {Row} row
+ */
+export function whatLabel(row) {
+  const title = String(row?.title || '').trim();
+  if (row?.type === 'join') return title ? `Event entry: ${title}` : 'Event entry';
+  if (row?.kind === 'gm-seat') return title ? `GM seat: ${title}` : 'GM seat';
+  if (row?.occurrenceId) return title ? `Game spot: ${title}` : 'Game spot';
+  if (row?.kind === 'walkin') return 'Walk-in';
+  return 'Table booking';
+}
+
 /** "3 people · T4 · 7pm–10pm", plus "Splitting the bill" when they are. @param {Row} row */
 export function rowDetails(row) {
   return [peopleLabel(row?.people), tablesLabel(row?.tables), timeRange(row?.start, row?.end), row?.split ? 'Splitting the bill' : '']
@@ -253,6 +267,22 @@ export function replaceRows(today, rows) {
   };
 }
 
+/**
+ * A list of rows with some swapped for fresher copies, and any new ones added at the end.
+ * @param {Row[]} rows
+ * @param {(Row | null | undefined)[]} fresh
+ * @returns {Row[]}
+ */
+export function mergeRows(rows, fresh) {
+  const updates = /** @type {Row[]} */ ((fresh || []).filter((r) => r && r.id != null));
+  const merged = (rows || []).map((row) => {
+    const update = updates.find((r) => rowKey(r) === rowKey(row));
+    return update ? { ...row, ...update } : row;
+  });
+  for (const row of updates) if (!merged.some((r) => rowKey(r) === rowKey(row))) merged.push(row);
+  return merged;
+}
+
 /** Sessions left on a pass (row passes say `left`, full passes `sessionsLeft`). @param {PassLike | null | undefined} pass */
 export function passLeft(pass) {
   const left = Number(pass?.left ?? pass?.sessionsLeft);
@@ -304,22 +334,23 @@ export function areYou(row) {
 export const TILE_KEY = 'tile-counts';
 
 /**
- * What the check-in screen saves for the tile.
+ * What the check-in screen saves for the tile: when, which Lair day, and the words.
  * @param {Today | null | undefined} today
  * @param {number} now
  */
 export function tileEntry(today, now) {
-  return { at: now, text: tileSubheading(today) };
+  return { at: now, day: String(today?.day || ''), text: tileSubheading(today) };
 }
 
 /**
- * The tile's saved subtitle when it's newer than the one the tile shows, otherwise null.
+ * The tile's saved subtitle when it's for today and newer than the one the tile shows, otherwise null.
  * @param {unknown} entry what `shopify.storage.get(TILE_KEY)` gave back
  * @param {number} shownAt when the tile's own subtitle was made
+ * @param {string} day the Lair day now, "2026-10-03"
  */
-export function newerTileText(entry, shownAt) {
-  const saved = /** @type {{ at?: unknown, text?: unknown } | null} */ (entry && typeof entry === 'object' ? entry : null);
-  if (!saved || typeof saved.text !== 'string' || !saved.text) return null;
+export function newerTileText(entry, shownAt, day) {
+  const saved = /** @type {{ at?: unknown, day?: unknown, text?: unknown } | null} */ (entry && typeof entry === 'object' ? entry : null);
+  if (!saved || typeof saved.text !== 'string' || !saved.text || saved.day !== day) return null;
   const at = Number(saved.at);
   return Number.isFinite(at) && at > shownAt ? saved.text : null;
 }

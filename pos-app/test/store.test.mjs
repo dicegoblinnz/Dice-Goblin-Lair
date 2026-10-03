@@ -32,8 +32,8 @@ test('keeps notes of shares and the tile’s numbers', async () => {
   await savePending({ 'booking:bk_sam': { ref: 'SJ-OWLBEAR-17', amount: 1000, expect: 1000, at: now - 1000 } });
   assert.deepEqual(await loadPending(now), { 'booking:bk_sam': { ref: 'SJ-OWLBEAR-17', amount: 1000, expect: 1000, at: now - 1000 } });
   assert.deepEqual(await loadPending(now + PENDING_MS), {}, 'old notes are dropped');
-  await saveTileEntry({ at: 1, text: '14 today · 5 here' });
-  assert.deepEqual(await readTileEntry(), { at: 1, text: '14 today · 5 here' });
+  await saveTileEntry({ at: 1, day: '2026-10-03', text: '14 today · 5 here' });
+  assert.deepEqual(await readTileEntry(), { at: 1, day: '2026-10-03', text: '14 today · 5 here' });
   assert.equal(saved.size, 2);
 });
 

@@ -1,7 +1,7 @@
 // Which screen comes next, and what each screen offers: after a scan, at check-in, with passes and tabs, and after the
 // cart. No `shopify` global here, so `npm test` can check it without a POS.
 import { readCode } from './codes.js';
-import { dayKey, dayLabel, money, timeRange } from './format.js';
+import { dateLabel, dayKey, dayLabel, money, timeRange } from './format.js';
 import { feeLines, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabItems } from './lines.js';
 import { dueOf, findRow, isArrived, passSummary, passUsable, rowState } from './today.js';
 
@@ -241,6 +241,18 @@ export function wrongScan(want) {
     : { title: "That's not a member code", message: 'Ask them to open My Lair on the website and show the code there.' };
 }
 
+/**
+ * Why a pass can't be used right now, or '' when it can.
+ * @param {PassLike | null | undefined} pass
+ */
+export function passProblem(pass) {
+  if (!pass) return 'That pass could not be found.';
+  if (pass.status === 'void') return 'It was cancelled on the staff page.';
+  if (pass.status === 'expired') return `It expired${pass.expiresAt ? ` on ${dateLabel(pass.expiresAt)}` : ''}.`;
+  if (!passUsable(pass)) return 'It has no sessions left.';
+  return '';
+}
+
 /** A scan that isn't a Lair code at all (a product barcode, say). @param {string} text */
 export function notALairCode(text) {
   const shown = String(text || '').trim().slice(0, 40);
@@ -257,19 +269,37 @@ export function codeInQuery(query) {
 }
 
 /**
- * The member view's "Check in everyone and add to cart": offered while any of their rows today is still to come or
- * still owes something.
- * @param {Row[]} rows
+ * The member view's main button, for their rows today:
+ *   someone still to come  "Check in everyone and add to cart" (POST /pos/checkin-member)
+ *   all here, money owed   "Add $X to cart" for what isn't in the cart yet (`owing`: each row's lines, asked for with
+ *                          `pass: 'none'` like the person view, so it never uses a pass by itself)
+ * @param {Row[]} rows the freshest copies
+ * @param {string[]} [inCart] codes with a line in the cart already
  */
-export function memberPlan(rows) {
+export function memberPlan(rows, inCart = []) {
   let waiting = 0;
   let due = 0;
+  /** @type {Row[]} */
+  const owing = [];
   for (const row of rows || []) {
     const state = rowState(row);
     if (state === 'waiting') waiting += 1;
-    if (state === 'waiting' || state === 'arrived') due += dueOf(row);
+    if ((state === 'waiting' || state === 'arrived') && dueOf(row) > 0 && !(row.ref && inCart.includes(String(row.ref)))) {
+      due += dueOf(row);
+      if (state === 'arrived') owing.push(row);
+    }
   }
-  return { canCheckIn: waiting > 0 || due > 0, waiting, due };
+  return { canCheckIn: waiting > 0 || due > 0, waiting, due, owing };
+}
+
+/**
+ * Rows swapped for the Today list's copies where it has them (it's updated after every check-in).
+ * @param {Row[]} rows
+ * @param {Today | null} today
+ * @returns {{ row: Row, group: import('./today.js').Group | null }[]}
+ */
+export function withGroups(rows, today) {
+  return (rows || []).map((row) => findRow(today, row.id, row.type) || { row, group: null });
 }
 
 /**
