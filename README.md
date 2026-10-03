@@ -214,7 +214,7 @@ Routes (all JSON; `/proxy/…` is `www.dicegoblin.nz/apps/lair/…` on the websi
 | `POST /proxy/contact` | anyone | "host your own event" form |
 | `POST /proxy/roll` | anyone (prizes: logged in) | `kind: fun\|spend` (`bonus` still works; `daily` is a 410) |
 | `POST /proxy/prizes/:id/done` | staff | a dice prize given at the counter |
-| `GET /proxy/me?name=` | logged in | My Lair: bookings, seats, games, sign-ups, credits, `member` (with `code`), `series`, `rolls`, `prizes`, `passes`, `tab`. `name` (the shop account's name, sent by the theme) fills in a member's missing name, so a first visit's code has their initials |
+| `GET /proxy/me?name=` | logged in | My Lair: bookings, seats, games, sign-ups, credits, `member` (with `code`), `series`, `rolls`, `prizes`, `passes`, `tab`. `name` (the shop account's name, sent by the theme) fills in a member's missing name, so a first visit's code has their initials. A sign-up or game spot held for online payment carries `checkoutUrl` and `holdUntil` |
 | `POST /proxy/me/profile` | logged in | first name, name, email, birthday |
 | `POST /proxy/me/passes/claim` | logged in | add a pass to your account by its code |
 | `POST /proxy/tab`, `/proxy/tab/clear` | logged in | save or clear today's self-serve tab |
