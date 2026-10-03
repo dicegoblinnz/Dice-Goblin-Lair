@@ -22,6 +22,7 @@ The tile says **Lair check-in** and today's numbers, like "14 today · 5 here". 
    names for a GM game, any note, and their session pass if they saved one. Check it's them.
 3. **Session pass?** If they have one, it's already picked. Pick another of theirs, or **Don't use a pass**, before
    you check them in. A pass covers one person's table fee per session (never event entry or a GM's fee).
+   Changed your mind after checking in? See "Wrong pass?" below.
 4. Tap **Check in**. The screen shows what's left to pay after any pass.
    - Nothing to pay: it says **"Checked in. Nothing to pay."** Tap **Done**.
    - Something to pay: tap **Add $X to cart**. It says "Added $X. Ready to pay." and goes back to the list.
@@ -61,7 +62,17 @@ Scanning someone's member code (from My Lair) shows their bookings today, their 
 Scanning a pass shows who has it and how many sessions are left. Tap **Use on…**, then the booking it's for: that
 person is checked in with the pass and the screen shows what's left to pay.
 
-Used a pass by mistake? Undo it on the staff page, under Passes. (The counter can't take a session back.)
+### Wrong pass?
+
+After a check-in that used a pass, the person's screen shows the pass in use:
+
+- **Undo pass** gives the session back, and the screen shows what's to pay now ("Pass undone. $45 to pay.").
+- To use a different pass, pick it and tap **Switch to this pass**: the first one is undone, then they're checked in
+  again with the new one.
+- Pick **Don't use a pass** and tap **Check in again without a pass** to pay the full amount instead.
+
+This works for someone checked in earlier too: open them again and the pass in use is there. If their fee is already
+in the cart, take that line off the sale first. (The staff page can undo a pass as well, under Passes.)
 
 ### What the labels mean
 
@@ -171,6 +182,7 @@ An expired key only stops deploys; the tile keeps working. To renew it:
 | It's in the cart, but not linked | After they pay, mark the booking paid on the staff page. |
 | Already in the cart | That booking already has a line in this sale: take that payment first, or take the line off the sale. |
 | Waiting for the last payment… | The payment hasn't reached the Lair app yet: tap **Refresh** in a few seconds. Didn't go through? Tap **It wasn't paid**. |
+| Couldn't find that pass use | Undo it on the staff page, under Passes, then open them again here. |
 | The tile says "App failed to load" | Close and reopen Shopify POS, and update it from the App Store. If it continues, note the device and iOS version and ask Claude. |
 
 ## What the Lair app (the Worker) does for this
@@ -185,6 +197,7 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
 | `POST /pos/checkin { id, type, pass?, force? }` | Check one person in; `pass` is a pass code, `'none'`, or left out for their saved pass. Answers with cart lines |
 | `POST /pos/checkin-member { customerId }` | Check in everything a member has today, with cart lines |
 | `POST /pos/share { id, type, amount? }` | One share of a bill as a cart line |
+| `POST /pos/pass-undo { useId }` | Give a pass use back (the same as the staff page's undo); answers `{ pass, row }` |
 | `POST /pos/tab/:id/added` | A member's tab is in the cart |
 
 - The session token is a JWT signed HS256 with the app's client secret, `aud` = the client ID, `dest` =
@@ -194,9 +207,11 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
 - **Cart lines:** fees are custom sales carrying `_booking: <code>` (and `_share: '1'` for a share of a bill); tab
   items are the real products carrying `_tab: <tab id>`. When the POS order is paid, the orders/paid webhook records
   each `_booking` line as a payment towards that booking or sign-up and marks each `_tab` tab paid.
-- A pass used by mistake can only be undone on the staff page (`POST /passes/uses/:id/undo` is staff-only), so the
-  check-in screen asks which pass to use *before* checking in, and never uses one by itself when asking for the cart
-  lines again (`pass: 'none'`).
+- **Passes:** a check-in that used a pass answers with its `pass.useId`, which **Undo pass** sends to
+  `/pos/pass-undo`. For someone checked in earlier, the screen finds the use from the pass itself (`/pos/scan` of a
+  pass code lists its `uses`). Switching undoes the pass in use first, then checks in again with the new choice (a
+  pass code, or `'none'`). Asking for the cart lines again always sends `pass: 'none'`, so it never uses a pass by
+  itself.
 
 ## For developers
 

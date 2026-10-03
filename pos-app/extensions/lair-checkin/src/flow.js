@@ -1,7 +1,7 @@
 // Which screen comes next, and what each screen offers: after a scan, at check-in, with passes and tabs, and after the
 // cart. No `shopify` global here, so `npm test` can check it without a POS.
 import { readCode } from './codes.js';
-import { dateLabel, dayKey, dayLabel, money, timeRange } from './format.js';
+import { dateLabel, dayKey, dayLabel, money, plural, timeRange } from './format.js';
 import { feeLines, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabItems } from './lines.js';
 import { dueOf, findRow, isArrived, passSummary, passUsable, rowState } from './today.js';
 
@@ -16,8 +16,11 @@ import { dueOf, findRow, isArrived, passSummary, passUsable, rowState } from './
  * @typedef {{ row?: Row | null, lines?: unknown, customer?: { id?: unknown } | null, pass?: UsedPass | null,
  *   notice?: string | null, message?: string, checkedIn?: boolean }} CheckinAnswer what POST /pos/checkin answers
  * @typedef {{ open: boolean, mode: 'person' | 'custom', custom: string, payer: Payer | null }} SplitState
+ * @typedef {{ useId: string, code: string, label: string, covered: number, used: number, left: number | null }} KnownUse
+ *   a pass use this screen saw in a check-in answer, so "Undo pass" can give it back
+ * @typedef {{ heading: string, body: string }} Note a banner the person view shows, like "Pass undone. $45 to pay."
  * @typedef {{ name: 'person', row: Row, groupKey: string | null, groupTitle: string, passes: PassLike[],
- *   choice: string | null, result: CheckinAnswer | null, split: SplitState }} PersonScreen
+ *   choice: string | null, result: CheckinAnswer | null, split: SplitState, uses: KnownUse[], note: Note | null }} PersonScreen
  * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], notices: string[] }} MemberScreen
  * @typedef {{ name: 'pass', pass: PassLike & Record<string, any>, picking: boolean }} PassScreen
  * @typedef {{ name: 'home' } | { name: 'group', key: string } | PersonScreen | MemberScreen | PassScreen} Screen
@@ -47,15 +50,18 @@ const lower = (value) => String(value ?? '').toLowerCase();
  */
 export function personScreen(row, { groupKey = null, groupTitle = '', passes = [], result = null } = {}) {
   const merged = result?.row ? { ...row, ...result.row } : row;
+  const uses = recordUses([], result);
   return {
     name: 'person',
     row: merged,
     groupKey,
     groupTitle,
     passes,
-    choice: passOptions(merged, passes).picked,
+    choice: passOptions(merged, passes, passInUse(merged, uses)).picked,
     result,
     split: { open: false, mode: 'person', custom: '', payer: null },
+    uses,
+    note: null,
   };
 }
 
@@ -118,21 +124,64 @@ export function currentRow(screen, today) {
 }
 
 /**
+ * The pass uses in a check-in answer, added to the ones this screen already knows (each answer's `pass.useId`).
+ * @param {KnownUse[]} uses
+ * @param {CheckinAnswer | null | undefined} answer
+ * @returns {KnownUse[]}
+ */
+export function recordUses(uses, answer) {
+  const list = uses || [];
+  const pass = answer?.pass;
+  const useId = pass?.useId != null ? String(pass.useId) : '';
+  if (!useId || list.some((u) => u.useId === useId)) return list;
+  const left = Number(pass?.left);
+  return [
+    ...list,
+    {
+      useId,
+      code: String(pass?.code || ''),
+      label: String(pass?.label || pass?.code || 'The pass'),
+      covered: Math.max(0, Math.round(Number(pass?.covered) || 0)),
+      used: Math.max(0, Math.round(Number(pass?.used) || 0)),
+      left: Number.isFinite(left) ? Math.max(0, Math.round(left)) : null,
+    },
+  ];
+}
+
+/**
+ * The pass covering this booking now, if any: the last one this screen used, or else the booking's own pass when
+ * something is covered (checked in earlier, here or on the staff page).
+ * @param {Row} row the freshest copy
+ * @param {KnownUse[]} uses
+ * @returns {{ code: string, label: string, left: number | null } | null}
+ */
+export function passInUse(row, uses) {
+  if (!(Number(row?.covered) > 0)) return null;
+  const list = uses || [];
+  const last = list[list.length - 1];
+  if (last) return { code: last.code, label: last.label, left: last.left };
+  const own = row?.pass;
+  const left = Number(own?.left);
+  return { code: String(own?.code || ''), label: String(own?.label || own?.code || 'A pass'), left: Number.isFinite(left) ? left : null };
+}
+
+/**
  * The pass choices on the person view, and which starts picked. Passes only cover table fees, so event entries
  * never get any.
  *   Before check-in: the booking's saved pass (picked), the member's other passes and any pass scanned here, then
  *   "Don't use a pass" (picked when there's no saved pass).
- *   Once they're here: only passes that could cover what's still due, none picked. The Lair app can't take a used
- *   session back through the POS (that's the staff page), so "Don't use a pass" isn't offered then.
+ *   Once they're here, with a pass in use: that pass (picked), the others, and "Don't use a pass". Picking another
+ *   one switches: the pass in use is undone first (POST /pos/pass-undo).
+ *   Once they're here, with no pass in use: passes that could cover what's still due, none picked.
  * @param {Row} row
  * @param {PassLike[]} passes
+ * @param {{ code: string, label: string, left: number | null } | null} [inUse] passInUse
  * @returns {{ options: { value: string, label: string }[], picked: string | null }}
  */
-export function passOptions(row, passes) {
+export function passOptions(row, passes, inUse = null) {
   if (!row || row.type === 'join') return { options: [], picked: null };
   const arrived = isArrived(row);
-  if (arrived && !dueOf(row)) return { options: [], picked: null };
-  const saved = row.pass?.code && passUsable(row.pass) && !(arrived && Number(row.covered) > 0) ? row.pass : null;
+  if (arrived && !dueOf(row) && !inUse) return { options: [], picked: null };
   const seen = new Set();
   /** @type {{ value: string, label: string }[]} */
   const options = [];
@@ -143,12 +192,74 @@ export function passOptions(row, passes) {
     seen.add(key);
     options.push({ value: String(pass.code), label });
   };
+  const using = arrived && inUse?.code ? inUse : null;
+  if (using) add({ code: using.code }, `${passSummary({ label: using.label, code: using.code, left: using.left ?? undefined })} (in use)`);
+  const saved = row.pass?.code && passUsable(row.pass) && !(arrived && !using && Number(row.covered) > 0) ? row.pass : null;
   if (saved) add(saved, `${passSummary(saved)} (saved on the booking)`);
   if (row.pass?.code) seen.add(alnum(row.pass.code));
   for (const pass of passes || []) if (passUsable(pass)) add(pass, passSummary(pass));
-  if (arrived) return { options, picked: null };
-  if (options.length) options.push({ value: NO_PASS, label: "Don't use a pass" });
+  if (arrived && !inUse) return { options, picked: null };
+  if (options.length || inUse) options.push({ value: NO_PASS, label: "Don't use a pass" });
+  if (arrived) return { options, picked: using ? String(using.code) : null };
   return { options, picked: saved ? String(saved.code) : options.length ? NO_PASS : null };
+}
+
+/**
+ * What the pass button does once they're here, for the picked choice:
+ *   none    nothing to change: the pass in use is picked, or no pass is in use and none is picked
+ *   use     no pass in use yet: check in again with the picked pass (it covers what's still due)
+ *   switch  a pass is in use and something else is picked: undo it, then check in again with the new choice
+ *           (a pass code, or 'none' for "Don't use a pass")
+ * @param {{ code: string } | null} inUse passInUse
+ * @param {string | null} choice
+ * @returns {{ action: 'none' | 'use' | 'switch', pass: string, label: string }}
+ */
+export function passChange(inUse, choice) {
+  const none = { action: /** @type {const} */ ('none'), pass: '', label: '' };
+  if (!choice) return none;
+  if (inUse) {
+    if (inUse.code && alnum(inUse.code) === alnum(choice)) return none;
+    if (choice === NO_PASS) return { action: 'switch', pass: NO_PASS, label: 'Check in again without a pass' };
+    return { action: 'switch', pass: choice, label: 'Switch to this pass' };
+  }
+  if (choice === NO_PASS) return none;
+  return { action: 'use', pass: choice, label: 'Use this pass' };
+}
+
+/**
+ * The uses of a pass on one booking that haven't been undone, from the pass as POST /pos/scan gives it (its `uses`).
+ * For undoing a pass this screen didn't use itself.
+ * @param {any} pass
+ * @param {unknown} bookingId
+ * @returns {string[]}
+ */
+export function openUseIds(pass, bookingId) {
+  return (Array.isArray(pass?.uses) ? pass.uses : [])
+    .filter((use) => use && use.id != null && String(use.bookingId) === String(bookingId) && !use.undone)
+    .map((use) => String(use.id));
+}
+
+/**
+ * What staff see after "Undo pass": what's to pay now, and the sessions back on the pass.
+ * @param {{ pass?: any, row?: Row | null }[]} answers the POST /pos/pass-undo answers, oldest first
+ * @param {Row} row the row after undoing
+ * @returns {Note}
+ */
+export function undoNote(answers, row) {
+  const due = dueOf(row);
+  /** @type {Map<string, string>} */
+  const passes = new Map();
+  for (const answer of answers || []) {
+    const pass = answer?.pass;
+    if (!pass) continue;
+    const left = Number(pass.sessionsLeft ?? pass.left);
+    const name = String(pass.label || pass.code || 'The pass');
+    passes.set(String(pass.code || name), Number.isFinite(left) ? `${name} has ${plural(Math.max(0, left), 'session')} left.` : `The session is back on ${name}.`);
+  }
+  return {
+    heading: `Pass undone. ${due > 0 ? `${money(due)} to pay.` : 'Nothing to pay.'}`,
+    body: [...passes.values()].join(' ') || 'The session is back on the pass.',
+  };
 }
 
 /**
