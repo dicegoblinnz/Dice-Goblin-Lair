@@ -3306,3 +3306,237 @@ test('live data: the live app\'s database (round 8) moves to round 4, and its bo
   assert.deepEqual(counts(), after);
   assert.equal(lair.booking('bk_live2').paidAmount, 3000);
 });
+
+/* ---------------- live data: main (round 4, 11c0130), the database the live app has now ---------------- */
+
+/** Main's migrations: round 8's two, then these, copied word for word from 11c0130 (git show 11c0130:src/lair.js). */
+const MAIN_MIGRATIONS = [
+  ...LIVE_MIGRATIONS,
+  // 3 Oct 2026, round 3: money owed back is flagged on the booking: 'due' (refund it), 'ask' (a paid no-show: staff
+  // decide) or 'done' (refunded).
+  [
+    'ALTER TABLE bookings ADD COLUMN refund TEXT',
+  ],
+  // Members: one per Shopify customer who has used the Lair logged in. Their spend is one row per paid order.
+  [
+    `CREATE TABLE IF NOT EXISTS members (
+      customer_id TEXT PRIMARY KEY, name TEXT, first_name TEXT, email TEXT, birthday TEXT, last_seen INTEGER, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS members_email ON members (lower(email))',
+    'CREATE INDEX IF NOT EXISTS members_birthday ON members (birthday)',
+    `CREATE TABLE IF NOT EXISTS spend (
+      order_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, amount INTEGER NOT NULL, source TEXT, created_at INTEGER NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS spend_customer ON spend (customer_id, created_at)',
+  ],
+  // Members' dice: every daily and bonus roll (one daily roll per Lair day) and every prize they've won.
+  [
+    `CREATE TABLE IF NOT EXISTS member_rolls (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, kind TEXT NOT NULL, day TEXT NOT NULL, roll INTEGER NOT NULL, prize_id TEXT, created_at INTEGER)`,
+    "CREATE UNIQUE INDEX IF NOT EXISTS member_rolls_daily ON member_rolls (customer_id, day) WHERE kind = 'daily'",
+    'CREATE INDEX IF NOT EXISTS member_rolls_customer ON member_rolls (customer_id, kind)',
+    `CREATE TABLE IF NOT EXISTS prizes (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, amount INTEGER, percent INTEGER, code TEXT,
+      expires_at INTEGER, status TEXT NOT NULL, period TEXT, note TEXT, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS prizes_customer ON prizes (customer_id, created_at)',
+  ],
+  // Birthday codes are prizes too (source 'birthday', period = the birthday's year): one per member per birthday.
+  [
+    "CREATE UNIQUE INDEX IF NOT EXISTS prizes_birthday ON prizes (customer_id, period) WHERE source = 'birthday'",
+  ],
+  // "Join every session": a player's standing seat at a game series. The seats it makes carry the series id.
+  [
+    `CREATE TABLE IF NOT EXISTS series_members (
+      series_id TEXT NOT NULL, customer_id TEXT NOT NULL, people INTEGER NOT NULL, players TEXT, name TEXT, email TEXT, status TEXT NOT NULL,
+      created_at INTEGER, updated_at INTEGER, PRIMARY KEY (series_id, customer_id))`,
+    'ALTER TABLE bookings ADD COLUMN series_id TEXT',
+    'CREATE INDEX IF NOT EXISTS bookings_series ON bookings (series_id, customer_id)',
+  ],
+  // Messages from a GM (or staff) to a game's players: kept for the daily limit and the record.
+  [
+    `CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY, game_id TEXT NOT NULL, limit_key TEXT NOT NULL, scope TEXT NOT NULL, text TEXT NOT NULL, recipients INTEGER, sent INTEGER,
+      sender TEXT, created_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS messages_limit ON messages (limit_key, created_at)',
+  ],
+  // Events: entry fees paid online or at the counter (sign-ups get the same payment columns as bookings), and game
+  // spots booked as tables linked to the event date.
+  [
+    'ALTER TABLE event_joins ADD COLUMN pay TEXT',
+    'ALTER TABLE event_joins ADD COLUMN paid INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE event_joins ADD COLUMN amount INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE event_joins ADD COLUMN hold_until INTEGER',
+    'ALTER TABLE event_joins ADD COLUMN draft_order_id TEXT',
+    'ALTER TABLE event_joins ADD COLUMN order_id TEXT',
+    'ALTER TABLE event_joins ADD COLUMN refund TEXT',
+    'CREATE INDEX IF NOT EXISTS event_joins_hold ON event_joins (status, hold_until)',
+    'CREATE INDEX IF NOT EXISTS event_joins_customer ON event_joins (customer_id, ends_at)',
+    'ALTER TABLE bookings ADD COLUMN occurrence_id TEXT',
+    'CREATE INDEX IF NOT EXISTS bookings_occurrence ON bookings (occurrence_id)',
+  ],
+  // Round 4: one table of every code (SJ-OWLBEAR-17) for bookings, sign-ups, members and session passes, so no code
+  // is ever used twice. The refs already given out (the first release's GOB-7K2QXM) go in too, so a new code can't
+  // clash with one. Members keep the code they were first given.
+  [
+    'CREATE TABLE IF NOT EXISTS codes (key TEXT PRIMARY KEY, code TEXT, kind TEXT, target_id TEXT, created_at INTEGER)',
+    "INSERT OR IGNORE INTO codes (key, code, kind, target_id, created_at) SELECT replace(upper(ref), '-', ''), ref, 'booking', id, created_at FROM bookings",
+    "INSERT OR IGNORE INTO codes (key, code, kind, target_id, created_at) SELECT replace(upper(ref), '-', ''), ref, 'join', id, created_at FROM event_joins",
+    'ALTER TABLE members ADD COLUMN code TEXT',
+  ],
+  // Round 4: session passes ("Warhammer league: 10 sessions"). A use is recorded at check-in, so a no-show never
+  // burns a session; covered is what passes have taken off a booking, and pass_id the pass saved for its check-in.
+  [
+    `CREATE TABLE IF NOT EXISTS passes (
+      id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, label TEXT NOT NULL, sessions_total INTEGER NOT NULL, sessions_used INTEGER NOT NULL DEFAULT 0,
+      cover INTEGER NOT NULL, customer_id TEXT, holder_name TEXT, holder_email TEXT, note TEXT, price_paid INTEGER, created_at INTEGER, created_by TEXT,
+      expires_at INTEGER, status TEXT NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS passes_customer ON passes (customer_id)',
+    `CREATE TABLE IF NOT EXISTS pass_uses (
+      id TEXT PRIMARY KEY, pass_id TEXT NOT NULL, booking_id TEXT NOT NULL, people INTEGER NOT NULL, covered INTEGER NOT NULL, at INTEGER NOT NULL, by TEXT,
+      undone_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS pass_uses_pass ON pass_uses (pass_id)',
+    'CREATE INDEX IF NOT EXISTS pass_uses_booking ON pass_uses (booking_id)',
+    'ALTER TABLE bookings ADD COLUMN pass_id TEXT',
+    'ALTER TABLE bookings ADD COLUMN covered INTEGER NOT NULL DEFAULT 0',
+  ],
+  // Round 4: the self-serve tab. A member adds drinks and snacks in My Lair; at the counter the POS puts them in the
+  // cart ('in-cart') and the paid order marks the tab 'paid'. One open tab a member a Lair day.
+  [
+    `CREATE TABLE IF NOT EXISTS tabs (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, day TEXT NOT NULL, items TEXT NOT NULL, total INTEGER NOT NULL, status TEXT NOT NULL,
+      order_id TEXT, created_at INTEGER, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS tabs_customer ON tabs (customer_id, day)',
+  ],
+  // Round 4: split the bill. paid_amount is what's been paid so far; payments has a row for each order line that paid
+  // for a booking or sign-up, with who paid, and an order's line only ever counts once. split: the booker will split
+  // the bill at the counter. Anything already marked paid was paid in full, so its paid_amount is its amount.
+  [
+    `CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY, booking_id TEXT NOT NULL, kind TEXT NOT NULL, order_id TEXT NOT NULL, line_id TEXT NOT NULL, amount INTEGER NOT NULL,
+      customer_id TEXT, at INTEGER NOT NULL, UNIQUE (order_id, line_id))`,
+    'CREATE INDEX IF NOT EXISTS payments_booking ON payments (booking_id)',
+    'ALTER TABLE bookings ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE bookings ADD COLUMN split INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE event_joins ADD COLUMN paid_amount INTEGER NOT NULL DEFAULT 0',
+    'UPDATE bookings SET paid_amount = amount WHERE paid = 1 AND amount > 0',
+    'UPDATE event_joins SET paid_amount = amount WHERE paid = 1 AND amount > 0',
+  ],
+  // Round 4: the checkout link of a sign-up or game spot held while it's paid online, so its owner can finish paying
+  // from My Lair or the event on any device (GET /me sends it with held items, and only to the owner).
+  [
+    'ALTER TABLE bookings ADD COLUMN checkout_url TEXT',
+    'ALTER TABLE event_joins ADD COLUMN checkout_url TEXT',
+  ],
+];
+
+/** A row the way main's code wrote it: every column main had, by name */
+const insertRow = (sql, table, row) => sql.exec(`INSERT INTO ${table} (${Object.keys(row).join(', ')}) VALUES (${Object.keys(row).map(() => '?').join(', ')})`, ...Object.values(row));
+
+/**
+ * Round 4's rows: members with codes, a weekly game with a past session and four to come, two weekly regulars (Mia holds
+ * seats in the next three sessions, the way round 4 booked every session; Kai in the last one and the next), a staff
+ * pass with a use, a tab, a payment and an old birthday code. Times are around Thursday 1 October 2026, 1pm.
+ */
+function mainRows(sql) {
+  const created = NOW - 3 * 24 * HOUR;
+  const member = (customerId, name, code, extra = {}) => {
+    insertRow(sql, 'members', { customer_id: customerId, name, first_name: name.split(' ')[0], email: `${name.split(' ')[0].toLowerCase()}@example.com`, birthday: null, last_seen: created, created_at: created, updated_at: created, code, ...extra });
+    insertRow(sql, 'codes', { key: code.replace(/-/g, ''), code, kind: 'member', target_id: customerId, created_at: created });
+  };
+  member('1001', 'Sam Jones', 'SJ-BADGER-2', { birthday: '10-03' });
+  member('mia', 'Mia Hart', 'MH-OTTER-5');
+  member('kai', 'Kai Tane', 'KT-MOA-8');
+  member('gm', 'Ana Smith', 'AS-HELM-4');
+  insertRow(sql, 'spend', { order_id: 'gid://shopify/Order/400', customer_id: '1001', amount: 25000, source: 'pos', created_at: created });
+  insertRow(sql, 'series', {
+    id: 'sr_main1', schedule: 'weekly', gm_customer_id: 'gm', details: JSON.stringify({ title: 'Lost Mine', gm: 'Ana', blurb: 'Goblins!', seats: 4, gmFee: 500, schedule: 'weekly', system: 'D&D 5e', gmEmail: 'ana@example.com' }),
+    tables: '["A1"]', clock: 1080, length: 3 * HOUR, first_day: '2026-09-24', status: 'active', approved: 1, image_id: null, created_at: created, updated_at: created,
+  });
+  const days = ['2026-09-24', '2026-10-01', '2026-10-08', '2026-10-15', '2026-10-22'];
+  let n = 0;
+  const booking = (b) => {
+    n += 1;
+    insertRow(sql, 'bookings', {
+      id: b.id, ref: b.ref, kind: b.kind, status: b.status || 'confirmed', tables: JSON.stringify(b.tables), room: b.room || null, starts_at: b.start, ends_at: b.end,
+      people: b.people || 1, name: b.name, email: b.email || null, phone: null, notes: null, activity: b.activity || 'rpg', extras: '[]', pay: 'day', paid: b.paid ? 1 : 0,
+      amount: b.amount || 0, game_id: b.gameId || null, customer_id: b.customerId || null, hold_until: null, draft_order_id: null, order_id: b.orderId || null,
+      created_at: created + n, updated_at: created + n, party: b.party ? JSON.stringify(b.party) : null, arrived_at: b.arrivedAt || null, refund: null,
+      series_id: b.seriesId || null, occurrence_id: null, pass_id: b.passId || null, covered: b.covered || 0, paid_amount: b.paidAmount || 0, split: 0, checkout_url: null,
+    });
+    insertRow(sql, 'codes', { key: b.ref.replace(/-/g, ''), code: b.ref, kind: 'booking', target_id: b.id, created_at: created + n });
+  };
+  days.forEach((day, i) => {
+    insertRow(sql, 'games', {
+      id: `gm_m${i}`, title: 'Lost Mine', system: 'D&D 5e', gm: 'Ana', gm_customer_id: 'gm', gm_email: 'ana@example.com', level: 'new', age: 'All ages', tags: '[]', safety: '[]',
+      pregens: 1, blurb: 'Goblins!', tables: '["A1"]', starts_at: at(day, 18), ends_at: at(day, 21), seats: 4, status: 'open', credited: null, created_at: created, updated_at: created,
+      schedule: 'weekly', series_id: 'sr_main1', gm_fee: 500, seat_price: 1500, room: 'side-room-1', characters: 'pregens', bring: '', content_notes: '', session_zero: '',
+      gm_bio: '', image_id: null, fee_approved: 1,
+    });
+    booking({ id: `bk_gmh${i}`, ref: `AS-HELM-${i + 10}`, kind: 'gm', tables: ['A1'], room: 'side-room-1', start: at(day, 18), end: at(day, 21), people: 5, name: 'GM Ana', paid: true, gameId: `gm_m${i}`, customerId: 'gm' });
+  });
+  const regular = (customerId, name, joined) => insertRow(sql, 'series_members', {
+    series_id: 'sr_main1', customer_id: customerId, people: 1, players: JSON.stringify([{ name, character: '' }]), name, email: `${name.toLowerCase()}@example.com`, status: 'active', created_at: joined, updated_at: joined,
+  });
+  regular('mia', 'Mia', NOW - 12 * 24 * HOUR);
+  regular('kai', 'Kai', NOW - 11 * 24 * HOUR);
+  const seat = (id, ref, i, customerId, name, extra = {}) => booking({
+    id, ref, kind: 'gm-seat', tables: ['A1'], room: 'side-room-1', start: at(days[i], 18), end: at(days[i], 21), name, email: `${name.toLowerCase()}@example.com`, amount: 1500,
+    gameId: `gm_m${i}`, customerId, seriesId: 'sr_main1', party: [{ name, character: '' }], ...extra,
+  });
+  // Round 4 seated a regular at every upcoming session with room: Mia has the next three. Kai came last week without paying.
+  seat('bk_mia1', 'MH-WAND-1', 1, 'mia', 'Mia', { paid: true, paidAmount: 1500, orderId: 'gid://shopify/Order/401' });
+  seat('bk_mia2', 'MH-WAND-2', 2, 'mia', 'Mia');
+  seat('bk_mia3', 'MH-WAND-3', 3, 'mia', 'Mia');
+  seat('bk_kai0', 'KT-ROPE-1', 0, 'kai', 'Kai', { status: 'seated', arrivedAt: at(days[0], 18) });
+  seat('bk_kai1', 'KT-ROPE-2', 1, 'kai', 'Kai');
+  insertRow(sql, 'payments', { id: 'pm_main1', booking_id: 'bk_mia1', kind: 'booking', order_id: 'gid://shopify/Order/401', line_id: '4011', amount: 1500, customer_id: 'mia', at: created });
+  // A table today that a staff pass covered at check-in, the pass and its use.
+  booking({ id: 'bk_t1', ref: 'SJ-KIWI-9', kind: 'table', status: 'seated', tables: ['T5'], room: 'common-room', start: at('2026-10-01', 12), end: at('2026-10-01', 14), people: 1, name: 'Sam Jones', email: 'sam@example.com', amount: 1000, customerId: '1001', activity: 'board', arrivedAt: at('2026-10-01', 12), passId: 'ps_main1', covered: 1000, paid: true });
+  insertRow(sql, 'passes', { id: 'ps_main1', code: 'SJ-RUNE-6', label: 'Warhammer league: 10 sessions', sessions_total: 10, sessions_used: 1, cover: 1000, customer_id: '1001', holder_name: 'Sam Jones', holder_email: 'sam@example.com', note: 'Paid cash', price_paid: 8000, created_at: created, created_by: 'staff', expires_at: null, status: 'active' });
+  insertRow(sql, 'codes', { key: 'SJRUNE6', code: 'SJ-RUNE-6', kind: 'pass', target_id: 'ps_main1', created_at: created });
+  insertRow(sql, 'pass_uses', { id: 'pu_main1', pass_id: 'ps_main1', booking_id: 'bk_t1', people: 1, covered: 1000, at: at('2026-10-01', 12), by: 'staff', undone_at: null });
+  // Yesterday's tab never got paid; an old birthday code from the daily job.
+  insertRow(sql, 'tabs', { id: 'tb_main1', customer_id: '1001', day: '2026-09-30', items: JSON.stringify([{ variantId: '44100000000001', title: 'Flat white', variantTitle: '', price: 550, qty: 2 }]), total: 1100, status: 'in-cart', order_id: null, created_at: created, updated_at: created });
+  insertRow(sql, 'prizes', { id: 'pz_main1', customer_id: '1001', source: 'birthday', kind: 'percent', amount: null, percent: 15, code: 'BDAY-7K2QXM', expires_at: NOW + 10 * 24 * HOUR, status: 'added', period: '2026', note: null, created_at: created, updated_at: created });
+}
+
+test('live data: main\'s database (round 4) moves to round 5 with every row kept, and the old rows read the new fields sensibly', async () => {
+  const { MIGRATIONS } = await import('../src/lair.js');
+  assert.deepEqual(MIGRATIONS.slice(0, MAIN_MIGRATIONS.length), MAIN_MIGRATIONS, 'the migrations the live app has run are never edited');
+  assert.equal(MIGRATIONS.length, MAIN_MIGRATIONS.length + 1, 'round 5 adds one migration');
+  assert.ok(MIGRATIONS.at(-1).every((s) => /^\s*(ALTER TABLE \w+ ADD COLUMN|CREATE (UNIQUE )?INDEX IF NOT EXISTS|CREATE TABLE IF NOT EXISTS)/.test(s)), 'only new columns, tables and indexes');
+  const ctx = fakeCtx();
+  const { sql } = ctx.storage;
+  sql.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
+  for (const statement of MAIN_MIGRATIONS.flat()) sql.exec(statement);
+  sql.exec("INSERT INTO meta (key, value) VALUES ('schema', ?)", String(MAIN_MIGRATIONS.length));
+  mainRows(sql);
+  const tables = ['bookings', 'games', 'series', 'series_members', 'members', 'codes', 'passes', 'pass_uses', 'tabs', 'payments', 'prizes', 'spend'];
+  const counts = () => Object.fromEntries(tables.map((t) => [t, sql.exec(`SELECT COUNT(*) AS n FROM ${t}`).one().n]));
+  const before = counts();
+
+  // Deploying round 5: its code opens the same database, and the new migration runs once.
+  const open = () => {
+    lair = new Lair(ctx, { CURRENCY: 'NZD' });
+    lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: id === 'gm' });
+    lair.shopify.orderSpend = async () => null;
+    lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, []);
+    lair.rulesLoadedAt = NOW + 10 * 365 * 24 * HOUR;
+  };
+  open();
+  assert.equal(sql.exec("SELECT value FROM meta WHERE key = 'schema'").one().value, String(MIGRATIONS.length));
+  assert.deepEqual(counts(), before, 'no rows lost or added');
+  assert.equal(lair.owedFrom, NOW, 'owed seats count from the first start of round 5');
+
+  // Old rows read with the new fields filled in sensibly.
+  assert.deepEqual([lair.booking('bk_mia2').waived, lair.booking('bk_mia2').seriesId, lair.booking('bk_mia2').createdAt > 0], [false, 'sr_main1', true]);
+  const pass = (await call('GET', 'passes?q=SJ-RUNE-6', null, 'staff')).data.passes[0];
+  assert.deepEqual([pass.sessionsLeft, pass.uses.map((u) => u.ref)], [9, ['SJ-KIWI-9']]);
+
+  // Opening the database again runs nothing twice.
+  const after = counts();
+  open();
+  assert.equal(sql.exec("SELECT value FROM meta WHERE key = 'schema'").one().value, String(MIGRATIONS.length));
+  assert.deepEqual(counts(), after);
+  Date.now = () => NOW + HOUR;
+  open();
+  assert.equal(lair.owedFrom, NOW, 'a later start keeps the first one');
+});

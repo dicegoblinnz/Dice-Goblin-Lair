@@ -220,12 +220,35 @@ export const MIGRATIONS = [
     'ALTER TABLE bookings ADD COLUMN checkout_url TEXT',
     'ALTER TABLE event_joins ADD COLUMN checkout_url TEXT',
   ],
+  // Round 5 (4 Oct 2026). Only new columns, tables and indexes, so the live rows stay as they are:
+  //  - passes say where they came from: source 'staff' (empty on older passes), 'order' or 'birthday'. A pass sold as a
+  //    product keeps its order, line and unit, and that triple is unique, so a repeated webhook never makes a second.
+  //  - waived: staff let a weekly regular off a seat they owe.
+  //  - series_alerts: "the next session is full" emails for weekly regulars, once per session and member.
+  //  - gifts: birthday gifts staff give (store credit, a pass, dice rolls, a product code), one row each.
+  [
+    'ALTER TABLE passes ADD COLUMN source TEXT',
+    'ALTER TABLE passes ADD COLUMN order_id TEXT',
+    'ALTER TABLE passes ADD COLUMN order_name TEXT',
+    'ALTER TABLE passes ADD COLUMN order_line TEXT',
+    'ALTER TABLE passes ADD COLUMN order_unit INTEGER',
+    'CREATE UNIQUE INDEX IF NOT EXISTS passes_order_unit ON passes (order_id, order_line, order_unit) WHERE order_id IS NOT NULL',
+    'ALTER TABLE bookings ADD COLUMN waived INTEGER NOT NULL DEFAULT 0',
+    'CREATE TABLE IF NOT EXISTS series_alerts (game_id TEXT NOT NULL, customer_id TEXT NOT NULL, at INTEGER, PRIMARY KEY (game_id, customer_id))',
+    `CREATE TABLE IF NOT EXISTS gifts (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, year TEXT NOT NULL, credit INTEGER NOT NULL DEFAULT 0, credit_status TEXT,
+      sessions INTEGER NOT NULL DEFAULT 0, pass_id TEXT, rolls INTEGER NOT NULL DEFAULT 0, product_variant_id TEXT, product_title TEXT,
+      product_code TEXT, product_status TEXT, note TEXT, emailed INTEGER NOT NULL DEFAULT 0, problems TEXT, created_by TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS gifts_customer ON gifts (customer_id, created_at)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS gifts_product_code ON gifts (product_code) WHERE product_code IS NOT NULL',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
   'id', 'ref', 'kind', 'status', 'tables', 'room', 'starts_at', 'ends_at', 'people', 'name', 'email', 'phone', 'notes', 'activity',
   'extras', 'pay', 'paid', 'amount', 'game_id', 'customer_id', 'hold_until', 'draft_order_id', 'order_id', 'party', 'arrived_at',
-  'refund', 'series_id', 'occurrence_id', 'pass_id', 'covered', 'paid_amount', 'split', 'created_at', 'updated_at',
+  'refund', 'series_id', 'occurrence_id', 'pass_id', 'covered', 'paid_amount', 'split', 'waived', 'created_at', 'updated_at',
 ];
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
@@ -326,6 +349,10 @@ export class Lair {
       for (const statement of MIGRATIONS[version]) this.sql.exec(statement);
       this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)", String(version + 1));
     }
+    // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
+    // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
+    this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
+    this.owedFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'owed-from'").toArray()[0]?.value) || 0;
   }
 
   /** Every write goes through here, so cached floor data is dropped the moment anything changes. */
@@ -347,6 +374,8 @@ export class Lair {
       passId: r.pass_id || null, covered: r.covered || 0,
       // paidAmount: what's been paid so far (a split bill is paid in parts); split: the booker is splitting the bill.
       paidAmount: r.paid_amount || 0, split: Boolean(r.split),
+      // waived: staff let a weekly regular off what they owed for this seat, so nothing is due.
+      waived: Boolean(r.waived), createdAt: r.created_at || null,
     };
   }
 
@@ -451,7 +480,7 @@ export class Lair {
       b.phone || null, b.notes || null, b.activity || null, JSON.stringify(b.extras || []), b.pay || 'day', b.paid ? 1 : 0, b.amount || 0,
       b.gameId || null, b.customerId || null, b.holdUntil || null, b.draftOrderId || null, b.orderId || null,
       b.party?.length ? JSON.stringify(b.party) : null, b.arrivedAt || null, b.refund || null, b.seriesId || null, b.occurrenceId || null,
-      b.passId || null, b.covered || 0, b.paidAmount || 0, b.split ? 1 : 0, now, now,
+      b.passId || null, b.covered || 0, b.paidAmount || 0, b.split ? 1 : 0, b.waived ? 1 : 0, now, now,
     );
   }
 
@@ -3086,6 +3115,9 @@ export class Lair {
       id: r.id, code: r.code, label: r.label, sessionsTotal: r.sessions_total, sessionsUsed: r.sessions_used, cover: r.cover,
       customerId: r.customer_id || null, holderName: r.holder_name || '', holderEmail: r.holder_email || '', note: r.note || '',
       pricePaid: r.price_paid || 0, createdAt: r.created_at, createdBy: r.created_by || null, expiresAt: r.expires_at || null, status: r.status,
+      // Where it came from: 'staff' (made on the staff page; older passes have no source), 'order' (bought as a product)
+      // or 'birthday' (a birthday gift). orderName is the order that bought it, like "#1550".
+      source: r.source || 'staff', orderId: r.order_id || null, orderName: r.order_name || null,
     };
   }
 
