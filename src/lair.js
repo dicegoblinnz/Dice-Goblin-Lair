@@ -781,12 +781,14 @@ export class Lair {
     // Calendar events' tables: soft (marked for the event, still bookable) unless the event locks them. Bookings
     // and games are checked against the locked ones only.
     const holds = eventHolds(rules, from, to);
+    // Staff see every sign-up, like every booking: a cancelled one can still be waiting on a refund ('ask' or 'due')
+    // under "Refunds to sort". Places taken only count the ones still on.
     const joinRows = this.sql
-      .exec("SELECT * FROM event_joins WHERE ends_at > ? AND starts_at < ? AND status != 'cancelled'", from, to)
+      .exec(`SELECT * FROM event_joins WHERE ends_at > ? AND starts_at < ?${who.staff ? '' : " AND status != 'cancelled'"}`, from, to)
       .toArray()
       .map((r) => this.rowToJoin(r));
     const eventJoins = {};
-    for (const j of joinRows) eventJoins[j.occurrenceId] = (eventJoins[j.occurrenceId] || 0) + j.people;
+    for (const j of joinRows) if (j.status !== 'cancelled') eventJoins[j.occurrenceId] = (eventJoins[j.occurrenceId] || 0) + j.people;
     // Event dates with game spots: how many there are and how many are taken (by anyone, through any booking).
     const eventSpots = {};
     for (const o of eventOccurrences(rules, from, to)) {

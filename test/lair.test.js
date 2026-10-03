@@ -2189,6 +2189,11 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
     assert.equal(cancelled.data.notice, 'Your spot is cancelled. You paid online, so have a chat with us about a refund.');
     assert.equal(lair.joinById(online.data.join.id).refund, 'ask');
     assert.equal((await call('GET', 'floor')).data.eventJoins['warhammer@2026-10-03'], 1, 'the place is freed');
+    // Staff still see it, waiting on their refund decision (Refunds to sort), and it doesn't count as a place taken
+    const staffFloor = (await call('GET', 'floor', null, 'staff')).data;
+    const waiting = staffFloor.joins.find((x) => x.id === online.data.join.id);
+    assert.deepEqual([waiting.status, waiting.refund, waiting.paidAmount, staffFloor.eventJoins['warhammer@2026-10-03']], ['cancelled', 'ask', 4000, 1]);
+    assert.ok(!(await call('GET', 'floor')).data.joins, 'the public floor has no sign-ups at all');
     await settle();
     assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /^Refund\?/.test(m.subject)), 'the refund alert asks staff to decide');
     // Staff cancelling (the event's off) means the money goes back: refund 'due'.
