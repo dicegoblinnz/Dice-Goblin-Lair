@@ -9,7 +9,8 @@ import { money, plural } from './format.js';
  * A tab item ready for cart.addLineItem.
  * @typedef {{ variantId: number, qty: number, title: string, price: number }} TabItem
  * @typedef {{ id?: string | number, day?: string, items?: unknown[], total?: number, status?: string, updatedAt?: number }} Tab
- * @typedef {{ code?: string, label?: string, used?: number, left?: number, covered?: number }} UsedPass
+ * @typedef {{ code?: string, label?: string, used?: number, left?: number, covered?: number, useId?: string }} UsedPass
+ *   the pass a check-in used; useId undoes it (POST /pos/pass-undo)
  */
 
 /** "15.00" for a positive price, null otherwise. @param {unknown} price */

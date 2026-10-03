@@ -13,6 +13,7 @@ import {
   scanCode,
   shareBill,
   tabAdded,
+  undoPassUse,
 } from '../extensions/lair-checkin/src/lair.js';
 
 /** @type {{ url: string, init: RequestInit }[]} */
@@ -59,7 +60,7 @@ test('GET /pos/today with the POS session token', async () => {
   assert.deepEqual((await getToday()).groups, [], 'a roster without groups is an empty day');
 });
 
-test('POST /pos/scan, /pos/checkin, /pos/checkin-member, /pos/share and /pos/tab/:id/added send what the contract says', async () => {
+test('POST /pos/scan, /pos/checkin, /pos/checkin-member, /pos/share, /pos/pass-undo and /pos/tab/:id/added send what the contract says', async () => {
   pretend({ body: { ok: true } });
   await scanCode('SJ-OWLBEAR-17');
   await checkIn({ id: 'bk_sam', type: 'booking' });
@@ -69,6 +70,7 @@ test('POST /pos/scan, /pos/checkin, /pos/checkin-member, /pos/share and /pos/tab
   await shareBill({ id: 'bk_sam', type: 'booking' });
   await shareBill({ id: 'bk_sam', type: 'booking', amount: 1250 });
   await shareBill({ id: 'bk_sam', type: 'booking', amount: null });
+  await undoPassUse('pu_1');
   await tabAdded('tab 1');
   assert.deepEqual(
     requests.map((r) => [r.init.method, r.url.slice(LAIR_URL.length), JSON.parse(String(r.init.body))]),
@@ -81,6 +83,7 @@ test('POST /pos/scan, /pos/checkin, /pos/checkin-member, /pos/share and /pos/tab
       ['POST', '/pos/share', { id: 'bk_sam', type: 'booking' }],
       ['POST', '/pos/share', { id: 'bk_sam', type: 'booking', amount: 1250 }],
       ['POST', '/pos/share', { id: 'bk_sam', type: 'booking' }],
+      ['POST', '/pos/pass-undo', { useId: 'pu_1' }],
       ['POST', '/pos/tab/tab%201/added', {}],
     ],
   );
@@ -131,6 +134,9 @@ test("shows the Lair app's own message for 4xx answers", async () => {
 test('a bare "Not found" (an older Lair app without the route) gets a clearer sentence', async () => {
   pretend({ status: 404, body: { error: 'Not found' } });
   await assert.rejects(getToday(), { kind: 'not-found', message: "The Lair app doesn't have the Today list yet. It needs its latest update." });
+  await assert.rejects(undoPassUse('pu_1'), { kind: 'not-found', message: 'That pass use could not be found. Undo it on the staff page, under Passes.' });
+  pretend({ status: 404, body: { error: 'That pass use could not be found.' } });
+  await assert.rejects(undoPassUse('pu_x'), { kind: 'not-found', message: 'That pass use could not be found.' });
 });
 
 test('login problems and server errors', async () => {

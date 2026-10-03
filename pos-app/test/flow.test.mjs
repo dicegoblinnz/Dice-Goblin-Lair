@@ -10,14 +10,19 @@ import {
   nextScreen,
   NO_PASS,
   notALairCode,
+  openUseIds,
+  passChange,
+  passInUse,
   passOptions,
   passParam,
   passProblem,
   personPlan,
   personScreen,
+  recordUses,
   scanPurpose,
   stackAfterPerson,
   tabPlan,
+  undoNote,
   withGroups,
   wrongScan,
 } from '../extensions/lair-checkin/src/flow.js';
@@ -40,6 +45,8 @@ test('a booking or sign-up opens the person view, with the pass choice ready', (
     choice: null,
     result: null,
     split: { open: false, mode: 'person', custom: '', payer: null },
+    uses: [],
+    note: null,
   });
   const join = nextScreen({ type: 'join', row: { id: 'ej_1', ref: 'JO-PIXIE-1' }, group: null });
   assert.equal(join?.name === 'person' && join.row.type, 'join');
@@ -124,14 +131,85 @@ test('before check-in: the saved pass, the member’s other passes, or no pass',
   assert.equal(passParam(null, row), undefined);
 });
 
-test('once they’re here: only a pass for what’s left, and asking again never uses one by itself', () => {
+test('once they’re here with a pass in use: keep it, switch it, or use none', () => {
   const here = { ...row, status: 'seated', arrivedAt: at(3, 19), pass: kiwi, covered: 3000, due: 1500 };
   const members = [{ code: 'SJ-MOA-8', label: 'Gift pack', sessionsLeft: 3, status: 'active' }, { code: 'SJ-KIWI-4', label: 'Warhammer league', sessionsLeft: 4, status: 'active' }];
-  assert.deepEqual(passOptions(here, members), { options: [{ value: 'SJ-MOA-8', label: 'Gift pack · 3 left' }], picked: null });
-  assert.deepEqual(passOptions({ ...here, due: 0 }, members), { options: [], picked: null });
-  assert.deepEqual(passOptions({ ...here, covered: 0, due: 4500 }, []).options.map((o) => o.value), ['SJ-KIWI-4'], 'saved but not used yet');
-  assert.equal(passParam(null, here), 'none');
+  // Checked in earlier: the booking's own pass is the one in use.
+  const inUse = passInUse(here, []);
+  assert.deepEqual(inUse, { code: 'SJ-KIWI-4', label: 'Warhammer league', left: 7 });
+  assert.deepEqual(passOptions(here, members, inUse), {
+    options: [
+      { value: 'SJ-KIWI-4', label: 'Warhammer league · 7 left (in use)' },
+      { value: 'SJ-MOA-8', label: 'Gift pack · 3 left' },
+      { value: NO_PASS, label: "Don't use a pass" },
+    ],
+    picked: 'SJ-KIWI-4',
+  });
+  assert.equal(passOptions({ ...here, due: 0 }, members, inUse).picked, 'SJ-KIWI-4', 'covered in full: still switchable');
+  assert.deepEqual(passChange(inUse, 'SJ-KIWI-4'), { action: 'none', pass: '', label: '' });
+  assert.deepEqual(passChange(inUse, 'sj moa 8'), { action: 'switch', pass: 'sj moa 8', label: 'Switch to this pass' });
+  assert.deepEqual(passChange(inUse, NO_PASS), { action: 'switch', pass: NO_PASS, label: 'Check in again without a pass' });
   assert.equal(passParam('SJ-MOA-8', here), 'SJ-MOA-8');
+  assert.equal(passParam(NO_PASS, here), 'none');
+});
+
+test('once they’re here with no pass in use: only a pass for what’s left, and asking again never uses one by itself', () => {
+  const here = { ...row, status: 'seated', arrivedAt: at(3, 19), pass: kiwi, covered: 0, due: 4500 };
+  const members = [{ code: 'SJ-MOA-8', label: 'Gift pack', sessionsLeft: 3, status: 'active' }];
+  assert.equal(passInUse(here, []), null);
+  assert.deepEqual(passOptions(here, members, null), {
+    options: [
+      { value: 'SJ-KIWI-4', label: 'Warhammer league · 7 left (saved on the booking)' },
+      { value: 'SJ-MOA-8', label: 'Gift pack · 3 left' },
+    ],
+    picked: null,
+  });
+  assert.deepEqual(passOptions({ ...here, due: 0 }, members, null), { options: [], picked: null });
+  assert.deepEqual(passChange(null, 'SJ-MOA-8'), { action: 'use', pass: 'SJ-MOA-8', label: 'Use this pass' });
+  assert.deepEqual(passChange(null, NO_PASS), { action: 'none', pass: '', label: '' });
+  assert.deepEqual(passChange(null, null), { action: 'none', pass: '', label: '' });
+  assert.equal(passParam(null, here), 'none');
+});
+
+test('remembers the pass uses it sees, so they can be undone', () => {
+  const answer = { row, pass: { code: 'SJ-KIWI-4', label: 'Warhammer league', used: 3, left: 4, covered: 3000, useId: 'pu_1' } };
+  const uses = recordUses([], answer);
+  assert.deepEqual(uses, [{ useId: 'pu_1', code: 'SJ-KIWI-4', label: 'Warhammer league', covered: 3000, used: 3, left: 4 }]);
+  assert.equal(recordUses(uses, answer), uses, 'the same use once');
+  assert.equal(recordUses(uses, { row, pass: null }), uses);
+  assert.equal(recordUses(uses, { row, pass: { code: 'X' } }), uses, 'no useId (an older Lair app)');
+  const second = recordUses(uses, { pass: { code: 'SJ-MOA-8', label: 'Gift pack', used: 1, left: 2, covered: 1000, useId: 'pu_2' } });
+  assert.deepEqual(second.map((u) => u.useId), ['pu_1', 'pu_2']);
+  // The last one used is the one in use.
+  assert.deepEqual(passInUse({ ...row, covered: 4000 }, second), { code: 'SJ-MOA-8', label: 'Gift pack', left: 2 });
+  assert.equal(passInUse({ ...row, covered: 0 }, second), null, 'nothing covered: undone elsewhere');
+  // A check-in that used a pass opens the person view with that use known.
+  const screen = personScreen(row, { result: { ...answer, row: { ...row, status: 'seated', arrivedAt: 1, covered: 3000, due: 1500 } } });
+  assert.deepEqual(screen.uses.map((u) => u.useId), ['pu_1']);
+  assert.equal(screen.choice, 'SJ-KIWI-4', 'the pass in use starts picked');
+});
+
+test('finds a booking’s pass uses from the pass itself, and says what undoing did', () => {
+  const pass = {
+    code: 'SJ-KIWI-4',
+    label: 'Warhammer league',
+    sessionsLeft: 7,
+    uses: [
+      { id: 'pu_1', bookingId: 'bk_sam', ref: 'SJ-OWLBEAR-17', people: 3, covered: 3000, at: 1, undone: null },
+      { id: 'pu_0', bookingId: 'bk_sam', ref: 'SJ-OWLBEAR-17', people: 1, covered: 1000, at: 0, undone: 5 },
+      { id: 'pu_9', bookingId: 'bk_ana', ref: 'AS-GOLEM-12', people: 1, covered: 1000, at: 2, undone: null },
+    ],
+  };
+  assert.deepEqual(openUseIds(pass, 'bk_sam'), ['pu_1']);
+  assert.deepEqual(openUseIds({ code: 'X' }, 'bk_sam'), []);
+  assert.deepEqual(undoNote([{ pass, row: { ...row, covered: 0, due: 4500 } }], { ...row, covered: 0, due: 4500 }), {
+    heading: 'Pass undone. $45 to pay.',
+    body: 'Warhammer league has 7 sessions left.',
+  });
+  assert.deepEqual(undoNote([{ pass: { code: 'P', label: 'Gift pack' }, row: null }], { ...row, due: 0, paid: true }), {
+    heading: 'Pass undone. Nothing to pay.',
+    body: 'The session is back on Gift pack.',
+  });
 });
 
 test('what a check-in answer means', () => {

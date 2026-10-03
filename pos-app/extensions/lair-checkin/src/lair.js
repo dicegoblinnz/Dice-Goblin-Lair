@@ -80,6 +80,16 @@ export function shareBill({ id, type, amount }) {
 }
 
 /**
+ * Gives a pass use back: the sessions go back on the pass, and the booking owes what the pass covered. The same as
+ * the staff page's undo. Answers `{ pass, row }`.
+ * @param {string} useId from a check-in answer's `pass.useId`, or the pass's own `uses`
+ * @returns {Promise<any>}
+ */
+export function undoPassUse(useId) {
+  return call('POST', '/pos/pass-undo', { useId }, 'That pass use could not be found. Undo it on the staff page, under Passes.');
+}
+
+/**
  * Tells the Lair app a member's tab is in the cart (so they can't change it while they pay). Answers `{ tab }`.
  * @param {string | number} tabId
  * @returns {Promise<any>}
