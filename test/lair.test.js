@@ -1192,6 +1192,25 @@ test('GM games: $0 fee means players pay the table fee only; flexible games add 
   assert.ok(sessions.length === 2 && sessions.every((g) => g.image === pic.data.image));
   assert.deepEqual(sessions.map((g) => g.series.schedule), ['flexible', 'flexible']);
 
+  // Staff can change any game's picture (round 5): a GM's own game, or one they listed for a GM.
+  const listed = await call('POST', 'games', {
+    title: 'Counter one-shot', system: 'Other', gm: 'Ana', gmEmail: 'ana@example.com', blurb: 'Listed for Ana.', seats: 4, tables: ['B3'], start: at('2026-10-02', 18), end: at('2026-10-02', 21),
+  }, 'staff');
+  assert.equal(listed.status, 200, listed.data.error);
+  assert.match(listed.data.notice, /isn't linked to their account/, 'no member has that email yet');
+  for (const id of [free.data.game.id, listed.data.game.id]) {
+    const staffPic = await call('POST', `games/${id}/image`, { dataUrl: png }, 'staff');
+    assert.equal(staffPic.status, 200, staffPic.data.error);
+    assert.equal((await call('GET', 'floor', null, 'staff')).data.games.find((g) => g.id === id).image, staffPic.data.image);
+  }
+  assert.deepEqual(
+    await call('POST', `games/${free.data.game.id}/image`, { dataUrl: png }, 'tui').then((r) => [r.status, r.data.error]),
+    [403, 'Only the GM or staff can change the picture.'],
+    'another member or GM: no',
+  );
+  assert.equal((await call('POST', `games/${free.data.game.id}/image`, { dataUrl: png }, 'gm')).status, 200, 'the GM still can');
+  assert.equal((await call('POST', 'games/gm_nope/image', { dataUrl: png }, 'staff')).status, 404);
+
   assert.equal((await call('POST', 'gm-profile', { name: 'Ana', bio: 'Rules-light and story-heavy.' })).status, 401);
   assert.equal((await call('POST', 'gm-profile', { name: 'Ana', bio: 'Rules-light and story-heavy.' }, 'gm')).status, 200);
   const me = (await call('GET', 'me', null, 'gm')).data;
@@ -1830,7 +1849,7 @@ test('dice: when Shopify can\'t add the store credit, the prize is kept as pendi
   }
 });
 
-test('birthdays: once a day after 9am, members with a birthday in the next 7 days get a code tiered by spend; once a year; staff get a list', async () => {
+test('birthdays: the daily job makes no codes any more; once a day after 9am the staff get the week\'s birthdays with a suggested gift, only when there\'s one', async () => {
   const { nextBirthday } = await import('../src/core.js');
   assert.equal(nextBirthday('02-29', '2026-10-01'), '2027-02-28');
   assert.equal(nextBirthday('02-29', '2027-10-01'), '2028-02-29');
@@ -1838,52 +1857,69 @@ test('birthdays: once a day after 9am, members with a birthday in the next 7 day
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.appInfo = async () => ({ app: 'Dice Goblin Lair', shop: 'Dice Goblin', scopes: [] });
   lair.shopify.webhookUris = async () => ['https://lair.test/webhooks/orders-paid'];
-  const codes = [];
-  lair.shopify.createPrizeCode = async (input) => codes.push(input);
+  lair.shopify.createPrizeCode = async () => assert.fail('no birthday codes are made by themselves');
+  lair.shopify.creditCustomer = async () => assert.fail('nothing is given by itself');
   const member = (id, name, email, birthday, spend) => {
     lair.write('INSERT INTO members (customer_id, name, first_name, email, birthday, last_seen) VALUES (?, ?, ?, ?, ?, ?)', id, name, name.split(' ')[0], email, birthday, NOW);
     if (spend) lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', `o-${id}`, id, spend, 'pos', NOW - 30 * 24 * HOUR);
   };
-  member('2001', 'Ana Small', 'ana@example.com', '10-04', 5000); // in 3 days, $50 → 10%
-  member('2002', 'Ben Middle', 'ben@example.com', '10-07', 25000); // in 6 days, $250 → 15%
-  member('2003', 'Cat Later', 'cat@example.com', '10-11', 90000); // in 10 days: not yet
-  member('2004', 'Dee Today', 'dee@example.com', '10-01', 60000); // today, $600 → 20%
-  member('2005', 'Eru Noemail', null, '10-03', 0); // no email: the code still shows in My Lair
+  member('2001', 'Ana Small', 'ana@example.com', '10-04', 5000); // in 3 days: $50 → $2 to $3
+  member('2002', 'Ben Middle', 'ben@example.com', '10-07', 25000); // in 6 days: $250 → $5 to $13
+  member('2003', 'Cat Later', 'cat@example.com', '10-11', 90000); // in 10 days: not this week
+  member('2004', 'Dee Today', 'dee@example.com', '10-01', 60000); // today: $600 → $12 to $30
+  member('2005', 'Eru Noemail', null, '10-03', 0); // no spend: $2 to $2
   const mail = captureEmails();
   try {
     Date.now = () => at('2026-10-01', 8, 50);
-    assert.equal(await lair.birthdays(lair.rulesCache, Date.now()), null, 'nothing before 9am');
+    assert.equal((await maintenance()).data.birthdays, undefined, 'nothing before 9am');
     Date.now = () => NOW;
-    const run = await internal('maintenance', { webhookUrl: 'https://lair.test/webhooks/orders-paid' });
-    assert.deepEqual(run.data.birthdays, { sent: 4, codes: 4 });
-    assert.deepEqual(codes.map((c) => [c.customerId, c.percent]), [['2004', 0.2], ['2005', 0.1], ['2001', 0.1], ['2002', 0.15]]);
-    assert.ok(codes.every((c) => /^BDAY-/.test(c.code) && c.endsAt === NOW + 14 * 24 * HOUR && !c.combinesWith.orderDiscounts && !c.combinesWith.productDiscounts));
+    const run = await maintenance();
+    assert.deepEqual(run.data.birthdays, { sent: 1, birthdays: 4 });
     await settle();
-    const toMembers = mail.sent.filter((m) => m.to !== 'staff@dicegoblin.test');
-    assert.deepEqual(toMembers.map((m) => m.to).sort(), ['ana@example.com', 'ben@example.com', 'dee@example.com']);
-    const ben = toMembers.find((m) => m.to === 'ben@example.com');
-    assert.match(ben.subject, /Happy birthday, Ben!/);
-    assert.match(ben.text, /15% off one order/);
-    assert.match(ben.text, new RegExp(codes[3].code));
-    const summary = mail.sent.find((m) => m.to === 'staff@dicegoblin.test');
-    assert.match(summary.subject, /Birthday codes: 4 sent/);
-    assert.match(summary.text, /Eru Noemail: +10% off, BDAY-.*No email/);
-    // Birthday codes are emailed; My Lair's prizes list is the dice.
-    assert.deepEqual((await call('GET', 'me', null, '2002')).data.prizes, []);
-    assert.equal(lair.sql.exec("SELECT status FROM prizes WHERE customer_id = '2002' AND source = 'birthday'").one().status, 'added');
+    assert.deepEqual(mail.sent.map((m) => m.to), ['staff@dicegoblin.test'], 'only the staff hear: members get nothing by themselves');
+    const [summary] = mail.sent;
+    assert.equal(summary.subject, 'Birthdays this week: 4');
+    assert.match(summary.text, /4 members have a birthday in the next week\. Pick a gift for each on the staff page, under Members/);
+    const lines = summary.text.split('\n').filter((l) => /Suggested gift/.test(l)).map((l) => l.replace(/ +/g, ' '));
+    assert.deepEqual(lines, [
+      'Dee Today: Today. Suggested gift: $12 to $30.',
+      'Eru Noemail: Saturday 3 October. Suggested gift: $2 to $2.',
+      'Ana Small: Sunday 4 October. Suggested gift: $2 to $3.',
+      'Ben Middle: Wednesday 7 October. Suggested gift: $5 to $13.',
+    ]);
+    assert.match(summary.html, /href="https:\/\/www\.dicegoblin\.nz\/pages\/lair-staff#members"/, 'the button opens the Members tab');
+    assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM prizes WHERE source = 'birthday'").one().n, 0);
 
-    // Later runs that day, the next day, or after editing a birthday: no second code.
-    assert.equal(await lair.birthdays(lair.rulesCache, NOW + HOUR), null);
-    await call('POST', 'me/profile', { birthday: '10-05' }, '2001');
-    Date.now = () => NOW + 24 * HOUR;
-    assert.deepEqual(await lair.birthdays(lair.rulesCache, Date.now()), { sent: 0 });
-    assert.equal(codes.length, 4);
+    // Once a day: a later run, or the app starting again, sends nothing more.
+    mail.sent.length = 0;
+    Date.now = () => at('2026-10-01', 15);
+    assert.equal((await maintenance()).data.birthdays, undefined);
+    const restarted = lair;
+    lair = new Lair(restarted.ctx, { CURRENCY: 'NZD' });
+    Object.assign(lair, { person: restarted.person, rulesCache: restarted.rulesCache, rulesLoadedAt: restarted.rulesLoadedAt, baseEnv: restarted.baseEnv, shopify: restarted.shopify });
+    assert.equal((await maintenance()).data.birthdays, undefined, 'the day it was sent is kept in the database');
+    await settle();
+    assert.equal(mail.sent.length, 0);
+
+    // The next day: the week ahead again, saying who's had a gift this year.
+    lair.write("INSERT INTO gifts (id, customer_id, year, credit, created_at) VALUES ('gf_ana', '2001', '2026', 500, ?)", NOW);
+    Date.now = () => at('2026-10-02', 10);
+    assert.deepEqual((await maintenance()).data.birthdays, { sent: 1, birthdays: 3 });
+    await settle();
+    assert.match(mail.sent[0].text, /Ana Small: +Sunday 4 October\. Suggested gift: \$2 to \$3\. Already had a gift this year\./);
+    // A week with no birthdays: no email.
+    mail.sent.length = 0;
+    lair.write('UPDATE members SET birthday = NULL');
+    Date.now = () => at('2026-10-03', 10);
+    assert.deepEqual((await maintenance()).data.birthdays, { sent: 0 });
+    await settle();
+    assert.equal(mail.sent.length, 0);
   } finally {
     mail.restore();
   }
 });
 
-test('GET /members/birthdays (staff): the next 30 days, soonest first, with spend and the code each gets', async () => {
+test('GET /members/birthdays (staff): the next 30 days, soonest first, with spend, a suggested gift, and gifts given', async () => {
   const member = (id, name, birthday, spend) => {
     lair.write('INSERT INTO members (customer_id, name, first_name, email, birthday, last_seen) VALUES (?, ?, ?, ?, ?, ?)', id, name, name, `${id}@example.com`, birthday, NOW);
     if (spend) lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', `o-${id}`, id, spend, 'web', NOW);
@@ -1892,12 +1928,194 @@ test('GET /members/birthdays (staff): the next 30 days, soonest first, with spen
   member('3002', 'Soon', '10-02', 0);
   member('3003', 'Too far', '11-15', 0);
   member('3004', 'Nobody knows', null, 0);
+  lair.write("INSERT INTO gifts (id, customer_id, year, credit, sessions, rolls, created_at) VALUES ('gf_old', '3001', '2025', 1000, 0, 0, ?)", NOW - 300 * 24 * HOUR);
   assert.equal((await call('GET', 'members/birthdays', null, '3001')).status, 403);
   const list = (await call('GET', 'members/birthdays', null, 'staff')).data;
-  assert.deepEqual(list.map((m) => [m.customerId, m.date, m.days, m.percent, m.sent, m.spendYear]), [
-    ['3002', '2026-10-02', 1, 10, false, 0],
-    ['3001', '2026-10-25', 24, 15, false, 12000],
+  assert.deepEqual(list.map((m) => [m.customerId, m.date, m.days, m.spendYear, m.suggested, m.giftedThisYear, m.lastGift?.id ?? null]), [
+    ['3002', '2026-10-02', 1, 0, { low: 2, high: 2 }, false, null],
+    ['3001', '2026-10-25', 24, 12000, { low: 2, high: 6 }, false, 'gf_old'],
   ]);
+  assert.deepEqual(list[1].lastGift, { id: 'gf_old', at: NOW - 300 * 24 * HOUR, credit: 1000, sessions: 0, passCode: null, rolls: 0, product: null, emailed: false, problems: [] });
+});
+
+/** POST /members/:id/gift as staff (or as `who`) */
+const giveGift = (body, id = '1001', who = 'staff') => call('POST', `members/${id}/gift`, body, who);
+
+/** Shopify for the gift tests: store credit and discount codes recorded, or failing with `fail` */
+function giftShopify({ creditFails = null, codeFails = null } = {}) {
+  Object.defineProperty(lair.shopify, 'configured', { value: true, configurable: true });
+  const credits = [];
+  const codes = [];
+  lair.shopify.creditCustomer = async (customerId, cents, currency) => {
+    if (creditFails) throw new Error(creditFails);
+    credits.push([customerId, cents, currency]);
+  };
+  lair.shopify.createPrizeCode = async (input) => {
+    if (codeFails) throw new Error(codeFails);
+    codes.push(input);
+    return `gid://shopify/DiscountCodeNode/${codes.length}`;
+  };
+  return { credits, codes };
+}
+
+test('birthday gifts: staff give store credit, sessions, dice rolls and a product in one go; each is theirs, the email lists them all, and My Lair shows them', async () => {
+  const shop = giftShopify();
+  await call('POST', 'me/profile', { name: 'Aroha Smith', email: 'aroha@example.com', birthday: '10-03' }, '1001');
+  const code = (await call('GET', 'me', null, '1001')).data.member.code;
+  const key = code.replace(/-/g, '');
+  const mail = captureEmails();
+  try {
+    // Staff only, a member, and at least one gift that makes sense. A refused gift saves nothing.
+    assert.equal((await giveGift({ credit: 10 }, '1001', '1001')).status, 403);
+    const refused = async (body, error, status = 422, id = '1001') => {
+      const res = await giveGift(body, id);
+      assert.deepEqual([res.status, res.data.error], [status, error], JSON.stringify(body));
+    };
+    await refused({ credit: 10 }, 'No member with that customer ID.', 404, '4040');
+    await refused({}, 'Pick at least one gift: store credit, sessions, dice rolls or a product.');
+    await refused({ credit: 0, sessions: 0, rolls: '', productVariantId: '' }, 'Pick at least one gift: store credit, sessions, dice rolls or a product.');
+    await refused({ credit: 1001 }, 'Store credit goes up to $1000. Check the amount.');
+    await refused({ credit: -5 }, 'Store credit goes up to $1000. Check the amount.');
+    await refused({ credit: 'lots' }, 'Store credit goes up to $1000. Check the amount.');
+    await refused({ sessions: 21 }, 'Sessions go from 1 to 20.');
+    await refused({ sessions: 2.5 }, 'Sessions go from 1 to 20.');
+    await refused({ rolls: -1 }, 'Dice rolls go from 1 to 20.');
+    await refused({ productVariantId: 'blue-dice', productTitle: 'Blue dice' }, "That product doesn't look right. Pick it again.");
+    assert.deepEqual([lair.sql.exec('SELECT COUNT(*) AS n FROM gifts').one().n, lair.sql.exec('SELECT COUNT(*) AS n FROM passes').one().n, shop.credits, shop.codes], [0, 0, [], []]);
+
+    const res = await giveGift({
+      credit: 15, sessions: 3, rolls: 2, productVariantId: 'gid://shopify/ProductVariant/50371432939623', productTitle: 'Blue d20 set',
+      note: 'Happy birthday from all of us!', notify: true,
+    });
+    assert.equal(res.status, 200, res.data.error);
+    const { gift } = res.data;
+    assert.match(gift.passCode, /^AS-[A-Z]{3,9}-([1-9]|1\d|20)$/);
+    assert.deepEqual(gift, {
+      id: gift.id, at: NOW, credit: 1500, sessions: 3, passCode: gift.passCode, rolls: 2, product: { title: 'Blue d20 set', code: `HBD-${key}` }, emailed: true, problems: [],
+    });
+    // Shopify: $15 of store credit, and a one-use code for that one variant, just for them, for 30 days
+    assert.deepEqual(shop.credits, [['1001', 1500, 'NZD']]);
+    const [made] = shop.codes;
+    assert.deepEqual(
+      [made.code, made.percent, made.variantId, made.customerId, made.endsAt],
+      [`HBD-${key}`, 1, '50371432939623', '1001', NOW + 30 * 24 * HOUR],
+    );
+    assert.match(made.title, new RegExp(`^Birthday gift: Blue d20 set for Aroha Smith \\(HBD-${key}\\)$`));
+    // The sessions are a pass of theirs
+    const pass = await passNamed(gift.passCode);
+    assert.deepEqual(
+      [pass.label, pass.sessionsTotal, pass.sessionsLeft, pass.cover, pass.pricePaid, pass.source, pass.orderName, pass.holder, pass.note, pass.expiresAt],
+      ['Birthday gift: 3 sessions', 3, 3, 1000, 0, 'birthday', null, { customerId: '1001', name: 'Aroha Smith', email: 'aroha@example.com' }, 'Happy birthday from all of us!', null],
+    );
+    // The email lists every part, the product with its code
+    await settle();
+    assert.equal(mail.sent.length, 1);
+    const [email] = mail.sent;
+    assert.deepEqual([email.to, email.subject], ['aroha@example.com', 'Happy birthday from Gobgob, Aroha!']);
+    assert.match(email.html, /Happy birthday from Gobgob!/);
+    assert.match(email.text, /^> Happy birthday from all of us!$/m);
+    assert.match(email.text, /^Store credit: +\$15, on your account now\. Spend it in the shop or online\.$/m);
+    assert.match(email.text, new RegExp(`^Table sessions: +3 sessions on a pass, ${gift.passCode}\\. Use it when you book, or show the code at the counter\\.$`, 'm'));
+    assert.match(email.text, /^Dice rolls: +2 extra rolls\. Roll them in My Lair whenever you like\.$/m);
+    assert.match(email.text, new RegExp(`^Blue d20 set: +Yours free with code HBD-${key}, in the shop or online\\. It works once, just for you, until 31 October\\.$`, 'm'));
+
+    // My Lair: the gift, the pass and two rolls without spending a cent. A gifted roll rolls like any other.
+    const me = (await call('GET', 'me', null, '1001')).data;
+    assert.deepEqual(me.gifts, [{ at: NOW, credit: 1500, sessions: 3, rolls: 2, product: { title: 'Blue d20 set', code: `HBD-${key}` } }]);
+    assert.deepEqual(me.passes.map((p) => [p.code, p.label, p.sessionsLeft, p.source]), [[gift.passCode, 'Birthday gift: 3 sessions', 3, 'birthday']]);
+    assert.equal(me.rolls.available, 2);
+    const unload = loadDice([5]);
+    try {
+      const rolled = await roll({ kind: 'spend' }, '1001');
+      assert.equal(rolled.status, 200, rolled.data.error);
+      assert.equal(rolled.data.rolls.available, 1);
+    } finally {
+      unload();
+    }
+    // Staff: Members and the birthday list say they've had a gift this year
+    const found = (await call('GET', 'members?q=aroha', null, 'staff')).data[0];
+    assert.deepEqual([found.giftedThisYear, found.rollsGifted, found.rollsUsed], [true, 2, 1]);
+    const birthday = (await call('GET', 'members/birthdays', null, 'staff')).data.find((m) => m.customerId === '1001');
+    assert.deepEqual([birthday.giftedThisYear, birthday.lastGift], [true, gift]);
+
+    // Another product gets its own code; without notify there's no email.
+    const again = await giveGift({ productVariantId: '50371432972391', productTitle: 'Sticker pack' });
+    assert.deepEqual([again.data.gift.product, again.data.gift.emailed, again.data.gift.passCode], [{ title: 'Sticker pack', code: `HBD-${key}-2` }, false, null]);
+    assert.equal(shop.codes[1].code, `HBD-${key}-2`);
+    await settle();
+    assert.equal(mail.sent.length, 1);
+    assert.deepEqual((await call('GET', 'me', null, '1001')).data.gifts.map((g) => g.product?.code), [`HBD-${key}-2`, `HBD-${key}`], 'newest first');
+  } finally {
+    mail.restore();
+  }
+});
+
+test('birthday gifts: each part that fails goes in problems on its own, and the rest still goes through', async () => {
+  await call('POST', 'me/profile', { name: 'Aroha Smith', email: 'aroha@example.com' }, '1001');
+  await call('POST', 'me/profile', { name: 'Eru Quiet' }, '1002');
+  const everything = { credit: 15, sessions: 2, rolls: 1, productVariantId: '50371432939623', productTitle: 'Blue d20 set', notify: true };
+  const mail = captureEmails();
+  try {
+    // 1. The store credit fails (no permission): the code, the pass, the rolls and the email still happen.
+    let shop = giftShopify({ creditFails: 'Shopify API: Access denied for storeCreditAccountCredit field.' });
+    const noCredit = (await giveGift(everything)).data.gift;
+    assert.deepEqual(noCredit.problems, ["The $15 store credit didn't go on (Access denied for storeCreditAccountCredit field). Add it in Shopify admin, or give it at the counter."]);
+    assert.deepEqual([noCredit.credit, noCredit.sessions, noCredit.rolls, noCredit.product?.code, noCredit.emailed, shop.codes.length], [1500, 2, 1, noCredit.product.code, true, 1]);
+    assert.match(noCredit.product.code, /^HBD-/);
+    assert.ok(noCredit.passCode);
+    await settle();
+    assert.match(mail.sent[0].text, /^Store credit: +\$15\. We'll pop it on your account at the counter\.$/m);
+    assert.match(mail.sent[0].text, /Yours free with code HBD-/);
+
+    // 2. The product code fails: the credit, the pass, the rolls and the email still happen. The email sends them to the counter.
+    mail.sent.length = 0;
+    shop = giftShopify({ codeFails: 'Shopify API: Access denied for discountCodeBasicCreate field.' });
+    const noCode = (await giveGift(everything)).data.gift;
+    assert.deepEqual(noCode.problems, ["Shopify couldn't make the code for Blue d20 set (Access denied for discountCodeBasicCreate field). Give it to them at the counter."]);
+    assert.deepEqual([noCode.product, noCode.emailed, shop.credits], [{ title: 'Blue d20 set', code: null }, true, [['1001', 1500, 'NZD']]]);
+    assert.ok(noCode.passCode);
+    await settle();
+    assert.match(mail.sent[0].text, /^Blue d20 set: +Yours free: show this email at the counter to pick it up\.$/m);
+    assert.match(mail.sent[0].text, /on your account now/);
+
+    // 3. The email can't go (no email on file): the credit, the code, the pass and the rolls still happen.
+    mail.sent.length = 0;
+    shop = giftShopify();
+    const noEmail = (await giveGift(everything, '1002')).data.gift;
+    assert.deepEqual(noEmail.problems, ['They have no email on file, so no birthday email went out. Let them know at the counter.']);
+    assert.deepEqual([noEmail.emailed, shop.credits, shop.codes.map((c) => c.customerId)], [false, [['1002', 1500, 'NZD']], ['1002']]);
+    assert.ok(noEmail.passCode && noEmail.product.code);
+    // ... and emails aren't set up at all
+    mail.restore();
+    lair.baseEnv = { ...lair.baseEnv, RESEND_API_KEY: '' };
+    const noMail = (await giveGift({ rolls: 1, notify: true })).data.gift;
+    assert.deepEqual([noMail.emailed, noMail.problems], [false, ["Emails aren't set up, so no birthday email went out. Let them know at the counter."]]);
+    await settle();
+    assert.equal(mail.sent.length, 0);
+
+    // 4. Shopify isn't connected: the credit and the code both fail, the pass and the rolls are still theirs.
+    Object.defineProperty(lair.shopify, 'configured', { value: false, configurable: true });
+    const offline = (await giveGift({ credit: 5, sessions: 1, rolls: 3, productVariantId: '50371432939623', productTitle: 'Blue d20 set' })).data.gift;
+    assert.deepEqual(offline.problems, [
+      "The $5 store credit didn't go on (Shopify is not connected). Add it in Shopify admin, or give it at the counter.",
+      "Shopify couldn't make the code for Blue d20 set (Shopify is not connected). Give it to them at the counter.",
+    ]);
+    assert.deepEqual([offline.sessions, offline.rolls, offline.product], [1, 3, { title: 'Blue d20 set', code: null }]);
+    assert.equal((await passNamed(offline.passCode)).holder.customerId, '1001');
+
+    // What My Lair and the staff see: every gift, problems kept with it; rolls 1 + 1 + 3; two passes of two sessions and one of one.
+    const me = (await call('GET', 'me', null, '1001')).data;
+    assert.equal(me.gifts.length, 4, "Eru's gift is Eru's");
+    assert.deepEqual(me.gifts.map((g) => g.product?.code ?? null), [null, null, null, noCredit.product.code], 'newest first');
+    assert.equal(me.rolls.available, 1 + 1 + 1 + 3);
+    assert.deepEqual(me.passes.map((p) => p.sessionsLeft).sort(), [1, 2, 2]);
+    const lastGift = (await call('GET', 'members/birthdays', null, 'staff')).data.find((m) => m.customerId === '1001')?.lastGift;
+    assert.equal(lastGift, undefined, 'no birthday on file, so not on the birthday list');
+    const stored = lair.sql.exec("SELECT credit_status, product_status, emailed FROM gifts WHERE customer_id = '1001' ORDER BY created_at, rowid").toArray().map((r) => [r.credit_status, r.product_status, r.emailed]);
+    assert.deepEqual(stored, [['failed', 'added', 1], ['added', 'failed', 1], [null, null, 0], ['failed', 'failed', 0]]);
+  } finally {
+    mail.restore();
+  }
 });
 
 /** The 10-minute maintenance, as the cron trigger runs it */

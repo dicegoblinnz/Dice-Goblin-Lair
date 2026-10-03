@@ -5,8 +5,8 @@
 // with no `await` in between. Where a Shopify call has to come after a write (checkouts, store credit), the
 // handler claims the row first and afterwards only updates the columns it owns.
 import {
-  ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, checkGameDetails,
-  checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId, makeRef,
+  ACTIVE, HOUR, MIN, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, checkGameDetails,
+  checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rollPrize, rulesFromSettings,
   SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
 } from './core.js';
@@ -23,7 +23,7 @@ const FALLBACK_ROOMS = [
 /** Permissions the Shopify app needs (checked by the health check) */
 const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions'];
 /** Permissions only some features need: everything else works without them */
-const FEATURE_SCOPES = { write_discounts: 'birthday codes' };
+const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes' };
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -48,6 +48,8 @@ const PASS_SKU = /^LAIR-PASS-(\d{1,3})$/i;
 const PASSES_A_LINE = 100;
 /** The holder of a pass sold with no customer on the sale and no name on the order */
 const SOLD_AT_COUNTER = 'Sold at the counter';
+/** How long a birthday gift's product code works */
+const GIFT_CODE_DAYS = 30;
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -831,6 +833,7 @@ export class Lair {
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
       if (a === 'passes' && b && c === 'apply') return json(await this.applyPass(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
+      if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
@@ -3314,12 +3317,20 @@ export class Lair {
     return 'A 1 on the face: $1 store credit.';
   }
 
-  /** A member's rolls: available (earned from spend, one per $20, less those used), toNext (spend until the next) and per. bonus mirrors available. */
+  /**
+   * A member's rolls: available (one per $20 of spend, plus any given as birthday gifts, less those used), toNext
+   * (spend until the next) and per. bonus mirrors available. Rolls never expire.
+   */
   rollsState(customerId, now = Date.now()) {
     const spend = this.spendOf(customerId, now);
     const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind IN ('spend', 'bonus')", String(customerId)).one().n;
-    const available = Math.max(0, Math.floor(spend.total / ROLL_EVERY) - used);
+    const available = Math.max(0, Math.floor(spend.total / ROLL_EVERY) + this.giftedRolls(customerId) - used);
     return { available, toNext: ROLL_EVERY - (spend.total % ROLL_EVERY), per: ROLL_EVERY, bonus: available };
+  }
+
+  /** Extra dice rolls a member has been given as birthday gifts */
+  giftedRolls(customerId) {
+    return this.sql.exec('SELECT COALESCE(SUM(rolls), 0) AS n FROM gifts WHERE customer_id = ?', String(customerId)).one().n;
   }
 
   /** One prize with its roll, or null */
@@ -3870,7 +3881,7 @@ export class Lair {
     const spend = this.spendOf(row.customer_id, now);
     return {
       customerId: row.customer_id, name: row.name || '', firstName: row.first_name || '', email: row.email || '', birthday: row.birthday || '',
-      spendYear: spend.year, spendTotal: spend.total, rollsFromSpend: Math.floor(spend.total / ROLL_EVERY),
+      spendYear: spend.year, spendTotal: spend.total, rollsFromSpend: Math.floor(spend.total / ROLL_EVERY), rollsGifted: this.giftedRolls(row.customer_id),
       rollsUsed: this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind IN ('spend', 'bonus')", row.customer_id).one().n,
       lastSeen: row.last_seen || null, code: row.code || null,
       // Dice prizes Shopify couldn't add: staff give them at the counter (POST /prizes/:id/done)
@@ -3999,89 +4010,231 @@ export class Lair {
       .sort((a, b) => a.days - b.days || String(a.row.name || '').localeCompare(String(b.row.name || '')));
   }
 
-  /**
-   * The daily birthday run, from the 10-minute maintenance once it's past 9am at the Lair: members with a birthday in
-   * the next 7 days get a personal code, by email, and staff get a list. The discount follows spend over the last 12
-   * months (birthdayPercent) and the code lasts 14 days. One code per member per birthday, and none within 300 days
-   * of the last (a birthday can be edited). Codes are claimed in the database before Shopify is asked, so a second
-   * run can't double up.
-   */
-  async birthdays(rules, now) {
-    const time = new LairTime(rules.tz);
-    const today = time.key(now);
-    if (this.birthdayDay === today || time.parts(now).h < 9) return null;
-    this.birthdayDay = today;
-    const claimed = [];
-    for (const { row, date } of this.upcomingBirthdays(rules, now, 7)) {
-      const had = this.sql
-        .exec("SELECT 1 AS n FROM prizes WHERE customer_id = ? AND source = 'birthday' AND (period = ? OR created_at > ?)", row.customer_id, date.slice(0, 4), now - 300 * 24 * HOUR)
-        .toArray().length;
-      if (had) continue;
-      const prize = {
-        id: makeId('pz'), row, date, code: `BDAY-${makeRef().slice(4)}`, percent: birthdayPercent(this.spendOf(row.customer_id, now).year),
-        expiresAt: now + BIRTHDAY_CODE_DAYS * 24 * HOUR, problem: null,
-      };
-      this.write(
-        "INSERT INTO prizes (id, customer_id, source, kind, percent, expires_at, status, period, created_at, updated_at) VALUES (?, ?, 'birthday', 'percent', ?, ?, 'pending', ?, ?, ?)",
-        prize.id, row.customer_id, prize.percent, prize.expiresAt, date.slice(0, 4), now, now,
-      );
-      claimed.push(prize);
-    }
-    if (!claimed.length) return { sent: 0 };
-    // --- claimed: now ask Shopify for the codes ---
-    for (const prize of claimed) {
-      try {
-        if (!this.shopify.configured) throw new Error('Shopify is not connected.');
-        await this.shopify.createPrizeCode({
-          title: `Birthday ${prize.percent}% off: ${prize.row.name || prize.row.code || prize.row.customer_id} (${prize.code})`, code: prize.code, percent: prize.percent / 100,
-          endsAt: prize.expiresAt, customerId: prize.row.customer_id, combinesWith: { productDiscounts: false, orderDiscounts: false, shippingDiscounts: false },
-        });
-      } catch (error) {
-        prize.problem = String(error.message || error).slice(0, 300);
-        console.error('Lair: birthday code failed', error);
-      }
-    }
-    // --- no awaits from here on: only these prizes' own rows change ---
-    const later = Date.now();
-    // added: the code was made; pending: Shopify couldn't make it, so it's given at the counter.
-    for (const p of claimed) this.write('UPDATE prizes SET status = ?, code = ?, note = ?, updated_at = ? WHERE id = ?', p.problem ? 'pending' : 'added', p.problem ? null : p.code, p.problem, later, p.id);
-    const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(time.at(key, 12 * 60)));
-    const until = (ms) => new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, day: 'numeric', month: 'long' }).format(new Date(ms));
-    const letters = claimed.filter((p) => isEmail(p.row.email)).map((p) => {
-      const first = p.row.first_name || String(p.row.name || '').split(/\s+/)[0] || 'friend';
-      return this.letter(p.row.email, `Happy birthday, ${first}! A present from Dice Goblin`, {
-        title: `Happy birthday, ${first}!`,
-        intro: p.problem
-          ? `Gobgob heard your birthday's coming up (${day(p.date)}), so here's a present: ${p.percent}% off one order. Show this email at the counter to use it.`
-          : `Gobgob heard your birthday's coming up (${day(p.date)}), so here's a present: ${p.percent}% off one order, in the shop or online.`,
-        details: [
-          ['Your code', p.problem ? 'Show this email at the counter' : p.code], ['Discount', `${p.percent}% off one order`], ['Use it by', until(p.expiresAt)],
-          ['Online', p.problem ? '' : 'Log in, then enter the code at checkout'],
-        ],
-        outro: "It's just for you, works once, and doesn't combine with other discounts.",
-        button: { label: 'Treat yourself', url: this.link('/') },
-        signoff: 'Have a great one, friend!\nGobgob',
-      });
-    });
-    if (letters.length && emailReady(this.env)) this.later(this.mailMany(letters));
-    this.notifyStaff(`Birthday codes: ${claimed.length} sent`, {
-      title: 'Birthday codes went out',
-      intro: `${claimed.length} ${claimed.length === 1 ? 'member has' : 'members have'} a birthday in the next week, so Gobgob sent ${claimed.length === 1 ? 'a code' : 'codes'}.${claimed.some((p) => p.problem) ? " Shopify couldn't make some of them: those members will show their email at the counter." : ''}`,
-      details: claimed.map((p) => [p.row.name || p.row.code || p.row.customer_id, `${p.percent}% off, ${p.problem ? 'give it at the counter' : p.code}. Birthday ${day(p.date)}.${isEmail(p.row.email) ? '' : ' No email on file, so let them know at the counter.'}`]),
-    });
-    return { sent: claimed.length, codes: claimed.filter((p) => !p.problem).length };
+  /** A birthday gift's suggested size, in dollars: 2% and 5% of the last 12 months' spend, rounded, at least $2 each */
+  suggestedGift(spendYear) {
+    const dollarsOf = (share) => Math.max(2, Math.round(((spendYear || 0) * share) / 100));
+    return { low: dollarsOf(0.02), high: dollarsOf(0.05) };
   }
 
-  /** GET /members/birthdays (staff): the next 30 days of birthdays, with spend and the code each gets (or got). */
+  /** Whether a member has had a birthday gift in this (Lair) year. No awaits. */
+  giftedIn(customerId, year) {
+    return this.sql.exec('SELECT 1 AS n FROM gifts WHERE customer_id = ? AND year = ? LIMIT 1', String(customerId), year).toArray().length > 0;
+  }
+
+  /**
+   * The daily birthday summary, from the 10-minute maintenance once it's past 9am at the Lair: one email to the staff
+   * listing the members with a birthday in the next 7 days, each with a suggested gift (2% to 5% of their last 12
+   * months' spend) and whether they've had one this year, and a link to the staff page's Members tab. Staff pick and
+   * give the gifts there (POST /members/:id/gift): nothing is made automatically any more. Once a day (noted in the
+   * meta table, so a restart doesn't send it twice), and only when someone has a birthday coming up. No awaits.
+   */
+  birthdaySummary(rules, now) {
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    if (time.parts(now).h < 9 || !emailReady(this.env) || !this.env.STAFF_EMAIL) return null;
+    if (this.sql.exec("SELECT value FROM meta WHERE key = 'birthday-summary'").toArray()[0]?.value === today) return null;
+    const list = this.upcomingBirthdays(rules, now, 7);
+    if (!list.length) return { sent: 0 };
+    this.write("INSERT OR REPLACE INTO meta (key, value) VALUES ('birthday-summary', ?)", today);
+    // "Saturday 3 October": some ICU versions put a comma after the weekday, so it comes out either way
+    const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(time.at(key, 12 * 60))).replace(',', '');
+    this.notifyStaff(`Birthdays this week: ${list.length}`, {
+      title: 'Birthdays coming up',
+      intro: `${list.length === 1 ? 'One member has' : `${list.length} members have`} a birthday in the next week. Pick a gift for each on the staff page, under Members: store credit, a session pass, dice rolls or something from the shop.`,
+      details: list.map(({ row, date, days }) => {
+        const range = this.suggestedGift(this.spendOf(row.customer_id, now).year);
+        const gifted = this.giftedIn(row.customer_id, today.slice(0, 4)) ? ' Already had a gift this year.' : '';
+        return [row.name || row.first_name || row.code || row.customer_id, `${days === 0 ? 'Today' : day(date)}. Suggested gift: $${range.low} to $${range.high}.${gifted}`];
+      }),
+      button: { label: 'Open Members', url: `${this.page('staff')}#members` },
+    });
+    return { sent: 1, birthdays: list.length };
+  }
+
+  /**
+   * GET /members/birthdays (staff): the next 30 days of birthdays, soonest first, with spend, suggested: { low, high }
+   * (dollars, see suggestedGift), giftedThisYear and lastGift (their latest gift, or null). percent, code and sent are
+   * the birthday codes round 4 sent by itself.
+   */
   async birthdayList(who) {
     this.requireStaff(who);
     const rules = await this.rules();
     const now = Date.now();
+    const year = new LairTime(rules.tz).key(now).slice(0, 4);
     return this.upcomingBirthdays(rules, now, 30).map(({ row, date, days }) => {
       const view = this.memberView(row, now);
       const given = this.sql.exec("SELECT * FROM prizes WHERE customer_id = ? AND source = 'birthday' AND period = ?", row.customer_id, date.slice(0, 4)).toArray()[0];
-      return { ...view, date, days, percent: given?.percent ?? birthdayPercent(view.spendYear), code: given?.code || null, sent: Boolean(given) };
+      const last = this.sql.exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? ORDER BY g.created_at DESC, g.rowid DESC LIMIT 1', row.customer_id).toArray()[0];
+      return {
+        ...view, date, days, percent: given?.percent ?? birthdayPercent(view.spendYear), code: given?.code || null, sent: Boolean(given),
+        suggested: this.suggestedGift(view.spendYear), giftedThisYear: this.giftedIn(row.customer_id, year), lastGift: last ? this.giftView(last) : null,
+      };
     });
+  }
+
+  /* ---------------- birthday gifts ---------------- */
+  /**
+   * A gift from the staff form, checked: credit (dollars, more than $0 and up to $1000), sessions and rolls (1 to 20
+   * each), productVariantId (digits, or the variant's gid) with productTitle, and a note. At least one gift. No awaits.
+   */
+  giftFields(input) {
+    const count = (value, what) => {
+      if (value == null || value === '' || Number(value) === 0) return 0;
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 1 || n > 20) throw new RuleError(`${what} go from 1 to 20.`);
+      return n;
+    };
+    let credit = 0;
+    if (input.credit != null && input.credit !== '' && Number(input.credit) !== 0) {
+      const value = Number(input.credit);
+      if (!(value > 0 && value <= 1000) || Math.round(value * 100) < 1) throw new RuleError('Store credit goes up to $1000. Check the amount.');
+      credit = Math.round(value * 100);
+    }
+    const sessions = count(input.sessions, 'Sessions');
+    const rolls = count(input.rolls, 'Dice rolls');
+    const variantId = String(input.productVariantId ?? '').trim().replace(/^gid:\/\/shopify\/ProductVariant\//, '');
+    if (variantId && !/^\d{1,20}$/.test(variantId)) throw new RuleError("That product doesn't look right. Pick it again.");
+    if (!credit && !sessions && !rolls && !variantId) throw new RuleError('Pick at least one gift: store credit, sessions, dice rolls or a product.');
+    return { credit, sessions, rolls, variantId, title: variantId ? trimmed(input.productTitle, 120) || 'A birthday pick' : '', note: trimmed(input.note, 300) };
+  }
+
+  /** "HBD-SJOWLBEAR17": a gift's product code, from the member code, with -2, -3 and so on once that's been given. No awaits. */
+  giftCode(member) {
+    const base = `HBD-${codeKey(member.code || member.customer_id)}`;
+    const taken = (code) => this.sql.exec('SELECT 1 AS n FROM gifts WHERE product_code = ?', code).toArray().length > 0;
+    if (!taken(base)) return base;
+    for (let n = 2; n < 1000; n += 1) if (!taken(`${base}-${n}`)) return `${base}-${n}`;
+    return `${base}-${makeId('x').slice(2, 8).toUpperCase()}`;
+  }
+
+  giftRow(id) {
+    return this.sql.exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.id = ?', String(id)).toArray()[0] || null;
+  }
+
+  /**
+   * A gift as staff see it: { id, at, credit (cents), sessions, passCode, rolls, product: { title, code } | null,
+   * emailed, problems }. product.code is null when Shopify couldn't make it.
+   */
+  giftView(r) {
+    return {
+      id: r.id, at: r.created_at, credit: r.credit || 0, sessions: r.sessions || 0, passCode: r.pass_code || null, rolls: r.rolls || 0,
+      product: r.product_title ? { title: r.product_title, code: r.product_status === 'added' ? r.product_code : null } : null,
+      emailed: Boolean(r.emailed), problems: parse(r.problems, []),
+    };
+  }
+
+  /** A gift as its member sees it in My Lair: { at, credit, sessions, rolls, product } */
+  memberGiftView(r) {
+    const { at, credit, sessions, rolls, product } = this.giftView(r);
+    return { at, credit, sessions, rolls, product };
+  }
+
+  /**
+   * POST /members/:customerId/gift (staff): a birthday gift, any mix of { credit (dollars), sessions, rolls,
+   * productVariantId and productTitle, note, notify }. sessions is a pass of theirs ("Birthday gift: 3 sessions",
+   * source 'birthday'); rolls are extra dice rolls that never expire; the product is a one-use code, just for them, for
+   * that one variant at 100% off, for 30 days (HBD-<their code>); credit goes on their Shopify store credit. The gift,
+   * the pass and the rolls are saved first; then Shopify is asked for the credit and the code. A part that fails goes in
+   * problems and the rest still goes through. notify: true sends "Happy birthday from Gobgob!" listing every part.
+   * Returns { gift }.
+   */
+  async giveGift(customerId, input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits until the gift is saved ---
+    const now = Date.now();
+    const member = this.memberRow(trimmed(customerId, 40));
+    if (!member) throw new RuleError('No member with that customer ID.', 404);
+    const f = this.giftFields(input || {});
+    const id = makeId('gf');
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    const name = trimmed(member.name || member.first_name, 80);
+    let passId = null;
+    if (f.sessions) {
+      passId = makeId('ps');
+      this.write(
+        `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
+           created_by, expires_at, status, source) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 0, ?, ?, NULL, 'active', 'birthday')`,
+        passId, this.newCode(name, 'pass', passId, now), `Birthday gift: ${plural(f.sessions, 'session', 'sessions')}`, f.sessions, rules.prices.table,
+        member.customer_id, name || null, isEmail(member.email) ? trimmed(member.email, 120) : null, f.note || null, now, by,
+      );
+    }
+    const productCode = f.variantId ? this.giftCode(member) : null;
+    this.write(
+      `INSERT INTO gifts (id, customer_id, year, credit, credit_status, sessions, pass_id, rolls, product_variant_id, product_title, product_code,
+         product_status, note, emailed, problems, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)`,
+      id, member.customer_id, new LairTime(rules.tz).key(now).slice(0, 4), f.credit, f.credit ? 'pending' : null, f.sessions, passId, f.rolls,
+      f.variantId || null, f.title || null, productCode, f.variantId ? 'pending' : null, f.note || null, by, now, now,
+    );
+    // --- saved: the pass and the rolls are theirs. Now Shopify, for the credit and the product code ---
+    const problems = [];
+    const said = (error) => String(error?.message || error).replace(/^Shopify API:\s*/, '').slice(0, 200).replace(/[.\s]+$/, '');
+    let creditStatus = null;
+    if (f.credit) {
+      try {
+        if (!this.shopify.configured) throw new Error('Shopify is not connected');
+        await this.shopify.creditCustomer(member.customer_id, f.credit, this.env.CURRENCY || 'NZD');
+        creditStatus = 'added';
+      } catch (error) {
+        creditStatus = 'failed';
+        console.error('Lair: birthday store credit failed', error);
+        problems.push(`The ${money(f.credit)} store credit didn't go on (${said(error)}). Add it in Shopify admin, or give it at the counter.`);
+      }
+    }
+    let productStatus = null;
+    if (f.variantId) {
+      try {
+        if (!this.shopify.configured) throw new Error('Shopify is not connected');
+        await this.shopify.createPrizeCode({
+          title: `Birthday gift: ${f.title} for ${name || member.code || member.customer_id} (${productCode})`, code: productCode, percent: 1,
+          variantId: f.variantId, endsAt: now + GIFT_CODE_DAYS * 24 * HOUR, customerId: member.customer_id,
+        });
+        productStatus = 'added';
+      } catch (error) {
+        productStatus = 'failed';
+        console.error('Lair: birthday product code failed', error);
+        problems.push(`Shopify couldn't make the code for ${f.title} (${said(error)}). Give it to them at the counter.`);
+      }
+    }
+    // --- no awaits from here on: only this gift's own row changes ---
+    const fresh = this.memberRow(member.customer_id) || member;
+    let emailed = false;
+    if (input?.notify === true) {
+      if (!emailReady(this.env)) problems.push("Emails aren't set up, so no birthday email went out. Let them know at the counter.");
+      else if (!isEmail(fresh.email)) problems.push('They have no email on file, so no birthday email went out. Let them know at the counter.');
+      else emailed = true;
+    }
+    this.write(
+      'UPDATE gifts SET credit_status = ?, product_status = ?, emailed = ?, problems = ?, updated_at = ? WHERE id = ?',
+      creditStatus, productStatus, emailed ? 1 : 0, problems.length ? JSON.stringify(problems) : null, Date.now(), id,
+    );
+    const gift = this.giftView(this.giftRow(id));
+    if (emailed) this.giftEmail(fresh, gift, { creditAdded: creditStatus === 'added', note: f.note }, rules);
+    return { gift };
+  }
+
+  /** "Happy birthday from Gobgob!", listing every part of a gift (the product with its code). No awaits. */
+  giftEmail(member, gift, { creditAdded, note }, rules) {
+    const first = member.first_name || String(member.name || '').split(/\s+/)[0] || 'friend';
+    const until = new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, day: 'numeric', month: 'long' }).format(new Date(gift.at + GIFT_CODE_DAYS * 24 * HOUR));
+    const details = [];
+    if (gift.credit) details.push(['Store credit', creditAdded ? `${money(gift.credit)}, on your account now. Spend it in the shop or online.` : `${money(gift.credit)}. We'll pop it on your account at the counter.`]);
+    if (gift.sessions) details.push(['Table sessions', `${plural(gift.sessions, 'session', 'sessions')} on a pass, ${gift.passCode}. Use it when you book, or show the code at the counter.`]);
+    if (gift.rolls) details.push(['Dice rolls', `${plural(gift.rolls, 'extra roll', 'extra rolls')}. Roll them in My Lair whenever you like.`]);
+    if (gift.product) {
+      details.push([gift.product.title, gift.product.code
+        ? `Yours free with code ${gift.product.code}, in the shop or online. It works once, just for you, until ${until}.`
+        : 'Yours free: show this email at the counter to pick it up.']);
+    }
+    this.later(this.mail(this.letter(member.email, `Happy birthday from Gobgob, ${first}!`, {
+      title: 'Happy birthday from Gobgob!',
+      intro: `Kia ora ${first}, Gobgob heard it's your birthday, so the team put together a present for you.`,
+      quote: note || '',
+      details,
+      outro: 'Your gifts are in My Lair too.',
+      button: { label: 'See it in My Lair', url: this.page('myLair') },
+      signoff: 'Have a great one, friend!\nGobgob',
+    })));
   }
 
   /* ---------------- My Lair ---------------- */
@@ -4162,6 +4315,11 @@ export class Lair {
       tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
       // What they can pay at the counter now: { id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }
       dueNow,
+      // This year's birthday gifts: { at, credit, sessions, rolls, product: { title, code } | null }
+      gifts: this.sql
+        .exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? AND g.year = ? ORDER BY g.created_at DESC, g.rowid DESC', who.customerId, new LairTime(rules.tz).key(now).slice(0, 4))
+        .toArray()
+        .map((r) => this.memberGiftView(r)),
     };
   }
 
@@ -4233,12 +4391,12 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not roll weekly regulars forward', error);
     }
-    // The same daily maintenance sends birthday codes (once a day, after 9am).
+    // The same maintenance emails the staff the week's birthdays, once a day after 9am, so they can pick gifts.
     try {
-      const birthdays = await this.birthdays(rules, Date.now());
+      const birthdays = this.birthdaySummary(rules, Date.now());
       if (birthdays) result.birthdays = birthdays;
     } catch (error) {
-      console.error('Lair: birthday codes failed', error);
+      console.error('Lair: birthday summary failed', error);
     }
     this.note({ connection: result });
     return result;
