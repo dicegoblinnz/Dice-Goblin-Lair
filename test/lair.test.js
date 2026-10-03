@@ -1454,6 +1454,19 @@ test('check-in: codes in lower case, with spaces or no dashes; the first release
   assert.match(lair.memberRow('5555').code, /^DG-/, 'opening My Lair first, with no name yet');
 });
 
+test('member codes: opening My Lair (or any page that reads GET /me) first makes the code from the shop account\'s name', async () => {
+  const first = await call('GET', `me?name=${encodeURIComponent('Aroha Ngata')}`, null, '6001');
+  assert.match(first.data.member.code, /^AN-[A-Z]{3,9}-\d{1,2}$/);
+  assert.deepEqual([first.data.member.name, first.data.member.firstName], ['Aroha Ngata', 'Aroha']);
+  // Later visits (and another name) change nothing: the code is permanent, and a name only fills a gap
+  const again = await call('GET', `me?name=${encodeURIComponent('Someone Else')}`, null, '6001');
+  assert.deepEqual([again.data.member.code, again.data.member.name], [first.data.member.code, 'Aroha Ngata']);
+  // No name sent (an older theme): DG, as before
+  assert.match((await call('GET', 'me', null, '6002')).data.member.code, /^DG-/);
+  assert.equal((await call('GET', `me?name=${'x'.repeat(300)}`, null, '6003')).status, 200, 'a long name is trimmed');
+  assert.equal((await call('GET', 'me?name=Sam', null, '')).status, 401);
+});
+
 test('member codes: given once and kept when the member renames themselves; staff can issue a new one, and the old one stops working', async () => {
   await call('POST', 'bookings', tableBooking({ name: 'Zoë van der Berg', email: 'zoe@example.com' }), '1001');
   const first = lair.memberRow('1001').code;

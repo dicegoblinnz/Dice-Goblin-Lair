@@ -703,7 +703,7 @@ export class Lair {
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
-      if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who));
+      if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
       if (request.method === 'GET' && a === 'members' && !b) return json(this.members(url, who));
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
@@ -3622,11 +3622,16 @@ export class Lair {
   }
 
   /* ---------------- My Lair ---------------- */
-  async me(who) {
+  /**
+   * GET /me (logged in). The first visit makes their member record, and its code comes from their name, like
+   * SJ-OWLBEAR-17. The app proxy only says who's logged in, so the theme sends the name on their shop account
+   * (?name=). Like a booking's name, it only fills in a name the member doesn't have yet.
+   */
+  async me(who, url = null) {
     if (!who.customerId) throw new RuleError('Log in to see your bookings.', 401);
     const rules = await this.rules();
     const now = Date.now();
-    this.touchMember(who.customerId, {}, now);
+    this.touchMember(who.customerId, { name: trimmed(url?.searchParams.get('name'), 80) }, now);
     const member = this.memberView(this.memberRow(who.customerId), now);
     const since = now - 30 * 24 * HOUR;
     const own = this.sql.exec('SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToBooking(r));
