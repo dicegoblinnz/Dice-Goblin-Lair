@@ -819,7 +819,7 @@ export class Lair {
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
-      if (request.method === 'GET' && a === 'members' && !b) return json(this.members(url, who));
+      if (request.method === 'GET' && a === 'members' && !b) return json(await this.members(url, who));
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
@@ -3902,24 +3902,84 @@ export class Lair {
     return { member: this.memberView(this.memberRow(who.customerId), now) };
   }
 
-  /** GET /members?q= (staff): find members by name, email, member code (any way it's typed) or customer ID. */
-  members(url, who) {
+  /**
+   * GET /members?q=&sort=spend|recent|owing&owing=1 (staff). q finds members by name, email, member code (any way it's
+   * typed) or customer ID, up to 25; with no q it's the top 100 by sort. sort: spend (the last 12 months, then all
+   * time), recent (last seen) or owing (owed seats plus open tabs), most first; with q and no sort, an exact customer
+   * ID comes first, then the most recently seen. owing=1 keeps only members with owed + openTab > 0. Each member is a
+   * memberView plus owed (cents, their owed seats), owedCount, openTab (cents: what's on an unpaid tab from an earlier
+   * day, or today's open tab) and giftedThisYear.
+   */
+  async members(url, who) {
     this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
     const now = Date.now();
     const q = trimmed(url.searchParams.get('q'), 80).toLowerCase();
-    if (!q) return this.sql.exec('SELECT * FROM members ORDER BY last_seen DESC LIMIT 25').toArray().map((r) => this.memberView(r, now));
-    const found = this.findCode(q);
-    const id = found?.type === 'member' ? found.item.customer_id : /^\d{3,20}$/.test(q) ? q : '';
-    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    return this.sql
+    const wanted = url.searchParams.get('sort');
+    const sort = ['spend', 'recent', 'owing'].includes(wanted) ? wanted : null;
+    let exact = '';
+    let rows;
+    if (q) {
+      const found = this.findCode(q);
+      exact = found?.type === 'member' ? found.item.customer_id : /^\d{3,20}$/.test(q) ? q : '';
+      const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      rows = this.sql
+        .exec(
+          `SELECT * FROM members WHERE customer_id = ? OR lower(name) LIKE ? ESCAPE '\\' OR lower(first_name) LIKE ? ESCAPE '\\' OR lower(email) LIKE ? ESCAPE '\\'
+             OR lower(code) LIKE ? ESCAPE '\\'`,
+          exact, like, like, like, like,
+        )
+        .toArray();
+    } else {
+      rows = this.sql.exec('SELECT * FROM members').toArray();
+    }
+    const money = this.membersMoney(rules, now);
+    let list = rows.map((row) => {
+      const owed = money.owed.get(row.customer_id) || { amount: 0, count: 0 };
+      return { row, spend: money.spend.get(row.customer_id) || { total: 0, year: 0 }, owed, openTab: money.tabs.get(row.customer_id) || 0, gifted: money.gifted.has(row.customer_id) };
+    });
+    if (url.searchParams.get('owing') === '1') list = list.filter((x) => x.owed.amount + x.openTab > 0);
+    const recent = (a, b) => (b.row.last_seen || 0) - (a.row.last_seen || 0) || String(a.row.customer_id).localeCompare(String(b.row.customer_id));
+    const orders = {
+      spend: (a, b) => b.spend.year - a.spend.year || b.spend.total - a.spend.total || recent(a, b),
+      recent,
+      owing: (a, b) => b.owed.amount + b.openTab - (a.owed.amount + a.openTab) || recent(a, b),
+    };
+    list.sort(orders[sort] || ((a, b) => Number(b.row.customer_id === exact) - Number(a.row.customer_id === exact) || recent(a, b)));
+    return list.slice(0, q ? 25 : 100).map((x) => ({
+      ...this.memberView(x.row, now), owed: x.owed.amount, owedCount: x.owed.count, openTab: x.openTab, giftedThisYear: x.gifted,
+    }));
+  }
+
+  /**
+   * Every member's money at once, for GET /members: spend (all time and the last 12 months), owed seats (amount and
+   * count), open tabs (an unpaid tab from an earlier day, or today's open one) and who has had a gift this year, by
+   * customer ID. No awaits.
+   */
+  membersMoney(rules, now) {
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    const spend = new Map(this.sql
+      .exec('SELECT customer_id, SUM(amount) AS total, SUM(CASE WHEN created_at > ? THEN amount ELSE 0 END) AS year FROM spend GROUP BY customer_id', now - YEAR)
+      .toArray().map((r) => [r.customer_id, { total: r.total || 0, year: r.year || 0 }]));
+    const owed = new Map();
+    const seats = this.sql
       .exec(
-        `SELECT * FROM members WHERE customer_id = ? OR lower(name) LIKE ? ESCAPE '\\' OR lower(first_name) LIKE ? ESCAPE '\\' OR lower(email) LIKE ? ESCAPE '\\'
-           OR lower(code) LIKE ? ESCAPE '\\'
-         ORDER BY customer_id = ? DESC, last_seen DESC LIMIT 25`,
-        id, like, like, like, like, id,
+        `SELECT * FROM bookings WHERE series_id IS NOT NULL AND kind = 'gm-seat' AND status != 'cancelled' AND ends_at <= ? AND created_at >= ? AND paid = 0
+           AND waived = 0 AND customer_id IS NOT NULL`,
+        now, this.owedFrom,
       )
-      .toArray()
-      .map((r) => this.memberView(r, now));
+      .toArray().map((r) => this.rowToBooking(r));
+    for (const b of seats.filter((x) => this.isOwed(x, now))) {
+      const sum = owed.get(b.customerId) || { amount: 0, count: 0 };
+      owed.set(b.customerId, { amount: sum.amount + dueOf(b), count: sum.count + 1 });
+    }
+    const tabs = new Map(this.sql
+      .exec("SELECT customer_id, SUM(total) AS n FROM tabs WHERE status != 'paid' AND (day < ? OR (day = ? AND status = 'open')) GROUP BY customer_id", today, today)
+      .toArray().map((r) => [r.customer_id, r.n || 0]));
+    const gifted = new Set(this.sql.exec('SELECT DISTINCT customer_id FROM gifts WHERE year = ?', today.slice(0, 4)).toArray().map((r) => r.customer_id));
+    return { spend, owed, tabs, gifted };
   }
 
   /* ---------------- birthdays ---------------- */

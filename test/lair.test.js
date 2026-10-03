@@ -3422,6 +3422,53 @@ test('owed seats: a regular\'s seat that ends unpaid is owed, whether or not the
   assert.equal((await call('POST', `bookings/${gmHold.id}/update`, { waived: true }, 'staff')).status, 422);
 });
 
+test('GET /members (staff): sorted by spend, last seen or what they owe; owing=1 lists only those owing; each with owed seats, open tabs and gifts', async () => {
+  const member = (id, name, seen) => lair.write('INSERT INTO members (customer_id, name, first_name, email, code, last_seen) VALUES (?, ?, ?, ?, ?, ?)', id, name, name.split(' ')[0], `${id}@example.com`, `${name.slice(0, 1)}X-GOBLIN-${id.slice(-1)}`, seen);
+  const spend = (id, amount, ago) => lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', `o-${id}-${ago}`, id, amount, 'pos', NOW - ago);
+  const tab = (id, customerId, day, status, total) => lair.write("INSERT INTO tabs (id, customer_id, day, items, total, status, created_at, updated_at) VALUES (?, ?, ?, '[]', ?, ?, ?, ?)", id, customerId, day, total, status, NOW, NOW);
+  member('5001', 'Ana Spender', NOW - 9 * HOUR);
+  member('5002', 'Ben Lastyear', NOW - 8 * HOUR);
+  member('5003', 'Cara Owes', NOW - 7 * HOUR);
+  member('5004', 'Dan Tab', NOW - 6 * HOUR);
+  member('5005', 'Eve Today', NOW - 5 * HOUR);
+  member('5006', 'Fin Counter', NOW - 4 * HOUR);
+  member('5007', 'Gus Paid', NOW - 3 * HOUR);
+  spend('5001', 50000, 30 * 24 * HOUR);
+  spend('5002', 200000, 400 * 24 * HOUR);
+  // Cara owes a weekly seat that ended this morning unpaid; Dan left yesterday's tab unpaid; Eve has today's tab open.
+  lair.saveBooking({
+    id: 'bk_owes', ref: 'CO-GOBLIN-3', kind: 'gm-seat', status: 'confirmed', tables: ['A1'], start: at('2026-10-01', 9), end: at('2026-10-01', 12), people: 1,
+    name: 'Cara Owes', amount: 1500, seriesId: 'sr_x', gameId: 'gm_x', customerId: '5003',
+  }, NOW);
+  tab('tb_dan', '5004', '2026-09-30', 'in-cart', 1100);
+  tab('tb_eve', '5005', '2026-10-01', 'open', 550);
+  tab('tb_fin', '5006', '2026-10-01', 'in-cart', 900); // at the counter right now: not "open"
+  tab('tb_gus', '5007', '2026-09-29', 'paid', 700);
+  lair.write("INSERT INTO gifts (id, customer_id, year, credit, created_at) VALUES ('gf_ana', '5001', '2026', 500, ?)", NOW);
+  lair.write("INSERT INTO gifts (id, customer_id, year, credit, created_at) VALUES ('gf_ben', '5002', '2025', 500, ?)", NOW - 400 * 24 * HOUR);
+
+  const list = async (query) => (await call('GET', `members${query}`, null, 'staff')).data;
+  assert.equal((await call('GET', 'members?sort=spend', null, '5001')).status, 403);
+  const all = await list('');
+  assert.deepEqual(all.map((m) => m.customerId), ['5007', '5006', '5005', '5004', '5003', '5002', '5001'], 'most recently seen first');
+  const cara = all.find((m) => m.customerId === '5003');
+  assert.deepEqual([cara.owed, cara.owedCount, cara.openTab, cara.giftedThisYear, cara.code, cara.email, cara.lastSeen], [1500, 1, 0, false, 'CX-GOBLIN-3', '5003@example.com', NOW - 7 * HOUR]);
+  assert.deepEqual(all.map((m) => [m.customerId, m.openTab, m.giftedThisYear]).filter(([, tabTotal, gifted]) => tabTotal || gifted), [['5005', 550, false], ['5004', 1100, false], ['5001', 0, true]]);
+  assert.deepEqual((await list('?sort=spend')).slice(0, 2).map((m) => [m.customerId, m.spendYear, m.spendTotal]), [['5001', 50000, 50000], ['5002', 0, 200000]]);
+  assert.deepEqual((await list('?sort=recent')).map((m) => m.customerId), all.map((m) => m.customerId));
+  assert.deepEqual((await list('?sort=owing')).slice(0, 3).map((m) => [m.customerId, m.owed + m.openTab]), [['5003', 1500], ['5004', 1100], ['5005', 550]]);
+  assert.deepEqual((await list('?sort=owing&owing=1')).map((m) => m.customerId), ['5003', '5004', '5005']);
+  assert.deepEqual((await list('?owing=1')).map((m) => m.customerId), ['5005', '5004', '5003'], 'owing=1 on its own keeps the last-seen order');
+  // q still searches; sort and owing apply to what it finds.
+  assert.deepEqual((await list('?q=example.com&sort=spend')).slice(0, 2).map((m) => m.customerId), ['5001', '5002']);
+  assert.deepEqual((await list('?q=today&owing=1')).map((m) => m.customerId), ['5005']);
+  assert.deepEqual((await list('?q=gus&owing=1')).map((m) => m.customerId), [], "Gus's tab is paid");
+  assert.deepEqual((await list('?q=5004')).map((m) => [m.customerId, m.openTab]), [['5004', 1100]]);
+  // Paid and waived seats aren't owed.
+  await call('POST', 'bookings/bk_owes/update', { waived: true }, 'staff');
+  assert.deepEqual((await list('?owing=1')).map((m) => m.customerId), ['5005', '5004']);
+});
+
 /* ---------------- live data: the database the live app (round 8, main at adf6ad2) has ---------------- */
 
 /** The live app has run these two migrations. Copied word for word from adf6ad2 (git show adf6ad2:src/lair.js). */
