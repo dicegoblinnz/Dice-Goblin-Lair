@@ -1711,7 +1711,7 @@ export class Lair {
   /**
    * Cancel sessions with their seats and GM holds, and email every player. A seat that was paid for is flagged
    * "refund due" (a cancelled game is always refunded, whatever the cut-off) and staff get one list of refunds to
-   * make. No awaits.
+   * make. Returns { affected (seats cancelled), refunds (paid seats flagged) }. No awaits.
    */
   cancelSessions(games, rules, now) {
     let affected = 0;
@@ -1755,7 +1755,7 @@ export class Lair {
         details: refunds,
       });
     }
-    return affected;
+    return { affected, refunds: refunds.length };
   }
 
   async updateGame(id, patch, who) {
@@ -1777,6 +1777,7 @@ export class Lair {
     }
     const before = game.status;
     let affected = 0;
+    let refunds = 0;
     if (patch.status === 'cancelled') {
       // A series: every future session, and this one too while it can still be cancelled.
       const targets = scope === 'series'
@@ -1784,7 +1785,7 @@ export class Lair {
           .toArray().map((r) => this.rowToGame(r))
         : before === 'cancelled' ? [] : [game];
       if (scope === 'series') this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.seriesId);
-      affected = this.cancelSessions(targets, rules, now);
+      ({ affected, refunds } = this.cancelSessions(targets, rules, now));
       game.status = 'cancelled';
     } else if (patch.status && ['open', 'pending'].includes(patch.status)) {
       game.status = patch.status;
@@ -1798,7 +1799,8 @@ export class Lair {
     }
     if (before === 'pending' && game.status === 'open') this.tellGmLive(game, rules);
     const fresh = this.game(id);
-    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), affected };
+    // affected: seats cancelled (each player is emailed); refunds: how many of them were paid, so are flagged 'due'
+    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), affected, refunds };
   }
 
   async creditGm(id, who) {

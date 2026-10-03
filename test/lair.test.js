@@ -423,7 +423,7 @@ test('cancelling a game frees its seats; staff holds report clashing bookings', 
   const seat = await call('POST', 'bookings', { kind: 'gm-seat', gameId: listed.data.game.id, people: 2, name: 'Mia', email: 'mia@example.com', pay: 'day' }, 'mia');
   assert.equal(seat.status, 200);
   const cancelled = await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'gm');
-  assert.equal(cancelled.data.affected, 1);
+  assert.deepEqual([cancelled.data.affected, cancelled.data.refunds], [1, 0]);
   const floor = await call('GET', 'floor', null, 'staff');
   assert.equal(floor.data.bookings.find((b) => b.ref === seat.data.booking.ref).status, 'cancelled');
   const free = await call('POST', 'bookings', tableBooking({ tables: ['A1'], start: at('2026-10-01', 18), end: at('2026-10-01', 19) }));
@@ -1532,6 +1532,7 @@ test('GM cancelling: up to an hour after the start, or a whole series; every pla
     const res = await call('POST', `games/${first.id}/update`, { status: 'cancelled', scope: 'series' }, 'gm');
     assert.equal(res.status, 200, res.data.error);
     assert.equal(res.data.affected, 3);
+    assert.equal(res.data.refunds, 1, 'the games board says how many paid seats are flagged for a refund');
     assert.ok(lair.sql.exec('SELECT status FROM games WHERE series_id = ?', listed.data.game.seriesId).toArray().every((r) => r.status === 'cancelled'));
     assert.deepEqual([lair.booking(mia.id).refund, lair.booking(leo.id).refund], ['due', null]);
     assert.equal(lair.booking(mia.id).refundDue, undefined, 'one field, refund, everywhere');
