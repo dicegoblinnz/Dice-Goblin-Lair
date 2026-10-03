@@ -1039,6 +1039,30 @@ test('check-in: scanners send the code with or without its dash; not-today and r
   assert.equal((await call('POST', 'checkin', { code: 'hello' }, 'staff')).status, 404);
 });
 
+test('check-in: anything later the same Lair day checks in (the POS Today list shows the whole day); other days don\'t', async () => {
+  // 1pm on Thursday 1 October: a 9pm table, a 6pm event sign-up, and Friday's table
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 18), end: at('2026-10-01', 20), tables: '', capacity: 20, entryFee: 500 },
+  ]);
+  const evening = (await call('POST', 'bookings', tableBooking({ tables: ['T7'], start: at('2026-10-01', 21), end: at('2026-10-01', 22) }))).data.booking;
+  const quiz = (await call('POST', 'events/quiz@2026-10-01/join', { name: 'Mia', email: 'mia@example.com', people: 1 })).data.join;
+  const friday = (await call('POST', 'bookings', tableBooking({ tables: ['T8'], start: at('2026-10-02', 15), end: at('2026-10-02', 17), email: 'fri@example.com' }))).data.booking;
+  const today = (await call('GET', 'floor', null, 'staff')).data;
+  assert.ok(today.bookings.some((b) => b.id === evening.id));
+  const pos = (path, body) => lair.fetch(new Request(`https://lair.test/internal/pos/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: JSON.stringify(body) })).then(async (r) => ({ status: r.status, data: await r.json() }));
+  const atCounter = await pos('checkin', { id: evening.id, type: 'booking' });
+  assert.deepEqual([atCounter.data.checkedIn, atCounter.data.reason, atCounter.data.lines.map((l) => l.price)], [true, undefined, ['40.00']], 'tapped on the Today list at 1pm for 9pm');
+  const signUp = await call('POST', 'checkin', { code: quiz.ref }, 'staff');
+  assert.deepEqual([signUp.data.checkedIn, signUp.data.due], [true, 500]);
+  const tomorrow = await call('POST', 'checkin', { code: friday.ref }, 'staff');
+  assert.deepEqual([tomorrow.data.checkedIn, tomorrow.data.reason], [false, 'not-today']);
+  assert.match(tomorrow.data.message, /not today/);
+  // A session that runs past midnight is still today at 12:30am
+  Date.now = () => at('2026-10-02', 0, 30);
+  assert.equal(lair.onTheDay({ start: at('2026-10-01', 23), end: at('2026-10-02', 1) }, lair.rulesCache, Date.now()), true);
+  assert.equal(lair.onTheDay({ start: at('2026-10-01', 15), end: at('2026-10-01', 17) }, lair.rulesCache, Date.now()), false);
+});
+
 test('events: repeating dates (weekly, monthly nth weekday, skips, until) and sign-ups with spaces', async () => {
   const { eventOccurrences, findOccurrence } = await import('../src/core.js');
   const events = [

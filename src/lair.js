@@ -2228,6 +2228,16 @@ export class Lair {
   }
 
   /**
+   * Whether a booking or sign-up can check in now: any time on its own Lair day (the POS Today list shows the whole
+   * day, and people turn up early), or from 3 hours before it starts until it ends, so a session running past
+   * midnight still counts. Anything else is "not today" unless staff force it.
+   */
+  onTheDay(item, rules, now) {
+    const time = new LairTime(rules.tz);
+    return time.key(item.start) === time.key(now) || (now >= item.start - 3 * HOUR && now <= item.end);
+  }
+
+  /**
    * Check in a booking or game seat: it's seated and arrived, and a pass is used (usePassAtCheckIn). Someone already
    * in stays in, and a pass can still be applied. A cancelled booking, a no-show or another day's booking comes back
    * unchecked with a reason unless force is set. No awaits.
@@ -2249,7 +2259,7 @@ export class Lair {
       return result(booking, { checkedIn: false, reason: 'cancelled', message, notice: message, pass: null });
     }
     const already = !force && (booking.status === 'seated' || booking.status === 'done' || Boolean(booking.arrivedAt));
-    if (!already && !force && !sameDay && !(now >= booking.start - 3 * HOUR && now <= booking.end)) {
+    if (!already && !force && !sameDay && !this.onTheDay(booking, rules, now)) {
       const message = `This booking is for ${time.label(booking.start)}, not today: ${who(booking)}.`;
       return result(booking, { checkedIn: false, reason: 'not-today', message, notice: message, pass: null });
     }
@@ -2281,7 +2291,7 @@ export class Lair {
       return result(join, { checkedIn: false, reason: 'cancelled', message, notice: message });
     }
     const already = !force && Boolean(join.arrivedAt);
-    if (!already && !force && !sameDay && !(now >= join.start - 3 * HOUR && now <= join.end)) {
+    if (!already && !force && !sameDay && !this.onTheDay(join, rules, now)) {
       const message = `This sign-up is for ${time.label(join.start)}, not today: ${label(join)}.`;
       return result(join, { checkedIn: false, reason: 'not-today', message, notice: message });
     }
