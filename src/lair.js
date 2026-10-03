@@ -285,8 +285,8 @@ const money = (cents) => `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toF
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 /** What's still owed on a booking or sign-up: its amount less what passes covered and what's been paid. */
 const owing = (x) => Math.max(0, (x.amount || 0) - (x.covered || 0) - (x.paidAmount || 0));
-/** What's left to pay at the counter: nothing for a GM's own table, or once it's paid. */
-const dueOf = (x) => (x.paid || x.kind === 'gm' ? 0 : owing(x));
+/** What's left to pay at the counter: nothing for a GM's own table, once it's paid, or when staff waived it. */
+const dueOf = (x) => (x.paid || x.kind === 'gm' || x.waived ? 0 : owing(x));
 /** paid, worked out again after a payment or a pass: true once something was owed and nothing is left. */
 const settled = (x) => ((x.amount || 0) > 0 ? owing(x) === 0 : Boolean(x.paid));
 /** What an order line paid, in cents: its price times its quantity, less that line's discounts. */
@@ -1171,7 +1171,7 @@ export class Lair {
       ...publicBooking(b), ref: b.ref, name: b.name, email: b.email, people: b.people, paid: b.paid, amount: b.amount, pay: b.pay, room: b.room,
       extras: b.extras || [], occurrenceId: b.occurrenceId || null, payment: b.pay === 'now' ? 'online' : 'store', refund: b.refund || null,
       pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0, split: Boolean(b.split),
-      seriesId: b.seriesId || null, ticketCode: this.ticketCode(b),
+      seriesId: b.seriesId || null, ticketCode: this.ticketCode(b), owed: this.isOwed(b), waived: Boolean(b.waived),
     };
   }
 
@@ -1186,6 +1186,35 @@ export class Lair {
       if (row?.code) return row.code;
     }
     return b?.ref || '';
+  }
+
+  /**
+   * A weekly regular's seat (from "join every session") whose session has ended unpaid: owed, whether or not they
+   * came, until it's paid or staff waive it. One-off bookings are never owed (an unpaid no-show is just recorded), and
+   * neither are seats booked before round 5 went live (owedFrom), under the old rules.
+   */
+  isOwed(b, now = Date.now()) {
+    return Boolean(b?.seriesId) && b.kind === 'gm-seat' && b.status !== 'cancelled' && b.end <= now && (b.createdAt || 0) >= this.owedFrom && dueOf(b) > 0;
+  }
+
+  /**
+   * A member's owed seats, oldest first, as check-in rows (owed: true) each with the cart line that pays it ("Owed:
+   * Curse of Strahd (Thu 1 Oct)"). memo: see savedPass. No awaits.
+   */
+  owedRows(customerId, rules, now, memo = new Map()) {
+    return this.sql
+      .exec(
+        `SELECT * FROM bookings WHERE customer_id = ? AND series_id IS NOT NULL AND kind = 'gm-seat' AND status != 'cancelled' AND ends_at <= ? AND created_at >= ?
+           AND paid = 0 AND waived = 0 ORDER BY starts_at, id`,
+        String(customerId), now, this.owedFrom,
+      )
+      .toArray()
+      .map((r) => this.rowToBooking(r))
+      .filter((b) => this.isOwed(b, now))
+      .map((b) => {
+        const row = this.bookingRow(b, rules, { memo, now });
+        return { ...row, line: this.posLine(row, rules) };
+      });
   }
 
   async updateBooking(id, patch, who) {
@@ -1250,6 +1279,12 @@ export class Lair {
     if (typeof patch.refunded === 'boolean') {
       if (patch.refunded && !next.paid && !(next.paidAmount > 0)) throw new RuleError('Only a paid booking can be marked as refunded.');
       next.refund = patch.refunded ? 'done' : null;
+    }
+    // Waived: staff let them off what's left (a weekly regular's owed seat, say). Nothing is due and it's not owed;
+    // whatever was paid stays paid. false puts it back.
+    if (typeof patch.waived === 'boolean') {
+      if (patch.waived && next.kind === 'gm') throw new RuleError("The GM's own table has nothing to pay.");
+      next.waived = patch.waived;
     }
     let moveGame = null;
     if (Array.isArray(patch.tables) || patch.end != null) {
@@ -2554,6 +2589,7 @@ export class Lair {
   payWords(item) {
     const due = dueOf(item);
     if (due) return ` Charge ${dollars(due)}.`;
+    if (item.waived && !(item.paidAmount > 0)) return ' Waived: nothing to pay.';
     const amount = item.amount || 0;
     // paid is set once nothing is left, but when a pass covered the lot no money changed hands
     if (amount > 0 && !(item.paidAmount > 0) && (item.covered || 0) >= amount) return ' Their pass covers it.';
@@ -2643,7 +2679,7 @@ export class Lair {
   staffBooking(b, memo = null, payments = null) {
     return {
       ...b, pass: this.savedPass(b, memo), covered: b.covered || 0, due: dueOf(b), refund: b.refund || null, paidAmount: b.paidAmount || 0,
-      split: Boolean(b.split), payments: payments || this.paymentsOf('booking', b.id),
+      split: Boolean(b.split), payments: payments || this.paymentsOf('booking', b.id), owed: this.isOwed(b), waived: Boolean(b.waived),
     };
   }
 
@@ -2658,9 +2694,10 @@ export class Lair {
   /**
    * A booking or game seat as a check-in row (POST /checkin, the POS and its Today list): { id, type, ref, name, people,
    * tables, start, end, status, arrivedAt, paid, amount, covered, due, customerId, pass, refund, note } plus kind, title,
-   * players, gameId and occurrenceId. memo: see savedPass.
+   * players, gameId, occurrenceId, seriesId (a weekly regular's seat), owed (a regular's seat that ended unpaid) and
+   * waived (staff let them off). memo: see savedPass.
    */
-  bookingRow(b, rules, { memo = null, game, payments = null } = {}) {
+  bookingRow(b, rules, { memo = null, game, payments = null, now = Date.now() } = {}) {
     const g = game !== undefined ? game : b.gameId ? this.game(b.gameId) : null;
     return {
       id: b.id, type: 'booking', kind: b.kind, ref: b.ref, name: b.name || '', people: b.people, tables: b.tables, start: b.start, end: b.end,
@@ -2668,6 +2705,7 @@ export class Lair {
       paidAmount: b.paidAmount || 0, payments: payments || this.paymentsOf('booking', b.id), split: Boolean(b.split),
       customerId: b.customerId || null, pass: this.savedPass(b, memo), refund: b.refund || null, note: b.notes || '',
       title: this.rowTitle(b, rules, g), players: b.party || [], gameId: b.gameId || null, occurrenceId: b.occurrenceId || null,
+      seriesId: b.seriesId || null, owed: this.isOwed(b, now), waived: Boolean(b.waived),
     };
   }
 
@@ -2678,7 +2716,7 @@ export class Lair {
       status: j.status, arrivedAt: j.arrivedAt || null, paid: j.paid, amount: j.amount || 0, covered: 0, due: dueOf(j),
       paidAmount: j.paidAmount || 0, payments: payments || this.paymentsOf('join', j.id), split: false,
       customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
-      gameId: null, occurrenceId: j.occurrenceId,
+      gameId: null, occurrenceId: j.occurrenceId, seriesId: null, owed: false, waived: false,
     };
   }
 
@@ -2712,6 +2750,19 @@ export class Lair {
       )
       .toArray().map((r) => this.rowToJoin(r));
     return { member, bookings, joins };
+  }
+
+  /**
+   * A member at the counter or in My Lair: their rows today (memberToday, as check-in rows, sorted) and their owed seats
+   * (owedRows, each with its cart line). A seat of today's that has already ended unpaid is owed, so it's there and not
+   * in today. No awaits.
+   */
+  memberDay(customerId, rules, now) {
+    const { member, bookings, joins } = this.memberToday(customerId, rules, now);
+    const memo = new Map();
+    const today = [...bookings.filter((b) => !this.isOwed(b, now)).map((b) => this.bookingRow(b, rules, { memo, now })), ...joins.map((j) => this.joinRow(j))]
+      .sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+    return { member, bookings, joins, today, owed: this.owedRows(customerId, rules, now, memo) };
   }
 
   /**
@@ -2819,8 +2870,9 @@ export class Lair {
 
   /**
    * POST /pos/scan { code }: what a code is, without checking anyone in. A booking or sign-up: { type, row, group }. A
-   * member: { type: 'member', member: { customerId, name, code }, rows (theirs today), tab (today's), passes (active) }.
-   * A pass: { type: 'pass', pass }. The first release's GOB- codes work too.
+   * member: { type: 'member', member: { customerId, name, code }, rows (theirs today, then their owed seats: owed: true,
+   * each with its cart line), tab (today's), passes (active) }. A pass: { type: 'pass', pass }. The first release's
+   * GOB- codes work too.
    */
   async posScan(input) {
     const rules = await this.rules();
@@ -2831,12 +2883,10 @@ export class Lair {
     if (found.type === 'pass') return { type: 'pass', pass: this.passView(found.item, { now }) };
     if (found.type === 'member') {
       const customerId = found.item.customer_id;
-      const { member, bookings, joins } = this.memberToday(customerId, rules, now);
-      const memo = new Map();
-      const rows = [...bookings.map((b) => this.bookingRow(b, rules, { memo })), ...joins.map((j) => this.joinRow(j))].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+      const { member, today, owed } = this.memberDay(customerId, rules, now);
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
-        rows, tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
+        rows: [...today, ...owed], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
       };
     }
     const row = found.type === 'join' ? this.joinRow(found.item) : this.bookingRow(found.item, rules);
@@ -2855,14 +2905,15 @@ export class Lair {
     // --- no awaits from here on ---
     const result = this.ticketCheckIn(input, rules, Date.now(), by);
     if (result.kind === 'pass') return { ...result, lines: [] };
-    if (result.kind === 'member') return { ...result, lines: result.rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r)) };
+    if (result.kind === 'member') return { ...result, lines: result.rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r, rules)) };
     const { row } = result;
-    return { ...result, lines: result.checkedIn && row.due > 0 ? [this.posLine(row)] : [], customer: row.customerId ? { id: row.customerId } : null };
+    return { ...result, lines: result.checkedIn && row.due > 0 ? [this.posLine(row, rules)] : [], customer: row.customerId ? { id: row.customerId } : null };
   }
 
   /**
    * POST /pos/checkin-member { customerId }: check in all of that member's rows today (their saved passes apply), with
-   * lines for everything left to pay. Returns { rows, lines, customer, notices }.
+   * lines for everything left to pay. Their owed seats (a weekly regular's unpaid sessions) come after today's rows, not
+   * checked in, with a line each: "Owed: Curse of Strahd (Thu 1 Oct)". Returns { rows, lines, customer, notices }.
    */
   async posCheckInMember(input, by = 'pos') {
     const rules = await this.rules();
@@ -2870,7 +2921,8 @@ export class Lair {
     const now = Date.now();
     const customerId = trimmed(input.customerId, 40);
     const { member, bookings, joins } = customerId ? this.memberToday(customerId, rules, now) : {};
-    if (!customerId || (!member && !bookings.length && !joins.length)) throw new RuleError('No member with that customer ID.', 404);
+    const owed = customerId ? this.owedRows(customerId, rules, now) : [];
+    if (!customerId || (!member && !bookings.length && !joins.length && !owed.length)) throw new RuleError('No member with that customer ID.', 404);
     const notices = [];
     const rows = [];
     const take = (result) => {
@@ -2878,31 +2930,41 @@ export class Lair {
       if (result.notice && result.checkedIn) notices.push(result.notice);
     };
     for (const b of bookings) {
+      // An owed seat (it ended today, unpaid) is paid, not checked in: it's with the owed rows.
+      if (this.isOwed(b, now)) continue;
       if (b.status === 'noshow') {
         notices.push(`${b.ref} was marked as a no-show, so it wasn't checked in.`);
-        rows.push(this.bookingRow(b, rules));
+        rows.push(this.bookingRow(b, rules, { now }));
       } else {
         take(this.checkInBooking(b, rules, now, { by, sameDay: true }));
       }
     }
     for (const j of joins) take(this.checkInJoin(j, rules, now, { sameDay: true }));
     rows.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
-    return { rows, lines: rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r)), customer: { id: customerId }, notices };
+    const lines = [...rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r, rules)), ...owed.map((r) => r.line)];
+    return { rows: [...rows, ...owed], lines, customer: { id: customerId }, notices };
   }
 
   /**
    * One custom sale for the POS cart, from a row: what's left to pay for it. "Table fee: SJ-OWLBEAR-17 (T4, 3 people)",
    * "GM seat: Curse of Strahd (SJ-OWLBEAR-17)", "Game spot: Warhammer night (SJ-OWLBEAR-17)" or "Event entry: Pokémon
-   * TCG league (SJ-OWLBEAR-17)", plus "(pass covered $20)" when a pass took some off.
+   * TCG league (SJ-OWLBEAR-17)", plus "(pass covered $20)" when a pass took some off. A weekly regular's owed seat is
+   * "Owed: Curse of Strahd (Thu 1 Oct)".
    */
-  posLine(row) {
+  posLine(row, rules = this.rulesCache) {
     let title;
-    if (row.type === 'join') title = `Event entry: ${row.title} (${row.ref})`;
+    if (row.owed) title = `Owed: ${row.title} (${this.shortDay(row.start, rules)})`;
+    else if (row.type === 'join') title = `Event entry: ${row.title} (${row.ref})`;
     else if (row.kind === 'gm-seat') title = `GM seat: ${row.title} (${row.ref})`;
     else if (row.occurrenceId) title = `Game spot: ${row.title} (${row.ref})`;
     else title = `Table fee: ${row.ref} (${row.tables.join(', ')}, ${plural(row.people, 'person', 'people')})`;
-    if (row.covered > 0) title += ` (pass covered ${money(row.covered)})`;
+    if (row.covered > 0 && !row.owed) title += ` (pass covered ${money(row.covered)})`;
     return { title: title.slice(0, 120), price: (row.due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: row.ref } };
+  }
+
+  /** "Thu 1 Oct", in Lair time */
+  shortDay(ms, rules = this.rulesCache) {
+    return new Intl.DateTimeFormat('en-NZ', { timeZone: rules?.tz || 'Pacific/Auckland', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ms)).replace(',', '');
   }
 
   /**
@@ -3987,8 +4049,15 @@ export class Lair {
       id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
       paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
       payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0,
-      split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), ...heldLink(b),
+      split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), owed: this.isOwed(b, now), waived: Boolean(b.waived), ...heldLink(b),
     });
+    // dueNow: everything they can pay at the counter now, the same as the POS rings up for their member code: today's
+    // bookings, seats and sign-ups with something due (no-shows aside), then their owed seats.
+    const day = this.memberDay(who.customerId, rules, now);
+    const dueNow = [...day.today.filter((r) => r.due > 0 && r.status !== 'noshow'), ...day.owed].map((r) => ({
+      id: r.id, type: r.type, ref: r.ref, title: r.title, start: r.start, end: r.end, amount: r.amount, covered: r.covered, paidAmount: r.paidAmount,
+      due: r.due, owed: Boolean(r.owed),
+    }));
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
     const seriesInfo = gameRows.some((g) => g.seriesId) ? this.seriesInfo(now) : null;
@@ -4031,6 +4100,8 @@ export class Lair {
       passes: this.memberPasses(who.customerId, now),
       // Today's self-serve tab, or null
       tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
+      // What they can pay at the counter now: { id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }
+      dueNow,
     };
   }
 

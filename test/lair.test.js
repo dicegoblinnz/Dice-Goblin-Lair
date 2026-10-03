@@ -3144,7 +3144,7 @@ test('POS today: games, events and table bookings for today, grouped and in orde
   assert.deepEqual(sam, {
     id: day.sam.id, type: 'booking', kind: 'table', ref: day.sam.ref, name: 'Sam', people: 4, tables: ['T5'], start: at('2026-10-01', 15), end: at('2026-10-01', 17),
     status: 'confirmed', arrivedAt: null, paid: false, amount: 4000, covered: 0, due: 4000, paidAmount: 0, payments: [], split: false, customerId: '1001', pass: null,
-    refund: null, note: '', title: 'Table T5', players: [], gameId: null, occurrenceId: null,
+    refund: null, note: '', title: 'Table T5', players: [], gameId: null, occurrenceId: null, seriesId: null, owed: false, waived: false,
   });
   assert.deepEqual(groups[1].rows[1].players, [{ name: 'Mia', character: '' }, { name: 'Mia +1', character: '' }]);
   assert.deepEqual([groups[3].rows[1].id, groups[3].rows[1].due, groups[3].rows[1].title, groups[3].rows[1].occurrenceId], [day.quizSam.id, 1000, 'Trivia night', 'quiz@2026-10-01']);
@@ -3344,6 +3344,82 @@ test('passes from orders: with no customer on the sale the pass is unlinked, nam
   await call('POST', 'me/profile', { name: 'Tama Ngata', email: 'tama@example.com' }, '2003');
   await call('POST', 'me/passes/claim', { code: aroha.code }, '2003');
   assert.deepEqual((await ordersPasses('#1600'))[0].holder, { customerId: '2003', name: 'Aroha Ngata', email: 'tama@example.com' }, 'a name from the order stays');
+});
+
+test('owed seats: a regular\'s seat that ends unpaid is owed, whether or not they came; My Lair and the POS list it; staff waive it; a later visit pays it; one-offs never owe', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const listed = await call('POST', 'games', {
+    title: 'Weekly Mothership', system: 'Mothership', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Space horror.', seats: 4, tables: ['A1'],
+    start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly',
+  }, 'gm');
+  const { sessions } = listed.data;
+  const regular = async (who, name) => (await call('POST', `games/${sessions[0].id}/join-series`, { people: 1, name, email: `${who}@example.com` }, who)).data.booked[0];
+  const mia = await regular('mia', 'Mia');
+  const kai = await regular('kai', 'Kai');
+  const leo = await regular('leo', 'Leo');
+  // Mia also has a one-off game this afternoon and doesn't show: that's just recorded, never owed.
+  const oneOff = await call('POST', 'games', { title: 'Afternoon one-shot', system: 'Other', gm: 'Ana', blurb: 'x', seats: 3, tables: ['B1'], start: at('2026-10-01', 15), end: at('2026-10-01', 17) }, 'gm');
+  const missed = (await call('POST', 'bookings', { kind: 'gm-seat', gameId: oneOff.data.game.id, people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia')).data.booking;
+  // A regular's seat booked before round 5 (under the old rules) is never owed either.
+  const older = { ...lair.booking(kai.ref), id: 'bk_older', ref: 'KT-OLD-1', gameId: oneOff.data.game.id, tables: ['B1'], start: at('2026-10-01', 15), end: at('2026-10-01', 17) };
+  lair.saveBooking(older, NOW - 24 * HOUR);
+  // Leo comes and pays at the counter. Mia comes but doesn't pay; Kai doesn't come.
+  Date.now = () => at('2026-10-01', 17, 50);
+  await call('POST', `bookings/${missed.id}/update`, { status: 'noshow' }, 'staff');
+  const leoIn = await pos('checkin', { code: lair.memberRow('leo').code.replace(/-/g, '') });
+  await internal('orders-paid', posOrder(3001, leoIn.data.lines.map((l, i) => payLine(30010 + i, l.price, l.properties._booking))));
+  await pos('checkin', { id: lair.booking(mia.ref).id, type: 'booking' });
+  assert.equal(lair.booking(mia.ref).status, 'seated');
+  assert.equal((await call('GET', 'me', null, 'mia')).data.seats.find((s) => s.ref === mia.ref).owed, false, 'not owed while the session is on');
+
+  // The session ends: Mia's and Kai's seats are owed; Leo paid; the one-off no-show and the old seat aren't.
+  Date.now = () => at('2026-10-01', 21, 5);
+  await maintenance();
+  const owedOf = (ref) => lair.isOwed(lair.booking(ref), Date.now());
+  assert.deepEqual([owedOf(mia.ref), owedOf(kai.ref), owedOf(leo.ref), owedOf(missed.ref), owedOf('KT-OLD-1')], [true, true, false, false, false]);
+  const me = (await call('GET', 'me', null, 'mia')).data;
+  const miaSeat = lair.booking(mia.ref);
+  assert.deepEqual(me.dueNow, [{ id: miaSeat.id, type: 'booking', ref: mia.ref, title: 'Weekly Mothership', start: sessions[0].start, end: at('2026-10-01', 21), amount: 1500, covered: 0, paidAmount: 0, due: 1500, owed: true }]);
+  const seat = (pred) => me.seats.find(pred);
+  assert.deepEqual([seat((s) => s.ref === mia.ref).owed, seat((s) => s.ref === mia.ref).waived, seat((s) => s.ref === mia.ref).due], [true, false, 1500]);
+  assert.equal(seat((s) => s.id === missed.id).owed, false, 'a one-off no-show is never owed');
+  const staffFloor = (await call('GET', `floor?from=${at('2026-10-01', 0)}&to=${at('2026-10-02', 0)}`, null, 'staff')).data.bookings;
+  assert.deepEqual(staffFloor.filter((b) => b.owed).map((b) => b.ref).sort(), [kai.ref, mia.ref].sort());
+
+  // A week on, Mia's member code at the counter: today's seat, then the owed one with its line.
+  Date.now = () => at('2026-10-08', 17);
+  const scan = await pos('scan', { code: lair.memberRow('mia').code });
+  assert.deepEqual(scan.data.rows.map((r) => [r.start, r.owed, r.arrivedAt != null]), [[sessions[1].start, false, false], [sessions[0].start, true, true]]);
+  const owedRow = scan.data.rows[1];
+  assert.deepEqual(owedRow.line, { title: 'Owed: Weekly Mothership (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: mia.ref } });
+  // Checking her in does today's seat only; the owed seat's line comes after.
+  const checked = await pos('checkin-member', { customerId: 'mia' });
+  assert.equal(checked.status, 200, checked.data.error);
+  assert.deepEqual(checked.data.rows.map((r) => [r.start, r.owed, r.status]), [[sessions[1].start, false, 'seated'], [sessions[0].start, true, 'seated']]);
+  assert.deepEqual(checked.data.lines.map((l) => [l.title, l.price, l.properties._booking]), [
+    [`GM seat: Weekly Mothership (${checked.data.rows[0].ref})`, '15.00', checked.data.rows[0].ref], ['Owed: Weekly Mothership (Thu 1 Oct)', '15.00', mia.ref],
+  ]);
+  assert.equal(lair.booking(mia.ref).arrivedAt, at('2026-10-01', 17, 50), 'the owed seat keeps its own check-in');
+  // Paying that sale pays both, like any _booking line.
+  await internal('orders-paid', posOrder(3002, checked.data.lines.map((l, i) => payLine(30020 + i, l.price, l.properties._booking))));
+  assert.deepEqual([owedOf(mia.ref), lair.booking(mia.ref).paid], [false, true]);
+  assert.deepEqual((await call('GET', 'me', null, 'mia')).data.dueNow, []);
+
+  // Kai's owed seat: only staff can waive it. Waived, nothing is due and it's not owed; false puts it back.
+  const kaiSeat = lair.booking(kai.ref);
+  assert.equal((await call('POST', `bookings/${kaiSeat.id}/update`, { waived: true }, 'kai')).status, 403);
+  const kaiDue = async () => (await call('GET', 'me', null, 'kai')).data.dueNow.map((x) => [x.ref, x.owed, x.due]);
+  const today = lair.gameBookings(sessions[1].id).find((b) => b.customerId === 'kai');
+  assert.deepEqual(await kaiDue(), [[today.ref, false, 1500], [kai.ref, true, 1500]], "today's seat, then the owed one");
+  const waived = await call('POST', `bookings/${kaiSeat.id}/update`, { waived: true }, 'staff');
+  assert.equal(waived.status, 200, waived.data.error);
+  assert.deepEqual([waived.data.booking.waived, waived.data.booking.due, waived.data.booking.owed, waived.data.booking.paid], [true, 0, false, false]);
+  assert.deepEqual(await kaiDue(), [[today.ref, false, 1500]]);
+  assert.deepEqual((await pos('scan', { code: lair.memberRow('kai').code })).data.rows.filter((r) => r.owed), []);
+  assert.match((await call('POST', 'checkin', { id: kaiSeat.id, type: 'booking', force: true }, 'staff')).data.message, /Waived: nothing to pay\.$/);
+  assert.equal((await call('POST', `bookings/${kaiSeat.id}/update`, { waived: false }, 'staff')).data.booking.owed, true);
+  const gmHold = lair.gameBookings(sessions[0].id).find((b) => b.kind === 'gm');
+  assert.equal((await call('POST', `bookings/${gmHold.id}/update`, { waived: true }, 'staff')).status, 422);
 });
 
 /* ---------------- live data: the database the live app (round 8, main at adf6ad2) has ---------------- */
@@ -3806,6 +3882,10 @@ test('live data: main\'s database (round 4) moves to round 5 with every row kept
   }
   assert.deepEqual(seatsOf('mia'), [...miaBefore, 'gm_m4:confirmed'], "Mia's round 4 seats are all still there");
   assert.deepEqual(seatsOf('kai'), ['gm_m0:seated', 'gm_m1:confirmed', 'gm_m2:confirmed', 'gm_m3:confirmed', 'gm_m4:confirmed']);
+  // Owed: only seats round 5 booked. Round 4's seats that ended unpaid (Kai's first two, Mia's next two) aren't owed.
+  const owedStarts = async (customerId) => (await call('GET', 'me', null, customerId)).data.dueNow.filter((x) => x.owed).map((x) => x.start);
+  assert.deepEqual(await owedStarts('kai'), [at('2026-10-08', 18), at('2026-10-15', 18)]);
+  assert.deepEqual(await owedStarts('mia'), []);
   Date.now = () => NOW;
 
   // Opening the database again runs nothing twice.
