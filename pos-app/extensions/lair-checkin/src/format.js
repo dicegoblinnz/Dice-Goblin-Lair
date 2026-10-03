@@ -119,7 +119,13 @@ export function dayLabel(ms, now = Date.now()) {
   const t = Number(ms);
   if (!t) return '';
   if (dayKey(t) === dayKey(now)) return 'Today';
-  return format(t, { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '');
+  return shortDay(t);
+}
+
+/** "Sun 4 Oct", never "Today". @param {unknown} ms */
+export function shortDay(ms) {
+  const t = Number(ms);
+  return t ? format(t, { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '') : '';
 }
 
 /** "Saturday 3 October". @param {unknown} ms */

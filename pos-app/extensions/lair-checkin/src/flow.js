@@ -1,7 +1,7 @@
 // Which screen comes next, and what each screen offers: after a scan, at check-in, with passes and tabs, and after the
 // cart. No `shopify` global here, so `npm test` can check it without a POS.
 import { readCode } from './codes.js';
-import { dateLabel, dayKey, dayLabel, money, plural, timeRange } from './format.js';
+import { dateLabel, dayKey, money, plural, shortDay, timeRange } from './format.js';
 import { feeLines, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabItems } from './lines.js';
 import { dueOf, findRow, isArrived, passSummary, passUsable, rowState } from './today.js';
 
@@ -323,7 +323,8 @@ export function personPlan(row, result, todayKey) {
   else if (lower(row.status) === 'cancelled') warning = `This ${noun} was cancelled.`;
   else if (['noshow', 'no-show'].includes(lower(row.status))) warning = `This ${noun} was marked as a no-show.`;
   else if (todayKey && Number(row.start) && dayKey(Number(row.start)) !== todayKey) {
-    warning = `This ${noun} is for ${dayLabel(row.start)}, ${timeRange(row.start, row.end)}, not today.`;
+    // Never "Today" here: this warning only shows for another day (and the screen's day can differ from the clock's)
+    warning = `This ${noun} is for ${shortDay(row.start)}, ${timeRange(row.start, row.end)}, not today.`;
   }
   return { stage: 'check-in', force: Boolean(warning), warning };
 }
