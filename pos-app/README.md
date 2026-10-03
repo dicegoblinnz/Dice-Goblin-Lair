@@ -89,8 +89,8 @@ in the cart, take that line off the sale first. (The staff page can undo a pass 
 
 ## One-time setup (Mo, on your phone)
 
-Do steps 1 and 2 before this folder is merged into `main`: merging starts the first deploy, and without the key it
-stops with a message saying the key is missing. If that happens, do steps 1 and 2, then step 4.
+This folder is already on `main`, so deploys are waiting for steps 1 and 2. Until the key is saved, each run only
+shows a yellow note saying it's missing. After step 2, run step 4 once (or ask Claude to start it).
 
 Use your phone's web browser (Safari or Chrome) for GitHub, not the GitHub app: the app can't add secrets.
 
@@ -99,7 +99,7 @@ Use your phone's web browser (Safari or Chrome) for GitHub, not the GitHub app: 
 1. Open https://dev.shopify.com/dashboard and log in.
 2. Tap **Apps**, then **Dice Goblin Lair**, then **Settings**.
 3. Scroll to **App Automation Token** and tap **Create token**.
-4. Under **Expiration**, pick **6 months**, then tap **Generate token**.
+4. Under **Expiration**, pick **6 months** (the longest Shopify offers), then tap **Generate token**.
 5. Copy the token straight away: Shopify only shows it once. Paste it in step 2 and nowhere else.
 6. Add a calendar reminder for 5 months from today: "Renew the POS deploy key" (see the end of this section).
 
