@@ -537,13 +537,17 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   };
 }
 
-export function checkSeatBooking(input, { state, rules, now }) {
+/**
+ * A seat at a GM game, checked. held: seats kept for the game's weekly regulars who don't have their seat yet (they
+ * aren't anyone else's to take).
+ */
+export function checkSeatBooking(input, { state, rules, now, held = 0 }) {
   const game = state.games.find((g) => g.id === input.gameId);
   if (!game || !['open', 'full'].includes(game.status)) throw new RuleError('That game is not open for players.', 404);
   if (game.end <= now) throw new RuleError('That game has finished.');
   const people = Math.floor(Number(input.people));
   if (!(people >= 1 && people <= 8)) throw new RuleError('Book between 1 and 8 seats.');
-  const left = game.seats - seatsTaken(state, game.id);
+  const left = game.seats - seatsTaken(state, game.id) - Math.max(0, held);
   if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'seat' : 'seats'} left.` : 'This table is full.', 409);
   const name = clean(input.name, 80);
   const email = clean(input.email, 120);
@@ -576,6 +580,8 @@ export function seatsTaken(state, gameId) {
 
 export const GM_FEES = [0, 500, 1000];
 export const SCHEDULES = ['one-shot', 'weekly', 'fortnightly', 'flexible'];
+/** How a series of sessions repeats (a one-shot isn't a series) */
+export const SERIES_SCHEDULES = ['weekly', 'fortnightly', 'flexible'];
 const CHARACTERS = ['pregens', 'bring', 'at-table'];
 
 /** The details of a GM game every session shares (checked once, when the game is listed) */
@@ -664,12 +670,16 @@ export function publicBooking(b) {
   return { id: b.id, kind: b.kind, tables: b.tables, start: b.start, end: b.end, status: b.status, gameId: b.gameId || null, people: b.kind === 'walkin' || b.kind === 'table' ? undefined : b.people };
 }
 
-export function publicGame(g, state, rules = null) {
-  const taken = seatsTaken(state, g.id);
+/**
+ * A GM game as the games board shows it. held: seats kept for weekly regulars who don't have their seat at this
+ * session yet; they count as taken, so the board never offers them to anyone else.
+ */
+export function publicGame(g, state, rules = null, held = 0) {
+  const taken = seatsTaken(state, g.id) + Math.max(0, held);
   const gmFee = g.gmFee ?? rules?.prices.gmCredit ?? 500;
   return {
     id: g.id, title: g.title, system: g.system, gm: g.gm, level: g.level, age: g.age, tags: g.tags, safety: g.safety,
-    pregens: g.pregens, blurb: g.blurb, tables: g.tables, start: g.start, end: g.end, seats: g.seats, taken,
+    pregens: g.pregens, blurb: g.blurb, tables: g.tables, start: g.start, end: g.end, seats: g.seats, taken, held: Math.max(0, held),
     status: g.status === 'open' && taken >= g.seats ? 'full' : g.status, campaign: g.campaign || null, credited: g.credited ?? null,
     schedule: g.schedule || 'one-shot', seriesId: g.seriesId || null, gmFee, seatPrice: g.seatPrice || rules?.prices.gmSeat || 1500,
     room: g.room || null, characters: g.characters || (g.pregens ? 'pregens' : ''), bring: g.bring || '', contentNotes: g.contentNotes || '',

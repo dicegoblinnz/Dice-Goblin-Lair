@@ -1131,10 +1131,14 @@ test('GM games: weekly series, GM fees, seat names, approval for a whole series,
   assert.ok(own.length >= 1 && own.every((g) => g.status === 'pending'));
 
   assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'open' }, 'staff')).status, 200);
-  const open = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId);
+  // The public board shows the series' next session; staff see every one, all approved.
+  const board = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId);
+  assert.deepEqual(board.map((g) => [g.id, g.nextOnly, g.series]), [[listed.data.game.id, true, { id: seriesId, schedule: 'weekly', regulars: 0 }]]);
+  assert.equal(board[0].gmBio, 'GMing since the 90s.');
+  assert.equal(board[0].players, undefined);
+  const open = (await call('GET', 'floor', null, 'staff')).data.games.filter((g) => g.seriesId === seriesId);
   assert.ok(open.length >= 7 && open.every((g) => g.status === 'open' && g.gmFeeApproved));
-  assert.equal(open[0].gmBio, 'GMing since the 90s.');
-  assert.equal(open[0].players, undefined);
+  assert.deepEqual(open.map((g) => g.nextOnly), open.map((_, i) => i === 0));
 
   const seat = await call('POST', 'bookings', {
     kind: 'gm-seat', gameId: open[0].id, people: 2, name: 'Mia', email: 'mia@example.com', pay: 'day',
@@ -1184,8 +1188,9 @@ test('GM games: $0 fee means players pay the table fee only; flexible games add 
   const served = await lair.fetch(new Request(`https://lair.test/internal/img/${imageId}`, { headers: { 'X-Lair-Internal': '1' } }));
   assert.equal(served.headers.get('Content-Type'), 'image/png');
   assert.equal((await served.arrayBuffer()).byteLength, 70);
-  const sessions = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === flexible.data.game.seriesId);
+  const sessions = (await call('GET', 'floor', null, 'staff')).data.games.filter((g) => g.seriesId === flexible.data.game.seriesId);
   assert.ok(sessions.length === 2 && sessions.every((g) => g.image === pic.data.image));
+  assert.deepEqual(sessions.map((g) => g.series.schedule), ['flexible', 'flexible']);
 
   assert.equal((await call('POST', 'gm-profile', { name: 'Ana', bio: 'Rules-light and story-heavy.' })).status, 401);
   assert.equal((await call('POST', 'gm-profile', { name: 'Ana', bio: 'Rules-light and story-heavy.' }, 'gm')).status, 200);
@@ -1895,7 +1900,10 @@ test('GET /members/birthdays (staff): the next 30 days, soonest first, with spen
   ]);
 });
 
-test('join every session: a seat at each upcoming session with room, the series growing seats members, and leaving frees the seats', async () => {
+/** The 10-minute maintenance, as the cron trigger runs it */
+const maintenance = () => internal('maintenance', { webhookUrl: 'https://lair.test/webhooks/orders-paid' });
+
+test('weekly regulars: joining books the next session only, the seat rolls forward once a session ends, skipping and leaving work', async () => {
   const mail = captureEmails();
   try {
     const listed = await call('POST', 'games', {
@@ -1905,82 +1913,206 @@ test('join every session: a seat at each upcoming session with room, the series 
     const { sessions } = listed.data;
     const seriesId = listed.data.game.seriesId;
     assert.equal(sessions.length, 9);
-    await call('POST', 'bookings', { kind: 'gm-seat', gameId: sessions[1].id, people: 2, name: 'Kai', email: 'kai@example.com', players: [{ name: 'Kai' }, { name: 'Tama' }] }, 'kai');
     const join = { people: 2, players: [{ name: 'Mia', character: 'Ripley' }, { name: 'Leo' }], name: 'Mia', email: 'mia@example.com' };
     assert.equal((await call('POST', `games/${sessions[0].id}/join-series`, join)).status, 401);
     assert.equal((await call('POST', `games/${sessions[0].id}/join-series`, { ...join, people: 4 }, 'mia')).status, 422, 'no more people than the game has seats');
     await settle();
     mail.sent.length = 0;
 
-    const joined = await call('POST', `games/${sessions[0].id}/join-series`, join, 'mia');
+    // Joining from any session (here the third) books the next one, and only that one.
+    const joined = await call('POST', `games/${sessions[2].id}/join-series`, join, 'mia');
     assert.equal(joined.status, 200, joined.data.error);
+    const code = lair.memberRow('mia').code;
     assert.deepEqual(joined.data.member, { seriesId, people: 2, players: [{ name: 'Mia', character: 'Ripley' }, { name: 'Leo', character: '' }] });
-    assert.equal(joined.data.booked.length, 8);
-    assert.deepEqual(joined.data.full.map((x) => x.gameId), [sessions[1].id], 'the session with one seat left is full for two');
+    assert.deepEqual([joined.data.booked.map((x) => [x.gameId, x.ticketCode]), joined.data.full], [[[sessions[0].id, code]], []]);
     const seat = lair.booking(joined.data.booked[0].ref);
     assert.deepEqual([seat.kind, seat.status, seat.pay, seat.paid, seat.amount, seat.seriesId, seat.customerId], ['gm-seat', 'confirmed', 'day', false, 3000, seriesId, 'mia']);
+    const seatsIn = (i) => lair.gameBookings(sessions[i].id).filter((b) => b.kind === 'gm-seat');
+    assert.deepEqual(sessions.slice(1).map((_, i) => seatsIn(i + 1).length), Array(8).fill(0), 'no seats in later sessions');
     await settle();
-    assert.match(mail.sent.find((m) => m.to === 'mia@example.com').text, /every upcoming session of Weekly Mothership/);
-    assert.equal((await call('POST', 'bookings', tableBooking({ email: 'mia@example.com' }), 'mia')).status, 200, 'series seats leave room under the per-email limit');
+    const welcome = mail.sent.find((m) => m.to === 'mia@example.com');
+    assert.match(welcome.subject, /^You're a regular: Weekly Mothership$/);
+    assert.match(welcome.text, new RegExp(`Your code: +${code}`));
+    assert.match(welcome.text, /A seat you keep is yours to pay for, even if you don't come\./);
     const again = await call('POST', `games/${sessions[0].id}/join-series`, join, 'mia');
-    assert.deepEqual(again.data.booked.map((x) => x.ref), joined.data.booked.map((x) => x.ref), 'joining again keeps the same seats');
+    assert.deepEqual(again.data.booked.map((x) => x.ref), [seat.ref], 'joining again keeps the same seat');
+    assert.equal((await call('POST', 'bookings', tableBooking({ email: 'mia@example.com' }), 'mia')).status, 200, 'series seats leave room under the per-email limit');
 
-    // A week on, the series grows by a session, and Mia has a seat at it.
-    Date.now = () => NOW + 7 * 24 * HOUR;
-    lair.seriesDay = null;
-    lair.extendSeries(lair.rulesCache, Date.now());
-    const newest = lair.sql.exec('SELECT id FROM games WHERE series_id = ? ORDER BY starts_at DESC LIMIT 1', seriesId).one().id;
-    assert.ok(!sessions.some((x) => x.id === newest));
-    assert.deepEqual(lair.gameBookings(newest).filter((b) => b.kind === 'gm-seat').map((b) => b.customerId), ['mia']);
-    assert.deepEqual((await call('GET', 'me', null, 'mia')).data.series.map((x) => [x.seriesId, x.title, x.people]), [[seriesId, 'Weekly Mothership', 2]]);
+    // My Lair: the seat, with her member code as its ticket (the seat keeps its own ref), and the series once.
+    const me = (await call('GET', 'me', null, 'mia')).data;
+    assert.deepEqual(me.seats.map((s) => [s.gameId, s.seriesId, s.ref, s.ticketCode]), [[sessions[0].id, seriesId, seat.ref, code]]);
+    assert.deepEqual(me.series.map((x) => [x.seriesId, x.title, x.people]), [[seriesId, 'Weekly Mothership', 2]]);
+    assert.ok((await call('POST', 'checkin', { code }, 'staff')).data.rows.some((r) => r.id === seat.id), 'her member code finds today\'s seat');
+    // The public board shows the next session, and says how many regulars it has.
+    const board = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId);
+    assert.deepEqual(board.map((g) => [g.id, g.nextOnly, g.series, g.taken, g.held]), [[sessions[0].id, true, { id: seriesId, schedule: 'weekly', regulars: 2 }, 2, 0]]);
 
+    // Nothing rolls forward before the session ends; once it has, maintenance books the next one, once.
+    assert.equal((await maintenance()).data.regulars, undefined);
+    Date.now = () => at('2026-10-01', 21, 5);
+    assert.deepEqual((await maintenance()).data.regulars, { seated: 1, full: 0 });
+    const next = seatsIn(1);
+    assert.deepEqual(next.map((b) => [b.customerId, b.seriesId, b.people, b.amount, b.status, b.pay, b.party.map((p) => p.name)]), [['mia', seriesId, 2, 3000, 'confirmed', 'day', ['Mia', 'Leo']]]);
+    assert.equal((await maintenance()).data.regulars, undefined, 'nothing more next time');
+    assert.equal(seatsIn(1).length, 1);
+    assert.deepEqual((await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId).map((g) => g.id), [sessions[1].id], 'the board moves on too');
+
+    // Skipping one: she cancels next week's seat, maintenance leaves it cancelled, and she has the week after once it's over.
+    assert.equal((await call('POST', `bookings/${next[0].id}/update`, { status: 'cancelled' }, 'mia')).status, 200);
+    await maintenance();
+    assert.deepEqual(seatsIn(1).map((b) => b.status), ['cancelled']);
+    Date.now = () => at('2026-10-08', 21, 5);
+    await maintenance();
+    assert.deepEqual([seatsIn(1).length, seatsIn(2).map((b) => [b.customerId, b.status])], [1, [['mia', 'confirmed']]]);
+
+    // Leaving frees the seat she has and stops the rolling.
     mail.sent.length = 0;
     assert.equal((await call('POST', `series/${seriesId}/leave`, {}, 'kai')).status, 404);
     const left = await call('POST', `series/${seriesId}/leave`, {}, 'mia');
     assert.equal(left.status, 200, left.data.error);
-    assert.equal(left.data.cancelled, 8, 'every upcoming seat it made (the first session is in the past now)');
-    assert.equal(lair.booking(joined.data.booked[0].ref).status, 'confirmed', 'past sessions are left alone');
+    assert.equal(left.data.cancelled, 1);
+    assert.equal(lair.booking(seat.ref).status, 'confirmed', 'past sessions are left alone');
     await settle();
     const gm = mail.sent.filter((m) => m.to === 'ellie@example.com');
     assert.equal(gm.length, 1);
     assert.match(gm[0].text, /Mia has stopped coming to every session/);
     assert.deepEqual((await call('GET', 'me', null, 'mia')).data.series, []);
-    Date.now = () => NOW + 14 * 24 * HOUR;
-    lair.seriesDay = null;
-    lair.extendSeries(lair.rulesCache, Date.now());
-    const latest = lair.sql.exec('SELECT id FROM games WHERE series_id = ? ORDER BY starts_at DESC LIMIT 1', seriesId).one().id;
-    assert.equal(lair.gameBookings(latest).filter((b) => b.kind === 'gm-seat').length, 0, 'no seats once she has left');
+    Date.now = () => at('2026-10-15', 21, 5);
+    await maintenance();
+    assert.equal(seatsIn(3).length, 0, 'no seats once she has left');
+
+    // Joining while a session is under way books the next one to start, never the one already going (they'd owe for
+    // it), and nothing is held for them there either.
+    Date.now = () => at('2026-10-22', 19);
+    const zoe = await call('POST', `games/${sessions[3].id}/join-series`, { people: 1, name: 'Zoe', email: 'zoe@example.com' }, 'zoe');
+    assert.deepEqual(zoe.data.booked.map((x) => x.gameId), [sessions[4].id]);
+    assert.equal((await maintenance()).data.regulars, undefined);
+    assert.deepEqual(seatsIn(3), []);
+    assert.equal((await call('GET', 'floor', null, 'staff')).data.games.find((g) => g.id === sessions[3].id).held, 0);
   } finally {
     mail.restore();
   }
 });
 
-test('join every session: a date the GM adds seats members and tells them; skipping one session keeps the rest; one-offs have no series', async () => {
+test('weekly regulars: their seats are held in every session\'s count; first to join picks first; a full next session gets the staff an alert, once', async () => {
+  const mail = captureEmails();
+  try {
+    const listed = await call('POST', 'games', {
+      title: 'Weekly Alien', system: 'Alien RPG', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Bugs.', seats: 3, tables: ['A2'],
+      start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly',
+    }, 'gm');
+    const { sessions } = listed.data;
+    const seriesId = listed.data.game.seriesId;
+    // Kai books two seats in the second session before anyone joins. Then Mia (2 seats) joins, and a minute later Leo (1).
+    const kai = await call('POST', 'bookings', { kind: 'gm-seat', gameId: sessions[1].id, people: 2, name: 'Kai', email: 'kai@example.com', players: [{ name: 'Kai' }, { name: 'Tama' }] }, 'kai');
+    assert.equal(kai.status, 200, kai.data.error);
+    await call('POST', `games/${sessions[0].id}/join-series`, { people: 2, name: 'Mia', email: 'mia@example.com', players: [{ name: 'Mia' }, { name: 'Jo' }] }, 'mia');
+    Date.now = () => NOW + 60_000;
+    const leo = await call('POST', `games/${sessions[0].id}/join-series`, { people: 1, name: 'Leo', email: 'leo@example.com' }, 'leo');
+    assert.equal(leo.data.booked.length, 1);
+    Date.now = () => NOW;
+
+    // Later sessions keep 3 seats for the regulars: full to everyone else.
+    const views = (await call('GET', 'floor', null, 'staff')).data.games.filter((g) => g.seriesId === seriesId);
+    const view = (i) => views.find((g) => g.id === sessions[i].id);
+    assert.deepEqual([view(0).taken, view(0).held, view(0).status], [3, 0, 'full']);
+    assert.deepEqual([view(1).taken, view(1).held, view(1).status], [5, 3, 'full'], "Kai's 2 seats, plus 3 kept for the regulars");
+    assert.deepEqual([view(2).taken, view(2).held, view(2).status, view(2).series.regulars], [3, 3, 'full', 3]);
+    const ana = await call('POST', 'bookings', { kind: 'gm-seat', gameId: sessions[2].id, people: 1, name: 'Ana', email: 'ana@example.com' }, 'ana');
+    assert.deepEqual([ana.status, ana.data.error], [409, 'This table is full.']);
+    const walkUp = await call('POST', `games/${sessions[2].id}/players`, { name: 'Walk-up', people: 1 }, 'staff');
+    assert.deepEqual([walkUp.status, walkUp.data.error], [409, 'This table is full. 3 seats are kept for regulars.']);
+    // A regular's own seat isn't kept from them: Leo books his third-session seat early, and his hold becomes that seat.
+    const own = await call('POST', 'bookings', { kind: 'gm-seat', gameId: sessions[2].id, people: 1, name: 'Leo', email: 'leo@example.com' }, 'leo');
+    assert.equal(own.status, 200, own.data.error);
+    const third = (await call('GET', 'floor', null, 'staff')).data.games.find((g) => g.id === sessions[2].id);
+    assert.deepEqual([third.taken, third.held], [3, 2]);
+
+    // The first session ends. The second has 1 seat free: Mia joined first but needs 2, so Leo gets it, and the staff
+    // hear about Mia once.
+    mail.sent.length = 0;
+    Date.now = () => at('2026-10-01', 21, 5);
+    assert.deepEqual((await maintenance()).data.regulars, { seated: 1, full: 1 });
+    const second = () => lair.gameBookings(sessions[1].id).filter((b) => b.kind === 'gm-seat' && b.status !== 'cancelled');
+    assert.deepEqual(second().map((b) => b.customerId).sort(), ['kai', 'leo']);
+    await settle();
+    const alerts = mail.sent.filter((m) => m.to === 'staff@dicegoblin.test');
+    assert.equal(alerts.length, 1);
+    assert.match(alerts[0].subject, /^No seat for a regular: Weekly Alien, Thursday,? 8 October/);
+    assert.match(alerts[0].text, /Regulars without a seat: +Mia \(2 seats\)/);
+    assert.match(alerts[0].text, /Seats taken: +3 of 3/);
+    mail.sent.length = 0;
+    assert.deepEqual((await maintenance()).data.regulars, undefined, 'one alert per regular and session');
+    await settle();
+    assert.equal(mail.sent.length, 0);
+    // Kai cancels: the next run gives Mia his seats, and tells her (it's hers to pay for if she keeps it).
+    const kaiSeat = lair.gameBookings(sessions[1].id).find((b) => b.customerId === 'kai');
+    await call('POST', `bookings/${kaiSeat.id}/update`, { status: 'cancelled' }, 'kai');
+    mail.sent.length = 0;
+    assert.deepEqual((await maintenance()).data.regulars, { seated: 1, full: 0 });
+    assert.deepEqual(second().map((b) => b.customerId).sort(), ['leo', 'mia']);
+    await settle();
+    const freed = mail.sent.filter((m) => m.to === 'mia@example.com');
+    assert.equal(freed.length, 1);
+    assert.match(freed[0].subject, /^A seat came free: Weekly Alien/);
+    assert.match(freed[0].text, /A seat you keep is yours to pay for, even if you don't come\./);
+    assert.match(freed[0].text, new RegExp(`Your code: +${lair.memberRow('mia').code}`));
+
+    // Someone joining while the next session is full is told so, and staff hear once maintenance runs.
+    const late = await call('POST', `games/${sessions[1].id}/join-series`, { people: 1, name: 'Ana', email: 'ana@example.com' }, 'ana');
+    assert.deepEqual([late.data.booked, late.data.full.map((x) => x.gameId)], [[], [sessions[1].id]]);
+    assert.deepEqual((await maintenance()).data.regulars, { seated: 0, full: 1 });
+  } finally {
+    mail.restore();
+  }
+});
+
+test('weekly regulars: a date the GM adds is theirs once it\'s the next session (straight away when nothing else is coming); one-offs have no regulars', async () => {
   const mail = captureEmails();
   try {
     const flexible = await call('POST', 'games', {
       title: 'Flexible Blades', system: 'Blades in the Dark', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Heists.', seats: 4, tables: ['B1'],
       start: at('2026-10-02', 18), end: at('2026-10-02', 21), schedule: 'flexible',
     }, 'gm');
-    const joined = await call('POST', `games/${flexible.data.game.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia');
-    assert.equal(joined.data.booked.length, 1);
+    const firstId = flexible.data.game.id;
+    const joined = await call('POST', `games/${firstId}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia');
+    assert.deepEqual(joined.data.booked.map((x) => x.gameId), [firstId]);
+    const seatsAt = (id) => lair.gameBookings(id).filter((b) => b.kind === 'gm-seat');
     await settle();
     mail.sent.length = 0;
-    const added = await call('POST', `games/${flexible.data.game.id}/sessions`, { start: at('2026-10-09', 18), end: at('2026-10-09', 21) }, 'gm');
+    // A date after the next one waits until the next one is over.
+    const added = await call('POST', `games/${firstId}/sessions`, { start: at('2026-10-09', 18), end: at('2026-10-09', 21) }, 'gm');
     assert.equal(added.status, 200, added.data.error);
-    const seats = lair.gameBookings(added.data.game.id).filter((b) => b.kind === 'gm-seat');
-    assert.deepEqual(seats.map((b) => [b.customerId, b.party[0].name]), [['mia', 'Mia']]);
+    assert.deepEqual(seatsAt(added.data.game.id), []);
     await settle();
-    assert.match(mail.sent.find((m) => m.to === 'mia@example.com').subject, /New session: Flexible Blades/);
+    assert.equal(mail.sent.filter((m) => m.to === 'mia@example.com').length, 0);
 
-    const skipped = await call('POST', `bookings/${seats[0].id}/update`, { status: 'cancelled' }, 'mia');
-    assert.equal(skipped.status, 200, skipped.data.error);
-    assert.equal(lair.booking(joined.data.booked[0].ref).status, 'confirmed', 'the other session stays booked');
+    // Skipping the first: the GM hears, and maintenance doesn't book it again.
+    const first = seatsAt(firstId)[0];
+    assert.equal((await call('POST', `bookings/${first.id}/update`, { status: 'cancelled' }, 'mia')).status, 200);
     await settle();
     assert.ok(mail.sent.some((m) => m.to === 'ellie@example.com' && /Seat dropped/.test(m.subject)));
+    await maintenance();
+    assert.deepEqual(seatsAt(firstId).map((b) => b.status), ['cancelled']);
+    // Once it's over, the added date has her seat.
+    Date.now = () => at('2026-10-02', 21, 30);
+    await maintenance();
+    assert.deepEqual(seatsAt(added.data.game.id).map((b) => [b.customerId, b.party[0].name]), [['mia', 'Mia']]);
 
-    const oneOff = await call('POST', 'games', { title: 'One-off', system: 'Other', gm: 'Ellie', blurb: 'x', seats: 3, tables: ['B2'], start: at('2026-10-02', 18), end: at('2026-10-02', 21) }, 'gm');
+    // With nothing else coming, a date the GM adds is the next one: she's booked straight away and told.
+    Date.now = () => at('2026-10-09', 21, 30);
+    mail.sent.length = 0;
+    const later = await call('POST', `games/${firstId}/sessions`, { start: at('2026-10-16', 18), end: at('2026-10-16', 21) }, 'gm');
+    assert.equal(later.status, 200, later.data.error);
+    assert.deepEqual(seatsAt(later.data.game.id).map((b) => b.customerId), ['mia']);
+    await settle();
+    const told = mail.sent.find((m) => m.to === 'mia@example.com');
+    assert.match(told.subject, /^New session: Flexible Blades/);
+    assert.match(told.text, new RegExp(`Your code: +${lair.memberRow('mia').code}`), 'her member code is the ticket');
+
+    const oneOff = await call('POST', 'games', { title: 'One-off', system: 'Other', gm: 'Ellie', blurb: 'x', seats: 3, tables: ['B2'], start: at('2026-10-17', 18), end: at('2026-10-17', 21) }, 'gm');
     assert.equal((await call('POST', `games/${oneOff.data.game.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia')).status, 422);
+    assert.deepEqual([oneOff.data.game.series, oneOff.data.game.nextOnly], [null, false]);
   } finally {
     mail.restore();
   }
@@ -3557,8 +3689,13 @@ function mainRows(sql) {
   member('kai', 'Kai Tane', 'KT-MOA-8');
   member('gm', 'Ana Smith', 'AS-HELM-4');
   insertRow(sql, 'spend', { order_id: 'gid://shopify/Order/400', customer_id: '1001', amount: 25000, source: 'pos', created_at: created });
+  // Every detail main's createGame keeps (checkGameDetails, plus the GM's email and who listed it).
+  const details = {
+    title: 'Lost Mine', gm: 'Ana', blurb: 'Goblins!', seats: 4, gmFee: 500, schedule: 'weekly', characters: 'pregens', system: 'D&D 5e', level: 'new', age: 'All ages',
+    tags: [], safety: [], pregens: true, bring: '', contentNotes: '', sessionZero: '', gmBio: '', gmEmail: 'ana@example.com', staffCreated: false,
+  };
   insertRow(sql, 'series', {
-    id: 'sr_main1', schedule: 'weekly', gm_customer_id: 'gm', details: JSON.stringify({ title: 'Lost Mine', gm: 'Ana', blurb: 'Goblins!', seats: 4, gmFee: 500, schedule: 'weekly', system: 'D&D 5e', gmEmail: 'ana@example.com' }),
+    id: 'sr_main1', schedule: 'weekly', gm_customer_id: 'gm', details: JSON.stringify(details),
     tables: '["A1"]', clock: 1080, length: 3 * HOUR, first_day: '2026-09-24', status: 'active', approved: 1, image_id: null, created_at: created, updated_at: created,
   });
   const days = ['2026-09-24', '2026-10-01', '2026-10-08', '2026-10-15', '2026-10-22'];
@@ -3642,6 +3779,34 @@ test('live data: main\'s database (round 4) moves to round 5 with every row kept
   const pass = (await call('GET', 'passes?q=SJ-RUNE-6', null, 'staff')).data.passes[0];
   assert.deepEqual([pass.source, pass.orderName, pass.sessionsLeft, pass.uses.map((u) => u.ref)], ['staff', null, 9, ['SJ-KIWI-9']], 'an older pass came from the staff page');
   assert.deepEqual((await call('GET', 'me', null, '1001')).data.passes.map((p) => [p.code, p.source]), [['SJ-RUNE-6', 'staff']]);
+
+  // Weekly regulars from round 4 keep every seat they hold (Mia has the next three sessions): nothing is deleted, and
+  // as sessions end, maintenance only adds the seats that are missing.
+  const seatsOf = (customerId) => sql.exec("SELECT id, game_id, status FROM bookings WHERE customer_id = ? AND kind = 'gm-seat' ORDER BY starts_at", customerId).toArray().map((r) => `${r.game_id}:${r.status}`);
+  const ids = (kind = null) => sql.exec(`SELECT id FROM bookings${kind ? ' WHERE kind = ?' : ''} ORDER BY id`, ...(kind ? [kind] : [])).toArray().map((r) => r.id);
+  const miaBefore = seatsOf('mia');
+  assert.deepEqual(miaBefore, ['gm_m1:confirmed', 'gm_m2:confirmed', 'gm_m3:confirmed']);
+  const seatsBefore = ids('gm-seat');
+  const allBefore = ids();
+  assert.equal((await maintenance()).data.regulars, undefined, 'both regulars have a seat in the next session already');
+  assert.deepEqual(ids('gm-seat'), seatsBefore);
+  assert.ok(allBefore.every((id) => ids().includes(id)), 'nothing deleted (the series grew, so its GM holds did too)');
+  const miaCode = lair.memberRow('mia').code;
+  assert.deepEqual((await call('GET', 'me', null, 'mia')).data.seats.map((s) => [s.gameId, s.ticketCode]), [['gm_m1', miaCode], ['gm_m2', miaCode], ['gm_m3', miaCode]], 'their seats show the member code');
+  assert.deepEqual((await call('GET', 'floor')).data.games.map((g) => [g.id, g.nextOnly, g.series.regulars]), [['gm_m1', true, 2]], 'the public board shows the next session');
+  const staffGames = (await call('GET', 'floor', null, 'staff')).data.games.filter((g) => g.seriesId === 'sr_main1');
+  assert.deepEqual(staffGames.slice(0, 4).map((g) => [g.id, g.taken, g.held]), [['gm_m1', 2, 0], ['gm_m2', 2, 1], ['gm_m3', 2, 1], ['gm_m4', 2, 2]], "Kai's seat is held where he hasn't one, and both are held in the last");
+  for (const [day, added] of [['2026-10-01', ['kai']], ['2026-10-08', ['kai']], ['2026-10-15', ['kai', 'mia']]]) {
+    Date.now = () => at(day, 21, 5);
+    const before = ids('gm-seat');
+    const all = ids();
+    assert.deepEqual((await maintenance()).data.regulars, { seated: added.length, full: 0 }, day);
+    assert.ok(all.every((id) => ids().includes(id)), 'nothing deleted');
+    assert.equal(ids('gm-seat').length, before.length + added.length);
+  }
+  assert.deepEqual(seatsOf('mia'), [...miaBefore, 'gm_m4:confirmed'], "Mia's round 4 seats are all still there");
+  assert.deepEqual(seatsOf('kai'), ['gm_m0:seated', 'gm_m1:confirmed', 'gm_m2:confirmed', 'gm_m3:confirmed', 'gm_m4:confirmed']);
+  Date.now = () => NOW;
 
   // Opening the database again runs nothing twice.
   const after = counts();

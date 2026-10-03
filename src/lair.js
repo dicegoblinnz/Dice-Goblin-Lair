@@ -8,7 +8,7 @@ import {
   ACTIVE, BIRTHDAY_CODE_DAYS, HOUR, MIN, ROLL_EVERY, LairTime, RuleError, addDays, birthdayPercent, checkGameDetails,
   checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId, makeRef,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rollPrize, rulesFromSettings,
-  seatPlayers, seatsTaken, tableIndex, uniqueCode,
+  SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -443,9 +443,82 @@ export class Lair {
     return id ? `${String(this.env.PUBLIC_URL || '').replace(/\/$/, '')}/img/${id}` : null;
   }
 
-  /** The public view of a game, with its picture */
-  gameView(g, st, rules) {
-    return { ...publicGame(g, st, rules), image: this.imageUrl(g.imageId) };
+  /**
+   * A game as the games board and its GM see it, with its picture. A session of a series adds series: { id, schedule,
+   * regulars } (regulars: how many players have a seat saved every session) and nextOnly: true when it's the series'
+   * next session that hasn't ended, the only one the public board shows. taken counts the seats held for regulars
+   * (held) too. info: seriesInfo, shared by a list.
+   */
+  gameView(g, st, rules, info = null) {
+    const series = g.seriesId ? info || this.seriesInfo(Date.now()) : null;
+    const held = g.seriesId ? this.heldIn(st).get(g.id) || 0 : 0;
+    return {
+      ...publicGame(g, st, rules, held), image: this.imageUrl(g.imageId),
+      series: series ? { id: g.seriesId, schedule: SERIES_SCHEDULES.includes(g.schedule) ? g.schedule : 'flexible', regulars: series.regulars.get(g.seriesId) || 0 } : null,
+      nextOnly: Boolean(series && series.next.get(g.seriesId) === g.id),
+    };
+  }
+
+  /**
+   * Weekly regulars ("join every session"), for game views: each series' next session that hasn't ended (cancelled
+   * ones don't count), and how many players are regulars. No awaits.
+   */
+  seriesInfo(now) {
+    const next = this.sql
+      .exec("SELECT series_id, id, MIN(starts_at) AS first FROM games WHERE series_id IS NOT NULL AND status != 'cancelled' AND ends_at > ? GROUP BY series_id", now)
+      .toArray();
+    const regulars = this.sql.exec("SELECT series_id, SUM(people) AS n FROM series_members WHERE status = 'active' GROUP BY series_id").toArray();
+    return { next: new Map(next.map((r) => [r.series_id, r.id])), regulars: new Map(regulars.map((r) => [r.series_id, r.n])) };
+  }
+
+  /** A series' next session that hasn't ended (cancelled ones don't count), or null. No awaits. */
+  nextSession(seriesId, now) {
+    const row = this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND ends_at > ? ORDER BY starts_at, id LIMIT 1", seriesId, now).toArray()[0];
+    return row ? this.rowToGame(row) : null;
+  }
+
+  /**
+   * A series' next session that hasn't started, or null: where a regular joining now gets their seat. (A session
+   * already under way is never booked for them: they'd owe for a session they weren't at.) No awaits.
+   */
+  upcomingSession(seriesId, now) {
+    const row = this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND starts_at > ? ORDER BY starts_at, id LIMIT 1", seriesId, now).toArray()[0];
+    return row ? this.rowToGame(row) : null;
+  }
+
+  /**
+   * Seats held for weekly regulars at each series session in a state's window that hasn't started, by game id: the
+   * people of every active member with no booking there yet (one they cancelled counts as a booking: they're skipping
+   * that session). Worked out once per state.
+   */
+  heldIn(st) {
+    if (!st.held) {
+      const rows = this.sql.exec(
+        `SELECT g.id AS game_id, SUM(m.people) AS n FROM games g JOIN series_members m ON m.series_id = g.series_id AND m.status = 'active'
+         WHERE g.series_id IS NOT NULL AND g.ends_at > ? AND g.starts_at < ? AND g.starts_at > ?
+           AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.game_id = g.id AND b.kind = 'gm-seat' AND b.customer_id = m.customer_id)
+         GROUP BY g.id`,
+        st.from ?? 0, st.to ?? Number.MAX_SAFE_INTEGER, Date.now(),
+      ).toArray();
+      st.held = new Map(rows.map((r) => [r.game_id, r.n]));
+    }
+    return st.held;
+  }
+
+  /**
+   * Seats held at one session for its series' regulars with no booking there yet (as heldIn; nothing once it has
+   * started, since nobody is seated in a session under way). except: a customer whose own hold doesn't count (they're
+   * the one booking); before: only regulars who joined before then, since regulars are seated in the order they
+   * joined. No awaits.
+   */
+  regularsWaiting(game, { except = null, before = null, now = Date.now() } = {}) {
+    if (!game?.seriesId || game.start <= now) return 0;
+    return this.sql.exec(
+      `SELECT COALESCE(SUM(m.people), 0) AS n FROM series_members m WHERE m.series_id = ? AND m.status = 'active' AND m.customer_id != ?
+         AND (? IS NULL OR m.created_at < ?)
+         AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.game_id = ? AND b.kind = 'gm-seat' AND b.customer_id = m.customer_id)`,
+      game.seriesId, String(except ?? ''), before ?? null, before ?? null, game.id,
+    ).one().n;
   }
 
   /** Who's in a game's seats (for its GM and for staff) */
@@ -461,6 +534,7 @@ export class Lair {
   /** Everything that touches the window [from, to) */
   state(from, to) {
     return {
+      from, to,
       bookings: this.sql.exec('SELECT * FROM bookings WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToBooking(r)),
       games: this.sql.exec('SELECT * FROM games WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToGame(r)),
       blocks: this.sql.exec('SELECT * FROM blocks WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToBlock(r)),
@@ -810,9 +884,16 @@ export class Lair {
       if (who.customerId && bk.customerId === who.customerId) return { ...publicBooking(bk), ref: bk.ref, name: bk.name, people: bk.people, paid: bk.paid };
       return publicBooking(bk);
     };
-    const visibleGames = st.games.filter(
-      (g) => who.staff || ['open', 'full'].includes(g.status) || (who.customerId && g.gmCustomerId === who.customerId && g.status === 'pending'),
-    );
+    // Weekly regulars: the public board shows a series' next session that hasn't ended, and no later ones. Staff and
+    // the game's own GM see every session. (Kept with the cached state, so it's at most a minute behind.)
+    if (!st.seriesInfo) st.seriesInfo = this.seriesInfo(now);
+    const info = st.seriesInfo;
+    const visibleGames = st.games.filter((g) => {
+      if (who.staff) return true;
+      const own = Boolean(who.customerId && g.gmCustomerId === who.customerId);
+      if (!['open', 'full'].includes(g.status) && !(own && g.status === 'pending')) return false;
+      return own || !g.seriesId || info.next.get(g.seriesId) === g.id;
+    });
     // Calendar events' tables: soft (marked for the event, still bookable) unless the event locks them. Bookings
     // and games are checked against the locked ones only.
     const holds = eventHolds(rules, from, to);
@@ -836,7 +917,7 @@ export class Lair {
       blocks: who.staff ? st.blocks : st.blocks.map((bl) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
       eventHolds: holds,
       games: visibleGames.map((g) => {
-        const game = this.gameView(g, st, rules);
+        const game = this.gameView(g, st, rules, info);
         if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
         return game;
       }),
@@ -869,7 +950,10 @@ export class Lair {
     let booking;
     let game = null;
     if (kind === 'gm-seat') {
-      const seat = checkSeatBooking(input, { state: st, rules, now });
+      // A series session keeps seats for its weekly regulars who don't have theirs yet (the booker's own excepted).
+      const wanted = st.games.find((g) => g.id === input.gameId);
+      const held = wanted ? this.regularsWaiting(wanted, { except: who.customerId, now }) : 0;
+      const seat = checkSeatBooking(input, { state: st, rules, now, held });
       game = seat.game;
       booking = {
         kind, gameId: game.id, tables: seat.tables, room: tableIndex(rules.rooms).get(seat.tables[0])?.roomObj.id, start: seat.start,
@@ -1087,7 +1171,21 @@ export class Lair {
       ...publicBooking(b), ref: b.ref, name: b.name, email: b.email, people: b.people, paid: b.paid, amount: b.amount, pay: b.pay, room: b.room,
       extras: b.extras || [], occurrenceId: b.occurrenceId || null, payment: b.pay === 'now' ? 'online' : 'store', refund: b.refund || null,
       pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0, split: Boolean(b.split),
+      seriesId: b.seriesId || null, ticketCode: this.ticketCode(b),
     };
+  }
+
+  /**
+   * What a booking's ticket and QR show: a weekly regular's seat is their member code (one code for every session);
+   * anything else its own code. The seat keeps its own ref for the POS's _booking lines. member: their member row,
+   * when the caller has it.
+   */
+  ticketCode(b, member = undefined) {
+    if (b?.seriesId && b.kind === 'gm-seat' && b.customerId) {
+      const row = member !== undefined ? member : this.memberRow(b.customerId);
+      if (row?.code) return row.code;
+    }
+    return b?.ref || '';
   }
 
   async updateBooking(id, patch, who) {
@@ -1498,14 +1596,19 @@ export class Lair {
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
     const people = Math.floor(Number(input.people ?? 1));
     if (!(people >= 1 && people <= 8)) throw new RuleError('Add between 1 and 8 players.');
-    const left = game.seats - this.takenSeats(game.id);
-    if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'seat' : 'seats'} left.` : 'This table is full.', 409);
     const name = trimmed(input.name, 80);
     if (!name) throw new RuleError('Add their name.');
     const email = trimmed(input.email, 120);
     if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
-    const players = seatPlayers(input.players, people, name);
     const customerId = trimmed(input.customerId, 40) || this.memberByEmail(email)?.customer_id || null;
+    // Seats kept for the series' weekly regulars aren't free (unless it's a regular being added).
+    const held = this.regularsWaiting(game, { except: customerId, now });
+    const left = game.seats - this.takenSeats(game.id) - held;
+    if (people > left) {
+      const why = held ? ` ${plural(held, 'seat is', 'seats are')} kept for regulars.` : '';
+      throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'seat' : 'seats'} left.${why}` : `This table is full.${why}`, 409);
+    }
+    const players = seatPlayers(input.players, people, name);
     const seatId = makeId('bk');
     const seat = {
       id: seatId, ref: this.newCode(name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: game.id, tables: game.tables, room: game.room,
@@ -1556,8 +1659,11 @@ export class Lair {
       this.later(this.mailMany(seated.filter((x) => isEmail(x.member.email)).map(({ member, result }) => this.letter(member.email, `New session: ${created.title}, ${this.when(created, rules)}`, {
         title: 'New session, same seat',
         intro: `Kia ora ${member.name}, ${created.gm} added a session of ${created.title}, and Gobgob saved your seat.`,
-        details: [['When', this.when(created, rules)], ['Players', this.partyLine(result.seat.party)], ['Fee', `${dollars(result.seat.amount)}, pay at the counter`], ['Your code', result.seat.ref]],
-        outro: [COUNTER, "Can't make this one? Cancel it in My Lair and your other sessions stay booked."],
+        details: [
+          ['When', this.when(created, rules)], ['Players', this.partyLine(result.seat.party)], ['Fee', `${dollars(result.seat.amount)}, pay at the counter`],
+          ['Your code', this.ticketCode(result.seat)],
+        ],
+        outro: [COUNTER, "Can't make this one? Cancel it in My Lair before it starts, and you're still a regular. A seat you keep is yours to pay for, even if you don't come."],
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       }))));
     }
@@ -1583,14 +1689,18 @@ export class Lair {
 
   /**
    * A series member's seat at one session: theirs already, a new one when there's room, or null when it's full.
-   * Series members pay at the counter each session. No awaits.
+   * Regulars are seated in the order they joined. ahead: seats to keep for regulars who joined earlier; left out, it's
+   * those still waiting for a seat there (someone joining doesn't take an earlier regular's seat). Callers that seat
+   * every regular in join order pass 0, so one who doesn't fit never keeps a seat from the next. Series members pay at
+   * the counter each session. No awaits.
    */
-  seatSeriesMember(session, member, rules, now) {
+  seatSeriesMember(session, member, rules, now, { ahead = null } = {}) {
     const existing = this.sql
       .exec("SELECT * FROM bookings WHERE game_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated') LIMIT 1", session.id, member.customer_id)
       .toArray()[0];
     if (existing) return { seat: this.rowToBooking(existing), created: false };
-    if (session.seats - this.takenSeats(session.id) < member.people) return null;
+    const earlier = ahead ?? this.regularsWaiting(session, { except: member.customer_id, before: member.created_at ?? null, now });
+    if (session.seats - this.takenSeats(session.id) - earlier < member.people) return null;
     const seatId = makeId('bk');
     const seat = {
       id: seatId, ref: this.newCode(member.name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: session.id, seriesId: session.seriesId,
@@ -1602,17 +1712,96 @@ export class Lair {
     return { seat, created: true };
   }
 
-  /** A new open session seats the series' members while there's room, first to join first. Returns the new seats. No awaits. */
+  /**
+   * A new open session seats the series' members while there's room, first to join first, but only when it's the
+   * series' next session: regulars hold a seat in the next session only, and roll forward as sessions end (rollSeries).
+   * Returns the new seats. No awaits.
+   */
   seatSeriesMembers(session, rules, now) {
-    if (session.status !== 'open' || !session.seriesId) return [];
-    const members = this.sql.exec("SELECT * FROM series_members WHERE series_id = ? AND status = 'active' ORDER BY created_at", session.seriesId).toArray();
-    return members.map((member) => ({ member, result: this.seatSeriesMember(session, member, rules, now) })).filter((x) => x.result?.created);
+    if (session.status !== 'open' || !session.seriesId || session.start <= now) return [];
+    if (this.nextSession(session.seriesId, now)?.id !== session.id) return [];
+    const members = this.sql.exec("SELECT * FROM series_members WHERE series_id = ? AND status = 'active' ORDER BY created_at, customer_id", session.seriesId).toArray();
+    return members.map((member) => ({ member, result: this.seatSeriesMember(session, member, rules, now, { ahead: 0 }) })).filter((x) => x.result?.created);
+  }
+
+  /** Whether a customer has any seat at a session, even one they cancelled (they're skipping it). No awaits. */
+  hasSeatAt(gameId, customerId) {
+    return this.sql.exec("SELECT 1 AS n FROM bookings WHERE game_id = ? AND customer_id = ? AND kind = 'gm-seat' LIMIT 1", gameId, String(customerId)).toArray().length > 0;
   }
 
   /**
-   * POST /games/:id/join-series { people, players, name, email } (logged in): a seat at every upcoming session of the
-   * game's series that has room, now and as new sessions appear. Skip one session by cancelling that seat; leave with
-   * POST /series/:id/leave. Joining again (to change who's coming) books every session again.
+   * Weekly regulars roll forward: every active member of an active series has a seat in its next session, booked in
+   * the order they joined. Run by the 10-minute maintenance, so once a session ends the regulars get the next one (a
+   * session under way is left alone until it ends). Anyone with any booking there (even one they cancelled, to skip it)
+   * is left alone, so nothing is ever booked twice or undone. A regular who doesn't fit gets the staff an alert, once
+   * per member and session; if a seat frees up before it starts, a later run books it and emails them, so nobody owes
+   * for a seat they didn't know about. No awaits. Returns { seated, full }.
+   */
+  rollSeries(rules, now) {
+    const members = this.sql
+      .exec(
+        `SELECT m.* FROM series_members m JOIN series s ON s.id = m.series_id WHERE m.status = 'active' AND s.status = 'active'
+         ORDER BY m.series_id, m.created_at, m.customer_id`,
+      )
+      .toArray();
+    const sessions = new Map();
+    let seated = 0;
+    const full = [];
+    const freed = [];
+    for (const member of members) {
+      if (!sessions.has(member.series_id)) sessions.set(member.series_id, this.nextSession(member.series_id, now));
+      const next = sessions.get(member.series_id);
+      if (!next || next.status !== 'open' || next.start <= now || this.hasSeatAt(next.id, member.customer_id)) continue;
+      const told = this.sql.exec('SELECT 1 AS n FROM series_alerts WHERE game_id = ? AND customer_id = ?', next.id, member.customer_id).toArray().length > 0;
+      // In join order, so earlier regulars pick first; one who doesn't fit doesn't keep a seat from the next.
+      const got = this.seatSeriesMember(next, member, rules, now, { ahead: 0 });
+      if (got?.created) {
+        seated += 1;
+        if (told) freed.push({ game: next, member, seat: got.seat });
+        continue;
+      }
+      if (got || told) continue;
+      this.write('INSERT INTO series_alerts (game_id, customer_id, at) VALUES (?, ?, ?)', next.id, member.customer_id, now);
+      full.push({ game: next, member });
+    }
+    // A regular who missed out has a seat after all: tell them, since it's theirs to pay for if they keep it.
+    if (freed.length && emailReady(this.env)) {
+      this.later(this.mailMany(freed.filter((x) => isEmail(x.member.email)).map(({ game, member, seat }) => this.letter(member.email, `A seat came free: ${game.title}, ${this.when(game, rules)}`, {
+        title: 'A seat came free!',
+        intro: `Kia ora ${member.name || 'friend'}, the next session of ${game.title} was full, but a seat's come free and Gobgob saved it for you.`,
+        details: [
+          ['When', this.when(game, rules)], ['Players', this.partyLine(seat.party)], ['Fee', `${dollars(seat.amount)}, pay at the counter`],
+          ['Your code', this.ticketCode(seat)],
+        ],
+        outro: "Can't make it? Cancel it in My Lair before it starts. A seat you keep is yours to pay for, even if you don't come.",
+        button: { label: 'See it in My Lair', url: this.page('myLair') },
+      }))));
+    }
+    // One email for each session that's full, naming the regulars who couldn't get their seat.
+    const byGame = new Map();
+    for (const x of full) byGame.set(x.game.id, [...(byGame.get(x.game.id) || []), x]);
+    for (const list of byGame.values()) {
+      const game = list[0].game;
+      const names = list.map(({ member }) => `${member.name || 'A regular'}${member.people > 1 ? ` (${member.people} seats)` : ''}`);
+      this.notifyStaff(`No seat for a regular: ${game.title}, ${this.when(game, rules)}`, {
+        title: "A regular couldn't get their seat",
+        intro: `The next session of ${game.title} is full, so Gobgob couldn't save ${list.length === 1 ? 'a seat' : 'seats'} for ${names.join(', ')}. Find them a seat on the staff page, or let them know.`,
+        details: [
+          ['Game', `${game.title}${game.gm ? `, GM ${game.gm}` : ''}`], ['When', this.when(game, rules)], ['Regulars without a seat', names.join('\n')],
+          ['Seats taken', `${this.takenSeats(game.id)} of ${game.seats}`],
+        ],
+      });
+    }
+    return { seated, full: full.length };
+  }
+
+  /**
+   * POST /games/:id/join-series { people, players, name, email } (logged in): a weekly regular. Their membership is
+   * saved and they get a seat in the series' next session, if it has room (one already under way doesn't count: they'd
+   * owe for a session they weren't at); after each session ends, maintenance gives them the next one (rollSeries).
+   * Their member code is the ticket. A seat they keep is theirs to pay for, whether or not they come (owed once the
+   * session ends); skip one by cancelling that seat, and leave with POST /series/:id/leave. Joining again (to change
+   * who's coming) saves the change and books the next session if they have no seat there. Returns { member, booked, full }.
    */
   async joinSeries(gameId, input, who, client = '') {
     if (!who.customerId) throw new RuleError('Log in to join a game.', 401);
@@ -1641,24 +1830,36 @@ export class Lair {
     );
     this.touchMember(who.customerId, { name, email }, now);
     const member = this.seriesMember(game.seriesId, who.customerId);
+    const code = this.memberRow(who.customerId)?.code || null;
     const booked = [];
     const full = [];
-    const sessions = this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status = 'open' AND starts_at > ? ORDER BY starts_at", game.seriesId, now).toArray().map((r) => this.rowToGame(r));
-    for (const session of sessions) {
-      const got = this.seatSeriesMember(session, member, rules, now);
-      if (got) booked.push({ gameId: session.id, start: session.start, ref: got.seat.ref });
-      else full.push({ gameId: session.id, start: session.start });
+    // Only the next session still to start: later ones roll forward as each session ends.
+    const next = this.upcomingSession(game.seriesId, now);
+    if (next && next.status === 'open') {
+      const got = this.seatSeriesMember(next, member, rules, now);
+      if (got) booked.push({ gameId: next.id, start: next.start, ref: got.seat.ref, ticketCode: code || got.seat.ref });
+      else full.push({ gameId: next.id, start: next.start });
     }
     if (emailReady(this.env)) {
-      const dates = (list) => list.map((x) => `${this.when(sessions.find((g) => g.id === x.gameId), rules)}${x.ref ? ` (${x.ref})` : ''}`).join('\n');
-      this.later(this.mail(this.letter(email, `You're in for every session: ${game.title}`, {
-        title: "You're in for every session!",
-        intro: `Kia ora ${name}, you've got a seat at every upcoming session of ${game.title}${game.gm ? ` with GM ${game.gm}` : ''}. New sessions get your seat too, while there's room.`,
+      const gm = game.gm ? ` with GM ${game.gm}` : '';
+      const intro = booked.length
+        ? `Kia ora ${name}, you're a regular at ${game.title}${gm}. Gobgob's booked your seat for the next session and will save you one every session after that.`
+        : full.length
+          ? `Kia ora ${name}, you're a regular at ${game.title}${gm}. The next session's full, sorry. If a seat comes free before it starts, Gobgob will grab it and let you know, and your seat's saved from the one after.`
+          : `Kia ora ${name}, you're a regular at ${game.title}${gm}. Gobgob will save your seat as soon as the next session's on the board.`;
+      this.later(this.mail(this.letter(email, `You're a regular: ${game.title}`, {
+        title: "You're a regular!",
+        intro,
         details: [
-          ['Game', game.title], ['Players', this.partyLine(players)], ['Booked', dates(booked)], ['Already full', dates(full)],
-          ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, paid at the counter`],
+          ['Game', game.title], ['Players', this.partyLine(players)], ['Next session', booked.length ? this.when(next, rules) : ''],
+          ['Already full', full.length ? this.when(next, rules) : ''],
+          ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, paid at the counter`], ['Your code', code || ''],
         ],
-        outro: ["Pay at the counter each session when you arrive. Show that session's code, or your member code from My Lair, and we'll ring it up.", "Skipping one? Cancel that session's seat in My Lair. To stop coming altogether, leave the game in My Lair."],
+        outro: [
+          "Your member code is your ticket every session (it's in My Lair). Show it at the counter and we'll ring up your seat.",
+          "Can't make one? Cancel that session's seat in My Lair before it starts. A seat you keep is yours to pay for, even if you don't come.",
+          'To stop coming, leave the game in My Lair.',
+        ],
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       })));
     }
@@ -3780,14 +3981,17 @@ export class Lair {
     const heldLink = (x) => (x.status === 'held' && x.checkoutUrl ? { checkoutUrl: x.checkoutUrl, holdUntil: x.holdUntil || null } : {});
     const own = this.sql.exec('SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray()
       .map((r) => withLink(this.rowToBooking(r), r));
+    // ticketCode: what the ticket and its QR show (a weekly regular's seat is their member code).
+    const memberRow = this.memberRow(who.customerId);
     const view = (b) => ({
       id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
       paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
       payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0,
-      split: Boolean(b.split), ...heldLink(b),
+      split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), ...heldLink(b),
     });
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
+    const seriesInfo = gameRows.some((g) => g.seriesId) ? this.seriesInfo(now) : null;
     const seatGames = new Map();
     for (const b of own.filter((x) => x.kind === 'gm-seat' && x.gameId)) if (!seatGames.has(b.gameId)) seatGames.set(b.gameId, this.game(b.gameId));
     const profile = this.sql.exec('SELECT name, bio FROM gm_profiles WHERE customer_id = ?', who.customerId).toArray()[0] || null;
@@ -3808,7 +4012,7 @@ export class Lair {
           seriesId: b.seriesId || null,
         };
       }),
-      games: gameRows.map((g) => ({ ...this.gameView(g, span, rules), players: this.gamePlayers(span, g.id) })),
+      games: gameRows.map((g) => ({ ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id) })),
       joins: joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })),
       credits,
       member: {
@@ -3890,6 +4094,13 @@ export class Lair {
       if (extended.length) result.series = extended;
     } catch (error) {
       console.error('Lair: could not extend game series', error);
+    }
+    // Weekly regulars roll forward: once a session ends, they get a seat in the next one.
+    try {
+      const rolled = this.rollSeries(rules, Date.now());
+      if (rolled.seated || rolled.full) result.regulars = rolled;
+    } catch (error) {
+      console.error('Lair: could not roll weekly regulars forward', error);
     }
     // The same daily maintenance sends birthday codes (once a day, after 9am).
     try {
