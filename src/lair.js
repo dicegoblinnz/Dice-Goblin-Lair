@@ -684,6 +684,7 @@ export class Lair {
         if (b === 'pos' && c === 'checkin') return json(await this.posCheckIn(body, by));
         if (b === 'pos' && c === 'checkin-member') return json(await this.posCheckInMember(body, by));
         if (b === 'pos' && c === 'share') return json(await this.posShare(body));
+        if (b === 'pos' && c === 'pass-undo') return json(await this.undoPassUse(String(body.useId || ''), { staff: true, customerId: null }));
         if (b === 'pos' && c === 'member') return json(await this.posMember(body));
         if (b === 'pos' && c === 'tab' && parts[3] && parts[4] === 'added') return json(this.posTabAdded(decodeURIComponent(parts[3])));
         return json({ error: 'Not found' }, 404);

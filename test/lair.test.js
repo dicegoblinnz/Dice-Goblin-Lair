@@ -2388,12 +2388,12 @@ test('Worker: POS routes answer CORS preflights, need a valid POS session token,
   // Round 4: GET /pos/today, and POST for scan, checkin-member, share and a tab in the cart.
   const auth = { Authorization: `Bearer ${token}` };
   assert.equal((await worker.fetch(new Request('https://worker.test/pos/today', { headers: auth }), env)).status, 200);
-  for (const route of ['scan', 'checkin-member', 'share', 'tab/tb_0123abcd/added']) {
+  for (const route of ['scan', 'checkin-member', 'share', 'pass-undo', 'tab/tb_0123abcd/added']) {
     assert.equal((await worker.fetch(new Request(`https://worker.test/pos/${route}`, { method: 'POST', headers: auth, body: '{"x":1}' }), env)).status, 200, route);
   }
   assert.deepEqual(seen.slice(2).map((s) => [s.path, s.body, s.user]), [
     ['/internal/pos/today', '{}', '42'], ['/internal/pos/scan', '{"x":1}', '42'], ['/internal/pos/checkin-member', '{"x":1}', '42'],
-    ['/internal/pos/share', '{"x":1}', '42'], ['/internal/pos/tab/tb_0123abcd/added', '{"x":1}', '42'],
+    ['/internal/pos/share', '{"x":1}', '42'], ['/internal/pos/pass-undo', '{"x":1}', '42'], ['/internal/pos/tab/tb_0123abcd/added', '{"x":1}', '42'],
   ]);
   assert.equal((await worker.fetch(new Request('https://worker.test/pos/today'), env)).status, 401, 'today needs the token too');
   assert.equal((await worker.fetch(new Request('https://worker.test/pos/today', { method: 'POST', headers: auth }), env)).status, 404, 'today is a GET');
@@ -2567,7 +2567,9 @@ test('passes at check-in: 3 people with 2 sessions left pay for one; void and ex
   assert.equal((await call('POST', 'checkin', { id: three.id, type: 'booking', pass: 'none' }, 'staff')).data.due, 3000);
   const after = await call('POST', 'checkin', { id: three.id, type: 'booking' }, 'staff');
   assert.deepEqual([after.data.pass.used, after.data.due], [2, 1000], 'left out: the pass saved on the booking');
-  await call('POST', `passes/uses/${after.data.pass.useId}/undo`, {}, 'staff');
+  // The POS can undo a use too (its session token stands in for staff)
+  const posUndo = await internal('pos/pass-undo', { useId: after.data.pass.useId });
+  assert.deepEqual([posUndo.status, posUndo.data.pass.sessionsLeft, posUndo.data.row.due], [200, 2, 3000]);
   // Void and expired passes are skipped with a notice; the check-in still happens.
   await call('POST', `passes/${pass.id}/update`, { status: 'void' }, 'staff');
   const voided = await call('POST', 'checkin', { id: three.id, type: 'booking' }, 'staff');
