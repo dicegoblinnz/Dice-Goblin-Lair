@@ -255,12 +255,12 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Who paid for an order and its subtotal after discounts (in cents), for members' spend. customerId is null when
-   * the order has no customer.
+   * Who paid for an order and its subtotal after discounts (in cents), for members' spend, and the order's name
+   * ("#1550"). customerId is null when the order has no customer.
    */
   async orderSpend(orderId) {
     const data = await this.graphql(
-      'query OrderSpend($id: ID!) { order(id: $id) { id sourceName customer { id } currentSubtotalPriceSet { shopMoney { amount currencyCode } } } }',
+      'query OrderSpend($id: ID!) { order(id: $id) { id name sourceName customer { id } currentSubtotalPriceSet { shopMoney { amount currencyCode } } } }',
       { id: orderId },
     );
     const order = data.order;
@@ -270,6 +270,29 @@ export class ShopifyAdmin {
       customerId: order.customer?.id ? String(order.customer.id).split('/').pop() : null,
       amount: Number.isFinite(amount) ? amount : 0,
       source: order.sourceName || null,
+      name: order.name || null,
+    };
+  }
+
+  /**
+   * Who bought an order, for the session passes on it: the billing and shipping names, and the customer's name and
+   * email. These are protected customer data: without Shopify's approval for names and emails this throws, and the
+   * pass is made with what the Lair already knows.
+   */
+  async orderBuyer(orderId) {
+    const data = await this.graphql(
+      'query OrderBuyer($id: ID!) { order(id: $id) { id name billingAddress { name } shippingAddress { name } customer { id displayName defaultEmailAddress { emailAddress } } } }',
+      { id: orderId },
+    );
+    const order = data.order;
+    if (!order) return null;
+    return {
+      name: order.name || null,
+      billingName: String(order.billingAddress?.name || '').trim(),
+      shippingName: String(order.shippingAddress?.name || '').trim(),
+      customerId: order.customer?.id ? String(order.customer.id).split('/').pop() : null,
+      customerName: String(order.customer?.displayName || '').trim(),
+      customerEmail: String(order.customer?.defaultEmailAddress?.emailAddress || '').trim(),
     };
   }
 

@@ -61,8 +61,9 @@ beforeEach(() => {
   Date.now = () => NOW;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD' });
   lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: id === 'gm' });
-  // Paid orders are looked up for members' spend; tests that care replace this.
+  // Paid orders are looked up for members' spend (and a pass buyer's name); tests that care replace these.
   lair.shopify.orderSpend = async () => null;
+  lair.shopify.orderBuyer = async () => null;
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     { id: 'fnm', title: 'Friday Night Magic', start: at('2026-10-02', 18, 30), end: at('2026-10-02', 22), tables: 'T11-T20' },
   ]);
@@ -2700,7 +2701,7 @@ test('usePass: members save their own pass on a booking for check-in; someone el
   const checked = await call('POST', 'checkin', { code: booked.data.booking.ref }, 'staff');
   assert.deepEqual([checked.data.pass.used, checked.data.pass.covered, checked.data.due], [4, 4000, 0]);
   const me = (await call('GET', 'me', null, '1001')).data;
-  assert.deepEqual(me.passes, [{ code: mine.code, label: mine.label, sessionsTotal: 10, sessionsLeft: 6, cover: 1000, expiresAt: null, status: 'active' }]);
+  assert.deepEqual(me.passes, [{ code: mine.code, label: mine.label, sessionsTotal: 10, sessionsLeft: 6, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null }]);
   const mineBooked = me.bookings.find((b) => b.id === booked.data.booking.id);
   assert.deepEqual([mineBooked.pass, mineBooked.covered, mineBooked.due, mineBooked.payment, mineBooked.refund], [{ code: mine.code, label: mine.label, sessionsLeft: 6 }, 4000, 0, 'store', null]);
   assert.deepEqual([me.seats[0].pass.code, me.seats[0].covered], [mine.code, 0]);
@@ -2715,7 +2716,7 @@ test('claiming a pass: an unclaimed one joins the member\'s passes; someone else
   assert.equal((await call('POST', 'me/passes/claim', { code: ticket.ref }, '1001')).status, 404, "a booking's code isn't a pass");
   const claimed = await call('POST', 'me/passes/claim', { code: gift.code.toLowerCase().replace(/-/g, ' ') }, '1001');
   assert.equal(claimed.status, 200, claimed.data.error);
-  assert.deepEqual(claimed.data.pass, { code: gift.code, label: 'Gift pack: 10 sessions', sessionsTotal: 1, sessionsLeft: 1, cover: 1000, expiresAt: null, status: 'active' });
+  assert.deepEqual(claimed.data.pass, { code: gift.code, label: 'Gift pack: 10 sessions', sessionsTotal: 1, sessionsLeft: 1, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null });
   assert.equal((await passNamed(gift.code)).holder.customerId, '1001');
   assert.equal((await call('POST', 'me/passes/claim', { code: gift.code }, '1001')).status, 200, 'your own again is fine');
   const taken = await call('POST', 'me/passes/claim', { code: gift.code }, '2002');
@@ -3101,6 +3102,116 @@ test('POS check-in-member: every row a member has today is checked in (passes ap
   assert.equal(lair.booking(day.kai.id).status, 'noshow');
   assert.equal((await pos('checkin-member', { customerId: '4040' })).status, 404);
   assert.equal((await pos('checkin-member', {})).status, 404);
+});
+
+/* ---------------- 4 Oct 2026, round 5 ---------------- */
+
+/** A paid order with session pass lines (SKU LAIR-PASS-N), as the orders/paid webhook sends it */
+const passOrder = (n, lines, extra = {}) => ({ id: n, admin_graphql_api_id: `gid://shopify/Order/${n}`, source_name: 'web', line_items: lines, ...extra });
+const passLine = (id, sku, quantity, price, extra = {}) => ({ id, sku, quantity, price, title: 'Session pass', properties: [], ...extra });
+const ordersPasses = async (orderName) => (await call('GET', `passes?status=all&q=${encodeURIComponent(orderName)}`, null, 'staff')).data.passes;
+
+test('passes from orders: each LAIR-PASS-10 bought makes a pass for the order\'s customer; Shopify sending the webhook twice (or at once) makes no more', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  await call('POST', 'me/profile', { name: 'Sam Jones', email: 'sam@example.com' }, '1001');
+  let slow = 0;
+  lair.shopify.orderSpend = async (id) => {
+    if (slow) await new Promise((r) => setTimeout(r, slow));
+    return { customerId: '1001', amount: 20000, source: 'web', name: id.endsWith('/1550') ? '#1550' : '#1551' };
+  };
+  lair.shopify.orderBuyer = async () => assert.fail('the member is known, so Shopify is not asked who they are');
+  // Two 10-session passes at $100 with $20 off the line, and a drink that isn't a pass.
+  const order = passOrder(1550, [
+    passLine(15501, 'LAIR-PASS-10', 2, '100.00', { discount_allocations: [{ amount: '20.00', discount_application_index: 0 }] }),
+    { id: 15502, sku: 'COKE-330', quantity: 1, price: '3.50', properties: [] },
+  ]);
+  const first = await internal('orders-paid', order);
+  assert.equal(first.status, 200, first.data.error);
+  assert.equal(first.data.passes.length, 2);
+  assert.equal(first.data.spend, 20000, 'the order still counts for their spend');
+  const made = await ordersPasses('#1550');
+  assert.deepEqual(made.map((p) => p.code).sort(), [...first.data.passes].sort());
+  for (const pass of made) {
+    assert.match(pass.code, /^SJ-[A-Z]{3,9}-\d{1,2}$/, 'the code comes from the holder');
+    assert.deepEqual(
+      [pass.label, pass.sessionsTotal, pass.sessionsLeft, pass.cover, pass.pricePaid, pass.status, pass.source, pass.orderName, pass.note, pass.holder, pass.expiresAt],
+      ['Session pass: 10 sessions', 10, 10, 1000, 9000, 'active', 'order', '#1550', 'Bought online', { customerId: '1001', name: 'Sam Jones', email: 'sam@example.com' }, null],
+    );
+  }
+  // Shopify sends it again, and then twice at once while Shopify is slow to answer: nothing new.
+  assert.deepEqual((await internal('orders-paid', order)).data.passes, []);
+  slow = 5;
+  const [a, b] = await Promise.all([internal('orders-paid', order), internal('orders-paid', order)]);
+  assert.deepEqual([a.data.passes, b.data.passes], [[], []]);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM passes WHERE source = 'order'").one().n, 2);
+  // A new order at the same time as a repeat: only the new one makes passes. Each unit counts once, even with a bigger quantity later.
+  const second = passOrder(1551, [passLine(15511, 'LAIR-PASS-5', 1, '50.00')], { source_name: 'pos' });
+  const [repeat, fresh] = await Promise.all([internal('orders-paid', order), internal('orders-paid', second)]);
+  assert.deepEqual([repeat.data.passes.length, fresh.data.passes.length], [0, 1]);
+  const counter = (await ordersPasses('#1551'))[0];
+  assert.deepEqual([counter.label, counter.pricePaid, counter.note, counter.source], ['Session pass: 5 sessions', 5000, 'Bought at the counter', 'order']);
+  slow = 0;
+
+  // My Lair lists them like any pass; they cover a table at check-in like any other.
+  const mine = (await call('GET', 'me', null, '1001')).data.passes;
+  assert.deepEqual(mine.map((p) => [p.label, p.source, p.orderName, p.sessionsLeft]).sort(), [
+    ['Session pass: 10 sessions', 'order', '#1550', 10], ['Session pass: 10 sessions', 'order', '#1550', 10], ['Session pass: 5 sessions', 'order', '#1551', 5],
+  ]);
+  const table = (await call('POST', 'bookings', tableBooking({ people: 1 }), '1001')).data.booking;
+  const used = await call('POST', 'checkin', { code: table.ref, pass: counter.code }, 'staff');
+  assert.deepEqual([used.data.pass.used, used.data.due], [1, 0]);
+});
+
+test('passes from orders: with no customer on the sale the pass is unlinked, named from the order (or "Sold at the counter"), and claimed in My Lair', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  const buyers = {
+    'gid://shopify/Order/1600': { name: '#1600', billingName: 'Aroha Ngata', shippingName: '', customerId: null, customerName: '', customerEmail: '' },
+    'gid://shopify/Order/1601': { name: '#1601', billingName: '', shippingName: '', customerId: null, customerName: '', customerEmail: '' },
+    'gid://shopify/Order/1603': { name: '#1603', billingName: 'Kiri S', shippingName: '', customerId: '3003', customerName: 'Kiri Smith', customerEmail: 'kiri@example.com' },
+  };
+  const asked = [];
+  lair.shopify.orderSpend = async (id) => ({ customerId: id.endsWith('/1603') ? '3003' : null, amount: 5000, source: 'pos', name: buyers[id]?.name || '#1602' });
+  lair.shopify.orderBuyer = async (id) => {
+    asked.push(id);
+    if (!buyers[id]) throw new Error('Shopify API: Access denied for billingAddress field. This app is not approved to access protected customer data.');
+    return buyers[id];
+  };
+  const pass = async (n, line) => {
+    const res = await internal('orders-paid', passOrder(n, [line], { source_name: 'pos' }));
+    assert.equal(res.status, 200, res.data.error);
+    return (await ordersPasses(`#${n}`))[0];
+  };
+  // The billing name, when the order has one.
+  const aroha = await pass(1600, passLine(16001, 'LAIR-PASS-10', 1, '100.00'));
+  assert.deepEqual([aroha.holder, aroha.source, aroha.orderName, aroha.note], [{ customerId: null, name: 'Aroha Ngata', email: '' }, 'order', '#1600', 'Bought at the counter']);
+  assert.match(aroha.code, /^AN-/);
+  // No name on the order, or Shopify won't share it (protected customer data): "Sold at the counter", and a DG code.
+  const nameless = await pass(1601, passLine(16011, 'lair-pass-5', 1, '50.00'));
+  assert.deepEqual([nameless.holder.name, nameless.holder.customerId, nameless.sessionsTotal], ['Sold at the counter', null, 5]);
+  assert.match(nameless.code, /^DG-/);
+  const denied = await pass(1602, passLine(16021, 'LAIR-PASS-10', 1, '100.00'));
+  assert.deepEqual([denied.holder.name, denied.orderName], ['Sold at the counter', '#1602']);
+  assert.match(lair.statusSeen.passBuyerError, /protected customer data/, 'noted for the status table');
+  // A customer the Lair doesn't know yet: linked, with the name and email Shopify gives.
+  const kiri = await pass(1603, passLine(16031, 'LAIR-PASS-10', 1, '100.00'));
+  assert.deepEqual(kiri.holder, { customerId: '3003', name: 'Kiri Smith', email: 'kiri@example.com' });
+  assert.match(kiri.code, /^KS-/);
+  // Not passes: no number, 0 sessions, too many digits, or nothing bought.
+  for (const [n, line] of [[1610, passLine(1, 'LAIR-PASS', 1, '1.00')], [1611, passLine(2, 'LAIR-PASS-0', 1, '1.00')], [1612, passLine(3, 'LAIR-PASS-1000', 1, '1.00')], [1613, passLine(4, 'LAIR-PASS-10', 0, '1.00')], [1614, passLine(5, 'XLAIR-PASS-10', 1, '1.00')]]) {
+    assert.deepEqual((await internal('orders-paid', passOrder(n, [line]))).data.passes, [], line.sku);
+  }
+  assert.deepEqual(asked, ['gid://shopify/Order/1600', 'gid://shopify/Order/1601', 'gid://shopify/Order/1602', 'gid://shopify/Order/1603'], 'Shopify is asked only while a pass is still to make');
+
+  // Whoever has the code claims it in My Lair; then it's theirs, by name.
+  await call('POST', 'me/profile', { name: 'Aroha Ngata', email: 'aroha@example.com' }, '2002');
+  const claimed = await call('POST', 'me/passes/claim', { code: nameless.code }, '2002');
+  assert.equal(claimed.status, 200, claimed.data.error);
+  assert.deepEqual([claimed.data.pass.source, claimed.data.pass.orderName], ['order', '#1601']);
+  const after = (await ordersPasses('#1601'))[0];
+  assert.deepEqual(after.holder, { customerId: '2002', name: 'Aroha Ngata', email: 'aroha@example.com' }, '"Sold at the counter" becomes their name');
+  await call('POST', 'me/profile', { name: 'Tama Ngata', email: 'tama@example.com' }, '2003');
+  await call('POST', 'me/passes/claim', { code: aroha.code }, '2003');
+  assert.deepEqual((await ordersPasses('#1600'))[0].holder, { customerId: '2003', name: 'Aroha Ngata', email: 'tama@example.com' }, 'a name from the order stays');
 });
 
 /* ---------------- live data: the database the live app (round 8, main at adf6ad2) has ---------------- */
@@ -3529,7 +3640,8 @@ test('live data: main\'s database (round 4) moves to round 5 with every row kept
   // Old rows read with the new fields filled in sensibly.
   assert.deepEqual([lair.booking('bk_mia2').waived, lair.booking('bk_mia2').seriesId, lair.booking('bk_mia2').createdAt > 0], [false, 'sr_main1', true]);
   const pass = (await call('GET', 'passes?q=SJ-RUNE-6', null, 'staff')).data.passes[0];
-  assert.deepEqual([pass.sessionsLeft, pass.uses.map((u) => u.ref)], [9, ['SJ-KIWI-9']]);
+  assert.deepEqual([pass.source, pass.orderName, pass.sessionsLeft, pass.uses.map((u) => u.ref)], ['staff', null, 9, ['SJ-KIWI-9']], 'an older pass came from the staff page');
+  assert.deepEqual((await call('GET', 'me', null, '1001')).data.passes.map((p) => [p.code, p.source]), [['SJ-RUNE-6', 'staff']]);
 
   // Opening the database again runs nothing twice.
   const after = counts();

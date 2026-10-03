@@ -42,6 +42,12 @@ const COUNTER = "Pay at the counter when you arrive. Show your code and we'll ri
 const SHOW_CODE = 'Show your code at the counter when you arrive. Its QR code is in My Lair too.';
 const LOCKED_IN_EMAIL = "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.";
 const SPLIT = 'Splitting the bill? Each friend can pay their share at the counter.';
+/** A session pass sold as a product: an order line with this SKU makes `quantity` passes of N sessions each. */
+const PASS_SKU = /^LAIR-PASS-(\d{1,3})$/i;
+/** The most passes one order line makes (a typo in a quantity shouldn't make thousands) */
+const PASSES_A_LINE = 100;
+/** The holder of a pass sold with no customer on the sale and no name on the order */
+const SOLD_AT_COUNTER = 'Sold at the counter';
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -1963,6 +1969,9 @@ export class Lair {
    *
    * Tabs. A POS line with a _tab property marks that self-serve tab paid.
    *
+   * Session passes. A line whose SKU is LAIR-PASS-N (online or at the POS) makes a pass of N sessions for each one
+   * bought, once per order, line and unit (issueOrderPasses).
+   *
    * Members' spend. Every paid order with a customer (online, draft or POS) adds its subtotal after discounts to that
    * customer's spend, once per order: the order id is the key.
    */
@@ -1972,16 +1981,24 @@ export class Lair {
     const source = order.source_name || '';
     const pos = source === 'pos';
     const fromDraft = !source || source === 'shopify_draft_order';
-    // The lines that pay for a booking or sign-up (its code in _booking), with what each paid; and tabs paid.
+    // The lines that pay for a booking or sign-up (its code in _booking), with what each paid; tabs paid; and session
+    // passes bought (their SKU), with what each one cost after the line's discounts.
     const lines = [];
     const tabs = new Set();
+    const passLines = [];
     (order.line_items || []).forEach((item, index) => {
       const props = item.properties || [];
+      const lineId = String(item.id ?? item.admin_graphql_api_id ?? `line-${index}`);
       const booking = props.find((p) => p.name === '_booking' && p.value);
-      if (booking) lines.push({ ref: String(booking.value).trim().toUpperCase(), lineId: String(item.id ?? item.admin_graphql_api_id ?? `line-${index}`), amount: lineAmount(item) });
+      if (booking) lines.push({ ref: String(booking.value).trim().toUpperCase(), lineId, amount: lineAmount(item) });
       // A self-serve tab's items, rung up at the counter. Only staff make POS orders, so only those count.
       const tab = props.find((p) => p.name === '_tab' && p.value);
       if (tab && pos) tabs.add(String(tab.value).trim());
+      const sku = String(item.sku ?? '').trim().match(PASS_SKU);
+      const quantity = Math.max(0, Math.floor(Number(item.quantity ?? 1)) || 0);
+      if (sku && Number(sku[1]) > 0 && quantity > 0) {
+        passLines.push({ lineId, sessions: Number(sku[1]), quantity: Math.min(quantity, PASSES_A_LINE), each: Math.round(lineAmount(item) / quantity) });
+      }
     });
     const refs = new Set(lines.map((l) => l.ref));
     if (fromDraft) {
@@ -2018,6 +2035,7 @@ export class Lair {
     // Payments are recorded, so if Shopify can't say who the customer is right now, failing the webhook (Shopify
     // sends it again) only repeats work that's already done.
     const spend = await this.orderSpend(orderId);
+    const buyer = await this.passBuyer(order, orderId, spend, passLines);
     // --- no awaits from here on ---
     // The order's customer paid: a friend paying their share with their own member code attached is the payer.
     if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
@@ -2026,7 +2044,80 @@ export class Lair {
       this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, spend.source || source || null, Date.now());
       counted = spend.amount;
     }
-    return { updated, tabs: tabsPaid, spend: counted };
+    const passes = this.issueOrderPasses(orderId, passLines, buyer, { pos, rules, now: Date.now() });
+    return { updated, tabs: tabsPaid, spend: counted, passes };
+  }
+
+  /** The units of an order's pass lines that don't have their pass yet. No awaits. */
+  passUnitsToMake(orderId, passLines) {
+    const units = [];
+    for (const line of passLines) {
+      for (let unit = 0; unit < line.quantity; unit += 1) {
+        const made = this.sql.exec('SELECT 1 AS n FROM passes WHERE order_id = ? AND order_line = ? AND order_unit = ?', orderId, line.lineId, unit).toArray().length > 0;
+        if (!made) units.push({ line, unit });
+      }
+    }
+    return units;
+  }
+
+  /**
+   * Who an order's session passes are for: the order's customer (orderSpend found them; their name and email come from
+   * their member record), or with no customer, the billing or shipping name. Shopify is only asked when passes are still
+   * to be made and the Lair doesn't know the buyer. Names and emails are protected customer data, so without Shopify's
+   * approval for them that answer fails: it's noted, and the pass is made with what the Lair has. Never throws.
+   * Returns { customerId, orderName, name, email }.
+   */
+  async passBuyer(order, orderId, spend, passLines) {
+    const idOf = (value) => String(value ?? '').match(/(\d+)$/)?.[1] || null;
+    const buyer = {
+      customerId: spend?.customerId || idOf(order.customer?.id) || null,
+      orderName: spend?.name || (order.name ? String(order.name) : null),
+      name: trimmed(order.billing_address?.name || order.shipping_address?.name, 80),
+      email: '',
+    };
+    if (!passLines.length || !this.passUnitsToMake(orderId, passLines).length) return buyer;
+    const member = buyer.customerId ? this.memberRow(buyer.customerId) : null;
+    if (member) return { ...buyer, name: trimmed(member.name || member.first_name, 80), email: isEmail(member.email) ? trimmed(member.email, 120) : '' };
+    if (!buyer.customerId && buyer.name) return buyer;
+    try {
+      const found = await this.shopify.orderBuyer(orderId);
+      if (found) {
+        const customerId = buyer.customerId || found.customerId;
+        return {
+          customerId,
+          orderName: buyer.orderName || found.name,
+          name: trimmed(customerId ? found.customerName : found.billingName || found.shippingName, 80),
+          email: customerId && isEmail(found.customerEmail) ? trimmed(found.customerEmail, 120) : '',
+        };
+      }
+    } catch (error) {
+      this.note({ passBuyerError: { message: String(error.message || error).slice(0, 300), at: new Date().toISOString() } });
+    }
+    return buyer;
+  }
+
+  /**
+   * Session passes bought on an order: each unit of a LAIR-PASS-N line is a pass of N sessions covering the standard
+   * table fee, made once (its order, line and unit are kept, so Shopify sending the webhook again makes nothing new).
+   * It's linked to the order's customer, or unlinked with the buyer's name ("Sold at the counter" when there's none) for
+   * them to claim in My Lair. pricePaid is what the unit cost after the line's discounts. Returns the codes made. No
+   * awaits.
+   */
+  issueOrderPasses(orderId, passLines, buyer, { pos, rules, now }) {
+    const made = [];
+    for (const { line, unit } of this.passUnitsToMake(orderId, passLines)) {
+      const id = makeId('ps');
+      const code = this.newCode(buyer.name, 'pass', id, now);
+      this.write(
+        `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
+           created_by, expires_at, status, source, order_id, order_name, order_line, order_unit) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', 'order', ?, ?, ?, ?)`,
+        id, code, `Session pass: ${plural(line.sessions, 'session', 'sessions')}`, line.sessions, rules.prices.table, buyer.customerId || null,
+        buyer.name || (buyer.customerId ? null : SOLD_AT_COUNTER), buyer.email || null, pos ? 'Bought at the counter' : 'Bought online', line.each, now,
+        `order:${buyer.orderName || orderId}`, orderId, buyer.orderName || null, line.lineId, unit,
+      );
+      made.push(code);
+    }
+    return made;
   }
 
   /**
@@ -3140,20 +3231,24 @@ export class Lair {
     return 'active';
   }
 
-  /** A pass as its holder sees it (GET /me, claiming one) */
+  /** A pass as its holder sees it (GET /me, claiming one). source: 'staff', 'order' or 'birthday'. */
   memberPassView(p, now = Date.now()) {
     return {
       code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), cover: p.cover,
-      expiresAt: p.expiresAt, status: this.passStatus(p, now),
+      expiresAt: p.expiresAt, status: this.passStatus(p, now), source: p.source, orderName: p.orderName,
     };
   }
 
-  /** A pass as staff see it, with its uses (newest first) unless uses is false */
+  /**
+   * A pass as staff see it, with its uses (newest first) unless uses is false. source: 'staff', 'order' (bought on
+   * orderName) or 'birthday'. A pass bought with no customer on the sale has no holder.customerId: its code is for them
+   * to claim in My Lair.
+   */
   passView(p, { uses = true, now = Date.now() } = {}) {
     const view = {
       id: p.id, code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsUsed: p.sessionsUsed, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed),
       cover: p.cover, holder: { customerId: p.customerId, name: p.holderName, email: p.holderEmail }, note: p.note, pricePaid: p.pricePaid,
-      expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt,
+      expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt, source: p.source, orderName: p.orderName,
     };
     if (uses) {
       view.uses = this.sql
@@ -3290,7 +3385,7 @@ export class Lair {
     return { pass: this.passView(this.passRow(id), { now }) };
   }
 
-  /** GET /passes?q=&status=active|void|all (staff): newest first, up to 100. q looks in the label, holder and code. */
+  /** GET /passes?q=&status=active|void|all (staff): newest first, up to 100. q looks in the label, holder, code and order name. */
   listPasses(url, who) {
     this.requireStaff(who);
     const now = Date.now();
@@ -3301,7 +3396,7 @@ export class Lair {
     const rows = status === 'all'
       ? this.sql.exec('SELECT * FROM passes ORDER BY created_at DESC, rowid DESC').toArray()
       : this.sql.exec('SELECT * FROM passes WHERE status = ? ORDER BY created_at DESC, rowid DESC', status).toArray();
-    const matches = (r) => !q || [r.label, r.holder_name, r.holder_email].some((v) => String(v || '').toLowerCase().includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key));
+    const matches = (r) => !q || [r.label, r.holder_name, r.holder_email, r.order_name].some((v) => String(v || '').toLowerCase().includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key));
     return { passes: rows.filter(matches).slice(0, 100).map((r) => this.passView(this.rowToPass(r), { now })) };
   }
 
@@ -3378,10 +3473,12 @@ export class Lair {
     const me = String(who.customerId);
     if (p.customerId && p.customerId !== me) throw new RuleError('That pass already belongs to someone. Ask us at the counter.', 409);
     if (!p.customerId) {
+      // A pass sold with no name on the order ("Sold at the counter") takes the name of whoever claims it.
       const member = this.memberRow(me);
       this.write(
-        'UPDATE passes SET customer_id = ?, holder_name = COALESCE(holder_name, ?), holder_email = COALESCE(holder_email, ?) WHERE id = ? AND customer_id IS NULL',
-        me, member?.name || null, member?.email || null, p.id,
+        `UPDATE passes SET customer_id = ?, holder_name = CASE WHEN holder_name IS NULL OR holder_name = ? THEN COALESCE(?, holder_name) ELSE holder_name END,
+           holder_email = COALESCE(holder_email, ?) WHERE id = ? AND customer_id IS NULL`,
+        me, SOLD_AT_COUNTER, member?.name || null, member?.email || null, p.id,
       );
     }
     return { pass: this.memberPassView(this.passRow(p.id), now) };
