@@ -34,16 +34,22 @@ jobs:
         with:
           persist-credentials: false
 
+      # Until the deploy key is added, the run skips the deploy with a note instead of failing (no alarming
+      # "run failed" emails). Add the key, then start this workflow by hand (Actions > Deploy POS app > Run).
       - name: Check the Shopify deploy key is set
+        id: key
         env:
           SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
         run: |
           if [ -z "$SHOPIFY_APP_AUTOMATION_TOKEN" ]; then
-            echo "::error title=Shopify deploy key missing::Add the SHOPIFY_APP_AUTOMATION_TOKEN secret in GitHub (Settings > Secrets and variables > Actions). The steps are in pos-app/README.md, under 'One-time setup'."
-            exit 1
+            echo "::warning title=POS app not deployed yet::Add the SHOPIFY_APP_AUTOMATION_TOKEN secret in GitHub (Settings > Secrets and variables > Actions), then run this workflow by hand. The steps are in pos-app/README.md, under 'One-time setup'."
+            echo "ready=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=yes" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Node.js
+        if: steps.key.outputs.ready == 'yes'
         uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -51,14 +57,17 @@ jobs:
           cache-dependency-path: pos-app/package-lock.json
 
       - name: Install
+        if: steps.key.outputs.ready == 'yes'
         run: npm ci
 
       - name: Test
+        if: steps.key.outputs.ready == 'yes'
         run: |
           npm test
           npm run check
 
       - name: Deploy to Shopify
+        if: steps.key.outputs.ready == 'yes'
         env:
           SHOPIFY_APP_AUTOMATION_TOKEN: ${{ secrets.SHOPIFY_APP_AUTOMATION_TOKEN }}
           SHOPIFY_CLI_NO_ANALYTICS: '1'

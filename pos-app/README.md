@@ -120,7 +120,9 @@ deploy tidies that up.
 
 ### 4. Deploy
 
-Deploys run by themselves whenever a change under `pos-app/` lands on `main`. To run one by hand:
+Deploys run by themselves whenever a change under `pos-app/` lands on `main`. Until the token from step 2 is
+saved, those runs skip the deploy and show a yellow note saying the token is missing; nothing breaks. Once the
+token is saved, run the first deploy by hand:
 
 1. Open https://github.com/dicegoblinnz/Dice-Goblin-Lair/actions/workflows/pos-deploy.yml
 2. Tap **Run workflow**, leave the branch on `main`, and tap **Run workflow** again.
