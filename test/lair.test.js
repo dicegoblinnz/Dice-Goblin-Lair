@@ -2201,6 +2201,39 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
   }
 });
 
+test('GET /me: a sign-up or game spot held for online payment carries its checkout link and when the hold ends, for its owner only', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [warhammer({ payment: 'online' })]);
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  let n = 0;
+  lair.shopify.createCheckout = async () => {
+    n += 1;
+    return { draftOrderId: `gid://shopify/DraftOrder/5${n}`, checkoutUrl: `https://checkout.test/5${n}` };
+  };
+  lair.shopify.draftOrderOrderId = async (id) => id.replace('DraftOrder', 'Order');
+  lair.shopify.deleteDraftIfOpen = async () => true;
+  const join = await call('POST', 'events/warhammer@2026-10-03/join', { name: 'Aroha', email: 'aroha@example.com', people: 1 }, '1001');
+  const spot = await call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Aroha', email: 'aroha@example.com', people: 2 }, '1001');
+  assert.deepEqual([join.data.join.status, join.data.checkoutUrl, spot.data.booking.status, spot.data.checkoutUrl], ['held', 'https://checkout.test/51', 'held', 'https://checkout.test/52']);
+
+  const mine = (await call('GET', 'me', null, '1001')).data;
+  const j = mine.joins.find((x) => x.id === join.data.join.id);
+  const b = mine.bookings.find((x) => x.id === spot.data.booking.id);
+  assert.deepEqual([j.checkoutUrl, j.holdUntil], ['https://checkout.test/51', NOW + 30 * 60_000]);
+  assert.deepEqual([b.checkoutUrl, b.holdUntil], ['https://checkout.test/52', NOW + 30 * 60_000]);
+  // Nobody else sees it: not another customer, not the public floor, not staff
+  assert.ok(!JSON.stringify((await call('GET', 'me', null, '2002')).data).includes('checkout.test'));
+  assert.ok(!JSON.stringify((await call('GET', 'floor')).data).includes('checkout.test'));
+  assert.ok(!JSON.stringify((await call('GET', 'floor', null, 'staff')).data).includes('checkout.test'));
+  // Paid: it's not held any more, so the link goes from GET /me
+  await internal('orders-paid', { id: 51, admin_graphql_api_id: 'gid://shopify/Order/51', source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: join.data.join.ref }] });
+  const after = (await call('GET', 'me', null, '1001')).data;
+  assert.deepEqual([after.joins.find((x) => x.id === join.data.join.id).status, 'checkoutUrl' in after.joins.find((x) => x.id === join.data.join.id)], ['confirmed', false]);
+  assert.equal(after.bookings.find((x) => x.id === spot.data.booking.id).checkoutUrl, 'https://checkout.test/52', 'the spot is still held');
+  // Staff seeing the spot at check-in or on the floor don't get it either, and saving the booking keeps it
+  await call('POST', `bookings/${spot.data.booking.id}/update`, { notes: 'x' }, 'staff');
+  assert.equal(lair.sql.exec('SELECT checkout_url FROM bookings WHERE id = ?', spot.data.booking.id).one().checkout_url, 'https://checkout.test/52');
+});
+
 test('event game spots: the first free spot is booked as a wargame table for the event\'s time; eventSpots counts what anyone has taken', async () => {
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     warhammer(),

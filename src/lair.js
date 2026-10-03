@@ -214,6 +214,12 @@ export const MIGRATIONS = [
     'UPDATE bookings SET paid_amount = amount WHERE paid = 1 AND amount > 0',
     'UPDATE event_joins SET paid_amount = amount WHERE paid = 1 AND amount > 0',
   ],
+  // Round 4: the checkout link of a sign-up or game spot held while it's paid online, so its owner can finish paying
+  // from My Lair or the event on any device (GET /me sends it with held items, and only to the owner).
+  [
+    'ALTER TABLE bookings ADD COLUMN checkout_url TEXT',
+    'ALTER TABLE event_joins ADD COLUMN checkout_url TEXT',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -897,7 +903,7 @@ export class Lair {
             Cancelling: "Paid online, so you're locked in. Have a chat with us if plans change.",
           },
         });
-        this.write('UPDATE bookings SET draft_order_id = ?, updated_at = ? WHERE id = ?', draftOrderId, Date.now(), booking.id);
+        this.write('UPDATE bookings SET draft_order_id = ?, checkout_url = ?, updated_at = ? WHERE id = ?', draftOrderId, checkoutUrl || null, Date.now(), booking.id);
         const fresh = this.booking(booking.id);
         if (fresh.status === 'held') return { booking: this.ownView(fresh), checkoutUrl, holdMinutes: HOLD_MINUTES };
         this.dropDraft(fresh);
@@ -2683,7 +2689,7 @@ export class Lair {
             Cancelling: "Paid online, so you're locked in. Have a chat with us if plans change.",
           },
         });
-        this.write('UPDATE event_joins SET draft_order_id = ?, updated_at = ? WHERE id = ?', draftOrderId, Date.now(), join.id);
+        this.write('UPDATE event_joins SET draft_order_id = ?, checkout_url = ?, updated_at = ? WHERE id = ?', draftOrderId, checkoutUrl || null, Date.now(), join.id);
         const fresh = this.joinById(join.id);
         if (fresh.status === 'held') return { join: this.joinView(fresh), checkoutUrl, holdMinutes: HOLD_MINUTES };
         this.dropDraft(fresh);
@@ -3634,12 +3640,17 @@ export class Lair {
     this.touchMember(who.customerId, { name: trimmed(url?.searchParams.get('name'), 80) }, now);
     const member = this.memberView(this.memberRow(who.customerId), now);
     const since = now - 30 * 24 * HOUR;
-    const own = this.sql.exec('SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToBooking(r));
+    // A place held while it's paid online keeps its checkout link (checkout_url) and when the hold ends, so they can
+    // finish paying from any device. Only the owner ever gets these, here: staff views and the floor never do.
+    const withLink = (item, row) => ({ ...item, checkoutUrl: row.checkout_url || null });
+    const heldLink = (x) => (x.status === 'held' && x.checkoutUrl ? { checkoutUrl: x.checkoutUrl, holdUntil: x.holdUntil || null } : {});
+    const own = this.sql.exec('SELECT * FROM bookings WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray()
+      .map((r) => withLink(this.rowToBooking(r), r));
     const view = (b) => ({
       id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
       paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
       payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0,
-      split: Boolean(b.split),
+      split: Boolean(b.split), ...heldLink(b),
     });
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
@@ -3650,7 +3661,8 @@ export class Lair {
       .exec('SELECT c.*, g.title AS title FROM credits c LEFT JOIN games g ON g.id = c.game_id WHERE c.customer_id = ? ORDER BY c.created_at DESC LIMIT 20', who.customerId)
       .toArray()
       .map((c) => ({ gameId: c.game_id, title: c.title, players: c.players, amount: c.amount, status: c.status, at: c.created_at }));
-    const joins = this.sql.exec('SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToJoin(r));
+    const joins = this.sql.exec('SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray()
+      .map((r) => withLink(this.rowToJoin(r), r));
     return {
       customer: { id: who.customerId, staff: who.staff, gm: who.gm },
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
@@ -3663,7 +3675,7 @@ export class Lair {
         };
       }),
       games: gameRows.map((g) => ({ ...this.gameView(g, span, rules), players: this.gamePlayers(span, g.id) })),
-      joins: joins.map((j) => this.joinView(j)),
+      joins: joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })),
       credits,
       member: {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
