@@ -1,221 +1,99 @@
-// Reading the codes staff scan or type, and turning Lair answers into short lines for the result card.
-// Plain functions with no `shopify` global, so `npm test` can check them without a POS.
+// Reading the codes staff scan or type: tickets, seats, event sign-ups, member cards and passes all look like
+// SJ-OWLBEAR-17 (initials, a word, a number). Older tickets look like GOB-7K2QXM.
+// No `shopify` global here, so `npm test` can check it without a POS.
 
-export const TIME_ZONE = 'Pacific/Auckland';
+/** The words in codes (API contract v4, appendix). Only used to tidy what staff type; the Lair app does the matching. */
+export const CODE_WORDS = [
+  'GOBLIN','KOBOLD','OWLBEAR','MIMIC','GOLEM','WYVERN','DRAGON','DRAKE','HYDRA','KRAKEN','GRIFFIN','PHOENIX',
+  'UNICORN','PEGASUS','BASILISK','CHIMERA','SPHINX','TROLL','OGRE','GNOME','PIXIE','SPRITE','FAERIE','BROWNIE',
+  'IMP','GREMLIN','BUGBEAR','HOBGOBLIN','YETI','GHOST','BANSHEE','WISP','DJINN','GENIE','SELKIE','KELPIE',
+  'SATYR','CENTAUR','MINOTAUR','CYCLOPS','HARPY','GORGON','KITSUNE','TANUKI','KAPPA','TENGU','DRYAD','TREANT',
+  'WEREWOLF','MUMMY','ZOMBIE','SKELETON','SLIME','OOZE','BLOB',
+  'BADGER','OTTER','FERRET','HEDGEHOG','RACCOON','WOMBAT','PLATYPUS','AXOLOTL','NEWT','TOAD','FROG','GECKO',
+  'BEETLE','MOTH','SNAIL','CRAB','SQUID','OCTOPUS','NARWHAL','WALRUS','PENGUIN','PUFFIN','RAVEN','MAGPIE',
+  'OWL','BAT','FOX','WOLF','BEAR','BOAR','STAG','HARE','LLAMA','ALPACA','CAPYBARA','PANDA','YAK','GOAT',
+  'MOOSE','LOBSTER','TORTOISE','TURTLE','LEMUR','SLOTH','KOALA','QUOKKA','MEERKAT','KITTEN','PUPPY',
+  'KIWI','KEA','KAKA','TUI','WETA','MOA','TUATARA','KAKAPO','PUKEKO','TAKAHE','KOKAKO','FANTAIL','MOREPORK',
+  'RURU','KERERU','WEKA','PAUA','KUMARA','PAVLOVA','JANDAL','LAMINGTON','FEIJOA','PIKELET',
+  'MEEPLE','DICE','POTION','SCROLL','WAND','STAFF','SWORD','SHIELD','LANTERN','TORCH','MAP','COMPASS','CROWN',
+  'GOBLET','CHEST','RUNE','TOME','AMULET','RING','CLOAK','BOOTS','HELM','AXE','BOW','ARROW','DAGGER','HAMMER',
+  'LUTE','HARP','DRUM','QUILL','INKPOT','CANDLE','KEY','ROPE','BACKPACK','CAULDRON','BROOM','MIRROR','ORB',
+  'GEM','RUBY','OPAL','AMBER','JADE','PEARL','TOPAZ','GARNET','COIN','DOUBLOON','TREASURE','BANNER','TOKEN',
+  'PAWN','ROOK','KNIGHT','BISHOP','QUEEN','KING',
+  'PIE','PRETZEL','MUFFIN','SCONE','CRUMPET','PANCAKE','WAFFLE','DUMPLING','NOODLE','PICKLE','TURNIP','RADISH',
+  'CARROT','MUSHROOM','TRUFFLE','CHEESE','BISCUIT','COOKIE','TOFFEE','FUDGE','NOUGAT','TOASTIE','NACHO','TACO',
+  'BAGEL','DONUT','CUPCAKE','PUDDING','JELLY','CUSTARD',
+  'QUEST','SAGA','LEGEND','RIDDLE','SPELL','HEX','CHARM','JINX','OMEN','LOOT','CRIT','BOSS','DUNGEON','TAVERN',
+  'CASTLE','TOWER','CAVE','LAIR','PORTAL','MAZE','VAULT','CRYPT','SWAMP','FOREST','MEADOW','GROTTO','ISLAND',
+  'VOLCANO','GLACIER',
+  'EMBER','SPARK','FROST','THUNDER','STORM','GUST','MIST','SHADOW','STAR','MOON','COMET','NOVA','AURORA',
+  'ECLIPSE','RAINBOW','BLIZZARD',
+];
 
-const MEMBER = /^DGC(\d{1,20})$/; // member card: DGC-<Shopify customer id>
-const TICKET = /^([A-Z]{2,10})(\d{4})$/; // booking or sign-up: SAM-4821 (first name, 4 digits)
-const OLD_TICKET = /^GOB([A-Z0-9]{6})$/; // older tickets: GOB-7K2QXM
+const WORDS = new Set(CODE_WORDS);
+const FUN = /^([A-Z]{2})([A-Z]{3,12})0*([1-9]\d?)$/; // SJ OWLBEAR 17: two initials, a word, 1–99
+const LEGACY = /^GOB([A-Z0-9]{6})$/; // GOB-7K2QXM
 
 /**
  * @typedef {{ kind: 'empty' }
  *   | { kind: 'unknown', text: string }
- *   | { kind: 'member', code: string, customerId: string }
- *   | { kind: 'ticket', code: string }} ReadCode
+ *   | { kind: 'code', code: string, key: string, legacy: boolean }} ReadCode
  */
 
+/** Letters and digits only, upper case: the Lair app's lookup key ("sj owlbear 17" → "SJOWLBEAR17"). @param {unknown} raw */
+export function codeKey(raw) {
+  return String(raw ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
 /**
- * Works out what a scanned or typed code is. Case, spaces and dashes don't matter ("sam 4821" is SAM-4821),
- * and a code inside a longer text or link is still found.
+ * @param {string} key
+ * @param {'word' | 'legacy' | 'any'} how
+ * @returns {ReadCode | null}
+ */
+function match(key, how) {
+  const fun = key.match(FUN);
+  if (fun && (how === 'any' || (how === 'word' && WORDS.has(fun[2])))) {
+    const code = `${fun[1]}-${fun[2]}-${fun[3]}`;
+    return { kind: 'code', code, key: codeKey(code), legacy: false };
+  }
+  const old = key.match(LEGACY);
+  if (old && (how === 'any' || how === 'legacy')) return { kind: 'code', code: `GOB-${old[1]}`, key, legacy: true };
+  return null;
+}
+
+/**
+ * Works out what a scanned or typed code is, and tidies it into the printed form. Case, spaces, dashes, dots and
+ * underscores don't matter ("sj owlbear 17", "SJOWLBEAR17" and "Sj-Owlbear-17" are all SJ-OWLBEAR-17), and a code
+ * inside a longer text or link is still found.
  * @param {unknown} raw
  * @returns {ReadCode}
  */
 export function readCode(raw) {
-  const text = String(raw ?? '').trim().toUpperCase();
-  if (!text) return { kind: 'empty' };
-  const tokens = text.split(/[^A-Z0-9]+/).filter(Boolean);
-  const candidates = [tokens.join('')];
-  tokens.forEach((token, i) => {
-    candidates.push(token);
-    if (i + 1 < tokens.length) candidates.push(token + tokens[i + 1]);
-  });
-  for (const candidate of candidates) {
-    const m = candidate.match(MEMBER);
-    if (m) return { kind: 'member', code: `DGC-${m[1]}`, customerId: m[1] };
+  const text = String(raw ?? '').trim();
+  const whole = codeKey(text);
+  if (!whole) return { kind: 'empty' };
+  const tokens = text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean);
+  // Runs of up to 4 neighbouring tokens ("SJ", "OWLBEAR", "17"), last ones first: codes sit at the end of links.
+  /** @type {string[]} */
+  const runs = [];
+  for (let end = tokens.length; end > 0; end -= 1) {
+    for (let size = Math.min(4, end); size > 0; size -= 1) runs.push(tokens.slice(end - size, end).join(''));
   }
-  for (const candidate of candidates) {
-    const t = candidate.match(TICKET);
-    if (t) return { kind: 'ticket', code: `${t[1]}-${t[2]}` };
-    const o = candidate.match(OLD_TICKET);
-    if (o) return { kind: 'ticket', code: `GOB-${o[1]}` };
-  }
-  return { kind: 'unknown', text: text.slice(0, 40) };
-}
-
-/** @param {unknown} cents */
-export function money(cents) {
-  const n = Math.max(0, Math.round(Number(cents) || 0));
-  return `$${(n / 100).toFixed(2)}`;
-}
-
-/** @param {unknown} n */
-export function peopleLabel(n) {
-  const count = Math.round(Number(n) || 0);
-  if (count < 1) return '';
-  return count === 1 ? '1 person' : `${count} people`;
-}
-
-/**
- * Formats a time in Auckland time, falling back to the device's own clock (which is in Auckland anyway).
- * @param {number} ms
- * @param {Intl.DateTimeFormatOptions} options
- */
-function format(ms, options) {
-  const date = new Date(ms);
-  try {
-    return new Intl.DateTimeFormat('en-NZ', { ...options, timeZone: TIME_ZONE }).format(date);
-  } catch {
-    try {
-      return new Intl.DateTimeFormat('en-NZ', options).format(date);
-    } catch {
-      return date.toString();
+  // A known word anywhere wins, then an old GOB code, then anything shaped like a code when it's all there is.
+  for (const how of /** @type {const} */ (['word', 'legacy'])) {
+    for (const candidate of [whole, ...runs]) {
+      const found = match(candidate, how);
+      if (found) return found;
     }
   }
-}
-
-/** "6:00pm" @param {number} ms */
-export function timeLabel(ms) {
-  return format(ms, { hour: 'numeric', minute: '2-digit' }).replace(/\s*([ap])\.?\s?m\.?/i, (_, x) => `${x.toLowerCase()}m`);
-}
-
-/** "Today" or "Sat 4 Oct" @param {number} ms @param {number} [now] */
-export function dayLabel(ms, now = Date.now()) {
-  const key = (/** @type {number} */ t) => format(t, { year: 'numeric', month: '2-digit', day: '2-digit' });
-  if (key(ms) === key(now)) return 'Today';
-  return format(ms, { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '');
-}
-
-/** "Today, 6:00pm–9:00pm" @param {unknown} start @param {unknown} end @param {number} [now] */
-export function whenLabel(start, end, now = Date.now()) {
-  const from = Number(start);
-  if (!from) return '';
-  const to = Number(end);
-  return `${dayLabel(from, now)}, ${timeLabel(from)}${to > from ? `–${timeLabel(to)}` : ''}`;
-}
-
-/**
- * A Shopify customer id as the number the POS cart wants ("123", 123 or "gid://shopify/Customer/123").
- * @param {unknown} id
- * @returns {number | null}
- */
-export function customerIdNumber(id) {
-  const match = String(id ?? '').match(/(\d+)$/);
-  const n = match ? Number(match[1]) : NaN;
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
-}
-
-/**
- * @typedef {{ ref?: string, kind?: string, name?: string, tables?: string[], start?: number, end?: number,
- *   people?: number, paid?: boolean, status?: string, arrivedAt?: number | null, title?: string,
- *   players?: { name?: string, character?: string }[] }} LairItem
- * @typedef {{ title: string, price: string, quantity: number, taxable: boolean, properties: Record<string, string> }} FeeLine
- * @typedef {{ found?: boolean, kind?: string, booking?: LairItem, join?: LairItem, game?: { title?: string, tables?: string[] } | null,
- *   checkedIn?: boolean, reason?: string, due?: number, message?: string, lines?: unknown[], customer?: { id?: unknown } | null }} CheckInAnswer
- */
-
-/** @param {CheckInAnswer | null | undefined} answer */
-function itemOf(answer) {
-  return answer?.booking || answer?.join || {};
-}
-
-/** @param {CheckInAnswer} answer */
-function tablesOf(answer) {
-  const own = answer.booking?.tables;
-  const tables = own?.length ? own : answer.game?.tables || [];
-  return tables.filter(Boolean).map(String);
-}
-
-/**
- * What the result card shows for a booking, GM game seat or event sign-up.
- * @param {CheckInAnswer} answer
- * @param {string} code
- * @param {number} [now]
- */
-export function describeTicket(answer, code, now = Date.now()) {
-  const item = itemOf(answer);
-  const ref = item.ref || code;
-  const booking = answer.booking;
-  let what = 'Table booking';
-  if (answer.join || answer.kind === 'join') what = `Event sign-up${item.title ? `: ${item.title}` : ''}`;
-  else if (booking?.kind === 'gm-seat') what = `Game seat${answer.game?.title ? `: ${answer.game.title}` : ''}`;
-  else if (booking?.kind === 'walkin') what = 'Walk-in';
-  const tables = tablesOf(answer);
-  const players = (booking?.players || []).map((p) => p?.name).filter(Boolean);
-  const people = peopleLabel(item.people);
-  return {
-    ref,
-    name: item.name || 'Guest',
-    what,
-    when: whenLabel(item.start, item.end, now),
-    tables: tables.length ? `${tables.length === 1 ? 'Table' : 'Tables'} ${tables.join(', ')}` : '',
-    people: players.length > 1 ? `${people}: ${players.join(', ')}` : people,
-    paid: Boolean(item.paid),
-    due: Math.max(0, Math.round(Number(answer.due) || 0)),
-    arrivedAt: item.arrivedAt ? timeLabel(item.arrivedAt) : '',
-  };
-}
-
-/** @param {unknown} price */
-function priceString(price) {
-  const n = Number(price);
-  return Number.isFinite(n) && n > 0 ? n.toFixed(2) : null;
-}
-
-/**
- * The custom sale lines to put in the POS cart: the ones the Lair app sends, or one line for what's due when an
- * older Lair app doesn't send any. Every line carries the `_booking` property, which is how the payment finds
- * its way back to the booking.
- * @param {CheckInAnswer} answer
- * @param {string} code
- * @returns {FeeLine[]}
- */
-export function feeLines(answer, code) {
-  const ref = itemOf(answer).ref || code;
-  /** @type {FeeLine[]} */
-  const lines = [];
-  for (const raw of Array.isArray(answer.lines) ? answer.lines : []) {
-    const line = /** @type {{ title?: unknown, price?: unknown, quantity?: unknown, taxable?: unknown, properties?: unknown }} */ (raw || {});
-    const price = priceString(line.price);
-    if (!price) continue;
-    /** @type {Record<string, string>} */
-    const properties = {};
-    if (line.properties && typeof line.properties === 'object') {
-      for (const [key, value] of Object.entries(line.properties)) properties[key] = String(value);
-    }
-    if (!properties._booking) properties._booking = ref;
-    lines.push({
-      title: String(line.title || `Table fee ${ref}`).slice(0, 255),
-      price,
-      quantity: Math.max(1, Math.round(Number(line.quantity) || 1)),
-      taxable: line.taxable !== false,
-      properties,
-    });
-  }
-  const due = Math.max(0, Math.round(Number(answer.due) || 0));
-  if (lines.length || !due) return lines;
-  const tables = tablesOf(answer);
-  const title = answer.join ? `Entry fee ${ref}` : `Table fee ${ref}${tables.length ? ` (${tables.join(', ')})` : ''}`;
-  return [{ title, price: (due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: ref } }];
-}
-
-/** Total of some fee lines, in cents. @param {FeeLine[]} lines */
-export function linesTotal(lines) {
-  return lines.reduce((sum, line) => sum + Math.round(Number(line.price) * 100) * line.quantity, 0);
-}
-
-/**
- * "2 bonus rolls waiting · today's free roll not used yet". Accepts a number or { daily, bonus, toNext }.
- * @param {unknown} rolls
- */
-export function rollsLabel(rolls) {
-  if (rolls == null) return '';
-  if (typeof rolls === 'number') return rolls > 0 ? `${rolls} bonus ${rolls === 1 ? 'roll' : 'rolls'} waiting` : 'No bonus rolls waiting';
-  if (typeof rolls !== 'object') return '';
-  const r = /** @type {{ daily?: unknown, bonus?: unknown, toNext?: unknown }} */ (rolls);
-  const bonus = Math.round(Number(r.bonus) || 0);
-  const parts = [];
-  if (bonus > 0) parts.push(`${bonus} bonus ${bonus === 1 ? 'roll' : 'rolls'} waiting`);
-  if (r.daily === true) parts.push("today's free roll not used yet");
-  if (Number(r.toNext) > 0) parts.push(`${money(r.toNext)} more spend for the next roll`);
-  return parts.join(' · ');
+  return match(whole, 'any') || { kind: 'unknown', text: text.slice(0, 40) };
 }

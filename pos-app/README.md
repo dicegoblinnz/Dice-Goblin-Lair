@@ -1,28 +1,80 @@
 # Lair check-in for Shopify POS
 
-A tile on the Shopify POS home screen for the Dice Goblin counter. Staff scan what the customer shows them:
-
-- **A ticket** (like `SAM-4821`): the screen shows who it is, what they booked and what's left to pay.
-  **Add $40.00 to cart and check in** checks them in and puts the table fee in the POS cart, so staff take
-  payment the usual way with **Pay on Verifone**. Once it's paid, the Lair app marks the booking paid by itself.
-- **A member card** (`DGC-…`, the QR code in My Lair): puts that member on the sale, so what they spend counts
-  toward their bonus dice rolls.
+A tile on the Shopify POS home screen for the Dice Goblin counter. It shows who's booked today (GM games, events
+and table bookings), checks people in, and puts what they owe in the POS cart, so staff take payment the usual way
+with **Pay on Verifone**. Once a sale is paid, the Lair app marks the booking, sign-up or tab paid by itself.
 
 This folder is a Shopify app project: `shopify.app.toml` holds the app's settings and `extensions/lair-checkin` is
-the tile. It talks to the Lair app (the Cloudflare Worker at the root of this repository) and changes nothing there.
+the tile. It talks to the Lair app (the Cloudflare Worker at the root of this repository).
 
 ## At the counter
 
-1. On the POS home screen, tap **Lair check-in**.
-2. Tap **Scan ticket or member card** and point the camera at the QR code. A barcode scanner works too, or type
-   the code in the box and tap **Look up** (capitals and dashes don't matter: `sam4821` works).
-3. For a ticket, check the name, then:
-   - **Add $X to cart and check in**, close the check-in screen and take payment with **Pay on Verifone**, or
-   - **Check in only** when there's nothing to pay.
-   - Not for today, or cancelled? The screen says so. Only tap the button that ends in **anyway** if that's OK.
-4. Tap **Scan next** for the next person.
+The tile says **Lair check-in** and today's numbers, like "14 today · 5 here". Tap it.
 
-If the booking belongs to a customer account, that customer goes on the sale too (unless the sale already has one).
+### Someone arrives
+
+1. Tap **Scan a code** and point the camera at the code they show you: the QR code on their ticket or in My Lair.
+   A barcode scanner works too. Codes look like `SJ-OWLBEAR-17` (older ones look like `GOB-7K2QXM`).
+   - **Left their phone at home?** Type their name in the search box, or type their code (capitals, spaces and
+     dashes don't matter: `sj owlbear 17` works).
+   - Or tap their game, event or "Table bookings" under **Today**, then tap them.
+2. The screen asks **"Are you Sam?"** and shows their code, how many people, their tables and time, the players'
+   names for a GM game, any note, and their session pass if they saved one. Check it's them.
+3. **Session pass?** If they have one, it's already picked. Pick another of theirs, or **Don't use a pass**, before
+   you check them in. A pass covers one person's table fee per session (never event entry or a GM's fee).
+4. Tap **Check in**. The screen shows what's left to pay after any pass.
+   - Nothing to pay: it says **"Checked in. Nothing to pay."** Tap **Done**.
+   - Something to pay: tap **Add $X to cart**. It says "Added $X. Ready to pay." and goes back to the list.
+5. When everyone in this sale has been added, close the check-in screen and take payment with **Pay on Verifone**.
+
+If the booking is for another day, was cancelled, or was marked as a no-show, the screen says so and the button
+reads **Check in anyway**. Only tap it if that's OK.
+
+### Splitting the bill
+
+Some people choose "Split the bill at the counter" when they book; the screen says **Splitting the bill**.
+
+1. Check them in, then tap **Split the bill**.
+2. Pick **One person's share** (the screen shows how many are left to pay and how much each) or **A different
+   amount** and type it.
+3. **Who's paying this share?** Tap the booker's name, tap **Scan their member code** (the code in their My Lair),
+   or type their member code and tap **Find**. They go on the sale, so their spend earns *their* dice rolls. No
+   member code? Go ahead anyway.
+4. Tap **Add $X to cart**, close the check-in screen and take payment on the Verifone.
+5. For the next friend, open the booking again (scan the booker's code, or find them in the list). It shows what's
+   been paid and what's left. Right after a payment it may say **"Waiting for the last payment…"**: tap
+   **Refresh** after a few seconds. If that payment didn't go through after all, tap **It wasn't paid**.
+
+### A member code
+
+Scanning someone's member code (from My Lair) shows their bookings today, their tab and their passes.
+
+- **Check in everyone and add to cart** checks in all of their bookings today and adds what they owe. Once they're
+  all here, the button just says **Add $X to cart**.
+- **Tab:** drinks and snacks they added in My Lair. **Add tab to cart** puts them in the cart as the real products
+  (the till charges the shop's own prices). Then take payment as usual.
+- **Put Sam on this sale** makes their spend count toward their dice rolls.
+- Tap a pass to see it.
+
+### A session pass code
+
+Scanning a pass shows who has it and how many sessions are left. Tap **Use on…**, then the booking it's for: that
+person is checked in with the pass and the screen shows what's left to pay.
+
+Used a pass by mistake? Undo it on the staff page, under Passes. (The counter can't take a session back.)
+
+### What the labels mean
+
+| Label | Means |
+| --- | --- |
+| Here | Checked in |
+| Paid | Already paid (online, or earlier) |
+| Free | Nothing to pay (a free event, say) |
+| Due $X | Still to pay |
+| In cart | Its fee is in this sale, waiting for payment |
+| Pass | They'll use their saved session pass |
+| No-show | Marked as not coming |
+| Refund? | They paid online, then cancelled or didn't come: sort out a refund on the staff page |
 
 ## One-time setup (Mo, on your phone)
 
@@ -75,6 +127,8 @@ Deploys run by themselves whenever a change under `pos-app/` lands on `main`. To
 3. After 2–3 minutes it shows a green tick. A red cross means it didn't deploy: tap the run, then the step with the
    cross, to read why. To retry a run, open it and tap **Re-run jobs**.
 
+After a deploy, close Shopify POS on the iPad completely and open it again to get the new check-in screen.
+
 ### 5. Put the tile on the POS home screen
 
 1. Shopify admin → **Sales channels → Point of Sale**. Under **Customize the in-store experience**, tap **Edit**
@@ -106,48 +160,62 @@ An expired key only stops deploys; the tile keeps working. To renew it:
 
 | The screen says | What to do |
 | --- | --- |
-| Can't reach the Lair app, or No internet | Check the Wi-Fi and tap **Try again**. If the internet works and it always says this, the Lair app isn't letting POS in yet (see the next section). |
+| Can't reach the Lair app | Check the iPad's internet and tap **Try again**. If the internet works and it always says this, the Lair app may be missing its latest update. |
 | This POS login has no access | Step 6 above, or log the POS in with the owner's account. |
 | The Lair app didn't accept this POS login | Close the check-in screen and open it again. If it keeps happening, the Lair app's Shopify client ID or secret doesn't match this app. |
-| Code not found | Check the code with the customer, or find them on the staff page. |
+| Code not found | Check the code with them, or search by name. |
 | That's not a Lair code | The scanner read something else, like a product barcode. |
-| The fee isn't in the cart | Add it by hand as a custom sale, with the title and price shown. |
-| The fee isn't linked to the booking | It's in the cart; after they pay, mark the booking paid on the staff page. |
+| It isn't in the cart | Add it by hand as a custom sale, with the title and price shown. |
+| It's in the cart, but not linked | After they pay, mark the booking paid on the staff page. |
+| Already in the cart | That booking already has a line in this sale: take that payment first, or take the line off the sale. |
+| Waiting for the last payment… | The payment hasn't reached the Lair app yet: tap **Refresh** in a few seconds. Didn't go through? Tap **It wasn't paid**. |
 | The tile says "App failed to load" | Close and reopen Shopify POS, and update it from the App Store. If it continues, note the device and iOS version and ask Claude. |
 
-## What the Lair app (the Worker) must do for this
+## What the Lair app (the Worker) does for this
 
-- **Routes** (API contract, section 6): `POST /pos/checkin { code, preview?, force? }` and `POST /pos/member { code }`,
-  with `Authorization: Bearer <POS session token>`. The token is a JWT signed HS256 with the app's client secret,
-  `aud` = the client ID, `dest` = `https://ep0qiq-rp.myshopify.com`. Errors as `{ error: "Plain sentence" }`
-  (404 for an unknown code, 401 for a bad token); the screen shows the sentence.
-- **CORS.** POS sends these requests from `https://cdn.shopify.com` and `https://extensions.shopifycdn.com`, with
-  `Authorization` and `Content-Type: application/json` headers, so it asks first with `OPTIONS`. The Worker must
-  answer `OPTIONS /pos/*` with 204 and `Access-Control-Allow-Origin` (that origin, or `*`),
-  `Access-Control-Allow-Methods: POST, OPTIONS`, `Access-Control-Allow-Headers: Authorization, Content-Type, Accept`
-  and `Access-Control-Max-Age: 86400`, and add `Access-Control-Allow-Origin` to every `/pos/*` answer, errors
-  included. Without it, every scan says "Can't reach the Lair app".
-- **`preview: true`** on `/pos/checkin`: look the code up without checking anyone in, with the same answer
-  (`checkedIn: false` unless they're already in, `reason` as usual, plus `due`, `lines` and `customer`). The screen
-  sends it when a code is scanned and checks in only when staff tap the button. A Worker that ignores `preview`
-  checks people in as soon as they're scanned; the screen copes by showing "Checked in" and offering just
-  **Add $X to cart**.
+The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.dicegoblinnz.workers.dev/pos/…`, with
+`Authorization: Bearer <POS session token>` (API contract v4, sections 7 and 11):
+
+| Route | What for |
+| --- | --- |
+| `GET /pos/today` | Today's groups and everyone in them (the home screen, and the tile's numbers) |
+| `POST /pos/scan { code }` | What a scanned or typed code is: a booking or sign-up, a member, or a pass |
+| `POST /pos/checkin { id, type, pass?, force? }` | Check one person in; `pass` is a pass code, `'none'`, or left out for their saved pass. Answers with cart lines |
+| `POST /pos/checkin-member { customerId }` | Check in everything a member has today, with cart lines |
+| `POST /pos/share { id, type, amount? }` | One share of a bill as a cart line |
+| `POST /pos/tab/:id/added` | A member's tab is in the cart |
+
+- The session token is a JWT signed HS256 with the app's client secret, `aud` = the client ID, `dest` =
+  `https://ep0qiq-rp.myshopify.com`. Errors come back as `{ error: "Plain sentence" }` and the screen shows them.
+- **CORS:** POS calls from Shopify's own origin, so `/pos/*` answers `OPTIONS` and allows `GET, POST`, the
+  `Authorization` and `Content-Type` headers, and any origin. Without it, every scan says "Can't reach the Lair app".
+- **Cart lines:** fees are custom sales carrying `_booking: <code>` (and `_share: '1'` for a share of a bill); tab
+  items are the real products carrying `_tab: <tab id>`. When the POS order is paid, the orders/paid webhook records
+  each `_booking` line as a payment towards that booking or sign-up and marks each `_tab` tab paid.
+- A pass used by mistake can only be undone on the staff page (`POST /passes/uses/:id/undo` is staff-only), so the
+  check-in screen asks which pass to use *before* checking in, and never uses one by itself when asking for the cart
+  lines again (`pass: 'none'`).
 
 ## For developers
 
 ```
 cd pos-app
 npm ci
-npm test        # code reading, fee lines and labels
-npm run check   # type-checks the extension against the POS API types
-npm run build   # bundles the extension (works offline)
+npm test        # the logic: codes, the Today list, badges, passes, split bills, cart lines, Worker calls
+npm run check   # type-checks the extension against the POS API types (2026-07)
+npm run build   # bundles the extension (works offline, no Shopify login needed)
 ```
 
-- POS UI extensions API `2026-07` (the latest stable version: Preact with Polaris web components such as
-  `s-button`), Shopify CLI 4.
-- `extensions/lair-checkin/src`: `Tile.jsx` (home tile), `Modal.jsx` (the check-in screen), `lair.js` (Worker calls),
-  `cart.js` (POS cart), `codes.js` (reading codes, fee lines, labels). `shopify.d.ts` is generated by the CLI.
-- `.github/workflows/pos-deploy.yml` (at the repository root) runs the tests, then
+- POS UI extensions API `2026-07` (Preact with Polaris web components such as `s-button`), Shopify CLI 4.
+- `extensions/lair-checkin/src`:
+  - `Tile.jsx` (the home tile) and `Modal.jsx` (the check-in screen: state, scanning, and every call to the POS and
+    the Worker); `views.jsx` draws the screens from what `Modal.jsx` hands it.
+  - Plain modules with tests in `test/`: `codes.js` (reading codes), `format.js` (money, times in Auckland),
+    `today.js` (the Today list, badges, search), `flow.js` (which screen next, pass choices, where a scan goes),
+    `split.js` (shares of a bill), `lines.js` (cart lines and toasts), `cart.js` (the POS cart), `lair.js` (Worker
+    calls and error banners), `store.js` (what the iPad remembers between visits).
+  - `shopify.d.ts` is generated by the CLI (`npm run build` rewrites it).
+- `.github/workflows/pos-deploy.yml` (at the repository root) runs the tests and the type check, then
   `shopify app deploy --config shopify.app.toml --allow-updates` with `SHOPIFY_APP_AUTOMATION_TOKEN`.
   `--allow-updates` adds and updates but never deletes: if a deploy fails because it would remove something from
   the app, find out why rather than adding `--allow-deletes`.

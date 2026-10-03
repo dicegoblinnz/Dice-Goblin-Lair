@@ -1,67 +1,292 @@
-// The check-in screen, opened from the "Lair check-in" tile.
-//   Ticket (SAM-4821, or the older GOB-7K2QXM): shows who it is, then "Add $X to cart and check in"
-//     (or "Check in only" when nothing is due). The fee goes in the cart as a custom sale tagged
-//     `_booking: <ref>`, so paying with "Pay on Verifone" marks the booking paid.
-//   Member card (DGC-<customer id>): puts that customer on the sale, so their spend counts toward their rolls.
+// The check-in screen, opened from the "Lair check-in" tile. What staff see (views.jsx draws it):
+//   Home    "Scan a code", search by name, and Today: GM games, events and table bookings in time order, with how
+//           many people are here.
+//   Group   everyone in it: Here, Paid, Due $X, No-show or Refund?.
+//   Person  "Are you Sam?": check in (with their session pass, another, or none), then "Add $X to cart" or
+//           "Split the bill" (each friend pays a share, on their own account).
+//   Member  (a member code) their bookings today with "Check in everyone and add to cart", their tab with "Add tab to
+//           cart", and their passes.
+//   Pass    (a pass code) who has it, sessions left, and "Use on…" one of today's bookings.
+// Fees go in the POS cart as custom sales tagged `_booking` (plus `_share` for a share of a bill), and a tab's items as
+// the real products tagged `_tab`. When the sale is paid on the Verifone, the Lair app's orders/paid webhook marks them
+// paid. API contract v4, sections 7 and 11.
 import '@shopify/ui-extensions/preact';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { addFeesToCart, bookingsInCart, cartProblem, setCartCustomer } from './cart.js';
-import { customerIdNumber, describeTicket, feeLines, linesTotal, money, readCode, rollsLabel } from './codes.js';
-import { checkIn, LairError, lookUpMember } from './lair.js';
+import { addFeesToCart, addTabToCart, bookingsInCart, cartCustomerId, putOnSale, sharesInCart, tabsInCart } from './cart.js';
+import { readCode } from './codes.js';
+import { dayKey, firstName } from './format.js';
+import {
+  checkinOutcome,
+  currentRow,
+  HOME,
+  memberPlan,
+  nextScreen,
+  NO_PASS,
+  notALairCode,
+  passParam,
+  passProblem,
+  personScreen,
+  scanPurpose,
+  stackAfterPerson,
+  withGroups,
+  wrongScan,
+} from './flow.js';
+import { checkIn, checkInMember, getToday, LairError, problemFor, scanCode, shareBill, tabAdded } from './lair.js';
+import { addedToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, shareLines, tabToast } from './lines.js';
+import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState } from './split.js';
+import { loadPending, savePending, saveTileEntry } from './store.js';
+import { dueOf, findRow, mergeRows, replaceRows, rowKey, tileEntry } from './today.js';
+import { CurrentScreen } from './views.jsx';
 
 export default async () => {
   render(<CheckIn />, document.body);
 };
 
 /**
- * @typedef {'critical' | 'warning' | 'info' | 'success'} Tone
- * @typedef {{ title: string, message: string, tone: Tone, retry?: (() => void) | null }} Problem
- * @typedef {import('./codes.js').CheckInAnswer} CheckInAnswer
- * @typedef {Awaited<ReturnType<typeof addFeesToCart>>} CartAdded
- * @typedef {CartAdded | { error: string, lines: import('./codes.js').FeeLine[] }} CartResult
- * @typedef {{ code: string, answer: CheckInAnswer, cart: CartResult | null }} Ticket
- * @typedef {{ code: string, name: string, customerId: number | null, rolls: unknown, attached: boolean, cartError: string }} Member
+ * @typedef {import('./today.js').Today} Today
+ * @typedef {import('./today.js').Row} Row
+ * @typedef {import('./today.js').Group} Group
+ * @typedef {import('./today.js').PassLike} PassLike
+ * @typedef {import('./flow.js').Screen} Screen
+ * @typedef {import('./flow.js').PersonScreen} PersonScreen
+ * @typedef {import('./flow.js').MemberScreen} MemberScreen
+ * @typedef {import('./flow.js').PassScreen} PassScreen
+ * @typedef {import('./split.js').Pending} Pending
+ * @typedef {import('./views.jsx').Shown} Shown
+ * @typedef {import('./views.jsx').Want} Want
+ * @typedef {import('./views.jsx').Ctx} Ctx
+ * @typedef {Awaited<ReturnType<typeof addFeesToCart>>} CartResult
  */
 
-const TITLES = /** @type {Record<string, string>} */ ({
-  offline: 'No internet',
-  network: "Can't reach the Lair app",
-  timeout: 'No answer from the Lair app',
-  login: 'This POS login has no access',
-  'not-found': 'Code not found',
-  busy: 'Slow down a moment',
-  server: 'The Lair app had a problem',
-  refused: "That didn't work",
-});
+/** A scan button sets what the next scan is for; after two minutes without one, a scan is just a scan again. */
+const WANT_MS = 120_000;
 
 function CheckIn() {
-  const [typed, setTyped] = useState('');
+  const [today, setToday] = useState(/** @type {Today | null} */ (null));
+  const [loading, setLoading] = useState(false);
+  const [listProblem, setListProblem] = useState(/** @type {Shown | null} */ (null));
+  const [stack, setStack] = useState(/** @type {Screen[]} */ ([HOME]));
   const [busy, setBusy] = useState('');
-  const [problem, setProblem] = useState(/** @type {Problem | null} */ (null));
-  const [ticket, setTicket] = useState(/** @type {Ticket | null} */ (null));
-  const [member, setMember] = useState(/** @type {Member | null} */ (null));
+  const [problem, setProblem] = useState(/** @type {Shown | null} */ (null));
+  const [query, setQuery] = useState('');
+  const [pending, setPending] = useState(/** @type {Record<string, Pending>} */ ({}));
   const cart = useCart();
+
   const working = useRef(false);
   const cameraOpen = useRef(false);
+  const want = useRef(/** @type {{ want: Want, at: number }} */ ({ want: 'any', at: 0 }));
+  const loadingNow = useRef(false);
+  const stale = useRef(false);
+  // The latest state, for scans and actions that finish after a render or two.
+  const stackNow = useRef(stack);
+  stackNow.current = stack;
+  const todayNow = useRef(today);
+  todayNow.current = today;
+  const pendingNow = useRef(pending);
+  pendingNow.current = pending;
+
+  /* ---------------- today's list ---------------- */
+
+  /** GET /pos/today: on opening, and on Refresh. No polling. */
+  async function loadToday() {
+    if (loadingNow.current) return;
+    loadingNow.current = true;
+    stale.current = false;
+    setLoading(true);
+    try {
+      const fresh = await getToday();
+      // Someone was checked in while it loaded: this copy may be older than the screen's, so ask again.
+      if (!stale.current) {
+        setToday(fresh);
+        setListProblem(null);
+      }
+    } catch (error) {
+      const shown = problemFor(error);
+      setListProblem({ ...shown, retry: shown.retry ? loadToday : null });
+    } finally {
+      loadingNow.current = false;
+      setLoading(false);
+    }
+    if (stale.current) loadToday();
+  }
+
+  /** Fresher copies of some rows (from a check-in, a scan or a share). @param {(Row | null | undefined)[]} rows */
+  function setRows(rows) {
+    setToday((current) => replaceRows(current, rows));
+    if (loadingNow.current) stale.current = true;
+  }
+
+  useEffect(() => {
+    loadToday();
+    loadPending(Date.now()).then((saved) => setPending((current) => ({ ...saved, ...current })));
+  }, []);
+
+  // The tile shows today's numbers; leave it the freshest ones.
+  useEffect(() => {
+    if (today) saveTileEntry(tileEntry(today, Date.now()));
+  }, [today]);
+
+  /* ---------------- shares of a bill waiting to be paid ---------------- */
+
+  /** @param {Record<string, Pending>} next */
+  function keepPending(next) {
+    pendingNow.current = next;
+    setPending(next);
+    savePending(next);
+  }
+
+  /** @param {string} key @param {Pending} note */
+  function rememberShare(key, note) {
+    keepPending({ ...pendingNow.current, [key]: note });
+  }
+
+  /** @param {string[]} keys */
+  function forgetShares(keys) {
+    const next = { ...pendingNow.current };
+    for (const key of keys) delete next[key];
+    keepPending(next);
+  }
+
+  // Forget a share once its payment has reached the Lair app (or it's been half an hour).
+  useEffect(() => {
+    const keys = Object.keys(pending);
+    if (!keys.length) return;
+    const now = Date.now();
+    const done = keys.filter((key) => {
+      const [type, ...rest] = key.split(':');
+      const row = findRow(today, rest.join(':'), type)?.row || null;
+      const state = pendingState(pending[key], row, cart.shares, now);
+      return state === 'landed' || state === 'expired';
+    });
+    if (done.length) forgetShares(done);
+  }, [today, pending, cart.shares]);
+
+  /* ---------------- doing one thing at a time ---------------- */
+
+  /**
+   * One action at a time, with a busy line while it runs and a plain-words banner if it fails.
+   * @param {string} label
+   * @param {() => Promise<void>} task
+   * @param {() => void} [retry]
+   */
+  async function run(label, task, retry) {
+    if (working.current) return;
+    working.current = true;
+    setBusy(label);
+    setProblem(null);
+    try {
+      await task();
+    } catch (error) {
+      const shown = problemFor(error);
+      setProblem({ ...shown, retry: shown.retry && retry ? retry : null });
+    } finally {
+      working.current = false;
+      setBusy('');
+    }
+  }
+
+  /** @param {string} title @param {string} message @param {'critical' | 'warning' | 'info'} [tone] */
+  function say(title, message, tone = 'warning') {
+    setProblem({ title, message, tone, retry: null });
+  }
+
+  /* ---------------- moving between screens ---------------- */
+
+  /** @param {Screen[]} next */
+  function navigate(next) {
+    setStack(next.length ? next : [HOME]);
+  }
+
+  /** @param {Screen} screen */
+  function push(screen) {
+    setProblem(null);
+    setStack((current) => [...current, screen]);
+  }
+
+  function back() {
+    if (working.current) return;
+    setProblem(null);
+    setStack((current) => (current.length > 1 ? current.slice(0, -1) : [HOME]));
+  }
+
+  /** @param {(screen: PersonScreen) => PersonScreen} change */
+  function updatePerson(change) {
+    setStack((current) => {
+      const top = current[current.length - 1];
+      return top.name === 'person' ? [...current.slice(0, -1), change(top)] : current;
+    });
+  }
+
+  /** @param {(screen: MemberScreen) => MemberScreen} change */
+  function updateMember(change) {
+    setStack((current) => {
+      const top = current[current.length - 1];
+      return top.name === 'member' ? [...current.slice(0, -1), change(top)] : current;
+    });
+  }
+
+  /** @param {(screen: PassScreen) => PassScreen} change */
+  function updatePass(change) {
+    setStack((current) => {
+      const top = current[current.length - 1];
+      return top.name === 'pass' ? [...current.slice(0, -1), change(top)] : current;
+    });
+  }
+
+  function topScreen() {
+    return stackNow.current[stackNow.current.length - 1];
+  }
+
+  /** @returns {PersonScreen | null} */
+  function topPerson() {
+    const top = topScreen();
+    return top.name === 'person' ? top : null;
+  }
+
+  /** @returns {MemberScreen | null} */
+  function topMember() {
+    const top = topScreen();
+    return top.name === 'member' ? top : null;
+  }
+
+  /** @returns {PassScreen | null} */
+  function topPass() {
+    const top = topScreen();
+    return top.name === 'pass' ? top : null;
+  }
+
+  /** @param {string} key */
+  const groupExists = (key) => Boolean(todayNow.current?.groups.some((g) => g.key === key));
+
+  /** After the cart: back to the member, or to their group. @param {PersonScreen} screen */
+  function leavePerson(screen) {
+    navigate(stackAfterPerson(stackNow.current, screen.groupKey, groupExists));
+  }
+
+  /* ---------------- scanning ---------------- */
 
   // One scanner subscription for the life of the screen, always calling this render's handler.
   const onScan = useRef(/** @type {(data: string, source?: string) => void} */ (() => {}));
   onScan.current = (data, source) => {
     if (cameraOpen.current && source !== 'external' && source !== 'embedded') closeCamera();
-    handle(data);
+    const asked = Date.now() - want.current.at < WANT_MS ? want.current.want : 'any';
+    want.current = { want: 'any', at: 0 };
+    handle(data, asked);
   };
   useEffect(() => listenToScanner((data, source) => onScan.current(data, source)), []);
 
-  function openCamera() {
+  /** "Scan a code", "Scan their member code", "Scan a pass". @param {Want} what */
+  function scan(what) {
     if (working.current) return;
     setProblem(null);
+    want.current = { want: what, at: Date.now() };
     try {
       shopify.scanner.showCameraScanner();
       cameraOpen.current = true;
     } catch {
       cameraOpen.current = false;
-      setProblem({ title: "Couldn't open the camera", message: 'Type the code into the box below instead.', tone: 'warning' });
+      say("Couldn't open the camera", what === 'any' ? 'Type the code into the search box instead.' : 'Type the code in instead.');
     }
   }
 
@@ -75,387 +300,431 @@ function CheckIn() {
   }
 
   /**
-   * Does one thing at a time, with a busy line while it runs and a plain-words problem if it fails.
-   * @param {string} label
-   * @param {() => Promise<void>} task
-   * @param {() => void} [retry]
+   * A scanned or typed code: POST /pos/scan, then wherever it belongs.
+   * @param {string} raw
+   * @param {Want} what
    */
-  async function run(label, task, retry) {
+  function handle(raw, what) {
     if (working.current) return;
-    working.current = true;
-    setBusy(label);
-    setProblem(null);
-    try {
-      await task();
-    } catch (error) {
-      setProblem(problemFor(error, retry));
-    } finally {
-      working.current = false;
-      setBusy('');
-    }
-  }
-
-  /** A scanned or typed code. @param {string} raw */
-  function handle(raw) {
-    if (working.current) return;
-    const code = readCode(raw);
-    if (code.kind === 'empty') return;
-    setTicket(null);
-    setMember(null);
-    if (code.kind === 'unknown') {
-      setProblem({
-        title: "That's not a Lair code",
-        message: `"${code.text}" isn't a ticket or member card. Tickets look like SAM-4821 and member cards start with DGC-.`,
-        tone: 'warning',
-      });
+    const read = readCode(raw);
+    if (read.kind === 'empty') return;
+    if (read.kind === 'unknown') {
+      const words = notALairCode(read.text);
+      say(words.title, words.message);
       return;
     }
-    if (code.kind === 'member') {
-      run(`Looking up member card ${code.code}…`, () => showMember(code.code, code.customerId), () => handle(raw));
-      return;
-    }
-    run(`Looking up ${code.code}…`, () => showTicket(code.code), () => handle(raw));
-  }
-
-  /** @param {string} code */
-  async function showTicket(code) {
-    const answer = await checkIn({ code, preview: true });
-    if (!answer || answer.found === false) {
-      throw new LairError('not-found', answer?.message || `No booking or sign-up with the code ${code}.`, 404);
-    }
-    setTicket({ code, answer, cart: null });
-    setTyped('');
-  }
-
-  /**
-   * "Add $X to cart and check in" (addToCart) or "Check in only".
-   * @param {boolean} addToCart
-   */
-  function confirm(addToCart) {
-    const current = ticket;
-    if (!current) return;
     run(
-      addToCart ? 'Checking in and adding to the cart…' : 'Checking in…',
+      `Looking up ${read.code}…`,
       async () => {
-        let answer = current.answer;
-        if (!answer.checkedIn) {
-          // A reason (not today, cancelled) means staff chose "anyway".
-          const force = Boolean(answer.reason) && answer.reason !== 'already';
-          answer = await checkIn({ code: current.code, force });
-          if (!answer?.checkedIn) {
-            setTicket({ code: current.code, answer: answer || current.answer, cart: null });
+        /** @type {any} */
+        let answer;
+        try {
+          answer = await scanCode(read.code);
+        } catch (error) {
+          if (error instanceof LairError && error.kind === 'not-found') {
+            say('Code not found', `${error.message} Check it with them, or search by name.`);
             return;
           }
+          throw error;
         }
-        const cartResult = addToCart ? await putFeesInCart(answer, current.code) : null;
-        setTicket({ code: current.code, answer, cart: cartResult });
-        announce(answer, current.code, cartResult, !current.answer.checkedIn);
+        route(answer, what);
       },
-      () => confirm(addToCart),
+      () => handle(raw, what),
     );
   }
 
-  /** "Add $X to cart" for someone already checked in. */
-  function addFeeOnly() {
-    const current = ticket;
-    if (!current) return;
-    run('Adding to the cart…', async () => {
-      const cartResult = await putFeesInCart(current.answer, current.code);
-      setTicket({ ...current, cart: cartResult });
-      announce(current.answer, current.code, cartResult, false);
-    });
+  /** @param {any} answer @param {Want} what */
+  function route(answer, what) {
+    const person = topPerson();
+    const row = person ? currentRow(person, todayNow.current) : null;
+    const purpose = scanPurpose(
+      { want: what, screen: topScreen().name, splitOpen: Boolean(person?.split.open), takesPass: Boolean(row && row.type !== 'join' && dueOf(row) > 0) },
+      answer?.type,
+    );
+    if (purpose === 'wrong') {
+      const words = wrongScan(what === 'pass' ? 'pass' : 'payer');
+      say(words.title, words.message);
+      return;
+    }
+    if (purpose === 'payer') {
+      const found = payerFromScan(answer);
+      if ('problem' in found) {
+        say("That's not a member code", found.problem);
+        return;
+      }
+      updatePerson((screen) => ({ ...screen, split: { ...screen.split, open: true, payer: found.payer } }));
+      toast(`${firstName(found.payer.name) || 'They'} will pay this share`);
+      return;
+    }
+    if (purpose === 'pass') {
+      /** @type {PassLike} */
+      const pass = answer.pass;
+      const why = passProblem(pass);
+      if (why) {
+        say(`${pass?.label || 'That pass'} can't be used`, why);
+        return;
+      }
+      updatePerson((screen) => ({ ...screen, passes: [...screen.passes.filter((p) => p.code !== pass.code), pass], choice: String(pass.code) }));
+      toast(`${pass.label || 'The pass'} is ready to use`);
+      return;
+    }
+    const screen = nextScreen(answer);
+    if (!screen) {
+      say('That code needs a newer screen', 'The Lair app answered with something this screen doesn’t know. Search by name instead.');
+      return;
+    }
+    if (screen.name === 'person') setRows([screen.row]);
+    if (screen.name === 'member') setRows(screen.rows);
+    setQuery('');
+    navigate([HOME, screen]);
+  }
+
+  /* ---------------- a person: check in, the cart, a share of the bill ---------------- */
+
+  /** "Check in", "Check in anyway" and "Use this pass". @param {boolean} force */
+  function doCheckIn(force) {
+    const screen = topPerson();
+    if (!screen) return;
+    const row = currentRow(screen, todayNow.current);
+    const pass = passParam(screen.choice, row);
+    run(
+      force ? 'Checking in anyway…' : 'Checking in…',
+      async () => {
+        const answer = await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass, force });
+        if (answer?.row) setRows([answer.row]);
+        const outcome = checkinOutcome(answer);
+        updatePerson((current) =>
+          rowKey(current.row) === rowKey(row)
+            ? { ...current, row: answer?.row ? { ...current.row, ...answer.row } : current.row, result: answer, choice: outcome.arrived ? null : current.choice }
+            : current,
+        );
+        if (outcome.arrived && !outcome.total) toast(NOTHING_TO_PAY);
+      },
+      () => doCheckIn(force),
+    );
+  }
+
+  /** "Add $X to cart": the check-in's lines (asked for again if what's due has changed), then back to the group. */
+  function addToCart() {
+    const screen = topPerson();
+    if (!screen) return;
+    const row = currentRow(screen, todayNow.current);
+    run(
+      'Adding to the cart…',
+      async () => {
+        let answer = screen.result;
+        let lines = answer && checkinOutcome(answer).arrived ? feeLines(answer) : [];
+        if (!lines.length || linesTotal(lines) !== dueOf(row)) {
+          // What's due now. 'none': asking again never uses a pass by itself.
+          answer = await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: NO_PASS });
+          if (answer?.row) setRows([answer.row]);
+          const fresh = answer;
+          updatePerson((current) => (rowKey(current.row) === rowKey(row) ? { ...current, result: fresh } : current));
+          lines = feeLines(answer);
+        }
+        if (!lines.length) {
+          toast(NOTHING_TO_PAY);
+          return;
+        }
+        const added = await addFeesToCart(lines, answer?.customer?.id ?? null);
+        if (stayAfterCart(added)) return;
+        toast(addedToast(linesTotal(added.added)));
+        leavePerson(screen);
+        warnAfterCart(added, firstName(row.name), String(row.ref || ''));
+      },
+      addToCart,
+    );
+  }
+
+  /** "Add $X to cart" in Split the bill: POST /pos/share, its line in the cart, the payer on the sale. */
+  function addShare() {
+    const screen = topPerson();
+    if (!screen) return;
+    const row = currentRow(screen, todayNow.current);
+    const custom = screen.split.mode === 'custom';
+    const amount = custom ? parseDollars(screen.split.custom) : null;
+    if (custom) {
+      const issue = amountProblem(amount, row);
+      if (issue) {
+        say('Check the amount', issue);
+        return;
+      }
+    }
+    const payer = screen.split.payer;
+    run(
+      'Adding the share to the cart…',
+      async () => {
+        const answer = await shareBill({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', amount: custom ? amount : null });
+        if (answer?.row) setRows([answer.row]);
+        const lines = shareLines(answer);
+        if (!lines.length) {
+          say('Nothing went in the cart', 'The Lair app sent no share for this booking. Refresh, then try again.');
+          return;
+        }
+        const added = await addFeesToCart(lines, payer ? payer.customerId : null, { replaceCustomer: Boolean(payer) });
+        if (stayAfterCart(added)) return;
+        const cents = linesTotal(added.added);
+        rememberShare(rowKey(row), pendingShare(answer?.row ? { ...row, ...answer.row } : row, cents, Date.now()));
+        toast(addedToast(cents));
+        leavePerson(screen);
+        warnAfterCart(added, payer ? firstName(payer.name) : '', String(row.ref || ''));
+      },
+      addShare,
+    );
   }
 
   /**
-   * @param {CheckInAnswer} answer
-   * @param {string} code
-   * @returns {Promise<CartResult | null>}
+   * After adding to the cart: stay on this screen with a banner when nothing new went in.
+   * @param {CartResult} added
+   * @returns {boolean} stay
    */
-  async function putFeesInCart(answer, code) {
-    const lines = feeLines(answer, code);
-    if (!lines.length) return null;
-    try {
-      return await addFeesToCart(lines, customerIdNumber(answer.customer?.id));
-    } catch (error) {
-      return { error: cartProblem(error), lines };
-    }
-  }
-
-  /** @param {string} code @param {string} idFromCode */
-  async function showMember(code, idFromCode) {
-    const found = await lookUpMember(code);
-    const name = typeof found?.name === 'string' && found.name.trim() ? found.name.trim() : 'Member';
-    const customerId = customerIdNumber(found?.customerId ?? idFromCode);
-    let attached = false;
-    let cartError = '';
-    if (customerId) {
-      try {
-        await setCartCustomer(customerId);
-        attached = true;
-      } catch (error) {
-        cartError = cartProblem(error);
-      }
-    } else {
-      cartError = 'The Lair app sent no customer number.';
-    }
-    setMember({ code, name, customerId, rolls: found?.rolls, attached, cartError });
-    setTyped('');
-    if (attached) toast(`${firstName(name)} is on this sale`);
-  }
-
-  /** "Put them on this sale" again, after the customer was changed or removed. */
-  function reattachMember() {
-    const current = member;
-    if (!current?.customerId) return;
-    const customerId = current.customerId;
-    run('Putting them on this sale…', async () => {
-      try {
-        await setCartCustomer(customerId);
-        setMember({ ...current, attached: true, cartError: '' });
-        toast(`${firstName(current.name)} is on this sale`);
-      } catch (error) {
-        setMember({ ...current, attached: false, cartError: cartProblem(error) });
-      }
-    });
-  }
-
-  function scanNext() {
-    setTicket(null);
-    setMember(null);
-    setProblem(null);
-    openCamera();
-  }
-
-  function lookUpTyped() {
-    if (!typed.trim()) {
-      setProblem({ title: 'Type a code first', message: 'Tickets look like SAM-4821 and member cards start with DGC-.', tone: 'info' });
-      return;
-    }
-    handle(typed);
-  }
-
-  const showing = Boolean(ticket || member);
-  return (
-    <s-page heading="Lair check-in">
-      <s-scroll-box>
-        <s-box padding="base">
-          <s-stack direction="block" gap="base">
-            {busy ? <BusyLine label={busy} /> : null}
-            {problem ? <ProblemBanner problem={problem} busy={Boolean(busy)} /> : null}
-            {ticket ? (
-              <TicketCard ticket={ticket} bookingsInCart={cart.bookings} busy={Boolean(busy)} onConfirm={confirm} onAddFee={addFeeOnly} />
-            ) : null}
-            {member ? (
-              <MemberCard member={member} cartCustomerId={cart.customerId} busy={Boolean(busy)} onReattach={reattachMember} />
-            ) : null}
-            <s-button variant={showing ? 'secondary' : 'primary'} disabled={Boolean(busy)} onClick={showing ? scanNext : openCamera}>
-              {showing ? 'Scan next' : 'Scan ticket or member card'}
-            </s-button>
-            <s-text-field label="Or type the code" placeholder="SAM-4821" value={typed} onInput={(event) => setTyped(event.currentTarget.value ?? '')}>
-              <s-button slot="accessory" disabled={Boolean(busy)} onClick={lookUpTyped}>
-                Look up
-              </s-button>
-            </s-text-field>
-          </s-stack>
-        </s-box>
-      </s-scroll-box>
-    </s-page>
-  );
-}
-
-/**
- * @param {{ ticket: Ticket, bookingsInCart: string[], busy: boolean, onConfirm: (addToCart: boolean) => void, onAddFee: () => void }} props
- */
-function TicketCard({ ticket, bookingsInCart: inCart, busy, onConfirm, onAddFee }) {
-  const { answer, code, cart } = ticket;
-  const t = describeTicket(answer, code);
-  const lines = feeLines(answer, code);
-  const total = linesTotal(lines);
-  const feeInCart = lines.length > 0 && lines.every((line) => inCart.includes(line.properties._booking));
-  const checkedIn = Boolean(answer.checkedIn);
-  const reason = checkedIn ? '' : answer.reason || '';
-  const noun = answer.join || answer.kind === 'join' ? 'sign-up' : 'booking';
-
-  /** @type {{ tone: 'success' | 'critical' | 'warning' | 'neutral', text: string }} */
-  let status = { tone: 'neutral', text: 'Not checked in yet' };
-  if (checkedIn) status = { tone: 'success', text: t.arrivedAt ? `Checked in ${t.arrivedAt}` : 'Checked in' };
-  else if (reason === 'cancelled') status = { tone: 'critical', text: 'Cancelled' };
-  else if (reason === 'not-today') status = { tone: 'warning', text: 'Not today' };
-
-  /** @type {{ tone: 'success' | 'warning' | 'info' | 'neutral', text: string }} */
-  let pay = { tone: 'neutral', text: 'Nothing to pay' };
-  if (t.due > 0 && feeInCart) pay = { tone: 'info', text: `In the cart: ${money(t.due)}` };
-  else if (t.due > 0) pay = { tone: 'warning', text: `To pay: ${money(t.due)}` };
-  else if (t.paid) pay = { tone: 'success', text: 'Paid' };
-
-  const added = cart && 'added' in cart ? cart : null;
-  // Once this screen has put the fee in the cart, don't offer it again (even if the cart is paid and cleared
-  // while the screen stays open): scan the ticket again to start over.
-  const justAdded = Boolean(added && added.added.length);
-  const offerFee = lines.length > 0 && !feeInCart && !justAdded;
-
-  const anyway = reason ? ' anyway' : '';
-  let action = null;
-  if (!checkedIn) {
-    action =
-      offerFee ? (
-        <s-button variant="primary" disabled={busy} onClick={() => onConfirm(true)}>
-          {`Add ${money(total)} to cart and check in${anyway}`}
-        </s-button>
-      ) : (
-        <s-button variant="primary" disabled={busy} onClick={() => onConfirm(false)}>
-          {reason ? 'Check in anyway' : 'Check in only'}
-        </s-button>
+  function stayAfterCart(added) {
+    if (added.failed.length) {
+      const said = added.failed[0].message.replace(/[.!]+$/, '');
+      say(
+        added.added.length ? "Some of it isn't in the cart" : "It isn't in the cart",
+        `POS said: ${said}. Add it by hand as a custom sale: ${added.failed.map(({ line }) => `${line.title}, $${line.price}`).join('; ')}.`,
+        'critical',
       );
-  } else if (offerFee) {
-    action = (
-      <s-button variant="primary" disabled={busy} onClick={onAddFee}>
-        {`Add ${money(total)} to cart`}
-      </s-button>
+      return true;
+    }
+    if (!added.added.length) {
+      say('Already in the cart', "There's a line for this booking in the cart already. Take that payment first, or take it off the sale.", 'info');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Things to know after the cart, shown on the next screen.
+   * @param {CartResult} added
+   * @param {string} who
+   * @param {string} ref
+   */
+  function warnAfterCart(added, who, ref) {
+    if (added.unlinked.length) {
+      say(
+        "It's in the cart, but not linked",
+        `Paying won't mark ${ref || 'the booking'} paid by itself. After they pay, mark it paid on the staff page.`,
+      );
+    } else if (added.customer === 'failed') {
+      say(`Couldn't put ${who || 'them'} on the sale`, "Add them with the cart's Add customer button, so their spend counts.", 'info');
+    }
+  }
+
+  /** "Refresh" while waiting for a share's payment: the row again from POST /pos/scan. */
+  function refreshRow() {
+    const screen = topPerson();
+    if (!screen) return;
+    const row = currentRow(screen, todayNow.current);
+    run(
+      'Checking for the payment…',
+      async () => {
+        const answer = await scanCode(String(row.ref));
+        /** @type {Row | null} */
+        const fresh = answer?.row && rowKey(answer.row) === rowKey(row) ? answer.row : null;
+        if (!fresh) return;
+        setRows([fresh]);
+        updatePerson((current) => (rowKey(current.row) === rowKey(fresh) ? { ...current, row: { ...current.row, ...fresh } } : current));
+      },
+      refreshRow,
     );
   }
 
-  return (
-    <s-stack direction="block" gap="base">
-      <s-section heading={t.name}>
-        <s-stack direction="block" gap="small">
-          <s-stack direction="inline" gap="small">
-            <s-badge tone={status.tone}>{status.text}</s-badge>
-            <s-badge tone={pay.tone}>{pay.text}</s-badge>
-          </s-stack>
-          <s-text type="strong">{`${t.what} · ${t.ref}`}</s-text>
-          {t.when ? <s-text>{t.when}</s-text> : null}
-          {t.tables ? <s-text>{t.tables}</s-text> : null}
-          {t.people ? <s-text>{t.people}</s-text> : null}
-        </s-stack>
-      </s-section>
-      {reason ? (
-        <s-banner tone={reason === 'cancelled' ? 'critical' : 'warning'} heading={reasonHeading(reason, noun)}>
-          {answer.message || `Check with them before letting them in.`}
-        </s-banner>
-      ) : null}
-      {cart && 'error' in cart ? (
-        <s-banner tone="critical" heading="The fee isn't in the cart">
-          {`POS said: ${cart.error}. Add it by hand as a custom sale: ${cart.lines.map((l) => `${l.title}, $${l.price}`).join('; ')}.`}
-        </s-banner>
-      ) : null}
-      {added && added.unlinked.length ? (
-        <s-banner tone="warning" heading="The fee isn't linked to the booking">
-          {`It's in the cart, but the ${noun} won't be marked paid by itself. After they pay, mark ${t.ref} paid on the staff page.`}
-        </s-banner>
-      ) : null}
-      {added && added.added.length && !added.unlinked.length ? (
-        <s-banner tone="success" heading={`${money(linesTotal(added.added))} is in the cart`}>
-          {`Take payment as usual.${added.customerAdded ? ` ${t.name}'s account is on the sale too, so it counts toward their rolls.` : ''}`}
-        </s-banner>
-      ) : null}
-      {added && !added.added.length && added.skipped.length ? (
-        <s-banner tone="info" heading="Already in the cart">{`The fee for ${t.ref} was already in the cart.`}</s-banner>
-      ) : null}
-      {action}
-    </s-stack>
-  );
-}
-
-/**
- * @param {{ member: Member, cartCustomerId: number | null, busy: boolean, onReattach: () => void }} props
- */
-function MemberCard({ member, cartCustomerId, busy, onReattach }) {
-  // The cart can report its new customer a moment after setCustomer finishes, so an empty cart customer still
-  // counts as "on this sale" once it's been set; a different customer means someone changed it.
-  const onSale = member.attached && (cartCustomerId === null || cartCustomerId === member.customerId);
-  const rolls = rollsLabel(member.rolls);
-  return (
-    <s-stack direction="block" gap="base">
-      <s-section heading={member.name}>
-        <s-stack direction="block" gap="small">
-          <s-stack direction="inline" gap="small">
-            <s-badge tone={onSale ? 'success' : 'warning'}>{onSale ? 'On this sale' : 'Not on this sale'}</s-badge>
-          </s-stack>
-          <s-text type="strong">{`Member card · ${member.code}`}</s-text>
-          {rolls ? <s-text>{rolls}</s-text> : null}
-          {onSale ? <s-text color="subdued">What they buy on this sale counts toward their bonus rolls.</s-text> : null}
-        </s-stack>
-      </s-section>
-      {member.cartError ? (
-        <s-banner tone="critical" heading="Couldn't put them on the sale">
-          {`POS said: ${member.cartError}. Add ${member.name} with the cart's "Add customer" button instead.`}
-        </s-banner>
-      ) : null}
-      {!onSale && member.customerId ? (
-        <s-button variant="primary" disabled={busy} onClick={onReattach}>
-          Put them on this sale
-        </s-button>
-      ) : null}
-    </s-stack>
-  );
-}
-
-/** @param {{ label: string }} props */
-function BusyLine({ label }) {
-  return (
-    <s-stack direction="inline" gap="small" alignItems="center">
-      <s-spinner accessibilityLabel={label} />
-      <s-text>{label}</s-text>
-    </s-stack>
-  );
-}
-
-/** @param {{ problem: Problem, busy: boolean }} props */
-function ProblemBanner({ problem, busy }) {
-  const retry = problem.retry;
-  return (
-    <s-stack direction="block" gap="small">
-      <s-banner tone={problem.tone} heading={problem.title}>
-        {problem.message}
-      </s-banner>
-      {retry ? (
-        <s-button disabled={busy} onClick={() => retry()}>
-          Try again
-        </s-button>
-      ) : null}
-    </s-stack>
-  );
-}
-
-/** @param {string} reason @param {string} noun */
-function reasonHeading(reason, noun) {
-  if (reason === 'not-today') return `This ${noun} isn't for today`;
-  if (reason === 'cancelled') return `This ${noun} was cancelled`;
-  return 'Check before letting them in';
-}
-
-/**
- * @param {unknown} error
- * @param {(() => void) | undefined} retry
- * @returns {Problem}
- */
-function problemFor(error, retry) {
-  if (error instanceof LairError) {
-    const canRetry = ['offline', 'network', 'timeout', 'busy', 'server'].includes(error.kind);
-    return {
-      title: TITLES[error.kind] || "That didn't work",
-      message: error.message,
-      tone: error.kind === 'not-found' || error.kind === 'refused' ? 'warning' : 'critical',
-      retry: canRetry ? retry : null,
-    };
+  /** "It wasn't paid": forget the share, so the rest can be paid. */
+  function forgetShare() {
+    const screen = topPerson();
+    if (screen) forgetShares([rowKey(currentRow(screen, todayNow.current))]);
   }
-  const message = error instanceof Error && error.message ? error.message : 'Try again.';
-  return { title: 'Something went wrong', message, tone: 'critical', retry };
+
+  /* ---------------- a member ---------------- */
+
+  /**
+   * The member view's main button. While someone is still to come: "Check in everyone and add to cart" (POST
+   * /pos/checkin-member). Once they're all here: "Add $X to cart" for each row still owing, its lines asked for with
+   * `pass: 'none'` like the person view, so the amount on the button is what goes in the cart.
+   */
+  function checkInEveryone() {
+    const screen = topMember();
+    if (!screen) return;
+    const name = firstName(screen.member.name);
+    const plan = memberPlan(withGroups(screen.rows, todayNow.current).map((x) => x.row), cart.bookings);
+    run(
+      plan.waiting ? 'Checking everyone in…' : 'Adding to the cart…',
+      async () => {
+        /** @type {any} */
+        let answer;
+        if (plan.waiting) {
+          answer = await checkInMember(screen.member.customerId);
+        } else {
+          const answers = [];
+          for (const row of plan.owing) answers.push(await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: NO_PASS }));
+          answer = {
+            rows: answers.map((a) => a?.row).filter(Boolean),
+            lines: answers.flatMap((a) => (Array.isArray(a?.lines) ? a.lines : [])),
+            customer: { id: screen.member.customerId },
+            notices: answers.map((a) => a?.notice).filter(Boolean),
+          };
+        }
+        /** @type {Row[]} */
+        const rows = Array.isArray(answer?.rows) ? answer.rows : [];
+        setRows(rows);
+        const notices = Array.isArray(answer?.notices) ? answer.notices.map(String) : [];
+        updateMember((current) => ({ ...current, rows: mergeRows(current.rows, rows), notices }));
+        const lines = feeLines(answer);
+        if (!lines.length) {
+          toast(NOTHING_TO_PAY);
+          return;
+        }
+        const added = await addFeesToCart(lines, answer?.customer?.id ?? screen.member.customerId);
+        if (stayAfterCart(added)) return;
+        toast(addedToast(linesTotal(added.added)));
+        warnAfterCart(added, name, '');
+      },
+      checkInEveryone,
+    );
+  }
+
+  /** "Add tab to cart": the products, POST /pos/tab/:id/added, then the member on the sale. */
+  function addTab() {
+    const screen = topMember();
+    if (!screen?.tab) return;
+    const tab = screen.tab;
+    run(
+      'Adding the tab to the cart…',
+      async () => {
+        /** @type {any} */
+        let marked = null;
+        const result = await addTabToCart(tab, screen.member.customerId, async (id) => {
+          marked = await tabAdded(id);
+        });
+        if (marked?.tab) updateMember((current) => ({ ...current, tab: marked.tab }));
+        if (result.already) {
+          say('The tab is in the cart already', 'Take payment on the Verifone.', 'info');
+          return;
+        }
+        const notes = [];
+        if (result.failed.length) notes.push(`POS couldn't add ${result.failed.map((f) => f.item.title).join(', ')} (${result.failed[0].message}).`);
+        if (result.declined.length) notes.push(`Not added: ${result.declined.map((i) => i.title).join(', ')}.`);
+        if (result.bad.length) notes.push(`Ring these up by hand: ${result.bad.join(', ')}.`);
+        if (result.untagged.length) notes.push(`${result.untagged.map((i) => i.title).join(', ')} isn't linked to the tab, so paying won't mark the tab paid by itself.`);
+        if (result.markProblem) notes.push(`The Lair app wasn't told the tab is at the counter (${result.markProblem}), so they could still change it in My Lair.`);
+        if (!result.added.length) {
+          say('Nothing from the tab went in the cart', notes.join(' ') || 'Try again.', 'critical');
+          return;
+        }
+        toast(tabToast(itemCount(result.added)));
+        if (notes.length) say('Check the cart', notes.join(' '));
+      },
+      addTab,
+    );
+  }
+
+  /** "Put Sam on this sale". */
+  function putMemberOnSale() {
+    const screen = topMember();
+    if (!screen) return;
+    const name = firstName(screen.member.name) || 'They';
+    run('Putting them on the sale…', async () => {
+      const result = await putOnSale(screen.member.customerId, true);
+      if (result === 'added' || result === 'already') toast(`${name} is on this sale`);
+      else if (result === 'none') say("Couldn't put them on the sale", "The Lair app has no Shopify account for them. Use the cart's Add customer button.");
+      else say("Couldn't put them on the sale", "POS said no. Use the cart's Add customer button instead.");
+    });
+  }
+
+  /* ---------------- a pass ---------------- */
+
+  /** "Use on…" a row: check them in with this pass, then their person view with what's left to pay. @param {Row} row @param {Group} group */
+  function usePassOn(row, group) {
+    const screen = topPass();
+    if (!screen) return;
+    const pass = screen.pass;
+    run(
+      `Checking ${firstName(row.name) || 'them'} in with ${pass.label || 'the pass'}…`,
+      async () => {
+        const answer = await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: String(pass.code) });
+        if (answer?.row) setRows([answer.row]);
+        const left = Number(answer?.pass?.left);
+        const after = Number.isFinite(left) ? { ...pass, sessionsLeft: left } : pass;
+        updatePass((current) => ({ ...current, picking: false, pass: after }));
+        const next = personScreen(row, { groupKey: group.key, groupTitle: group.title || '', passes: [after], result: answer });
+        // Not checked in (another day, say): "Check in anyway" should still use this pass.
+        push(checkinOutcome(answer).arrived ? next : { ...next, choice: String(pass.code) });
+      },
+      () => usePassOn(row, group),
+    );
+  }
+
+  /* ---------------- drawing ---------------- */
+
+  const top = stack[stack.length - 1];
+  /** @type {Ctx} */
+  const ctx = {
+    today,
+    loading,
+    listProblem,
+    todayKey: today?.day || dayKey(Date.now()),
+    now: Date.now(),
+    busy,
+    problem,
+    query,
+    cart,
+    pending,
+    backLabel: backLabel(stack, today),
+    act: {
+      back,
+      scan,
+      lookUp: (text, what) => handle(text, what),
+      setQuery: (text) => setQuery(text),
+      refresh: () => loadToday(),
+      openGroup: (key) => push({ name: 'group', key }),
+      openRow: (row, group, passes) => push(personScreen(row, { groupKey: group?.key ?? null, groupTitle: group?.title ?? '', passes: passes || [] })),
+      checkIn: (force) => doCheckIn(force),
+      setChoice: (choice) => updatePerson((screen) => ({ ...screen, choice })),
+      usePass: () => doCheckIn(false),
+      addToCart,
+      done: () => {
+        const screen = topPerson();
+        if (screen) leavePerson(screen);
+      },
+      setSplit: (patch) => {
+        setProblem(null);
+        updatePerson((screen) => ({ ...screen, split: { ...screen.split, ...patch } }));
+      },
+      addShare,
+      refreshRow,
+      forgetShare,
+      checkInEveryone,
+      addTab,
+      putMemberOnSale,
+      openPass: (pass) => push({ name: 'pass', pass, picking: false }),
+      togglePicking: () => updatePass((screen) => ({ ...screen, picking: !screen.picking })),
+      usePassOn,
+    },
+  };
+  return <CurrentScreen screen={top} ctx={ctx} />;
 }
 
 /**
- * @param {CheckInAnswer} answer
- * @param {string} code
- * @param {CartResult | null} cartResult
- * @param {boolean} checkedInNow
+ * Where the Back button goes, in words.
+ * @param {Screen[]} stack
+ * @param {Today | null} today
  */
-function announce(answer, code, cartResult, checkedInNow) {
-  const parts = [];
-  if (checkedInNow) parts.push(`${firstName(describeTicket(answer, code).name)} checked in`);
-  if (cartResult && 'added' in cartResult && cartResult.added.length) parts.push(`${money(linesTotal(cartResult.added))} in the cart`);
-  if (cartResult && 'error' in cartResult) parts.push('fee NOT in the cart');
-  if (parts.length) toast(parts.join(' · '));
+function backLabel(stack, today) {
+  const previous = stack.length > 1 ? stack[stack.length - 2] : HOME;
+  switch (previous.name) {
+    case 'group':
+      return today?.groups.find((g) => g.key === previous.key)?.title || 'Back';
+    case 'person':
+      return firstName(previous.row.name) || 'Back';
+    case 'member':
+      return firstName(previous.member.name) || 'Member';
+    case 'pass':
+      return previous.pass.label || 'Pass';
+    default:
+      return 'Today';
+  }
 }
 
 /** @param {string} text */
@@ -463,13 +732,8 @@ function toast(text) {
   try {
     shopify.toast.show(text);
   } catch {
-    // The screen already says the same thing.
+    // The screen says the same thing.
   }
-}
-
-/** @param {string} name */
-function firstName(name) {
-  return String(name).trim().split(/\s+/)[0] || name;
 }
 
 /**
@@ -498,9 +762,14 @@ function listenToScanner(onScan) {
   return unsubscribe;
 }
 
-/** The booking refs already in the cart and the cart's customer, kept up to date. */
+/** What's in the POS cart that matters here, kept up to date: booking lines, shares, tabs and the customer. */
 function useCart() {
-  const read = (/** @type {any} */ value) => ({ bookings: bookingsInCart(value), customerId: customerIdNumber(value?.customer?.id) });
+  const read = (/** @type {any} */ value) => ({
+    bookings: bookingsInCart(value),
+    shares: sharesInCart(value),
+    tabs: tabsInCart(value),
+    customerId: cartCustomerId(value),
+  });
   const [state, setState] = useState(() => read(shopify.cart?.current?.value));
   useEffect(() => {
     const signal = shopify.cart?.current;
@@ -509,3 +778,4 @@ function useCart() {
   }, []);
   return state;
 }
+
