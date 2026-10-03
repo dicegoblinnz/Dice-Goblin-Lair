@@ -2586,6 +2586,8 @@ test('passes at check-in: a $10 table is fully covered, the $15 room pays $5 a p
   assert.deepEqual([res.data.row.type, res.data.row.ref, res.data.row.amount, res.data.row.covered, res.data.row.due, res.data.row.paid], ['booking', one.ref, 1000, 1000, 0, true]);
   assert.deepEqual(res.data.row.pass, { code: pass.code, label: pass.label, left: 19 }, 'the pass is saved on the booking');
   assert.doesNotMatch(res.data.message, /Charge/);
+  assert.match(res.data.message, /Their pass covers it\.$/, 'paid is set, but no money changed hands');
+  assert.match((await call('POST', 'checkin', { code: one.ref }, 'staff')).data.message, /^Already checked in .+Their pass covers it\.$/);
 
   const fancy = (await call('POST', 'bookings', tableBooking({ tables: ['F1'], people: 4, email: 'f@example.com' }))).data.booking;
   const room = await call('POST', 'checkin', { code: fancy.ref, pass: pass.code }, 'staff');

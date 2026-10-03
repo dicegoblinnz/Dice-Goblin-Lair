@@ -2229,11 +2229,14 @@ export class Lair {
     return new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
   }
 
-  /** The end of a check-in message: what to charge, or that it's paid */
+  /** The end of a check-in message: what to charge, that a pass covers it, or that it's paid */
   payWords(item) {
     const due = dueOf(item);
     if (due) return ` Charge ${dollars(due)}.`;
-    if (item.paid && (item.amount || 0) > 0) return item.pay === 'now' ? ' Paid online.' : ' Paid.';
+    const amount = item.amount || 0;
+    // paid is set once nothing is left, but when a pass covered the lot no money changed hands
+    if (amount > 0 && !(item.paidAmount > 0) && (item.covered || 0) >= amount) return ' Their pass covers it.';
+    if (item.paid && amount > 0) return item.pay === 'now' ? ' Paid online.' : ' Paid.';
     return '';
   }
 
