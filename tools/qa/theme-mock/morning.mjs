@@ -1,0 +1,33 @@
+// Phone screenshots of the merged theme (demo mode) for Mo's morning summary.
+process.env.DG_THEME = '/home/claude/dg-theme';
+const m = await import('./render.mjs');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('/opt/node-tools/node_modules/playwright');
+m.globalSettings.lair_mode = 'demo';
+const OUT = process.argv[2];
+const server = await m.serve(4662);
+const browser = await chromium.launch();
+const errors = [];
+const shot = async (path, file, { customer = null, before = null, full = false, selector = null } = {}) => {
+  m.mockState.customer = customer;
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push(`${file}: ${e.message}`));
+  await page.goto(`http://localhost:4662${path}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(900);
+  if (before) await before(page);
+  if (selector) await (await page.$(selector)).screenshot({ path: `${OUT}/${file}` });
+  else await page.screenshot({ path: `${OUT}/${file}`, fullPage: full });
+  await ctx.close();
+};
+const mo = { id: 888, first_name: 'Mo', name: 'Mo', email: 'mo@example.com', phone: '', tags: ['staff'] };
+await shot('/?roll=20', '1-dice-nat20.png', { before: async (p) => { await p.click('[data-die]').catch(() => p.click('[data-roll]')); await p.waitForTimeout(2500); }, selector: 'd20-roller' });
+await shot('/pages/events-calendar', '2-events-week.png', { before: async (p) => { await p.evaluate(() => document.querySelector('lair-calendar').scrollIntoView()); await p.waitForTimeout(300); } });
+await shot('/pages/gm-games', '3-gm-games.png', { before: async (p) => { await p.evaluate(() => document.querySelector('gm-board').scrollIntoView()); await p.waitForTimeout(300); } });
+await shot('/pages/board-game-rental', '4-library-plans.png', { before: async (p) => { await p.evaluate(() => document.querySelector('.library-plans, [id*="plans"], .plans')?.scrollIntoView()); await p.waitForTimeout(300); } });
+await shot('/pages/my-lair', '5-my-lair.png', { customer: { ...mo, tags: [] } });
+await shot('/pages/lair-staff', '6-staff-checkin.png', { customer: mo });
+console.log('errors', errors);
+await browser.close();
+server.close();

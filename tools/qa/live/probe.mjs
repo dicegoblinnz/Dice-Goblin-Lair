@@ -1,0 +1,12 @@
+import { proxy, pos, fake } from './client.mjs';
+const setup = await fetch('http://127.0.0.1:8787/setup', { method: 'POST', headers: { Authorization: 'Bearer test-setup-key' } }).then((r) => r.json());
+console.log('setup', JSON.stringify(setup).slice(0, 900));
+const floor = await proxy('GET', 'floor');
+console.log('floor', floor.status, Object.keys(floor.data), floor.data.features, floor.data.shopTables);
+console.log('eventHolds', floor.data.eventHolds?.filter((h) => /warhammer|riftbound-store/.test(h.id)).slice(0, 4));
+console.log('eventSpots', Object.entries(floor.data.eventSpots || {}).slice(0, 3));
+const staff = await proxy('GET', 'floor', { customer: '7001' });
+console.log('staff floor', staff.status, staff.data.staff);
+const today = await pos('GET', 'today');
+console.log('pos today', today.status, today.cors, JSON.stringify(today.data).slice(0, 400));
+console.log('fake', await fake('GET', 'state').then((s) => ({ calls: s.calls, webhooks: s.webhooks })));

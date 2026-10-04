@@ -1,0 +1,22 @@
+// The GM manager and a pass's page after the summary tap-target change: Edit this session / Edit this pass at 44px
+import { m, chromium, open, shot, overflow, smallTargets, STAFF, PORT } from './lib.mjs';
+const tag = process.argv[2] || 'phone';
+const server = await m.serve(PORT);
+const browser = await chromium.launch();
+m.mockState.customer = STAFF;
+const { ctx, page } = await open(browser, tag, '/pages/lair-staff');
+await page.click('[data-tab="games"]');
+await page.waitForTimeout(300);
+await page.click('.staff-gm-row');
+await page.waitForTimeout(500);
+await page.evaluate(() => document.querySelector('.staff-gm__more').scrollIntoView({ block: 'center' }));
+await shot(page, `${tag}-g1-manager-closed`);
+console.log(tag, 'summaries:', await page.$$eval('summary.staff-gm__summary', (els) => els.map((el) => `${el.textContent.trim()} ${Math.round(el.getBoundingClientRect().height)}px`).join(', ')));
+await page.click('.staff-gm__more summary');
+await page.waitForTimeout(300);
+await page.evaluate(() => document.querySelector('[data-gm-photo^="edit:"]').scrollIntoView({ block: 'center' }));
+await shot(page, `${tag}-g2-manager-edit-open`);
+console.log(tag, 'overflow', await overflow(page), 'small', JSON.stringify(await smallTargets(page, '[data-games]')), 'errors', JSON.stringify(page.errors));
+await ctx.close();
+await browser.close();
+server.close();

@@ -1,0 +1,26 @@
+# LOCAL QA ONLY. Never deploy with this file. A copy of the repo's wrangler.toml with the same bindings, main
+# pointing at the dev entry (the real worker plus the fake Admin API redirect) and PUBLIC_URL at this machine, so
+# game pictures never point at the live Worker. up.sh runs it from the repo root:
+#   wrangler dev --local --port 8787 -c tools/qa/live/dev/wrangler.toml --persist-to <state dir>
+name = "dice-goblin-lair-qa"
+main = "worker-entry.mjs"
+compatibility_date = "2026-09-01"
+
+[[durable_objects.bindings]]
+name = "LAIR"
+class_name = "Lair"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Lair"]
+
+[[d1_databases]]
+binding = "CONFIG"
+database_name = "dice-goblin-lair-config"
+database_id = "8d004701-239f-4805-886b-c1a09d6e3a64"
+
+[vars]
+SHOP = "ep0qiq-rp.myshopify.com"
+API_VERSION = "2026-07"
+CURRENCY = "NZD"
+PUBLIC_URL = "http://127.0.0.1:8787"

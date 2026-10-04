@@ -1,0 +1,7 @@
+SHOPIFY_CLIENT_ID=client-id
+SHOPIFY_CLIENT_SECRET=hush
+SETUP_KEY=test-setup-key
+RESEND_API_KEY=re_fake
+FROM_EMAIL=Dice Goblin <bookings@dicegoblin.test>
+REPLY_TO=hello@dicegoblin.test
+STAFF_EMAIL=staff@dicegoblin.test

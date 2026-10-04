@@ -1,0 +1,79 @@
+// QA harness for round 5 (mg4): My Lair and the GM games board on the mock store (port 4312), Playwright Chromium,
+// phone (390x844) and desktop (1280x800), console and page errors, sideways-scroll checks and screenshots in ./shots.
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+const require = createRequire(import.meta.url);
+export const { chromium } = require('/opt/node-tools/node_modules/playwright');
+process.env.DG_THEME = process.env.DG_THEME || '/home/claude/dg-theme-mg4';
+export const m = await import('../../theme-mock/render.mjs');
+m.globalSettings.lair_mode = 'demo';
+export const OUT = new URL('./shots/', import.meta.url).pathname;
+fs.mkdirSync(OUT, { recursive: true });
+export const PORT = 4312;
+export const BASE = `http://localhost:${PORT}`;
+export const SIZES = { phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
+export const customer = {
+  id: 7700112233, first_name: 'Ruby', last_name: 'Tane', name: 'Ruby Tane', email: 'ruby@example.com', phone: null, tags: [],
+  orders_count: 1,
+  orders: [{ name: '#1550', created_at: '2026-10-01T03:12:00Z', total_price: 10000, fulfillment_status: 'fulfilled', cancelled: false, customer_url: '/account/orders/1550' }],
+  store_credit_account: { balance: 500 },
+};
+export const errors = [];
+let server;
+let browser;
+export async function start(launch = {}) {
+  server = await m.serve(PORT);
+  browser = await chromium.launch(launch);
+  return browser;
+}
+export async function stop() {
+  await browser?.close();
+  server?.close();
+}
+/** A fresh browser context (the demo's localStorage starts empty unless storageState is passed) at a size */
+export async function open(size, path = '/pages/my-lair', opts = {}) {
+  const vp = SIZES[size] || size;
+  const phone = vp.width < 700;
+  const ctx = opts.ctx || await browser.newContext({ viewport: vp, hasTouch: phone, isMobile: phone, deviceScaleFactor: opts.scale || 1, storageState: opts.storageState });
+  const page = await ctx.newPage();
+  const tag = `${typeof size === 'string' ? size : `${vp.width}`}${opts.label ? `/${opts.label}` : ''}`;
+  page.on('pageerror', (e) => errors.push(`${tag} pageerror: ${e.message}`));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(`${tag} console: ${msg.text()}`);
+  });
+  if (opts.init) await page.addInitScript(opts.init);
+  m.mockState.customer = opts.customer === undefined ? customer : opts.customer;
+  await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
+  if (path.startsWith('/pages/my-lair') && m.mockState.customer) {
+    await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { timeout: 10000 });
+  }
+  if (path.startsWith('/pages/gm-games')) await page.waitForSelector('.gm-card, .gm-empty', { timeout: 10000 });
+  await page.waitForTimeout(400);
+  return { ctx, page, tag };
+}
+export async function overflow(page, tag) {
+  const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  if (over > 0) errors.push(`${tag}: horizontal overflow ${over}px`);
+  return over;
+}
+export const shot = (page, name, opts = {}) => page.screenshot({ path: `${OUT}${name}.png`, ...opts });
+export async function shotOf(page, selector, name) {
+  await page.locator(selector).first().screenshot({ path: `${OUT}${name}.png` });
+}
+export function report(label = 'done') {
+  console.log(errors.length ? `ERRORS (${errors.length}):\n${errors.join('\n')}` : `${label}: no errors`);
+}
+/** Anything clickable under 44px in either direction that's visible */
+export async function smallTargets(page, scope = 'my-lair') {
+  return page.evaluate((scope) => {
+    const out = [];
+    for (const el of document.querySelectorAll(`${scope} button, ${scope} a, ${scope} input, ${scope} select, ${scope} summary`)) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const style = getComputedStyle(el);
+      if (style.visibility === 'hidden') continue;
+      if (r.height < 43.5 || r.width < 43.5) out.push(`${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]} "${(el.textContent || el.value || '').trim().slice(0, 30)}" ${Math.round(r.width)}x${Math.round(r.height)}`);
+    }
+    return out;
+  }, scope);
+}

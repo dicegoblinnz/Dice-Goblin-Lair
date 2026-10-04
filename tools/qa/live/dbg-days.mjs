@@ -1,0 +1,11 @@
+import { start, stop, context, page, BASE } from './harness.mjs';
+await start();
+const ctx = await context(null);
+const p = await page(ctx, 'dbg');
+await p.goto(`${BASE}/pages/book-a-table`, { waitUntil: 'networkidle' });
+console.log(await p.evaluate(() => [...document.querySelectorAll('[data-dates] [data-day]')].map((b) => b.dataset.day + (b.disabled ? '(x)' : '')).join(' ')));
+await p.fill('[data-date-input]', '2026-10-11');
+await p.dispatchEvent('[data-date-input]', 'change');
+await p.waitForTimeout(300);
+console.log(await p.evaluate(() => [document.querySelector('lair-booking').state.day, [...document.querySelectorAll('[data-slot]')].map((b) => b.dataset.slot).join(',')]));
+await stop();

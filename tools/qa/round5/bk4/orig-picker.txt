@@ -1,0 +1,288 @@
+const FRAME_RATIO = 2;
+const OUT_WIDTH = 1200;
+const OUT_QUALITY = 0.82;
+const MAX_IMAGE_BYTES = 600 * 1024;
+const WORK_SIDE = 3200; // the copy kept for cutting: the longest side, in px
+const PREVIEW_SIDE = 1600; // the copy drawn while framing
+const MIN_CROP = 320; // zooming stops before the frame holds fewer picture pixels across than this
+const LAIR_DARK = '#16110f'; // see-through PNGs get the Lair's dark background, not black
+
+async function readImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch {
+      /* older browsers: fall back to an <img> */
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('We couldn’t open that picture. Try a JPEG or PNG.'));
+    };
+    img.src = url;
+  });
+}
+
+/** A canvas copy of a picture, at most `side` px on its longest side */
+function copyOf(source, sw, sh, side) {
+  const k = Math.min(1, side / Math.max(sw, sh));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(sw * k));
+  canvas.height = Math.max(1, Math.round(sh * k));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = LAIR_DARK;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+/** Open a picture for framing: centred, just covering the frame. x/y/w/h below are in `work` pixels. */
+async function loadPhoto(file) {
+  if (!file || (file.type && !file.type.startsWith('image/'))) throw new Error('Choose a photo or a picture file.');
+  const source = await readImage(file);
+  const sw = source.naturalWidth || source.width;
+  const sh = source.naturalHeight || source.height;
+  if (!sw || !sh) throw new Error('We couldn’t open that picture. Try a JPEG or PNG.');
+  const work = copyOf(source, sw, sh, WORK_SIDE);
+  source.close?.();
+  const preview = copyOf(work, work.width, work.height, PREVIEW_SIDE);
+  const photo = { work, preview, w: work.width, h: work.height, cx: work.width / 2, cy: work.height / 2, z: 1 };
+  photo.zMax = Math.round(Math.min(4, Math.max(1, coverWidth(photo) / MIN_CROP)) * 100) / 100;
+  return photo;
+}
+
+/** How wide the frame's view of the picture is at zoom 1: the most of it a 2:1 frame can hold */
+const coverWidth = (p) => Math.min(p.w, p.h * FRAME_RATIO);
+
+/** The part of the picture in the frame */
+function cropOf(p) {
+  const w = coverWidth(p) / p.z;
+  const h = w / FRAME_RATIO;
+  return { x: p.cx - w / 2, y: p.cy - h / 2, w, h };
+}
+
+/** Keep the zoom in range and the picture covering the frame */
+function settle(p) {
+  p.z = Math.min(p.zMax, Math.max(1, p.z));
+  const { w, h } = cropOf(p);
+  p.cx = Math.min(p.w - w / 2, Math.max(w / 2, p.cx));
+  p.cy = Math.min(p.h - h / 2, Math.max(h / 2, p.cy));
+}
+
+/** The framed picture as a 2:1 JPEG: 1200px wide at most (never stretched past the picture's own pixels) */
+function cutPhoto(p) {
+  const r = cropOf(p);
+  let width = Math.max(2, Math.min(OUT_WIDTH, Math.round(r.w)));
+  let quality = OUT_QUALITY;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const height = Math.max(1, Math.round(width / FRAME_RATIO));
+    // Halve big crops first, so the last step is a gentle one and stays sharp in every browser
+    let src = p.work;
+    let box = r;
+    while (box.w > width * 2) {
+      const half = document.createElement('canvas');
+      half.width = Math.round(box.w / 2);
+      half.height = Math.round(box.h / 2);
+      const hctx = half.getContext('2d');
+      hctx.imageSmoothingQuality = 'high';
+      hctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, half.width, half.height);
+      src = half;
+      box = { x: 0, y: 0, w: half.width, h: half.height };
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = LAIR_DARK;
+    ctx.fillRect(0, 0, width, height);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+    const bytes = Math.round(((dataUrl.length - dataUrl.indexOf(',') - 1) * 3) / 4);
+    if (bytes <= MAX_IMAGE_BYTES) return { dataUrl, width, height, bytes };
+    if (quality > 0.66) quality -= 0.08;
+    else width = Math.round(width * 0.85);
+  }
+  throw new Error('That picture is too big, even shrunk. Try another one.');
+}
+
+/** The frame on screen: drag to move; pinch, wheel, slider or keys to zoom. onChange runs after every move. */
+class PhotoFrame {
+  constructor(root, photo, onChange = () => {}) {
+    this.root = root;
+    this.photo = photo;
+    this.onChange = onChange;
+    this.frame = root.querySelector('[data-crop-frame]');
+    this.canvas = root.querySelector('[data-crop-canvas]');
+    this.zoom = root.querySelector('[data-crop-zoom]');
+    this.pointers = new Map();
+    this.pinch = null;
+    this.zoom.max = String(photo.zMax);
+    this.zoom.disabled = photo.zMax <= 1;
+    const on = (el, type, fn, opts) => {
+      el.addEventListener(type, fn, opts);
+      this.offs = [...(this.offs || []), () => el.removeEventListener(type, fn, opts)];
+    };
+    on(this.frame, 'pointerdown', (e) => this.down(e));
+    on(this.frame, 'pointermove', (e) => this.move(e));
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((type) => on(this.frame, type, (e) => this.up(e)));
+    on(this.frame, 'wheel', (e) => this.wheel(e), { passive: false });
+    on(this.frame, 'keydown', (e) => this.key(e));
+    on(this.frame, 'gesturestart', (e) => e.preventDefault()); // Safari: no page zoom while pinching the picture
+    on(this.zoom, 'input', () => this.zoomAt(Number(this.zoom.value), 0.5, 0.5));
+    this.resize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => this.draw()) : null;
+    this.resize?.observe(this.frame);
+    this.draw();
+  }
+
+  destroy() {
+    (this.offs || []).forEach((off) => off());
+    this.resize?.disconnect();
+    cancelAnimationFrame(this.raf);
+  }
+
+  /** Where a pointer is, as a share of the frame (0 to 1 across and down) */
+  spot(e) {
+    const rect = this.frame.getBoundingClientRect();
+    return { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height };
+  }
+
+  down(e) {
+    if (e.button > 0) return;
+    e.preventDefault();
+    this.frame.focus({ preventScroll: true });
+    this.frame.setPointerCapture?.(e.pointerId);
+    this.pointers.set(e.pointerId, this.spot(e));
+    this.frame.classList.add('is-moving', 'is-touched');
+    if (this.pointers.size === 2) this.startPinch();
+  }
+
+  startPinch() {
+    const [a, b] = [...this.pointers.values()];
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const r = cropOf(this.photo);
+    this.pinch = { dist: this.gap(a, b), z: this.photo.z, anchor: { x: r.x + mid.x * r.w, y: r.y + mid.y * r.h } };
+  }
+
+  /** The distance between two fingers, in frame widths (the frame is twice as wide as it is tall) */
+  gap(a, b) {
+    return Math.hypot(a.x - b.x, (a.y - b.y) / FRAME_RATIO) || 0.0001;
+  }
+
+  move(e) {
+    const last = this.pointers.get(e.pointerId);
+    if (!last) return;
+    e.preventDefault();
+    const now = this.spot(e);
+    this.pointers.set(e.pointerId, now);
+    const p = this.photo;
+    if (this.pinch && this.pointers.size >= 2) {
+      const [a, b] = [...this.pointers.values()];
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      p.z = this.pinch.z * (this.gap(a, b) / this.pinch.dist);
+      settle(p);
+      // Keep the spot that was under the fingers under them
+      const r = cropOf(p);
+      p.cx = this.pinch.anchor.x - mid.x * r.w + r.w / 2;
+      p.cy = this.pinch.anchor.y - mid.y * r.h + r.h / 2;
+    } else {
+      const r = cropOf(p);
+      p.cx -= (now.x - last.x) * r.w;
+      p.cy -= (now.y - last.y) * r.h;
+    }
+    this.changed();
+  }
+
+  up(e) {
+    if (!this.pointers.delete(e.pointerId)) return;
+    if (this.pointers.size < 2) this.pinch = null;
+    if (this.pointers.size === 2) this.startPinch();
+    if (!this.pointers.size) this.frame.classList.remove('is-moving');
+  }
+
+  wheel(e) {
+    e.preventDefault();
+    const at = this.spot(e);
+    // A trackpad pinch arrives as a wheel with ctrlKey; both zoom about the pointer
+    this.zoomAt(this.photo.z * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), at.x, at.y);
+    this.frame.classList.add('is-touched');
+  }
+
+  key(e) {
+    const p = this.photo;
+    const step = e.shiftKey ? 0.2 : 0.05;
+    const r = cropOf(p);
+    const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    if (moves[e.key]) {
+      p.cx += moves[e.key][0] * r.w;
+      p.cy += moves[e.key][1] * r.h;
+      this.changed();
+    } else if (e.key === '+' || e.key === '=') {
+      this.zoomAt(p.z * 1.15, 0.5, 0.5);
+    } else if (e.key === '-' || e.key === '_') {
+      this.zoomAt(p.z / 1.15, 0.5, 0.5);
+    } else if (e.key === '0') {
+      Object.assign(p, { z: 1, cx: p.w / 2, cy: p.h / 2 });
+      this.changed();
+    } else {
+      return;
+    }
+    e.preventDefault();
+    this.frame.classList.add('is-touched');
+  }
+
+  /** Zoom to z about a spot in the frame (shares of its width and height), keeping that spot still */
+  zoomAt(z, fx, fy) {
+    const p = this.photo;
+    const before = cropOf(p);
+    const ax = before.x + fx * before.w;
+    const ay = before.y + fy * before.h;
+    p.z = z;
+    settle(p);
+    const r = cropOf(p);
+    p.cx = ax - fx * r.w + r.w / 2;
+    p.cy = ay - fy * r.h + r.h / 2;
+    this.changed();
+  }
+
+  changed() {
+    settle(this.photo);
+    this.draw();
+    this.onChange(this.photo);
+  }
+
+  draw() {
+    cancelAnimationFrame(this.raf);
+    this.raf = requestAnimationFrame(() => {
+      const p = this.photo;
+      const rect = this.frame.getBoundingClientRect();
+      if (!rect.width) return;
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      const cw = Math.round(rect.width * dpr);
+      const ch = Math.round(rect.height * dpr);
+      if (this.canvas.width !== cw || this.canvas.height !== ch) {
+        this.canvas.width = cw;
+        this.canvas.height = ch;
+      }
+      const ctx = this.canvas.getContext('2d');
+      const k = p.preview.width / p.w;
+      const r = cropOf(p);
+      ctx.fillStyle = LAIR_DARK;
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(p.preview, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, cw, ch);
+      this.zoom.value = String(p.z);
+      this.zoom.setAttribute('aria-valuetext', `${Math.round(p.z * 100)}%`);
+      this.zoom.style.setProperty('--fill', `${p.zMax > 1 ? ((p.z - 1) / (p.zMax - 1)) * 100 : 0}%`);
+    });
+  }
+}
+

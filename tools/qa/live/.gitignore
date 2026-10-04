@@ -1,0 +1,15 @@
+state/
+shots/
+dev/.dev.vars
+dev/.wrangler/
+*.log
+*.log.totals
+*.pid
+*.jsonl
+booking-*.json
+events-*.json
+games-*.json
+pending-prize-*.json
+pos-out.json
+seed.json
+today.json

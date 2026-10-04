@@ -1,0 +1,17 @@
+import { serve } from './render.mjs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('/opt/node-tools/node_modules/playwright');
+const server = await serve(4196);
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+const page = await ctx.newPage();
+page.on('pageerror', (e) => console.log('pageerror', e.message));
+await page.goto('http://localhost:4196/', { waitUntil: 'networkidle' });
+await page.click('[data-dialog-open="search-modal"]');
+await page.waitForTimeout(300);
+await page.fill('#search-modal [data-search-input]', process.argv[2] || 'w');
+await page.waitForTimeout(900);
+await page.screenshot({ path: process.argv[3] || '../library-shots/v/psearch.png' });
+console.log(await page.evaluate(() => [...document.querySelectorAll('.predictive__item')].slice(0, 8).map((a) => a.innerText.replace(/\s+/g, ' ')).join(' | ')));
+await browser.close(); server.close();
