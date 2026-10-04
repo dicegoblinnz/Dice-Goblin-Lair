@@ -4393,11 +4393,19 @@ export class Lair {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
         spendTotal: member.spendTotal, code: member.code,
       },
-      // Games they're seated at every session of (POST /series/:id/leave stops it)
+      // Games they're seated at every session of (POST /series/:id/leave stops it). schedule: how the series repeats,
+      // 'weekly', 'fortnightly' or 'flexible', as the games board's series.schedule says it.
       series: this.sql
-        .exec("SELECT m.*, s.details AS details FROM series_members m JOIN series s ON s.id = m.series_id WHERE m.customer_id = ? AND m.status = 'active' AND s.status = 'active'", who.customerId)
+        .exec(
+          `SELECT m.*, s.details AS details, s.schedule AS schedule FROM series_members m JOIN series s ON s.id = m.series_id
+           WHERE m.customer_id = ? AND m.status = 'active' AND s.status = 'active'`,
+          who.customerId,
+        )
         .toArray()
-        .map((m) => ({ seriesId: m.series_id, title: parse(m.details, {}).title || 'GM game', people: m.people, players: parse(m.players, []) })),
+        .map((m) => ({
+          seriesId: m.series_id, title: parse(m.details, {}).title || 'GM game', people: m.people, players: parse(m.players, []),
+          schedule: SERIES_SCHEDULES.includes(m.schedule) ? m.schedule : 'flexible',
+        })),
       // Dice: rolls earned from spend ({ available, toNext, per }, bonus mirrors available) and the last 10 prizes
       rolls: this.rollsState(who.customerId, now),
       prizes: this.memberPrizes(who.customerId),

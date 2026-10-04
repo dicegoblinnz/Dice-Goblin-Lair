@@ -4321,3 +4321,26 @@ test('passes (v5.1): a member\'s own pass views say where each pass came from, l
   assert.equal(claimed.status, 200, claimed.data.error);
   assert.deepEqual(shape(claimed.data.pass), ['order', '#1552', 'Bought at the counter']);
 });
+
+test('weekly regulars (v5.1): GET /me series says how each game repeats, weekly, fortnightly or flexible, as the board\'s series.schedule does', async () => {
+  const list = async (title, schedule, table, day) => (await call('POST', 'games', {
+    title, system: 'Other', gm: 'Ellie', email: 'ellie@example.com', blurb: 'x', seats: 4, tables: [table], start: at(day, 18), end: at(day, 21), schedule,
+  }, 'gm')).data.game;
+  const weekly = await list('Weekly game', 'weekly', 'A1', '2026-10-01');
+  const fortnightly = await list('Fortnightly game', 'fortnightly', 'A2', '2026-10-02');
+  const flexible = await list('Flexible game', 'flexible', 'A3', '2026-10-03');
+  // A one-shot its GM adds a date to becomes a flexible series.
+  const oneShot = await list('One-shot game', 'one-shot', 'A4', '2026-10-01');
+  assert.equal((await call('POST', `games/${oneShot.id}/sessions`, { start: at('2026-10-08', 18), end: at('2026-10-08', 21) }, 'gm')).status, 200);
+  for (const g of [weekly, fortnightly, flexible, oneShot]) {
+    const joined = await call('POST', `games/${g.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia');
+    assert.equal(joined.status, 200, joined.data.error);
+  }
+  const { series } = (await call('GET', 'me', null, 'mia')).data;
+  assert.deepEqual(Object.fromEntries(series.map((s) => [s.title, s.schedule])), {
+    'Weekly game': 'weekly', 'Fortnightly game': 'fortnightly', 'Flexible game': 'flexible', 'One-shot game': 'flexible',
+  });
+  const board = (await call('GET', 'floor', null, 'staff')).data.games;
+  for (const s of series) assert.equal(board.find((g) => g.seriesId === s.seriesId).series.schedule, s.schedule);
+  assert.deepEqual(Object.keys(series[0]).sort(), ['people', 'players', 'schedule', 'seriesId', 'title'], 'the other fields are as before');
+});
