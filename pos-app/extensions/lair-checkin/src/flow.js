@@ -3,7 +3,7 @@
 import { readCode } from './codes.js';
 import { dateLabel, dayKey, money, plural, shortDay, timeRange } from './format.js';
 import { feeLines, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabItems } from './lines.js';
-import { dueOf, findRow, isArrived, passSummary, passUsable, rowState } from './today.js';
+import { dueOf, findRow, isArrived, isOwed, passSummary, passUsable, rowState } from './today.js';
 
 /**
  * @typedef {import('./today.js').Row} Row
@@ -305,6 +305,8 @@ export function checkinOutcome(answer) {
 
 /**
  * Where the person view is at:
+ *   owed      a weekly regular's seat whose session ended unpaid: "Add $X to cart" with its "Owed: …" line, never a
+ *             check-in (they owe it whether or not they came)
  *   check-in  not here yet: "Check in", or "Check in anyway" with a warning (cancelled, no-show, another day, or
  *             the Lair app said no)
  *   pay       here, with money left to pay
@@ -312,8 +314,10 @@ export function checkinOutcome(answer) {
  * @param {Row} row the freshest copy (currentRow)
  * @param {CheckinAnswer | null} result this screen's last check-in answer
  * @param {string} todayKey the Lair day, "2026-10-03"
+ * @returns {{ stage: 'owed' | 'check-in' | 'pay' | 'done', force: boolean, warning: string }}
  */
 export function personPlan(row, result, todayKey) {
+  if (isOwed(row)) return { stage: 'owed', force: false, warning: '' };
   const outcome = result ? checkinOutcome(result) : null;
   const arrived = isArrived(row) || Boolean(outcome?.arrived);
   if (arrived) return { stage: dueOf(row) > 0 ? 'pay' : 'done', force: false, warning: '' };
@@ -381,7 +385,21 @@ export function codeInQuery(query) {
 }
 
 /**
- * The member view's main button, for their rows today:
+ * A member's rows split into today's and their owed seats (a weekly regular's sessions that ended unpaid).
+ * @template {Row} R
+ * @param {R[]} rows
+ */
+export function splitOwed(rows) {
+  /** @type {R[]} */
+  const today = [];
+  /** @type {R[]} */
+  const owed = [];
+  for (const row of rows || []) (row?.owed ? owed : today).push(row);
+  return { today, owed };
+}
+
+/**
+ * The member view's button for their rows today (owed seats aren't today's, so they're left out):
  *   someone still to come  "Check in everyone and add to cart" (POST /pos/checkin-member)
  *   all here, money owed   "Add $X to cart" for what isn't in the cart yet (`owing`: each row's lines, asked for with
  *                          `pass: 'none'` like the person view, so it never uses a pass by itself)
@@ -394,6 +412,7 @@ export function memberPlan(rows, inCart = []) {
   /** @type {Row[]} */
   const owing = [];
   for (const row of rows || []) {
+    if (row?.owed) continue;
     const state = rowState(row);
     if (state === 'waiting') waiting += 1;
     if ((state === 'waiting' || state === 'arrived') && dueOf(row) > 0 && !(row.ref && inCart.includes(String(row.ref)))) {

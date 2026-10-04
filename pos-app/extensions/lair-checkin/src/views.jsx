@@ -36,6 +36,7 @@ import {
   dueOf,
   groupDetails,
   groupSummary,
+  owedWhen,
   passCandidates,
   passLeft,
   passSummary,
@@ -324,6 +325,13 @@ function PersonView({ screen, ctx }) {
           Take payment on the Verifone. To change the pass or pay another way, take that line off the sale first.
         </s-banner>
       ) : null}
+      {plan.stage === 'owed' ? (
+        <s-banner tone={inCart ? 'info' : 'warning'} heading={inCart ? "It's in the cart" : `Owed from ${owedWhen(row)}`}>
+          {inCart
+            ? 'Take payment on the Verifone.'
+            : "A weekly regular's seat is theirs to pay for, even if they didn't come. Add it to the cart, or waive it on the staff page."}
+        </s-banner>
+      ) : null}
 
       {showPasses ? <PassChoice row={row} screen={screen} options={choices.options} inUse={inUse} stage={plan.stage} ctx={ctx} /> : null}
 
@@ -335,7 +343,12 @@ function PersonView({ screen, ctx }) {
         </s-button>
       ) : null}
       {paying && !screen.split.open ? <PayButtons row={row} due={due} busy={busyNow} act={act} /> : null}
-      {plan.stage === 'done' || (plan.stage === 'pay' && (inCart || holding)) ? (
+      {plan.stage === 'owed' && !inCart ? (
+        <s-button variant="primary" disabled={busyNow} onClick={act.addToCart}>
+          {`Add ${money(due)} to cart`}
+        </s-button>
+      ) : null}
+      {plan.stage === 'done' || ((plan.stage === 'pay' || plan.stage === 'owed') && (inCart || holding)) ? (
         <s-button variant={plan.stage === 'done' ? 'primary' : 'secondary'} disabled={busyNow} onClick={act.done}>
           Done
         </s-button>
@@ -359,7 +372,8 @@ function personFacts(row, groupTitle) {
   const players = playerNames(row);
   if (players.length) lines.push(`Players: ${players.join(', ')}`);
   if (row.note) lines.push(`Note: ${row.note}`);
-  if (row.pass?.code || row.pass?.label) lines.push(`Saved pass: ${passSummary(row.pass)}`);
+  // An owed seat is paid, never checked in, so its saved pass isn't used.
+  if (!row.owed && (row.pass?.code || row.pass?.label)) lines.push(`Saved pass: ${passSummary(row.pass)}`);
   if (Number(row.covered) > 0) lines.push(`A pass covered ${money(row.covered)}`);
   if (row.split) lines.push('Splitting the bill');
   const paid = paidSummary(row);
@@ -518,9 +532,11 @@ function MemberView({ screen, ctx }) {
   const member = screen.member;
   const name = String(member.name || '').trim() || 'Member';
   const onSale = cart.customerId !== null && cart.customerId === customerIdNumber(member.customerId);
-  // Rows from the Today list where it has them (they're updated as people check in).
+  // Rows from the Today list where it has them (they're updated as people check in). Owed sessions are listed apart.
   const rows = withGroups(screen.rows, today);
-  const plan = memberPlan(rows.map((x) => x.row), cart.bookings);
+  const todayRows = rows.filter(({ row }) => !row.owed);
+  const owedRows = rows.filter(({ row }) => row.owed);
+  const plan = memberPlan(todayRows.map((x) => x.row), cart.bookings);
   const tab = tabPlan(screen.tab, cart.tabs);
   const { items, bad } = tabItems(screen.tab);
   return (
@@ -543,9 +559,9 @@ function MemberView({ screen, ctx }) {
               {screen.notices.join(' ')}
             </s-banner>
           ) : null}
-          {rows.length ? (
+          {todayRows.length ? (
             <RowList
-              items={rows.map(({ row, group }) => ({ row, group, details: [whatLabel(row), rowDetails(row)].filter(Boolean).join(' · ') }))}
+              items={todayRows.map(({ row, group }) => ({ row, group, details: [whatLabel(row), rowDetails(row)].filter(Boolean).join(' · ') }))}
               cart={cart}
               busy={busy}
               onOpen={(row, group) => act.openRow(row, group, screen.passes)}
@@ -560,6 +576,20 @@ function MemberView({ screen, ctx }) {
           ) : null}
         </s-stack>
       </s-section>
+
+      {owedRows.length ? (
+        <s-section heading="Owed">
+          <s-stack direction="block" gap="small">
+            <s-text color="subdued">Sessions they kept a seat for and haven't paid. Tap one to add just that.</s-text>
+            <RowList
+              items={owedRows.map(({ row, group }) => ({ row, group, details: [whatLabel(row), owedWhen(row)].filter(Boolean).join(' · ') }))}
+              cart={cart}
+              busy={busy}
+              onOpen={(row, group) => act.openRow(row, group, screen.passes)}
+            />
+          </s-stack>
+        </s-section>
+      ) : null}
 
       {tab.show ? (
         <s-section heading="Tab">

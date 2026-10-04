@@ -7,8 +7,10 @@ import {
   itemCount,
   linesTotal,
   NOTHING_TO_PAY,
+  owedLines,
   passUsedLabel,
   shareLines,
+  splitOwedLines,
   tabItems,
   tabSummary,
   tabToast,
@@ -118,4 +120,32 @@ test('says what happened in plain words', () => {
   assert.equal(passUsedLabel({ code: 'SJ-KIWI-4', label: 'Warhammer league', used: 2, left: 6, covered: 2000 }), 'Warhammer league covered $20 · 6 sessions left');
   assert.equal(passUsedLabel({ label: 'Gift pack', left: 1, covered: 0 }), 'Gift pack used · 1 session left');
   assert.equal(passUsedLabel(null), '');
+});
+
+// Thursday 1 October 2026, 6pm in Auckland (NZDT, UTC+13)
+const oct1 = Date.UTC(2026, 9, 1, 5, 0);
+
+test('owed sessions: the Lair app\'s own line for each, or one made the same way when a row has none', () => {
+  const sent = { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-7' } };
+  const owed = { id: 'bk_kai', ref: 'KT-KRAKEN-7', owed: true, due: 1500, title: 'Curse of Strahd', start: oct1, line: sent };
+  assert.deepEqual(owedLines([owed]), [sent]);
+  // The Today list's rows carry no line: the same title, from the row.
+  assert.deepEqual(owedLines([{ ...owed, line: undefined, ref: 'KT-KRAKEN-8', due: 2000 }]), [
+    { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '20.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-8' } },
+  ]);
+  assert.deepEqual(owedLines([{ ...owed, line: { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: 15 } }])[0].properties, { _booking: 'KT-KRAKEN-7' }, 'a line without its code gets the row\'s');
+  assert.equal(owedLines([{ ...owed, line: { title: 'Broken', price: 'abc' } }])[0].title, 'Owed: Curse of Strahd (Thu 1 Oct)', 'a broken line is made again');
+  assert.deepEqual(owedLines([{ ...owed, owed: false }, { ...owed, due: 0 }, { ...owed, ref: '' }, null]), [], 'not owed, nothing left, or no code to pay it by');
+  assert.equal(owedLines([{ ...owed, line: undefined, title: '' }])[0].title, 'Owed: GM seat (Thu 1 Oct)');
+});
+
+test('splits a member\'s lines into today\'s and the owed seats\'', () => {
+  const today = { title: 'GM seat: Curse of Strahd (KT-OGRE-2)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-OGRE-2' } };
+  const owed = { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-7' } };
+  const rows = [
+    { id: 'bk_today', ref: 'KT-OGRE-2', owed: false },
+    { id: 'bk_kai', ref: 'KT-KRAKEN-7', owed: true },
+  ];
+  assert.deepEqual(splitOwedLines([today, owed], rows), { today: [today], owed: [owed] });
+  assert.deepEqual(splitOwedLines([today, owed], []), { today: [today, owed], owed: [] }, 'no owed rows known: all today');
 });

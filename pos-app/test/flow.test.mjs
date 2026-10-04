@@ -20,6 +20,7 @@ import {
   personScreen,
   recordUses,
   scanPurpose,
+  splitOwed,
   stackAfterPerson,
   tabPlan,
   undoNote,
@@ -295,4 +296,27 @@ test('the member view: their tab', () => {
   assert.equal(tabPlan({ ...tab, status: 'in-cart' }, []).canAdd, true, 'a sale that never went through');
   assert.equal(tabPlan({ ...tab, items: [] }, []).canAdd, false);
   assert.equal(tabPlan(null, []).show, false);
+});
+
+/* ---------------- round 5: owed sessions, weekly regulars and one bill ---------------- */
+
+// Kai, a weekly regular: tonight's seat, and last Thursday's that ended unpaid (owed, with the Lair app's line).
+const tonight = { id: 'bk_tonight', type: 'booking', kind: 'gm-seat', ref: 'KT-OGRE-2', name: 'Kai Tane', people: 1, start: at(3, 18), end: at(3, 22), status: 'confirmed', due: 1500, customerId: '888', seriesId: 'sr_strahd', owed: false, title: 'Curse of Strahd' };
+const owedLine = { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-7' } };
+const lastWeek = { ...tonight, id: 'bk_last', ref: 'KT-KRAKEN-7', start: Date.UTC(2026, 9, 1, 5), end: Date.UTC(2026, 9, 1, 9), status: 'noshow', owed: true, line: owedLine };
+
+test('owed sessions are kept apart from today\'s rows, and the Today button leaves them out', () => {
+  assert.deepEqual(splitOwed([tonight, lastWeek]), { today: [tonight], owed: [lastWeek] });
+  assert.deepEqual(memberPlan([tonight, lastWeek]), { canCheckIn: true, waiting: 1, due: 1500, owing: [] });
+  assert.deepEqual(memberPlan([lastWeek]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  // Owed whether or not they came, and whether or not anyone marked them: never one to check in or ask lines for.
+  assert.deepEqual(memberPlan([{ ...lastWeek, status: 'confirmed' }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  assert.deepEqual(memberPlan([{ ...lastWeek, status: 'seated', arrivedAt: 1 }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+});
+
+test('an owed session on the person view is paid, never checked in, whatever its day', () => {
+  assert.deepEqual(personPlan(lastWeek, null, TODAY), { stage: 'owed', force: false, warning: '' });
+  assert.deepEqual(personPlan({ ...lastWeek, status: 'seated', arrivedAt: 1 }, null, TODAY), { stage: 'owed', force: false, warning: '' });
+  assert.equal(personPlan({ ...lastWeek, due: 0, paid: true }, null, TODAY).stage, 'check-in', 'paid since: the usual rules (another day, no-show)');
+  assert.equal(personPlan(tonight, null, TODAY).stage, 'check-in');
 });

@@ -1,6 +1,6 @@
-// What goes in the POS cart: fee lines from a check-in, items from a member's tab, and the words staff see after.
-// No `shopify` global here, so `npm test` can check it without a POS.
-import { money, plural } from './format.js';
+// What goes in the POS cart: fee lines from a check-in, owed sessions, items from a member's tab, and the words staff
+// see after. No `shopify` global here, so `npm test` can check it without a POS.
+import { money, plural, shortDay } from './format.js';
 
 /**
  * A custom sale for the POS cart. `properties._booking` is the ticket code: when the order is paid, the Lair app
@@ -76,6 +76,54 @@ export function shareLines(answer) {
 /** Total of some fee lines, in cents. @param {FeeLine[]} lines */
 export function linesTotal(lines) {
   return (lines || []).reduce((sum, line) => sum + Math.round(Number(line.price) * 100) * line.quantity, 0);
+}
+
+/**
+ * The cart lines for a weekly regular's owed seats: the line the Lair app sent with each owed row ("Owed: Curse of
+ * Strahd (Thu 1 Oct)"), or one made the same way when a row came without it (the Today list's rows have none). Each is
+ * tagged with its seat's code, so paying it pays that seat. Rows that aren't owed, or have nothing left to pay, add
+ * nothing.
+ * @param {{ ref?: string, owed?: boolean, due?: number, title?: string, start?: number, line?: unknown }[]} rows
+ * @returns {FeeLine[]}
+ */
+export function owedLines(rows) {
+  /** @type {FeeLine[]} */
+  const lines = [];
+  for (const row of rows || []) {
+    const due = Math.max(0, Math.round(Number(row?.due) || 0));
+    const ref = String(row?.ref || '').trim();
+    if (!row?.owed || !due || !ref) continue;
+    const given = row.line && typeof row.line === 'object' ? feeLines({ lines: [row.line], row: { ref } }) : [];
+    if (given.length) {
+      lines.push(...given);
+      continue;
+    }
+    const day = shortDay(row.start);
+    lines.push({
+      title: `Owed: ${String(row.title || 'GM seat').trim()}${day ? ` (${day})` : ''}`.slice(0, 120),
+      price: (due / 100).toFixed(2),
+      quantity: 1,
+      taxable: true,
+      properties: { _booking: ref },
+    });
+  }
+  return lines;
+}
+
+/**
+ * Some fee lines split into today's and the owed seats' (by the code each line pays), since POST /pos/checkin-member
+ * answers with both.
+ * @param {FeeLine[]} lines
+ * @param {{ ref?: string, owed?: boolean }[]} rows the rows the lines came with
+ */
+export function splitOwedLines(lines, rows) {
+  const owedRefs = new Set((rows || []).filter((row) => row?.owed && row.ref).map((row) => String(row.ref)));
+  /** @type {FeeLine[]} */
+  const today = [];
+  /** @type {FeeLine[]} */
+  const owed = [];
+  for (const line of lines || []) (owedRefs.has(String(line.properties?._booking ?? '')) ? owed : today).push(line);
+  return { today, owed };
 }
 
 /**

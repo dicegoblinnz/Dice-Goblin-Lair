@@ -39,10 +39,10 @@ import {
   wrongScan,
 } from './flow.js';
 import { checkIn, checkInMember, getToday, LairError, problemFor, scanCode, shareBill, tabAdded, undoPassUse } from './lair.js';
-import { addedToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, shareLines, tabToast } from './lines.js';
+import { addedToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, owedLines, shareLines, splitOwedLines, tabToast } from './lines.js';
 import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState } from './split.js';
 import { loadPending, savePending, saveTileEntry } from './store.js';
-import { dueOf, findRow, mergeRows, replaceRows, rowKey, tileEntry } from './today.js';
+import { dueOf, findRow, isOwed, mergeRows, replaceRows, rowKey, tileEntry } from './today.js';
 import { CurrentScreen } from './views.jsx';
 
 export default async () => {
@@ -344,7 +344,12 @@ function CheckIn() {
     const person = topPerson();
     const row = person ? currentRow(person, todayNow.current) : null;
     const purpose = scanPurpose(
-      { want: what, screen: topScreen().name, splitOpen: Boolean(person?.split.open), takesPass: Boolean(row && row.type !== 'join' && dueOf(row) > 0) },
+      {
+        want: what,
+        screen: topScreen().name,
+        splitOpen: Boolean(person?.split.open),
+        takesPass: Boolean(row && row.type !== 'join' && dueOf(row) > 0 && !isOwed(row)),
+      },
       answer?.type,
     );
     if (purpose === 'wrong') {
@@ -487,7 +492,10 @@ function CheckIn() {
     );
   }
 
-  /** "Add $X to cart": the check-in's lines (asked for again if what's due has changed), then back to the group. */
+  /**
+   * "Add $X to cart": the check-in's lines (asked for again if what's due has changed), then back to the group. An owed
+   * seat (a regular's unpaid session) is never checked in: its own "Owed: …" line goes in.
+   */
   function addToCart() {
     const screen = topPerson();
     if (!screen) return;
@@ -495,6 +503,19 @@ function CheckIn() {
     run(
       'Adding to the cart…',
       async () => {
+        if (isOwed(row)) {
+          const owed = owedLines([row]);
+          if (!owed.length) {
+            say('Nothing went in the cart', 'This seat has no code to pay it by. Refresh, then try again.');
+            return;
+          }
+          const added = await addFeesToCart(owed, row.customerId ?? null);
+          if (stayAfterCart(added)) return;
+          toast(addedToast(linesTotal(added.added)));
+          leavePerson(screen);
+          warnAfterCart(added, firstName(row.name), String(row.ref || ''));
+          return;
+        }
         let answer = screen.result;
         let lines = answer && checkinOutcome(answer).arrived ? feeLines(answer) : [];
         if (!lines.length || linesTotal(lines) !== dueOf(row)) {
@@ -625,7 +646,8 @@ function CheckIn() {
   /**
    * The member view's main button. While someone is still to come: "Check in everyone and add to cart" (POST
    * /pos/checkin-member). Once they're all here: "Add $X to cart" for each row still owing, its lines asked for with
-   * `pass: 'none'` like the person view, so the amount on the button is what goes in the cart.
+   * `pass: 'none'` like the person view, so the amount on the button is what goes in the cart. Only today's fees: owed
+   * sessions are paid from their own screen.
    */
   function checkInEveryone() {
     const screen = topMember();
@@ -654,7 +676,8 @@ function CheckIn() {
         setRows(rows);
         const notices = Array.isArray(answer?.notices) ? answer.notices.map(String) : [];
         updateMember((current) => ({ ...current, rows: mergeRows(current.rows, rows), notices }));
-        const lines = feeLines(answer);
+        // POST /pos/checkin-member answers with the owed sessions' lines too: this button is today's only.
+        const lines = splitOwedLines(feeLines(answer), mergeRows(screen.rows, rows)).today;
         if (!lines.length) {
           toast(NOTHING_TO_PAY);
           return;
