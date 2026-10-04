@@ -7,8 +7,10 @@ import {
   findRow,
   groupDetails,
   groupSummary,
+  isOwed,
   mergeRows,
   newerTileText,
+  owedWhen,
   passCandidates,
   passSummary,
   passUsable,
@@ -232,4 +234,93 @@ test('the tile picks up newer numbers the check-in screen saved today', () => {
   assert.equal(newerTileText(undefined, 0, '2026-10-03'), null);
   assert.equal(newerTileText({ at: 9000, day: '2026-10-03' }, 0, '2026-10-03'), null);
   assert.equal(newerTileText({ at: 'soon', day: '2026-10-03', text: 'x' }, 0, '2026-10-03'), null);
+});
+
+// 1 and 2 Oct 2026 are NZDT too. (Dates in October only: some ICU versions shorten September to "Sept".)
+const oct1 = (hourNz) => Date.UTC(2026, 9, 1, hourNz - 13, 0);
+const oct2 = (hourNz) => Date.UTC(2026, 9, 2, hourNz - 13, 0);
+const regular = {
+  id: 'bk_kai',
+  type: 'booking',
+  kind: 'gm-seat',
+  ref: 'KT-KRAKEN-7',
+  name: 'Kai Tane',
+  people: 1,
+  start: at(18),
+  end: at(22),
+  status: 'confirmed',
+  due: 1500,
+  customerId: '888',
+  seriesId: 'sr_strahd',
+  owed: false,
+  title: 'Curse of Strahd',
+};
+
+test('a weekly regular\'s seat says Weekly, after the usual badges', () => {
+  assert.deepEqual(rowBadges(regular), [
+    { tone: 'warning', text: 'Due $15' },
+    { tone: 'info', text: 'Weekly' },
+  ]);
+  assert.deepEqual(rowBadges({ ...regular, status: 'seated', arrivedAt: at(18), due: 0, paid: true }), [
+    { tone: 'success', text: 'Here' },
+    { tone: 'info', text: 'Weekly' },
+  ]);
+  assert.deepEqual(rowBadges(regular, true), [
+    { tone: 'info', text: 'In cart' },
+    { tone: 'info', text: 'Weekly' },
+  ]);
+  assert.deepEqual(rowBadges({ ...regular, seriesId: null }), [{ tone: 'warning', text: 'Due $15' }], 'a one-off seat');
+});
+
+test('an owed session says Owed $X, even for a no-show, never Pass, and when it was', () => {
+  const owed = { ...regular, owed: true, start: oct1(18), end: oct1(21), pass };
+  assert.equal(isOwed(owed), true);
+  assert.equal(isOwed({ ...owed, due: 0 }), false, 'paid or waived since');
+  assert.equal(isOwed(regular), false);
+  assert.deepEqual(rowBadges(owed), [
+    { tone: 'warning', text: 'Owed $15' },
+    { tone: 'info', text: 'Weekly' },
+  ]);
+  assert.deepEqual(rowBadges({ ...owed, status: 'noshow' }), [
+    { tone: 'neutral', text: 'No-show' },
+    { tone: 'warning', text: 'Owed $15' },
+    { tone: 'info', text: 'Weekly' },
+  ]);
+  assert.deepEqual(rowBadges({ ...owed, status: 'seated', arrivedAt: oct1(18) }), [
+    { tone: 'success', text: 'Here' },
+    { tone: 'warning', text: 'Owed $15' },
+    { tone: 'info', text: 'Weekly' },
+  ]);
+  assert.deepEqual(rowBadges({ ...regular, status: 'noshow' }), [
+    { tone: 'neutral', text: 'No-show' },
+    { tone: 'info', text: 'Weekly' },
+  ]);
+  assert.equal(owedWhen(owed), 'Thu 1 Oct, 6pm–9pm');
+  assert.equal(owedWhen({ ...owed, start: oct2(19), end: oct2(22) }), 'Fri 2 Oct, 7pm–10pm');
+  assert.equal(owedWhen({ ...owed, start: at(18), end: at(22) }), 'Sat 3 Oct, 6pm–10pm', 'the date even for today');
+});
+
+test('an owed no-show still counts as money due; owed seats are never offered a pass', () => {
+  const owedNoShow = { ...regular, status: 'noshow', owed: true };
+  assert.deepEqual(countRows([owedNoShow]), { people: 1, arrived: 0, due: 1500 });
+  assert.deepEqual(countRows([{ ...regular, status: 'noshow' }]), { people: 1, arrived: 0, due: 0 });
+  const today = {
+    groups: [
+      {
+        key: 'game:gm_9',
+        kind: 'game',
+        title: 'Curse of Strahd · GM Kate',
+        start: at(12),
+        end: at(15),
+        rows: [
+          { ...regular, owed: true, start: at(12), end: at(15) },
+          { ...regular, id: 'bk_one', ref: 'ON-OGRE-2', seriesId: null, start: at(12), end: at(15) },
+        ],
+      },
+    ],
+  };
+  assert.deepEqual(
+    passCandidates(today, pass).map((x) => x.row.id),
+    ['bk_one'],
+  );
 });

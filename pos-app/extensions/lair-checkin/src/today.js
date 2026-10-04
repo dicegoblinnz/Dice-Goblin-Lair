@@ -1,6 +1,6 @@
 // The "Today" roster from GET /pos/today: groups in time order, who's here, what's still due, badges and search.
 // No `shopify` global here, so `npm test` can check it without a POS.
-import { firstName, fold, money, peopleLabel, plural, tablesLabel, timeRange } from './format.js';
+import { firstName, fold, money, peopleLabel, plural, shortDay, tablesLabel, timeRange } from './format.js';
 
 /**
  * @typedef {{ code?: string, label?: string, left?: number, sessionsLeft?: number, sessionsTotal?: number,
@@ -11,7 +11,10 @@ import { firstName, fold, money, peopleLabel, plural, tablesLabel, timeRange } f
  *   tables?: string[], start?: number, end?: number, status?: string, arrivedAt?: number | null, paid?: boolean,
  *   amount?: number, covered?: number, due?: number, paidAmount?: number, payments?: Payment[], split?: boolean,
  *   customerId?: unknown, pass?: PassLike | null, refund?: string | null, note?: string, title?: string,
- *   players?: unknown[], party?: unknown[], gameId?: string | null, occurrenceId?: string | null }} Row
+ *   players?: unknown[], party?: unknown[], gameId?: string | null, occurrenceId?: string | null,
+ *   seriesId?: string | null, owed?: boolean, waived?: boolean, line?: unknown }} Row
+ *   seriesId: a weekly regular's seat. owed: a regular's seat whose session ended unpaid (paid like any fee, never
+ *   checked in); the Lair app sends its cart line as `line` with a member's rows. waived: staff let them off.
  * @typedef {{ key: string, kind?: string, title?: string, start?: number, end?: number, tables?: string[], rows: Row[] }} Group
  * @typedef {{ day?: string, now?: number, groups: Group[] }} Today
  * @typedef {'waiting' | 'arrived' | 'noshow' | 'refund' | 'cancelled'} RowState
@@ -59,33 +62,54 @@ function headcount(row) {
   return Math.max(1, Math.round(Number(row?.people) || 1));
 }
 
+/** A weekly regular's seat whose session ended unpaid, still to pay. @param {Row | null | undefined} row */
+export function isOwed(row) {
+  return Boolean(row?.owed) && dueOf(row) > 0;
+}
+
 /**
- * The badges for a row in a list: Here, Paid, Due $X, No-show or Refund?, plus "In cart" when its line is already
- * in this POS cart and "Pass" when a saved pass will be used at check-in.
+ * The badges for a row in a list: Here, Paid, Due $X (Owed $X for a regular's unpaid session), No-show or Refund?,
+ * plus "In cart" when its line is already in this POS cart, "Pass" when a saved pass will be used at check-in, and
+ * "Weekly" for a weekly regular's seat.
  * @param {Row} row
  * @param {boolean} [inCart] a line for it is in this POS cart already
  * @returns {Badge[]}
  */
 export function rowBadges(row, inCart = false) {
+  const badges = stateBadges(row, inCart);
+  if (row?.seriesId) badges.push({ tone: 'info', text: 'Weekly' });
+  return badges;
+}
+
+/** @param {Row} row @param {boolean} inCart @returns {Badge[]} */
+function stateBadges(row, inCart) {
   const due = dueOf(row);
+  const owed = isOwed(row);
   /** @type {Badge | null} */
-  const moneyBadge = due > 0 ? (inCart ? { tone: 'info', text: 'In cart' } : { tone: 'warning', text: `Due ${money(due)}` }) : null;
+  const moneyBadge = due > 0 ? (inCart ? { tone: 'info', text: 'In cart' } : { tone: 'warning', text: `${owed ? 'Owed' : 'Due'} ${money(due)}` }) : null;
   switch (rowState(row)) {
     case 'refund':
       return [{ tone: 'critical', text: 'Refund?' }];
     case 'cancelled':
       return [{ tone: 'critical', text: 'Cancelled' }];
     case 'noshow':
-      return [{ tone: 'neutral', text: 'No-show' }];
+      // A regular's seat is owed even when they didn't come.
+      return owed && moneyBadge ? [{ tone: 'neutral', text: 'No-show' }, moneyBadge] : [{ tone: 'neutral', text: 'No-show' }];
     case 'arrived':
       return moneyBadge ? [{ tone: 'success', text: 'Here' }, moneyBadge] : [{ tone: 'success', text: 'Here' }];
     default: {
       /** @type {Badge[]} */
       const badges = [moneyBadge || (row?.paid ? { tone: 'success', text: 'Paid' } : { tone: 'neutral', text: 'Free' })];
-      if (due > 0 && (row?.pass?.code || row?.pass?.label)) badges.push({ tone: 'info', text: 'Pass' });
+      // An owed seat is paid, never checked in, so its saved pass isn't used.
+      if (due > 0 && !owed && (row?.pass?.code || row?.pass?.label)) badges.push({ tone: 'info', text: 'Pass' });
       return badges;
     }
   }
+}
+
+/** When an owed seat's session was: "Thu 1 Oct, 6pm–9pm" (the date even when it was today). @param {Row} row */
+export function owedWhen(row) {
+  return [shortDay(row?.start), timeRange(row?.start, row?.end)].filter(Boolean).join(', ');
 }
 
 /** @param {Row} a @param {Row} b */
@@ -120,7 +144,8 @@ export function sortGroups(groups) {
 }
 
 /**
- * People booked, people here and money still due (no-shows, cancellations and refunds don't count as due).
+ * People booked, people here and money still due (no-shows, cancellations and refunds don't count as due, except a
+ * regular's owed seat).
  * @param {Row[]} rows
  */
 export function countRows(rows) {
@@ -132,7 +157,7 @@ export function countRows(rows) {
     if (state === 'cancelled') continue;
     people += headcount(row);
     if (state === 'arrived') arrived += headcount(row);
-    if (state === 'waiting' || state === 'arrived') due += dueOf(row);
+    if (state === 'waiting' || state === 'arrived' || (state === 'noshow' && isOwed(row))) due += dueOf(row);
   }
   return { people, arrived, due };
 }
@@ -304,7 +329,8 @@ export function passUsable(pass) {
 
 /**
  * Who a pass could be used on today: table bookings, seats and game spots (not event entries) with something still to
- * pay, whether they're here yet or not. The holder's own bookings come first.
+ * pay, whether they're here yet or not. Not an owed seat: passes are used at check-in, and those aren't checked in.
+ * The holder's own bookings come first.
  * @param {Today | null | undefined} today
  * @param {PassLike | null | undefined} pass
  * @returns {{ row: Row, group: Group }[]}
@@ -316,7 +342,7 @@ export function passCandidates(today, pass) {
   for (const group of sortGroups(today?.groups || [])) {
     for (const row of group.rows) {
       const state = rowState(row);
-      if (row.type === 'join' || (state !== 'waiting' && state !== 'arrived') || !dueOf(row)) continue;
+      if (row.type === 'join' || (state !== 'waiting' && state !== 'arrived') || !dueOf(row) || isOwed(row)) continue;
       list.push({ row, group });
     }
   }
