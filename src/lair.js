@@ -447,7 +447,8 @@ export class Lair {
 
   /**
    * A game as the games board and its GM see it, with its picture. A session of a series adds series: { id, schedule,
-   * regulars } (regulars: how many players have a seat saved every session) and nextOnly: true when it's the series'
+   * regulars } (regulars: how many people are regulars, each with their seats saved every session, however many seats
+   * that is) and nextOnly: true when it's the series'
    * next session that hasn't ended, the only one the public board shows. taken counts the seats held for regulars
    * (held) too. info: seriesInfo, shared by a list.
    */
@@ -463,13 +464,14 @@ export class Lair {
 
   /**
    * Weekly regulars ("join every session"), for game views: each series' next session that hasn't ended (cancelled
-   * ones don't count), and how many players are regulars. No awaits.
+   * ones don't count), and how many people are regulars (members, not seats: a regular who brings a friend is one,
+   * as the theme's demo counts them; the seats they hold are in heldIn). No awaits.
    */
   seriesInfo(now) {
     const next = this.sql
       .exec("SELECT series_id, id, MIN(starts_at) AS first FROM games WHERE series_id IS NOT NULL AND status != 'cancelled' AND ends_at > ? GROUP BY series_id", now)
       .toArray();
-    const regulars = this.sql.exec("SELECT series_id, SUM(people) AS n FROM series_members WHERE status = 'active' GROUP BY series_id").toArray();
+    const regulars = this.sql.exec("SELECT series_id, COUNT(*) AS n FROM series_members WHERE status = 'active' GROUP BY series_id").toArray();
     return { next: new Map(next.map((r) => [r.series_id, r.id])), regulars: new Map(regulars.map((r) => [r.series_id, r.n])) };
   }
 
