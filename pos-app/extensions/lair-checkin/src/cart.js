@@ -81,15 +81,24 @@ export async function putOnSale(id, replace = false) {
  * @param {{ replaceCustomer?: boolean }} [options]
  */
 export async function addFeesToCart(lines, customerId, { replaceCustomer = false } = {}) {
+  const result = { ...(await addFeeLines(lines)), customer: /** @type {CustomerResult} */ ('none') };
+  if (result.added.length || result.skipped.length) result.customer = await putOnSale(customerId, replaceCustomer);
+  return result;
+}
+
+/**
+ * The fee lines into the cart, as addFeesToCart does, without touching the customer.
+ * @param {FeeLine[]} lines
+ */
+async function addFeeLines(lines) {
   const already = new Set(bookingsInCart(shopify.cart.current.value));
   const result = {
     /** @type {FeeLine[]} */ added: [],
     /** @type {FeeLine[]} a line for that booking was in the cart already */ skipped: [],
     /** @type {FeeLine[]} in the cart, but not tagged with their booking */ unlinked: [],
     /** @type {{ line: FeeLine, message: string }[]} not in the cart */ failed: [],
-    /** @type {CustomerResult} */ customer: 'none',
   };
-  for (const line of lines) {
+  for (const line of lines || []) {
     const ref = line.properties._booking;
     if (ref && already.has(ref)) {
       result.skipped.push(line);
@@ -115,7 +124,6 @@ export async function addFeesToCart(lines, customerId, { replaceCustomer = false
       result.unlinked.push(line);
     }
   }
-  if (result.added.length || result.skipped.length) result.customer = await putOnSale(customerId, replaceCustomer);
   return result;
 }
 
@@ -132,6 +140,52 @@ export async function addFeesToCart(lines, customerId, { replaceCustomer = false
  * @param {(tabId: string) => Promise<unknown>} markAdded
  */
 export async function addTabToCart(tab, customerId, markAdded) {
+  const result = {
+    ...(await addTabItems(tab)),
+    /** @type {string} what the Lair app said when told the tab is in the cart, if it went wrong */ markProblem: '',
+    customer: /** @type {CustomerResult} */ ('none'),
+  };
+  if (!result.added.length) return result;
+  result.markProblem = await tellTabAdded(String(tab?.id ?? ''), markAdded);
+  result.customer = await putOnSale(customerId);
+  return result;
+}
+
+/**
+ * "Add everything to cart" for a member, in the order the API contract gives (v5 section 2): their fee lines (today's,
+ * then owed seats'), then the tab's items tagged `_tab`, then the member on the sale, then the Lair app told the tab
+ * is in the cart. Each part skips what's in the cart already, like addFeesToCart and addTabToCart.
+ * @param {{ lines: FeeLine[], tab: import('./lines.js').Tab | null, customerId: unknown, markAdded: (tabId: string) => Promise<unknown> }} input
+ */
+export async function addEverythingToCart({ lines, tab, customerId, markAdded }) {
+  const fees = await addFeeLines(lines);
+  const tabPart = tab ? { ...(await addTabItems(tab)), markProblem: '' } : null;
+  const anything = fees.added.length || fees.skipped.length || tabPart?.added.length || tabPart?.already;
+  /** @type {CustomerResult} */
+  const customer = anything ? await putOnSale(customerId) : 'none';
+  if (tabPart?.added.length) tabPart.markProblem = await tellTabAdded(String(tab?.id ?? ''), markAdded);
+  return { fees, tab: tabPart, customer };
+}
+
+/**
+ * POST /pos/tab/:id/added through `markAdded`: '' when it went, else what to tell staff.
+ * @param {string} tabId
+ * @param {(tabId: string) => Promise<unknown>} markAdded
+ */
+async function tellTabAdded(tabId, markAdded) {
+  try {
+    await markAdded(tabId);
+    return '';
+  } catch (error) {
+    return error instanceof Error && error.message ? error.message : 'The Lair app did not answer.';
+  }
+}
+
+/**
+ * A tab's items into the cart, as addTabToCart does, without telling the Lair app or touching the customer.
+ * @param {import('./lines.js').Tab} tab
+ */
+async function addTabItems(tab) {
   const tabId = String(tab?.id ?? '');
   const { items, bad } = tabItems(tab);
   const result = {
@@ -141,8 +195,6 @@ export async function addTabToCart(tab, customerId, markAdded) {
     /** @type {TabItem[]} in the cart without `_tab`: paying won't mark the tab paid */ untagged: [],
     /** @type {{ item: TabItem, message: string }[]} */ failed: [],
     /** @type {string[]} no usable product */ bad,
-    /** @type {string} what the Lair app said when told the tab is in the cart, if it went wrong */ markProblem: '',
-    /** @type {CustomerResult} */ customer: 'none',
   };
   if (result.already || !tabId) return result;
   for (const item of items) {
@@ -168,12 +220,5 @@ export async function addTabToCart(tab, customerId, markAdded) {
       }
     }
   }
-  if (!result.added.length) return result;
-  try {
-    await markAdded(tabId);
-  } catch (error) {
-    result.markProblem = error instanceof Error && error.message ? error.message : 'The Lair app did not answer.';
-  }
-  result.customer = await putOnSale(customerId);
   return result;
 }

@@ -4,21 +4,25 @@
 //   Group   everyone in it: Here, Paid, Due $X, No-show or Refund?.
 //   Person  "Are you Sam?": check in (with their session pass, another, or none), then "Add $X to cart" or
 //           "Split the bill" (each friend pays a share, on their own account).
-//   Member  (a member code) their bookings today with "Check in everyone and add to cart", their tab with "Add tab to
-//           cart", and their passes.
+//   Member  (a member code) "Add everything to cart ($X)": today's bookings checked in, their fees, any sessions they
+//           owe from earlier weeks and their tab, all in one sale. Then their bookings today (with "Check in everyone
+//           and add to cart"), owed sessions, their tab (with "Add tab to cart") and their passes.
 //   Pass    (a pass code) who has it, sessions left, and "Use on…" one of today's bookings.
-// Fees go in the POS cart as custom sales tagged `_booking` (plus `_share` for a share of a bill), and a tab's items as
-// the real products tagged `_tab`. When the sale is paid on the Verifone, the Lair app's orders/paid webhook marks them
-// paid. API contract v4, sections 7 and 11.
+// Fees go in the POS cart as custom sales tagged `_booking` (plus `_share` for a share of a bill; an owed session is
+// "Owed: <game> (<date>)"), and a tab's items as the real products tagged `_tab`. When the sale is paid on the
+// Verifone, the Lair app's orders/paid webhook marks them paid. API contract v4, sections 7 and 11, and v5 section 2.
 import '@shopify/ui-extensions/preact';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { addFeesToCart, addTabToCart, bookingsInCart, cartCustomerId, putOnSale, sharesInCart, tabsInCart } from './cart.js';
+import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, cartCustomerId, putOnSale, sharesInCart, tabsInCart } from './cart.js';
 import { readCode } from './codes.js';
 import { dayKey, firstName } from './format.js';
 import {
   checkinOutcome,
   currentRow,
+  everythingOutcome,
+  everythingPlan,
+  failedFeesText,
   HOME,
   memberPlan,
   nextScreen,
@@ -33,7 +37,9 @@ import {
   personScreen,
   recordUses,
   scanPurpose,
+  splitOwed,
   stackAfterPerson,
+  tabNotes,
   undoNote,
   withGroups,
   wrongScan,
@@ -62,6 +68,7 @@ export default async () => {
  * @typedef {import('./views.jsx').Shown} Shown
  * @typedef {import('./views.jsx').Want} Want
  * @typedef {import('./views.jsx').Ctx} Ctx
+ * @typedef {import('./lines.js').FeeLine} FeeLine
  * @typedef {Awaited<ReturnType<typeof addFeesToCart>>} CartResult
  */
 
@@ -584,12 +591,7 @@ function CheckIn() {
    */
   function stayAfterCart(added) {
     if (added.failed.length) {
-      const said = added.failed[0].message.replace(/[.!]+$/, '');
-      say(
-        added.added.length ? "Some of it isn't in the cart" : "It isn't in the cart",
-        `POS said: ${said}. Add it by hand as a custom sale: ${added.failed.map(({ line }) => `${line.title}, $${line.price}`).join('; ')}.`,
-        'critical',
-      );
+      say(added.added.length ? "Some of it isn't in the cart" : "It isn't in the cart", failedFeesText(added.failed), 'critical');
       return true;
     }
     if (!added.added.length) {
@@ -644,10 +646,41 @@ function CheckIn() {
   /* ---------------- a member ---------------- */
 
   /**
-   * The member view's main button. While someone is still to come: "Check in everyone and add to cart" (POST
-   * /pos/checkin-member). Once they're all here: "Add $X to cart" for each row still owing, its lines asked for with
-   * `pass: 'none'` like the person view, so the amount on the button is what goes in the cart. Only today's fees: owed
-   * sessions are paid from their own screen.
+   * Today's rows for the member view, before their fees go in the cart: checked in (POST /pos/checkin-member) while
+   * anyone is still to come, or else each row that's here and still owing asked for its lines with `pass: 'none'` like
+   * the person view, so the amount on the button is what goes in the cart and no pass is used by itself. The rows that
+   * come back go on the screen. POST /pos/checkin-member also answers with the owed seats, each with its line
+   * (`fromMember`).
+   * @param {MemberScreen} screen
+   * @param {ReturnType<typeof memberPlan>} plan
+   * @returns {Promise<{ rows: Row[], lines: FeeLine[], fromMember: boolean }>}
+   */
+  async function checkInToday(screen, plan) {
+    /** @type {any} */
+    let answer;
+    if (plan.waiting) {
+      answer = await checkInMember(screen.member.customerId);
+    } else {
+      const answers = [];
+      for (const row of plan.owing) answers.push(await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: NO_PASS }));
+      answer = {
+        rows: answers.map((a) => a?.row).filter(Boolean),
+        lines: answers.flatMap((a) => (Array.isArray(a?.lines) ? a.lines : [])),
+        notices: answers.map((a) => a?.notice).filter(Boolean),
+      };
+    }
+    /** @type {Row[]} */
+    const rows = Array.isArray(answer?.rows) ? answer.rows : [];
+    setRows(rows);
+    const notices = Array.isArray(answer?.notices) ? answer.notices.map(String) : [];
+    updateMember((current) => ({ ...current, rows: mergeRows(current.rows, rows), notices }));
+    return { rows, lines: feeLines(answer), fromMember: plan.waiting > 0 };
+  }
+
+  /**
+   * The Today section's own button. While someone is still to come: "Check in everyone and add to cart". Once
+   * they're all here: "Add $X to cart" for each row still owing. Only today's fees: owed sessions and the tab have
+   * their own.
    */
   function checkInEveryone() {
     const screen = topMember();
@@ -657,37 +690,87 @@ function CheckIn() {
     run(
       plan.waiting ? 'Checking everyone in…' : 'Adding to the cart…',
       async () => {
-        /** @type {any} */
-        let answer;
-        if (plan.waiting) {
-          answer = await checkInMember(screen.member.customerId);
-        } else {
-          const answers = [];
-          for (const row of plan.owing) answers.push(await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: NO_PASS }));
-          answer = {
-            rows: answers.map((a) => a?.row).filter(Boolean),
-            lines: answers.flatMap((a) => (Array.isArray(a?.lines) ? a.lines : [])),
-            customer: { id: screen.member.customerId },
-            notices: answers.map((a) => a?.notice).filter(Boolean),
-          };
-        }
-        /** @type {Row[]} */
-        const rows = Array.isArray(answer?.rows) ? answer.rows : [];
-        setRows(rows);
-        const notices = Array.isArray(answer?.notices) ? answer.notices.map(String) : [];
-        updateMember((current) => ({ ...current, rows: mergeRows(current.rows, rows), notices }));
-        // POST /pos/checkin-member answers with the owed sessions' lines too: this button is today's only.
-        const lines = splitOwedLines(feeLines(answer), mergeRows(screen.rows, rows)).today;
+        const day = await checkInToday(screen, plan);
+        const lines = splitOwedLines(day.lines, mergeRows(screen.rows, day.rows)).today;
         if (!lines.length) {
           toast(NOTHING_TO_PAY);
           return;
         }
-        const added = await addFeesToCart(lines, answer?.customer?.id ?? screen.member.customerId);
+        const added = await addFeesToCart(lines, screen.member.customerId);
         if (stayAfterCart(added)) return;
         toast(addedToast(linesTotal(added.added)));
         warnAfterCart(added, name, '');
       },
       checkInEveryone,
+    );
+  }
+
+  /**
+   * "Add everything to cart ($X)" (API contract v5, section 2), from a fresh look at the member (POST /pos/scan of
+   * their code, so a session paid or a tab changed since the scan isn't missed):
+   *   1. today's rows checked in (checkInToday)
+   *   2. their fee lines, then their owed sessions' lines ("Owed: Curse of Strahd (Thu 1 Oct)")
+   *   3. the tab's items, tagged `_tab`
+   *   4. the member on the sale, then POST /pos/tab/:id/added
+   */
+  function addEverything() {
+    const screen = topMember();
+    if (!screen) return;
+    const name = firstName(screen.member.name);
+    run(
+      'Adding everything to the cart…',
+      async () => {
+        let current = screen;
+        let rows = withGroups(screen.rows, todayNow.current).map((x) => x.row);
+        if (screen.member.code) {
+          /** @type {any} */
+          let fresh = null;
+          try {
+            fresh = await scanCode(String(screen.member.code));
+          } catch (error) {
+            // A code staff replaced since the scan: carry on with what's on screen.
+            if (!(error instanceof LairError && error.kind === 'not-found')) throw error;
+          }
+          const next = nextScreen(fresh);
+          if (next?.name === 'member') {
+            current = { ...screen, rows: next.rows, tab: next.tab, passes: next.passes };
+            rows = next.rows;
+            setRows(next.rows);
+            updateMember((shown) => ({ ...shown, rows: next.rows, tab: next.tab, passes: next.passes }));
+          }
+        }
+        const inCart = { bookings: bookingsInCart(shopify.cart.current.value), tabs: tabsInCart(shopify.cart.current.value) };
+        const plan = everythingPlan(rows, current.tab, inCart);
+        if (!plan.show) {
+          say('Nothing to add', "Everything of theirs is paid, or in this sale already.", 'info');
+          return;
+        }
+        const day = plan.today.canCheckIn ? await checkInToday(current, plan.today) : { rows: [], lines: [], fromMember: false };
+        const todayLines = splitOwedLines(day.lines, mergeRows(rows, day.rows)).today;
+        // POST /pos/checkin-member answers with every owed seat as it is now; otherwise the fresh scan's.
+        const owedRows = day.fromMember ? splitOwed(day.rows).owed : plan.owed;
+        const lines = [...todayLines, ...owedLines(owedRows)];
+        const tab = plan.tab ? current.tab : null;
+        if (!lines.length && !tab) {
+          toast(NOTHING_TO_PAY);
+          return;
+        }
+        /** @type {any} */
+        let marked = null;
+        const result = await addEverythingToCart({
+          lines,
+          tab,
+          customerId: screen.member.customerId,
+          markAdded: async (id) => {
+            marked = await tabAdded(id);
+          },
+        });
+        if (marked?.tab) updateMember((shown) => ({ ...shown, tab: marked.tab }));
+        const outcome = everythingOutcome(result, name);
+        if (outcome.toast) toast(outcome.toast);
+        if (outcome.problem) say(outcome.problem.title, outcome.problem.message, outcome.problem.tone);
+      },
+      addEverything,
     );
   }
 
@@ -709,12 +792,7 @@ function CheckIn() {
           say('The tab is in the cart already', 'Take payment on the Verifone.', 'info');
           return;
         }
-        const notes = [];
-        if (result.failed.length) notes.push(`POS couldn't add ${result.failed.map((f) => f.item.title).join(', ')} (${result.failed[0].message}).`);
-        if (result.declined.length) notes.push(`Not added: ${result.declined.map((i) => i.title).join(', ')}.`);
-        if (result.bad.length) notes.push(`Ring these up by hand: ${result.bad.join(', ')}.`);
-        if (result.untagged.length) notes.push(`${result.untagged.map((i) => i.title).join(', ')} isn't linked to the tab, so paying won't mark the tab paid by itself.`);
-        if (result.markProblem) notes.push(`The Lair app wasn't told the tab is at the counter (${result.markProblem}), so they could still change it in My Lair.`);
+        const notes = tabNotes(result);
         if (!result.added.length) {
           say('Nothing from the tab went in the cart', notes.join(' ') || 'Try again.', 'critical');
           return;
@@ -803,6 +881,7 @@ function CheckIn() {
       refreshRow,
       forgetShare,
       checkInEveryone,
+      addEverything,
       addTab,
       putMemberOnSale,
       openPass: (pass) => push({ name: 'pass', pass, picking: false }),

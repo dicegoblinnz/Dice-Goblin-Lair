@@ -154,12 +154,17 @@ export function tabItems(tab) {
   return { items, bad };
 }
 
+/** What a tab comes to at its own prices, in cents (POS charges the shop's). @param {Tab | null | undefined} tab */
+export function tabCents(tab) {
+  if (Number(tab?.total) > 0) return Math.round(Number(tab?.total));
+  return tabItems(tab).items.reduce((sum, i) => sum + i.price * i.qty, 0);
+}
+
 /** "3 items · $12.50" (the tab's own prices; POS charges the shop's). @param {Tab | null | undefined} tab */
 export function tabSummary(tab) {
   const { items, bad } = tabItems(tab);
   const count = [...items.map((i) => i.qty), ...bad.map(() => 1)].reduce((a, b) => a + b, 0);
-  const total = Number(tab?.total) > 0 ? Number(tab?.total) : items.reduce((sum, i) => sum + i.price * i.qty, 0);
-  return `${plural(count, 'item')} · ${money(total)}`;
+  return `${plural(count, 'item')} · ${money(tabCents(tab))}`;
 }
 
 /** The toast after fees go in the cart: "Added $15. Ready to pay." @param {number} cents */
@@ -172,6 +177,17 @@ export const NOTHING_TO_PAY = 'Checked in. Nothing to pay.';
 /** The toast after a tab goes in the cart: "Added 3 items from the tab. Ready to pay." @param {number} count */
 export function tabToast(count) {
   return `Added ${plural(count, 'item')} from the tab. Ready to pay.`;
+}
+
+/**
+ * The toast after "Add everything to cart": "Added $30 and 3 items from the tab. Ready to pay.", or just one of them.
+ * @param {number} cents fees added
+ * @param {number} items tab items added
+ */
+export function everythingToast(cents, items) {
+  if (cents > 0 && items > 0) return `Added ${money(cents)} and ${plural(items, 'item')} from the tab. Ready to pay.`;
+  if (items > 0) return tabToast(items);
+  return addedToast(cents);
 }
 
 /** How many things a list of tab items is (2 Cokes and an ice cream are 3). @param {TabItem[]} items */

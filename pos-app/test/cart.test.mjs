@@ -1,7 +1,7 @@
 // Putting fees, shares, tabs and members in the POS cart, with a pretend POS cart: `npm test` in pos-app.
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { addFeesToCart, addTabToCart, bookingsInCart, putOnSale, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
+import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, putOnSale, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
 
 /**
  * A pretend POS cart that records every call.
@@ -181,4 +181,54 @@ test('puts a member on the sale, and only replaces someone else when asked', asy
   assert.equal(await putOnSale(null), 'none');
   pretendCart({ refuse: ['setCustomer'] });
   assert.equal(await putOnSale('777'), 'failed');
+});
+
+test('Add everything to cart: fees, then owed sessions, then the tab tagged _tab, then the member, then the Lair app is told', async () => {
+  const { calls, state } = pretendCart();
+  const owed = { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-7' } };
+  const tab = { id: 'tab_kai', items: [{ variantId: '44123456789012', title: 'Coke', price: 350, qty: 2 }] };
+  const markAdded = async (id) => {
+    calls.push(['markAdded', id]);
+  };
+  const result = await addEverythingToCart({ lines: [fee('KT-OGRE-2'), owed], tab, customerId: '888', markAdded });
+  assert.deepEqual(calls, [
+    ['addCustomSale', { title: 'Table fee: KT-OGRE-2', price: '15.00', quantity: 1, taxable: true }],
+    ['addLineItemProperties', 'line-1', { _booking: 'KT-OGRE-2' }],
+    ['addCustomSale', { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true }],
+    ['addLineItemProperties', 'line-2', { _booking: 'KT-KRAKEN-7' }],
+    ['addLineItem', 44123456789012, 2, { properties: { _tab: 'tab_kai' } }],
+    ['setCustomer', { id: 888 }],
+    ['markAdded', 'tab_kai'],
+  ]);
+  assert.deepEqual([result.fees.added.length, result.tab?.added.length, result.tab?.markProblem, result.customer], [2, 1, '', 'added']);
+  assert.deepEqual(bookingsInCart(state), ['KT-OGRE-2', 'KT-KRAKEN-7']);
+  assert.deepEqual(tabsInCart(state), ['tab_kai']);
+
+  // A second tap adds nothing and tells the Lair app nothing.
+  calls.length = 0;
+  const again = await addEverythingToCart({ lines: [fee('KT-OGRE-2'), owed], tab, customerId: '888', markAdded });
+  assert.deepEqual(calls, []);
+  assert.deepEqual([again.fees.skipped.length, again.tab?.already, again.customer], [2, true, 'already']);
+});
+
+test('Add everything to cart: just fees, just a tab, or nothing; the tab stays in the cart when the Lair app cannot be told', async () => {
+  const { calls } = pretendCart();
+  const feesOnly = await addEverythingToCart({ lines: [fee('KT-OGRE-2')], tab: null, customerId: '888', markAdded: async () => assert.fail('no tab') });
+  assert.deepEqual([feesOnly.tab, feesOnly.customer], [null, 'added']);
+  assert.deepEqual(calls.map((c) => c[0]), ['addCustomSale', 'addLineItemProperties', 'setCustomer']);
+
+  pretendCart();
+  const tabOnly = await addEverythingToCart({
+    lines: [],
+    tab: { id: 'tab_kai', items: [{ variantId: '7', title: 'Coke', qty: 1 }] },
+    customerId: '888',
+    markAdded: async () => {
+      throw new Error("Can't reach the Lair app. Check the iPad's internet and try again.");
+    },
+  });
+  assert.deepEqual([tabOnly.tab?.added.length, tabOnly.tab?.markProblem, tabOnly.customer], [1, "Can't reach the Lair app. Check the iPad's internet and try again.", 'added']);
+
+  const { calls: none } = pretendCart();
+  const nothing = await addEverythingToCart({ lines: [], tab: null, customerId: '888', markAdded: async () => assert.fail('no tab') });
+  assert.deepEqual([none, nothing.customer], [[], 'none'], 'nothing in the sale, so no customer either');
 });

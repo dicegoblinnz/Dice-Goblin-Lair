@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   addedToast,
+  everythingToast,
   feeLines,
   itemCount,
   linesTotal,
@@ -11,6 +12,7 @@ import {
   passUsedLabel,
   shareLines,
   splitOwedLines,
+  tabCents,
   tabItems,
   tabSummary,
   tabToast,
@@ -148,4 +150,13 @@ test('splits a member\'s lines into today\'s and the owed seats\'', () => {
   ];
   assert.deepEqual(splitOwedLines([today, owed], rows), { today: [today], owed: [owed] });
   assert.deepEqual(splitOwedLines([today, owed], []), { today: [today, owed], owed: [] }, 'no owed rows known: all today');
+});
+
+test('a tab\'s total, and the toast after Add everything to cart', () => {
+  assert.equal(tabCents({ total: 1250, items: [] }), 1250);
+  assert.equal(tabCents({ items: [{ variantId: '1', price: 350, qty: 2 }, { variantId: 'x', price: 999, qty: 1 }] }), 700, 'from its items when there is no total');
+  assert.equal(tabCents(null), 0);
+  assert.equal(everythingToast(3000, 3), 'Added $30 and 3 items from the tab. Ready to pay.');
+  assert.equal(everythingToast(1500, 0), 'Added $15. Ready to pay.');
+  assert.equal(everythingToast(0, 1), 'Added 1 item from the tab. Ready to pay.');
 });

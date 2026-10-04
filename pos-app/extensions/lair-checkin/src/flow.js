@@ -2,7 +2,7 @@
 // cart. No `shopify` global here, so `npm test` can check it without a POS.
 import { readCode } from './codes.js';
 import { dateLabel, dayKey, money, plural, shortDay, timeRange } from './format.js';
-import { feeLines, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabItems } from './lines.js';
+import { everythingToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabCents, tabItems } from './lines.js';
 import { dueOf, findRow, isArrived, isOwed, passSummary, passUsable, rowState } from './today.js';
 
 /**
@@ -11,6 +11,14 @@ import { dueOf, findRow, isArrived, isOwed, passSummary, passUsable, rowState } 
  * @typedef {import('./today.js').Today} Today
  * @typedef {import('./lines.js').Tab} Tab
  * @typedef {import('./lines.js').UsedPass} UsedPass
+ * @typedef {import('./lines.js').FeeLine} FeeLine
+ * @typedef {import('./lines.js').TabItem} TabItem
+ * @typedef {{ added: FeeLine[], skipped: FeeLine[], unlinked: FeeLine[], failed: { line: FeeLine, message: string }[] }} FeesResult
+ *   what happened to some fee lines in the cart (cart.js)
+ * @typedef {{ already: boolean, added: TabItem[], declined: TabItem[], untagged: TabItem[],
+ *   failed: { item: TabItem, message: string }[], bad: string[], markProblem: string }} TabResult
+ *   what happened to a tab's items in the cart (cart.js)
+ * @typedef {{ title: string, message: string, tone: 'critical' | 'warning' | 'info' }} Banner
  * @typedef {import('./split.js').Payer} Payer
  * @typedef {{ customerId?: unknown, name?: string, code?: string | null }} Member
  * @typedef {{ row?: Row | null, lines?: unknown, customer?: { id?: unknown } | null, pass?: UsedPass | null,
@@ -421,6 +429,111 @@ export function memberPlan(rows, inCart = []) {
     }
   }
   return { canCheckIn: waiting > 0 || due > 0, waiting, due, owing };
+}
+
+/**
+ * The member view's main button, "Add everything to cart ($X)" (API contract v5, section 2): today's rows checked in
+ * and their fees, their owed seats, and their tab, in one go.
+ *   today     memberPlan for today's rows
+ *   owed      owed seats with something to pay and no line in the cart yet; owedDue what they come to
+ *   tab       whether the tab goes in; tabTotal what it comes to at its own prices (the till charges the shop's)
+ *   total     what the button says: today's dues (before any saved pass comes off), the owed seats and the tab
+ *   show      there's someone to check in or something to pay
+ *   label     "Add everything to cart ($52)", or "Check in everyone" when there's nothing to pay (just "Add
+ *             everything to cart" for a tab with no prices on it)
+ *   separate  more than one of those parts
+ *   parts     "Today $30 · Owed $15 · Tab $7" when it's more than one part, else ''
+ *   note      a word when a saved pass will come off at check-in, so the cart may come to less
+ * @param {Row[]} rows the freshest copies, today's and owed
+ * @param {Tab | null | undefined} tab
+ * @param {{ bookings?: string[], tabs?: string[] }} [cart] codes and tabs with lines in the cart already
+ */
+export function everythingPlan(rows, tab, { bookings = [], tabs = [] } = {}) {
+  const split = splitOwed(rows);
+  const today = memberPlan(split.today, bookings);
+  const owed = split.owed.filter((row) => isOwed(row) && !(row.ref && bookings.includes(String(row.ref))));
+  const owedDue = owed.reduce((sum, row) => sum + dueOf(row), 0);
+  const tabState = tabPlan(tab, tabs);
+  const tabTotal = tabState.canAdd ? tabCents(tab) : 0;
+  const total = today.due + owedDue + tabTotal;
+  const separate = [today.canCheckIn, owed.length > 0, tabState.canAdd].filter(Boolean).length > 1;
+  const parts = [
+    today.due ? `Today ${money(today.due)}` : '',
+    owedDue ? `Owed ${money(owedDue)}` : '',
+    tabState.canAdd ? (tabTotal ? `Tab ${money(tabTotal)}` : 'Tab') : '',
+  ].filter(Boolean);
+  const passComesOff = split.today.some(
+    (row) => rowState(row) === 'waiting' && dueOf(row) > 0 && Boolean(row.pass?.code) && passUsable(row.pass) && !(row.ref && bookings.includes(String(row.ref))),
+  );
+  return {
+    today,
+    owed,
+    owedDue,
+    tab: tabState.canAdd,
+    tabTotal,
+    total,
+    show: today.canCheckIn || owed.length > 0 || tabState.canAdd,
+    label: total > 0 ? `Add everything to cart (${money(total)})` : tabState.canAdd ? 'Add everything to cart' : 'Check in everyone',
+    separate,
+    parts: separate && parts.length > 1 ? parts.join(' · ') : '',
+    note: passComesOff ? 'A saved pass comes off when they check in, so it may come to less.' : '',
+  };
+}
+
+/**
+ * What staff are told about fee lines POS wouldn't take: "POS said: …. Add it by hand as a custom sale: <title>, $15.00."
+ * @param {{ line: FeeLine, message: string }[]} failed
+ */
+export function failedFeesText(failed) {
+  const said = String(failed[0]?.message || 'POS refused the change').replace(/[.!]+$/, '');
+  return `POS said: ${said}. Add it by hand as a custom sale: ${failed.map(({ line }) => `${line.title}, $${line.price}`).join('; ')}.`;
+}
+
+/**
+ * What staff should know after a tab's items went in the cart: items POS couldn't add or staff declined, ones to ring
+ * up by hand, ones not linked to the tab, and the Lair app not hearing about it.
+ * @param {Pick<TabResult, 'failed' | 'declined' | 'bad' | 'untagged' | 'markProblem'>} result
+ * @returns {string[]}
+ */
+export function tabNotes(result) {
+  const notes = [];
+  if (result.failed.length) notes.push(`POS couldn't add ${result.failed.map((f) => f.item.title).join(', ')} (${result.failed[0].message}).`);
+  if (result.declined.length) notes.push(`Not added: ${result.declined.map((i) => i.title).join(', ')}.`);
+  if (result.bad.length) notes.push(`Ring these up by hand: ${result.bad.join(', ')}.`);
+  if (result.untagged.length) notes.push(`${result.untagged.map((i) => i.title).join(', ')} isn't linked to the tab, so paying won't mark the tab paid by itself.`);
+  if (result.markProblem) notes.push(`The Lair app wasn't told the tab is at the counter (${result.markProblem}), so they could still change it in My Lair.`);
+  return notes;
+}
+
+/**
+ * What "Add everything to cart" tells staff: a toast for what went in ("Added $30 and 3 items from the tab. Ready to
+ * pay."), and a banner when something needs sorting out, worst first: something isn't in the cart; something to
+ * check; it was all in the cart already; they couldn't be put on the sale.
+ * @param {{ fees: FeesResult, tab: TabResult | null, customer: string }} result addEverythingToCart's
+ * @param {string} [who] their first name
+ * @returns {{ toast: string, problem: Banner | null }}
+ */
+export function everythingOutcome(result, who = '') {
+  const { fees, tab } = result;
+  const items = itemCount(tab?.added || []);
+  const added = fees.added.length > 0 || items > 0;
+  const toast = added ? everythingToast(linesTotal(fees.added), items) : '';
+  const notes = [];
+  if (fees.failed.length) notes.push(failedFeesText(fees.failed));
+  if (fees.unlinked.length) {
+    const what = fees.unlinked.map((line) => line.properties._booking || line.title).join(', ');
+    notes.push(`Paying won't mark ${what} paid by itself. After they pay, mark ${fees.unlinked.length === 1 ? 'it' : 'them'} paid on the staff page.`);
+  }
+  if (tab) notes.push(...tabNotes(tab));
+  if (fees.failed.length || tab?.failed.length) {
+    return { toast, problem: { title: added ? "Some of it isn't in the cart" : "It isn't in the cart", message: notes.join(' '), tone: 'critical' } };
+  }
+  if (notes.length) return { toast, problem: { title: 'Check the cart', message: notes.join(' '), tone: 'warning' } };
+  if (!added) return { toast, problem: { title: 'Already in the cart', message: "It's all in this sale already. Take payment on the Verifone.", tone: 'info' } };
+  if (result.customer === 'failed') {
+    return { toast, problem: { title: `Couldn't put ${who || 'them'} on the sale`, message: "Add them with the cart's Add customer button, so their spend counts.", tone: 'info' } };
+  }
+  return { toast, problem: null };
 }
 
 /**

@@ -6,7 +6,7 @@ import {
   checkinOutcome,
   codeInQuery,
   currentRow,
-  memberPlan,
+  everythingPlan,
   passChange,
   passInUse,
   passOptions,
@@ -87,6 +87,7 @@ import {
  *   refreshRow: () => void,
  *   forgetShare: () => void,
  *   checkInEveryone: () => void,
+ *   addEverything: () => void,
  *   addTab: () => void,
  *   putMemberOnSale: () => void,
  *   openPass: (pass: PassLike) => void,
@@ -536,7 +537,8 @@ function MemberView({ screen, ctx }) {
   const rows = withGroups(screen.rows, today);
   const todayRows = rows.filter(({ row }) => !row.owed);
   const owedRows = rows.filter(({ row }) => row.owed);
-  const plan = memberPlan(todayRows.map((x) => x.row), cart.bookings);
+  const everything = everythingPlan(rows.map((x) => x.row), screen.tab, cart);
+  const plan = everything.today;
   const tab = tabPlan(screen.tab, cart.tabs);
   const { items, bad } = tabItems(screen.tab);
   return (
@@ -551,6 +553,19 @@ function MemberView({ screen, ctx }) {
           </s-button>
         )}
       </s-stack>
+
+      {everything.show ? (
+        <s-stack direction="block" gap="small">
+          <s-button variant="primary" disabled={Boolean(busy)} onClick={act.addEverything}>
+            {everything.label}
+          </s-button>
+          {[everything.parts, everything.note].filter(Boolean).map((line) => (
+            <s-text key={line} color="subdued">
+              {line}
+            </s-text>
+          ))}
+        </s-stack>
+      ) : null}
 
       <s-section heading="Today">
         <s-stack direction="block" gap="small">
@@ -570,7 +585,7 @@ function MemberView({ screen, ctx }) {
             <s-text color="subdued">Nothing booked today.</s-text>
           )}
           {plan.canCheckIn ? (
-            <s-button variant="primary" disabled={Boolean(busy)} onClick={act.checkInEveryone}>
+            <s-button variant="secondary" disabled={Boolean(busy)} onClick={act.checkInEveryone}>
               {plan.waiting ? 'Check in everyone and add to cart' : `Add ${money(plan.due)} to cart`}
             </s-button>
           ) : null}
@@ -605,7 +620,7 @@ function MemberView({ screen, ctx }) {
             ) : null}
             {tab.note ? <s-text>{tab.note}</s-text> : null}
             {tab.canAdd ? (
-              <s-button variant={plan.canCheckIn ? 'secondary' : 'primary'} disabled={Boolean(busy)} onClick={act.addTab}>
+              <s-button variant="secondary" disabled={Boolean(busy)} onClick={act.addTab}>
                 Add tab to cart
               </s-button>
             ) : null}
