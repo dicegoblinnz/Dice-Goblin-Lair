@@ -402,7 +402,10 @@ async function renderPage(templateName, extra = {}) {
   engine.options.globals = scope;
   const tpl = readJson(`templates/${templateName}.json`);
   let content = '';
-  for (const id of tpl.order) content += await renderSection(tpl.sections[id].type, `template--1__${id}`, tpl.sections[id]);
+  for (const id of tpl.order) {
+    if (tpl.sections[id].disabled) continue; // Shopify skips sections switched off in the editor
+    content += await renderSection(tpl.sections[id].type, `template--1__${id}`, tpl.sections[id]);
+  }
   const layout = read(`layout/${tpl.layout || 'theme'}.liquid`).replace('{{ content_for_layout }}', content.replace(/\$/g, '$$$$'));
   return engine.parseAndRender(layout, scope);
 }
@@ -433,6 +436,7 @@ const PAGES = {
   '/pages/lair-staff': () => renderPage('page.lair-staff', { page: pages['lair-staff'], template: { name: 'page', suffix: 'lair-staff' } }),
   '/pages/board-game-rental': () => renderPage('page.board-game-rental', { page: pages['board-game-rental'], template: { name: 'page', suffix: 'board-game-rental' } }),
   '/404': () => renderPage('404', { template: { name: '404' } }),
+  '/pages/contact': () => renderPage(hasTemplate('page.contact') ? 'page.contact' : 'page', { page: pages.contact, template: { name: 'page', suffix: 'contact' } }),
 };
 
 /* ---- library routes (library worktree): tag-filtered library collection, membership, terms, search ---- */

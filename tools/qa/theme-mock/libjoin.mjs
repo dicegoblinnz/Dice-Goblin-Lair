@@ -3,7 +3,7 @@ import { serve } from './render.mjs';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { chromium } = require('/opt/node-tools/node_modules/playwright');
-const PORT = 4194;
+const PORT = Number(process.env.PORT || 4194);
 const server = await serve(PORT);
 const browser = await chromium.launch();
 const parseMultipart = (buf, type) => {
@@ -53,6 +53,7 @@ await run('library page join', '/pages/board-game-rental', async ({ page, posts,
   await page.click('.join__button');
   await page.waitForTimeout(300);
   console.log('posts without ticking terms:', posts.length, '| checkbox valid:', await page.evaluate(() => document.querySelector('.join__check input').validity.valid));
+  console.log('message when unticked:', await page.evaluate(() => { const e = document.querySelector('.join [data-form-error]'); return e && !e.hidden ? e.textContent : null; }), '| focus on the tick:', await page.evaluate(() => document.activeElement === document.querySelector('.join__check input')));
   await page.click('.join__check');
   console.log('ticked by tapping the label:', await page.evaluate(() => document.querySelector('.join__check input').checked));
   fail();
