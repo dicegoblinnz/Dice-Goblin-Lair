@@ -48,14 +48,31 @@ Some people choose "Split the bill at the counter" when they book; the screen sa
 
 ### A member code
 
-Scanning someone's member code (from My Lair) shows their bookings today, their tab and their passes.
+Scanning someone's member code (from My Lair) shows everything they can pay for: their bookings today, any sessions
+they owe from earlier weeks, their tab, and their passes. A weekly regular's ticket *is* their member code.
 
-- **Check in everyone and add to cart** checks in all of their bookings today and adds what they owe. Once they're
-  all here, the button just says **Add $X to cart**.
-- **Tab:** drinks and snacks they added in My Lair. **Add tab to cart** puts them in the cart as the real products
-  (the till charges the shop's own prices). Then take payment as usual.
+- **Add everything to cart ($X)** does the lot in one go: checks in their bookings today, adds today's fees and any
+  owed sessions, adds their tab, and puts them on the sale. Then take payment on the Verifone as usual.
+  - Under the button it says what the total is made of, like "Today $15 · Owed $15 · Tab $7".
+  - A saved session pass comes off when they check in, so the cart can come to less than the button says (the
+    screen warns you when that might happen).
+  - The tab goes in as the real products, so the till charges the shop's own prices.
+- Only want one part? **Check in everyone and add to cart** (under Today) does just today's bookings, and **Add tab
+  to cart** just the tab. To add one owed session on its own, tap it under **Owed**.
 - **Put Sam on this sale** makes their spend count toward their dice rolls.
 - Tap a pass to see it.
+
+### Weekly regulars and owed sessions
+
+**Weekly** on someone's seat means they're a weekly regular (they tapped "Join every session" on the website): their
+seat is saved for them every week. A regular's seat is theirs to pay for, even if they don't come, so once a session
+has ended unpaid it's **owed**.
+
+- Their owed sessions show under **Owed** when you scan their member code, each with its date ("Thu 1 Oct,
+  6pm–9pm"). **Add everything to cart** includes them, as lines like "Owed: Curse of Strahd (Thu 1 Oct)".
+- Tap one to pay just that one: the screen says **Owed from …** with **Add $X to cart**. An owed session is never
+  checked in, and passes aren't used on it.
+- Letting them off? Waive it on the staff page (open the booking). It stops showing as owed.
 
 ### A session pass code
 
@@ -82,6 +99,8 @@ in the cart, take that line off the sale first. (The staff page can undo a pass 
 | Paid | Already paid (online, or earlier) |
 | Free | Nothing to pay (a free event, say) |
 | Due $X | Still to pay |
+| Owed $X | A weekly regular's session that has ended unpaid: still theirs to pay |
+| Weekly | A weekly regular's seat: saved for them every week |
 | In cart | Its fee is in this sale, waiting for payment |
 | Pass | They'll use their saved session pass |
 | No-show | Marked as not coming |
@@ -188,14 +207,14 @@ An expired key only stops deploys; the tile keeps working. To renew it:
 ## What the Lair app (the Worker) does for this
 
 The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.dicegoblinnz.workers.dev/pos/…`, with
-`Authorization: Bearer <POS session token>` (API contract v4, sections 7 and 11):
+`Authorization: Bearer <POS session token>` (API contract v4, sections 7 and 11, and v5 section 2):
 
 | Route | What for |
 | --- | --- |
 | `GET /pos/today` | Today's groups and everyone in them (the home screen, and the tile's numbers) |
-| `POST /pos/scan { code }` | What a scanned or typed code is: a booking or sign-up, a member, or a pass |
+| `POST /pos/scan { code }` | What a scanned or typed code is: a booking or sign-up, a member, or a pass. A member's `rows` are today's, then their owed sessions (`owed: true`, each with its cart `line`) |
 | `POST /pos/checkin { id, type, pass?, force? }` | Check one person in; `pass` is a pass code, `'none'`, or left out for their saved pass. Answers with cart lines |
-| `POST /pos/checkin-member { customerId }` | Check in everything a member has today, with cart lines |
+| `POST /pos/checkin-member { customerId }` | Check in everything a member has today, with cart lines, plus their owed sessions (never checked in) and their lines |
 | `POST /pos/share { id, type, amount? }` | One share of a bill as a cart line |
 | `POST /pos/pass-undo { useId }` | Give a pass use back (the same as the staff page's undo); answers `{ pass, row }` |
 | `POST /pos/tab/:id/added` | A member's tab is in the cart |
@@ -204,9 +223,15 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
   `https://ep0qiq-rp.myshopify.com`. Errors come back as `{ error: "Plain sentence" }` and the screen shows them.
 - **CORS:** POS calls from Shopify's own origin, so `/pos/*` answers `OPTIONS` and allows `GET, POST`, the
   `Authorization` and `Content-Type` headers, and any origin. Without it, every scan says "Can't reach the Lair app".
-- **Cart lines:** fees are custom sales carrying `_booking: <code>` (and `_share: '1'` for a share of a bill); tab
-  items are the real products carrying `_tab: <tab id>`. When the POS order is paid, the orders/paid webhook records
-  each `_booking` line as a payment towards that booking or sign-up and marks each `_tab` tab paid.
+- **Cart lines:** fees are custom sales carrying `_booking: <code>` (and `_share: '1'` for a share of a bill); an owed
+  session is one too, titled "Owed: <game> (<date>)" and carrying its seat's code. Tab items are the real products
+  carrying `_tab: <tab id>`. When the POS order is paid, the orders/paid webhook records each `_booking` line as a
+  payment towards that booking or sign-up and marks each `_tab` tab paid.
+- **Add everything to cart:** looks the member's code up again (`/pos/scan`), checks in today's rows
+  (`/pos/checkin-member`, or `/pos/checkin` with `pass: 'none'` for each one still owing once they're all here), adds
+  today's lines and then the owed lines, then the tab's items, then sets the customer, then calls `/pos/tab/:id/added`.
+  Anything already in the cart is skipped, so a second tap never charges twice.
+- **Weekly:** a row with a `seriesId` is a weekly regular's seat. A row with `owed: true` is paid, never checked in.
 - **Passes:** a check-in that used a pass answers with its `pass.useId`, which **Undo pass** sends to
   `/pos/pass-undo`. For someone checked in earlier, the screen finds the use from the pass itself (`/pos/scan` of a
   pass code lists its `uses`). Switching undoes the pass in use first, then checks in again with the new choice (a
@@ -219,9 +244,13 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
 cd pos-app
 npm ci
 npm test        # the logic: codes, the Today list, badges, passes, split bills, cart lines, Worker calls
+TZ=UTC npm test # the same on UTC, like GitHub's runner
 npm run check   # type-checks the extension against the POS API types (2026-07)
 npm run build   # bundles the extension (works offline, no Shopify login needed)
 ```
+
+Tests use fixed times, never today's date or the computer's time zone: a test that leaned on the clock once broke a
+deploy. Times are shown in Auckland time whatever the device says.
 
 - POS UI extensions API `2026-07` (Preact with Polaris web components such as `s-button`), Shopify CLI 4.
 - `extensions/lair-checkin/src`:
