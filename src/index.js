@@ -1,5 +1,5 @@
 // Dice Goblin Lair — Cloudflare Worker entry point.
-//   /proxy/*                 Shopify app proxy (www.dicegoblin.nz/apps/lair/*), signature checked. Signed requests
+//   /proxy/*                 Shopify app proxy (www.dicegoblin.nz/apps/liar/*), signature checked. Signed requests
 //                            on other paths are served the same way, in case the proxy URL was entered without /proxy.
 //   /pos/*                   the POS extension on the counter iPad (today, scan, checkin, checkin-member, share,
 //                            tab/:id/added, member): a Shopify POS session token, CORS for its origin
@@ -81,7 +81,7 @@ async function statusPage(env) {
   const proxyUrl = `${(env.PUBLIC_URL || 'https://dice-goblin-lair.dicegoblinnz.workers.dev').replace(/\/$/, '')}/proxy`;
   const proxyHint = proxyMiss
     ? `Shopify reached the app, but at "${proxyMiss.path}" instead of a booking address. In the Dev Dashboard, set the app proxy URL to ${proxyUrl} and release that version.`
-    : 'Shopify admin → Settings → Apps → Dice Goblin Lair should list an app proxy at www.dicegoblin.nz/apps/lair. This line turns green the first time a booking page loads in live mode.';
+    : 'Shopify admin → Settings → Apps → Dice Goblin Lair should list an app proxy at www.dicegoblin.nz/apps/liar. This line turns green the first time a booking page loads in live mode.';
   const line = (ok, good, bad) => `<li class="${ok ? 'ok' : 'wait'}"><span aria-hidden="true">${ok ? '✓' : '…'}</span>${ok ? good : bad}</li>`;
   const hint = (text) => `<li class="hint"><span aria-hidden="true"></span><small>${escapeHtml(text)}</small></li>`;
   const html = `<!doctype html><html lang="en-NZ"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -101,7 +101,7 @@ ${line(shopifyOk, 'Connected to the Shopify store', 'Waiting for the Shopify app
 ${!shopifyOk && connection?.advice ? hint(connection.advice) : ''}
 ${shopifyOk && connection?.featureAdvice ? hint(connection.featureAdvice) : ''}
 ${line(webhookOk, 'Online payments are reported back to the app', 'Payment notifications not set up yet')}
-${line(proxyOk, `The website has reached the app through dicegoblin.nz${escapeHtml(proxy?.prefix || '/apps/lair')}`, 'Waiting for the store link (app proxy) to be set up')}
+${line(proxyOk, `The website has reached the app through dicegoblin.nz${escapeHtml(proxy?.prefix || '/apps/liar')}`, 'Waiting for the store link (app proxy) to be set up')}
 ${!proxyOk && shopifyOk ? hint(proxyHint) : ''}
 ${emailOn ? line(!email || email.ok, 'Booking confirmation emails are on', `Booking emails are failing: ${escapeHtml(email?.message || 'unknown error')}`) : ''}
 </ul>
