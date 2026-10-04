@@ -4344,3 +4344,33 @@ test('weekly regulars (v5.1): GET /me series says how each game repeats, weekly,
   for (const s of series) assert.equal(board.find((g) => g.seriesId === s.seriesId).series.schedule, s.schedule);
   assert.deepEqual(Object.keys(series[0]).sort(), ['people', 'players', 'schedule', 'seriesId', 'title'], 'the other fields are as before');
 });
+
+test('GET /me dueNow (v5.1): a table booking is "Table T3" or "Tables T6 and T7" and a game spot "Game table at <event>", as My Lair words them; game seats and sign-ups keep their titles, and the counter keeps its own', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'kill-team', title: 'Kill Team night', start: at('2026-10-01', 18), end: at('2026-10-01', 21), tables: '', gameTables: 'B1+B2' },
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 19), end: at('2026-10-01', 21), tables: '', capacity: 20, entryFee: 500 },
+  ]);
+  const book = async (body, path = 'bookings') => {
+    const res = await call('POST', path, { name: 'Mia', email: 'mia@example.com', ...body }, 'mia');
+    assert.equal(res.status, 200, res.data.error);
+    return res.data.booking || res.data.join;
+  };
+  const one = await book(tableBooking({ tables: ['T3'], people: 2, name: 'Mia', email: 'mia@example.com' }));
+  const two = await book(tableBooking({ tables: ['T6', 'T7'], people: 6, start: at('2026-10-01', 16), end: at('2026-10-01', 18), name: 'Mia', email: 'mia@example.com' }));
+  const three = await book(tableBooking({ tables: ['T8', 'T9', 'T10'], people: 9, start: at('2026-10-01', 17), end: at('2026-10-01', 19), name: 'Mia', email: 'mia@example.com' }));
+  const spot = await book({ people: 2 }, 'events/kill-team@2026-10-01/reserve');
+  const game = await call('POST', 'games', { title: 'Tomb of Horrors', system: 'D&D 5e', gm: 'Ana', blurb: 'x', seats: 4, tables: ['A1'], start: at('2026-10-01', 19), end: at('2026-10-01', 21) }, 'gm');
+  const seat = await book({ kind: 'gm-seat', gameId: game.data.game.id, people: 1 });
+  const join = await book({ people: 1 }, 'events/quiz@2026-10-01/join');
+  const due = (await call('GET', 'me', null, 'mia')).data.dueNow;
+  assert.deepEqual(Object.fromEntries(due.map((d) => [d.ref, d.title])), {
+    [one.ref]: 'Table T3', [two.ref]: 'Tables T6 and T7', [three.ref]: 'Tables T8, T9 and T10', [spot.ref]: 'Game table at Kill Team night',
+    [seat.ref]: 'Tomb of Horrors', [join.ref]: 'Trivia night',
+  });
+  assert.deepEqual(Object.keys(due[0]).sort(), ['amount', 'covered', 'due', 'end', 'id', 'owed', 'paidAmount', 'ref', 'start', 'title', 'type'], 'the other fields are as before');
+  // The counter's rows keep their own titles.
+  const scan = await pos('scan', { code: lair.memberRow('mia').code });
+  assert.deepEqual(Object.fromEntries(scan.data.rows.map((r) => [r.ref, r.title])), {
+    [one.ref]: 'Table T3', [two.ref]: 'Tables T6, T7', [three.ref]: 'Tables T8, T9, T10', [spot.ref]: 'Kill Team night', [seat.ref]: 'Tomb of Horrors', [join.ref]: 'Trivia night',
+  });
+});

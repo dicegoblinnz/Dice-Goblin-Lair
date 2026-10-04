@@ -2771,6 +2771,20 @@ export class Lair {
   }
 
   /**
+   * A row's title on the member's own bill (GET /me dueNow), as My Lair words it: a table booking or walk-in is "Table
+   * T3" or "Tables T6 and T7", and an event game spot "Game table at Warhammer night", since the event's name alone
+   * reads like the event's entry. A game seat is its game and a sign-up its event, as on the counter's rows. No awaits.
+   */
+  dueTitle(row, rules) {
+    if (row.type !== 'booking' || row.kind === 'gm-seat' || row.kind === 'gm') return row.title;
+    const event = row.occurrenceId ? findOccurrence(rules, row.occurrenceId)?.title : null;
+    if (event) return `Game table at ${event}`;
+    const tables = row.tables || [];
+    const names = tables.length < 2 ? tables.join('') : `${tables.slice(0, -1).join(', ')} and ${tables[tables.length - 1]}`;
+    return `${tables.length > 1 ? 'Tables' : 'Table'} ${names}`;
+  }
+
+  /**
    * A booking or game seat as a check-in row (POST /checkin, the POS and its Today list): { id, type, ref, name, people,
    * tables, start, end, status, arrivedAt, paid, amount, covered, due, customerId, pass, refund, note } plus kind, title,
    * players, gameId, occurrenceId, seriesId (a weekly regular's seat), owed (a regular's seat that ended unpaid) and
@@ -4360,8 +4374,8 @@ export class Lair {
     // bookings, seats and sign-ups with something due (no-shows aside), then their owed seats.
     const day = this.memberDay(who.customerId, rules, now);
     const dueNow = [...day.today.filter((r) => r.due > 0 && r.status !== 'noshow'), ...day.owed].map((r) => ({
-      id: r.id, type: r.type, ref: r.ref, title: r.title, start: r.start, end: r.end, amount: r.amount, covered: r.covered, paidAmount: r.paidAmount,
-      due: r.due, owed: Boolean(r.owed),
+      id: r.id, type: r.type, ref: r.ref, title: this.dueTitle(r, rules), start: r.start, end: r.end, amount: r.amount, covered: r.covered,
+      paidAmount: r.paidAmount, due: r.due, owed: Boolean(r.owed),
     }));
     const gameRows = this.sql.exec('SELECT * FROM games WHERE gm_customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray().map((r) => this.rowToGame(r));
     const span = gameRows.length ? this.state(Math.min(...gameRows.map((g) => g.start)) - 1, Math.max(...gameRows.map((g) => g.end)) + 1) : null;
