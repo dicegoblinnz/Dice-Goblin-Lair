@@ -2631,11 +2631,15 @@ export class Lair {
     this.requireStaff(who);
     const rules = await this.rules();
     // --- no awaits from here on ---
-    return this.ticketCheckIn(input, rules, Date.now(), who.customerId ? `staff:${who.customerId}` : 'staff');
+    // A member code on the staff page also lists what they owe from earlier sessions (owed rows), for Waive and Mark paid.
+    return this.ticketCheckIn(input, rules, Date.now(), who.customerId ? `staff:${who.customerId}` : 'staff', { owed: true });
   }
 
-  /** The check-in itself, shared by the staff page and the POS. by: who did it, kept with any pass use. No awaits. */
-  ticketCheckIn(input, rules, now, by = null) {
+  /**
+   * The check-in itself, shared by the staff page and the POS. by: who did it, kept with any pass use. owed: a member
+   * code also lists their owed rows (the staff page asks for them; the POS's round 3 member-code lines don't). No awaits.
+   */
+  ticketCheckIn(input, rules, now, by = null, { owed = false } = {}) {
     const options = { force: input.force === true, pass: input.pass, by };
     if (input.id != null && input.id !== '') {
       const id = String(input.id);
@@ -2647,7 +2651,7 @@ export class Lair {
     }
     const found = this.findCode(input.code);
     if (!found) throw new RuleError('No booking, member or pass with that code.', 404);
-    if (found.type === 'member') return this.memberCard(found.item.customer_id, rules, now);
+    if (found.type === 'member') return this.memberCard(found.item.customer_id, rules, now, { owed });
     if (found.type === 'pass') {
       const pass = this.passView(found.item, { now });
       return {
@@ -2860,26 +2864,33 @@ export class Lair {
 
   /**
    * A member code at the counter: that member's rows today (each with what's left to pay) and their active passes.
-   * Nothing is checked in until staff pick a row. bookings is the round 3 list of the same day.
+   * Nothing is checked in until staff pick a row. bookings is the round 3 list of the same day. owed (the staff page):
+   * their owed rows come after today's, oldest first (owedRows, owed: true), the ones not already among today's. They
+   * are never checked in, only paid or waived; due counts them, and the message says what they owe.
    */
-  memberCard(customerId, rules, now) {
+  memberCard(customerId, rules, now, { owed: withOwed = false } = {}) {
     const { member, bookings, joins } = this.memberToday(customerId, rules, now);
     if (!member && !bookings.length && !joins.length) throw new RuleError('No booking, member or pass with that code.', 404);
     const memo = new Map();
     const rows = [...bookings.map((b) => this.bookingRow(b, rules, { memo })), ...joins.map((j) => this.joinRow(j))].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+    const today = new Set(rows.map((x) => x.id));
+    // The staff page's rows, without the POS's cart line
+    const owed = withOwed ? this.owedRows(customerId, rules, now, memo).filter((x) => !today.has(x.id)).map(({ line, ...x }) => x) : [];
     const name = member?.name || member?.first_name || bookings[0]?.name || joins[0]?.name || member?.code || 'This member';
-    const due = rows.reduce((sum, x) => sum + x.due, 0);
+    const due = [...rows, ...owed].reduce((sum, x) => sum + x.due, 0);
+    const owedDue = owed.reduce((sum, x) => sum + x.due, 0);
     const here = (x) => Boolean(x.arrivedAt) || ['seated', 'done', 'attended'].includes(x.status);
     const list = rows.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${here(x) ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
+    const said = rows.length ? `${name} has ${plural(rows.length, 'booking', 'bookings')} today. ${list}.` : `${name} has nothing booked today.`;
     return {
       found: true, kind: 'member', type: 'member', checkedIn: false, customer: { id: String(customerId) },
       member: { customerId: String(customerId), name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null },
-      rows, passes: this.activePasses(customerId, now), due,
+      rows: [...rows, ...owed], passes: this.activePasses(customerId, now), due,
       bookings: rows.map((x) => ({
         kind: x.type, id: x.id, ref: x.ref, title: x.title, start: x.start, end: x.end, people: x.people, tables: x.tables, status: x.status,
         checkedIn: here(x), due: x.due, gameId: x.gameId, occurrenceId: x.occurrenceId,
       })),
-      message: rows.length ? `${name} has ${plural(rows.length, 'booking', 'bookings')} today. ${list}.` : `${name} has nothing booked today.`,
+      message: owed.length ? `${said} They owe ${money(owedDue)} from ${plural(owed.length, 'earlier session', 'earlier sessions')}.` : said,
     };
   }
 

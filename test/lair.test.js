@@ -4399,3 +4399,55 @@ test('GET /members/birthdays (v5.1): code is the member code, the same as GET /m
     assert.equal(found.code, row.code, 'merging a birthday row into the member keeps their member code');
   }
 });
+
+test('POST /checkin with a member code (v5.1): today\'s rows as before, then their owed rows (owed: true), never checked in; due and the message count them; paying or waiving clears them; the POS keeps its own lines', async () => {
+  const listed = await call('POST', 'games', {
+    title: 'Weekly Ironsworn', system: 'Ironsworn', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Vows.', seats: 4, tables: ['A1'],
+    start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly',
+  }, 'gm');
+  const { sessions } = listed.data;
+  await call('POST', `games/${sessions[0].id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia');
+  // The first session ends unpaid, so it's owed; maintenance seats her in the next one.
+  Date.now = () => at('2026-10-01', 21, 5);
+  await maintenance();
+  // A week on, she has a table this afternoon too.
+  Date.now = () => at('2026-10-08', 13);
+  const table = (await call('POST', 'bookings', tableBooking({ start: at('2026-10-08', 15), end: at('2026-10-08', 17), people: 2, name: 'Mia', email: 'mia@example.com' }), 'mia')).data.booking;
+  const code = lair.memberRow('mia').code;
+  const owedSeat = lair.gameBookings(sessions[0].id).find((b) => b.customerId === 'mia');
+  const todaySeat = lair.gameBookings(sessions[1].id).find((b) => b.customerId === 'mia');
+  const before = lair.memberCard('mia', lair.rulesCache, Date.now());
+  const card = (await call('POST', 'checkin', { code }, 'staff')).data;
+  assert.deepEqual(card.rows.slice(0, before.rows.length), before.rows, "today's rows exactly as before");
+  assert.deepEqual(card.bookings, before.bookings, "the round 3 list is today's only");
+  assert.deepEqual(card.rows.map((r) => [r.id, r.owed]), [[table.id, false], [todaySeat.id, false], [owedSeat.id, true]]);
+  const owed = card.rows[2];
+  assert.deepEqual(
+    [owed.type, owed.kind, owed.ref, owed.title, owed.start, owed.status, owed.arrivedAt, owed.amount, owed.covered, owed.paidAmount, owed.due, owed.paid, owed.waived, owed.gameId, owed.seriesId],
+    ['booking', 'gm-seat', owedSeat.ref, 'Weekly Ironsworn', sessions[0].start, 'confirmed', null, 1500, 0, 0, 1500, false, false, sessions[0].id, owedSeat.seriesId],
+  );
+  assert.equal('line' in owed, false, 'no POS cart line on the staff page');
+  assert.deepEqual([card.due, before.due], [5000, 3500]);
+  assert.match(card.message, /^Mia has 2 bookings today\. .*\. They owe \$15 from 1 earlier session\.$/);
+  // A member code checks nothing in, owed or not.
+  assert.deepEqual([table.id, todaySeat.id, owedSeat.id].map((id) => [lair.booking(id).status, lair.booking(id).arrivedAt]), [['confirmed', null], ['confirmed', null], ['confirmed', null]]);
+  // The POS's round 3 member-code check-in keeps today's lines only (its member flow has owed rows from /pos/scan).
+  const counter = (await pos('checkin', { code })).data;
+  assert.deepEqual([counter.rows.map((r) => r.id), counter.lines.map((l) => l.properties._booking)], [[table.id, todaySeat.id], [table.ref, todaySeat.ref]]);
+  assert.deepEqual((await pos('scan', { code })).data.rows.filter((r) => r.owed).map((r) => r.id), [owedSeat.id]);
+
+  // Waiving it (the staff page's Waive) or paying it takes it off the card; un-waived, it's back.
+  const owedIds = async () => (await call('POST', 'checkin', { code }, 'staff')).data.rows.filter((r) => r.owed).map((r) => r.id);
+  assert.equal((await call('POST', `bookings/${owedSeat.id}/update`, { waived: true }, 'staff')).status, 200);
+  assert.deepEqual(await owedIds(), []);
+  await call('POST', `bookings/${owedSeat.id}/update`, { waived: false }, 'staff');
+  assert.deepEqual(await owedIds(), [owedSeat.id]);
+  await call('POST', `bookings/${owedSeat.id}/update`, { paid: true }, 'staff');
+  assert.deepEqual(await owedIds(), []);
+
+  // The next day she has nothing booked, and last night's seat ended unpaid: the card lists just that.
+  Date.now = () => at('2026-10-09', 13);
+  const next = (await call('POST', 'checkin', { code }, 'staff')).data;
+  assert.deepEqual([next.rows.map((r) => [r.id, r.owed]), next.bookings, next.due], [[[todaySeat.id, true]], [], 1500]);
+  assert.equal(next.message, 'Mia has nothing booked today. They owe $15 from 1 earlier session.');
+});
