@@ -147,3 +147,29 @@ Agents must not:
 - push
 - upload theme files
 - call the live Worker
+
+## v5.1 additions (5 Oct 2026)
+Four follow-ups the theme asked for. **Additive only:** no field was renamed or removed, there's no new migration, and money stays in cents. The theme's DemoBackend in `assets/lair-core.js` is the reference for each name and shape.
+
+**1. Floor `games`: `taken` counts the seats held for weekly regulars.**
+- No new field. `taken` = seats booked + `held`, and `held` (seats kept for regulars with no booking in that session yet) is never more than the seats still free, so `taken` never passes `seats` because of regulars.
+- `status` is `'full'` once `taken >= seats`, as the demo's `boardGames()` sends.
+- Seats held for regulars stay held everywhere seats are worked out:
+  - booking a seat, staff adding players, staff changing a seat's `people`, and putting a cancelled seat back (409 with the seats kept)
+  - a seat paid after its hold ran out
+- Joining a series counts the regulars ahead the way maintenance seats them (first to join, first seated).
+- A regular told on joining that the next session is full gets the "A seat came free" email if a seat is saved for them later.
+- A cancelled session (or series) holds nothing.
+
+**2. A member's own pass views carry where the pass came from.** This covers GET /me `passes` and the `pass` from `POST /me/passes/claim`.
+- `source`: `'staff'`, `'order'` or `'birthday'`, the staff pass view's values.
+- `orderName`: like `"#1550"`, or `null` when it wasn't bought.
+- `note`, only on a pass bought as a product: `"Bought online"` or `"Bought at the counter"`. Other notes are staff-only and never shown to members.
+
+**3. GET /me `series`** items add `schedule`: `'weekly'`, `'fortnightly'` or `'flexible'`. This is the same value as the floor's `series.schedule`.
+
+**4. GET /me `dueNow`**: table bookings get the titles My Lair shows.
+- A table booking or walk-in: `"Table T3"`, `"Tables T6 and T7"`, `"Tables T8, T9 and T10"`.
+- An event game spot: `"Game table at <event title>"`.
+- Game seats (today's or owed) and event sign-ups keep their titles.
+- The POS and staff check-in rows keep their own titles.
