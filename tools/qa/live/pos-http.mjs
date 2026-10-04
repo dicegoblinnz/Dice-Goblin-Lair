@@ -20,7 +20,7 @@ check('GET /pos/today', today.status === 200 && Array.isArray(today.data.groups)
 const groups = today.data.groups || [];
 const game = groups.find((g) => g.kind === 'game' && g.key === `game:${T.D.id}`);
 check('Today: the GM game is a group titled "<game> · GM <gm>" with its seats, not the GM', game && game.title === 'Curse of Strahd · GM Ana' && game.rows.length === 2 && game.rows.every((r) => r.kind === 'gm-seat'), game && [game.title, game.rows.map((r) => r.name)]);
-const dnd = groups.find((g) => g.key === `event:dnd-saturday-6pm@${T.today}`);
+const dnd = groups.find((g) => g.key === `event:${T.tonight}`);
 check('Today: tonight\'s D&D is an event group with Leo\'s sign-up', dnd && dnd.rows.some((r) => r.type === 'join' && r.ref === T.C.ref && r.name === 'Leo Tane'), dnd && dnd.rows.map((r) => r.ref));
 const tables = groups.find((g) => g.kind === 'tables');
 const refs = tables ? tables.rows.map((r) => r.ref) : [];

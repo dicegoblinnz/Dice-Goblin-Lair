@@ -11,7 +11,7 @@ const SECRET = 'hush';
 const SHOP = 'ep0qiq-rp.myshopify.com';
 
 globalSettings.lair_mode = 'live';
-const API = (globalSettings.lair_api || '/apps/lair').replace(/\/$/, '');
+const API = (globalSettings.lair_api || '/apps/liar').replace(/\/$/, '');
 globalSettings.store_phone = '09 555 0123';
 
 mockState.before = async (req, res, url) => {

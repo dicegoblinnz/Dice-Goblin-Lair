@@ -1,5 +1,6 @@
 // Mock lair_event metaobjects for render.mjs: the 30 real weekly events created in the store
-// (events-qa/events-data.json, the same data the Shopify entries were made from).
+// (events-qa/events-data.json, the same data the Shopify entries were made from). That file isn't in this repo: without
+// it, QA_EVENTS below stands in, the weekly events the live flows use (tools/qa/live), with made-up details.
 // Images render as /img/event-<slug>__WxH.svg placeholders; events-qa/shot.mjs serves the real PNG crops there.
 //
 // Round 4 (3 Oct, ev3 worktree): every event also has `payment` ("In store", "Online", "Online or in store", or
@@ -22,6 +23,42 @@ const DATA = path.join(HERE, '..', 'events-qa', 'events-data.json');
 const SIZES = { 'cyberpunk-red': '400x225', daggerheart: '400x225', 'dc-universe': '400x225', 'mtg-premodern': '320x180', rapscallion: '320x180' };
 
 const field = (value) => ({ value });
+
+/**
+ * The stand-in for events-data.json: weekly events from early September 2026, so every date the flows pick is on.
+ *   - D&D on Saturdays 6pm and Sundays 10am, $15 at the counter, 12 places
+ *   - Pokémon TCG league on Fridays 5pm (round 4 makes it "Online or in store", $10, 24 places)
+ *   - Warhammer & other wargames on Thursdays 6pm (round 4 gives it soft tables and game tables)
+ *   - Commander on Wednesdays and board games on Tuesdays: free, no sign-ups (no capacity)
+ */
+const QA_EVENTS = [
+  {
+    handle: 'dnd-saturday-6pm', title: 'Dungeons & Dragons', event_type: 'rpg', starts_at: '2026-09-05T18:00:00+12:00', ends_at: '2026-09-05T22:00:00+12:00',
+    repeat: 'weekly', capacity: 12, entry_fee: 15, image_slug: 'dnd',
+    description: 'Daring heroes, dodgy decisions and dice that never roll what you need. New players welcome.\n\nBring dice and a pencil, or borrow ours.',
+  },
+  {
+    handle: 'dnd-sunday-10am', title: 'Dungeons & Dragons', event_type: 'rpg', starts_at: '2026-09-06T10:00:00+12:00', ends_at: '2026-09-06T14:00:00+12:00',
+    repeat: 'weekly', capacity: 12, entry_fee: 15, image_slug: 'dnd',
+    description: 'A Sunday morning table for adventurers of every level.\n\nBring dice and a pencil, or borrow ours.',
+  },
+  {
+    handle: 'pokemon-tcg-league', title: 'Pokémon TCG league', event_type: 'tcg', starts_at: '2026-09-04T17:00:00+12:00', ends_at: '2026-09-04T20:00:00+12:00',
+    repeat: 'weekly', image_slug: 'pokemon', description: 'League play every Friday: bring a deck, earn points, win promos.',
+  },
+  {
+    handle: 'warhammer-wargames', title: 'Warhammer & other wargames', event_type: 'wargame', starts_at: '2026-09-03T18:00:00+12:00', ends_at: '2026-09-03T23:00:00+12:00',
+    repeat: 'weekly', image_slug: 'warhammer', description: 'Bring your army and find a game: Warhammer 40,000, Age of Sigmar, Kill Team and friends.',
+  },
+  {
+    handle: 'commander-night', title: 'Commander night', event_type: 'tcg', starts_at: '2026-09-02T18:00:00+12:00', ends_at: '2026-09-02T22:00:00+12:00',
+    repeat: 'weekly', image_slug: 'mtg', description: 'Casual Magic: The Gathering Commander pods. Just turn up.',
+  },
+  {
+    handle: 'board-game-night', title: 'Board game night', event_type: 'social', starts_at: '2026-09-01T18:00:00+12:00', ends_at: '2026-09-01T22:00:00+12:00',
+    repeat: 'weekly', image_slug: 'board-games', description: 'Grab a game off the library shelf and a table. Free, and the goblins can teach you.',
+  },
+];
 
 /** Round 4 changes to the real events, by handle */
 const ROUND4 = {
@@ -53,14 +90,24 @@ const lairIso = ({ y, m, d }, hour) => {
   return `${y}-${pad(m)}-${pad(d)}T${pad(hour)}:00:00${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
 };
 
-/** The two one-off events: next Sunday (a week on when today is Sunday) and the Sunday after */
+/**
+ * The one-off events: next Sunday (a week on when today is Sunday) and the Sunday after, and tonight's D&D (6-10pm on
+ * the day of the run, $15 at the counter), so the live flows have an event today whatever the day.
+ */
 function oneOffs() {
   const today = lairParts(Date.now());
   const weekday = new Date(Date.UTC(today.y, today.m - 1, today.d)).getUTCDay();
   const toSunday = (7 - weekday) % 7 || 7;
   const next = lairDay(toSunday);
   const after = lairDay(toSunday + 7);
+  const tonight = lairDay(0);
   return [
+    {
+      handle: 'dnd-tonight', title: 'Dungeons & Dragons', event_type: 'rpg',
+      starts_at: lairIso(tonight, 18), ends_at: lairIso(tonight, 22), repeat: null, capacity: 12, entry_fee: 15,
+      description: 'A one-shot for anyone who wants to roll some dice tonight. Pregens provided.',
+      image_slug: 'dnd',
+    },
     {
       handle: 'learn-riftbound', title: 'Learn to play: Riftbound', event_type: 'learn',
       starts_at: lairIso(next, 13), ends_at: lairIso(next, 15), repeat: null, capacity: 8,
@@ -78,11 +125,11 @@ function oneOffs() {
 }
 
 export function lairEvents() {
-  let rows = [];
+  let rows = QA_EVENTS;
   try {
     rows = JSON.parse(fs.readFileSync(DATA, 'utf8'));
   } catch {
-    return [];
+    // no events-data.json here: the stand-in
   }
   rows = [...rows.map((e) => ({ ...e, ...(ROUND4[e.handle] || {}) })), ...oneOffs()];
   return rows.map((e) => ({

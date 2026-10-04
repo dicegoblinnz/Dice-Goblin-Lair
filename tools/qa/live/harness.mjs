@@ -59,7 +59,8 @@ mockState.before = async (req, res, url) => {
     body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(chunks),
   });
   const text = await upstream.text();
-  apiLog.push({ at: Date.now(), who: who?.id || null, method: req.method, route, status: upstream.status, body: chunks.length ? Buffer.concat(chunks).toString('utf8').slice(0, 2000) : null, text: text.slice(0, 4000) });
+  // whole replies (a member card with owed rows and passes runs past 4 kB), so the flows can parse them
+  apiLog.push({ at: Date.now(), who: who?.id || null, method: req.method, route, status: upstream.status, body: chunks.length ? Buffer.concat(chunks).toString('utf8').slice(0, 2000) : null, text: text.slice(0, 200000) });
   res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
   res.end(text);
   return true;

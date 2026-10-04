@@ -146,7 +146,8 @@ check(`${L}: the webhook with _tab marks the tab paid`, paid.status === 200 && p
 await openLair(p);
 await p.waitForSelector('[data-tab-card]', { timeout: 5000 }).catch(() => {});
 const card3 = await text(p, '[data-tab-card]');
-check(`${L}: My Lair shows the tab paid, and a fresh one can start`, /Paid\. Thanks, friend\./.test(card3) && (await text(p, '[data-tab-add-title]')) === 'Start a fresh tab', card3.slice(0, 200));
+// round 5, one bill: while today's sessions are still to pay, the card leads with them and says the tab's paid in a line
+check(`${L}: My Lair shows the tab paid, and a fresh one can start`, /Paid\. Thanks, friend\.|Your tab's paid\. Thanks, friend\./.test(card3) && (await text(p, '[data-tab-add-title]')) === 'Start a fresh tab', card3.slice(0, 400));
 await shot(p, `mylair-tab-paid-${L}`);
 
 /* 5. Sam's bookings: the pass saved for check-in, what it covered */

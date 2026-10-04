@@ -2,7 +2,7 @@
 //   A  Sam (member, pass) books the $15 Fancy room for 4 at 5pm: the pass covers $10 a person, $5 each is left
 //   A2 Sam books T13 for 2 at 8pm with the pass (the staff page switches and undoes passes on this one)
 //   B  Kiri books T10 for 4 at 5pm and splits the bill: Sam and Leo pay shares at the counter
-//   C  Leo joins tonight's D&D (6pm, $15, paid in store)
+//   C  Leo joins tonight's D&D (6pm, $15, paid in store: dnd-tonight, the mock's one-off on the day of the run)
 //   D  Ana (trusted GM) runs a game today at G1+G2, 6-9pm, $5 GM fee: Sam takes a seat with his pass, Leo without
 //   E  a walk-in at T12, seated by staff
 //   F  Sam's self-serve tab: two drinks and a snack
@@ -20,7 +20,7 @@ const offset = (() => {
 })();
 const at = (h, m = 0) => Date.parse(`${today}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z`) - offset * 60000;
 const seed = JSON.parse(fs.readFileSync(new URL('./seed.json', import.meta.url)));
-const out = { today };
+const out = { today, tonight: `dnd-tonight@${today}` };
 
 const A = await proxy('POST', 'bookings', { customer: '7101', body: { kind: 'table', tables: ['F1'], start: at(17), end: at(19), people: 4, name: 'Sam Jones', email: 'sam@example.com', usePass: seed.samPass.code } });
 check('A: Sam books the Fancy room for 4 with his pass', A.status === 200 && A.data.booking.pass?.code === seed.samPass.code && A.data.booking.amount === 6000, A.data.error || A.data.booking?.ref);
@@ -31,7 +31,7 @@ out.A2 = A2.data.booking;
 const B = await proxy('POST', 'bookings', { customer: '7102', body: { kind: 'table', tables: ['T10'], start: at(17), end: at(20), people: 4, name: 'Kiri Smith', email: 'kiri@example.com', split: true } });
 check('B: Kiri books T10 for 4 and splits the bill', B.status === 200 && B.data.booking.split === true && B.data.booking.amount === 4000, B.data.error || B.data.booking?.ref);
 out.B = B.data.booking;
-const C = await proxy('POST', `events/dnd-saturday-6pm@${today}/join`, { customer: '7104', body: { name: 'Leo Tane', email: 'leo@example.com', people: 1, pay: 'now' } });
+const C = await proxy('POST', `events/${out.tonight}/join`, { customer: '7104', body: { name: 'Leo Tane', email: 'leo@example.com', people: 1, pay: 'now' } });
 check('C: Leo joins tonight\'s D&D (in store, so pay is ignored)', C.status === 200 && C.data.join?.status === 'confirmed' && !C.data.checkoutUrl && C.data.join.payment === 'store', C.data.error || JSON.stringify(C.data).slice(0, 200));
 out.C = C.data.join;
 const D = await proxy('POST', 'games', {

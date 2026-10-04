@@ -8,7 +8,7 @@ const { chromium } = require('/opt/node-tools/node_modules/playwright');
 const WORKER = 'http://127.0.0.1:8787';
 const SHOP = 'ep0qiq-rp.myshopify.com';
 globalSettings.lair_mode = 'live';
-const API = (globalSettings.lair_api || '/apps/lair').replace(/\/$/, '');
+const API = (globalSettings.lair_api || '/apps/liar').replace(/\/$/, '');
 const calls = [];
 mockState.before = async (req, res, url) => {
   if (!url.pathname.startsWith(`${API}/`)) return false;

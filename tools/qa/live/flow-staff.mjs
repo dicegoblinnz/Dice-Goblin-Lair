@@ -155,16 +155,24 @@ check(`${L}: void the pass`, voided?.status === 200 && JSON.parse(voided.text).p
 const tryVoid = await checkin(newPass.code);
 check(`${L}: a void pass scanned at check-in says so`, tryVoid.data.kind === 'pass' && /Void/.test(tryVoid.card), tryVoid.card.slice(0, 200));
 
-/* 6. the Members tab: Sam's pending prize, Leo's new code */
+/* 6. the Members tab (round 5: a list to sort and search, and a page for each member): Sam's pending prize, Leo's
+   new code */
 await p.click('[data-tab="members"]');
+await p.waitForSelector('[data-members-find]');
 const samCode = (await proxy('GET', 'me', { customer: '7101' })).data.member.code;
 await p.fill('[data-members-find]', samCode.toLowerCase());
-await p.waitForTimeout(1000);
-const members = await text(p, '[data-members-results]');
+await p.waitForFunction((c) => (document.querySelector('[data-members-list]')?.textContent || '').includes(c), samCode, { timeout: 8000 }).catch(() => {});
+const members = await text(p, '[data-members-list]');
 const pendingPrize = ((await proxy('GET', `members?q=${encodeURIComponent(samCode)}`, { customer: '7001' })).data[0]?.pendingPrizes || [])[0] || null;
 check(`${L}: (Sam has a dice prize waiting from the My Lair run)`, Boolean(pendingPrize), 'run flow-mylair.mjs first');
-check(`${L}: search by member code: Sam's card with his code`, members.includes('Sam Jones') && members.includes(samCode), members.slice(0, 200));
-check(`${L}: Sam's dice prize waiting at the counter shows, with Mark done`, !pendingPrize || (/to sort at the counter/.test(members) && Boolean(await p.$(`[data-prize-done="${pendingPrize.id}"]`))), members.slice(0, 300));
+check(`${L}: search by member code: Sam's row with his code`, members.includes('Sam Jones') && members.includes(samCode), members.slice(0, 200));
+await p.click('[data-members-list] [data-member-view="7101"]');
+await p.waitForSelector('[data-person-card]');
+await p.waitForFunction(() => !/Looking up what they owe|Loading their passes/.test(document.querySelector('.staff-person')?.textContent || ''), null, { timeout: 8000 }).catch(() => {});
+const person = await text(p, '[data-person-card]');
+const prizesText = await text(p, '[data-person-prizes]');
+check(`${L}: Sam's page: his code and its QR`, person.includes(samCode) && Boolean(await p.$('[data-person-card] svg')), person.slice(0, 200));
+check(`${L}: Sam's dice prize waiting at the counter shows, with Mark done`, !pendingPrize || (/to sort at the counter/.test(prizesText) && Boolean(await p.$(`[data-prize-done="${pendingPrize.id}"]`))), prizesText.slice(0, 300));
 await shot(p, `staff-members-${L}`);
 if (pendingPrize) {
   b = apiLog.length;
@@ -173,15 +181,20 @@ if (pendingPrize) {
   const done = apiLog.slice(b).find((c) => c.method === 'POST' && /^prizes\/.+\/done$/.test(c.route));
   check(`${L}: Mark done: the prize is sorted`, done?.status === 200 && JSON.parse(done.text).prize.status === 'done' && !(await p.$(`[data-prize-done="${pendingPrize.id}"]`)), done ? done.text : 'no call');
 }
+await p.click('[data-members-back]');
+await p.waitForSelector('[data-members-find]');
 await p.fill('[data-members-find]', 'leo');
-await p.waitForTimeout(1000);
-await p.click('[data-member-confirm="7104"]');
+await p.waitForSelector('[data-members-list] [data-member-view="7104"]', { timeout: 8000 }).catch(() => {});
+await p.click('[data-members-list] [data-member-view="7104"]');
+await p.waitForSelector('[data-member-confirm="code:7104"]');
+await p.click('[data-member-confirm="code:7104"]');
 b = apiLog.length;
 await p.click('[data-member-new-code="7104"]');
 await p.waitForTimeout(1000);
 const fresh = apiLog.slice(b).find((c) => c.method === 'POST' && c.route === 'members/7104/new-code');
 const newCode = fresh ? JSON.parse(fresh.text).code : '';
-check(`${L}: a new member code for Leo, shown with "New"`, fresh?.status === 200 && newCode && newCode !== leoCode && (await text(p, '[data-members-results]')).includes(newCode), fresh ? fresh.text : 'no call');
+const leoCard = await text(p, '[data-person-card]');
+check(`${L}: a new member code for Leo, shown with "New"`, fresh?.status === 200 && newCode && newCode !== leoCode && leoCard.includes(newCode) && /New/.test(leoCard), fresh ? `${fresh.text} | ${leoCard.slice(0, 160)}` : 'no call');
 const oldScan = await checkin(leoCode);
 check(`${L}: the old member code stops working`, oldScan.call?.status === 404 || oldScan.data.kind !== 'member', oldScan.card.slice(0, 120));
 const newScan = await checkin(newCode);

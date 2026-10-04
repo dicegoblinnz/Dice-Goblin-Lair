@@ -1,5 +1,7 @@
 // GM games board, live: a seat without a pass, a seat with a pass (the GM fee is still paid), "join every session",
 // and the GM's tools (message the players, cancel a session). Ana (trusted GM) lists a weekly game first.
+// Round 5: a weekly regular ("save my seat every week") holds a seat in the next session only, with their member code
+// as the ticket; later sessions are seated as each one ends (flow-r5-regulars.mjs covers that part).
 import fs from 'node:fs';
 import { start, stop, context, page, overflow, shot, text, apiLog, PHONE, DESKTOP, BASE } from './harness.mjs';
 import { check, summary, proxy, fake } from './client.mjs';
@@ -82,7 +84,8 @@ out.samSeat = got.booking;
 problems.push(...ps.problems);
 await sam.close();
 
-/* 3. Kiri: join every session */
+/* 3. Kiri: join every session (round 5: her seat in the next session, her member code as the ticket) */
+const kiriCode = (await proxy('GET', 'me', { customer: '7102' })).data.member?.code;
 const kiri = await context(7102, DEVICE);
 const pk = await page(kiri, `${L}/kiri`);
 await openJoin(pk, g.id, true);
@@ -93,11 +96,11 @@ await pk.click('[data-join-submit]');
 await pk.waitForSelector('.gm-done', { timeout: 8000 }).catch(() => {});
 call = apiLog.slice(b).find((c) => c.method === 'POST' && /join-series/.test(c.route));
 got = call ? JSON.parse(call.text) : {};
-check(`${L}: every session: a seat in each upcoming session, each with its own code`, call?.status === 200 && got.booked?.length === listed.data.sessions.length && got.booked.every((x) => /^KS-[A-Z]+-\d+$/.test(x.ref)) && !('pay' in JSON.parse(call.body)), call ? call.text.slice(0, 200) : 'no call');
+check(`${L}: a regular: a seat in the next session only, the member code is the ticket`, call?.status === 200 && got.booked?.length === 1 && got.booked[0].gameId === g.id && /^KS-[A-Z]+-\d+$/.test(got.booked[0].ref) && got.booked[0].ticketCode === kiriCode && !('pay' in JSON.parse(call.body)), call ? call.text.slice(0, 260) : 'no call');
 const tk3 = await text(pk, '.gm-done');
-check(`${L}: the "regular" ticket lists the sessions and says pay at the counter each session`, /You’re in every session/.test(tk3) && /Pay at the counter each session/.test(tk3) && got.booked && tk3.includes(got.booked[0].ref), tk3.slice(0, 300));
+const qr3 = await pk.evaluate(() => document.querySelector('.gm-done .gm-ticket__stub svg')?.getAttribute('aria-label') || '');
+check(`${L}: the "regular" ticket: seat saved every week, the next session, pay at the counter each week, the Goblin card as the ticket`, /A regular! Gobgob has saved your seat/.test(tk3) && /Your seat’s saved every week/.test(tk3) && /Each week\$20 Pay at the counter/.test(tk3) && /Your Goblin card is your ticket/.test(tk3) && Boolean(kiriCode) && qr3.includes(kiriCode), { qr3, tk3: tk3.slice(0, 400) });
 out.series = got;
-const seriesResult = got;
 problems.push(...pk.problems);
 await kiri.close();
 
@@ -132,9 +135,10 @@ if (second) {
   await pa.waitForTimeout(1500);
   call = apiLog.slice(b).find((c) => c.method === 'POST' && c.route === `games/${second}/update`);
   got = call ? JSON.parse(call.text) : {};
-  check(`${L}: the GM cancelled one session: Kiri's seat in it goes`, call?.status === 200 && got.game?.status === 'cancelled' && got.affected === 1, call ? call.text.slice(0, 200) : 'no call');
+  // round 5: nobody holds a seat in the session after next yet (regulars roll forward as each session ends)
+  check(`${L}: the GM cancelled the session after next: nobody had a seat in it yet`, call?.status === 200 && got.game?.status === 'cancelled' && got.affected === 0, call ? call.text.slice(-200) : 'no call');
   const told = await text(pa, 'gm-board dialog');
-  check(`${L}: the board says who was told`, /Cancelled .+We’ve emailed 1 booking/.test(told), told.slice(0, 200));
+  check(`${L}: the board says there was no one to tell`, /Cancelled .+Nobody had a seat, so there was no one to tell\./.test(told), told.slice(0, 200));
 }
 problems.push(...pa.problems);
 await ana.close();
@@ -147,14 +151,17 @@ await pk2.goto('about:blank');
 await pk2.goto(`${BASE}/pages/gm-games#game=${encodeURIComponent(g.id)}`, { waitUntil: 'networkidle' });
 await pk2.waitForSelector('[data-leave]', { timeout: 8000 }).catch(() => {});
 const youText = await text(pk2, '.gm-you');
-check(`${L}: Kiri's ticket on the game, with skip and leave`, seriesResult.booked && youText.includes(seriesResult.booked[0].ref) && Boolean(await pk2.$('[data-skip]')) && Boolean(await pk2.$('[data-leave]')), youText.slice(0, 200));
+check(`${L}: Kiri's ticket on the game (her member code), with skip and leave`, Boolean(kiriCode) && youText.includes(kiriCode) && /Your seat’s saved every week/.test(youText) && Boolean(await pk2.$('[data-skip]')) && Boolean(await pk2.$('[data-leave]')), youText.slice(0, 200));
 await pk2.click('[data-skip]');
 await pk2.waitForSelector('[data-skip-do]');
 b = apiLog.length;
 await pk2.click('[data-skip-do]');
 await pk2.waitForTimeout(1500);
 call = apiLog.slice(b).find((c) => c.method === 'POST' && /^bookings\/.+\/update$/.test(c.route));
-check(`${L}: skipping a session cancels that seat only`, call?.status === 200 && JSON.parse(call.body).status === 'cancelled' && JSON.parse(call.text).booking.status === 'cancelled' && /Skipped .+You’re still in every other session\./.test(await text(pk2, 'gm-board dialog')), call ? call.text.slice(0, 160) : 'no call');
+check(`${L}: skipping a session cancels that seat only, and the seat stays saved after that`, call?.status === 200 && JSON.parse(call.body).status === 'cancelled' && JSON.parse(call.text).booking.status === 'cancelled' && /Skipped .+Your seat’s still saved after that\./.test(await text(pk2, 'gm-board dialog')), call ? call.text.slice(0, 160) : 'no call');
+const kiriMe = (await proxy('GET', 'me', { customer: '7102' })).data;
+check(`${L}: she's still a regular after skipping`, kiriMe.series?.some((m) => m.seriesId === g.seriesId), kiriMe.series);
+const coming = (kiriMe.seats || []).filter((x) => x.seriesId === g.seriesId && ['held', 'confirmed'].includes(x.status) && x.start > Date.now()).length;
 await pk2.waitForSelector('[data-leave]', { timeout: 8000 }).catch(() => {});
 await pk2.click('[data-leave]');
 await pk2.waitForSelector('[data-leave-do]');
@@ -163,7 +170,8 @@ await pk2.click('[data-leave-do]');
 await pk2.waitForTimeout(1500);
 call = apiLog.slice(b).find((c) => c.method === 'POST' && /^series\/.+\/leave$/.test(c.route));
 const left = call ? JSON.parse(call.text) : {};
-check(`${L}: leaving the series frees the seats to come`, call?.status === 200 && left.ok === true && left.cancelled === seriesResult.booked.length - 2 && /You’ve left/.test(await text(pk2, 'gm-board dialog')), call ? call.text : 'no call');
+check(`${L}: leaving the series frees the seats to come (none after the skip)`, call?.status === 200 && left.ok === true && left.cancelled === coming && /Gobgob has stopped saving your seat/.test(await text(pk2, 'gm-board dialog')), call ? `${call.text} (coming ${coming})` : 'no call');
+check(`${L}: she's not a regular any more`, !((await proxy('GET', 'me', { customer: '7102' })).data.series || []).some((m) => m.seriesId === g.seriesId));
 problems.push(...pk2.problems);
 await kiri2.close();
 check(`${L}: no script errors, console errors or failed requests`, problems.length === 0, problems.slice(0, 6).join(' | '));
