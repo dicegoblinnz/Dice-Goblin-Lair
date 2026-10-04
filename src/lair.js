@@ -3581,12 +3581,28 @@ export class Lair {
     return 'active';
   }
 
-  /** A pass as its holder sees it (GET /me, claiming one). source: 'staff', 'order' or 'birthday'. */
+  /**
+   * A pass as its holder sees it (GET /me, claiming one). source: 'staff', 'order' or 'birthday', the same as the staff
+   * view. A pass bought as a product also has orderName (like "#1550") and note: how it was bought, "Bought online" or
+   * "Bought at the counter". Notes are otherwise for staff only, so that's all a member ever sees of one: a pass staff
+   * made has no note here, and a bought pass's note gives only how it was bought, even after staff add to it ('' once
+   * they've replaced that). orderName is null for passes that weren't bought.
+   */
   memberPassView(p, now = Date.now()) {
+    const bought = p.source === 'order';
     return {
       code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), cover: p.cover,
-      expiresAt: p.expiresAt, status: this.passStatus(p, now), source: p.source, orderName: p.orderName,
+      expiresAt: p.expiresAt, status: this.passStatus(p, now), source: p.source, orderName: bought ? p.orderName || null : null,
+      ...(bought ? { note: this.boughtNote(p.note) } : {}),
     };
+  }
+
+  /** How a pass from an order was bought, from the note the order gave it: "Bought online", "Bought at the counter", or '' */
+  boughtNote(note) {
+    const text = String(note || '').trim();
+    if (/^bought at the counter\b/i.test(text)) return 'Bought at the counter';
+    if (/^bought online\b/i.test(text)) return 'Bought online';
+    return '';
   }
 
   /**

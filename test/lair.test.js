@@ -4282,3 +4282,42 @@ test('weekly regulars (v5.1): joining seats someone exactly as maintenance would
   }
 });
 
+test('passes (v5.1): a member\'s own pass views say where each pass came from, like the staff view: source, orderName and, for a pass bought as a product, how it was bought', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  await call('POST', 'me/profile', { name: 'Sam Jones', email: 'sam@example.com' }, '1001');
+  lair.shopify.orderSpend = async (id) => ({ customerId: id.endsWith('/1552') ? null : '1001', amount: 10000, source: 'web', name: `#${id.split('/').pop()}` });
+  lair.shopify.orderBuyer = async (id) => ({ name: `#${id.split('/').pop()}`, billingName: '', shippingName: '', customerId: null, customerName: '', customerEmail: '' });
+  // One bought online, one at the counter, one staff made (with a note for staff only), and a birthday gift.
+  await internal('orders-paid', passOrder(1550, [passLine(15501, 'LAIR-PASS-10', 1, '100.00')]));
+  await internal('orders-paid', passOrder(1551, [passLine(15511, 'LAIR-PASS-5', 1, '50.00')], { source_name: 'pos' }));
+  assert.equal((await call('POST', 'passes', { label: 'Warhammer league', sessions: 10, customerId: '1001', note: 'League organiser: $50 up front' }, 'staff')).status, 200);
+  assert.equal((await call('POST', 'members/1001/gift', { sessions: 2 }, 'staff')).status, 200);
+  const shape = (p) => [p.source, p.orderName, 'note' in p ? p.note : '(none)'];
+  const mine = async () => Object.fromEntries((await call('GET', 'me', null, '1001')).data.passes.map((p) => [p.label, p]));
+  const passes = await mine();
+  assert.deepEqual(shape(passes['Session pass: 10 sessions']), ['order', '#1550', 'Bought online']);
+  assert.deepEqual(shape(passes['Session pass: 5 sessions']), ['order', '#1551', 'Bought at the counter']);
+  assert.deepEqual(shape(passes['Warhammer league']), ['staff', null, '(none)'], 'a staff note stays with staff');
+  assert.deepEqual(shape(passes['Birthday gift: 2 sessions']), ['birthday', null, '(none)']);
+  // The staff view of the same passes says the same.
+  const staff = (await call('GET', 'passes?status=all', null, 'staff')).data.passes;
+  for (const p of Object.values(passes)) {
+    const s = staff.find((x) => x.code === p.code);
+    assert.deepEqual([s.source, s.orderName], [p.source, p.orderName]);
+    if (p.source === 'order') assert.equal(s.note, p.note);
+  }
+  // Staff add to a bought pass's note: the member still sees only how it was bought, and nothing once it's replaced.
+  const online = staff.find((x) => x.orderName === '#1550');
+  await call('POST', `passes/${online.id}/update`, { note: 'Bought online. Swapping for a 5-pass?' }, 'staff');
+  assert.equal((await mine())['Session pass: 10 sessions'].note, 'Bought online');
+  await call('POST', `passes/${online.id}/update`, { note: 'Gift for their brother' }, 'staff');
+  assert.deepEqual(shape((await mine())['Session pass: 10 sessions']), ['order', '#1550', '']);
+  // Claiming a pass sold with no customer on the sale gives the same view.
+  await internal('orders-paid', passOrder(1552, [passLine(15521, 'LAIR-PASS-5', 1, '50.00')], { source_name: 'pos' }));
+  const loose = (await ordersPasses('#1552'))[0];
+  assert.equal(loose.holder.customerId, null);
+  await call('POST', 'me/profile', { name: 'Aroha Ngata', email: 'aroha@example.com' }, '2002');
+  const claimed = await call('POST', 'me/passes/claim', { code: loose.code }, '2002');
+  assert.equal(claimed.status, 200, claimed.data.error);
+  assert.deepEqual(shape(claimed.data.pass), ['order', '#1552', 'Bought at the counter']);
+});
