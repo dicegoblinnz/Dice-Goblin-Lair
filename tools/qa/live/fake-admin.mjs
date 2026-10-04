@@ -5,13 +5,16 @@
 //   rooms   = the theme's default rooms (T1-T21, P1-P4, G1-G4, F1 at $15)
 //   events  = the mock renderer's lair_event metaobjects (events-mock.mjs: round 4 payment / lock_tables included)
 //   theme   = dg-theme-t5's config/settings_data.json (hours, shop tables, prices)
-// and keeps draft orders, orders (for orders/paid spend), store credit and discount codes in memory.
+// and keeps draft orders, orders (for orders/paid spend and session pass buyers), store credit and discount codes in
+// memory.
 //
 // Control routes for the test scripts (never part of Shopify):
 //   GET  /__fake/state                       everything it holds
-//   POST /__fake/set { failCheckout, failCredit }
-//   POST /__fake/customer { id, tags }
-//   POST /__fake/order { id, customerId, subtotal (cents), source }
+//   POST /__fake/set { failCheckout, failCredit, failDiscount, failBuyer }
+//                                            failDiscount: discountCodeBasicCreate answers with a userError;
+//                                            failBuyer: OrderBuyer fails like a store without protected data approval
+//   POST /__fake/customer { id, tags, name, email }
+//   POST /__fake/order { id, customerId, subtotal (cents), source, name ("#1550"), billingName, shippingName }
 //   POST /__fake/draft-paid { draftId, orderId }  the checkout was paid: the draft order turned into orderId
 //   GET  /__fake/calls                       every GraphQL call so far (operation, variables)
 //   GET  /__fake/emails                      every email the app sent (Resend stand-in at /resend/emails[/batch])
@@ -29,15 +32,31 @@ const LOG = path.join(HERE, 'fake-admin.calls.jsonl');
 const state = {
   failCheckout: false,
   failCredit: false,
+  failDiscount: false,
+  failBuyer: false,
   customers: {
     7001: ['staff'], // Mo, staff
     7101: [], // Sam Jones, member
     7102: [], // Kiri Smith, a friend who pays a share
     7103: ['gm'], // Ana Rangi, trusted GM
     7104: [], // Leo Tane, player
+    7105: [], // Zoë van der Berg, brand new
+    7106: [], // Tui Harper, a weekly regular (round 5 flows)
+    7107: [], // Ari Moana, buys a pass before ever opening My Lair
+  },
+  // names and emails for OrderBuyer (protected customer data), the same made-up people as harness.mjs
+  people: {
+    7001: { name: 'Mo Ashgrove', email: 'mo@dicegoblin.test' },
+    7101: { name: 'Sam Jones', email: 'sam@example.com' },
+    7102: { name: 'Kiri Smith', email: 'kiri@example.com' },
+    7103: { name: 'Ana Rangi', email: 'ana@example.com' },
+    7104: { name: 'Leo Tane', email: 'leo@example.com' },
+    7105: { name: 'Zoë van der Berg', email: 'zoe@example.com' },
+    7106: { name: 'Tui Harper', email: 'tui@example.com' },
+    7107: { name: 'Ari Moana', email: 'ari@example.com' },
   },
   drafts: {}, // id -> { id, status, orderId, input }
-  orders: {}, // gid -> { customerId, subtotal, source }
+  orders: {}, // gid -> { customerId, subtotal, source, name, billingName, shippingName }
   credits: [], // { customerId, amount }
   discounts: [],
   webhooks: [],
@@ -119,8 +138,24 @@ function answer(op, query, v) {
       if (!o) return { order: null };
       return {
         order: {
-          id: v.id, sourceName: o.source || 'web', customer: o.customerId ? { id: `gid://shopify/Customer/${o.customerId}` } : null,
+          id: v.id, name: o.name, sourceName: o.source || 'web', customer: o.customerId ? { id: `gid://shopify/Customer/${o.customerId}` } : null,
           currentSubtotalPriceSet: { shopMoney: { amount: (o.subtotal / 100).toFixed(2), currencyCode: 'NZD' } },
+        },
+      };
+    }
+    case 'OrderBuyer': {
+      if (state.failBuyer) return { __errors: [{ message: 'Access denied for customer field. This app is not approved to access protected customer data.' }] };
+      const o = state.orders[v.id];
+      if (!o) return { order: null };
+      const person = o.customerId ? state.people[o.customerId] || {} : {};
+      return {
+        order: {
+          id: v.id, name: o.name,
+          billingAddress: o.billingName ? { name: o.billingName } : null,
+          shippingAddress: o.shippingName ? { name: o.shippingName } : null,
+          customer: o.customerId
+            ? { id: `gid://shopify/Customer/${o.customerId}`, displayName: person.name || '', defaultEmailAddress: person.email ? { emailAddress: person.email } : null }
+            : null,
         },
       };
     }
@@ -132,6 +167,7 @@ function answer(op, query, v) {
       return { storeCreditAccountCredit: { storeCreditAccountTransaction: { amount: { amount: (amount / 100).toFixed(2) } }, userErrors: [] } };
     }
     case 'Prize':
+      if (state.failDiscount) return { discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ field: ['basicCodeDiscount'], message: 'Fake: discounts are switched off', code: 'FAKE' }] } };
       state.discounts.push(v.discount);
       return { discountCodeBasicCreate: { codeDiscountNode: { id: `gid://shopify/DiscountCodeNode/${(seq += 1)}` }, userErrors: [] } };
     case 'Hooks':
@@ -173,6 +209,7 @@ const server = http.createServer(async (req, res) => {
       if (op === 'Draft' && state.failCheckout === 'http') return send(res, 500, { errors: 'boom' });
       const data = answer(op, query, variables || {});
       if (!data) return send(res, 200, { errors: [{ message: `Fake Admin API: unknown operation ${op}` }] });
+      if (data.__errors) return send(res, 200, { errors: data.__errors });
       return send(res, 200, { data });
     }
     // Resend's API: the app's emails land here (the dev entry sends api.resend.com/* to /resend/*)
@@ -187,17 +224,21 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/__fake/calls') return send(res, 200, state.calls);
     if (url.pathname === '/__fake/set' && req.method === 'POST') {
       Object.assign(state, JSON.parse(raw || '{}'));
-      return send(res, 200, { ok: true, failCheckout: state.failCheckout, failCredit: state.failCredit });
+      return send(res, 200, { ok: true, failCheckout: state.failCheckout, failCredit: state.failCredit, failDiscount: state.failDiscount, failBuyer: state.failBuyer });
     }
     if (url.pathname === '/__fake/customer' && req.method === 'POST') {
-      const { id, tags } = JSON.parse(raw || '{}');
+      const { id, tags, name, email } = JSON.parse(raw || '{}');
       state.customers[String(id)] = tags || [];
+      if (name || email) state.people[String(id)] = { name: name || '', email: email || '' };
       return send(res, 200, { ok: true });
     }
     if (url.pathname === '/__fake/order' && req.method === 'POST') {
       const o = JSON.parse(raw || '{}');
       const gid = String(o.id).startsWith('gid://') ? o.id : `gid://shopify/Order/${o.id}`;
-      state.orders[gid] = { customerId: o.customerId ? String(o.customerId) : null, subtotal: Number(o.subtotal || 0), source: o.source || 'web' };
+      state.orders[gid] = {
+        customerId: o.customerId ? String(o.customerId) : null, subtotal: Number(o.subtotal || 0), source: o.source || 'web',
+        name: o.name || `#${String(gid).split('/').pop()}`, billingName: o.billingName || '', shippingName: o.shippingName || '',
+      };
       return send(res, 200, { ok: true, gid });
     }
     if (url.pathname === '/__fake/draft-paid' && req.method === 'POST') {

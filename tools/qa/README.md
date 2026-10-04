@@ -17,6 +17,8 @@ Nothing here ships. The Worker bundles only `src/`, and `npm test` runs only `te
 - Seeds: `seed.mjs` and `seed-today.mjs`.
 - POS routes: `pos-http.mjs`.
 - Page flows, phone and desktop, driven by Playwright through `harness.mjs`.
+- Round 5 (`flow-r5-*.mjs`): passes sold as a product (`LAIR-PASS-N` orders), birthday gifts, weekly regulars, the Members view, one bill at the POS (`/pos/checkin-member` with owed lines and the tab), and the staff page's owed rows with Waive, members list and gifts.
+  - Weekly regulars need a session to have ended. `flow-r5-regulars-setup.mjs` books one, then `run-all.sh` stops wrangler and `r5-travel.py` moves that game a week earlier in the saved state, starts wrangler again, and `flow-r5-regulars.mjs` runs maintenance (`/setup`) and checks what's owed.
 - `live-smoke.mjs`.
 
 **Paths and config:**
