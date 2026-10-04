@@ -14,10 +14,12 @@ const run = Date.now() % 100000;
 await start();
 const problems = [];
 
-async function openLair(p) {
+/** My Lair at one of its views: Home (the card and the dice), or #tab, #wallet, #bookings, #me. Everything is drawn into
+    every view, so text can be read from any of them; a click needs its view showing. */
+async function openLair(p, view = '') {
   if (p.url().includes('/pages/my-lair')) await p.goto('about:blank');
-  await p.goto(`${BASE}/pages/my-lair`, { waitUntil: 'networkidle' });
-  await p.waitForSelector('[data-card-qr] svg', { timeout: 8000 }).catch(() => {});
+  await p.goto(`${BASE}/pages/my-lair${view ? `#${view}` : ''}`, { waitUntil: 'networkidle' });
+  await p.waitForSelector('[data-card-qr] svg', { state: 'attached', timeout: 8000 }).catch(() => {});
 }
 
 /* setup: Sam spends $200 online (a signed orders/paid webhook), staff-side refund states for Kiri */
@@ -80,14 +82,16 @@ check(`${L}: recent prizes list the pending one`, /Show this at the counter to c
 await shot(p, `mylair-dice-pending-${L}`);
 fs.writeFileSync(new URL(`./pending-prize-${L}.json`, import.meta.url), JSON.stringify(pending?.prize || null));
 
-/* 3. passes: Sam's league pass */
+/* 3. passes: Sam's league pass (in the Wallet) */
 const passes = await text(p, '[data-passes]');
 check(`${L}: Sam's pass is listed with sessions left`, /Warhammer league/.test(passes) && /of 10 sessions left/.test(passes) && passes.includes(seed.samPass.code), passes.slice(0, 200));
+await p.click('.ml-bar [data-view-link="wallet"]');
+await p.waitForTimeout(300);
 await shot(p, `mylair-passes-${L}`);
 
-/* 4. the tab: add from the menu, edit, clear, add again */
+/* 4. the tab: add from the menu, edit, clear, add again (in the Tab view) */
 await proxy('POST', 'tab/clear', { customer: '7101', body: {} });
-await openLair(p);
+await openLair(p, 'tab');
 const firstGroup = await p.$('[data-menu-toggle]');
 if (firstGroup && (await firstGroup.getAttribute('aria-expanded')) === 'false') await firstGroup.click();
 const items = await p.$$eval('.ml-menu__item[data-variant]', (rows) => rows.filter((r) => r.offsetParent).slice(0, 2).map((r) => r.dataset.variant));
@@ -133,7 +137,7 @@ check(`${L}: a fresh tab after clearing`, call?.status === 200 && tab?.status ==
 // the counter: the POS puts it in the cart
 const added = await pos('POST', `tab/${tab.id}/added`, {});
 check(`${L}: POST /pos/tab/:id/added marks it in the cart`, added.status === 200 && added.data.tab.status === 'in-cart');
-await openLair(p);
+await openLair(p, 'tab');
 await p.waitForSelector('[data-tab-card]', { timeout: 5000 }).catch(() => {});
 const card2 = await text(p, '[data-tab-card]');
 check(`${L}: My Lair shows "At the counter now", and no adding`, /At the counter/.test(card2) && (await p.$eval('[data-tab-add]', (el) => el.hidden)), card2.slice(0, 200));
@@ -143,7 +147,7 @@ const order = 81000 + run;
 await fake('POST', 'order', { id: order, customerId: '7101', subtotal: tab.total, source: 'pos' });
 const paid = await webhook({ id: order, source_name: 'pos', line_items: tab.items.map((x, i) => ({ id: order * 10 + i, title: x.title, price: (x.price / 100).toFixed(2), quantity: x.qty, variant_id: Number(x.variantId), properties: [{ name: '_tab', value: tab.id }] })) });
 check(`${L}: the webhook with _tab marks the tab paid`, paid.status === 200 && paid.data.tabs?.[0] === tab.id, paid.data);
-await openLair(p);
+await openLair(p, 'tab');
 await p.waitForSelector('[data-tab-card]', { timeout: 5000 }).catch(() => {});
 const card3 = await text(p, '[data-tab-card]');
 // round 5, one bill: while today's sessions are still to pay, the card leads with them and says the tab's paid in a line
@@ -161,7 +165,7 @@ await sam.close();
 /* 6. Leo claims the unclaimed gift pack by its code; then nobody else can */
 const leo = await context(7104, DEVICE);
 const pl = await page(leo, `${L}/leo`);
-await openLair(pl);
+await openLair(pl, 'wallet');
 await pl.fill('#ml-claim-code', 'zz nope 9');
 let cb = apiLog.length;
 await pl.click('[data-claim] [type="submit"]');
@@ -185,7 +189,7 @@ check(`${L}: someone else claiming it: 409 and the contract's words`, stolen.sta
 /* 7. Kiri: the split bill, and the refund labels on her game spots */
 const kiri = await context(7102, DEVICE);
 const k = await page(kiri, `${L}/kiri`);
-await openLair(k);
+await openLair(k, 'bookings');
 const kb = await text(k, '[data-panel="bookings"]');
 check(`${L}: Kiri's booking: "Splitting the bill", paid $20 of $40, $20 left`, kb.includes(T.B.ref) && /Splitting the bill/.test(kb) && /Paid \$20 of \$40 · \$20 left/.test(kb), kb.slice(0, 500));
 await k.evaluate((ref) => [...document.querySelectorAll('[data-panel="bookings"] .ml-ticket, [data-panel="bookings"] article')].find((x) => x.textContent.includes(ref))?.scrollIntoView({ block: 'center' }), T.B.ref);

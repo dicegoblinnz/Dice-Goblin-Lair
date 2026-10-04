@@ -45,12 +45,27 @@ export async function open(size, path = '/pages/my-lair', opts = {}) {
   m.mockState.customer = opts.customer === undefined ? customer : opts.customer;
   await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
   if (path.startsWith('/pages/my-lair') && m.mockState.customer) {
-    await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { timeout: 10000 });
+    // My Lair is five views (Home, Bookings, Tab, Wallet, Me) and only one shows: the bookings panel is drawn either way
+    await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached', timeout: 10000 });
   }
   if (path.startsWith('/pages/gm-games')) await page.waitForSelector('.gm-card, .gm-empty', { timeout: 10000 });
   await page.waitForTimeout(400);
   return { ctx, page, tag };
 }
+/** Open one of My Lair's views the way a person does: its link in the bar (the rail from 990px) */
+export async function view(page, name) {
+  await page.click(`.ml-bar [data-view-link="${name}"]`);
+  await page.waitForSelector(`[data-view="${name}"]:not([hidden])`, { timeout: 5000 });
+  await page.waitForTimeout(250);
+}
+
+/** Open a later booking's row so its ticket shows (today's tickets are open already) */
+export async function openRow(page, selector) {
+  const row = page.locator(`details.ml-later:has(${selector})`).first();
+  if ((await row.count()) && !(await row.evaluate((d) => d.open))) await row.locator(':scope > summary').click();
+  await page.waitForTimeout(150);
+}
+
 export async function overflow(page, tag) {
   const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   if (over > 0) errors.push(`${tag}: horizontal overflow ${over}px`);

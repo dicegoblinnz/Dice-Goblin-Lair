@@ -11,8 +11,8 @@ check(`${L}: Kiri has a refunded booking and one waiting on staff (from the staf
 await start();
 const ctx = await context(7102, DEVICE);
 const p = await page(ctx, `${L}/kiri-refunds`);
-await p.goto(`${BASE}/pages/my-lair`, { waitUntil: 'networkidle' });
-await p.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { timeout: 8000 }).catch(() => {});
+await p.goto(`${BASE}/pages/my-lair#bookings`, { waitUntil: 'networkidle' });
+await p.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached', timeout: 8000 }).catch(() => {});
 const panel = await text(p, '[data-panel="bookings"]');
 const rowOf = (ref) => p.evaluate((r) => [...document.querySelectorAll('[data-panel="bookings"] li, [data-panel="bookings"] article')].find((x) => x.textContent.includes(r) && x.textContent.length < 400)?.innerText.replace(/\s+/g, ' ') || '', ref);
 check(`${L}: the refunded game spot says "Refunded"`, done && /Refunded/.test(panel), done && (await rowOf(done.ref)));

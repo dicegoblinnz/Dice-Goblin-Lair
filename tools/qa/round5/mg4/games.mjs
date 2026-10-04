@@ -150,7 +150,12 @@ for (const size of ['phone', 'desktop']) {
   await closeSheet(board);
   await overflow(board, b.tag);
   // 9. My Lair now: two regular cards (weekly and fortnightly) and the flexible one waiting for room
-  const after = await open(size, '/pages/my-lair', { ctx, label: 'after' });
+  const after = await open(size, '/pages/my-lair#ml-seats', { ctx, label: 'after' });
+  // later sessions are rows that open to their card: open them all, as someone checking each one would
+  const rows = after.page.locator('[data-panel="seats"] details.ml-later');
+  for (let i = 0; i < (await rows.count()); i += 1) {
+    if (!(await rows.nth(i).evaluate((d) => d.open))) await rows.nth(i).locator(':scope > summary').click();
+  }
   const cards = await after.page.locator('.ml-ticket--series').allInnerTexts();
   console.log(after.tag, 'series cards:', cards.map((c) => flat(c).slice(0, 120)));
   if (cards.length !== 3) errors.push(`${after.tag}: ${cards.length} series cards, want 3 (weekly, fortnightly, flexible)`);
