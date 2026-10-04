@@ -4399,10 +4399,12 @@ export class Lair {
       payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0,
       split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), owed: this.isOwed(b, now), waived: Boolean(b.waived), ...heldLink(b),
     });
-    // dueNow: everything they can pay at the counter now, the same as the POS rings up for their member code: today's
-    // bookings, seats and sign-ups with something due (no-shows aside), then their owed seats.
+    // dueNow: everything they can pay at the counter now: today's bookings and seats that are confirmed or seated, and
+    // sign-ups confirmed or checked in ('attended'), with something due, then their owed seats. A place held while it's
+    // paid online isn't on it (its checkout is still open), and neither is a no-show or a table they've left ('done').
     const day = this.memberDay(who.customerId, rules, now);
-    const dueNow = [...day.today.filter((r) => r.due > 0 && r.status !== 'noshow'), ...day.owed].map((r) => ({
+    const atCounter = (r) => (r.type === 'join' ? ['confirmed', 'attended'] : ['confirmed', 'seated']).includes(r.status);
+    const dueNow = [...day.today.filter((r) => r.due > 0 && atCounter(r)), ...day.owed].map((r) => ({
       id: r.id, type: r.type, ref: r.ref, title: this.dueTitle(r, rules), start: r.start, end: r.end, amount: r.amount, covered: r.covered,
       paidAmount: r.paidAmount, due: r.due, owed: Boolean(r.owed),
     }));

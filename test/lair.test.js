@@ -4470,3 +4470,43 @@ test('birthday gifts (v5.1): each problem is { part, message } with the part tha
   ]), gift.id);
   assert.deepEqual(lair.giftView(lair.giftRow(gift.id)).problems.map((p) => p.part), ['credit', 'product', 'email']);
 });
+
+test('GET /me dueNow (v5.1): only what they can pay at the counter now: confirmed or seated bookings, confirmed or checked-in sign-ups, then owed seats; never a place held for online payment, a table they\'ve left or a no-show', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  let n = 0;
+  lair.shopify.createCheckout = async () => { n += 1; return { draftOrderId: `gid://shopify/DraftOrder/7${n}`, checkoutUrl: `https://checkout.test/7${n}` }; };
+  lair.shopify.deleteDraftIfOpen = async () => true;
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
+    { id: 'quiz', title: 'Trivia night', start: at('2026-10-01', 19), end: at('2026-10-01', 21), tables: '', capacity: 20, entryFee: 1500, payment: 'online' },
+    { id: 'kt', title: 'Kill Team night', start: at('2026-10-01', 18), end: at('2026-10-01', 21), tables: '', gameTables: 'B1+B2', payment: 'online' },
+    { id: 'paint', title: 'Painting club', start: at('2026-10-01', 16), end: at('2026-10-01', 18), tables: '', capacity: 10, entryFee: 500 },
+  ]);
+  const as = (body) => ({ name: 'Mia', email: 'mia@example.com', ...body });
+  // Held while they pay online: a sign-up and a game table, each with its checkout still open.
+  const heldJoin = await call('POST', 'events/quiz@2026-10-01/join', as({ people: 1 }), 'mia');
+  const heldSpot = await call('POST', 'events/kt@2026-10-01/reserve', as({ people: 2 }), 'mia');
+  assert.deepEqual([heldJoin.data.join.status, heldSpot.data.booking.status, Boolean(heldJoin.data.checkoutUrl && heldSpot.data.checkoutUrl)], ['held', 'held', true]);
+  // At the counter: a confirmed table, one that's seated, one they've left, one they didn't come to, and a sign-up paid in store, checked in.
+  const book = async (tables, hh) => (await call('POST', 'bookings', tableBooking(as({ tables, start: at('2026-10-01', hh), end: at('2026-10-01', hh + 1), people: 2 })), 'mia')).data.booking;
+  const confirmed = await book(['T1'], 15);
+  const seated = await book(['T2'], 15);
+  const left = await book(['T3'], 15);
+  const missed = await book(['T4'], 15);
+  const painting = (await call('POST', 'events/paint@2026-10-01/join', as({ people: 1 }), 'mia')).data.join;
+  // Still 1pm, so the holds' 30 minutes haven't run out (check-in works any time on the day).
+  await call('POST', 'checkin', { id: seated.id, type: 'booking' }, 'staff');
+  await call('POST', `bookings/${left.id}/update`, { status: 'done' }, 'staff');
+  await call('POST', `bookings/${missed.id}/update`, { status: 'noshow' }, 'staff');
+  await call('POST', 'checkin', { id: painting.id, type: 'join' }, 'staff');
+  assert.deepEqual([lair.booking(seated.id).status, lair.booking(left.id).status, lair.joinById(painting.id).status], ['seated', 'done', 'attended']);
+  const me = (await call('GET', 'me', null, 'mia')).data;
+  assert.deepEqual(me.dueNow.map((d) => [d.ref, d.due, d.owed]).sort(), [
+    [confirmed.ref, 2000, false], [painting.ref, 500, false], [seated.ref, 2000, false],
+  ].sort());
+  // The held ones are still theirs to pay online: My Lair has their checkout links.
+  assert.equal(me.joins.find((j) => j.id === heldJoin.data.join.id).checkoutUrl, heldJoin.data.checkoutUrl);
+  assert.equal(me.bookings.find((b) => b.id === heldSpot.data.booking.id).checkoutUrl, heldSpot.data.checkoutUrl);
+  // If the checkout couldn't be paid and staff confirm the spot at the counter instead, it's on the bill.
+  lair.write("UPDATE bookings SET status = 'confirmed', pay = 'day', hold_until = NULL WHERE id = ?", heldSpot.data.booking.id);
+  assert.ok((await call('GET', 'me', null, 'mia')).data.dueNow.some((d) => d.id === heldSpot.data.booking.id));
+});
