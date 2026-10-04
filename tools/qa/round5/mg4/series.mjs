@@ -1,7 +1,7 @@
 // My Lair's card for a weekly regular: its member-code ticket (QR decodes), add to calendar, skip this week, and
 // stop saving my seat (owed stays owed), on phone and desktop
 import { execFileSync } from 'node:child_process';
-import { start, stop, open, report, errors, shotOf, shot, overflow, OUT } from './harness.mjs';
+import { start, stop, open, report, errors, shotOf, shot, overflow, openRow, OUT } from './harness.mjs';
 const PREFIX = process.argv[2] || 'series';
 const decode = (file) => execFileSync('python3', ['decode.py', file], { cwd: new URL('../booking-qa/', import.meta.url).pathname }).toString();
 const flat = (s) => s.replace(/\s+/g, ' ').trim();
@@ -13,7 +13,9 @@ const want = (tag, text, list, label) => {
 };
 await start();
 for (const size of ['phone', 'desktop']) {
-  const { ctx, page, tag } = await open(size);
+  // Bookings, game seats (the older address #ml-seats), and the regular's row opened to its card
+  const { ctx, page, tag } = await open(size, '/pages/my-lair#ml-seats');
+  await openRow(page, '.ml-ticket--series');
   const card = page.locator('.ml-ticket--series');
   let text = flat(await card.innerText());
   want(tag, text, ["Weekly · your seat's saved every week", 'Abomination Vaults', 'Next', '5pm to 9pm', 'Owed', '$15', 'To pay', 'Your Goblin card is your ticket', 'Skip this week', 'Stop saving my seat'], 'card');

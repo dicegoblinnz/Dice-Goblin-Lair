@@ -1,5 +1,6 @@
 // The one bill in My Lair's tab card, every state: sessions only, sessions + tab, editing, at the counter, a paid tab
 // with sessions still due, everything paid, and a tab on its own. The bill's QR must decode to the member code.
+// The bill is in My Lair's Tab view (#tab); Home's "To pay at the counter" line says the same total.
 import { execFileSync } from 'node:child_process';
 import { start, stop, open, report, errors, shotOf, overflow, OUT } from './harness.mjs';
 const PREFIX = process.argv[2] || 'bill';
@@ -23,8 +24,8 @@ const dueNow = (page) => page.evaluate(async () => {
   return (me.dueNow || []).filter((d) => d.due > 0).map((d) => ({ title: d.title, due: d.due, today: t.key(d.start) === t.today() }));
 });
 for (const size of ['phone', 'desktop']) {
-  // A. sessions only
-  const { ctx, page, tag } = await open(size);
+  // A. sessions only (straight to the Tab view: #tab)
+  const { ctx, page, tag } = await open(size, '/pages/my-lair#tab');
   let text = await billText(page);
   const due = await dueNow(page);
   const n = due.length;
@@ -50,6 +51,9 @@ for (const size of ['phone', 'desktop']) {
   await shotOf(page, '[data-tab-card]', `${PREFIX}-B-both-${size}`);
   const nav = await page.locator('[data-count="tab"]').innerText();
   if (nav !== String(n + 1)) errors.push(`${tag} B: nav count ${nav}, want ${n + 1} (${sessions(n)} + 1 thing)`);
+  // Home's line says the same: what's due and how many things, as a link to the Tab view
+  const homeDue = (await page.locator('[data-home-due]').textContent()).replace(/\s+/g, ' ').trim();
+  for (const w of ['To pay at the counter', money(total + 300), `${sessions(n)} and 1 thing on your tab`]) if (!homeDue.includes(w)) errors.push(`${tag} B: Home's due line "${homeDue}" lacks "${w}"`);
   // C. editing keeps the sessions and the combined total
   await page.click('[data-tab-edit]');
   await page.locator('[data-qty-box="edit"] [data-step="1"]').click();
@@ -88,7 +92,7 @@ for (const size of ['phone', 'desktop']) {
   await overflow(page, tag);
   await ctx.close();
   // H. a tab on its own (no sessions due), and "All paid" when sessions get paid with no tab
-  const h = await open(size, '/pages/my-lair', { label: 'tab-only' });
+  const h = await open(size, '/pages/my-lair#tab', { label: 'tab-only' });
   text = await billText(h.page);
   const hDue = await dueNow(h.page);
   if (!text.includes(sessions(hDue.length))) errors.push(`${h.tag} H: expected the seeded sessions first`);

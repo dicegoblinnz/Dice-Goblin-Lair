@@ -1,11 +1,12 @@
 // Birthday gifts (the line, the code, Copy the code with and without the clipboard) and where passes came from;
 // tap targets across My Lair; the logged-out My Lair
-import { start, stop, open, report, errors, shotOf, overflow, smallTargets } from './harness.mjs';
+import { start, stop, open, report, errors, shotOf, overflow, smallTargets, view } from './harness.mjs';
 const PREFIX = process.argv[2] || 'gifts';
 const flat = (s) => s.replace(/\s+/g, ' ').trim();
 await start();
 for (const size of ['phone', 'desktop']) {
-  const { ctx, page, tag } = await open(size);
+  // Gifts and passes are in the Wallet (#wallet), the birthday form in Me
+  const { ctx, page, tag } = await open(size, '/pages/my-lair#wallet');
   const code = await page.locator('.ml-gcard__code').innerText();
   const hbd = `HBD-${code.replace(/[^A-Z0-9]/gi, '')}`;
   const gift = flat(await page.locator('[data-gifts]').innerText());
@@ -19,7 +20,7 @@ for (const size of ['phone', 'desktop']) {
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   if (copied !== hbd) errors.push(`${tag}: clipboard has "${copied}", want ${hbd}`);
   if ((await page.locator('[data-copy]').innerText()) !== 'Copied') errors.push(`${tag}: the copy button doesn't say Copied`);
-  await shotOf(page, '#ml-birthday', `${PREFIX}-bday-${size}`);
+  await shotOf(page, '#ml-gifts', `${PREFIX}-gifts-${size}`);
   // and without one: the code is selected
   await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('no')) }, configurable: true }); });
   await page.waitForTimeout(2700);
@@ -35,8 +36,13 @@ for (const size of ['phone', 'desktop']) {
   if (!bought || bought[1] !== 'Bought online #1550') errors.push(`${tag}: the bought pass says "${bought && bought[1]}"`);
   if (sources.some(([label, from]) => /Birthday gift/.test(label) && from)) errors.push(`${tag}: the birthday pass repeats its source`);
   if (sources.some(([label, from]) => /Gift pack|School|Painting/.test(label) && from)) errors.push(`${tag}: a staff pass shows a source`);
-  // tap targets
-  const small = (await smallTargets(page)).filter((x) => !/^a\.text-link|^button\.text-link/.test(x));
+  // tap targets, in every view
+  const small = [];
+  for (const name of ['home', 'bookings', 'tab', 'wallet', 'me']) {
+    await view(page, name);
+    if (name === 'me') await shotOf(page, '#ml-birthday', `${PREFIX}-bday-${size}`);
+    small.push(...(await smallTargets(page)).filter((x) => !/^a\.text-link|^button\.text-link/.test(x)).map((x) => `${name}: ${x}`));
+  }
   console.log(tag, 'small targets:', JSON.stringify(small));
   await overflow(page, tag);
   await ctx.close();
