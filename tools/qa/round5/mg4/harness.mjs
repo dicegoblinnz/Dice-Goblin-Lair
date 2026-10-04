@@ -9,7 +9,7 @@ export const m = await import('../../theme-mock/render.mjs');
 m.globalSettings.lair_mode = 'demo';
 export const OUT = new URL('./shots/', import.meta.url).pathname;
 fs.mkdirSync(OUT, { recursive: true });
-export const PORT = 4312;
+export const PORT = Number(process.env.QA_PORT || 4312); // QA_PORT lets two checkouts run at once
 export const BASE = `http://localhost:${PORT}`;
 export const SIZES = { phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
 export const customer = {

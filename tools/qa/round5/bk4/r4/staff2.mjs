@@ -4,7 +4,7 @@
 // Usage: node staff2.mjs phone|desktop
 import { m, chromium, open, shot, text, overflow, STAFF } from './lib.mjs';
 const tag = process.argv[2] || 'phone';
-const server = await m.serve(4311);
+const server = await m.serve(Number(process.env.QA_PORT || 4311));
 const browser = await chromium.launch();
 m.mockState.customer = STAFF;
 const { ctx, page } = await open(browser, tag, '/pages/lair-staff');

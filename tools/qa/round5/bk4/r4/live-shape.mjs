@@ -3,7 +3,7 @@
 // pass lookups (those 404); the undo route returns { ok: true }. The page must still check in, undo a pass (finding
 // the use on the pass), show a member code from the members search and the floor, and show a scanned pass.
 import { m, chromium, open, text, overflow, STAFF } from './lib.mjs';
-const server = await m.serve(4311);
+const server = await m.serve(Number(process.env.QA_PORT || 4311));
 const browser = await chromium.launch();
 m.mockState.customer = STAFF;
 const { ctx, page } = await open(browser, 'phone', '/pages/lair-staff');

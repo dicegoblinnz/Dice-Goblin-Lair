@@ -13,7 +13,7 @@ for (const size of ['phone', 'desktop']) {
   if (!gift.includes(line)) errors.push(`${tag}: gift line is "${gift}"`);
   if (!/Use the code by \w{3} \d+ \w+, online at checkout or at the counter\. Your 2 sessions are in My passes\./.test(gift)) errors.push(`${tag}: gift hints: ${gift}`);
   // Copy the code: with the clipboard
-  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:4312' });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://localhost:${process.env.QA_PORT || 4312}` });
   await page.click('[data-copy]');
   await page.waitForTimeout(200);
   const copied = await page.evaluate(() => navigator.clipboard.readText());

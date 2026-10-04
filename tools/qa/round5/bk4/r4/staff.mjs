@@ -6,7 +6,7 @@
 // member code; 8 a walk-in still works. Usage: node staff.mjs phone|desktop
 import { m, chromium, shot, text, overflow, decode, smallTargets, STAFF, CUSTOMER, SIZES, CLOCK } from './lib.mjs';
 const tag = process.argv[2] || 'phone';
-const PORT = 4311;
+const PORT = Number(process.env.QA_PORT || 4311);
 const server = await m.serve(PORT);
 const browser = await chromium.launch();
 const [W, H] = SIZES[tag];
