@@ -14,8 +14,13 @@ echo "##### mg4 (My Lair, games board)"
 sh "$HERE/mg4/final.sh" 2>&1 | filter
 cd "$HERE/bk4"
 echo "##### bk4 (staff page)"
-for s in clockcheck core counter members photo giftshape live-members gmlook; do
-  echo "=== $s"; timeout 500 node $s.mjs phone 2>&1 | filter | tail -6
+# core takes a page query, not a size, so it runs with none
+echo "=== core"; timeout 500 node core.mjs 2>&1 | filter | tail -6
+for s in clockcheck giftshape; do echo "=== $s"; timeout 500 node $s.mjs 2>&1 | filter | tail -6; done
+for t in phone desktop; do
+  for s in counter members photo live-members gmlook; do
+    echo "=== $s $t"; timeout 500 node $s.mjs $t 2>&1 | filter | tail -6
+  done
 done
 for t in phone desktop; do echo "=== look $t"; timeout 300 node look.mjs $t r5 2>&1 | filter | tail -4; done
 FORCED_AT="$(TZ=Pacific/Auckland date +%Y-%m-%d)T23:30"
