@@ -672,14 +672,18 @@ export function publicBooking(b) {
 
 /**
  * A GM game as the games board shows it. held: seats kept for weekly regulars who don't have their seat at this
- * session yet; they count as taken, so the board never offers them to anyone else.
+ * session yet; they count as taken, so the board never offers them to anyone else. Only seats still free can be held
+ * (the theme's demo works it out the same way), so held never says more than that, taken (booked plus held) never
+ * passes the seats because of regulars, and an open game is full once taken reaches its seats.
  */
 export function publicGame(g, state, rules = null, held = 0) {
-  const taken = seatsTaken(state, g.id) + Math.max(0, held);
+  const booked = seatsTaken(state, g.id);
+  const holding = Math.max(0, Math.min(Number(held) || 0, g.seats - booked));
+  const taken = booked + holding;
   const gmFee = g.gmFee ?? rules?.prices.gmCredit ?? 500;
   return {
     id: g.id, title: g.title, system: g.system, gm: g.gm, level: g.level, age: g.age, tags: g.tags, safety: g.safety,
-    pregens: g.pregens, blurb: g.blurb, tables: g.tables, start: g.start, end: g.end, seats: g.seats, taken, held: Math.max(0, held),
+    pregens: g.pregens, blurb: g.blurb, tables: g.tables, start: g.start, end: g.end, seats: g.seats, taken, held: holding,
     status: g.status === 'open' && taken >= g.seats ? 'full' : g.status, campaign: g.campaign || null, credited: g.credited ?? null,
     schedule: g.schedule || 'one-shot', seriesId: g.seriesId || null, gmFee, seatPrice: g.seatPrice || rules?.prices.gmSeat || 1500,
     room: g.room || null, characters: g.characters || (g.pregens ? 'pregens' : ''), bring: g.bring || '', contentNotes: g.contentNotes || '',
