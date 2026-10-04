@@ -4374,3 +4374,28 @@ test('GET /me dueNow (v5.1): a table booking is "Table T3" or "Tables T6 and T7"
     [one.ref]: 'Table T3', [two.ref]: 'Tables T6, T7', [three.ref]: 'Tables T8, T9, T10', [spot.ref]: 'Kill Team night', [seat.ref]: 'Tomb of Horrors', [join.ref]: 'Trivia night',
   });
 });
+
+/* ---------- v5.1: backend fixes from the contract check ---------- */
+
+test('GET /members/birthdays (v5.1): code is the member code, the same as GET /members sends; round 4\'s birthday discount code is birthdayCode (null when none)', async () => {
+  const member = (id, name, code, birthday) => {
+    lair.write('INSERT INTO members (customer_id, name, first_name, email, birthday, code, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)', id, name, name.split(' ')[0], `${id}@example.com`, birthday, code, NOW);
+    lair.write('INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, ?, ?, ?)', code.replace(/-/g, ''), code, 'member', id, NOW);
+  };
+  member('3101', 'Wiki Tane', 'WT-KIWI-4', '10-03');
+  member('3102', 'Ana Smith', 'AS-MOA-9', '10-20');
+  // Round 4 sent Wiki a birthday code by itself this year.
+  lair.write(
+    "INSERT INTO prizes (id, customer_id, source, kind, percent, code, expires_at, status, period, created_at) VALUES ('pz_bday', '3101', 'birthday', 'percent', 15, 'BDAY-7K2QXM', ?, 'added', '2026', ?)",
+    NOW + 14 * 24 * HOUR, NOW - 24 * HOUR,
+  );
+  const list = (await call('GET', 'members/birthdays', null, 'staff')).data;
+  assert.deepEqual(list.map((m) => [m.customerId, m.code, m.birthdayCode, m.percent, m.sent]), [
+    ['3101', 'WT-KIWI-4', 'BDAY-7K2QXM', 15, true],
+    ['3102', 'AS-MOA-9', null, 10, false],
+  ]);
+  for (const row of list) {
+    const found = (await call('GET', `members?q=${row.customerId}`, null, 'staff')).data.find((m) => m.customerId === row.customerId);
+    assert.equal(found.code, row.code, 'merging a birthday row into the member keeps their member code');
+  }
+});

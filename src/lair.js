@@ -4158,9 +4158,10 @@ export class Lair {
   }
 
   /**
-   * GET /members/birthdays (staff): the next 30 days of birthdays, soonest first, with spend, suggested: { low, high }
-   * (dollars, see suggestedGift), giftedThisYear and lastGift (their latest gift, or null). percent, code and sent are
-   * the birthday codes round 4 sent by itself.
+   * GET /members/birthdays (staff): the next 30 days of birthdays, soonest first. Each is the member as GET /members
+   * sends them (code is their member code, so the staff page can merge these rows into its members), plus date, days,
+   * suggested: { low, high } (dollars, see suggestedGift), giftedThisYear and lastGift (their latest gift, or null).
+   * percent, birthdayCode and sent are the birthday discount code round 4 sent by itself (birthdayCode null when none).
    */
   async birthdayList(who) {
     this.requireStaff(who);
@@ -4172,7 +4173,7 @@ export class Lair {
       const given = this.sql.exec("SELECT * FROM prizes WHERE customer_id = ? AND source = 'birthday' AND period = ?", row.customer_id, date.slice(0, 4)).toArray()[0];
       const last = this.sql.exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? ORDER BY g.created_at DESC, g.rowid DESC LIMIT 1', row.customer_id).toArray()[0];
       return {
-        ...view, date, days, percent: given?.percent ?? birthdayPercent(view.spendYear), code: given?.code || null, sent: Boolean(given),
+        ...view, date, days, percent: given?.percent ?? birthdayPercent(view.spendYear), code: view.code, birthdayCode: given?.code || null, sent: Boolean(given),
         suggested: this.suggestedGift(view.spendYear), giftedThisYear: this.giftedIn(row.customer_id, year), lastGift: last ? this.giftView(last) : null,
       };
     });

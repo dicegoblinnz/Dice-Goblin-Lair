@@ -173,3 +173,6 @@ Four follow-ups the theme asked for. **Additive only:** no field was renamed or 
 - An event game spot: `"Game table at <event title>"`.
 - Game seats (today's or owed) and event sign-ups keep their titles.
 - The POS and staff check-in rows keep their own titles.
+
+**5. Contract-check fixes.** These came out of checking the theme against the backend.
+- **GET /members/birthdays:** each row's `code` is the member code, the same as GET /members, since the staff page merges these rows into its member records. The birthday discount code round 4 made by itself moves to a new field, `birthdayCode` (null when none). `percent` and `sent` are unchanged. This is the one change of meaning: only the round 5 staff page reads these rows.
