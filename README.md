@@ -3,7 +3,8 @@
 The part of the website that remembers bookings. The Shopify theme shows the floor map, the booking form,
 the GM games board, My Lair and the staff page; this app stores every booking, game, event sign-up, member,
 session pass and self-serve tab, stops double bookings, takes payment through Shopify (at the POS, or online for
-events that ask for it), pays GMs their store credit, rolls the dice prizes and sends birthday codes.
+events that ask for it), keeps weekly regulars' seats, makes the session passes people buy, pays GMs their store
+credit, rolls the dice prizes and gives the birthday gifts staff pick.
 
 ## How it fits together
 
@@ -16,9 +17,9 @@ Cloudflare Worker  dice-goblin-lair  (src/index.js: checks the signature)
 One Durable Object with a small SQLite database  (src/lair.js: bookings, games, holds, credits)
         │
         ├── Shopify Admin API: rooms and events (metaobjects), booking rules (theme settings),
-        │   customer tags (staff, gm), checkouts for events paid online (draft orders), store credit, birthday codes
+        │   customer tags (staff, gm), checkouts for events paid online (draft orders), store credit, birthday gift codes
         ├── Shopify webhook orders/paid → records payments for bookings and sign-ups (online or POS, a bill can be
-        │   paid in parts), marks tabs paid, adds to members' spend
+        │   paid in parts), makes session passes bought as a product, marks tabs paid, adds to members' spend
         └── Resend → every email, as HTML with a plain-text copy
 
 Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/checkin, … (POS session token)
@@ -57,10 +58,10 @@ The Worker is connected to the GitHub repository and the keys are in the config 
    - **App URL:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Embedding in the Shopify admin: off.
    - **Access scopes:**
      `read_customers, read_metaobjects, read_themes, read_orders, write_draft_orders, write_store_credit_account_transactions, write_discounts, write_app_proxy`
-     (`write_discounts` makes the birthday codes; without it those are given at the counter instead)
+     (`write_discounts` makes the codes for birthday gifts from the shop; without it staff give those at the counter instead)
    - **App proxy:** prefix `apps`, subpath `lair`, URL `https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy`
 3. Release the version, then **install** the app on the Dice Goblin store.
-4. If Shopify asks about protected customer data, request it with the reason "store management". The app reads customer tags and, for members' spend, which customer paid an order and its subtotal; it doesn't need the name, email, phone or address fields.
+4. If Shopify asks about protected customer data, request it with the reason "store management". The app reads customer tags and, for members' spend, which customer paid an order and its subtotal. For a session pass bought by someone who isn't a member yet, it also reads the customer's name and email on that order (or the billing name when there's no customer on the sale), so request the **Name** and **Email** fields too. Without them the pass is still made: linked to the customer's account, or as "Sold at the counter" when there's no customer. It doesn't read phone numbers or street addresses.
 5. The app's **Client ID** and **Client secret** (app → Settings) go in the config table as `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` (already done for the current app).
 
 ### 3. Check the connection
@@ -118,11 +119,16 @@ self-serve tab's items carry `_tab`). When that POS order is paid, the booking's
 - **Refunds to make** are flagged: "refund due" (staff or the GM cancelled, so the money goes back) or "Refund?" (a paid no-show, or someone cancelled what they paid online: your call). `STAFF_EMAIL` gets an email, and a list when a GM cancels a game with paid seats.
 - **Split bills:** people can tick "Split the bill at the counter" when they book. At the counter, each friend pays a share (the POS offers a share a person or any amount); scan the friend's member code first so their spend counts for them. The booking shows what's paid and what's left.
 - **Session passes** ("Warhammer league: 10 sessions", "Gift pack: 10 sessions"): staff page → Passes. Each session covers one person's table fee (up to the table price; the $15 room still pays $5 and GM seats still pay the GM fee). Sessions are used when people check in, never when they book, so a no-show doesn't burn one. A used session can be undone.
+  - **Selling passes:** sell the "Session pass" product (5 or 10 sessions; SKUs `LAIR-PASS-5` and `LAIR-PASS-10`) at the counter or online like anything else. When the order is paid, the app makes the pass ("Session pass: 10 sessions") on the customer's account, one for each one bought. With no customer on the sale, the pass carries the name on the order, or "Sold at the counter": give them its code (Passes lists it) and they add it in My Lair. A new size is just a new variant with the SKU `LAIR-PASS-` and the number of sessions.
+- **Weekly regulars** ("join every session"): a regular always has a seat in the next session of their game. When a session ends, the app books each regular into the next one within 10 minutes, first to join first. Other players only see the seats left after the regulars. If the next session is full, `STAFF_EMAIL` gets an alert; if a seat frees up later, the regular gets it and an email. A regular's ticket is their member code.
+  - **Owed sessions:** a regular's seat is theirs to pay for, whether or not they came. Once the session ends unpaid it's owed: it shows in their My Lair, at the counter when you scan their member code, and on the staff page under Members. They pay it at any visit. If you're letting it go, open the booking on the staff page and waive it. Ordinary bookings never become owed (a no-show is only recorded), and nor do seats booked before this update went live.
+- **One bill at the counter:** scan a member's code on the POS and tap "Add everything to cart": it checks in today's sessions and puts them, anything they owe from earlier sessions and their self-serve tab in the cart, with them as the customer.
 - **GM store credit:** after the session, staff page → the game → Credit GM. It counts players marked as paid, and Shopify emails the GM about the credit.
 - If someone pays after their 30-minute hold ran out and their place was taken in the meantime, it's flagged "refund or reseat" (and `STAFF_EMAIL` gets an alert). Anything paid twice, or paid more than was owed, is flagged too.
-- **Members:** anyone who books or opens My Lair while logged in. Each gets a member code the first time, which stays theirs; staff can give them a new one (the old one stops working). Staff search members by name, email or code. Their spend counts every paid order with their customer on it, online or at the POS (scan their member code to attach them to the POS cart).
+- **Members:** anyone who books or opens My Lair while logged in. Each gets a member code the first time, which stays theirs; staff can give them a new one (the old one stops working). Staff search members by name, email or code, or list the top 100 by spend, by last seen or by what they owe (owed sessions plus unpaid tabs), or just those owing. Their spend counts every paid order with their customer on it, online or at the POS (scan their member code to attach them to the POS cart).
 - **Self-serve tab:** members add drinks and snacks in My Lair. At the counter, scan their member code and the tab's items go in the cart.
-- **Birthdays:** every day after 9am, members with a birthday in the next week get their code by email, and `STAFF_EMAIL` gets the list. If Shopify can't make a code, the email says to show it at the counter.
+- **Birthdays:** every day after 9am, `STAFF_EMAIL` gets the list of members with a birthday in the next week, each with a suggested gift (2% to 5% of what they spent in the last 12 months, at least $2) and whether they've had one this year. Nothing goes to members by itself any more. Give a gift on the staff page under Members: any mix of store credit, a session pass, extra dice rolls and something from the shop (a code just for them that makes it free, once, for 30 days). Tick the email box and Gobgob sends a "Happy birthday" email listing the lot. Anything Shopify couldn't do (store credit or the code) is listed straight away so you can sort it at the counter; the rest still goes through.
+- **Game pictures:** GMs add their own; staff can add or change the picture on any game.
 - **Dice prizes Shopify couldn't add** (store credit) come to `STAFF_EMAIL`; the member shows their screen at the counter, and the staff page lists them under the member until you mark them done.
 
 ## The rules the app enforces
@@ -136,7 +142,7 @@ self-serve tab's items carry `_tab`). When that POS order is paid, the booking's
 - Opening hours come from the theme setting: weekdays 4pm to midnight, Saturday 10am to midnight, Sunday 10am to 10pm.
 - Tables allowed = enough to seat the group (4 to a table), doubled for a wargame or big box game. Online bookings are for up to 24 people; bigger groups call the shop.
 - The public booking page applies these rules to everyone, staff included. The staff page skips them by sending `staffOverride: true`, and walk-ins (staff only) can take any tables. Bookings made that way aren't linked to the staff member's own account.
-- Tables, walk-ins, GM seats and "join every session" are paid at the counter: you reserve, it's locked in, and you pay when you arrive. (Tables the first release took online payment for keep its rule: refunded if cancelled at least 24 hours ahead, theme setting "Refund cut-off".) A no-show is only recorded; if they'd paid, it gets a "Refund?" note for staff to decide.
+- Tables, walk-ins, GM seats and "join every session" are paid at the counter: you reserve, it's locked in, and you pay when you arrive. (Tables the first release took online payment for keep its rule: refunded if cancelled at least 24 hours ahead, theme setting "Refund cut-off".) A no-show is only recorded; if they'd paid, it gets a "Refund?" note for staff to decide. Weekly regulars are the exception: a seat they keep is owed once the session ends unpaid (see GM games).
 - A table can't be double-booked; bookings, staff holds and events that lock their tables count. An event's other tables are only marked for it.
 - Codes look like `SJ-OWLBEAR-17`: initials from the first and last words of the name (accents dropped; one word gives its first two letters; `DG` with no letters), a word from a fixed list, and a d20 roll (21 to 99 once the d20 numbers are taken). One table keeps every code ever given out, so none is used twice across bookings, sign-ups, members and passes. Matching ignores case, spaces, dashes, dots and underscores. Check-in also takes the first release's `GOB-7K2QXM` codes.
 - Split bills: `paidAmount` is what's been paid so far and `due` what's left after passes and payments. Each order line counts once, whoever pays it.
@@ -145,17 +151,22 @@ self-serve tab's items carry `_tab`). When that POS order is paid, the booking's
 
 - 2 to 8 player seats; the GM isn't counted, so the players must fit at the tables (a GM can always take up to 2 tables, more for big groups). Seats cost the room's table fee plus the GM fee: $0, $5 or $10, and no fee needs a manager's OK.
 - Staff and trusted GMs (tagged `gm`) go straight on the board; anyone else waits for a manager's OK.
-- Joining a game needs a login. One booking takes 1 up to the seats left (at most 8), with a name for every seat. "Join every session" seats a player at every upcoming session of a series that has room, and at new sessions as they appear; they pay at the counter each time, skip one by cancelling that seat, or leave the series.
+- Joining a game needs a login. One booking takes 1 up to the seats left (at most 8), with a name for every seat.
+- "Join every session" makes a weekly regular. It books a seat in the series' next session that hasn't started, and only that one. After a session ends, the 10-minute maintenance books each regular (first to join first) into the next session that hasn't started, if it's open and has room; a regular who already has a seat there, or cancelled it to skip that week, is left alone. If it's full, `STAFF_EMAIL` gets one alert per session and regular, and a seat that frees up later goes to them with an email. Regulars pay at the counter each time, skip one by cancelling that seat, or leave the series. Regulars who had seats in several future sessions before this rule keep them.
+- Regulars' seats are held: for a session that hasn't started, the seats left for everyone else are the seats, less those booked, less the regulars with no booking in that session yet. A session that's under way holds nothing.
+- The public games board shows only a series' next session that hasn't ended; GMs, staff and the game's own views see every session.
+- A regular's seat whose session has ended unpaid is owed, whether or not they came: `owed` with `due` still due, in `dueNow` in My Lair, in the POS member view ("Owed: <title> (<date>)") and in the staff Members list. It's paid like any other booking line, at any later visit. Staff can waive it (`waived`), which makes `due` 0. Seats booked before round 5 went live never become owed, and one-off seats keep the no-show rule.
 - A GM can cancel a session until an hour after it starts, or every future session at once. Every player gets an email, and seats that were paid for are flagged "refund due" (a cancelled game is always refunded). A player dropping their seat emails the GM.
 - GMs (and staff) can email their players: one session's, or a whole series'. 5 messages a game a day; replies go to the GM.
 - Store credit (the GM fee per paying player) is paid once, after the game starts. Moving or extending a game on the staff page moves its players with it; editing a game changes this session and the later ones of its series.
 
 **Members, dice and birthdays**
 
-- The home page dice are just for fun. Members earn a roll for every $20 they spend; rolls stack and never expire. Each "1" on the face is $1 store credit (1, 10 and 12–19 are $1, 11 is $2) and a natural 20 is $20. No discount codes. A roll is used up before Shopify is asked for the credit, so two taps can't spend it twice.
-- Session passes: one session covers one person's table fee up to the pass's cover. Sessions used = the people not covered or paid yet, up to the sessions left. A void or expired pass is skipped with a notice. Members use their own passes when they book; staff can use any.
+- The home page dice are just for fun. Members earn a roll for every $20 they spend; rolls stack and never expire. Each "1" on the face is $1 store credit (1, 10 and 12–19 are $1, 11 is $2) and a natural 20 is $20. No discount codes. A roll is used up before Shopify is asked for the credit, so two taps can't spend it twice. Rolls given as a birthday gift add to the rolls available and never expire either.
+- Session passes: one session covers one person's table fee up to the pass's cover. Sessions used = the people not covered or paid yet, up to the sessions left. A void or expired pass is skipped with a notice. Members use their own passes when they book; staff can use any. Every pass says where it came from: `staff` (made on the staff page), `order` (bought, with the order's name, like #1550) or `birthday`.
+- Passes bought on an order: each paid line with the SKU `LAIR-PASS-<n>` makes one pass of n sessions for each unit (up to 100 a line), covering the table fee, with `pricePaid` the unit's price after the line's discounts. Each order, line and unit makes its pass once, however often Shopify sends the order. Passes with no customer can be claimed by code in My Lair.
 - Spend is each paid order's subtotal after discounts, counted once per order. There's no clawback for refunds.
-- Birthday codes: 10% off under $100 of spend in the last 12 months, 15% from $100, 20% from $500. One a year, valid 14 days, personal, and they don't combine with other discounts.
+- Birthday gifts are chosen by staff; the app no longer makes birthday codes by itself (codes sent before still work until they expire). The suggestion is 2% and 5% of the last 12 months' spend, rounded to the dollar, at least $2 each. Store credit goes up to $1000; sessions and rolls are 1 to 20. A product gift is a one-use code for that one product variant, 100% off, only for that customer, for 30 days, named `HBD-` and their member code (then `-2`, `-3`…). The gift, its pass and its rolls are saved before Shopify is asked for the credit and the code, and what Shopify couldn't do is kept with the gift as `problems`.
 
 **Events**
 
@@ -192,18 +203,18 @@ Routes (all JSON; `/proxy/…` is `www.dicegoblin.nz/apps/lair/…` on the websi
 
 | Route | Who | What |
 | --- | --- | --- |
-| `GET /proxy/floor?from=&to=` | anyone | bookings, holds, `eventHolds` (with `soft` and `title`), games, `eventJoins` and `eventSpots` in a window (names only for staff and your own bookings; staff also get `pass`, `covered`, `due`, `refund`, `paidAmount` and `payments`) |
+| `GET /proxy/floor?from=&to=` | anyone | bookings, holds, `eventHolds` (with `soft` and `title`), games, `eventJoins` and `eventSpots` in a window (names only for staff and your own bookings; staff also get `pass`, `covered`, `due`, `refund`, `paidAmount`, `payments`, `owed` and `waived`). Games carry `series: { id, schedule, regulars }` (or null), `nextOnly` and `held` (regulars' seats in the count); the public sees only a series' next session |
 | `POST /proxy/bookings` | anyone (`gm-seat`: logged in) | `kind: table`, `gm-seat`, or `walkin` (staff); `staffOverride: true` (staff) skips the house rules; `usePass: code`; `split: true` (tables); always paid at the counter |
-| `POST /proxy/bookings/:id/update` | staff, or the owner to cancel | status, paid, people, tables, end, `refunded` (sign-ups too: paid, `refunded`) |
+| `POST /proxy/bookings/:id/update` | staff, or the owner to cancel | status, paid, people, tables, end, `refunded`, `waived` (staff: let a regular off a seat; `due` becomes 0) (sign-ups too: paid, `refunded`) |
 | `POST /proxy/games` | logged-in customers | list a GM game; staff can list one for a GM with `gmCustomerId` or `gmEmail` |
 | `POST /proxy/games/:id/update` | staff, or the GM to cancel (`scope: session\|series`) | approve or cancel |
 | `POST /proxy/games/:id/edit` | staff | change a game's details, time or tables |
 | `POST /proxy/games/:id/players` | staff | seat someone, no payment |
 | `POST /proxy/games/:id/sessions` | the GM or staff | add a session |
-| `POST /proxy/games/:id/join-series` | logged in | a seat at every session of the series |
+| `POST /proxy/games/:id/join-series` | logged in | become a weekly regular: a seat in the next session (`booked` items carry `ticketCode`, their member code); later ones roll forward |
 | `POST /proxy/series/:id/leave` | logged in | leave a series |
 | `POST /proxy/games/:id/message` | the GM or staff | email the players (5 a game a day) |
-| `POST /proxy/games/:id/image`, `/proxy/gm-profile` | the GM or staff | game picture, GM profile |
+| `POST /proxy/games/:id/image`, `/proxy/gm-profile` | the GM or staff (staff: any game) | game picture, GM profile |
 | `POST /proxy/games/:id/credit` | staff | pay the GM's store credit |
 | `POST /proxy/blocks`, `/proxy/blocks/:id/delete` | staff | hold or release tables |
 | `POST /proxy/openings`, `/proxy/openings/:id/delete` | staff | open shop tables |
@@ -214,27 +225,30 @@ Routes (all JSON; `/proxy/…` is `www.dicegoblin.nz/apps/lair/…` on the websi
 | `POST /proxy/contact` | anyone | "host your own event" form |
 | `POST /proxy/roll` | anyone (prizes: logged in) | `kind: fun\|spend` (`bonus` still works; `daily` is a 410) |
 | `POST /proxy/prizes/:id/done` | staff | a dice prize given at the counter |
-| `GET /proxy/me?name=` | logged in | My Lair: bookings, seats, games, sign-ups, credits, `member` (with `code`), `series`, `rolls`, `prizes`, `passes`, `tab`. `name` (the shop account's name, sent by the theme) fills in a member's missing name, so a first visit's code has their initials. A sign-up or game spot held for online payment carries `checkoutUrl` and `holdUntil` |
+| `GET /proxy/me?name=` | logged in | My Lair: bookings, seats, games, sign-ups, credits, `member` (with `code`), `series`, `rolls`, `prizes`, `passes`, `tab`, `dueNow` and `gifts`. `name` (the shop account's name, sent by the theme) fills in a member's missing name, so a first visit's code has their initials. A sign-up or game spot held for online payment carries `checkoutUrl` and `holdUntil`. Bookings and seats carry `ticketCode` (a regular's seat: their member code), `owed` and `waived`. `dueNow` is what they can pay at the counter now: today's bookings, seats and sign-ups with something due, then owed seats, each `{ id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }`. `gifts` is this year's birthday gifts, each `{ at, credit, sessions, rolls, product: { title, code } \| null }` |
 | `POST /proxy/me/profile` | logged in | first name, name, email, birthday |
 | `POST /proxy/me/passes/claim` | logged in | add a pass to your account by its code |
 | `POST /proxy/tab`, `/proxy/tab/clear` | logged in | save or clear today's self-serve tab |
-| `GET /proxy/members?q=` | staff | search members by name, email or code, with spend and `pendingPrizes` |
+| `GET /proxy/members?q=&sort=&owing=` | staff | search members by name, email or code (up to 25), or with no `q` the top 100 by `sort`: `spend`, `recent` (last seen) or `owing`. `owing=1` keeps those with `owed + openTab > 0`. Each has spend, `pendingPrizes`, `owed` and `owedCount` (owed seats), `openTab` (cents on an unpaid tab from an earlier day, or today's open tab), `giftedThisYear` and `rollsGifted` |
 | `POST /proxy/members/:customerId/new-code` | staff | a new member code; the old one stops working |
-| `GET /proxy/members/birthdays` | staff | birthdays in the next 30 days |
-| `GET /proxy/passes?q=&status=`, `POST /proxy/passes` | staff | find or make session passes |
+| `POST /proxy/members/:customerId/gift` | staff | a birthday gift: any of `credit` (dollars), `sessions`, `rolls` (1 to 20 each), `productVariantId` with `productTitle`, plus `note` and `notify: true` (the email). Returns `{ gift: { id, at, credit, sessions, passCode, rolls, product, emailed, problems } }` |
+| `GET /proxy/members/birthdays` | staff | birthdays in the next 30 days, with `suggested: { low, high }` (dollars), `giftedThisYear` and `lastGift` |
+| `GET /proxy/passes?q=&status=`, `POST /proxy/passes` | staff | find or make session passes; every pass has `source` (`staff`, `order`, `birthday`) and `orderName` |
 | `POST /proxy/passes/:id/update`, `/proxy/passes/:id/apply` | staff | change a pass; save it on a booking for check-in |
 | `POST /proxy/passes/uses/:useId/undo` | staff | give a used session back |
 | `GET /pos/today` | the POS extension (session token) | today's games, events and table bookings, grouped, with every person as a row |
-| `POST /pos/scan`, `/pos/checkin`, `/pos/checkin-member` | the POS extension | look a code up; check one row or a member's whole day in, with cart lines |
+| `POST /pos/scan`, `/pos/checkin`, `/pos/checkin-member` | the POS extension | look a code up; check one row or a member's whole day in, with cart lines. A member's rows include their owed seats (`owed: true`, earlier dates), which are never checked in; their lines are titled "Owed: <title> (<date>)" |
 | `POST /pos/share`, `/pos/tab/:id/added`, `/pos/member` | the POS extension | a cart line for one share of a bill; a tab is in the cart; round 3's member lookup |
-| `POST /webhooks/orders-paid` | Shopify (HMAC checked) | records payments for bookings and sign-ups, marks tabs paid, adds to members' spend |
+| `POST /webhooks/orders-paid` | Shopify (HMAC checked) | records payments for bookings and sign-ups, makes session passes for `LAIR-PASS-<n>` lines, marks tabs paid, adds to members' spend |
 | `GET /setup?key=` | you | connection check |
 | `GET /health` | anyone | uptime check |
 
 Notes:
 
-- Every booking lives in one Durable Object called `dice-goblin`. Checks and saves happen without an `await` in between, so two people can't take the same table; the GM credit, dice prizes and birthday codes claim their row before calling Shopify, so nothing is paid twice.
-- Schema changes go at the end of `MIGRATIONS` in `src/lair.js`; each entry runs once.
+- Every booking lives in one Durable Object called `dice-goblin`. Checks and saves happen without an `await` in between, so two people can't take the same table; the GM credit, dice prizes and birthday gifts save their row before calling Shopify, so nothing is paid twice, and what Shopify answered is saved afterwards.
+- Schema changes go at the end of `MIGRATIONS` in `src/lair.js`; each entry runs once. Only add columns (with defaults or nullable), tables and `IF NOT EXISTS` indexes there, so the live data moves across as it is; `test/lair.test.js` builds the live schema and migrates it.
+- The 10-minute maintenance (the cron trigger) checks the connection, adds sessions to series, rolls weekly regulars forward, and sends the daily birthday summary (the day it went is kept in the `meta` table, so a restart doesn't send it twice).
+- A `LAIR-PASS-<n>` order line makes its passes keyed by order id, line id and unit (a unique index), so a webhook sent twice, or twice at once, makes each pass once. The buyer's name is looked up on the order only for a customer who isn't a member yet, or a sale with no customer; if Shopify won't say, the pass is made anyway.
 - Proxy requests are rejected unless Shopify's signature, timestamp and shop domain check out, and non-GET requests must be JSON (blocks cross-site form posts). The `internal/*` routes only answer the Worker itself.
 - The orders/paid webhook records a payment only for orders whose `source_name` is `shopify_draft_order` and whose code belongs to a booking that was sent to checkout (it then asks Shopify which order that booking's draft became), or for POS orders (`source_name` `pos`) with a `_booking` line property. Each order line is recorded once in `payments` (order id and line id), so retries never count it twice, and the order's customer is the payer. A draft that was already paid is never deleted when its hold runs out. Every paid order is also looked up for members' spend, keyed by order id.
 - POS routes check the POS session token with WebCrypto (HS256 with the client secret, `aud` = client ID, `dest` = the shop, `exp`/`nbf` with 60 seconds' leeway) and answer CORS for any origin, since the extension runs on Shopify's own origin.
