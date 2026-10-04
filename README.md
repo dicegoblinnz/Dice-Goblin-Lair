@@ -9,7 +9,7 @@ credit, rolls the dice prizes and gives the birthday gifts staff pick.
 ## How it fits together
 
 ```
-www.dicegoblin.nz/apps/lair/...   (the booking pages call this)
+www.dicegoblin.nz/apps/liar/...   (the booking pages call this)
         │  Shopify's app proxy signs every request and says who is logged in
         ▼
 Cloudflare Worker  dice-goblin-lair  (src/index.js: checks the signature)
@@ -34,7 +34,7 @@ Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/che
 
 - **Code:** GitHub, `dicegoblinnz/Dice-Goblin-Lair`. Every push to `main` is built and deployed by Cloudflare Workers Builds (the Worker is `dice-goblin-lair` on the dicegoblinnz Cloudflare account).
 - **Theme:** GitHub, `dicegoblinnz/Dice-Goblin-website`, branch `dice-goblin-2-theme` (connect it in Shopify: Online Store → Themes → Add theme → Connect from GitHub).
-- **Address:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Open it for a plain status page; the website reaches the app through `www.dicegoblin.nz/apps/lair`.
+- **Address:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Open it for a plain status page; the website reaches the app through `www.dicegoblin.nz/apps/liar`.
 - **Keys and settings:** the D1 database `dice-goblin-lair-config`, table `config` (Cloudflare → Storage & databases → D1). Changes there apply within a minute, no redeploy needed. A Worker variable or secret with the same name overrides the database.
 - **Health:** the same database's `status` table. Every 10 minutes the app checks its Shopify login, permissions, payment webhook, rooms and hours and writes the result there (`connection`, `rules`, `proxy`, `lastError`).
 
@@ -59,7 +59,7 @@ The Worker is connected to the GitHub repository and the keys are in the config 
    - **Access scopes:**
      `read_customers, read_metaobjects, read_themes, read_orders, write_draft_orders, write_store_credit_account_transactions, write_discounts, write_app_proxy`
      (`write_discounts` makes the codes for birthday gifts from the shop; without it staff give those at the counter instead)
-   - **App proxy:** prefix `apps`, subpath `lair`, URL `https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy`
+   - **App proxy:** prefix `apps`, subpath `liar` (`liar`, not `lair`: it's the live address and the theme calls it, so keep it), URL `https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy`
 3. Release the version, then **install** the app on the Dice Goblin store.
 4. If Shopify asks about protected customer data, request it with the reason "store management". The app reads customer tags and, for members' spend, which customer paid an order and its subtotal. For a session pass bought by someone who isn't a member yet, it also reads the customer's name and email on that order (or the billing name when there's no customer on the sale), so request the **Name** and **Email** fields too. Without them the pass is still made: linked to the customer's account, or as "Sold at the counter" when there's no customer. It doesn't read phone numbers or street addresses.
 5. The app's **Client ID** and **Client secret** (app → Settings) go in the config table as `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` (already done for the current app).
@@ -70,7 +70,7 @@ Open `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Within 10 minutes of t
 
 - **Connected to the Shopify store:** the app can log in and has every permission it needs. If not, the `connection` row in the `status` table says why (wrong client ID or secret, app not installed, or `missingScopes`).
 - **Online payments are reported back:** Shopify will tell the app when someone pays online.
-- **The website has reached the app:** shows after the first visit to a booking page in live mode once the app proxy is set up. To check the proxy by hand, open `www.dicegoblin.nz/apps/lair/floor`: a page of text starting with `{` means it works; the shop's "page not found" means Shopify isn't passing the address on yet.
+- **The website has reached the app:** shows after the first visit to a booking page in live mode once the app proxy is set up. To check the proxy by hand, open `www.dicegoblin.nz/apps/liar/floor`: a page of text starting with `{` means it works; the shop's "page not found" means Shopify isn't passing the address on yet.
 
 ### 4. Emails (optional)
 
@@ -90,7 +90,7 @@ New tags take up to 5 minutes to count.
 **Online Store → Themes → Dice Goblin 2.0 → Customize → Theme settings → Lair bookings:**
 
 - **Booking system:** Live
-- **Lair app address:** `/apps/lair`
+- **Lair app address:** `/apps/liar`
 
 Tables, walk-ins and GM seats are always paid at the counter (the old "Let people pay online" setting no longer does
 anything). Events say for themselves how they're paid (see Day to day).
@@ -182,7 +182,7 @@ self-serve tab's items carry `_tab`). When that POS order is paid, the booking's
 
 ## If something isn't working
 
-- **Status page says "Waiting for the store link".** Shopify admin → Settings → Apps → Dice Goblin Lair should list an app proxy at `www.dicegoblin.nz/apps/lair`. If there's none, add it to a new app version in the Dev Dashboard (prefix `apps`, subpath `lair`, URL `https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy`) and release it. If the store shows a different address, use **Customize URL** there to set `apps` / `lair`, or change the theme setting **Lair app address** to match.
+- **Status page says "Waiting for the store link".** Shopify admin → Settings → Apps → Dice Goblin Lair should list an app proxy at `www.dicegoblin.nz/apps/liar`. If there's none, add it to a new app version in the Dev Dashboard (prefix `apps`, subpath `liar`, URL `https://dice-goblin-lair.dicegoblinnz.workers.dev/proxy`) and release it. If the store shows a different address, use **Customize URL** there to set `apps` / `liar`, or change the theme setting **Lair app address** to match.
 - **Bookings say "The booking app only accepts JSON requests."** Shopify has stopped passing the request type through the app proxy. Add `JSON_ONLY` = `off` to the config table and tell whoever looks after the site.
 - **Online payment doesn't show for an event.** Check the event's "Payment" field is "Online" or "Online or in store", and that `/setup?key=…` shows `"shopify": true` and `"shopifyLogin": "ok"`. Tables and GM seats are always paid at the counter.
 - **Online payments stay "unpaid" on the staff page.** Open `/setup?key=…` and check `paymentWebhook` is ok. Shopify retries a failed notification for a few hours, so a short outage sorts itself out.
@@ -199,7 +199,7 @@ npx wrangler dev         # run locally; put SHOPIFY_CLIENT_SECRET and SETUP_KEY 
 Without `SHOPIFY_CLIENT_ID` the app runs on its built-in room list (main room T1–T21, party room P1–P4, gaming room G1–G4, fancy room F1) and default hours;
 events paid "online or in store" fall back to the counter and online-only events refuse sign-ups.
 
-Routes (all JSON; `/proxy/…` is `www.dicegoblin.nz/apps/lair/…` on the website):
+Routes (all JSON; `/proxy/…` is `www.dicegoblin.nz/apps/liar/…` on the website):
 
 | Route | Who | What |
 | --- | --- | --- |
