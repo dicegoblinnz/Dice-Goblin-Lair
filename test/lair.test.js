@@ -2059,7 +2059,7 @@ test('birthday gifts: each part that fails goes in problems on its own, and the 
     // 1. The store credit fails (no permission): the code, the pass, the rolls and the email still happen.
     let shop = giftShopify({ creditFails: 'Shopify API: Access denied for storeCreditAccountCredit field.' });
     const noCredit = (await giveGift(everything)).data.gift;
-    assert.deepEqual(noCredit.problems, ["The $15 store credit didn't go on (Access denied for storeCreditAccountCredit field). Add it in Shopify admin, or give it at the counter."]);
+    assert.deepEqual(noCredit.problems, [{ part: 'credit', message: "The $15 store credit didn't go on (Access denied for storeCreditAccountCredit field). Add it in Shopify admin, or give it at the counter." }]);
     assert.deepEqual([noCredit.credit, noCredit.sessions, noCredit.rolls, noCredit.product?.code, noCredit.emailed, shop.codes.length], [1500, 2, 1, noCredit.product.code, true, 1]);
     assert.match(noCredit.product.code, /^HBD-/);
     assert.ok(noCredit.passCode);
@@ -2071,7 +2071,7 @@ test('birthday gifts: each part that fails goes in problems on its own, and the 
     mail.sent.length = 0;
     shop = giftShopify({ codeFails: 'Shopify API: Access denied for discountCodeBasicCreate field.' });
     const noCode = (await giveGift(everything)).data.gift;
-    assert.deepEqual(noCode.problems, ["Shopify couldn't make the code for Blue d20 set (Access denied for discountCodeBasicCreate field). Give it to them at the counter."]);
+    assert.deepEqual(noCode.problems, [{ part: 'product', message: "Shopify couldn't make the code for Blue d20 set (Access denied for discountCodeBasicCreate field). Give it to them at the counter." }]);
     assert.deepEqual([noCode.product, noCode.emailed, shop.credits], [{ title: 'Blue d20 set', code: null }, true, [['1001', 1500, 'NZD']]]);
     assert.ok(noCode.passCode);
     await settle();
@@ -2082,14 +2082,14 @@ test('birthday gifts: each part that fails goes in problems on its own, and the 
     mail.sent.length = 0;
     shop = giftShopify();
     const noEmail = (await giveGift(everything, '1002')).data.gift;
-    assert.deepEqual(noEmail.problems, ['They have no email on file, so no birthday email went out. Let them know at the counter.']);
+    assert.deepEqual(noEmail.problems, [{ part: 'email', message: 'They have no email on file, so no birthday email went out. Let them know at the counter.' }]);
     assert.deepEqual([noEmail.emailed, shop.credits, shop.codes.map((c) => c.customerId)], [false, [['1002', 1500, 'NZD']], ['1002']]);
     assert.ok(noEmail.passCode && noEmail.product.code);
     // ... and emails aren't set up at all
     mail.restore();
     lair.baseEnv = { ...lair.baseEnv, RESEND_API_KEY: '' };
     const noMail = (await giveGift({ rolls: 1, notify: true })).data.gift;
-    assert.deepEqual([noMail.emailed, noMail.problems], [false, ["Emails aren't set up, so no birthday email went out. Let them know at the counter."]]);
+    assert.deepEqual([noMail.emailed, noMail.problems], [false, [{ part: 'email', message: "Emails aren't set up, so no birthday email went out. Let them know at the counter." }]]);
     await settle();
     assert.equal(mail.sent.length, 0);
 
@@ -2097,8 +2097,8 @@ test('birthday gifts: each part that fails goes in problems on its own, and the 
     Object.defineProperty(lair.shopify, 'configured', { value: false, configurable: true });
     const offline = (await giveGift({ credit: 5, sessions: 1, rolls: 3, productVariantId: '50371432939623', productTitle: 'Blue d20 set' })).data.gift;
     assert.deepEqual(offline.problems, [
-      "The $5 store credit didn't go on (Shopify is not connected). Add it in Shopify admin, or give it at the counter.",
-      "Shopify couldn't make the code for Blue d20 set (Shopify is not connected). Give it to them at the counter.",
+      { part: 'credit', message: "The $5 store credit didn't go on (Shopify is not connected). Add it in Shopify admin, or give it at the counter." },
+      { part: 'product', message: "Shopify couldn't make the code for Blue d20 set (Shopify is not connected). Give it to them at the counter." },
     ]);
     assert.deepEqual([offline.sessions, offline.rolls, offline.product], [1, 3, { title: 'Blue d20 set', code: null }]);
     assert.equal((await passNamed(offline.passCode)).holder.customerId, '1001');
@@ -4450,4 +4450,23 @@ test('POST /checkin with a member code (v5.1): today\'s rows as before, then the
   const next = (await call('POST', 'checkin', { code }, 'staff')).data;
   assert.deepEqual([next.rows.map((r) => [r.id, r.owed]), next.bookings, next.due], [[[todaySeat.id, true]], [], 1500]);
   assert.equal(next.message, 'Mia has nothing booked today. They owe $15 from 1 earlier session.');
+});
+
+test('birthday gifts (v5.1): each problem is { part, message } with the part that failed, as the staff page reads it; a product named like another part is still the product; gifts saved with plain sentences read the same way', async () => {
+  await call('POST', 'me/profile', { name: 'Aroha Smith', email: 'aroha@example.com' }, '1001');
+  const shop = giftShopify({ creditFails: 'Shopify API: Access denied for storeCreditAccountCredit field.', codeFails: 'Shopify API: Access denied for discountCodeBasicCreate field.' });
+  // A product whose title has "dice", "pass" and "email" in it: the staff page used to guess the part from the words.
+  const gift = (await giveGift({ credit: 10, sessions: 2, rolls: 2, productVariantId: '50371432939623', productTitle: 'Dice pass email binder' })).data.gift;
+  assert.deepEqual(gift.problems.map((p) => p.part), ['credit', 'product']);
+  assert.ok(gift.problems.every((p) => typeof p.message === 'string' && p.message.length > 20 && Object.keys(p).sort().join() === 'message,part'));
+  assert.deepEqual([gift.sessions, gift.rolls, Boolean(gift.passCode), shop.credits, shop.codes], [2, 2, true, [], []], 'the pass and the rolls went through');
+  // The same problems come back with the gift later (the birthday list's lastGift reads the saved row).
+  assert.deepEqual(lair.giftView(lair.giftRow(gift.id)).problems, gift.problems);
+  // A gift saved before v5.1 kept sentences: they read back with their part.
+  lair.write('UPDATE gifts SET problems = ? WHERE id = ?', JSON.stringify([
+    "The $10 store credit didn't go on (Access denied). Add it in Shopify admin, or give it at the counter.",
+    "Shopify couldn't make the code for Dice pass email binder (Access denied). Give it to them at the counter.",
+    'They have no email on file, so no birthday email went out. Let them know at the counter.',
+  ]), gift.id);
+  assert.deepEqual(lair.giftView(lair.giftRow(gift.id)).problems.map((p) => p.part), ['credit', 'product', 'email']);
 });

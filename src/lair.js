@@ -4231,14 +4231,29 @@ export class Lair {
 
   /**
    * A gift as staff see it: { id, at, credit (cents), sessions, passCode, rolls, product: { title, code } | null,
-   * emailed, problems }. product.code is null when Shopify couldn't make it.
+   * emailed, problems: [{ part, message }] }. product.code is null when Shopify couldn't make it.
    */
   giftView(r) {
     return {
       id: r.id, at: r.created_at, credit: r.credit || 0, sessions: r.sessions || 0, passCode: r.pass_code || null, rolls: r.rolls || 0,
       product: r.product_title ? { title: r.product_title, code: r.product_status === 'added' ? r.product_code : null } : null,
-      emailed: Boolean(r.emailed), problems: parse(r.problems, []),
+      emailed: Boolean(r.emailed), problems: this.giftProblems(r.problems),
     };
+  }
+
+  /**
+   * A gift's problems, each { part, message } with part 'credit', 'sessions', 'rolls', 'product' or 'email'. A gift saved
+   * before v5.1 kept plain sentences: their part comes from how the app worded them (credit, the product's code, or the
+   * email, the only parts that could fail). No awaits.
+   */
+  giftProblems(text) {
+    const PARTS = ['credit', 'sessions', 'rolls', 'product', 'email'];
+    return parse(text, []).filter(Boolean).map((p) => {
+      if (typeof p === 'object' && PARTS.includes(p.part)) return { part: p.part, message: String(p.message ?? '') };
+      const message = String(typeof p === 'object' ? p.message ?? '' : p);
+      const part = /^The \$[\d.]+ store credit\b/.test(message) ? 'credit' : /^Shopify couldn't make the code\b/.test(message) ? 'product' : 'email';
+      return { part, message };
+    });
   }
 
   /** A gift as its member sees it in My Lair: { at, credit, sessions, rolls, product } */
@@ -4285,6 +4300,8 @@ export class Lair {
       f.variantId || null, f.title || null, productCode, f.variantId ? 'pending' : null, f.note || null, by, now, now,
     );
     // --- saved: the pass and the rolls are theirs. Now Shopify, for the credit and the product code ---
+    // Each part that fails: { part: 'credit'|'sessions'|'rolls'|'product'|'email', message }. (The pass and the rolls are
+    // saved above, so only the credit, the product code and the email can fail here.)
     const problems = [];
     const said = (error) => String(error?.message || error).replace(/^Shopify API:\s*/, '').slice(0, 200).replace(/[.\s]+$/, '');
     let creditStatus = null;
@@ -4296,7 +4313,7 @@ export class Lair {
       } catch (error) {
         creditStatus = 'failed';
         console.error('Lair: birthday store credit failed', error);
-        problems.push(`The ${money(f.credit)} store credit didn't go on (${said(error)}). Add it in Shopify admin, or give it at the counter.`);
+        problems.push({ part: 'credit', message: `The ${money(f.credit)} store credit didn't go on (${said(error)}). Add it in Shopify admin, or give it at the counter.` });
       }
     }
     let productStatus = null;
@@ -4311,15 +4328,15 @@ export class Lair {
       } catch (error) {
         productStatus = 'failed';
         console.error('Lair: birthday product code failed', error);
-        problems.push(`Shopify couldn't make the code for ${f.title} (${said(error)}). Give it to them at the counter.`);
+        problems.push({ part: 'product', message: `Shopify couldn't make the code for ${f.title} (${said(error)}). Give it to them at the counter.` });
       }
     }
     // --- no awaits from here on: only this gift's own row changes ---
     const fresh = this.memberRow(member.customer_id) || member;
     let emailed = false;
     if (input?.notify === true) {
-      if (!emailReady(this.env)) problems.push("Emails aren't set up, so no birthday email went out. Let them know at the counter.");
-      else if (!isEmail(fresh.email)) problems.push('They have no email on file, so no birthday email went out. Let them know at the counter.');
+      if (!emailReady(this.env)) problems.push({ part: 'email', message: "Emails aren't set up, so no birthday email went out. Let them know at the counter." });
+      else if (!isEmail(fresh.email)) problems.push({ part: 'email', message: 'They have no email on file, so no birthday email went out. Let them know at the counter.' });
       else emailed = true;
     }
     this.write(
