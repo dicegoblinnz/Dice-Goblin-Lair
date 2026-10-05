@@ -3871,7 +3871,7 @@ test('live data: the live app\'s database (round 8) moves to round 4, and its bo
   assert.deepEqual([join.ref, join.status, join.pay, join.paid, join.amount, join.paidAmount, join.refund, join.note], ['GOB-J9N22K', 'confirmed', 'day', false, 0, 0, null, 'Team Goblins']);
   assert.deepEqual([lair.game('gm_live1').title, lair.game('gm_live1').seriesId], ['Lost Mine', 'sr_live1']);
   // Every old ref is in the codes table, so a new code can never be the same.
-  assert.deepEqual(sql.exec('SELECT key, kind, target_id FROM codes ORDER BY key').toArray().map((r) => [r.key, r.kind, r.target_id]), [
+  assert.deepEqual(sql.exec("SELECT key, kind, target_id FROM codes WHERE kind != 'roll' ORDER BY key").toArray().map((r) => [r.key, r.kind, r.target_id]), [
     ['GOBGMH9DX', 'booking', 'bk_gm1'], ['GOBHE7D33', 'booking', 'bk_live3'], ['GOBJ9N22K', 'join', 'ej_live1'], ['GOBPA7D22', 'booking', 'bk_live2'],
     ['GOBSEAT77', 'booking', 'bk_seat1'], ['GOBSEAT22', 'booking', 'bk_seat2'], ['GOB7K2QXM', 'booking', 'bk_live1'],
   ].sort((a, b) => a[0].localeCompare(b[0])));
@@ -4159,7 +4159,8 @@ test('live data: main\'s database (round 4) moves to round 5 with every row kept
   sql.exec("INSERT INTO meta (key, value) VALUES ('schema', ?)", String(MAIN_MIGRATIONS.length));
   mainRows(sql);
   const tables = ['bookings', 'games', 'series', 'series_members', 'members', 'codes', 'passes', 'pass_uses', 'tabs', 'payments', 'prizes', 'spend'];
-  const counts = () => Object.fromEntries(tables.map((t) => [t, sql.exec(`SELECT COUNT(*) AS n FROM ${t}`).one().n]));
+  // round 7's first start adds one row of its own, the welcome loot code (kind 'roll'), so it isn't counted
+  const counts = () => Object.fromEntries(tables.map((t) => [t, sql.exec(t === 'codes' ? "SELECT COUNT(*) AS n FROM codes WHERE kind != 'roll'" : `SELECT COUNT(*) AS n FROM ${t}`).one().n]));
   const before = counts();
 
   // Deploying round 5: its code opens the same database, and the new migration runs once.
@@ -5363,7 +5364,8 @@ test('live data: round 5\'s database (main, db8702b) moves to round 6 with every
   insertRow(sql, 'member_rolls', { id: 'rl_r5', customer_id: '1001', kind: 'spend', day: '2026-09-30', roll: 11, prize_id: 'pz_r5', created_at: NOW - 24 * HOUR });
   insertRow(sql, 'prizes', { id: 'pz_r5', customer_id: '1001', source: 'spend', kind: 'credit', amount: 200, percent: null, code: null, expires_at: null, status: 'pending', period: null, note: 'Shopify API error 502', created_at: NOW - 24 * HOUR, updated_at: NOW - 24 * HOUR });
   const tables = ['bookings', 'games', 'series', 'series_members', 'members', 'codes', 'passes', 'pass_uses', 'tabs', 'payments', 'prizes', 'spend', 'gifts', 'member_rolls', 'blocks', 'event_joins'];
-  const counts = () => Object.fromEntries(tables.map((t) => [t, sql.exec(`SELECT COUNT(*) AS n FROM ${t}`).one().n]));
+  // round 7's first start adds one row of its own, the welcome loot code (kind 'roll'), so it isn't counted
+  const counts = () => Object.fromEntries(tables.map((t) => [t, sql.exec(t === 'codes' ? "SELECT COUNT(*) AS n FROM codes WHERE kind != 'roll'" : `SELECT COUNT(*) AS n FROM ${t}`).one().n]));
   const before = counts();
   const open = () => {
     lair = new Lair(ctx, { CURRENCY: 'NZD' });

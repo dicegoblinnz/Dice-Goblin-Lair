@@ -130,6 +130,9 @@ beforeEach(() => {
   lair.shopify.orderBuyer = async () => null;
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, EVENTS);
   lair.rulesLoadedAt = NOW + 10 * 365 * DAY;
+  // The first start makes the welcome loot code ROLL-FOR-LOOT (tested on its own below); these tests make their own
+  lair.sql.exec("DELETE FROM codes WHERE kind = 'roll'");
+  lair.sql.exec('DELETE FROM roll_codes');
 });
 afterEach(() => {
   Date.now = realNow;
@@ -347,6 +350,19 @@ test('loot codes (3): staff make them, typed or made by Gobgob; every rule has i
   assert.deepEqual((await update(made.id, { status: 'paused' })).data.error, 'A code is active or inactive.');
   const changed = (await update(made.id, { rolls: 2, limit: null, expires: null, note: 'Changed', status: 'active' })).data.code;
   assert.deepEqual([changed.rolls, changed.limit, changed.expiresAt, changed.note, changed.status, changed.code], [2, null, null, 'Changed', 'active', made.code], 'the text never changes');
+});
+
+test('loot codes (3): the first start makes the welcome code ROLL-FOR-LOOT once; switched off, it isn\'t made again', async () => {
+  const fresh = new Lair(fakeCtx(), { CURRENCY: 'NZD', SHOP: 'ep0qiq-rp.myshopify.com' });
+  fresh.person = lair.person;
+  fresh.rulesCache = lair.rulesCache;
+  fresh.rulesLoadedAt = lair.rulesLoadedAt;
+  const list = (await fresh.fetch(new Request('https://lair.test/roll-codes', { headers: { 'X-Lair-Customer': 'staff' } })).then((r) => r.json())).codes;
+  assert.deepEqual(list.map((c) => [c.code, c.rolls, c.limit, c.expiresAt, c.status, c.note, c.createdBy]), [['ROLL-FOR-LOOT', 1, null, null, 'active', "Gobgob's welcome loot, for every customer", 'setup']]);
+  fresh.sql.exec("UPDATE roll_codes SET status = 'inactive'");
+  fresh.migrate();
+  assert.equal(fresh.sql.exec('SELECT COUNT(*) AS n FROM roll_codes').one().n, 1, 'made once');
+  assert.equal(fresh.sql.exec("SELECT status FROM roll_codes").one().status, 'inactive', 'switched off stays off');
 });
 
 test('loot codes (3): "Got a code?" gives a loot code\'s rolls once per customer, typed any way; the words say so; used up, expired or switched off it stops; it\'s never a ticket', async () => {
@@ -796,7 +812,8 @@ test('migration 17: round 6\'s database moves to round 7 with every row kept; ga
   hold('lh_gone', '4403', 'cancelled', { title: 'Root', shelf_code: null });
   row('gifts', { id: 'gf_old', customer_id: '1001', year: '2026', credit: 0, sessions: 0, rolls: 2, product_title: 'Blue d20 set', product_code: 'HBD-SJBADGER2', product_status: 'added', created_by: 'staff', created_at: NOW - DAY, updated_at: NOW - DAY });
   const tables = ['members', 'loyalty_grants', 'library_holds', 'gifts', 'codes'];
-  const counts = () => Object.fromEntries(tables.map((t) => [t, sql.exec(`SELECT COUNT(*) AS n FROM ${t}`).one().n]));
+  // round 7's first start adds one row of its own, the welcome loot code (kind 'roll'), so it isn't counted
+  const counts = () => Object.fromEntries(tables.map((t) => [t, sql.exec(t === 'codes' ? "SELECT COUNT(*) AS n FROM codes WHERE kind != 'roll'" : `SELECT COUNT(*) AS n FROM ${t}`).one().n]));
   const before = counts();
   lair = new Lair(ctx, { CURRENCY: 'NZD' });
   lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: false, tags: TAGS[id] || [] });

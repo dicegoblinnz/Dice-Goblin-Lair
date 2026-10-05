@@ -535,6 +535,22 @@ export class Lair {
       }
       this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('library-codes-filled', ?)", String(Date.now()));
     }
+    // Round 7: Gobgob's welcome loot code, made once (Mo, 6 Oct: ROLL-FOR-LOOT, 1 roll for every customer, no limit, no
+    // last day). Staff change it or switch it off on the Loot codes tab, and it's never made again.
+    if (!this.sql.exec("SELECT value FROM meta WHERE key = 'welcome-loot-code'").toArray().length) {
+      const code = 'ROLL-FOR-LOOT';
+      if (!this.codeTaken(codeKey(code))) {
+        const id = makeId('rc');
+        const now = Date.now();
+        this.sql.exec("INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, 'roll', ?, ?)", codeKey(code), code, id, now);
+        this.sql.exec(
+          `INSERT INTO roll_codes (id, code, rolls, total_limit, expires_at, status, note, created_by, created_at, updated_at)
+           VALUES (?, ?, 1, NULL, NULL, 'active', ?, 'setup', ?, ?)`,
+          id, code, "Gobgob's welcome loot, for every customer", now, now,
+        );
+      }
+      this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('welcome-loot-code', ?)", String(Date.now()));
+    }
   }
 
   /** Every write goes through here, so cached floor data is dropped the moment anything changes. */
