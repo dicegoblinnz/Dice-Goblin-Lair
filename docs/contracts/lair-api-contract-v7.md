@@ -1,5 +1,7 @@
 # Lair app API: round 7 (6 Oct 2026)
 
+**v7.1 (09:30):** Mo's 09:22 message changed two things before the builders started: holds end at midnight on the third day counting the day they're made (made Tuesday: until midnight Thursday), and the welcome code is the loot code ROLL-FOR-LOOT, with roll codes called loot codes wherever people read them.
+
 **Changes only.** This round sits on top of `lair-api-contract-v6.md`, then v5 (with v5.1), v4, v3 and the base contract (v1). Where they disagree, this file wins. Money is in cents (a field that takes dollars says so), times are milliseconds since 1970 (UTC), and days are Lair days (Pacific/Auckland) unless a field says otherwise. Errors stay `{ error: "A plain sentence." }` with a 4xx or 5xx status.
 
 **Where things live:**
@@ -17,7 +19,7 @@
 |---|---|---|---|
 | 3 Mobile number required | 1 | A | shell (forms), mylair (profile) |
 | 16 Player profile | 2 | A | mylair; staff-admin and staff-games show it |
-| 4 Welcome roll → roll codes, "Got a code?" | 3 | A | staff-admin (Codes tab), mylair (Wallet) |
+| 4 Welcome roll → loot codes (roll codes), "Got a code?" | 3 | A | staff-admin (Loot codes tab), mylair (Wallet) |
 | 15 Loyalty card always refreshing | 4 | A | mylair |
 | 5, 6 Birthdays, gift contents, claimed gifts | 5 | A | mylair (Wallet), staff-admin (Members) |
 | 7 Library holds, loans, scanning | 6 | A | library (mylair gives it a container) |
@@ -114,14 +116,16 @@ GET /me's `profile` comes from the demo member (the same object staff see), `sav
 
 ---
 
-## 3. Codes: roll codes and "Got a code?" [A] (theme: staff-admin for the Codes tab, mylair for the Wallet)
+## 3. Codes: loot codes (roll codes) and "Got a code?" [A] (theme: staff-admin for the Loot codes tab, mylair for the Wallet)
 
 > "make the welcome roll a single use coupon of sorts and then we can just give it to all our customers."
+>
+> "Happy with the welcome coupon but let's make the coupon sounding cooler more fun. Dice Goblin feel if we can." (Mo, 09:22)
 
 ### Rules
 - **No more automatic welcome roll.** From round 7, nothing gives a member a welcome roll by itself: `touchMember` and the profile form stop calling `welcomeRoll`. ★ Welcome rolls already given since round 6 went live stay: they're rows in `loyalty_grants`, they still count, and `loyalty.rolls.earned.welcome` stays in the shape. Only Mo, staff and testers have had one (members are only made on the preview's Lair pages), so it's a handful.
 - **Roll codes:** staff make them on the staff page. Each has:
-  - a **code**, typed or made by the Lair. Typed: 4 to 24 letters, numbers or dashes, kept in capitals ("WELCOME", "GOBGOB-2026"); at least 4 letters or numbers once dashes are dropped. Made by the Lair: like **GG-KOBOLD-14** (`uniqueCode('Gobgob Gift', …)`). Either way it goes in the `codes` table with kind `'roll'`, so no code of any kind is ever used twice. The text never changes: make a new code instead.
+  - a **code**, typed or made by the Lair. Typed: 4 to 24 letters, numbers or dashes, kept in capitals ("ROLL-FOR-LOOT", "GOBGOB-2026"); at least 4 letters or numbers once dashes are dropped. Made by the Lair: like **GG-KOBOLD-14** (`uniqueCode('Gobgob Gift', …)`). Either way it goes in the `codes` table with kind `'roll'`, so no code of any kind is ever used twice. The text never changes: make a new code instead.
   - **rolls** per redeem, 1 to 20, default 1;
   - **once per customer**, always;
   - an optional **total limit** (1 to 100,000 redeems; none means no limit);
@@ -130,7 +134,9 @@ GET /me's `profile` comes from the demo member (the same object staff see), `sav
   - a staff **note**, up to 300 characters.
 - Redeeming gives loyalty rolls: a `loyalty_grants` row with kind `'code'`, count = the code's rolls, note = the code, `created_by` = `code:<id>`. Its own row in `roll_code_uses` (unique per code and customer) keeps the once-each rule.
 - Roll codes never work as tickets: check-in, the POS scan and the member search treat them as unknown ("No booking, member or pass with that code.").
-- Mo makes the welcome code himself (say "WELCOME", 1 roll, no limit, no expiry) and hands it to every customer.
+- **Customers and staff call them loot codes.** Goblins hand out loot: a loot code gives rolls on the loyalty card. Routes, tables and code keep the name roll codes (`/roll-codes`, `roll_codes`, `rollCode`).
+- **The welcome code is ROLL-FOR-LOOT** (Mo, 09:22: cooler, more fun, a Dice Goblin feel): 1 roll, no limit, no expiry, note "Gobgob's welcome loot, for every customer". The coordinator makes it on the store once the tab is live, and Mo hands it to every customer. It works typed with or without dashes, in any case (code keys ignore both).
+- **Words (theme):** the Wallet box is headed "Got a code?", with the line "Pass codes, gift codes and Gobgob's loot codes all go here." The staff tab is "Loot codes", and its panel says "Each loot code gives rolls on the loyalty card, once per customer."
 
 ### Staff routes
 - **`GET /roll-codes?status=active|all`** → `{ codes: [rollCode] }`, newest first. `active` (the default) leaves out inactive ones; `all` is the last 200.
@@ -148,7 +154,7 @@ rollCode: {
 ```
 
 Staff messages:
-- 422 "Codes are 4 to 24 letters, numbers or dashes, like WELCOME."
+- 422 "Codes are 4 to 24 letters, numbers or dashes, like ROLL-FOR-LOOT."
 - 409 "That code's taken. Pick another, or leave it empty and Gobgob will make one."
 - 422 "A code gives 1 to 20 rolls."
 - 422 "The limit is how many times it can be used in all, from 1 up. Leave it empty for no limit."
@@ -159,16 +165,16 @@ Staff messages:
 - 403 for anyone else: the staff-only words every staff route uses.
 
 ### Member route: "Got a code?"
-**`POST /me/codes/redeem { code }`** (logged in): one box for pass codes, session gift codes and roll codes.
+**`POST /me/codes/redeem { code }`** (logged in): one box for pass codes, session gift codes and loot codes (roll codes).
 - **A pass or session gift code** (a pass nobody has claimed): exactly what `POST /me/passes/claim` does, and that route keeps working. → `{ kind: 'pass', pass, message: "Added to your wallet: <label>." }` (`pass` as the claim route's).
 - **A roll code** → `{ kind: 'roll', rolls, message, loyalty }` (`loyalty` as GET /me's).
-  - message: "That's 1 roll for your loyalty card. Roll it on Home!" or "That's N rolls for your loyalty card. Roll them on Home!"
+  - message: "Loot! That's 1 roll for your loyalty card. Roll it on Home, friend." or "Loot! That's N rolls for your loyalty card. Roll them on Home, friend."
 - **Errors:**
   - 401 "Log in to use a code."
   - 422 "Type your code first."
   - 404 "Gobgob doesn't know that code. Check it and try again, friend." (anything else, member and ticket codes included)
   - 422 "That's a shop discount code. Use it at checkout online, or show it at the counter." (a birthday gift's HBD- product code)
-  - 409 "You've used that code already, friend."
+  - 409 "You've used that code already, friend. It's one go each."
   - 410 "That code isn't working any more. Ask us at the counter." (inactive, expired or used up)
   - the claim route's 404 and 409 for passes ("No pass with that code…", "That pass already belongs to someone. Ask us at the counter."), and section 9's 409 for a group's pass
   - 429 "Too many tries in a row. Give it ten minutes, or ask us at the counter." Ten tries in ten minutes per member, shared with the claim route; a pass code counts once (call `claimPass` for it rather than counting twice).
@@ -178,8 +184,8 @@ Staff messages:
 `roll_codes`, `roll_code_uses`, and the `'roll'` rows in `codes` (migration 17).
 
 ### Demo
-- staff-admin writes the demo `rollCodes`, `createRollCode` and `updateRollCode`; mylair writes the demo `redeemCode`. Both read and write `state.rollCodes` (section 18 has its shape). When it isn't there yet, both start from the same seed: one active code **WELCOME**, 1 roll, no limit, no expiry, note "The welcome roll, for every customer".
-- The demo member no longer starts with a welcome roll (mylair changes the loyalty seed); the WELCOME code shows the redeem flow instead.
+- staff-admin writes the demo `rollCodes`, `createRollCode` and `updateRollCode`; mylair writes the demo `redeemCode`. Both read and write `state.rollCodes` (section 18 has its shape). When it isn't there yet, both start from the same seed: one active code **ROLL-FOR-LOOT**, 1 roll, no limit, no expiry, note "Gobgob's welcome loot, for every customer".
+- The demo member no longer starts with a welcome roll (mylair changes the loyalty seed); the ROLL-FOR-LOOT code shows the redeem flow instead.
 
 ---
 
@@ -257,14 +263,16 @@ mylair: GET /me's gifts with states and `words` (seed one claimed gift, used yes
 
 > "The library membership should have its own "page" like My Library and have each image of the game be displayed next to each item. And a camera scanner to help jump into the camera scanner to help book a game in and out"
 > "Then make the held is until midnight on the third day"
+>
+> "Actually it should hold until midnight Thursday as Thursday is the third day if it was Tuesday since Tuesday is the first day." (Mo, 09:22)
 > "a way for staff to be able to click on a board game that is collected to be able to return to shelve"
 
 ### Rules
-- **Holds last until midnight at the end of the third day** after the day they're made: `until` is the very start (00:00, Lair time) of the fourth day after. Made any time Tuesday 6 Oct: `until` is 00:00 Saturday 10 Oct, which everyone reads as "midnight, Fri 9 Oct".
-  - `holdUntil(time, ms) = time.at(addDays(time.key(ms), HOLD_DAYS + 1), 0)` with `HOLD_DAYS = 3`; `HOLD_UNTIL_HOUR` goes. Counting days keeps it right across daylight saving.
+- **Holds last until midnight at the end of the third day, the day they're made counting as the first** (Mo, 09:22): `until` is the very start (00:00, Lair time) of the third day after the day they're made. Made any time Tuesday 6 Oct: `until` is 00:00 Friday 9 Oct, which everyone reads as "midnight, Thu 8 Oct".
+  - `holdUntil(time, ms) = time.at(addDays(time.key(ms), HOLD_DAYS), 0)` with `HOLD_DAYS = 3` (the day it's made is day 1); `HOLD_UNTIL_HOUR` goes. Counting days keeps it right across daylight saving.
   - Holds made before round 7 keep their 12pm `until`. Staff putting a hold back (`status: 'held'`) gives it a fresh `until` by the new rule.
 - **How a hold's `until` reads, everywhere** (the library page, My Library, the staff page, messages and emails):
-  - `until` exactly at midnight Lair time is the end of the day before. Short: **"midnight, Fri 9 Oct"**. Long (emails): **"midnight on Friday 9 October"**. Weekday: **"midnight Fri"**.
+  - `until` exactly at midnight Lair time is the end of the day before. Short: **"midnight, Thu 8 Oct"**. Long (emails): **"midnight on Thursday 8 October"**. Weekday: **"midnight Thu"**.
   - Any other time (holds from before round 7) as round 6: "Thu 8 Oct, 12pm", "Thursday 8 October, 12pm", "Thu 12pm".
 - **Games at home (loans).** A collected game is at home with the member, on loan, until it's returned. A loan is `'out'` or `'returned'`. ★ There's no due date and so no "overdue": a member keeps a game while their plan runs (Mo set no limit). Staff lists show how many days each has been out.
 - **Copies on the shelf:** `available = copies − active holds − loans out`, never below 0.
@@ -286,7 +294,7 @@ Library copies' barcodes and SKUs are their shelf codes (DGL56-002, DGL7+-001), 
 - **`GET /library/status?ids=`** adds `out` (copies at home with members). `available` takes them off too. `nextFree` stays the soonest hold `until` when nothing's available and something's held, else null (null when every copy is at home). Adds **`atHome: { id, outAt } | null`**: the logged-in member has a copy at home.
 - **`POST /library/holds`** takes an optional `image`: the game's picture from the page, up to 500 characters, either on `cdn.shopify.com` or the store's own `/cdn/shop/` path (what Liquid's `image_url` gives, like `//www.dicegoblin.nz/cdn/shop/files/…`; a `//` address is kept as `https:`). Anything else is ignored (stored as null). Its checks count loans:
   - 409 "Your plan has N games at a time, and you've got N: X reserved and Y at home. Return one or cancel a hold first." ("1 game", and say only the parts that aren't 0.)
-  - 409 "Every copy is reserved or out on loan right now. It's back on the shelf by midnight Fri if nobody collects it." (some held; the weekday as above)
+  - 409 "Every copy is reserved or out on loan right now. It's back on the shelf by midnight Thu if nobody collects it." (some held; the weekday as above)
   - 409 "Every copy is out on loan right now. Check back soon, friend." (all at home)
 - **`POST /library/scan { code, action? }`** (logged in): borrow or return a game in the Lair with the camera. `action` is `'borrow'` or `'return'`; left out, it's a return when the game is at home with them, otherwise a borrow.
   - **Return** → `{ result: 'returned', loan, library, message: "<title> is checked back in. Thanks, friend!" }`. 404 "That game isn't on loan to you." when asked to return one they don't have.
@@ -330,7 +338,7 @@ staffLoan: loan + { customerId, name, email, code (member code), days (whole day
 `image` is a Shopify CDN address (the theme adds `width=`), or null. With null, the theme uses `/products/<handle>.js`'s featured image.
 
 ### Emails
-- The hold emails keep their words, with the new `until` wording: staff "Hold this game: Catan (DGL34-001) for Sam, until midnight on Friday 9 October"; the member "Catan is on hold for you until midnight on Friday 9 October. Collect it at the counter with your member code."
+- The hold emails keep their words, with the new `until` wording: staff "Hold this game: Catan (DGL34-001) for Sam, until midnight on Thursday 8 October"; the member "Catan is on hold for you until midnight on Thursday 8 October. Collect it at the counter with your member code."
 - Their "See it in My Lair" button opens `/pages/my-lair?view=library`.
 - No emails for loans.
 
@@ -750,8 +758,8 @@ Every email uses the existing template (`letter`, `renderEmail`) in Gobgob's voi
 
 | Email | Owner | Subject | What it says |
 |---|---|---|---|
-| Hold this game (staff) | A | "Hold this game: <title> (<shelf>) for <name>, until midnight on Friday 9 October" | As round 6, with the new `until` wording |
-| On hold for you (member) | A | "<title> is on hold for you" | As round 6, "…until midnight on Friday 9 October…"; button to `/pages/my-lair?view=library` |
+| Hold this game (staff) | A | "Hold this game: <title> (<shelf>) for <name>, until midnight on Thursday 8 October" | As round 6, with the new `until` wording |
+| On hold for you (member) | A | "<title> is on hold for you" | As round 6, "…until midnight on Thursday 8 October…"; button to `/pages/my-lair?view=library` |
 | Session gift codes (buyer) | A | "Your session gift is ready" | As round 6; the redeem line says "under 'Got a code?'" |
 | GM invite | B | "You're running <title> at the Dice Goblin Lair" | See below |
 | You're a regular (staff added them) | B | "You're a regular: <title>" | Round 5's "You're a regular!" email, but the intro is "Kia ora <name>, the Dice Goblin team has saved your seat at <title> with GM <gm> every week." ("fortnight" or "session" to match the schedule) |
@@ -898,7 +906,7 @@ Who uses it: My Library (borrow and return), the tab scanner (my-lair.js's scann
 ### 18.4 Staff page
 - **Tabs** (staff-admin replaces the `TABS` line of lair-staff.js with exactly this; nobody else edits it):
   ```js
-  const TABS = [['floor', 'Floor'], ['today', 'Today’s bookings'], ['passes', 'Passes'], ['groups', 'Groups'], ['members', 'Members'], ['codes', 'Codes'], ['holds', 'Holds and openings'], ['games', 'GM games'], ['events', 'Events'], ['library', 'Library']];
+  const TABS = [['floor', 'Floor'], ['today', 'Today’s bookings'], ['passes', 'Passes'], ['groups', 'Groups'], ['members', 'Members'], ['codes', 'Loot codes'], ['holds', 'Holds and openings'], ['games', 'GM games'], ['events', 'Events'], ['library', 'Library']];
   ```
 - **Panels** (staff-admin, in `build()`, right after the passes panel's `</section>`): one `<section class="staff-panel" id="panel-<id>" role="tabpanel" aria-labelledby="tab-<id>" data-panel="<id>" hidden>` each for `groups`, `codes` and `events`, holding `<staff-groups>`, `<staff-codes>` and `<staff-events>`.
 - **Opening a tab** (staff-admin adds one line at the end of `setTab()`, before `this.render()`): `this.dispatchEvent(new CustomEvent('lair-staff:tab', { bubbles: true, detail: { id } }))`. The new elements load their data the first time their tab opens, and again after a minute away. Deep links `#events` and `?tab=codes` work through `TABS`.
@@ -959,7 +967,7 @@ Demo methods also changed in place:
 
 For the coordinator to check before the builders start:
 1. **Welcome rolls already given stay** (section 3). Only preview users have them, and taking rolls back would be a clawback.
-2. **Generated roll codes look like GG-KOBOLD-14**, and typed codes are 4 to 24 letters, numbers or dashes (section 3).
+2. **Generated roll codes (loot codes to customers) look like GG-KOBOLD-14**, and typed codes are 4 to 24 letters, numbers or dashes (section 3).
 3. **Loans have no due date**, so there's no "overdue" list; staff see days at home (section 6). Mo set no limit.
 4. **A member can borrow by scanning anywhere**: the app can't tell they're in the Lair. Staff see and fix loans (section 6).
 5. **A tab takes any Active product** (not library copies, gift cards or selling-plan products). "Published" is read as Active, so counter-only café items work; sold-out ones are still refused by the theme, as today (section 7).
@@ -971,11 +979,11 @@ For the coordinator to check before the builders start:
 
 For Mo (the coordinator asks him, in plain words):
 - Approve the app's waiting permissions in Shopify admin: read_products, read_inventory, write_metaobjects, write_files. Until then: no barcode lookups for the library and tab (known games and the menu still work), and no saving in the events editor.
-- Make the welcome code on the staff page once it's live (say WELCOME, 1 roll), or let the coordinator make it.
+- Nothing to decide on the welcome code: the coordinator makes ROLL-FOR-LOOT (1 roll) on the staff page once it's live (Mo asked for a cooler, Dice Goblin name at 09:22).
 - Protected customer data (Name, Email): if it isn't approved yet, the customer search only finds people who've used the Lair.
 - Points 3, 4 and 6 above, if he'd rather have due dates, scan-in-the-Lair-only, or no shop tables for staff sessions.
 
 ## 20. What the coordinator does
 - Merges (backend-a's migration before backend-b's), live harness, deploy, theme upload, and Mo's scope approvals.
-- Store data: the WELCOME code if Mo wants it, the Session gift on sale with the stacked logo (MO.md 17), Library below Events in the menu.
+- Store data: the ROLL-FOR-LOOT welcome code, the Session gift on sale with the stacked logo (MO.md 17), Library below Events in the menu.
 - **Agents must not** write to the store, push, upload theme files or call the live Worker.
