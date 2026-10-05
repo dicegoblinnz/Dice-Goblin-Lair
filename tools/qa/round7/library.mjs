@@ -290,6 +290,8 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await page.click('[data-reserve]');
   await page.waitForSelector('library-reserve[data-state="mine"]', { timeout: 5000 }).catch(() => {});
   await openMyLibrary(page, STASH);
+  text = await lib(page);
+  check(tag, text.includes('3 of 3 games: 1 reserved, 2 at home'), 'My Library: the plan line as Mo wrote it ("2 of 3 games: 1 reserved, 1 at home")', text.slice(0, 120));
   await page.click('my-library [data-mlib-cancel]');
   const askFocus = await page.evaluate(() => document.activeElement && document.activeElement.textContent.trim());
   await page.click('my-library [data-mlib-cancel-yes]');
