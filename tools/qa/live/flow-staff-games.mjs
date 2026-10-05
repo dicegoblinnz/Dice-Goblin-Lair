@@ -57,13 +57,18 @@ const sent = call ? JSON.parse(call.body) : {};
 check(`${L}: add a player from the members (linked to their account)`, call?.status === 200 && sent.customerId === '7101' && JSON.parse(call.text).booking?.customerId === '7101', call ? `${call.body} → ${call.text.slice(0, 160)}` : 'no call');
 check(`${L}: Sam shows in the players`, /Dr Okafor/.test(await text(p, '[data-gm-players]')));
 await shot(p, `staff-gm-manage-${L}`);
-// edit: a new title and no GM fee
+// edit: a new title and no GM fee. Round 7: Edit this session is the GMs' own form (<lair-session-form>), a part at a
+// time: the title on The game, the fee on Who's running it. Leo listed his game without saying how characters are
+// made, so the form asks for it, as it asks GMs.
 await p.click('[data-gm-edit-wrap] >> xpath=..');
 await p.evaluate(() => { const d = document.querySelector('[data-gm-edit-wrap]').closest('details'); d.open = true; });
 await p.fill('[data-gm-edit] [name="title"]', `${g.title} (edited)`);
-// tap the "No fee" chip as a person would (its label: the radio itself is hidden), then make sure it took
-await p.locator('[data-gm-edit] label.chip', { has: p.locator('input[name="gmFee"][value="0"]') }).click();
-if (!(await p.$eval('[data-gm-edit] input[name="gmFee"][value="0"]', (i) => i.checked))) throw new Error('The No fee chip did not select');
+await p.click('[data-gm-edit-wrap] [data-sf-step="2"]');
+await p.locator('[data-gm-edit] label.pay-option', { has: p.locator('input[name="characters"][value="pregens"]') }).click();
+await p.click('[data-gm-edit-wrap] [data-sf-step="4"]');
+// tap "$0" as a person would (its label: the radio itself is hidden), then make sure it took
+await p.locator('[data-gm-edit] label.pay-option', { has: p.locator('input[name="gmFee"][value="0"]') }).click();
+if (!(await p.$eval('[data-gm-edit] input[name="gmFee"][value="0"]', (i) => i.checked))) throw new Error('The $0 fee did not select');
 b = apiLog.length;
 await p.click('[data-gm-edit] [type="submit"]');
 await p.waitForTimeout(1200);

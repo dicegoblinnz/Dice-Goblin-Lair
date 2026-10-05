@@ -1,6 +1,8 @@
 // Round 5, GM games on the staff page: "New game for a GM" and "Edit this session" frame a picture with the shared
 // picker (lair-photo.js): pick a photo, drag and zoom it, the labels follow the system and schedule, and it uploads
 // after the game is saved. Usage: node photo.mjs phone|desktop
+// Round 7: "New game for a GM" is "Make a session", the GMs' own steps (<lair-session-form>, assets/lair-session-form.js),
+// so making one goes through the steps (makeSession below) instead of filling one form; the picture is on step 1.
 import { m, chromium, open, shot, text, overflow, smallTargets, wideOnes, STAFF, PORT } from './lib.mjs';
 const tag = process.argv[2] || 'phone';
 const server = await m.serve(PORT);
@@ -37,7 +39,31 @@ const photo = async (hue) => {
   return { name: `test-${hue}.png`, mimeType: 'image/png', buffer: Buffer.from(url.split(',')[1], 'base64') };
 };
 
-// ---------- 1. New game for a GM, with a picture ----------
+/** Round 7: steps 2 to 5 of Make a session (the GMs' own form): players, at the table, when and where on the map,
+    and the GM picked from the customers */
+const F = '[data-games] lair-session-form';
+const makeSession = async ({ day, tables, schedule = 'one-shot', gm }) => {
+  await page.click(`${F} [data-step-next]`);
+  await page.waitForSelector(`${F} [data-step="players"]`);
+  await page.click(`${F} label.chip:has-text("All ages")`);
+  await page.click(`${F} [data-step-next]`);
+  await page.waitForSelector(`${F} [data-step="table"]`);
+  await page.click(`${F} label.pay-option:has-text("Pre-generated")`);
+  await page.click(`${F} [data-step-next]`);
+  await page.waitForSelector(`${F} [data-step="when"]`);
+  if (schedule !== 'one-shot') await page.click(`${F} label.chip:has(input[name="schedule"][value="${schedule}"])`);
+  await page.click(`${F} [data-day="${day}"]`);
+  await page.click(`${F} [data-stepper="hours"] [data-step-down]`);
+  await page.click(`${F} [data-slot="${18 * 60}"]`);
+  for (const id of tables) await page.evaluate(({ F, id }) => document.querySelector(`${F} gm-floor [data-table="${id}"]`).click(), { F, id });
+  await page.click(`${F} [data-step-next]`);
+  await page.waitForSelector(`${F} [data-step="gm"]`);
+  await page.fill(`${F} [data-sf-search]`, gm);
+  await page.waitForSelector(`${F} [data-sf-pick]`);
+  await page.click(`${F} [data-sf-pick]`);
+};
+
+// ---------- 1. New game for a GM (round 7: Make a session), with a picture ----------
 await page.click('[data-tab="games"]');
 await sleep(400);
 await page.click('[data-gm-new]');
@@ -57,16 +83,9 @@ const pick = await page.evaluate(() => {
   return null;
 });
 log('free then:', JSON.stringify(pick));
-await page.fill('#find-gm', 'rangi');
-await sleep(500);
-await page.click('[data-member-pick]');
-await sleep(200);
-await page.fill('#gm-new-title', 'Picture test: the Owlbear’s Lair');
-await page.fill('#gm-new-system', 'Daggerheart');
-await page.fill('#gm-new-blurb', 'A short pitch for the picture test.');
-await page.fill('#gm-new-day', pick.day);
-await page.fill('#gm-new-tables', pick.tables.join(', '));
-await page.selectOption('#gm-new-schedule', 'weekly');
+await page.fill(`${F} [name="title"]`, 'Picture test: the Owlbear’s Lair');
+await page.click(`${F} label.chip:has-text("Daggerheart")`);
+await page.fill(`${F} [name="blurb"]`, 'A short pitch for the picture test.');
 await page.setInputFiles('[data-gm-photo-input="create"]', await photo(20));
 await sleep(900);
 const frame = await page.evaluate(() => {
@@ -77,9 +96,8 @@ const frame = await page.evaluate(() => {
   return f ? { w: Math.round(f.getBoundingClientRect().width), h: Math.round(f.getBoundingClientRect().height), canvas: `${c.width}x${c.height}`, system: sys.textContent, hidden: sys.hidden, sched: sched.textContent, accent: f.closest('[data-crop]').dataset.accent } : null;
 });
 log('frame:', JSON.stringify(frame));
-// the labels follow the form
-await page.fill('#gm-new-system', 'Call of Cthulhu');
-await page.selectOption('#gm-new-schedule', 'fortnightly');
+// the labels follow the form (round 7: the system on this step; how often it runs is step 4's)
+await page.click(`${F} label.chip:has-text("Call of Cthulhu")`);
 await sleep(200);
 log('labels now:', await page.evaluate(() => {
   const crop = document.querySelector('[data-gm-photo="create"] [data-crop]');
@@ -101,7 +119,8 @@ await page.$eval('[data-gm-photo="create"]', (el) => el.scrollIntoView({ block: 
 await sleep(200);
 await shot(page, `${tag}-p1-create-framed`, '[data-gm-photo="create"]');
 await check('create form', '[data-gm-create]');
-await page.click('[data-gm-create] button[type="submit"]');
+await makeSession({ day: pick.day, tables: pick.tables, schedule: 'weekly', gm: 'rangi' });
+await page.click(`${F} [data-step-next]`);
 await sleep(1500);
 log('toast:', await text(page, '.toast'));
 const made = await page.evaluate(() => {
@@ -154,12 +173,9 @@ await page.click('[data-gm-back]');
 await sleep(300);
 await page.click('[data-gm-new]');
 await sleep(300);
-await page.fill('#find-gm', 'kiri');
-await sleep(500);
-await page.click('[data-member-pick]');
-await page.fill('#gm-new-title', 'Picture test 2');
-await page.fill('#gm-new-blurb', 'Upload fails.');
-await page.fill('#gm-new-day', pick.day);
+await page.fill(`${F} [name="title"]`, 'Picture test 2');
+await page.click(`${F} label.chip:has-text("D&D 5e")`);
+await page.fill(`${F} [name="blurb"]`, 'Upload fails.');
 const free2 = await page.evaluate((day) => {
   const { store } = window.Lair;
   const t = store.time;
@@ -172,14 +188,14 @@ const free2 = await page.evaluate((day) => {
   }
   return [];
 }, pick.day);
-await page.fill('#gm-new-tables', free2.join(', '));
 await page.setInputFiles('[data-gm-photo-input="create"]', await photo(100));
 await sleep(900);
 await page.evaluate(() => {
   const be = window.Lair.store.backend;
   be.uploadGameImage = async () => { throw Object.assign(new Error('That picture is too big. Try a smaller one.'), { status: 413 }); };
 });
-await page.click('[data-gm-create] button[type="submit"]');
+await makeSession({ day: pick.day, tables: free2, gm: 'kiri' });
+await page.click(`${F} [data-step-next]`);
 await sleep(1500);
 log('failed upload toast:', await text(page, '.toast'));
 log('edit open with it waiting:', await page.evaluate(() => {
