@@ -238,6 +238,89 @@ export class ShopifyAdmin {
     });
   }
 
+  /**
+   * Round 7, the events editor: every lair_event entry with all its fields, newest change first, 100 a page. refs asks
+   * for the picture's and ticket product's details too (read_files and read_products); without them, the plain query
+   * gives those as ids only. Returns [{ id, handle, updatedAt, fields: [{ key, type, value, reference }] }].
+   */
+  async lairEventsAdmin({ refs = true } = {}) {
+    const reference = refs ? ' reference { __typename ... on MediaImage { id alt image { url width height } } ... on Product { id handle title } }' : '';
+    const query = refs
+      ? `query LairEventsAdmin($after: String) { metaobjects(type: "lair_event", first: 100, after: $after, sortKey: "updated_at", reverse: true) { nodes { id handle updatedAt fields { key type value${reference} } } pageInfo { hasNextPage endCursor } } }`
+      : 'query LairEventsAdminPlain($after: String) { metaobjects(type: "lair_event", first: 100, after: $after, sortKey: "updated_at", reverse: true) { nodes { id handle updatedAt fields { key type value } } pageInfo { hasNextPage endCursor } } }';
+    const nodes = [];
+    let after = null;
+    for (let page = 0; page < 10; page += 1) {
+      const data = await this.graphql(query, { after });
+      nodes.push(...(data.metaobjects?.nodes || []));
+      if (!data.metaobjects?.pageInfo?.hasNextPage) break;
+      after = data.metaobjects.pageInfo.endCursor;
+    }
+    return nodes;
+  }
+
+  /** One lair_event entry by its handle (is a handle taken; the event before a change), or null. read_metaobjects. */
+  async lairEventByHandle(handle) {
+    const data = await this.graphql(
+      'query LairEventHandle($handle: MetaobjectHandleInput!) { metaobjectByHandle(handle: $handle) { id handle updatedAt fields { key type value } } }',
+      { handle: { type: 'lair_event', handle } },
+    );
+    return data.metaobjectByHandle || null;
+  }
+
+  /** A new lair_event entry: { metaobject, userErrors }. fields: [{ key, value }]. write_metaobjects. */
+  async createLairEvent(handle, fields) {
+    const data = await this.graphql(
+      'mutation LairEventCreate($metaobject: MetaobjectCreateInput!) { metaobjectCreate(metaobject: $metaobject) { metaobject { id handle updatedAt fields { key type value } } userErrors { field message code } } }',
+      { metaobject: { type: 'lair_event', handle, fields } },
+    );
+    return { metaobject: data.metaobjectCreate?.metaobject || null, userErrors: data.metaobjectCreate?.userErrors || [] };
+  }
+
+  /** Change a lair_event entry's fields (only those sent; value "" clears one): { metaobject, userErrors }. write_metaobjects. */
+  async updateLairEvent(id, fields) {
+    const data = await this.graphql(
+      'mutation LairEventUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) { metaobjectUpdate(id: $id, metaobject: $metaobject) { metaobject { id handle updatedAt fields { key type value } } userErrors { field message code } } }',
+      { id, metaobject: { fields } },
+    );
+    return { metaobject: data.metaobjectUpdate?.metaobject || null, userErrors: data.metaobjectUpdate?.userErrors || [] };
+  }
+
+  /** Delete a lair_event entry: { deletedId, userErrors }. write_metaobjects. */
+  async deleteLairEvent(id) {
+    const data = await this.graphql('mutation LairEventDelete($id: ID!) { metaobjectDelete(id: $id) { deletedId userErrors { field message code } } }', { id });
+    return { deletedId: data.metaobjectDelete?.deletedId || null, userErrors: data.metaobjectDelete?.userErrors || [] };
+  }
+
+  /**
+   * An event picture into Shopify's Files (round 7): a staged upload target (stagedUploadsCreate), the file posted to it
+   * by the Worker itself (a multipart form: every parameter Shopify gave, in order, then the file), then fileCreate.
+   * write_files. Returns { image: { id, url, alt, status } } or { problem } with what went wrong.
+   */
+  async uploadEventPicture({ bytes, mimeType, filename, alt }) {
+    const staged = await this.graphql(
+      'mutation LairStagedUpload($input: [StagedUploadInput!]!) { stagedUploadsCreate(input: $input) { stagedTargets { url resourceUrl parameters { name value } } userErrors { field message } } }',
+      { input: [{ resource: 'IMAGE', filename, mimeType, httpMethod: 'POST', fileSize: String(bytes.length) }] },
+    );
+    const problems = staged.stagedUploadsCreate?.userErrors || [];
+    const target = staged.stagedUploadsCreate?.stagedTargets?.[0];
+    if (problems.length || !target?.url) return { problem: problems.map((e) => e.message).join('; ') || 'no upload address' };
+    const form = new FormData();
+    for (const p of target.parameters || []) form.append(p.name, p.value);
+    form.append('file', new Blob([bytes], { type: mimeType }), filename);
+    const sent = await fetch(target.url, { method: 'POST', body: form });
+    await sent.arrayBuffer().catch(() => null);
+    if (!sent.ok) return { problem: `the upload answered ${sent.status}` };
+    const made = await this.graphql(
+      'mutation LairFileCreate($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { id fileStatus alt ... on MediaImage { image { url width height } } } userErrors { field message code } } }',
+      { files: [{ originalSource: target.resourceUrl, contentType: 'IMAGE', alt }] },
+    );
+    const errors = made.fileCreate?.userErrors || [];
+    const file = made.fileCreate?.files?.[0];
+    if (errors.length || !file?.id) return { problem: errors.map((e) => e.message).join('; ') || 'no file came back' };
+    return { image: { id: file.id, url: file.image?.url || null, alt: file.alt ?? alt ?? '', status: file.fileStatus || null } };
+  }
+
   async customerTags(customerId) {
     const data = await this.graphql('query C($id: ID!) { customer(id: $id) { id tags } }', { id: `gid://shopify/Customer/${customerId}` });
     return data.customer ? data.customer.tags.map((t) => t.toLowerCase()) : [];

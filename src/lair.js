@@ -14,6 +14,7 @@ import {
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
 import { hoursSummary, renderEmail } from './email.js';
+import { eventPayment } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -24,7 +25,7 @@ const FALLBACK_ROOMS = [
 /** Permissions the Shopify app needs (checked by the health check) */
 const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions'];
 /** Permissions only some features need: everything else works without them */
-const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes', read_products: 'library copies on the shelf', read_inventory: 'library copies on the shelf' };
+const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes', read_products: 'library copies, scanning library games and tab items', read_inventory: 'library copies on the shelf', write_metaobjects: 'staff adding and editing events', write_files: 'event pictures' };
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -63,6 +64,17 @@ const COPIES_TTL = 10 * MIN;
 const STATUS_IDS = 60;
 /** Round 7: a group (a league or a club, with passes of its own) has up to this many people */
 const GROUP_MAX = 200;
+/** Round 7, the events editor: an event's kinds and repeats (the lair_event definition's choices), and its "How people
+    pay" words for the Lair's payment values */
+const EVENT_TYPES = ['tcg', 'rpg', 'wargame', 'market', 'social', 'tournament', 'learn', 'launch', 'other'];
+const EVENT_REPEATS = ['weekly', 'fortnightly', 'monthly'];
+const EVENT_PAYMENT_WORDS = { store: 'In store', online: 'Online', either: 'Online or in store' };
+/** How far ahead the events editor looks for an event's dates that people have signed up for */
+const EVENT_DAYS = 400;
+/** The events editor's answer while write_metaobjects or write_files waits for Mo's approval */
+const EVENTS_DENIED = "Shopify hasn't let the Lair change events yet. Approve the app's new permissions in Shopify admin (Apps › Dice Goblin Lair), then try again.";
+/** Shopify down (not a missing permission) while staff use the events editor */
+const SHOPIFY_DOWN = "Shopify didn't answer just now. Try again in a minute.";
 /** Picking a customer the Lair has never met, with no name to make their member record from */
 const PICK_AGAIN = 'That customer could not be found. Pick them from the search again.';
 /** A guest seat or sign-up joins the account with its email if it's upcoming or ended in the last 30 days */
@@ -938,6 +950,7 @@ export class Lair {
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
       if (request.method === 'GET' && a === 'groups' && !b) return json(this.listGroups(url, who));
       if (request.method === 'GET' && a === 'customers' && !b) return json(await this.findCustomers(url, who));
+      if (request.method === 'GET' && a === 'events' && !b) return json(await this.listEvents(who));
       if (request.method === 'GET' && a === 'library' && b === 'status' && !c) return json(await this.libraryStatus(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'holds' && !c) return json(await this.listHolds(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
@@ -979,6 +992,10 @@ export class Lair {
       if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
+      if (a === 'events' && !b) return json(await this.createEvent(body, who));
+      if (a === 'events' && b === 'pictures' && !c) return json(await this.eventPicture(body, who));
+      if (a === 'events' && b && c === 'update') return json(await this.updateEvent(decodeURIComponent(b), body, who));
+      if (a === 'events' && b && c === 'delete') return json(await this.deleteEvent(decodeURIComponent(b), who));
       if (a === 'contact' && !b) return json(await this.contact(body, who, client));
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
       if (a === 'prizes' && b && c === 'done') return json(await this.prizeDone(decodeURIComponent(b), who));
@@ -3750,6 +3767,546 @@ export class Lair {
     }, { replyTo: email }));
     if (!sent.ok) throw new RuleError("That didn't send. Email or call us instead.", 502);
     return { ok: true };
+  }
+
+  /* ---------------- the events editor (round 7) ---------------- */
+  // Events are the lair_event metaobjects: the Lair reads and writes them through the Admin API and copies nothing in.
+  // Every change is checked against the sign-ups first (a date people signed up for can't move or go); Shopify's write
+  // comes after that check, so a sign-up landing in between is the one case staff sort by hand.
+
+  /** A Shopify call in the events editor failed: a missing permission is the 503 Mo fixes by approving it; anything else, try again */
+  eventsFailed(error) {
+    if (error instanceof RuleError) return error;
+    const message = String(error?.message || error);
+    this.note({ eventsError: { message: message.slice(0, 300), at: new Date().toISOString() } });
+    return /access denied|access_denied|required access|not approved/i.test(message) ? new RuleError(EVENTS_DENIED, 503) : new RuleError(SHOPIFY_DOWN, 502);
+  }
+
+  /** After every write: the next request loads the events again (a failed load keeps the ones the Lair has), so sign-ups, game spots and table holds follow at once */
+  dropEvents() {
+    this.rulesLoadedAt = 0;
+  }
+
+  /** A metaobject's fields as { key: value } (null when empty), remembering any picture or product it names for later views */
+  eventFieldMap(fields) {
+    this.eventRefs = this.eventRefs || new Map();
+    if (this.eventRefs.size > 2000) this.eventRefs.clear();
+    const out = {};
+    for (const f of fields || []) {
+      out[f.key] = f.value == null || f.value === '' ? null : String(f.value);
+      const ref = f.reference;
+      if (ref?.__typename === 'MediaImage' && ref.id) this.eventRefs.set(ref.id, { url: ref.image?.url || null, alt: ref.alt ?? '' });
+      if (ref?.__typename === 'Product' && ref.id) this.eventRefs.set(ref.id, { handle: ref.handle || null, title: ref.title || null });
+    }
+    return out;
+  }
+
+  /** An event's fields the way the Lair's rules hold events (as shopify.js loadLairData reads them), for its dates */
+  eventRule(handle, f) {
+    const start = Date.parse(f.starts_at || '');
+    const fee = Math.round(Number(f.entry_fee || 0) * 100);
+    return {
+      id: handle, title: f.title || '', start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * HOUR, tables: f.tables || '',
+      repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: this.eventSkipDates(f.skip_dates),
+      capacity: f.capacity ? Number(f.capacity) : null, entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
+      payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
+    };
+  }
+
+  eventSkipDates(value) {
+    try {
+      const list = JSON.parse(value || '[]');
+      return Array.isArray(list) ? list.map((d) => String(d).slice(0, 10)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** "Weekly · Thursdays 6pm", "Fortnightly · Thursdays 6:30pm", "Monthly · Third Saturday 11am" (the calendar's tag), or null for a one-off */
+  repeatTag(ev, rules) {
+    const repeat = String(ev.repeat || '').trim().toLowerCase();
+    if (!EVENT_REPEATS.includes(repeat) || !Number.isFinite(ev.start)) return null;
+    const weekday = new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long' }).format(new Date(ev.start));
+    const clock = this.clockWord(ev.start, rules.tz);
+    if (repeat === 'monthly') {
+      const nth = ['First', 'Second', 'Third', 'Fourth', 'Fifth'][Math.ceil(Number(lairTime(rules.tz).key(ev.start).slice(8, 10)) / 7) - 1];
+      return `Monthly · ${nth} ${weekday} ${clock}`;
+    }
+    return `${repeat === 'weekly' ? 'Weekly' : 'Fortnightly'} · ${weekday}s ${clock}`;
+  }
+
+  /**
+   * An event's dates from now: upcoming (every date that hasn't ended, up to 400 days ahead), next (the first one's start)
+   * and last (the last date to come: a one-off's own, a repeating event's last before Repeat until, null when it goes on)
+   */
+  eventDatesFrom(ev, rules, now) {
+    if (!Number.isFinite(ev.start)) return { upcoming: [], next: null, last: null };
+    const one = { tz: rules.tz, events: [ev] };
+    const upcoming = eventOccurrences(one, now, now + EVENT_DAYS * 24 * HOUR);
+    const next = upcoming[0]?.start ?? null;
+    let last = null;
+    if (!ev.repeat) last = next;
+    else if (ev.repeatUntil) {
+      const until = lairTime(rules.tz).at(addDays(ev.repeatUntil, 1), 0);
+      const all = until > now ? eventOccurrences(one, now, until) : [];
+      last = all.length ? all[all.length - 1].start : null;
+    }
+    return { upcoming, next, last };
+  }
+
+  /**
+   * An event's upcoming dates with anyone on them, soonest first: [{ occurrenceId, start, people (sign-ups that aren't
+   * cancelled), spots (game spots: active bookings) }]. No awaits.
+   */
+  eventBookings(handle, now) {
+    // Its dates' ids are `<handle>@YYYY-MM-DD`: everything from "<handle>@" up to "<handle>A" ('A' follows '@'), on the index
+    const [from, to] = [`${handle}@`, `${handle}A`];
+    const byDate = new Map();
+    const add = (r, key) => {
+      const item = byDate.get(r.occurrence_id) || { occurrenceId: r.occurrence_id, start: r.start, people: 0, spots: 0 };
+      item.start = Math.min(item.start, r.start);
+      item[key] += r.n;
+      byDate.set(r.occurrence_id, item);
+    };
+    for (const r of this.sql.exec(
+      "SELECT occurrence_id, MIN(starts_at) AS start, COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id >= ? AND occurrence_id < ? AND status != 'cancelled' AND ends_at > ? GROUP BY occurrence_id",
+      from, to, now,
+    ).toArray()) add(r, 'people');
+    for (const r of this.sql.exec(
+      "SELECT occurrence_id, MIN(starts_at) AS start, COUNT(*) AS n FROM bookings WHERE occurrence_id >= ? AND occurrence_id < ? AND status IN ('held', 'confirmed', 'seated') AND ends_at > ? GROUP BY occurrence_id",
+      from, to, now,
+    ).toArray()) add(r, 'spots');
+    return [...byDate.values()].filter((x) => x.people > 0 || x.spots > 0).sort((a, b) => a.start - b.start || a.occurrenceId.localeCompare(b.occurrenceId));
+  }
+
+  /** A picture's address at a width, the way the theme's image_url filter asks for one */
+  withWidth(url, width) {
+    return url ? `${url}${url.includes('?') ? '&' : '?'}width=${width}` : null;
+  }
+
+  /**
+   * An event as the staff page's editor sees it (contract v7 section 10), with config: the event exactly as
+   * lair-config.liquid writes it, for the staff page's store.cfg.events. booked: its dates with sign-ups (looked up when
+   * not given). Returns { view, ev } (ev: the event as the Lair's rules hold it). No awaits.
+   */
+  eventEntry(node, rules, now, booked = null) {
+    const f = this.eventFieldMap(node.fields);
+    const ev = this.eventRule(node.handle, f);
+    const dates = this.eventDatesFrom(ev, rules, now);
+    const refs = this.eventRefs || new Map();
+    const picture = f.image ? refs.get(f.image) || null : null;
+    const ticket = f.product ? refs.get(f.product) || null : null;
+    const fee = f.entry_fee != null ? Math.round(Number(f.entry_fee) * 100) : null;
+    const productUrl = ticket?.handle ? `/products/${ticket.handle}` : null;
+    const view = {
+      id: node.id, handle: node.handle, title: f.title || '', type: f.event_type || 'other', game: f.game || '', start: Number.isFinite(ev.start) ? ev.start : null,
+      end: f.ends_at ? Date.parse(f.ends_at) : null, repeat: ev.repeat, repeatUntil: ev.repeatUntil, skipDates: ev.skipDates, description: f.description || '',
+      image: f.image ? { id: f.image, url: picture?.url || null, alt: picture ? picture.alt ?? '' : null } : null,
+      capacity: ev.capacity, priceNote: f.price_note || '', entryFee: Number.isFinite(fee) ? fee : null, payment: ev.payment, tables: f.tables || '',
+      gameTables: f.game_tables || '', lockTables: ev.lockTables, link: f.link || '',
+      product: f.product ? { id: f.product, handle: ticket?.handle || null, title: ticket?.title || null } : null,
+      repeatTag: this.repeatTag(ev, rules), next: dates.next, last: dates.last, booked: booked || this.eventBookings(node.handle, now),
+      updatedAt: Date.parse(node.updatedAt || '') || null,
+      config: {
+        id: node.handle, title: f.title || '', type: f.event_type || 'other', game: f.game || '', start: f.starts_at, end: f.ends_at, repeat: ev.repeat,
+        repeatUntil: ev.repeatUntil, skipDates: ev.skipDates, capacity: ev.capacity, tables: f.tables, entryFee: Number.isFinite(fee) ? fee : null,
+        gameTables: f.game_tables, payment: ev.payment, lockTables: ev.lockTables, price: f.price_note, url: productUrl || f.link, link: f.link,
+        product: productUrl ? { url: productUrl, title: ticket.title || '', price: null, available: null, stock: null } : null,
+        blurb: f.description, image: this.withWidth(picture?.url || null, 800), imageAlt: picture?.alt || '',
+      },
+    };
+    return { view, ev, upcoming: dates.upcoming };
+  }
+
+  /**
+   * GET /events (staff): every lair_event entry, those with dates to come first (soonest next), then the rest (the most
+   * recent first). Read with the pictures and products (read_files, read_products); if Shopify won't give those yet,
+   * read again without them (ids only).
+   */
+  async listEvents(who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    let nodes;
+    try {
+      nodes = await this.shopify.lairEventsAdmin({ refs: true });
+    } catch (error) {
+      if (!/access denied|access_denied|required access/i.test(String(error?.message || error))) throw this.eventsFailed(error);
+      try {
+        nodes = await this.shopify.lairEventsAdmin({ refs: false });
+      } catch (again) {
+        throw this.eventsFailed(again);
+      }
+    }
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const entries = nodes.map((n) => this.eventEntry(n, rules, now));
+    const latest = (x) => {
+      if (!Number.isFinite(x.ev.start)) return 0;
+      const past = eventOccurrences({ tz: rules.tz, events: [x.ev] }, x.ev.start - 1, now);
+      return past.length ? past[past.length - 1].start : x.ev.start;
+    };
+    const coming = entries.filter((x) => x.view.next != null).sort((a, b) => a.view.next - b.view.next || a.view.title.localeCompare(b.view.title));
+    const done = entries.filter((x) => x.view.next == null).map((x) => ({ x, at: latest(x) })).sort((a, b) => b.at - a.at || a.x.view.title.localeCompare(b.x.view.title)).map((y) => y.x);
+    return { events: [...coming, ...done].map((x) => x.view) };
+  }
+
+  /** A real date, 'YYYY-MM-DD', or null */
+  dayOf(value) {
+    const text = String(value ?? '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+    const ms = Date.parse(`${text}T00:00:00Z`);
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === text ? text : null;
+  }
+
+  /** A moment as the events keep it in Shopify: Lair wall-clock time with its offset, like 2026-10-08T18:00:00+13:00 */
+  lairIso(ms, tz) {
+    const time = lairTime(tz);
+    const p = time.parts(ms);
+    const offset = Math.round(time.offset(ms) / MIN);
+    const pad = (n) => String(Math.abs(n)).padStart(2, '0');
+    return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.h)}:${pad(p.mi)}:00${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
+  }
+
+  /** Whether "Tables reserved" reads as tables that exist: table codes and ranges (T20-T21), rooms by name, or all */
+  tablesExist(spec, rooms) {
+    const text = String(spec).trim();
+    if (/^all$/i.test(text)) return true;
+    const index = tableIndex(rooms);
+    const parts = text.split(/[,;]+/).map((p) => p.trim()).filter(Boolean);
+    if (!parts.length) return false;
+    return parts.every((part) => {
+      if (rooms.some((r) => r.id.toLowerCase() === part.toLowerCase() || r.name.toLowerCase() === part.toLowerCase())) return true;
+      return part.split(/\s+/).every((token) => {
+        const range = token.match(/^([A-Za-z]+)(\d+)-(?:([A-Za-z]+))?(\d+)$/);
+        if (!range) return index.has(token.toUpperCase());
+        if (range[3] && range[3].toUpperCase() !== range[1].toUpperCase()) return false;
+        if (+range[2] > +range[4]) return false;
+        for (let i = +range[2]; i <= +range[4]; i += 1) if (!index.has(`${range[1].toUpperCase()}${i}`)) return false;
+        return true;
+      });
+    });
+  }
+
+  /** Whether "Game tables" reads as spots of tables that exist, each spot in one room: T14+T15, T16+T17 */
+  spotsExist(spec, rooms) {
+    const index = tableIndex(rooms);
+    const parts = String(spec).split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
+    if (!parts.length) return false;
+    return parts.every((part) => {
+      const tables = part.split('+').map((t) => t.trim().toUpperCase());
+      return tables.every((t) => index.has(t)) && tables.every((t) => index.get(t).roomObj.id === index.get(tables[0]).roomObj.id);
+    });
+  }
+
+  /**
+   * The editor's fields, checked (contract v7 section 10), as the lair_event fields to write: { set: { key: value } }
+   * with only what was sent ('' clears an optional field), and merged: the entry after the change. current: the entry's
+   * fields now ({} for a new one). A one-off keeps no Repeat until or skip dates. No awaits.
+   */
+  eventFields(input, rules, current = {}) {
+    const creating = !Object.keys(current).length;
+    const has = (k) => Object.prototype.hasOwnProperty.call(input, k);
+    const empty = (k) => input[k] == null || String(input[k]).trim() === '';
+    const set = {};
+    if (creating || has('title')) {
+      const title = trimmed(input.title, 80);
+      if (!title) throw new RuleError('Give the event a title.');
+      set.title = title;
+    }
+    if (creating || has('type')) {
+      if (!EVENT_TYPES.includes(input.type)) throw new RuleError('Pick what kind of event it is.');
+      set.event_type = input.type;
+    }
+    if (has('game')) {
+      const game = String(input.game ?? '').trim();
+      if (game.length > 40) throw new RuleError("The game's name is 40 characters at most.");
+      set.game = game;
+    }
+    if (creating || has('start')) {
+      const start = Number(input.start);
+      if (empty('start') || !Number.isFinite(start)) throw new RuleError('Pick when it starts.');
+      set.starts_at = this.lairIso(start, rules.tz);
+    }
+    if (has('end')) {
+      const end = Number(input.end);
+      if (!empty('end') && !Number.isFinite(end)) throw new RuleError('It has to finish after it starts.');
+      set.ends_at = empty('end') ? '' : this.lairIso(end, rules.tz);
+    }
+    if (has('repeat')) {
+      const repeat = empty('repeat') ? '' : String(input.repeat).trim().toLowerCase();
+      if (repeat && !EVENT_REPEATS.includes(repeat)) throw new RuleError('Pick how often it repeats: weekly, fortnightly or monthly. Or leave it as a one-off.');
+      set.repeat = repeat;
+    }
+    if (has('repeatUntil')) {
+      const day = empty('repeatUntil') ? '' : this.dayOf(input.repeatUntil);
+      if (day === null) throw new RuleError("'Repeat until' has to be on or after the first date.");
+      set.repeat_until = day;
+    }
+    if (has('skipDates')) {
+      const raw = Array.isArray(input.skipDates) ? input.skipDates : String(input.skipDates ?? '').split(/[\s,;]+/);
+      const days = raw.map((d) => String(d ?? '').trim()).filter(Boolean).map((d) => this.dayOf(d));
+      if (days.some((d) => d === null) || days.length > 52) throw new RuleError('Skip dates have to be real dates, on or after the first date.');
+      set.skip_dates = days.length ? JSON.stringify([...new Set(days)].sort()) : '';
+    }
+    if (has('description')) set.description = String(input.description ?? '').replace(/\r\n?/g, '\n').trim().slice(0, 2000);
+    if (has('imageId')) {
+      const id = String(input.imageId ?? '').trim();
+      const digits = id.match(/^(?:gid:\/\/shopify\/MediaImage\/)?(\d{1,20})$/);
+      if (id && !digits) throw new RuleError('Pick a JPEG, PNG or WebP picture.');
+      set.image = id ? `gid://shopify/MediaImage/${digits[1]}` : '';
+    }
+    if (has('capacity')) {
+      const capacity = Number(input.capacity);
+      if (!empty('capacity') && !(Number.isInteger(capacity) && capacity >= 1 && capacity <= 500)) throw new RuleError('Capacity is a number of people, from 1 to 500.');
+      set.capacity = empty('capacity') ? '' : String(capacity);
+    }
+    if (has('priceNote')) {
+      const note = String(input.priceNote ?? '').trim();
+      if (note.length > 60) throw new RuleError('Keep the price note short: 60 characters at most.');
+      set.price_note = note;
+    }
+    if (has('entryFee')) {
+      const fee = Number(input.entryFee);
+      if (!empty('entryFee') && !(Number.isFinite(fee) && fee >= 0 && fee <= 1000)) throw new RuleError('The entry fee is in dollars, from $0 to $1000.');
+      set.entry_fee = empty('entryFee') ? '' : (Math.round(fee * 100) / 100).toFixed(2);
+    }
+    if (has('payment')) {
+      if (!empty('payment') && !EVENT_PAYMENT_WORDS[input.payment]) throw new RuleError('Pick how people pay: in store, online, or either.');
+      set.payment = empty('payment') ? '' : EVENT_PAYMENT_WORDS[input.payment];
+    }
+    if (has('tables')) {
+      const tables = String(input.tables ?? '').trim();
+      if (tables && !this.tablesExist(tables, rules.rooms)) throw new RuleError("Some of those tables don't exist. Use table codes like T20-T21, a room's name, or all.");
+      set.tables = tables;
+    }
+    if (has('gameTables')) {
+      const spots = String(input.gameTables ?? '').trim();
+      if (spots && !this.spotsExist(spots, rules.rooms)) throw new RuleError('Game tables are pairs like T14+T15, T16+T17, with tables that exist.');
+      set.game_tables = spots;
+    }
+    if (has('lockTables')) set.lock_tables = input.lockTables === true || input.lockTables === 'true' ? 'true' : 'false';
+    if (has('link')) {
+      const link = String(input.link ?? '').trim();
+      let ok = !link;
+      if (link && /^https?:\/\//i.test(link) && link.length <= 300) {
+        try {
+          ok = Boolean(new URL(link).hostname);
+        } catch {
+          ok = false;
+        }
+      }
+      if (!ok) throw new RuleError('Links start with https://.');
+      set.link = link;
+    }
+    if (has('productId')) {
+      const id = String(input.productId ?? '').trim();
+      const digits = id.match(/^(?:gid:\/\/shopify\/Product\/)?(\d{1,20})$/);
+      if (id && !digits) throw new RuleError("That ticket product doesn't look right. Pick it again.");
+      set.product = id ? `gid://shopify/Product/${digits[1]}` : '';
+    }
+    // The entry after the change, checked as a whole: the end after the start (24 hours at most), and Repeat until and the
+    // skip dates on or after the first date. A one-off keeps neither (a skip date would hide its only date).
+    const merged = { ...current };
+    for (const [key, value] of Object.entries(set)) merged[key] = value === '' ? null : value;
+    const start = Date.parse(merged.starts_at || '');
+    const first = Number.isFinite(start) ? lairTime(rules.tz).key(start) : null;
+    if ((set.starts_at || set.ends_at) && merged.ends_at) {
+      const end = Date.parse(merged.ends_at);
+      if (!(end > start)) throw new RuleError('It has to finish after it starts.');
+      if (end - start > 24 * HOUR) throw new RuleError('Keep an event to 24 hours or less. Use Repeats for more dates.');
+    }
+    if (!merged.repeat) {
+      for (const key of ['repeat_until', 'skip_dates']) {
+        if (merged[key] != null) {
+          set[key] = '';
+          merged[key] = null;
+        }
+      }
+    } else {
+      if ((set.repeat_until || set.starts_at || 'repeat' in set) && merged.repeat_until && first && merged.repeat_until < first) {
+        throw new RuleError("'Repeat until' has to be on or after the first date.");
+      }
+      if ((set.skip_dates || set.starts_at || 'repeat' in set) && first && this.eventSkipDates(merged.skip_dates).some((d) => d < first)) {
+        throw new RuleError('Skip dates have to be real dates, on or after the first date.');
+      }
+    }
+    // Only what changes goes to Shopify
+    for (const [key, value] of Object.entries(set)) {
+      const now = current[key] ?? '';
+      const same = ['starts_at', 'ends_at'].includes(key) ? now && value && Date.parse(now) === Date.parse(value)
+        : key === 'entry_fee' ? now !== '' && value !== '' && Number(now) === Number(value)
+          : key === 'skip_dates' ? JSON.stringify(this.eventSkipDates(now)) === JSON.stringify(this.eventSkipDates(value))
+            : String(now) === String(value);
+      if (same || (!creating ? false : value === '')) delete set[key];
+    }
+    return { set, merged };
+  }
+
+  /** Lower case, letters, numbers and dashes from the title, up to 50 characters (with room for a -2) */
+  eventHandleBase(title, room = 0) {
+    const slug = String(title || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return (slug || 'event').slice(0, 50 - room).replace(/-+$/, '') || 'event';
+  }
+
+  /** A handle nobody has: the title's, then -2, -3… (joins and pictures are routes, never handles) */
+  async freeEventHandle(title) {
+    for (let n = 1; n <= 20; n += 1) {
+      const suffix = n === 1 ? '' : `-${n}`;
+      const handle = `${this.eventHandleBase(title, suffix.length)}${suffix}`;
+      if (['joins', 'pictures'].includes(handle)) continue;
+      if (!(await this.shopify.lairEventByHandle(handle))) return handle;
+    }
+    return `${this.eventHandleBase(title, 7)}-${makeId('x').slice(2, 8)}`;
+  }
+
+  /**
+   * Save an event in Shopify, once more after a second if Shopify says its picture isn't ready yet (a file still being
+   * processed). Returns { metaobject, userErrors }.
+   */
+  async writeEvent(write, picture) {
+    let result = await write();
+    const notReady = (e) => /image|file|media/i.test(`${(e.field || []).join(' ')} ${e.message || ''}`);
+    if (picture && result.userErrors?.some(notReady)) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      result = await write();
+    }
+    return result;
+  }
+
+  /** Shopify's userErrors, as the editor shows them */
+  shopifySaidNo(userErrors) {
+    return new RuleError(`Shopify said no: ${userErrors.map((e) => e.message).filter(Boolean).join('; ') || 'it would not save that'}`, 422);
+  }
+
+  /** POST /events { …fields } (staff): a new event. Its handle comes from the title and never changes. Returns { event, notice }. */
+  async createEvent(input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    const { set } = this.eventFields(input || {}, rules);
+    let result;
+    try {
+      const handle = await this.freeEventHandle(set.title);
+      // A new handle has no sign-ups, so there's nothing to check before Shopify saves it
+      result = await this.writeEvent(() => this.shopify.createLairEvent(handle, Object.entries(set).map(([key, value]) => ({ key, value }))), Boolean(set.image));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.userErrors?.length || !result.metaobject) throw this.shopifySaidNo(result.userErrors || []);
+    // --- no awaits from here on ---
+    this.dropEvents();
+    return { event: this.eventEntry(result.metaobject, rules, Date.now()).view, notice: null };
+  }
+
+  /**
+   * POST /events/:handle/update { …the fields that change } (staff). A date people have signed up for (sign-ups or game
+   * spots) can't move or go: 409, and nothing changes. A lower capacity is fine (notice: nobody's cancelled). Returns
+   * { event, notice }.
+   */
+  async updateEvent(handle, input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    let node;
+    try {
+      node = await this.shopify.lairEventByHandle(String(handle || '').slice(0, 120));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (!node) throw new RuleError('That event could not be found.', 404);
+    // --- no awaits until Shopify saves it: the sign-up check ---
+    const now = Date.now();
+    const current = this.eventFieldMap(node.fields);
+    const { set, merged } = this.eventFields(input || {}, rules, current);
+    const booked = this.eventBookings(node.handle, now);
+    const before = this.eventDatesFrom(this.eventRule(node.handle, current), rules, now).upcoming;
+    const after = new Map(this.eventDatesFrom(this.eventRule(node.handle, merged), rules, now).upcoming.map((o) => [o.id, o]));
+    const was = new Map(before.map((o) => [o.id, o]));
+    for (const b of booked) {
+      const old = was.get(b.occurrenceId);
+      if (!old) continue;
+      const next = after.get(b.occurrenceId);
+      if (!next || next.start !== old.start || next.end !== old.end) {
+        throw new RuleError(`People have signed up for ${this.shortDay(old.start, rules)}, so that date can't move or go. Cancel their sign-ups on the staff page first, or make the change from a date nobody's signed up for.`, 409);
+      }
+    }
+    const capacity = merged.capacity ? Number(merged.capacity) : null;
+    const over = 'capacity' in set && capacity ? booked.find((b) => after.has(b.occurrenceId) && b.people > capacity) : null;
+    const notice = over ? `${this.shortDay(over.start, rules)} already has ${plural(over.people, 'person', 'people')}, more than the new capacity. Nobody's been cancelled.` : null;
+    const fields = Object.entries(set).map(([key, value]) => ({ key, value }));
+    if (!fields.length) return { event: this.eventEntry(node, rules, now, booked).view, notice };
+    let result;
+    try {
+      result = await this.writeEvent(() => this.shopify.updateLairEvent(node.id, fields), Boolean(set.image));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.userErrors?.length || !result.metaobject) throw this.shopifySaidNo(result.userErrors || []);
+    // --- no awaits from here on ---
+    this.dropEvents();
+    return { event: this.eventEntry(result.metaobject, rules, Date.now()).view, notice };
+  }
+
+  /** POST /events/:handle/delete (staff): not while any date to come has people on it (409). The picture stays in Shopify's Files. */
+  async deleteEvent(handle, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    let node;
+    try {
+      node = await this.shopify.lairEventByHandle(String(handle || '').slice(0, 120));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (!node) throw new RuleError('That event could not be found.', 404);
+    // --- no awaits until Shopify deletes it: the sign-up check ---
+    const booked = this.eventBookings(node.handle, Date.now());
+    if (booked.length) {
+      throw new RuleError(`People have signed up for ${this.shortDay(booked[0].start, rules)}. Cancel their sign-ups first, or end the event after that date with Repeat until.`, 409);
+    }
+    let result;
+    try {
+      result = await this.shopify.deleteLairEvent(node.id);
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.userErrors?.length) throw this.shopifySaidNo(result.userErrors);
+    // --- no awaits from here on ---
+    this.dropEvents();
+    return { ok: true, handle: node.handle };
+  }
+
+  /**
+   * POST /events/pictures { dataUrl, alt? } (staff): a picture for an event, into Shopify's Files. The browser shrinks it
+   * first (JPEG, PNG or WebP, 700 KB at most); the Worker sends it to Shopify's upload target itself. Returns { image:
+   * { id, url, alt, status } }: id is the MediaImage to save as imageId; url can be null while Shopify processes it.
+   */
+  async eventPicture(input, who) {
+    this.requireStaff(who);
+    const match = String(input?.dataUrl || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
+    if (!match) throw new RuleError('Pick a JPEG, PNG or WebP picture.');
+    let raw;
+    try {
+      raw = atob(match[2].replace(/\s+/g, ''));
+    } catch {
+      throw new RuleError('Pick a JPEG, PNG or WebP picture.');
+    }
+    if (raw.length > IMAGE_LIMIT) throw new RuleError('That picture is too big. Try a smaller one.', 413);
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    const filename = `lair-event-${makeId('x').slice(2, 14)}.${match[1].split('/')[1].replace('jpeg', 'jpg')}`;
+    let result;
+    try {
+      result = await this.shopify.uploadEventPicture({ bytes, mimeType: match[1], filename, alt: trimmed(input?.alt, 200) });
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.problem) throw new RuleError(`Shopify didn't take the picture (${String(result.problem).slice(0, 160)}). Try again.`, 502);
+    this.eventRefs = this.eventRefs || new Map();
+    this.eventRefs.set(result.image.id, { url: result.image.url, alt: result.image.alt ?? '' });
+    return { image: result.image };
   }
 
   /* ---------------- dice ---------------- */
