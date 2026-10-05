@@ -66,6 +66,7 @@ test('a member opens the member view with their rows, tab and passes', () => {
     rows: [row],
     tab: { id: 'tab_1', items: [] },
     passes: [{ code: 'SJ-KIWI-4' }],
+    loyalty: { stamps: 7, cardSize: 10, rollsAvailable: 1 },
   });
   assert.equal(screen?.name, 'member');
   if (screen?.name !== 'member') return;
@@ -74,8 +75,9 @@ test('a member opens the member view with their rows, tab and passes', () => {
   assert.equal(screen.tab?.id, 'tab_1');
   assert.equal(screen.passes.length, 1);
   assert.deepEqual(screen.notices, []);
+  assert.deepEqual(screen.loyalty, { stamps: 7, cardSize: 10, rollsAvailable: 1 }, 'the loyalty card, for show (round 6)');
   const bare = nextScreen({ type: 'member', member: { customerId: '1' } });
-  assert.deepEqual(bare?.name === 'member' && [bare.rows, bare.tab, bare.passes], [[], null, []]);
+  assert.deepEqual(bare?.name === 'member' && [bare.rows, bare.tab, bare.passes, bare.loyalty], [[], null, [], null]);
 });
 
 test('a pass opens the pass view; anything else is not a screen', () => {

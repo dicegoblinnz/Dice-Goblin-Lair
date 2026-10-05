@@ -226,6 +226,49 @@ export class ShopifyAdmin {
     return data.customer ? data.customer.tags.map((t) => t.toLowerCase()) : [];
   }
 
+  /**
+   * The email on a customer's own Shopify account, and whether Shopify says it's verified (round 6: a guest's bookings
+   * join the account with that email). read_customers, and protected customer data approval for the email field.
+   * Returns { email, verified } or null when there's no such customer.
+   */
+  async customerEmail(customerId) {
+    const data = await this.graphql('query CustomerEmail($id: ID!) { customer(id: $id) { id verifiedEmail defaultEmailAddress { emailAddress } } }', { id: `gid://shopify/Customer/${customerId}` });
+    const c = data.customer;
+    return c ? { email: String(c.defaultEmailAddress?.emailAddress || '').trim(), verified: c.verifiedEmail === true } : null;
+  }
+
+  /**
+   * When each customer's Shopify account was made (round 6: years with Dice Goblin), for up to 100 customer IDs in one
+   * call. read_customers. Returns a Map of customer ID → ms, or null for a customer Shopify doesn't have.
+   */
+  async customersSince(customerIds) {
+    const ids = [...new Set(customerIds.map(String))].slice(0, 100);
+    if (!ids.length) return new Map();
+    const data = await this.graphql('query CustomersSince($ids: [ID!]!) { nodes(ids: $ids) { ... on Customer { id createdAt } } }', { ids: ids.map((id) => `gid://shopify/Customer/${id}`) });
+    const found = new Map((data.nodes || []).filter((n) => n?.id).map((n) => [String(n.id).split('/').pop(), Date.parse(n.createdAt)]));
+    return new Map(ids.map((id) => [id, Number.isFinite(found.get(id)) ? found.get(id) : null]));
+  }
+
+  /**
+   * How many copies of each library game there are (round 6: library holds): each product variant's inventory quantity,
+   * for up to 60 variant IDs in one call. Needs read_products and read_inventory (Mo approves them once in Shopify admin);
+   * until then Shopify refuses and this throws. Returns a Map of variant ID → { quantity, tracked }, or null for a
+   * variant Shopify doesn't have.
+   */
+  async variantCopies(variantIds) {
+    const ids = [...new Set(variantIds.map(String))].slice(0, 60);
+    if (!ids.length) return new Map();
+    const data = await this.graphql(
+      'query VariantCopies($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id inventoryQuantity inventoryItem { tracked } } } }',
+      { ids: ids.map((id) => `gid://shopify/ProductVariant/${id}`) },
+    );
+    const found = new Map((data.nodes || []).filter((n) => n?.id).map((n) => [String(n.id).split('/').pop(), n]));
+    return new Map(ids.map((id) => {
+      const n = found.get(id);
+      return [id, n ? { quantity: Number.isFinite(Number(n.inventoryQuantity)) ? Number(n.inventoryQuantity) : null, tracked: n.inventoryItem?.tracked !== false } : null];
+    }));
+  }
+
   /** A draft order with one custom line; its invoice URL is a normal Shopify checkout. */
   async createCheckout({ ref, title, unitPrice, quantity, email, currency, attributes }) {
     const data = await this.graphql(
@@ -275,6 +318,42 @@ export class ShopifyAdmin {
   }
 
   /**
+   * A customer's paid orders, for the spend report's backfill (round 6), with when their Shopify account was made. Each
+   * order: { id, name, at (processed, else created), source, amount (subtotal after discounts, before returns: the same
+   * "no clawback" rule as orders/paid), paid (it was paid at some point and isn't cancelled) }.
+   * Scopes: read_orders gives Shopify's last 60 days of orders; with read_all_orders granted it's every order. Up to
+   * `pages` pages of 100, oldest first.
+   */
+  async customerOrders(customerId, { pages = 10 } = {}) {
+    const orders = [];
+    let createdAt = null;
+    let after = null;
+    for (let page = 0; page < pages; page += 1) {
+      const data = await this.graphql(
+        `query CustomerOrders($id: ID!, $after: String) { customer(id: $id) { id createdAt
+          orders(first: 100, after: $after, sortKey: CREATED_AT) {
+            nodes { id name createdAt processedAt sourceName cancelledAt displayFinancialStatus subtotalPriceSet { shopMoney { amount currencyCode } } }
+            pageInfo { hasNextPage endCursor } } } }`,
+        { id: `gid://shopify/Customer/${customerId}`, after },
+      );
+      const customer = data.customer;
+      if (!customer) break;
+      createdAt = Date.parse(customer.createdAt) || null;
+      for (const o of customer.orders?.nodes || []) {
+        const amount = Math.round(Number(o.subtotalPriceSet?.shopMoney?.amount || 0) * 100);
+        orders.push({
+          id: o.id, name: o.name || null, at: Date.parse(o.processedAt || o.createdAt) || null, source: o.sourceName || null,
+          amount: Number.isFinite(amount) ? amount : 0,
+          paid: !o.cancelledAt && ['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'].includes(o.displayFinancialStatus),
+        });
+      }
+      if (!customer.orders?.pageInfo?.hasNextPage) break;
+      after = customer.orders.pageInfo.endCursor;
+    }
+    return { createdAt, orders };
+  }
+
+  /**
    * Who bought an order, for the session passes on it: the billing and shipping names, and the customer's name and
    * email. These are protected customer data: without Shopify's approval for names and emails this throws, and the
    * pass is made with what the Lair already knows.
@@ -293,6 +372,28 @@ export class ShopifyAdmin {
       customerId: order.customer?.id ? String(order.customer.id).split('/').pop() : null,
       customerName: String(order.customer?.displayName || '').trim(),
       customerEmail: String(order.customer?.defaultEmailAddress?.emailAddress || '').trim(),
+    };
+  }
+
+  /**
+   * Who bought a session gift (round 6), to email them its codes: the order's email (or the customer's), and the buyer's
+   * first name for the pass note. Protected customer data (name and email), like orderBuyer: without Shopify's approval
+   * this throws, and staff get the codes instead. Returns { name, email, firstName } or null.
+   */
+  async orderGiftBuyer(orderId) {
+    const data = await this.graphql(
+      'query OrderGiftBuyer($id: ID!) { order(id: $id) { id name email billingAddress { firstName name } customer { id firstName displayName defaultEmailAddress { emailAddress } } } }',
+      { id: orderId },
+    );
+    const order = data.order;
+    if (!order) return null;
+    // displayName falls back to the email when the customer has no name: that's never a first name.
+    const fallback = String(order.customer?.displayName || order.billingAddress?.name || '').trim().split(/\s+/)[0] || '';
+    const first = String(order.customer?.firstName || order.billingAddress?.firstName || '').trim() || (fallback.includes('@') ? '' : fallback);
+    return {
+      name: order.name || null,
+      email: String(order.email || order.customer?.defaultEmailAddress?.emailAddress || '').trim(),
+      firstName: first.slice(0, 40),
     };
   }
 

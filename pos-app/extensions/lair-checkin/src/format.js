@@ -43,6 +43,21 @@ export function plural(n, one, many = `${one}s`) {
 }
 
 /**
+ * The member view's loyalty card (API contract v6, section 1): "Loyalty card: 7 of 10 stamps · 1 roll waiting in My
+ * Lair", or '' when the scan didn't send one (a Lair app from before round 6). For show only: they roll in My Lair.
+ * @param {unknown} loyalty `{ stamps, cardSize, rollsAvailable }` from POST /pos/scan
+ */
+export function loyaltyLine(loyalty) {
+  if (!loyalty || typeof loyalty !== 'object') return '';
+  const card = /** @type {{ stamps?: unknown, cardSize?: unknown, rollsAvailable?: unknown }} */ (loyalty);
+  const size = Math.round(Number(card.cardSize) || 0);
+  if (size < 1) return '';
+  const stamps = Math.min(size, Math.max(0, Math.round(Number(card.stamps) || 0)));
+  const rolls = Math.max(0, Math.round(Number(card.rollsAvailable) || 0));
+  return `Loyalty card: ${stamps} of ${size} stamps${rolls ? ` · ${plural(rolls, 'roll')} waiting in My Lair` : ''}`;
+}
+
+/**
  * Lower case without accents, for matching names: "Zoë" → "zoe".
  * @param {unknown} text
  */

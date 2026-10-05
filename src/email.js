@@ -45,6 +45,7 @@ export function hoursSummary(hours) {
  *   preheader  the grey line email apps show after the subject (defaults to the first paragraph)
  *   intro      paragraph(s) under the title
  *   quote      a block of someone else's words (a GM's message), shown as typed
+ *   codes      [{ code, lines }]: codes to hand on (a session gift's), each in big letters in its own box with its lines
  *   details    [[label, value], …] for the details table; rows without a value are left out
  *   button     { label, url }
  *   outro      paragraph(s) after the details
@@ -52,9 +53,10 @@ export function hoursSummary(hours) {
  *   footer     { name, address, phone, hours }
  * Returns { html, text }.
  */
-export function renderEmail({ title, preheader, intro, quote, details = [], button, outro, signoff, footer = {} }) {
+export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, outro, signoff, footer = {} }) {
   const before = list(intro);
   const after = list(outro);
+  const boxes = (codes || []).filter((c) => c && String(c.code ?? '').trim()).map((c) => ({ code: String(c.code).trim(), lines: list(c.lines) }));
   const rows = (details || []).filter((row) => row && String(row[1] ?? '').trim()).map(([label, value]) => [String(label), String(value).trim()]);
   const link = button && safeUrl(button.url) ? { label: String(button.label || 'Open'), url: safeUrl(button.url) } : null;
   const signed = list(signoff ?? 'See you at the Lair!\nGobgob, the Dice Goblin goblin');
@@ -74,6 +76,10 @@ export function renderEmail({ title, preheader, intro, quote, details = [], butt
 <h1 style="margin:0 0 16px;font:800 28px/1.2 ${FONT};color:${C.ink};">${escapeHtml(title)}</h1>
 ${before.map((t) => p(t)).join('\n')}
 ${said ? `<div style="margin:4px 0 18px;padding:14px 16px;background:${C.quote};border-left:4px solid ${C.button};border-radius:6px;font:16px/1.55 ${FONT};color:${C.ink};">${lines(said)}</div>` : ''}
+${boxes.map((b) => `<div style="margin:4px 0 16px;padding:18px 16px;background:${C.quote};border:2px dashed ${C.button};border-radius:10px;text-align:center;">
+<div style="font:800 30px/1.2 ${FONT};letter-spacing:0.06em;color:${C.ink};word-break:break-word;">${escapeHtml(b.code)}</div>
+${b.lines.map((t) => `<p style="margin:8px 0 0;font:15px/1.5 ${FONT};color:${C.ink};">${lines(t)}</p>`).join('\n')}
+</div>`).join('\n')}
 ${rows.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 20px;border-collapse:collapse;">
 ${rows.map(([label, value]) => `<tr><td style="padding:10px 12px 10px 0;border-top:1px solid ${C.line};font:700 15px/1.45 ${FONT};color:${C.ink};vertical-align:top;width:36%;">${escapeHtml(label)}</td><td style="padding:10px 0;border-top:1px solid ${C.line};font:15px/1.45 ${FONT};color:${C.ink};vertical-align:top;">${lines(value)}</td></tr>`).join('\n')}
 </table>` : ''}
@@ -91,6 +97,7 @@ ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
     String(title).toUpperCase(),
     ...before,
     said ? said.split(/\r?\n/).map((l) => `> ${l}`).join('\n') : null,
+    ...boxes.map((b) => [`    ${b.code}`, ...b.lines.map((t) => `    ${t}`)].join('\n')),
     rows.length ? rows.map(([label, value]) => `${`${label}:`.padEnd(width + 2)}${value.replace(/\r?\n/g, `\n${' '.repeat(width + 2)}`)}`).join('\n') : null,
     link ? `${link.label}: ${link.url}` : null,
     ...after,
