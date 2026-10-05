@@ -61,7 +61,9 @@ await shot(p, `staff-gm-manage-${L}`);
 await p.click('[data-gm-edit-wrap] >> xpath=..');
 await p.evaluate(() => { const d = document.querySelector('[data-gm-edit-wrap]').closest('details'); d.open = true; });
 await p.fill('[data-gm-edit] [name="title"]', `${g.title} (edited)`);
-await p.check('[data-gm-edit] input[name="gmFee"][value="0"]', { force: true });
+// tap the "No fee" chip as a person would (its label: the radio itself is hidden), then make sure it took
+await p.locator('[data-gm-edit] label.chip', { has: p.locator('input[name="gmFee"][value="0"]') }).click();
+if (!(await p.$eval('[data-gm-edit] input[name="gmFee"][value="0"]', (i) => i.checked))) throw new Error('The No fee chip did not select');
 b = apiLog.length;
 await p.click('[data-gm-edit] [type="submit"]');
 await p.waitForTimeout(1200);
