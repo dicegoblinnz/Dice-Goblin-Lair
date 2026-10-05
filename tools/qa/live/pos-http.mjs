@@ -144,7 +144,8 @@ check('Kiri\'s My Lair: no payer names (staff and POS only)', kB && !('payments'
 const sam = await proxy('GET', 'me', { customer: '7101' });
 check('Sam\'s My Lair: the tab is paid', sam.data.tab?.status === 'paid' && sam.data.tab.id === T.F.id, sam.data.tab);
 check('Sam\'s My Lair: his Fancy room booking is paid, the pass covered $40', sam.data.bookings.find((b) => b.id === T.A.id)?.paid === true && sam.data.bookings.find((b) => b.id === T.A.id)?.covered === 4000);
-check('Sam\'s spend counts (orders 6002 and 6004: $40 → 2 rolls)', sam.data.member?.spendTotal === 4000 && sam.data.rolls?.available === 2 && sam.data.rolls.bonus === 2 && sam.data.rolls.per === 2000 && !('daily' in sam.data.rolls), { spend: sam.data.member?.spendTotal, rolls: sam.data.rolls });
+// Round 6 retired the spend dice (rolls come from the loyalty card, codes and staff), so spending counts but earns no rolls
+check('Sam\'s spend counts (orders 6002 and 6004: $40), and buying earns no rolls', sam.data.member?.spendTotal === 4000 && sam.data.rolls?.per == null && sam.data.rolls?.toNext == null && !('daily' in (sam.data.rolls || {})), { spend: sam.data.member?.spendTotal, rolls: sam.data.rolls });
 const newTab = await proxy('POST', 'tab', { customer: '7101', body: { items: [{ variantId: '44114640601191', title: 'Drinks', variantTitle: '$6 Drink', price: 600, qty: 1 }] } });
 check('after the tab is paid, a new tab starts', newTab.status === 200 && newTab.data.tab?.id !== T.F.id && newTab.data.tab.status === 'open', newTab.data);
 await proxy('POST', 'tab/clear', { customer: '7101', body: {} });
