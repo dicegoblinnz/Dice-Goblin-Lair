@@ -170,7 +170,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await page.waitForSelector('library-reserve[data-state="mine"]', { timeout: 5000 }).catch(() => {});
   await visit(page, STASH, '/pages/my-lair');
   const home = flat(await page.locator('[data-home-holds]').innerText().catch(() => ''));
-  check(tag, home.includes('Reserved games') && home.includes('Forbidden Island') && home.includes('Held until Thu 8 Oct, 12pm'), 'My Lair Home: reserved games under Coming up', home);
+  check(tag, home.includes('Reserved games') && home.includes('Thursday 8 October: Forbidden Island') && home.includes('Held until 12pm · DGL34-052'), 'My Lair Home: reserved games under Coming up (the date tile is the day)', home);
   await page.click('.ml-bar [data-view-link="me"]');
   await page.waitForSelector('[data-view="me"]:not([hidden])');
   await page.waitForTimeout(200);
