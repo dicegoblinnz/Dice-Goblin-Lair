@@ -64,6 +64,13 @@ library.push(
 );
 /* ev2: the one library copy in the store with a barcode (its ISBN), so the borrow card's QR uses the barcode */
 library.find((p) => p.handle === 'd-d-bigby-library').variants[0].barcode = '9780786968992';
+/* r6 library holds: fixed ids for the library copies (product 810000000000NN, variant 481000000000NN, NN their place
+   in this list from 1), so the demo's seeded holds in assets/lair-demo.js (7 Wonders Duel held by Aroha, and the
+   rest) land on these games, and the flow checks can name them. Inventory is their copies (Forbidden Island has 3). */
+library.forEach((p, i) => {
+  p.id = 81000000000000 + i + 1;
+  p.variants[0].id = 48100000000000 + i + 1;
+});
 /* the membership: requires a selling plan, three monthly plans (prices set by the plan, like Simplee does) */
 const sellingPlan = (id, name, description, cents, option, groupId) => ({
   id, name, description, group_id: groupId, recurring_deliveries: true, selected: false,

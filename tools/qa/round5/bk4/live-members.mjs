@@ -1,8 +1,9 @@
 // The staff page in live mode against a stand-in for the Lair app that answers only what the round 5 contract
 // promises: GET /members?q=&sort=&owing=1 (an array), GET /members/birthdays (suggested, giftedThisYear, lastGift),
 // POST /members/:id/gift (problems as plain words), POST /checkin with a member code (rows with owed: true),
-// GET /passes (source, orderName), POST /bookings/:id/update { waived: true }, POST /games/:id/image.
-// It logs what the page asked for. Usage: node live-members.mjs phone|desktop
+// GET /passes (source, orderName), POST /bookings/:id/update { waived: true }, POST /games/:id/image, and from round 6
+// GET /library/holds (the Library tab's count, asked for as the page loads). It logs what the page asked for.
+// Usage: node live-members.mjs phone|desktop
 import { m, chromium, open, shot, text, overflow, smallTargets, STAFF, PORT } from './lib.mjs';
 const tag = process.argv[2] || 'phone';
 m.globalSettings.lair_mode = 'live';
@@ -63,6 +64,8 @@ m.mockState.before = async (req, res, url) => {
     return send(200, { booking: { ...owedRow(decodeURIComponent(update[1]), 6), owed: false, waived: true, due: 0 } });
   }
   if (route === '/games/g1/image') return send(200, { image: 'https://cdn.example/x.jpg' });
+  // Round 6: the staff page loads the library holds for its Library tab's count (contract v6, section 4)
+  if (route === '/library/holds') return send(200, { holds: [] });
   return send(404, { error: 'Not found' });
 };
 const server = await m.serve(PORT);
