@@ -109,7 +109,7 @@ membership.collections = [collections['board-game-rental']];
 const allProducts = Object.fromEntries([...arrivals, ...boardGames, ...library, membership].map((p) => [p.handle, p]));
 const pages = {
   'book-a-table': { handle: 'book-a-table', title: 'Book a Table or Session', url: '/pages/book-a-table', content: '' },
-  'gm-games': { handle: 'gm-games', title: 'GM games', url: '/pages/gm-games', content: '' },
+  'gm-games': { handle: 'gm-games', title: 'Book a TTRPG session', url: '/pages/gm-games', content: '' },
   'events-calendar': { handle: 'events-calendar', title: 'Events Calendar', url: '/pages/events-calendar', content: '' },
   'board-game-rental': { handle: 'board-game-rental', title: 'Board Game Rental', url: '/pages/board-game-rental', content: '' },
   'lair-staff': { handle: 'lair-staff', title: 'Lair staff', url: '/pages/lair-staff', content: '' },
