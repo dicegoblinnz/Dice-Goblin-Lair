@@ -1,5 +1,5 @@
-// My Lair, live, phone first: the member code and its QR; dice (round 6: the round 5 theme's spend roll gets the 410,
-// and loyalty rolls staff give pay their face in store credit, then pending when Shopify can't); passes and claiming
+// My Lair, live, phone first: the member code and its QR; the loyalty card (round 6: the spend dice's 410, and the rolls
+// staff give pay their face in store credit through the page, then pending when Shopify can't); passes and claiming
 // one; the tab (add, edit, clear, add again, in the cart after POST /pos/tab/:id/added, paid after a webhook with
 // _tab); and bookings with refund labels and a split bill.
 import fs from 'node:fs';
@@ -42,32 +42,46 @@ await p.waitForTimeout(300);
 await shot(p, `mylair-card-${L}`);
 await p.evaluate(() => window.scrollTo(0, 0));
 
-/* 2. dice (round 6): the spend dice retired. This round 5 theme's roll button still sends { kind: 'spend' }, which the
-   app now answers with a 410 and the loyalty card's words (the round 6 theme rolls { kind: 'loyalty' }). The loyalty
-   roll itself goes through the app here: staff give Sam two rolls, the first pays its face in store credit (added) and
-   the second is pending when Shopify can't add it. */
+/* 2. the loyalty card (round 6): the spend dice have retired, so { kind: 'spend' } gets the 410 and the loyalty card's
+   words. Staff give Sam two rolls; the page's "Roll your d20" sends { kind: 'loyalty' } and its face is his store
+   credit (added); with Shopify down, the next one is pending and says to show the screen at the counter. Sam also has
+   his welcome roll, so he has at least three. */
+const retired = await proxy('POST', 'roll', { customer: '7101', body: { kind: 'spend' } });
+check(`${L}: the spend dice have retired: { kind: 'spend' } gets the 410 and the loyalty card's words`, retired.status === 410 && retired.data.error === 'The spend dice have retired. Fill your loyalty card: 10 sessions earn a roll.', `${retired.status} ${JSON.stringify(retired.data).slice(0, 200)}`);
 const given = await proxy('POST', 'members/7101/rolls', { customer: '7001', body: { count: 2, note: `QA ${L}` } });
 check(`${L}: staff give Sam two loyalty rolls`, given.status === 200 && given.data.member?.loyalty?.rollsAvailable >= 2, given.data.error || given.data.member?.loyalty);
 await openLair(p);
-const b0 = apiLog.length;
-await p.click('[data-roll]');
-await p.waitForFunction(() => !document.querySelector('my-lair').rolling, null, { timeout: 8000 }).catch(() => {});
-const retired = apiLog.slice(b0).find((c) => c.method === 'POST' && c.route.startsWith('roll'));
-check(`${L}: the round 5 roll button (kind 'spend') gets the 410: the spend dice have retired`, retired && JSON.parse(retired.body).kind === 'spend' && retired.status === 410 && JSON.parse(retired.text).error === 'The spend dice have retired. Fill your loyalty card: 10 sessions earn a roll.', retired ? `${retired.status} ${retired.text.slice(0, 200)}` : 'no call');
-const note = await text(p, '[data-roll-slots] .ml-roll__error');
-check(`${L}: the page shows the app's words`, /The spend dice have retired/.test(note), note.slice(0, 200));
+await p.waitForSelector('[data-roll-slots] [data-roll]', { timeout: 8000 }).catch(() => {});
+const ready = await text(p, '[data-rolls-ready]');
+check(`${L}: the loyalty card says how many rolls are ready`, Number((ready.match(/(\d+) rolls? ready/) || [])[1]) >= 2, ready.slice(0, 200));
+const rollOnce = async () => {
+  const b0 = apiLog.length;
+  await p.click('[data-roll-slots] [data-roll]');
+  await p.waitForFunction(() => !document.querySelector('my-lair').rolling, null, { timeout: 10000 }).catch(() => {});
+  await p.waitForTimeout(400);
+  const call = apiLog.slice(b0).find((c) => c.method === 'POST' && c.route.startsWith('roll'));
+  let data = null;
+  try { data = call ? JSON.parse(call.text) : null; } catch { data = null; }
+  return { call, data, sent: call ? JSON.parse(call.body || '{}') : null };
+};
 const credits0 = (await fake('GET', 'state')).credits.length;
-const won = (await proxy('POST', 'roll', { customer: '7101', body: { kind: 'loyalty' } })).data;
-check(`${L}: a loyalty roll: its face in store credit, added`, won && won.kind === 'loyalty' && won.prize?.status === 'added' && won.prize.kind === 'credit' && won.prize.amount === won.roll * 100, won);
+const first = await rollOnce();
+const won = first.data;
+check(`${L}: Roll your d20 sends { kind: 'loyalty' }: its face in store credit, added`, first.sent?.kind === 'loyalty' && first.call.status === 200 && won?.prize?.status === 'added' && won.prize.kind === 'credit' && won.prize.amount === won.roll * 100, first.call ? `${first.call.status} ${first.call.text.slice(0, 200)}` : 'no call');
+const shown = await text(p, '[data-roll-slots] [data-result]');
+check(`${L}: the page shows the app's words and the credit`, Boolean(won) && shown.includes(won.message) && shown.includes(`$${won.roll}`), shown.slice(0, 200));
 const credits1 = (await fake('GET', 'state')).credits;
 check(`${L}: Shopify was asked to add that credit (storeCreditAccountCredit)`, won && credits1.length === credits0 + 1 && credits1.at(-1).customerId === '7101' && credits1.at(-1).amount === won.prize.amount, credits1.at(-1));
 await fake('POST', 'set', { failCredit: true });
-const pending = (await proxy('POST', 'roll', { customer: '7101', body: { kind: 'loyalty' } })).data;
+const second = await rollOnce();
 await fake('POST', 'set', { failCredit: false });
-check(`${L}: Shopify down: the prize is saved as pending, "show this screen"`, pending && pending.prize?.status === 'pending' && /Show this screen at the counter to claim it\.$/.test(pending.message), pending);
-await openLair(p);
+const pending = second.data;
+check(`${L}: Shopify down: the prize is saved as pending, "show this screen"`, pending && pending.prize?.status === 'pending' && /Show this screen at the counter to claim it\.$/.test(pending.message), second.call ? `${second.call.status} ${second.call.text.slice(0, 200)}` : 'no call');
+const shown2 = await text(p, '[data-roll-slots] [data-result]');
+check(`${L}: the page says to show this screen at the counter`, /Show this screen at the counter to claim it/.test(shown2), shown2.slice(0, 200));
+await openLair(p, 'wallet');
 const prizes = await text(p, '[data-prizes]');
-check(`${L}: recent prizes list the pending one and the added one`, /Show this at the counter to claim it/.test(prizes) && /Added/.test(prizes), prizes.slice(0, 300));
+check(`${L}: the Wallet lists the pending roll and the added one`, /Show this at the counter to claim it/.test(prizes) && /Added/.test(prizes), prizes.slice(0, 300));
 await shot(p, `mylair-dice-pending-${L}`);
 fs.writeFileSync(new URL(`./pending-prize-${L}.json`, import.meta.url), JSON.stringify(pending?.prize || null));
 
