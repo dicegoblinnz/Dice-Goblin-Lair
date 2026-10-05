@@ -148,8 +148,8 @@ const linklists = {
       link('Shop', '/collections/all', [link('New arrivals', '/collections/new-additions'), link('Board games', '/collections/board-game'), link('Family games', '/collections/family-games'), link('Role-playing games', '/collections/role-playing-game'), link('Trading card games', '/collections/trading-card-games'), link('Painting and hobby', '/collections/painting'), link('Plush and toys', '/collections/toys-plush'), link('Everything', '/collections/all')]),
       link('Book a table', '/pages/book-a-table'),
       link('Book a TTRPG session', '/pages/gm-games'),
-      link('Library', '/pages/board-game-rental'),
       link('Events', '/pages/events-calendar'),
+      link('Library', '/pages/board-game-rental'), // r7: below Events, as on the store
       link('Contact', '/pages/contact'),
     ],
   },
@@ -284,7 +284,14 @@ blockTag('paginate', function* (ctx, emitter) {
   ctx.pop();
 });
 
-async function renderSection(type, id, data = {}) {
+/* r7 shell: each section in its own wrapper, the way Shopify renders it: <div id="shopify-section-<id>"
+   class="shopify-section [shopify-section-group-<group file>] [the schema's class]">, or the schema's tag. */
+const sectionWrapper = (id, schema, html, group) => {
+  const tag = schema.tag || 'div';
+  const cls = ['shopify-section', group ? `shopify-section-group-${group}` : '', schema.class || ''].filter(Boolean).join(' ');
+  return `<${tag} id="shopify-section-${id}" class="${cls}">${html}</${tag}>`;
+};
+async function renderSection(type, id, data = {}, group = '') {
   const file = `sections/${type}.liquid`;
   const schema = schemaOf(file);
   const settings = resolveSettings(schema.settings, data.settings || {});
@@ -296,7 +303,7 @@ async function renderSection(type, id, data = {}) {
   });
   const src = read(file).replace(/\{%-?\s*render block\s*-?%\}/g, '');
   const html = await engine.parseAndRender(src, { ...scope, section: { id, settings, blocks } });
-  return `<div id="shopify-section-${id}" class="shopify-section">${html}</div>`;
+  return sectionWrapper(id, schema, html, group);
 }
 
 engine.registerTag(
@@ -321,7 +328,12 @@ engine.registerTag(
     *render() {
       const group = readJson(`sections/${this.name}.json`);
       let out = '';
-      for (const id of group.order) out += yield renderSection(group.sections[id].type, `${this.name}__${id}`, group.sections[id]);
+      // r7 shell: Shopify's ids (sections--<n>__<key>), and a section switched off in the editor isn't rendered
+      const n = { 'header-group': 1, 'footer-group': 2 }[this.name] || 3;
+      for (const id of group.order) {
+        if (group.sections[id].disabled) continue;
+        out += yield renderSection(group.sections[id].type, `sections--${n}__${id}`, group.sections[id], this.name);
+      }
       return out;
     }
   },
@@ -330,13 +342,18 @@ engine.registerTag(
 /* ---------------- filters ---------------- */
 const locale = readJson('locales/en.default.json');
 const lookup = (key) => key.split('.').reduce((o, k) => (o ? o[k] : undefined), locale);
+/* r7 shell: like Shopify, t HTML-escapes a translation whose key doesn't end in _html (so "We're" comes out
+   "We&#39;re", which a JSON words block hands JS as is). DG_T_ESCAPE=0 turns that off. */
+const tEscape = process.env.DG_T_ESCAPE !== '0';
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 engine.registerFilter('t', (key, ...args) => {
   let v = lookup(key);
   const params = {};
   for (const a of args) if (Array.isArray(a)) params[a[0]] = a[1];
   if (v && typeof v === 'object') v = params.count === 1 ? v.one : v.other;
   if (v == null) return `[missing ${key}]`;
-  return String(v).replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => params[k] ?? '');
+  const out = String(v).replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => params[k] ?? '');
+  return tEscape && !/_html$/.test(String(key)) ? escapeHtml(out) : out;
 });
 const hsl = (hex) => {
   const n = parseInt(hex.slice(1), 16);
@@ -701,7 +718,7 @@ async function cartSections(ids) {
       if (!fs.existsSync(path.join(THEME, 'sections', `${id}.liquid`))) continue;
       const schema = schemaOf(`sections/${id}.liquid`);
       const html = await engine.parseAndRender(read(`sections/${id}.liquid`), { ...local, section: { id, settings: resolveSettings(schema.settings, {}), blocks: [] } });
-      out[id] = `<div id="shopify-section-${id}" class="shopify-section">${html}</div>`;
+      out[id] = sectionWrapper(id, schema, html);
     }
   } finally {
     engine.options.globals = saved;
@@ -806,7 +823,7 @@ export function serve(port = 4173) {
       if (url.pathname.startsWith('/assets/')) {
         const file = path.join(THEME, 'assets', path.basename(url.pathname));
         const ext = path.extname(file);
-        res.writeHead(200, { 'Content-Type': { '.css': 'text/css', '.js': 'text/javascript', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream' });
+        res.writeHead(200, { 'Content-Type': { '.css': 'text/css', '.js': 'text/javascript', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.png': 'image/png' }[ext] || 'application/octet-stream' });
         res.end(fs.readFileSync(file));
         return;
       }
