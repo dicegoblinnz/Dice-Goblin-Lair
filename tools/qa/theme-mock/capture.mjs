@@ -49,6 +49,10 @@ const ROUTES = [
   ['my-lair-logged-out', '/pages/my-lair'],
   ['my-lair', '/pages/my-lair', { customer: CUSTOMER }],
   ['staff', '/pages/lair-staff', { customer: STAFF }],
+  // round 7 (staff-admin): the new tabs, opened by their deep links
+  ['staff-events', '/pages/lair-staff#events', { customer: STAFF }],
+  ['staff-groups', '/pages/lair-staff#groups', { customer: STAFF }],
+  ['staff-codes', '/pages/lair-staff?tab=codes', { customer: STAFF }],
   ['search', '/search?q=wing'],
   ['404', '/404'],
 ];
