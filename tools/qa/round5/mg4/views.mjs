@@ -253,7 +253,7 @@ for (const size of ['phone', 'desktop']) {
   if (!/Waiting for payment/.test(hold) || !/Pay \$\d+ online/.test(hold) || !/holding your spot until/.test(hold)) errors.push(`${tag}: Home's held place: "${hold}"`);
   await shot(page, `${PREFIX}-held-${size}`);
   const heldTicket = await page.evaluate(() => {
-    const t = [...document.querySelectorAll('[data-panel="joins"] .ml-ticket')].find((x) => /Waiting for payment/.test(x.textContent));
+    const t = [...document.querySelectorAll('[data-view="bookings"] .ml-ticket')].find((x) => /Waiting for payment/.test(x.textContent)); // round 7: in the one list
     return t ? t.querySelector('.ml-pay')?.textContent.trim() : '';
   });
   if (!/Pay \$\d+ online/.test(heldTicket || '')) errors.push(`${tag}: the held sign-up's ticket has no payment link (${heldTicket})`);
