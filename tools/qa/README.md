@@ -19,6 +19,10 @@ Nothing here ships. The Worker bundles only `src/`, and `npm test` runs only `te
 - Page flows, phone and desktop, driven by Playwright through `harness.mjs`.
 - Round 5 (`flow-r5-*.mjs`): passes sold as a product (`LAIR-PASS-N` orders), birthday gifts, weekly regulars, the Members view, one bill at the POS (`/pos/checkin-member` with owed lines and the tab), and the staff page's owed rows with Waive, members list and gifts.
   - Weekly regulars need a session to have ended. `flow-r5-regulars-setup.mjs` books one, then `run-all.sh` stops wrangler and `r5-travel.py` moves that game a week earlier in the saved state, starts wrangler again, and `flow-r5-regulars.mjs` runs maintenance (`/setup`) and checks what's owed.
+- Round 6 (`flow-r6-*.mjs`, HTTP only, no browser): the loyalty card (check-ins, stamps, rolls and their store credit, staff rolls, customer since, the POS view, birthdays), spend by month and financial year with the Shopify backfill, session gifts (`LAIR-GIFT-N` orders, the buyer's email, claiming), library holds, and guest seats (the GM's email, adoption on My Lair, a hold's `game`). `r6-time.mjs` works out Lair times and the words emails use.
+  - A library hold has to run out of time: `flow-r6-holds.mjs` makes one, `r6-travel.py` moves its end into the past during the same wrangler restart as `r5-travel.py`, and `flow-r6-holds-expiry.mjs` checks maintenance expired it once and emailed the member.
+  - `fake-admin.mjs` answers the round 6 queries too (`CustomerEmail`, `CustomersSince`, `VariantCopies`, `CustomerOrders`, `OrderGiftBuyer`). `POST /__fake/variant` sets a variant's stock. `POST /__fake/set` also takes `failVariant`, `failOrders` and `scopes` (add `read_all_orders`, say), and `failBuyer` fails `OrderGiftBuyer` too.
+  - `flow-mylair.mjs`'s dice part checks the round 5 theme's spend roll gets the 410, then rolls loyalty rolls staff gave.
 - `live-smoke.mjs`.
 
 **Paths and config:**
