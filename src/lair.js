@@ -968,7 +968,7 @@ export class Lair {
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
       if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
       if (a === 'games' && c === 'players') return json(await this.addPlayers(b, body, who));
-      if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who));
+      if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who, body));
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
       if (a === 'blocks' && !b) return json(await this.createBlock(body, who));
@@ -1038,6 +1038,8 @@ export class Lair {
       const total = parseSpots(o.gameTables, rules.rooms).length;
       if (total) eventSpots[o.id] = { total, taken: total - this.freeSpots(o, rules, st).length };
     }
+    // Round 7: waiting series invites, by series, for the games below (staff and GMs only)
+    const waiting = who.staff || who.customerId ? this.waitingInvites() : new Map();
     return {
       now,
       bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
@@ -1046,6 +1048,12 @@ export class Lair {
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info);
         if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
+        // Round 7: for staff and the session's GM, the seats of its series reserved for someone who's still to make an
+        // account (a GM never sees a player's email on the board); for staff, the GM's email and whether the game is on
+        // their account ('linked'), waiting for them to make one ('invited': an email nobody has used yet) or neither ('none')
+        if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) {
+          game.invites = ((g.seriesId && waiting.get(g.seriesId)) || []).map((x) => (who.staff ? x : { ...x, email: '' }));
+        }
         if (who.staff) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g) });
         return game;
       }),
@@ -1209,8 +1217,12 @@ export class Lair {
     return (party || []).map((p) => (p.character ? `${p.name} (${p.character})` : p.name)).join(', ');
   }
 
-  /** Booking confirmation email: tables, game seats and event game spots. Returns whether one was sent (needs RESEND_API_KEY and FROM_EMAIL). */
-  confirm(booking, rules, game = null) {
+  /**
+   * Booking confirmation email: tables, game seats and event game spots. Returns whether one was sent (needs RESEND_API_KEY
+   * and FROM_EMAIL). invite (round 7): the schedule of the game a seat staff reserved for someone without an account was
+   * also invited to every session of ('weekly', 'fortnightly' or 'flexible'), for its last line.
+   */
+  confirm(booking, rules, game = null, { invite = null } = {}) {
     if (!emailReady(this.env) || !isEmail(booking.email)) return false;
     const when = this.when(booking, rules);
     const online = Boolean(booking.paid && booking.pay === 'now');
@@ -1237,7 +1249,8 @@ export class Lair {
         outro: [
           pay, changes || "Can't make it after all? Drop your seat in My Lair and Gobgob will let your GM know.",
           // A seat with no account (a guest, or a player staff added): it joins their account once they make one (round 6).
-          ...(booking.customerId ? [] : ['Make an account with this email any time, and your seats will show up in My Lair.']),
+          // Round 7: a seat staff reserved at a weekly game says the account also saves their seat every week.
+          ...(booking.customerId ? [] : [invite ? this.inviteLine(invite) : 'Make an account with this email any time, and your seats will show up in My Lair.']),
         ],
       };
     } else {
@@ -1257,6 +1270,13 @@ export class Lair {
     }
     this.later(this.mail(this.letter(booking.email, subject, { ...content, button: { label: 'See it in My Lair', url: this.page('myLair') } })));
     return true;
+  }
+
+  /** The last line of a reserved seat's confirmation when its person is invited to every session (round 7) */
+  inviteLine(schedule) {
+    if (schedule === 'fortnightly') return "It's a fortnightly game: make your Dice Goblin account with this email and Gobgob will save your seat every fortnight.";
+    if (schedule === 'flexible') return "It's a regular game: make your Dice Goblin account with this email and Gobgob will save your seat every session.";
+    return "It's a weekly game: make your Dice Goblin account with this email and Gobgob will save your seat every week.";
   }
 
   /** An alert for the team (STAFF_EMAIL). content: { title, intro, details, outro }. extra: { replyTo }. */
@@ -1870,9 +1890,16 @@ export class Lair {
   }
 
   /**
-   * POST /games/:id/players { name, email, people, players, customerId? } (staff): seat someone at a game, with no
-   * payment and no rule but the seats left. Their account is linked when customerId is given or their email matches
-   * a member.
+   * POST /games/:id/players { customerId?, customerName?, name, email?, phone?, people, players?, weekly? } (staff): seat
+   * someone at a game, with no payment and no rule but the seats left. Their account is linked when customerId is given
+   * (picked from the customers: one the Lair hasn't met comes with customerName and email, and their member record is
+   * made) or their email matches a member. Round 7, weekly: true at a session of a series:
+   *  - a customer becomes a regular from now on, exactly as "Save my seat every week" makes one (this seat is their
+   *    first), and gets "You're a regular" too;
+   *  - someone without an account (their email needed) is invited: their seat is reserved under their name, and when
+   *    they log in with that email the invite becomes their regular membership (adoptGuestBookings). Until then it
+   *    holds no later seats.
+   * Returns { booking, game, emailed, regular: { seriesId, customerId } | null, invite: { id, email } | null }.
    */
   async addPlayers(id, input, who) {
     this.requireStaff(who);
@@ -1886,9 +1913,17 @@ export class Lair {
     if (!(people >= 1 && people <= 8)) throw new RuleError('Add between 1 and 8 players.');
     const name = trimmed(input.name, 80);
     if (!name) throw new RuleError('Add their name.');
-    const email = trimmed(input.email, 120);
+    let email = trimmed(input.email, 120);
     if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
-    const customerId = trimmed(input.customerId, 40) || this.memberByEmail(email)?.customer_id || null;
+    const weekly = input.weekly === true;
+    if (weekly && !game.seriesId) throw new RuleError("This game is a one-off, so a seat can't be saved every week.");
+    const series = weekly ? this.sql.exec('SELECT * FROM series WHERE id = ?', game.seriesId).toArray()[0] : null;
+    if (weekly && (!series || series.status !== 'active')) throw new RuleError("This game isn't running any more.", 409);
+    // A customer picked from the search (round 7: one the Lair hasn't met comes with their name and email)
+    const picked = String(input.customerId ?? '').trim() ? this.pickedCustomer({ customerId: input.customerId, name: input.customerName || name, email }) : null;
+    const customerId = picked?.customerId || this.memberByEmail(email)?.customer_id || null;
+    if (!email && picked?.email) email = picked.email;
+    if (weekly && !customerId && !email) throw new RuleError('Add their email, so Gobgob can invite them to keep the seat.');
     // Seats kept for the series' weekly regulars aren't free (unless it's a regular being added). The number kept is the
     // board's held: never more than the seats still free.
     const held = this.regularsWaiting(game, { except: customerId, now });
@@ -1900,16 +1935,80 @@ export class Lair {
       throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'seat' : 'seats'} left.${why}` : `This table is full.${why}`, 409);
     }
     const players = seatPlayers(input.players, people, name);
+    if (picked) this.makeMember(picked, now);
+    const regular = weekly && customerId ? { seriesId: game.seriesId, customerId } : null;
     const seatId = makeId('bk');
     const seat = {
       id: seatId, ref: this.newCode(name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: game.id, tables: game.tables, room: game.room,
       start: game.start, end: game.end, people, name, email, amount: (game.seatPrice || rules.prices.gmSeat) * people, pay: 'day', paid: false,
       activity: 'rpg', party: players, customerId, notes: 'Added by staff',
+      // Round 7: an optional phone (staff-made, so not required), and a new regular's first seat carries the series
+      phone: trimmed(input.phone, 40).replace(/\s+/g, ' ').slice(0, 20) || null, seriesId: regular ? game.seriesId : null,
     };
     this.saveBooking(seat, now);
+    let invite = null;
+    if (regular) {
+      // A regular from now on, as "Save my seat every week" makes one (joinSeries): later seats are theirs, and
+      // maintenance books each next session. Someone already a regular keeps their place in the queue.
+      this.write(
+        `INSERT INTO series_members (series_id, customer_id, people, players, name, email, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+         ON CONFLICT(series_id, customer_id) DO UPDATE SET people = excluded.people, players = excluded.players, name = excluded.name, email = excluded.email,
+           status = 'active', created_at = CASE WHEN series_members.status = 'active' THEN series_members.created_at ELSE excluded.created_at END,
+           updated_at = excluded.updated_at`,
+        game.seriesId, customerId, people, JSON.stringify(players), name, email || this.memberRow(customerId)?.email || null, now, now,
+      );
+    } else if (weekly) {
+      // An invite to be a regular, for someone still to make an account: one waiting invite per series and email
+      const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+      const waiting = this.sql.exec("SELECT id FROM series_invites WHERE series_id = ? AND lower(email) = lower(?) AND status = 'waiting'", game.seriesId, email).toArray()[0];
+      const inviteId = waiting?.id || makeId('si');
+      if (waiting) {
+        this.write(
+          'UPDATE series_invites SET name = ?, phone = ?, people = ?, players = ?, booking_id = ?, updated_at = ? WHERE id = ?',
+          name, seat.phone, people, JSON.stringify(players), seatId, now, inviteId,
+        );
+      } else {
+        this.write(
+          `INSERT INTO series_invites (id, series_id, email, name, phone, people, players, status, customer_id, booking_id, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', NULL, ?, ?, ?, ?)`,
+          inviteId, game.seriesId, email, name, seat.phone, people, JSON.stringify(players), seatId, by, now, now,
+        );
+      }
+      invite = { id: inviteId, email };
+    }
     this.tellGmNewPlayer(seat, game, rules);
-    const emailed = this.confirm(seat, rules, game);
-    return { booking: { ...this.ownView(seat), players, customerId }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed };
+    const emailed = this.confirm(seat, rules, game, { invite: invite ? game.schedule : null });
+    if (regular) this.tellStaffRegular(seat, game, rules);
+    return {
+      booking: { ...this.ownView(seat), players, customerId }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed,
+      regular, invite,
+    };
+  }
+
+  /**
+   * "You're a regular: <title>" for someone staff made a regular (round 7): round 5's email, with the team saving their
+   * seat every week (fortnight, or session, to match the game). No awaits.
+   */
+  tellStaffRegular(seat, game, rules) {
+    const member = this.memberRow(seat.customerId);
+    const to = isEmail(seat.email) ? seat.email : member?.email;
+    if (!emailReady(this.env) || !isEmail(to)) return false;
+    const every = game.schedule === 'weekly' ? 'week' : game.schedule === 'fortnightly' ? 'fortnight' : 'session';
+    this.later(this.mail(this.letter(to, `You're a regular: ${game.title}`, {
+      title: "You're a regular!",
+      intro: `Kia ora ${seat.name}, the Dice Goblin team has saved your seat at ${game.title}${game.gm ? ` with GM ${game.gm}` : ''} every ${every}.`,
+      details: [
+        ['Game', game.title], ['Players', this.partyLine(seat.party)], ['Next session', this.when(game, rules)],
+        ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * seat.people)} a session, paid at the counter`], ['Your code', member?.code || ''],
+      ],
+      outro: [
+        "Your member code is your ticket every session (it's in My Lair). Show it at the counter and we'll ring up your seat.",
+        "Can't make one? Cancel that session's seat in My Lair before it starts. A seat you keep is yours to pay for, even if you don't come.",
+        'To stop coming, leave the game in My Lair.',
+      ],
+      button: { label: 'See it in My Lair', url: this.page('myLair') },
+    })));
+    return true;
   }
 
   /** A GM (or staff) adds a date to a flexible or repeating game. A one-shot becomes a flexible series. */
@@ -2176,17 +2275,29 @@ export class Lair {
     return { member: { seriesId: game.seriesId, people, players }, booked, full };
   }
 
-  /** POST /series/:id/leave (logged in): stop being seated at every session, and free the upcoming seats it made. */
-  async leaveSeries(seriesId, who) {
+  /**
+   * POST /series/:id/leave (logged in): stop being seated at every session, and free the upcoming seats it made. Round
+   * 7, staff: { customerId } stops a regular (the same as them leaving, with the GM's email), and { inviteId } cancels a
+   * waiting invite (the seat reserved with it stays until staff remove it).
+   */
+  async leaveSeries(seriesId, who, input = {}) {
     if (!who.customerId) throw new RuleError('Log in to manage your games.', 401);
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
-    const member = this.seriesMember(seriesId, who.customerId);
-    if (!member || member.status !== 'active') throw new RuleError("You're not signed up for every session of that game.", 404);
-    this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, who.customerId);
+    if (who.staff && input?.inviteId) {
+      const invite = this.sql.exec('SELECT * FROM series_invites WHERE id = ? AND series_id = ?', trimmed(input.inviteId, 40), String(seriesId)).toArray()[0];
+      if (!invite || invite.status !== 'waiting') throw new RuleError('That invite could not be found.', 404);
+      this.write("UPDATE series_invites SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'waiting'", now, invite.id);
+      return { ok: true, cancelled: 0, invite: { id: invite.id, email: invite.email, status: 'cancelled' } };
+    }
+    const forThem = Boolean(who.staff && input?.customerId);
+    const customerId = forThem ? trimmed(input.customerId, 40) : String(who.customerId);
+    const member = this.seriesMember(seriesId, customerId);
+    if (!member || member.status !== 'active') throw new RuleError(forThem ? "They're not a regular at that game." : "You're not signed up for every session of that game.", 404);
+    this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, customerId);
     const seats = this.sql
-      .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, who.customerId, now)
+      .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, customerId, now)
       .toArray().map((r) => this.rowToBooking(r));
     for (const seat of seats) {
       const refund = refundFor(seat, rules, now);
@@ -5747,7 +5858,7 @@ export class Lair {
     const joins = this.sql.exec('SELECT COUNT(*) AS n FROM event_joins WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', email, since).one().n;
     if (bookings) this.write("UPDATE bookings SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND kind != 'gm' AND lower(email) = lower(?) AND ends_at > ?", id, now, email, since);
     if (joins) this.write('UPDATE event_joins SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', id, now, email, since);
-    return bookings + joins + this.adoptGmGames(id, email, now);
+    return bookings + joins + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now);
   }
 
   /**
@@ -5771,6 +5882,48 @@ export class Lair {
       id, now, id, email, since,
     );
     return games;
+  }
+
+  /**
+   * Round 7: someone staff reserved a weekly seat for makes their account. Each waiting invite with their email becomes
+   * their regular membership, queued from when they were invited (a regular already keeps their place), or is cancelled
+   * when its series has ended. No awaits. Returns how many invites there were.
+   */
+  takeUpInvites(id, email, now) {
+    const invites = this.sql
+      .exec(
+        `SELECT i.*, s.status AS series_status FROM series_invites i LEFT JOIN series s ON s.id = i.series_id
+         WHERE i.status = 'waiting' AND lower(i.email) = lower(?) ORDER BY i.created_at, i.id`,
+        email,
+      )
+      .toArray();
+    for (const invite of invites) {
+      if (invite.series_status !== 'active') {
+        this.write("UPDATE series_invites SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'waiting'", now, invite.id);
+        continue;
+      }
+      const already = this.seriesMember(invite.series_id, id);
+      if (already?.status !== 'active') {
+        this.write(
+          `INSERT INTO series_members (series_id, customer_id, people, players, name, email, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+           ON CONFLICT(series_id, customer_id) DO UPDATE SET people = excluded.people, players = excluded.players, name = excluded.name, email = excluded.email,
+             status = 'active', created_at = excluded.created_at, updated_at = excluded.updated_at`,
+          invite.series_id, id, invite.people, invite.players || '[]', invite.name, invite.email, invite.created_at, now,
+        );
+      }
+      this.write("UPDATE series_invites SET status = 'joined', customer_id = ?, updated_at = ? WHERE id = ? AND status = 'waiting'", id, now, invite.id);
+    }
+    return invites.length;
+  }
+
+  /** Waiting series invites by series id, for the floor: { id, name, email, people } each (round 7). No awaits. */
+  waitingInvites() {
+    const out = new Map();
+    for (const r of this.sql.exec("SELECT * FROM series_invites WHERE status = 'waiting' ORDER BY created_at, id").toArray()) {
+      if (!out.has(r.series_id)) out.set(r.series_id, []);
+      out.get(r.series_id).push({ id: r.id, name: r.name, email: r.email, people: r.people });
+    }
+    return out;
   }
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
