@@ -230,12 +230,14 @@ try {
         return {
           file, w: b.width, h: b.height, attrs: [img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('loading'), img.getAttribute('alt')],
           srcset: img.getAttribute('srcset') || '', right: b.right, nextLeft: Math.min(...after), headerH: header.getBoundingClientRect().height, dpr: window.devicePixelRatio,
+          linkH: img.closest('a').getBoundingClientRect().height,
         };
       });
       const px = /960/.test(l.file) ? 960 : /480/.test(l.file) ? 480 : 0;
       check(`wordmark at ${w}px x${scale}: the theme's wordmark, 480x90, eager, alt the shop's name, 480/960 srcset`, /dg-wordmark-(480|960)\.png/.test(l.file) && l.attrs[0] === '480' && l.attrs[1] === '90' && l.attrs[2] === 'eager' && l.attrs[3] === 'Dice Goblin NZ' && /480w/.test(l.srcset) && /960w/.test(l.srcset), l.attrs.concat(l.file).join(' '));
       check(`wordmark at ${w}px x${scale}: its own shape, crisp and legible (${minH}px+ tall)`, Math.abs(l.w / l.h - 480 / 90) < 0.12 && px >= l.w * l.dpr - 1 && l.h >= minH, `${Math.round(l.w)}x${Math.round(l.h)} from ${px}px wide at x${l.dpr}`);
       check(`wordmark at ${w}px x${scale}: fits beside the menu and buttons, one row`, l.right <= l.nextLeft + 0.5 && l.headerH <= 80 && (await overflowX(o.page)) === 0, `logo right ${Math.round(l.right)}, next ${Math.round(l.nextLeft)}, header ${Math.round(l.headerH)}px`);
+      check(`wordmark at ${w}px x${scale}: its home link is a 44px tap target`, l.linkH >= 44, `${Math.round(l.linkH)}px tall`);
       await done(o);
     }
 
