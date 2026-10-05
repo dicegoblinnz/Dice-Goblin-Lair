@@ -79,9 +79,10 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   const left = L.cardSize - L.stamps;
   check(size, 'the card shows the right stamps', s.stamped === L.stamps && s.count.includes(`${L.stamps} of ${L.cardSize} stamps`)
     && s.count.includes(`${left} more ${left === 1 ? 'session' : 'sessions'} to your next roll`), `${s.stamped} stamped; "${s.count}"; app says ${L.stamps}`);
-  check(size, 'the demo card starts at 7 stamps, 1 card filled, 2 rolls ready', L.stamps === 7 && L.cards === 1 && L.rolls.available === 2
-    && s.tag === '1 card filled' && s.ready.startsWith('2 rolls ready'), `${L.stamps}/${L.cards}/${L.rolls.available}; tag "${s.tag}"; "${s.ready}"`);
-  check(size, 'the welcome roll says where it came from', s.ready.includes("Welcome to the Lair! Your first roll's on us."), s.ready);
+  // round 7: the demo member starts on card 3 (two filled) with 1 roll ready, and no welcome roll (loot codes now)
+  check(size, 'the demo card starts at card 3 with 7 stamps, 2 cards filled, 1 roll ready', L.stamps === 7 && L.cards === 2 && L.card === 3 && L.rolls.available === 1
+    && s.tag === '2 cards filled' && s.count.startsWith('Card 3 · 7 of 10 stamps') && s.ready.startsWith('1 roll ready'), `${L.stamps}/${L.cards}/${L.rolls.available}; tag "${s.tag}"; "${s.ready}"`);
+  check(size, 'no welcome roll: where the rolls came from', !/Welcome to the Lair/.test(s.ready) && L.rolls.earned.welcome === 0 && s.ready.includes('2 from full cards'), s.ready);
   check(size, 'one clear roll button', s.buttons === 1 && /^Roll your d20/.test(s.button), s.button);
 
   // ---------- the roll: ?roll=14 ----------
@@ -94,13 +95,10 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   check(size, 'focus moves to the result', focused);
   L = await me(page);
   s = await ui(page);
-  check(size, 'the card updates after the roll', L.rolls.available === 1 && s.ready.startsWith('1 roll ready') && /1 ready/.test(s.button)
-    && L.history[0] && L.history[0].amount === 1400, `"${s.ready}" / "${s.button}"`);
+  check(size, 'the card updates after the roll', L.rolls.available === 0 && s.buttons === 0 && /That's all your rolls for now/.test(s.slots)
+    && L.history[0] && L.history[0].amount === 1400, `"${s.ready}" / "${s.slots}"`);
 
   // ---------- no rolls: the 409 words and no button ----------
-  await page.click('[data-roll-slots] [data-roll]');
-  await page.waitForSelector('[data-roll-slots] [data-result]', { timeout: 10000 });
-  await page.waitForTimeout(400);
   await go(page, '/pages/my-lair'); // without ?roll, so no roll is given back
   s = await ui(page);
   const app409 = await page.evaluate(async () => {
@@ -141,7 +139,7 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
 
   // ---------- nothing about the old spend dice for customers ----------
   const seen = [];
-  for (const name of ['home', 'wallet', 'me']) {
+  for (const name of ['home', 'wallet', 'profile']) {
     await view(page, name);
     seen.push(await page.evaluate(() => document.querySelector('my-lair').innerText));
   }

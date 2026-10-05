@@ -190,27 +190,32 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await page.click('[data-reserve]');
   await page.waitForSelector('library-reserve[data-state="mine"]', { timeout: 5000 }).catch(() => {});
   await visit(page, STASH, '/pages/my-lair');
-  const home = flat(await page.locator('[data-home-holds]').innerText().catch(() => ''));
-  check(tag, home.includes('Reserved games') && home.includes('Thursday 8 October: Forbidden Island') && home.includes('Held until 12pm · DGL34-052'), 'My Lair Home: reserved games under Coming up (the date tile is the day)', home);
-  await page.click('.ml-bar [data-view-link="me"]');
-  await page.waitForSelector('[data-view="me"]:not([hidden])');
+  // Round 7 (contract v7 18.3): Home's reserved-games row went, and Me's list moved to My Library, the Library section's
+  // <my-library> (the library agent's component, checked in its own round 7 check). My Lair counts the holds on Home's
+  // Library card and hands GET /me to <my-library>.
+  check(tag, (await page.locator('[data-home-holds]').count()) === 0, 'My Lair Home: no reserved-games row (My Library lists them)');
+  const libCard = flat(await page.locator('.ml-sum--library').innerText());
+  check(tag, /\b1 of 3\b/.test(libCard) && /1 held/.test(libCard), 'My Lair Home: the Library card counts the hold, 1 of 3 games', libCard);
+  await page.click('.ml-bar [data-view-link="library"]');
+  await page.waitForSelector('[data-view="library"]:not([hidden])');
   await page.waitForTimeout(200);
-  const me = flat(await page.locator('[data-holds]').innerText());
-  check(tag, me.includes('1 of 3 games reserved') && me.includes('Forbidden Island') && me.includes('DGL34-052') && me.includes('Held until Thu 8 Oct, 12pm'),
-    'My Lair Me: the game, its shelf code, when it\'s held until, and 1 of 3 games reserved', me);
-  check(tag, me.includes("Your hold on Wyrmspan ended, so it's back on the shelf.") && me.includes('Reserve it again any time.'), 'My Lair Me: a hold that ended lately');
-  check(tag, (await page.locator('[data-holds] a[href$="/products/forbidden-island"]').count()) === 1, 'My Lair Me: the game links to its page');
-  await page.locator('#ml-library').screenshot({ path: `${OUT}${tag}-mylair-holds.png` });
-  // cancel from My Lair: the dialog asks first; then the notice, and focus on the list's heading
-  await page.click('[data-hold-cancel]');
-  await page.waitForSelector('[data-cancel-dialog][open]');
-  const dialog = flat(await page.locator('[data-cancel-body]').innerText());
-  await page.click('[data-confirm-hold-cancel]');
-  await page.waitForTimeout(400);
-  const notice = flat(await page.locator('[data-notice]').innerText());
-  const headingFocus = await page.evaluate(() => document.activeElement && document.activeElement.id);
-  check(tag, dialog.includes('Forbidden Island') && notice === 'Cancelled. Forbidden Island is back on the shelf.' && headingFocus === 'ml-holds-title'
-    && (await page.locator('[data-holds]').innerText()).includes('0 of 3 games reserved'), 'My Lair cancel: asks first, says so, focus on Reserved games', notice);
+  const handed = await page.evaluate(() => {
+    const lair = document.querySelector('my-lair');
+    const el = document.querySelector('[data-view="library"] my-library');
+    const hold = ((lair.me && lair.me.holds) || []).find((h) => h.title === 'Forbidden Island' && h.status === 'held');
+    return { container: Boolean(el), plans: el && el.dataset.plansUrl, hold: hold ? { id: hold.id, shelf: hold.shelfCode, until: hold.until } : null };
+  });
+  check(tag, handed.container && /#plans$/.test(handed.plans || '') && handed.hold && handed.hold.shelf === 'DGL34-052', 'My Lair Library: <my-library> is there, and GET /me (its me) has the hold', handed);
+  await page.locator('[data-view="library"]').screenshot({ path: `${OUT}${tag}-mylair-holds.png` });
+  // cancelled in My Library: it asks My Lair to fetch GET /me again (lair:refresh), and Home's card follows
+  await page.evaluate(async (id) => {
+    await window.Lair.store.backend.cancelLibraryHold(id);
+    const lair = document.querySelector('my-lair');
+    lair.querySelector('my-library').dispatchEvent(new CustomEvent('lair:refresh', { bubbles: true }));
+    await lair.loading;
+  }, handed.hold && handed.hold.id);
+  const after = await page.evaluate(() => `${document.querySelector('[data-sum="library"]').textContent} / ${document.querySelector('[data-sum="library-more"]').textContent}`);
+  check(tag, /^0 of 3 \/ 0 held/.test(after), 'My Lair: after a cancel in My Library, Home\'s Library card says 0 of 3', after);
   check(tag, (await overflow(page)) === 0, 'My Lair: no sideways scroll');
 
   // 8. Staff: the Library tab marks a hold collected, and puts one back on the shelf (with Undo)
