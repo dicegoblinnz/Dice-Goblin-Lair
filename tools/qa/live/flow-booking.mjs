@@ -79,6 +79,7 @@ for (const [device, label] of [[PHONE, 'phone'], [DESKTOP, 'desktop']]) {
   check(`${label}: the summary has one heads-up about Warhammer's dibs`, (summaryText.match(/Heads up, friend/g) || []).length === 1 && new RegExp(`Warhammer & other wargames has dibs on ${softId} from 6`).test(summaryText), summaryText.slice(-200));
   await p.fill('#bk-name', label === 'phone' ? 'Hemi Walker' : 'Desk Top');
   await p.fill('#bk-email', label === 'phone' ? 'hemi@example.com' : 'desk@example.com');
+  await p.fill('#bk-phone', '021 555 0177'); // round 7: a mobile is required
   const agree = p.locator('input[name="agree"]');
   if (await agree.count()) await agree.check();
   const before = apiLog.length;

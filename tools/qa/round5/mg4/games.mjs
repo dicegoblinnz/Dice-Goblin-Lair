@@ -91,6 +91,7 @@ for (const size of ['phone', 'desktop']) {
   const button = flat(await board.locator('[data-join-submit]').innerText());
   if (button !== 'Save my seat every week') errors.push(`${b.tag}: join button says "${button}"`);
   await shot(board, `${PREFIX}-join-weekly-${size}`);
+  await board.fill('[data-session-join] [name="phone"]', '021 555 0123'); // round 7: a mobile is required (saved to her for next time)
   await board.click('[data-join-submit]');
   await board.waitForSelector('.gm-done');
   await board.waitForTimeout(300);
@@ -106,6 +107,7 @@ for (const size of ['phone', 'desktop']) {
   await board.check('[name="joinMode"][value="series"]');
   text = await sheet(board);
   want(b.tag, text, ['Save my seat every fortnight', 'each fortnight'], 'fortnightly join');
+  await board.fill('[data-session-join] [name="phone"]', '021 555 0123'); // round 7
   await board.click('[data-join-submit]');
   await board.waitForSelector('.gm-done');
   text = await sheet(board);
@@ -118,6 +120,7 @@ for (const size of ['phone', 'desktop']) {
   await shot(board, `${PREFIX}-full-${size}`);
   await board.click('[data-sheet-foot] [data-join]');
   await board.waitForSelector('[data-join-form]');
+  await board.fill('[data-session-join] [name="phone"]', '021 555 0123'); // round 7
   await board.click('[data-join-submit]');
   await board.waitForSelector('.gm-done');
   text = await sheet(board);

@@ -51,6 +51,7 @@ async function join(p, id, { pay = null, people = 1 } = {}) {
   await p.waitForSelector('[data-join-form]');
   if (people > 1) await p.check(`[data-join-form] input[name="people"][value="${people}"]`, { force: true });
   if (pay) await p.check(`[data-join-form] input[name="pay"][value="${pay}"]`, { force: true });
+  await p.fill('[data-join-form] [name="phone"]', '021 555 0188'); // round 7: a mobile is required
   const before = apiLog.length;
   await p.click('button[form="cal-join-form"]');
   await p.waitForTimeout(1500);
@@ -146,6 +147,7 @@ await p.waitForSelector('[data-reserve-form]');
 const passOpt = await p.$(`[data-reserve-form] input[name="pay"][value="pass:${seed.samPass.code}"]`);
 check(`${L}: Warhammer offers "Use my pass" (paid at the counter)`, Boolean(passOpt) && !(await p.$('[data-reserve-form] input[name="pay"][value="now"]')));
 if (passOpt) await p.check(`[data-reserve-form] input[name="pay"][value="pass:${seed.samPass.code}"]`, { force: true });
+await p.fill('[data-reserve-form] [name="phone"]', '021 555 0188'); // round 7: a mobile is required
 const bw = apiLog.length;
 await p.click('button[form="cal-reserve-form"]');
 await p.waitForTimeout(1500);
