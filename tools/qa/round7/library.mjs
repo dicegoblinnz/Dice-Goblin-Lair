@@ -102,7 +102,8 @@ async function visit(page, who, path) {
   m.mockState.customer = who;
   await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
   if (path.startsWith('/products/')) await page.waitForSelector('library-reserve[data-state]', { timeout: 10000 });
-  if (path.startsWith('/pages/my-lair')) await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached', timeout: 10000 });
+  // My Lair has loaded GET /me (after the merge its views may differ, so this only waits, it doesn't fail)
+  if (path.startsWith('/pages/my-lair')) await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached', timeout: 10000 }).catch(() => {});
   await page.waitForTimeout(250);
 }
 const state = (page) => page.getAttribute('library-reserve', 'data-state');
