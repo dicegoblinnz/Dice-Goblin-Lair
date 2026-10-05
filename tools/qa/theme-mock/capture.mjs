@@ -20,6 +20,8 @@ const CUSTOMER = {
   store_credit_account: { balance: 500 },
 };
 const STAFF = { id: 7001, first_name: 'Mo', name: 'Mo Ashgrove', email: 'mo@example.com', phone: '', tags: ['staff'] };
+// r6: a library member (Stash plan, 3 games), for the Reserve button on a library copy
+const MEMBER = { id: 7700500001, first_name: 'Kiri', last_name: 'Moana', name: 'Kiri Moana', email: 'kiri.moana@example.com', phone: null, tags: ['Goblin Treasure - Board Game Rental'] };
 
 // Pin the page clock to Monday 5 Oct 2026, 5pm in Auckland (UTC+13), so "today" has sessions on the floor
 const AT = Date.UTC(2026, 9, 5, 4, 0);
@@ -32,6 +34,7 @@ const ROUTES = [
   ['cart-drawer', '/cart-open', { click: '[data-cart-open]' }],
   ['product', '/products/wingspan'],
   ['product-library-copy', '/products/library'],
+  ['product-library-member', '/products/library', { customer: MEMBER }],
   ['product-membership', '/products/board-game-rental-monthly'],
   ['collection', '/collections/new-additions'],
   ['collection-library', '/collections/board-game-rental'],
