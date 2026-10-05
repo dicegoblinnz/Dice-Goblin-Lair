@@ -1,9 +1,10 @@
-// My Lair's five views (website review D1, D7, D9): a bar at the bottom of a phone and a rail from 990px, links not
-// tabs, so back, forward, refresh and shared links work. Each view's title takes focus when it opens. Every older
-// address (#ml-seats, #ml-passes...) and ?view= opens the right view, Bookings' chips filter it, a plain visit is Home.
-// Also: the keyboard path through the bar, the Tab view's "Add to my tab" bar sitting above the bottom bar, Home's
-// height, one filled button per ticket (cancelling is a ruby link), no dash before Gobgob, the payment link for a
-// place held for an online payment, and the logged-out page listing the five views. Phone, then desktop.
+// My Lair's six sections (round 7: a row of labelled links that stays at the top, on phones too; it was five views in
+// a bottom bar and a rail), links not tabs, so back, forward, refresh and shared links work. Each view's title takes
+// focus when it opens. Every older address (#me, #ml-seats, #ml-passes...) and ?view= opens the right view, Bookings'
+// chips filter it (focus on its one list of what's coming), a plain visit is Home. Also: the keyboard path through the
+// row, the Tab view's "Add to my tab" bar on screen, Home's height, one filled button per ticket (cancelling is a ruby
+// link), no dash before Gobgob, the payment link for a place held for an online payment, and the logged-out page
+// listing the six sections. Phone, then desktop.
 import { start, stop, open, report, errors, shot, overflow, view, openRow, BASE } from './harness.mjs';
 
 const PREFIX = process.argv[2] || 'views';
@@ -35,12 +36,17 @@ const want = (tag, s, view, label, more = {}) => {
   if (more.focus !== undefined && s.focus !== more.focus) errors.push(`${tag} ${label}: focus on ${s.focus || 'nothing'}, want ${more.focus}`);
   if (more.chip !== undefined && s.chip !== more.chip) errors.push(`${tag} ${label}: chip ${s.chip}, want ${more.chip}`);
 };
-const TITLES = { home: 'ml-home-title', bookings: 'ml-bookings-title', tab: 'ml-tab-title', wallet: 'ml-wallet-title', me: 'ml-me-title' };
+const TITLES = {
+  home: 'ml-home-title', bookings: 'ml-bookings-title', wallet: 'ml-wallet-title', library: 'ml-library-title', tab: 'ml-tab-title', profile: 'ml-profile-title',
+};
+const VIEWS = ['home', 'bookings', 'wallet', 'library', 'tab', 'profile'];
+// round 7: a kind of booking (#ml-tables...) is its chip, with focus on the one list of what's coming (Ruby runs no
+// games, so #ml-games is that part itself); Me's parts moved to Profile, the Wallet and Library (contract v7 18.3)
 const OLD = [
   ['#ml-card', 'home', 'ml-gcard-title'], ['#ml-dice', 'home', 'ml-roll-title'], ['#ml-tab', 'tab', 'ml-tab-title'],
-  ['#ml-passes', 'wallet', 'ml-passes-title'], ['#ml-tables', 'bookings', 'ml-tables-title', 'tables'], ['#ml-seats', 'bookings', 'ml-seats-title', 'seats'],
-  ['#ml-events', 'bookings', 'ml-events-title', 'events'], ['#ml-games', 'bookings', 'ml-games-title', 'games'], ['#ml-birthday', 'me', 'ml-bday-title'],
-  ['#ml-orders', 'me', 'ml-orders-title'], ['#ml-library', 'me', 'ml-library-title'],
+  ['#ml-passes', 'wallet', 'ml-passes-title'], ['#ml-tables', 'bookings', 'ml-coming-title', 'tables'], ['#ml-seats', 'bookings', 'ml-coming-title', 'seats'],
+  ['#ml-events', 'bookings', 'ml-coming-title', 'events'], ['#ml-games', 'bookings', 'ml-games-title', 'games'], ['#ml-birthday', 'profile', 'ml-bday-title'],
+  ['#ml-orders', 'wallet', 'ml-orders-title'], ['#ml-library', 'library', 'ml-library-title'], ['#me', 'profile', 'ml-profile-title'],
 ];
 
 for (const size of ['phone', 'desktop']) {
@@ -66,7 +72,7 @@ for (const size of ['phone', 'desktop']) {
   await overflow(page, tag);
 
   // 2. The bar: each link shows its view, marks it, puts its address in the URL, focus on its title, at the view's top
-  for (const name of ['bookings', 'tab', 'wallet', 'me', 'home']) {
+  for (const name of ['bookings', 'wallet', 'library', 'tab', 'profile', 'home']) {
     await page.evaluate(() => window.scrollTo(0, 400));
     await view(page, name);
     s = await state(page);
@@ -86,16 +92,16 @@ for (const size of ['phone', 'desktop']) {
   // 3. Back and forward walk the views (and refresh keeps the view)
   await page.goBack();
   await page.waitForTimeout(250);
-  want(tag, await state(page), 'me', 'back from home');
+  want(tag, await state(page), 'profile', 'back from home');
   await page.goBack();
   await page.waitForTimeout(250);
-  want(tag, await state(page), 'wallet', 'back again');
+  want(tag, await state(page), 'tab', 'back again');
   await page.goForward();
   await page.waitForTimeout(250);
-  want(tag, await state(page), 'me', 'forward');
+  want(tag, await state(page), 'profile', 'forward');
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached' });
-  want(tag, await state(page), 'me', 'refresh on #me', { focus: TITLES.me });
+  want(tag, await state(page), 'profile', 'refresh on #profile', { focus: TITLES.profile });
 
   // 4. Every older address opens the view it lives in now (Bookings with its chip), with that part in sight and focused
   for (const [hash, name, heading, chip] of OLD) {
@@ -109,7 +115,7 @@ for (const size of ['phone', 'desktop']) {
     if (!(await inView(page, `#${heading}`))) errors.push(`${tag} ${hash}: ${heading} isn't on screen`);
   }
   // ?view= for emails; the #hash wins over it; anything unknown is Home
-  for (const [path, name] of [['?view=wallet', 'wallet'], ['?view=bookings', 'bookings'], ['?view=wallet#tab', 'tab'], ['?view=nope', 'home'], ['#nope', 'home']]) {
+  for (const [path, name] of [['?view=wallet', 'wallet'], ['?view=bookings', 'bookings'], ['?view=library', 'library'], ['?view=me', 'profile'], ['?view=wallet#tab', 'tab'], ['?view=nope', 'home'], ['#nope', 'home']]) {
     await page.goto('about:blank');
     await page.goto(`${BASE}/pages/my-lair${path}`, { waitUntil: 'networkidle' });
     await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached' });
@@ -149,7 +155,7 @@ for (const size of ['phone', 'desktop']) {
   await page.goto(`${BASE}/pages/my-lair`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached' });
   const stops = [];
-  for (let i = 0; i < 40 && stops.length < 5; i += 1) {
+  for (let i = 0; i < 60 && stops.length < 6; i += 1) {
     await page.keyboard.press('Tab');
     const link = await page.evaluate(() => document.activeElement?.dataset?.viewLink || '');
     if (link) {
@@ -158,7 +164,7 @@ for (const size of ['phone', 'desktop']) {
       if (ring === 'none') errors.push(`${tag} keyboard: no focus ring on ${link}`);
     }
   }
-  if (stops.join() !== 'home,bookings,tab,wallet,me') errors.push(`${tag} keyboard: bar stops ${stops}`);
+  if (stops.join() !== VIEWS.join()) errors.push(`${tag} keyboard: bar stops ${stops}`);
   // back to Bookings' link and open it
   await page.focus('.ml-bar [data-view-link="bookings"]');
   await page.keyboard.press('Enter');
@@ -169,7 +175,7 @@ for (const size of ['phone', 'desktop']) {
   const next = await page.evaluate(() => document.activeElement?.dataset?.filterLink || document.activeElement?.className);
   if (next !== 'all') errors.push(`${tag} keyboard: after the title, Tab goes to ${next}, want the All chip`);
   // every view's controls take focus with a visible ring
-  for (const name of ['home', 'bookings', 'tab', 'wallet', 'me']) {
+  for (const name of VIEWS) {
     await view(page, name);
     const missing = await page.evaluate(async (n) => {
       const out = [];
@@ -188,7 +194,7 @@ for (const size of ['phone', 'desktop']) {
     if (missing.length) errors.push(`${tag} ${name}: ${missing.slice(0, 4).join(' | ')}`);
   }
 
-  // 8. The Tab view: pick something, and the "Add to my tab" bar sits above the bottom bar (phone), never under it
+  // 8. The Tab view: pick something, and the "Add to my tab" bar is on screen (round 7: no bottom bar to clear)
   await view(page, 'tab');
   if (!(await page.locator('.ml-menu__item').first().isVisible())) await page.locator('[data-menu-toggle]').first().click();
   await page.locator('.ml-menu__item [data-step="1"]').first().click();
@@ -261,10 +267,10 @@ for (const size of ['phone', 'desktop']) {
   if (dashes.length) errors.push(`${tag}: a dash before Gobgob: ${dashes}`);
   await ctx.close();
 
-  // 12. Logged out: the five views, in their own words
+  // 12. Logged out: the six sections, in their own words
   const out = await open(size, '/pages/my-lair', { customer: null, label: 'out' });
   const list = flat(await out.page.locator('.ml-out__list').innerText());
-  for (const name of ['Home', 'Bookings', 'Tab', 'Wallet', 'Me']) if (!new RegExp(`\\b${name}\\b`).test(list)) errors.push(`${out.tag}: "${name}" missing from: ${list}`);
+  for (const name of ['Home', 'Bookings', 'Wallet', 'Library', 'Tab', 'Profile']) if (!new RegExp(`\\b${name}\\b`).test(list)) errors.push(`${out.tag}: "${name}" missing from: ${list}`);
   if (/[—–]/.test(await out.page.locator('.ml--out').innerText())) errors.push(`${out.tag}: a dash on the logged-out page`);
   await shot(out.page, `${PREFIX}-out-${size}`, { fullPage: true });
   await overflow(out.page, out.tag);

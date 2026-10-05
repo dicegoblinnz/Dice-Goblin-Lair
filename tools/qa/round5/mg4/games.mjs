@@ -151,8 +151,9 @@ for (const size of ['phone', 'desktop']) {
   await overflow(board, b.tag);
   // 9. My Lair now: two regular cards (weekly and fortnightly) and the flexible one waiting for room
   const after = await open(size, '/pages/my-lair#ml-seats', { ctx, label: 'after' });
-  // later sessions are rows that open to their card: open them all, as someone checking each one would
-  const rows = after.page.locator('[data-panel="seats"] details.ml-later');
+  // later sessions are rows that open to their card: open them all, as someone checking each one would (round 7:
+  // everything coming up is one list at the top of Bookings, and #ml-seats shows its seats)
+  const rows = after.page.locator('[data-coming] .ml-coming__item[data-kind="seats"] details.ml-later');
   for (let i = 0; i < (await rows.count()); i += 1) {
     if (!(await rows.nth(i).evaluate((d) => d.open))) await rows.nth(i).locator(':scope > summary').click();
   }
@@ -161,7 +162,7 @@ for (const size of ['phone', 'desktop']) {
   if (cards.length !== 3) errors.push(`${after.tag}: ${cards.length} series cards, want 3 (weekly, fortnightly, flexible)`);
   const masks = cards.map(flat).find((c) => c.includes('Masks'));
   if (masks) want(after.tag, masks, ['Regular · your seat\'s saved for every session', 'is full, so you\'re not in that one', 'Gobgob saves your seat from the next session with room'], 'flexible card');
-  await shotOf(after.page, '#ml-seats', `${PREFIX}-mylair-seats-${size}`);
+  await shotOf(after.page, '[data-coming-box]', `${PREFIX}-mylair-seats-${size}`);
   await overflow(after.page, after.tag);
   await ctx.close();
 }

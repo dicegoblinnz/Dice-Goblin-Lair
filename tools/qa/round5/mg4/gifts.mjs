@@ -5,13 +5,14 @@ const PREFIX = process.argv[2] || 'gifts';
 const flat = (s) => s.replace(/\s+/g, ' ').trim();
 await start();
 for (const size of ['phone', 'desktop']) {
-  // Gifts and passes are in the Wallet (#wallet), the birthday form in Me
+  // Gifts and passes are in the Wallet (#wallet), the birthday in Profile (round 7)
   const { ctx, page, tag } = await open(size, '/pages/my-lair#wallet');
   const code = await page.locator('.ml-gcard__code').innerText();
   const hbd = `HBD-${code.replace(/[^A-Z0-9]/gi, '')}`;
   const gift = flat(await page.locator('[data-gifts]').innerText());
-  const line = `Birthday gift from Gobgob: $5 store credit, 2 sessions, a free Pokémon booster pack: code ${hbd}`;
-  if (!gift.includes(line)) errors.push(`${tag}: gift line is "${gift}"`);
+  // round 7: a gift says what it was in the contract's words (staff see the same line), its code to copy under them
+  const line = new RegExp(`Birthday gift from Gobgob: \\$5 store credit, 2 sessions on pass [A-Z]{2}-[A-Z]+-\\d+, Pokémon booster pack \\(code ${hbd}, until \\d{1,2} \\w{3,4}\\)`);
+  if (!line.test(gift)) errors.push(`${tag}: gift line is "${gift}"`);
   if (!/Use the code by \w{3} \d+ \w+, online at checkout or at the counter\. Your 2 sessions are in My passes\./.test(gift)) errors.push(`${tag}: gift hints: ${gift}`);
   // Copy the code: with the clipboard
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://localhost:${process.env.QA_PORT || 4312}` });
@@ -38,9 +39,9 @@ for (const size of ['phone', 'desktop']) {
   if (sources.some(([label, from]) => /Gift pack|School|Painting/.test(label) && from)) errors.push(`${tag}: a staff pass shows a source`);
   // tap targets, in every view
   const small = [];
-  for (const name of ['home', 'bookings', 'tab', 'wallet', 'me']) {
+  for (const name of ['home', 'bookings', 'wallet', 'library', 'tab', 'profile']) {
     await view(page, name);
-    if (name === 'me') await shotOf(page, '#ml-birthday', `${PREFIX}-bday-${size}`);
+    if (name === 'profile') await shotOf(page, '#ml-birthday', `${PREFIX}-bday-${size}`);
     small.push(...(await smallTargets(page)).filter((x) => !/^a\.text-link|^button\.text-link/.test(x)).map((x) => `${name}: ${x}`));
   }
   console.log(tag, 'small targets:', JSON.stringify(small));
