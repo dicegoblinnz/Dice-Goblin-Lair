@@ -79,6 +79,9 @@ for (const [device, label] of [[PHONE, 'phone'], [DESKTOP, 'desktop']]) {
   check(`${label}: the summary has one heads-up about Warhammer's dibs`, (summaryText.match(/Heads up, friend/g) || []).length === 1 && new RegExp(`Warhammer & other wargames has dibs on ${softId} from 6`).test(summaryText), summaryText.slice(-200));
   await p.fill('#bk-name', label === 'phone' ? 'Hemi Walker' : 'Desk Top');
   await p.fill('#bk-email', label === 'phone' ? 'hemi@example.com' : 'desk@example.com');
+  // round 7: a mobile is required (the form's Mobile field)
+  const mobile = p.locator('#bk-phone, lair-booking input[type="tel"]');
+  if (await mobile.count() && !(await mobile.first().inputValue())) await mobile.first().fill('021 555 0177');
   const agree = p.locator('input[name="agree"]');
   if (await agree.count()) await agree.check();
   const before = apiLog.length;

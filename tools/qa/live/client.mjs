@@ -40,9 +40,13 @@ export function forwardedFor() {
   return `198.18.${(process.pid + Math.floor(visitor / 250)) % 250}.${(visitor % 250) + 1}, 23.227.38.2`;
 }
 
+// Round 7: every customer booking needs a mobile number (contract v7, section 1). The flows are about other things, so a
+// booking route gets one when a flow sends none (`phone: undefined` sends none: flow-r7-a.mjs checks the rule itself).
+const MOBILE_ROUTES = /^(?:bookings|games\/[^/?]+\/join-series|events\/[^/?]+\/(?:join|reserve))(?:\?|$)/;
 export async function proxy(method, route, { customer = '', body } = {}) {
+  const sent = method === 'POST' && body && MOBILE_ROUTES.test(String(route).replace(/^\//, '')) && !('phone' in body) ? { ...body, phone: '021 555 0100' } : body;
   const res = await fetch(proxyUrl(route, customer), {
-    method, headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': forwardedFor() }, body: body ? JSON.stringify(body) : undefined,
+    method, headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': forwardedFor() }, body: sent ? JSON.stringify(sent) : undefined,
   });
   const text = await res.text();
   let data;

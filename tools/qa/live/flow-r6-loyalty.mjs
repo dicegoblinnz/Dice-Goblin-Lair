@@ -1,4 +1,4 @@
-// Round 6 (a): the loyalty card. Aroha, a new member, gets her welcome roll. Four sessions she turns up to (two tables,
+// Round 6 (a): the loyalty card. Aroha, a new member, gets no welcome roll (round 7), so staff give her one. Four sessions she turns up to (two tables,
 // a TTRPG seat and an event sign-up, 10 people in all), checked in by staff, fill her card: a roll. Undoing a check-in
 // takes its stamps back. Her rolls pay the d20's face in store credit (storeCreditAccountCredit at the fake), or a
 // pending prize for the counter when Shopify refuses. Staff give her rolls and set when she became a customer; the POS
@@ -12,12 +12,14 @@ await fake('POST', 'customer', { id: AROHA, tags: [], name: 'Aroha Tipene', emai
 const me = async () => (await proxy('GET', `me?name=${encodeURIComponent('Aroha Tipene')}`, { customer: AROHA })).data;
 const today = key(Date.now());
 
-/* 1. A new member: the welcome roll, once */
+/* 1. A new member: round 7, no welcome roll (a loot code does that job now) */
 let m = await me();
-check('a new member: an empty card and the welcome roll', m.loyalty?.stamps === 0 && m.loyalty.cardSize === 10 && m.loyalty.cards === 0 && m.loyalty.rolls.available === 1 && m.loyalty.rolls.earned.welcome === 1, m.loyalty);
-check('rolls (the old field) mirrors the loyalty rolls', m.rolls?.available === 1 && m.rolls.toNext === null && m.rolls.per === null && m.rolls.bonus === 1, m.rolls);
+check('a new member: an empty card, card 1, and no welcome roll (round 7)', m.loyalty?.stamps === 0 && m.loyalty.cardSize === 10 && m.loyalty.cards === 0 && m.loyalty.card === 1 && m.loyalty.rolls.available === 0 && m.loyalty.rolls.earned.welcome === 0, m.loyalty);
+check('rolls (the old field) mirrors the loyalty rolls', m.rolls?.available === 0 && m.rolls.toNext === null && m.rolls.per === null && m.rolls.bonus === 0, m.rolls);
 m = await me();
-check('the welcome roll is given once, however often she comes back', m.loyalty.rolls.earned.welcome === 1 && m.loyalty.rolls.available === 1, m.loyalty.rolls);
+check('still no welcome roll, however often she comes back', m.loyalty.rolls.earned.welcome === 0 && m.loyalty.rolls.available === 0, m.loyalty.rolls);
+// round 7: staff give her the one roll the welcome roll used to be, so the counts below read as before
+await proxy('POST', `members/${AROHA}/rolls`, { customer: STAFF, body: { count: 1, note: 'In place of the welcome roll (round 7)' } });
 await proxy('POST', 'me/profile', { customer: AROHA, body: { name: 'Aroha Tipene', firstName: 'Aroha', email: 'aroha.t@example.com', birthday: addDays(today, 5).slice(5) } });
 
 /* 2. Sessions she turns up to: 3 + 4 + 2 + 1 people */
@@ -39,7 +41,7 @@ for (const x of [t1.data.booking, t2.data.booking, seat.data.booking, join.data.
 }
 check('each check-in stamps her card, one stamp a person: 3, 7, 9, then the tenth fills it', JSON.stringify(stamps) === JSON.stringify([3, 7, 9, 0]), stamps);
 m = await me();
-check('a full card: one roll, plus the welcome roll', m.loyalty.cards === 1 && m.loyalty.rolls.earned.cards === 1 && m.loyalty.rolls.available === 2, m.loyalty);
+check('a full card: one roll, plus the one staff gave; the next card starts at once (card 2)', m.loyalty.cards === 1 && m.loyalty.card === 2 && m.loyalty.rolls.earned.cards === 1 && m.loyalty.rolls.available === 2, m.loyalty);
 check('recent sessions, newest first, titled as My Lair shows them', m.loyalty.recent.length === 4 && m.loyalty.recent[0].title === 'Table T19' && m.loyalty.recent[0].people === 4 && m.loyalty.recent[3].title === 'Dungeons & Dragons' && m.loyalty.recent.some((r) => r.title === 'Masks: A New Generation (r6)' && r.people === 2), m.loyalty.recent);
 
 /* 3. Undoing a check-in takes its stamps back; checking in again brings them back */
@@ -98,6 +100,6 @@ const scan = await pos('POST', 'scan', { code: m.member.code });
 check('POS member scan: her card (display only)', scan.status === 200 && scan.data.loyalty?.stamps === 0 && scan.data.loyalty.cardSize === 10 && scan.data.loyalty.rollsAvailable === 2, scan.data.loyalty);
 const birthdays = (await proxy('GET', 'members/birthdays', { customer: STAFF })).data || [];
 const hers = birthdays.find((b) => b.customerId === AROHA);
-check('birthdays: a roll for every year she\'s been with us', hers && hers.suggested?.rolls === Math.max(1, wholeYears('2019-03-10', today)), hers?.suggested);
+check('birthdays: her years with us show, and no rolls are suggested (round 7)', hers && hers.suggested?.rolls === 0 && hers.yearsWithUs === wholeYears('2019-03-10', today), hers && [hers.suggested, hers.yearsWithUs]);
 
 process.exit(summary() ? 1 : 0);

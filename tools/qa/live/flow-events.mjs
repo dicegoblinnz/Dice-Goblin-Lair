@@ -51,6 +51,9 @@ async function join(p, id, { pay = null, people = 1 } = {}) {
   await p.waitForSelector('[data-join-form]');
   if (people > 1) await p.check(`[data-join-form] input[name="people"][value="${people}"]`, { force: true });
   if (pay) await p.check(`[data-join-form] input[name="pay"][value="${pay}"]`, { force: true });
+  // round 7: a mobile is required; round 6's calendar form has no field for one (so its joins fail until round 7's theme)
+  const mobile = p.locator('[data-join-form] input[type="tel"], [data-join-form] input[name="phone"]');
+  if (await mobile.count() && !(await mobile.first().inputValue())) await mobile.first().fill('021 555 0101');
   const before = apiLog.length;
   await p.click('button[form="cal-join-form"]');
   await p.waitForTimeout(1500);
@@ -146,6 +149,9 @@ await p.waitForSelector('[data-reserve-form]');
 const passOpt = await p.$(`[data-reserve-form] input[name="pay"][value="pass:${seed.samPass.code}"]`);
 check(`${L}: Warhammer offers "Use my pass" (paid at the counter)`, Boolean(passOpt) && !(await p.$('[data-reserve-form] input[name="pay"][value="now"]')));
 if (passOpt) await p.check(`[data-reserve-form] input[name="pay"][value="pass:${seed.samPass.code}"]`, { force: true });
+// round 7: a mobile, when the form has a field for one (round 6's calendar doesn't)
+const spotMobile = p.locator('[data-reserve-form] input[type="tel"], [data-reserve-form] input[name="phone"]');
+if (await spotMobile.count() && !(await spotMobile.first().inputValue())) await spotMobile.first().fill('021 555 0101');
 const bw = apiLog.length;
 await p.click('button[form="cal-reserve-form"]');
 await p.waitForTimeout(1500);

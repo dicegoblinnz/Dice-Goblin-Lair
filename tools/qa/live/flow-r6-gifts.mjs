@@ -38,7 +38,7 @@ check('price paid: what each unit cost', passes.map((p) => p.pricePaid).sort((x,
 const mail = a.emails.find((e) => [].concat(e.to).includes('rangi.gifts@example.com'));
 check('one email to the order\'s address: "Your session gift is ready"', a.emails.length === 1 && mail?.subject === 'Your session gift is ready', a.emails.map((e) => [e.to, e.subject]));
 check('every code is in it, with its sessions and how to redeem it', mail && codes.every((c) => mail.text.includes(c)) && (mail.text.match(/5 sessions at the Dice Goblin Lair/g) || []).length === 2 && (mail.text.match(/10 sessions at the Dice Goblin Lair/g) || []).length === 1
-  && (mail.text.match(/Log in at dicegoblin\.nz, open My Lair › Wallet and enter the code under 'Got a pass code\?'/g) || []).length === 3, (mail?.text || '').slice(0, 600));
+  && (mail.text.match(/Log in at dicegoblin\.nz, open My Lair › Wallet and enter the code under 'Got a code\?'/g) || []).length === 3, (mail?.text || '').slice(0, 600));
 
 /* 2. The same webhook again: nothing new */
 const before = (await fake('GET', 'emails')).length;

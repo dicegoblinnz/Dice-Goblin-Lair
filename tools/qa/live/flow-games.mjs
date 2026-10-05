@@ -38,6 +38,13 @@ async function openJoin(p, id, every = false) {
   await p.goto(`${BASE}/pages/gm-games?join=${encodeURIComponent(id)}${every ? '&every=1' : ''}`, { waitUntil: 'networkidle' });
   await p.waitForSelector('#gm-join-form', { timeout: 8000 });
 }
+/** Round 7: a mobile is required. The form's phone field sits behind "Change" when the booker is known; it's filled only when empty. */
+async function typeMobile(p, mobile) {
+  const field = p.locator('#gm-join-form input[type="tel"], #gm-join-form input[name="phone"]');
+  if (!(await field.count()) || (await field.first().inputValue())) return;
+  if (!(await field.first().isVisible()) && (await p.$('[data-booker-edit]'))) await p.click('[data-booker-edit]');
+  await field.first().fill(mobile);
+}
 
 /* 1. Leo: a seat, no pass */
 const leo = await context(7104, DEVICE);
@@ -45,6 +52,7 @@ const pl = await page(leo, `${L}/leo`);
 await openJoin(pl, g.id);
 const form1 = await text(pl, '#gm-join-form');
 check(`${L}: the seat form says pay at the counter, $20 a seat`, /Pay at the counter/.test(form1) && /\$20 a seat/.test(form1) && !/online/i.test(form1), form1.slice(0, 300));
+await typeMobile(pl, '021 555 0104');
 let b = apiLog.length;
 await pl.click('[data-join-submit]');
 await pl.waitForSelector('.gm-done', { timeout: 8000 }).catch(() => {});
@@ -91,6 +99,7 @@ const pk = await page(kiri, `${L}/kiri`);
 await openJoin(pk, g.id, true);
 const mode = await pk.evaluate(() => document.querySelector('#gm-join-form input[name="joinMode"]:checked')?.value);
 check(`${L}: "Join every session" opens in series mode`, mode === 'series', mode);
+await typeMobile(pk, '021 555 0102');
 b = apiLog.length;
 await pk.click('[data-join-submit]');
 await pk.waitForSelector('.gm-done', { timeout: 8000 }).catch(() => {});

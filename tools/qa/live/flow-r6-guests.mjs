@@ -18,7 +18,7 @@ const seat = (body, customer = '') => proxy('POST', 'bookings', { customer, body
 const noEmail = await seat({ name: 'Tama Walker', email: '' });
 check('a guest needs a real email', noEmail.status === 422 && noEmail.data.error === 'Add an email so we can send your confirmation.', noEmail.data);
 const longPhone = await seat({ name: 'Tama Walker', email: 'tama.w@example.com', phone: '0'.repeat(31) });
-check('a phone number is up to 30 characters', longPhone.status === 422, longPhone.data);
+check('round 7: the phone is a mobile, and checked (31 zeros are refused)', longPhone.status === 422 && longPhone.data.error === "That mobile number doesn't look right. Try one like 021 123 4567.", longPhone.data);
 const emails0 = (await fake('GET', 'emails')).length;
 const guest = await seat({ people: 2, name: 'Tama Walker', email: 'tama.w@example.com', phone: '021 555 0142', notes: 'New to Blades, keen to learn', players: [{ name: 'Tama Walker', character: 'Silver' }, { name: 'Ruby', character: '' }] });
 const booking = guest.data.booking || {};

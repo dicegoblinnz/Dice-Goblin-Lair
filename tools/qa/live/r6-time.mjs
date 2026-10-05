@@ -24,17 +24,18 @@ export const at = (k, h, mi = 0) => {
   const first = guess - offset(guess);
   return guess - offset(first);
 };
-/** When a library hold made at `ms` ends: 12pm on the third day after that Lair day */
-export const holdUntil = (ms) => at(addDays(key(ms), 3), 12);
+/** When a library hold made at `ms` ends (round 7): midnight at the end of the third day, the day it's made counting as
+    the first (made Tuesday: 00:00 Friday) */
+export const holdUntil = (ms) => at(addDays(key(ms), 3), 0);
 /** Whole years from one date key to another, the way birthdays count */
 export const wholeYears = (a, b) => {
   const [y1, m1, d1] = a.split('-').map(Number);
   const [y2, m2, d2] = b.split('-').map(Number);
   return Math.max(0, y2 - y1 - (m2 < m1 || (m2 === m1 && d2 < d1) ? 1 : 0));
 };
-/** "Sunday 11 October, 12pm" (emails), "Sun 11 Oct, 12pm" (messages on the page) and "Sun 12pm", the way the Lair app
-    words a hold's end */
-export const longWhen = (ms) => `${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(ms)).replace(',', '')}, 12pm`;
-export const pageWhen = (ms) => `${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ms)).replace(',', '')}, 12pm`;
-export const shortWhen = (ms) => `${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short' }).format(new Date(ms))} 12pm`;
+/** "midnight on Thursday 8 October" (emails), "midnight, Thu 8 Oct" (messages on the page) and "midnight Thu", the way the
+    Lair app words a hold's end (round 7: 00:00 is the end of the day before) */
+export const longWhen = (ms) => `midnight on ${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(ms - 1)).replace(',', '')}`;
+export const pageWhen = (ms) => `midnight, ${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ms - 1)).replace(',', '')}`;
+export const shortWhen = (ms) => `midnight ${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short' }).format(new Date(ms - 1))}`;
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

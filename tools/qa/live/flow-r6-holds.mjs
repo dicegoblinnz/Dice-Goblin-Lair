@@ -39,7 +39,7 @@ const made = Date.now();
 const hana = await reserve(HANA, game(1, 'Wingspan (Library)'));
 const hold = hana.data.hold || {};
 const until = holdUntil(made);
-check('Hana reserves it: held until 12pm on the third day', hana.status === 200 && hold.status === 'held' && hold.until === until && hold.variantId === V(1) && hold.shelfCode === 'DGL34', hana.data);
+check('Hana reserves it: held until midnight on the third day, today counting as the first (round 7)', hana.status === 200 && hold.status === 'held' && hold.until === until && hold.variantId === V(1) && hold.shelfCode === 'DGL34', hana.data);
 await sleep(800);
 const mails = (await fake('GET', 'emails')).slice(emails0);
 const staffMail = mails.find((e) => [].concat(e.to).includes('staff@dicegoblin.test'));
@@ -54,13 +54,13 @@ const seen = (await status([V(1)], WIREMU))[V(1)];
 check('status for anyone else: one copy (from Shopify), held, nextFree its until, not theirs', seen && seen.copies === 1 && seen.held === 1 && seen.available === 0 && seen.nextFree === until && seen.mine === null, seen);
 check('status for Hana: it\'s hers', (await status([V(1)], HANA))[V(1)]?.mine?.id === hold.id);
 const full = await reserve(WIREMU, game(1, 'Wingspan (Library)'));
-check('Wiremu tries: every copy is reserved, back on the shelf by …', full.status === 409 && full.data.error === `Every copy is reserved right now. It's back on the shelf by ${shortWhen(until)} if nobody collects it.`, full.data);
+check('Wiremu tries: every copy is reserved, back on the shelf by …', full.status === 409 && full.data.error === `Every copy is reserved or out on loan right now. It's back on the shelf by ${shortWhen(until)} if nobody collects it.`, full.data);
 
 /* 4. Copies the page sends for a game Shopify doesn't track; plan limits */
 const azulW = await reserve(WIREMU, game(2, 'Azul (Library)', { copies: 2 }));
 check('Azul isn\'t tracked in Shopify: the page\'s 2 copies count, and Wiremu reserves one', azulW.status === 200 && (await status([V(2)]))[V(2)]?.copies === 2, azulW.data.error || (await status([V(2)]))[V(2)]);
 const limit = await reserve(WIREMU, game(3, 'Cascadia (Library)'));
-check('Wiremu\'s plan is 1 game at a time', limit.status === 409 && limit.data.error === "Your plan has 1 game at a time, and you've got 1 reserved. Collect or cancel one first.", limit.data);
+check('Wiremu\'s plan is 1 game at a time', limit.status === 409 && limit.data.error === "Your plan has 1 game at a time, and you've got 1: 1 reserved. Return one or cancel a hold first.", limit.data);
 const azulH = await reserve(HANA, game(2, 'Azul (Library)', { copies: 2 }));
 check('Hana reserves Azul\'s other copy (the one that runs out of time)', azulH.status === 200, azulH.data.error);
 

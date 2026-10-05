@@ -11,7 +11,7 @@ const status = async () => (await proxy('GET', `library/status?ids=${plan.varian
 const endedMail = async () => (await fake('GET', 'emails')).slice(plan.emails || 0)
   .filter((e) => [].concat(e.to).includes(plan.email) && e.subject === `Your hold on ${plan.title} ended`);
 const early = await status();
-check('past its time, it counts as ended, maintenance or not (both copies free: the other was collected)', early?.held === 0 && early.available === 2, early);
+check('past its time, it counts as ended, maintenance or not (round 7: the other copy is at home with Wiremu, so one is on the shelf)', early?.held === 0 && early.out === 1 && early.available === 1, early);
 const setup = await (await fetch(`${WORKER}/setup?key=test-setup-key`)).json();
 await sleep(800);
 const mails = await endedMail();

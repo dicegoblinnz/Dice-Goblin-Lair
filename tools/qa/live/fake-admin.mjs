@@ -23,6 +23,11 @@
 //   POST /__fake/order { id, customerId, subtotal (cents), source, name ("#1550"), billingName, shippingName, email,
 //                        createdAt (ISO, default now), status ('PAID' default), cancelled }
 //   POST /__fake/variant { id, quantity, tracked }   a library copy's inventory (round 6)
+//   POST /__fake/variant-code { id, productId, handle, productTitle, title, sku, barcode, price ('4.50'), available, image,
+//        productImage, status ('ACTIVE'), giftCard, sellingPlan, libraryCode }   round 7: a variant LairVariantByCode finds
+//        by its barcode or SKU (library copies have a libraryCode); POST /__fake/set { failVariantCode } refuses that lookup
+//        like a store without read_products. POST /__fake/discount-use { code, count }: how often a code was used
+//        (LairGiftCodeUse); orders take discountCodes (OrderSpend answers them, with processedAt)
 //   POST /__fake/draft-paid { draftId, orderId }  the checkout was paid: the draft order turned into orderId
 //   GET  /__fake/calls                       every GraphQL call so far (operation, variables)
 //   GET  /__fake/emails                      every email the app sent (Resend stand-in at /resend/emails[/batch])
@@ -46,6 +51,9 @@ const state = {
   failOrders: false,
   scopes: null,
   variants: {}, // round 6: variant id -> { quantity, tracked }
+  variantCodes: [], // round 7: variants found by barcode or SKU (LairVariantByCode)
+  failVariantCode: false, // round 7: LairVariantByCode refused (read_products not approved)
+  discountUses: {}, // round 7: discount code (upper case) -> times used (LairGiftCodeUse)
   customers: {
     7001: ['staff'], // Mo, staff
     7101: [], // Sam Jones, member
@@ -151,6 +159,35 @@ function answer(op, query, v) {
           return x ? { id: gid, inventoryQuantity: x.quantity, inventoryItem: { tracked: x.tracked !== false } } : null;
         }),
       };
+    // Round 7: the variants whose barcode or SKU is a scanned code (library scans, the tab's scanner)
+    case 'LairVariantByCode': {
+      if (state.failVariantCode) return { __errors: [{ message: 'Access denied for productVariants field. Required access: `read_products` access scope.', extensions: { code: 'ACCESS_DENIED' } }] };
+      const wanted = [...String(v.query || '').matchAll(/(barcode|sku):"([^"]*)"/g)].map((m) => [m[1], m[2].toUpperCase()]);
+      return {
+        productVariants: {
+          nodes: state.variantCodes.filter((x) => wanted.some(([field, value]) => String(x[field] || '').toUpperCase() === value)).slice(0, 5).map((x) => ({
+            id: `gid://shopify/ProductVariant/${x.id}`, title: x.title || 'Default Title', sku: x.sku || null, barcode: x.barcode || null, price: x.price || '0.00',
+            availableForSale: x.available !== false, media: { nodes: x.image ? [{ preview: { image: { url: x.image } } }] : [] },
+            product: {
+              id: `gid://shopify/Product/${x.productId}`, handle: x.handle || '', title: x.productTitle || '', status: x.status || 'ACTIVE', isGiftCard: Boolean(x.giftCard),
+              requiresSellingPlan: Boolean(x.sellingPlan), featuredMedia: x.productImage ? { preview: { image: { url: x.productImage } } } : null,
+              libraryCode: x.libraryCode ? { value: x.libraryCode } : null,
+            },
+          })),
+        },
+      };
+    }
+    // Round 7: a birthday gift's product code as Shopify sees it: made (discountCodeBasicCreate) and how often it's been used
+    case 'LairGiftCodeUse': {
+      const made = state.discounts.find((d) => String(d.code || '').toUpperCase() === String(v.code || '').toUpperCase());
+      if (!made) return { codeDiscountNodeByCode: null };
+      return {
+        codeDiscountNodeByCode: {
+          id: `gid://shopify/DiscountCodeNode/${made.code}`,
+          codeDiscount: { __typename: 'DiscountCodeBasic', status: 'ACTIVE', endsAt: made.endsAt || null, asyncUsageCount: state.discountUses[String(made.code).toUpperCase()] || 0 },
+        },
+      };
+    }
     // Round 6: a customer's orders for the spend report's backfill. Without read_all_orders, Shopify shows the last
     // 60 days only, so this does too.
     case 'CustomerOrders': {
@@ -192,6 +229,8 @@ function answer(op, query, v) {
         order: {
           id: v.id, name: o.name, sourceName: o.source || 'web', customer: o.customerId ? { id: `gid://shopify/Customer/${o.customerId}` } : null,
           currentSubtotalPriceSet: { shopMoney: { amount: (o.subtotal / 100).toFixed(2), currencyCode: 'NZD' } },
+          // round 7: a birthday gift's product code on an order is noticed from these
+          discountCodes: o.discountCodes || [], processedAt: o.createdAt || null,
         },
       };
     }
@@ -310,6 +349,16 @@ const server = http.createServer(async (req, res) => {
       state.variants[String(id)] = { quantity: Number(quantity), tracked: tracked !== false };
       return send(res, 200, { ok: true, variant: state.variants[String(id)] });
     }
+    if (url.pathname === '/__fake/variant-code' && req.method === 'POST') {
+      const x = JSON.parse(raw || '{}');
+      state.variantCodes = [...state.variantCodes.filter((y) => String(y.id) !== String(x.id)), x];
+      return send(res, 200, { ok: true, variant: x });
+    }
+    if (url.pathname === '/__fake/discount-use' && req.method === 'POST') {
+      const { code, count } = JSON.parse(raw || '{}');
+      state.discountUses[String(code || '').toUpperCase()] = Number(count) || 0;
+      return send(res, 200, { ok: true, uses: state.discountUses });
+    }
     if (url.pathname === '/__fake/order' && req.method === 'POST') {
       const o = JSON.parse(raw || '{}');
       const gid = String(o.id).startsWith('gid://') ? o.id : `gid://shopify/Order/${o.id}`;
@@ -318,6 +367,8 @@ const server = http.createServer(async (req, res) => {
         name: o.name || `#${String(gid).split('/').pop()}`, billingName: o.billingName || '', shippingName: o.shippingName || '',
         // round 6: the order's email (session gifts), when it was made, its financial status and whether it was cancelled
         email: o.email || '', createdAt: o.createdAt || new Date().toISOString(), status: o.status || 'PAID', cancelled: Boolean(o.cancelled),
+        // round 7: the discount codes used on it
+        discountCodes: Array.isArray(o.discountCodes) ? o.discountCodes.map(String) : [],
       };
       return send(res, 200, { ok: true, gid });
     }
