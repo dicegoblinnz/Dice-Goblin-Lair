@@ -475,8 +475,11 @@ const clean = (v, max = 200) => String(v ?? '').trim().slice(0, max);
 /**
  * Check a table booking against the house rules. Returns the normalised booking fields.
  * staff = true skips the lead-time rule and lets staff seat people without contact details.
+ * Round 7, for TTRPG sessions staff make under the GMs' rules: shopTables = true lets them use the shop tables (the
+ * team's own, like an opening), and editing = true skips only the lead time and the booking horizon (moving a session
+ * that's already listed, tonight's included). Everything else is the house rule.
  */
-export function checkTableBooking(input, { state, rules, time, now, staff = false }) {
+export function checkTableBooking(input, { state, rules, time, now, staff = false, shopTables = false, editing = false }) {
   const tables = Array.isArray(input.tables) ? [...new Set(input.tables.map(String))] : [];
   const { room, known } = oneRoom(tables, rules);
   if (!room.bookable && !staff) throw new RuleError(`${room.name} can't be booked online.`);
@@ -488,8 +491,8 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   if (!staff) {
     if (minutes % 60 !== 0) throw new RuleError('Bookings are in one-hour blocks.');
     if (minutes / 60 > rules.maxHours) throw new RuleError(`Bookings can be up to ${rules.maxHours} hours.`);
-    if (start < now + rules.leadMinutes * MIN) throw new RuleError('That time is too soon to book online. Walk in instead.');
-    if (start > now + rules.horizonDays * 24 * HOUR) throw new RuleError('That date is too far ahead to book yet.');
+    if (!editing && start < now + rules.leadMinutes * MIN) throw new RuleError('That time is too soon to book online. Walk in instead.');
+    if (!editing && start > now + rules.horizonDays * 24 * HOUR) throw new RuleError('That date is too far ahead to book yet.');
     const win = windowAt(rules, time, start);
     if (!win) throw new RuleError("We're closed then.");
     if (start < win.open || end > win.close) throw new RuleError('That time is outside opening hours.');
@@ -514,7 +517,7 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
       );
     }
     for (const id of tables) {
-      if ((rules.shopTables || []).includes(id) && !shopTableOpen(state, id, start, end)) {
+      if (!shopTables && (rules.shopTables || []).includes(id) && !shopTableOpen(state, id, start, end)) {
         throw new RuleError(`${id} is a shop table, kept for the team's own games. Pick another table.`);
       }
     }
@@ -613,12 +616,14 @@ export function checkGameDetails(input) {
 
 /**
  * One session's tables and time, checked like a table booking for its players: they must fit at the tables (the GM
- * isn't counted). ignore: the game's own bookings, when a session moves.
+ * isn't counted). ignore: the game's own bookings, when a session moves. Round 7: staff-made sessions follow the GM
+ * rules too, with shopTables (the shop tables are open to staff) and editing (a move skips only the lead time and the
+ * horizon); see checkTableBooking.
  */
-export function checkGameSession(input, details, { state, rules, time, now, staff = false, ignore = null }) {
+export function checkGameSession(input, details, { state, rules, time, now, staff = false, ignore = null, shopTables = false, editing = false }) {
   const booking = checkTableBooking(
     { tables: input.tables, start: input.start, end: input.end, people: details.seats, name: `GM ${details.gm}`, email: 'gm@lair.local', game: true, ignoreBookingId: ignore },
-    { state, rules, time, now, staff },
+    { state, rules, time, now, staff, shopTables, editing },
   );
   const room = tableIndex(rules.rooms).get(booking.tables[0]).roomObj;
   return { tables: booking.tables, start: booking.start, end: booking.end, room: room.id, seatPrice: room.price + details.gmFee };

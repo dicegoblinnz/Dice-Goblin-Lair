@@ -1046,6 +1046,7 @@ export class Lair {
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info);
         if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
+        if (who.staff) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g) });
         return game;
       }),
       events: [],
@@ -1617,7 +1618,8 @@ export class Lair {
       if (start <= now) continue;
       const end = start + row.length;
       try {
-        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, staff: Boolean(details.staffCreated) });
+        // A staff-made series' dates follow the GM rules plus the shop tables, like its first session (round 7)
+        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, shopTables: Boolean(details.staffCreated) });
         const base = {
           ...details, gmCustomerId: row.gm_customer_id, gmEmail: details.gmEmail || null, seriesId: row.id, credited: null,
           status: row.approved ? 'open' : 'pending', feeApproved: true,
@@ -1667,19 +1669,30 @@ export class Lair {
     const time = new LairTime(rules.tz);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = checkGameDetails(input);
-    const first = checkGameSession(input, details, { state: st, rules, time, now, staff: who.staff });
-    // Staff can list a game for a GM: gmCustomerId, or gmEmail matched against members. A GM who isn't a member yet
-    // still gets the emails, but the game isn't linked to an account (their store credit is added by hand).
+    // Round 7: staff make sessions under the GMs' rules (hours, whole hours, lead time, horizon, locked event tables),
+    // with the shop tables open to them
+    const first = checkGameSession(input, details, { state: st, rules, time, now, shopTables: Boolean(who.staff) });
+    // Staff can list a game for a GM (round 7): gmCustomerId, picked from the customers (with gmCustomerName and gmEmail
+    // from the picker when they aren't a member yet), or gmEmail with the board name in gm. An email a member has links
+    // them; any other is an invite: the game waits on that email with no account, the GM is emailed to make one, and
+    // GET /me links it when they log in with it. Until then their store credit is added by hand.
     let gmCustomerId = who.customerId;
     let gmEmail = isEmail(input.email) ? trimmed(input.email, 120) : null;
     let notice = null;
+    let picked = null;
+    let invited = false;
     const forGm = Boolean(who.staff && (input.gmCustomerId || input.gmEmail));
-    if (forGm) {
-      const byEmail = this.memberByEmail(input.gmEmail);
-      gmCustomerId = input.gmCustomerId ? trimmed(input.gmCustomerId, 40) : byEmail?.customer_id || null;
-      gmEmail = isEmail(input.gmEmail) ? trimmed(input.gmEmail, 120) : this.memberRow(gmCustomerId)?.email || gmEmail;
-      if (!gmCustomerId) notice = "No member has that email yet, so this game isn't linked to their account. Add their store credit in Shopify admin after each session.";
+    if (forGm && input.gmCustomerId) {
+      picked = this.pickedCustomer({ customerId: input.gmCustomerId, name: input.gmCustomerName, email: input.gmEmail });
+      gmCustomerId = picked.customerId;
+      gmEmail = isEmail(input.gmEmail) ? trimmed(input.gmEmail, 120) : picked.email || null;
+    } else if (forGm) {
+      if (!isEmail(input.gmEmail)) throw new RuleError("That email address doesn't look right.");
+      gmEmail = trimmed(input.gmEmail, 120);
+      gmCustomerId = this.memberByEmail(gmEmail)?.customer_id || null;
+      invited = !gmCustomerId;
     }
+    if (picked) this.makeMember(picked, now);
     // Staff and trusted GMs (tagged gm) go straight on the board; anyone else waits for a manager's OK. GM fees of
     // $0, $5 and $10 never need one.
     const approved = Boolean(who.staff || who.gm);
@@ -1720,12 +1733,49 @@ export class Lair {
         ],
       });
     }
-    if (forGm) this.tellGmLive(game, rules, { listedForThem: true });
+    if (forGm && invited) {
+      // Round 7: a GM who isn't a customer yet: invited by email to make an account, which the game joins
+      this.inviteGm(game, rules);
+      notice = emailReady(this.env)
+        ? `Gobgob emailed ${gmEmail} to make an account. The game joins their account when they log in with that email.`
+        : `Emails aren't set up, so Gobgob couldn't email ${gmEmail}. The game joins their account when they log in with that email.`;
+    } else if (forGm) this.tellGmLive(game, rules, { listedForThem: true });
     const view = this.state(game.start - 1, game.end + 1);
     return {
       game: this.gameView(game, view, rules), sessions: sessions.map((g) => ({ id: g.id, start: g.start })), skipped, pending: !approved,
-      emailed: emailReady(this.env) && Boolean(gmEmail), ...(notice ? { notice } : {}),
+      emailed: emailReady(this.env) && Boolean(gmEmail), ...(invited ? { invited: true } : {}), ...(notice ? { notice } : {}),
     };
+  }
+
+  /**
+   * A game staff listed for a GM who isn't a customer yet (round 7): "You're running <title> at the Dice Goblin Lair",
+   * with the game's details and how its account works (make one with this email and the game joins it). No awaits.
+   */
+  inviteGm(game, rules) {
+    if (!emailReady(this.env) || !isEmail(game.gmEmail)) return false;
+    const credit = game.gmFee ?? rules.prices.gmCredit;
+    this.later(this.mail(this.letter(game.gmEmail, `You're running ${game.title} at the Dice Goblin Lair`, {
+      title: 'Your game is on the board!',
+      intro: `Kia ora ${game.gm}, the Dice Goblin team has put ${game.title} on the games board for you.`,
+      details: [
+        ['Game', game.title], [game.seriesId ? 'First session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
+        ['Player seats', String(game.seats)],
+        ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+      ],
+      outro: [
+        `Make your Dice Goblin account with this email (${game.gmEmail}): log in at dicegoblin.nz with it, and the game joins your account. Then you can see who's coming, message your players and add dates in My Lair, and your store credit goes straight onto your account after each session.`,
+        'Players can book already. Gobgob will email you each time someone joins.',
+      ],
+      button: { label: 'Open My Lair', url: this.page('myLair') },
+      signoff: 'Happy GMing!\nGobgob',
+    })));
+    return true;
+  }
+
+  /** Whose a game is, for staff (round 7): 'linked' (a GM's account), 'invited' (an email waiting for an account) or 'none' */
+  gmAccount(g) {
+    if (g.gmCustomerId) return 'linked';
+    return isEmail(g.gmEmail) ? 'invited' : 'none';
   }
 
   /** "Your game is on the board": when staff approve a game, or list one for a GM. */
@@ -1777,7 +1827,9 @@ export class Lair {
       const end = input.end != null ? Number(input.end) : game.end;
       const own = new Set(this.gameBookings(game.id).map((b) => b.id));
       const st = this.state(Math.min(start, game.start) - 24 * HOUR, Math.max(end, game.end) + 24 * HOUR);
-      const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, staff: true, ignore: own });
+      // Round 7: a move follows the GM rules too, skipping only the lead time and the horizon (tonight's session can
+      // still move); locked event tables, bookings and holds block it, and the shop tables are open to staff.
+      const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, ignore: own, shopTables: true, editing: true });
       place = { tables: moved.tables, start: moved.start, end: moved.end, room: moved.room };
     }
     const shared = {
@@ -1874,7 +1926,8 @@ export class Lair {
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = this.gameDetails(game);
     const tables = Array.isArray(input.tables) && input.tables.length ? input.tables : game.tables;
-    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, staff: who.staff });
+    // Round 7: staff adding a date follow the GM rules too, with the shop tables open to them
+    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, shopTables: Boolean(who.staff) });
     let seriesId = game.seriesId;
     let series = seriesId ? this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).toArray()[0] : null;
     if (!seriesId) {
@@ -5694,7 +5747,30 @@ export class Lair {
     const joins = this.sql.exec('SELECT COUNT(*) AS n FROM event_joins WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', email, since).one().n;
     if (bookings) this.write("UPDATE bookings SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND kind != 'gm' AND lower(email) = lower(?) AND ends_at > ?", id, now, email, since);
     if (joins) this.write('UPDATE event_joins SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', id, now, email, since);
-    return bookings + joins;
+    return bookings + joins + this.adoptGmGames(id, email, now);
+  }
+
+  /**
+   * Round 7: a GM staff invited by email makes their account. Sessions with no GM account whose GM email is theirs
+   * (ignoring case), upcoming or ended in the last 30 days, become theirs, with their series (so later dates are theirs
+   * too) and the GM's own table holds. No awaits. Returns how many sessions joined.
+   */
+  adoptGmGames(id, email, now) {
+    const since = now - ADOPT_DAYS * 24 * HOUR;
+    const games = this.sql.exec('SELECT COUNT(*) AS n FROM games WHERE gm_customer_id IS NULL AND lower(gm_email) = lower(?) AND ends_at > ?', email, since).one().n;
+    if (!games) return 0;
+    this.write('UPDATE games SET gm_customer_id = ?, updated_at = ? WHERE gm_customer_id IS NULL AND lower(gm_email) = lower(?) AND ends_at > ?', id, now, email, since);
+    this.write(
+      `UPDATE series SET gm_customer_id = ?, updated_at = ? WHERE gm_customer_id IS NULL
+         AND id IN (SELECT series_id FROM games WHERE series_id IS NOT NULL AND gm_customer_id = ? AND lower(gm_email) = lower(?))`,
+      id, now, id, email,
+    );
+    this.write(
+      `UPDATE bookings SET customer_id = ?, updated_at = ? WHERE kind = 'gm' AND customer_id IS NULL
+         AND game_id IN (SELECT id FROM games WHERE gm_customer_id = ? AND lower(gm_email) = lower(?) AND ends_at > ?)`,
+      id, now, id, email, since,
+    );
+    return games;
   }
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
