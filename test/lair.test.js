@@ -41,12 +41,16 @@ const FALLBACK = [
 const TEST_HOURS = 'Mon closed\nTue 12:00-22:00\nWed 12:00-22:00\nThu 12:00-22:00\nFri 12:00-23:00\nSat 10:00-23:00\nSun 10:00-20:00';
 
 let lair;
+// Round 7: every customer booking needs a mobile number (contract v7, section 1). These tests are about other rules, so a
+// booking route gets one when the test sends none; test/round7-a.test.js tests the mobile rule itself.
+const MOBILE_ROUTES = /^(?:bookings|games\/[^/]+\/join-series|events\/[^/]+\/(?:join|reserve))$/;
 async function call(method, path, body, customer = '', extraHeaders = {}) {
+  const sent = method === 'POST' && body && MOBILE_ROUTES.test(path) && !('phone' in body) ? { ...body, phone: '021 555 0100' } : body;
   const response = await lair.fetch(
     new Request(`https://lair.test/${path}`, {
       method,
       headers: { 'Content-Type': 'application/json', 'X-Lair-Customer': customer, ...extraHeaders },
-      body: body ? JSON.stringify(body) : undefined,
+      body: sent ? JSON.stringify(sent) : undefined,
     }),
   );
   return { status: response.status, data: await response.json() };
@@ -1772,11 +1776,11 @@ test('dice (round 6): the spend dice and the daily roll have retired (410); a lo
     assert.deepEqual((await roll({ kind: 'loyalty' })).data, { roll: 7 }, 'logged out: always fun');
     assert.deepEqual((await roll({ kind: 'spend' })).data, { roll: 7 }, 'logged out: always fun');
     assert.deepEqual((await roll({}, '1001')).data, { roll: 7 }, "no kind: the home page's fun roll");
-    // $200 of spend under the old dice earns nothing now: there's just the welcome roll
+    // $200 of spend under the old dice earns nothing now, and (round 7) there's no welcome roll any more
     lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', 'gid://shopify/Order/1', '1001', 20000, 'pos', NOW);
     const me = (await call('GET', 'me', null, '1001')).data;
-    assert.deepEqual([me.rolls, me.prizes], [{ available: 1, toNext: null, per: null, bonus: 1 }, []], 'the old rolls field mirrors the loyalty rolls');
-    assert.deepEqual(me.loyalty, { stamps: 0, cardSize: 10, cards: 0, rolls: { available: 1, earned: { cards: 0, welcome: 1, birthday: 0, staff: 0 }, used: 0 }, recent: [], history: [] });
+    assert.deepEqual([me.rolls, me.prizes], [{ available: 0, toNext: null, per: null, bonus: 0 }, []], 'the old rolls field mirrors the loyalty rolls');
+    assert.deepEqual(me.loyalty, { stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 0, earned: { cards: 0, welcome: 0, birthday: 0, staff: 0, codes: 0 }, used: 0 }, recent: [], history: [] });
   } finally {
     unload();
   }
@@ -1791,14 +1795,14 @@ test('dice (round 6): a loyalty roll\'s face is the prize, $1 to $20 store credi
   };
   lair.shopify.createPrizeCode = async () => assert.fail('the dice never make discount codes');
   await call('GET', 'me', null, '1001');
-  assert.equal((await call('POST', 'members/1001/rolls', { count: 19, note: 'One for every face' }, 'staff')).status, 200);
+  assert.equal((await call('POST', 'members/1001/rolls', { count: 20, note: 'One for every face' }, 'staff')).status, 200);
   const faces = Array.from({ length: 20 }, (_, i) => i + 1);
   const said = (face) => (face === 20 ? 'Natural 20! $20 store credit is yours.'
     : face === 1 ? "A 1! $1 store credit, and Gobgob's still proud of it."
       : `You rolled ${[8, 11, 18].includes(face) ? 'an' : 'a'} ${face}: $${face} store credit is yours.`);
   const unload = loadDice([...faces, 5, 5]);
   try {
-    assert.equal((await call('GET', 'me', null, '1001')).data.loyalty.rolls.available, 20, 'the welcome roll and 19 from staff');
+    assert.equal((await call('GET', 'me', null, '1001')).data.loyalty.rolls.available, 20, '20 from staff (round 7: no welcome roll)');
     for (const face of faces) {
       const res = await roll({ kind: 'loyalty' }, '1001');
       assert.equal(res.status, 200, res.data.error);
@@ -1832,7 +1836,8 @@ test('dice (round 6): when Shopify can\'t add a loyalty roll\'s credit, the priz
     throw new Error('Shopify API error 502');
   };
   await call('POST', 'me/profile', { name: 'Aroha Smith' }, '1001');
-  await call('POST', 'members/1001/rolls', { count: 1 }, 'staff');
+  // round 7: no welcome roll, so staff give both
+  await call('POST', 'members/1001/rolls', { count: 2 }, 'staff');
   const mail = captureEmails();
   const unload = loadDice([11, 20]);
   try {
@@ -1947,10 +1952,13 @@ test('GET /members/birthdays (staff): the next 30 days, soonest first, with spen
   assert.equal((await call('GET', 'members/birthdays', null, '3001')).status, 403);
   const list = (await call('GET', 'members/birthdays', null, 'staff')).data;
   assert.deepEqual(list.map((m) => [m.customerId, m.date, m.days, m.spendYear, m.suggested, m.giftedThisYear, m.lastGift?.id ?? null]), [
-    ['3002', '2026-10-02', 1, 0, { low: 2, high: 2, rolls: 1 }, false, null],
-    ['3001', '2026-10-25', 24, 12000, { low: 2, high: 6, rolls: 1 }, false, 'gf_old'],
-  ]);
-  assert.deepEqual(list[1].lastGift, { id: 'gf_old', at: NOW - 300 * 24 * HOUR, credit: 1000, sessions: 0, passCode: null, rolls: 0, product: null, emailed: false, problems: [] });
+    ['3002', '2026-10-02', 1, 0, { low: 2, high: 2, rolls: 0 }, false, null],
+    ['3001', '2026-10-25', 24, 12000, { low: 2, high: 6, rolls: 0 }, false, 'gf_old'],
+  ], 'round 7: no suggested rolls');
+  assert.deepEqual(list[1].lastGift, {
+    id: 'gf_old', at: NOW - 300 * 24 * HOUR, credit: 1000, sessions: 0, passCode: null, rolls: 0, product: null, emailed: false, problems: [],
+    state: 'claimed', claimedAt: NOW - 300 * 24 * HOUR, words: '$10 store credit (to give at the counter)', note: '',
+  });
 });
 
 /** POST /members/:id/gift as staff (or as `who`) */
@@ -2006,7 +2014,10 @@ test('birthday gifts: staff give store credit, sessions, dice rolls and a produc
     const { gift } = res.data;
     assert.match(gift.passCode, /^AS-[A-Z]{3,9}-([1-9]|1\d|20)$/);
     assert.deepEqual(gift, {
-      id: gift.id, at: NOW, credit: 1500, sessions: 3, passCode: gift.passCode, rolls: 2, product: { title: 'Blue d20 set', code: `HBD-${key}` }, emailed: true, problems: [],
+      id: gift.id, at: NOW, credit: 1500, sessions: 3, passCode: gift.passCode, rolls: 2,
+      product: { title: 'Blue d20 set', code: `HBD-${key}`, status: 'ready', expiresAt: NOW + 30 * 24 * HOUR, usedAt: null, order: null }, emailed: true, problems: [],
+      state: 'ready', claimedAt: null, words: `$15 store credit, 3 sessions on pass ${gift.passCode}, 2 rolls, Blue d20 set (code HBD-${key}, until 31 Oct)`,
+      note: 'Happy birthday from all of us!',
     });
     // Shopify: $15 of store credit, and a one-use code for that one variant, just for them, for 30 days
     assert.deepEqual(shop.credits, [['1001', 1500, 'NZD']]);
@@ -2034,29 +2045,32 @@ test('birthday gifts: staff give store credit, sessions, dice rolls and a produc
     assert.match(email.text, /^Dice rolls: +2 extra rolls\. Roll them in My Lair whenever you like\.$/m);
     assert.match(email.text, new RegExp(`^Blue d20 set: +Yours free with code HBD-${key}, in the shop or online\\. It works once, just for you, until 31 October\\.$`, 'm'));
 
-    // My Lair: the gift, the pass and two rolls without spending a cent. A gifted roll is a loyalty roll (round 6), on
-    // top of the welcome roll.
+    // My Lair: the gift, the pass and two rolls without spending a cent. A gifted roll is a loyalty roll (round 6; round 7:
+    // no welcome roll any more).
     const me = (await call('GET', 'me', null, '1001')).data;
-    assert.deepEqual(me.gifts, [{ at: NOW, credit: 1500, sessions: 3, rolls: 2, product: { title: 'Blue d20 set', code: `HBD-${key}` } }]);
+    assert.deepEqual(me.gifts, [{
+      id: gift.id, at: NOW, credit: 1500, sessions: 3, rolls: 2, product: { title: 'Blue d20 set', code: `HBD-${key}`, status: 'ready', expiresAt: NOW + 30 * 24 * HOUR, usedAt: null },
+      state: 'ready', claimedAt: null, words: gift.words,
+    }]);
     assert.deepEqual(me.passes.map((p) => [p.code, p.label, p.sessionsLeft, p.source]), [[gift.passCode, 'Birthday gift: 3 sessions', 3, 'birthday']]);
-    assert.deepEqual([me.rolls.available, me.loyalty.rolls.earned], [3, { cards: 0, welcome: 1, birthday: 2, staff: 0 }]);
+    assert.deepEqual([me.rolls.available, me.loyalty.rolls.earned], [2, { cards: 0, welcome: 0, birthday: 2, staff: 0, codes: 0 }]);
     const unload = loadDice([5]);
     try {
       const rolled = await roll({ kind: 'loyalty' }, '1001');
       assert.equal(rolled.status, 200, rolled.data.error);
-      assert.equal(rolled.data.loyalty.rolls.available, 2);
+      assert.equal(rolled.data.loyalty.rolls.available, 1);
     } finally {
       unload();
     }
     // Staff: Members and the birthday list say they've had a gift this year (rollsUsed is the old spend dice's)
     const found = (await call('GET', 'members?q=aroha', null, 'staff')).data[0];
-    assert.deepEqual([found.giftedThisYear, found.rollsGifted, found.rollsUsed, found.loyalty.rollsAvailable], [true, 2, 0, 2]);
+    assert.deepEqual([found.giftedThisYear, found.rollsGifted, found.rollsUsed, found.loyalty.rollsAvailable], [true, 2, 0, 1]);
     const birthday = (await call('GET', 'members/birthdays', null, 'staff')).data.find((m) => m.customerId === '1001');
     assert.deepEqual([birthday.giftedThisYear, birthday.lastGift], [true, gift]);
 
     // Another product gets its own code; without notify there's no email.
     const again = await giveGift({ productVariantId: '50371432972391', productTitle: 'Sticker pack' });
-    assert.deepEqual([again.data.gift.product, again.data.gift.emailed, again.data.gift.passCode], [{ title: 'Sticker pack', code: `HBD-${key}-2` }, false, null]);
+    assert.deepEqual([again.data.gift.product, again.data.gift.emailed, again.data.gift.passCode], [{ title: 'Sticker pack', code: `HBD-${key}-2`, status: 'ready', expiresAt: NOW + 30 * 24 * HOUR, usedAt: null, order: null }, false, null]);
     assert.equal(shop.codes[1].code, `HBD-${key}-2`);
     await settle();
     assert.equal(mail.sent.length, 1);
@@ -2088,7 +2102,7 @@ test('birthday gifts: each part that fails goes in problems on its own, and the 
     shop = giftShopify({ codeFails: 'Shopify API: Access denied for discountCodeBasicCreate field.' });
     const noCode = (await giveGift(everything)).data.gift;
     assert.deepEqual(noCode.problems, [{ part: 'product', message: "Shopify couldn't make the code for Blue d20 set (Access denied for discountCodeBasicCreate field). Give it to them at the counter." }]);
-    assert.deepEqual([noCode.product, noCode.emailed, shop.credits], [{ title: 'Blue d20 set', code: null }, true, [['1001', 1500, 'NZD']]]);
+    assert.deepEqual([noCode.product, noCode.emailed, shop.credits], [{ title: 'Blue d20 set', code: null, status: 'failed', expiresAt: NOW + 30 * 24 * HOUR, usedAt: null, order: null }, true, [['1001', 1500, 'NZD']]]);
     assert.ok(noCode.passCode);
     await settle();
     assert.match(mail.sent[0].text, /^Blue d20 set: +Yours free: show this email at the counter to pick it up\.$/m);
@@ -2116,14 +2130,14 @@ test('birthday gifts: each part that fails goes in problems on its own, and the 
       { part: 'credit', message: "The $5 store credit didn't go on (Shopify is not connected). Add it in Shopify admin, or give it at the counter." },
       { part: 'product', message: "Shopify couldn't make the code for Blue d20 set (Shopify is not connected). Give it to them at the counter." },
     ]);
-    assert.deepEqual([offline.sessions, offline.rolls, offline.product], [1, 3, { title: 'Blue d20 set', code: null }]);
+    assert.deepEqual([offline.sessions, offline.rolls, offline.product], [1, 3, { title: 'Blue d20 set', code: null, status: 'failed', expiresAt: NOW + 30 * 24 * HOUR, usedAt: null, order: null }]);
     assert.equal((await passNamed(offline.passCode)).holder.customerId, '1001');
 
     // What My Lair and the staff see: every gift, problems kept with it; rolls 1 + 1 + 3; two passes of two sessions and one of one.
     const me = (await call('GET', 'me', null, '1001')).data;
     assert.equal(me.gifts.length, 4, "Eru's gift is Eru's");
     assert.deepEqual(me.gifts.map((g) => g.product?.code ?? null), [null, null, null, noCredit.product.code], 'newest first');
-    assert.equal(me.rolls.available, 1 + 1 + 1 + 3 + 1, 'and the welcome roll (round 6)');
+    assert.equal(me.rolls.available, 1 + 1 + 1 + 3, 'round 7: no welcome roll');
     assert.deepEqual(me.passes.map((p) => p.sessionsLeft).sort(), [1, 2, 2]);
     const lastGift = (await call('GET', 'members/birthdays', null, 'staff')).data.find((m) => m.customerId === '1001')?.lastGift;
     assert.equal(lastGift, undefined, 'no birthday on file, so not on the birthday list');
@@ -2875,7 +2889,7 @@ test('POS check-in: the fee still to pay as cart lines with the ticket code, the
 
   await call('GET', 'me', null, '1001');
   const member = await pos('member', { code: memberCode.toLowerCase().replace(/-/g, '') });
-  assert.deepEqual([member.status, member.data.customerId, member.data.name, member.data.rolls.available], [200, '1001', 'Sam', 1], 'round 6: rolls mirrors the loyalty rolls (the welcome roll)');
+  assert.deepEqual([member.status, member.data.customerId, member.data.name, member.data.rolls.available], [200, '1001', 'Sam', 0], 'round 6: rolls mirrors the loyalty rolls (round 7: no welcome roll)');
   assert.equal((await pos('member', { code: 'ZZ-GOBLIN-77' })).status, 404);
   assert.equal((await pos('member', { code: table.ref })).status, 404);
 });
@@ -3413,7 +3427,7 @@ test('POS scan: a booking, seat, game spot or sign-up shows its row and group; a
   for (const code of ['ZZ-NOPE-1', 'hello', '']) assert.deepEqual([(await scan(code)).status, (await scan(code)).data.error], [404, 'No booking, member or pass with that code.'], code);
   // Round 3's /pos/member answers for member codes only.
   const old = await pos('member', { code: lair.memberRow('1001').code });
-  assert.deepEqual([old.data.type, old.data.customerId, old.data.name, old.data.rolls.available], ['member', '1001', 'Sam', 1], 'round 6: the welcome roll');
+  assert.deepEqual([old.data.type, old.data.customerId, old.data.name, old.data.rolls.available], ['member', '1001', 'Sam', 0], 'round 6: the loyalty rolls (round 7: no welcome roll)');
   assert.equal((await pos('member', { code: day.sam.ref })).status, 404);
 });
 
@@ -4622,11 +4636,11 @@ test('loyalty card (round 6): a stamp for each person at each checked-in session
   await call('POST', `bookings/${solo.id}/update`, { status: 'seated' }, 'staff');
   await call('POST', `bookings/${solo.id}/update`, { status: 'done' }, 'staff');
   c = await card();
-  assert.deepEqual([c.stamps, c.cards, c.rolls], [0, 1, { available: 2, earned: { cards: 1, welcome: 1, birthday: 0, staff: 0 }, used: 0 }]);
+  assert.deepEqual([c.stamps, c.cards, c.card, c.rolls], [0, 1, 2, { available: 1, earned: { cards: 1, welcome: 0, birthday: 0, staff: 0, codes: 0 }, used: 0 }], 'round 7: the next card starts at once (card 2), and no welcome roll');
   // Undoing the table's check-in takes its 4 stamps back (the card isn't full any more); checking in again brings them back
   await call('POST', `bookings/${table.id}/update`, { status: 'confirmed' }, 'staff');
   c = await card();
-  assert.deepEqual([c.stamps, c.cards, c.rolls.available], [6, 0, 1]);
+  assert.deepEqual([c.stamps, c.cards, c.rolls.available], [6, 0, 0]);
   const again = await checkInCode(table.ref);
   assert.deepEqual([again.data.checkedIn, again.data.already], [true, false], 'an undone check-in checks in afresh');
   assert.deepEqual([(await card()).stamps, (await card()).cards], [0, 1]);
@@ -4655,21 +4669,21 @@ test('loyalty card (round 6): a stamp for each person at each checked-in session
   assert.deepEqual([(await card('1002')).stamps, (await card('1002')).cards], [4, 0]);
   // The counter sees the card when it scans a member code (display only)
   const scan = await pos('scan', { code: lair.memberRow('1001').code });
-  assert.deepEqual(scan.data.loyalty, { stamps: 0, cardSize: 10, rollsAvailable: 2 });
-  assert.deepEqual((await pos('member', { code: lair.memberRow('1001').code })).data.rolls, { available: 2, toNext: null, per: null, bonus: 2 }, 'round 3\'s rolls mirror the loyalty rolls');
+  assert.deepEqual(scan.data.loyalty, { stamps: 0, cardSize: 10, rollsAvailable: 1, card: 2 });
+  assert.deepEqual((await pos('member', { code: lair.memberRow('1001').code })).data.rolls, { available: 1, toNext: null, per: null, bonus: 1 }, 'round 3\'s rolls mirror the loyalty rolls');
   // Staff see it on the member: GET /members loyalty
-  assert.deepEqual((await call('GET', 'members?q=1001', null, 'staff')).data[0].loyalty, { stamps: 0, cards: 1, rollsAvailable: 2 });
+  assert.deepEqual((await call('GET', 'members?q=1001', null, 'staff')).data[0].loyalty, { stamps: 0, cards: 1, rollsAvailable: 1, card: 2 });
 });
 
-test('loyalty rolls (round 6): one welcome roll per member, once; birthday gifts\' rolls and staff rolls add up; staff give 1 to 20 at a time to a member', async () => {
+test('loyalty rolls (round 6): birthday gifts\' rolls and staff rolls add up; staff give 1 to 20 at a time to a member; round 7: nothing gives a welcome roll any more', async () => {
   await call('GET', 'me', null, '1001');
   await call('GET', 'me', null, '1001');
   await call('POST', 'me/profile', { name: 'Sam Jones', email: 'sam@example.com' }, '1001');
   await call('POST', 'bookings', tableBooking(), '1001');
   const welcomes = (id) => lair.sql.exec("SELECT COUNT(*) AS n FROM loyalty_grants WHERE customer_id = ? AND kind = 'welcome'", id).one().n;
-  assert.equal(welcomes('1001'), 1, 'once, however often they come back');
+  assert.equal(welcomes('1001'), 0, 'round 7: My Lair, the profile form and bookings give no welcome roll (a loot code does that job)');
   await call('POST', 'me/profile', { name: 'Kiri Smith' }, '1002');
-  assert.equal(welcomes('1002'), 1, 'a member the profile form makes gets theirs too');
+  assert.equal(welcomes('1002'), 0, 'nor does a member the profile form makes');
   // Staff give rolls: staff only, 1 to 20, a member
   assert.equal((await call('POST', 'members/1001/rolls', { count: 1 }, '1001')).status, 403);
   for (const count of [0, 21, 2.5, 'lots', undefined]) {
@@ -4680,16 +4694,16 @@ test('loyalty rolls (round 6): one welcome roll per member, once; birthday gifts
   const given = await call('POST', 'members/1001/rolls', { count: 3, note: 'Helped set up the market' }, 'staff');
   assert.equal(given.status, 200, given.data.error);
   const { member } = given.data;
-  assert.deepEqual([member.customerId, member.loyalty, member.owed, member.openTab, member.giftedThisYear], ['1001', { stamps: 0, cards: 0, rollsAvailable: 4 }, 0, 0, false], 'the GET /members view');
+  assert.deepEqual([member.customerId, member.loyalty, member.owed, member.openTab, member.giftedThisYear], ['1001', { stamps: 0, cards: 0, rollsAvailable: 3, card: 1 }, 0, 0, false], 'the GET /members view');
   assert.deepEqual(lair.sql.exec("SELECT count, note, created_by FROM loyalty_grants WHERE kind = 'staff'").toArray().map((r) => ({ ...r })), [{ count: 3, note: 'Helped set up the market', created_by: 'staff:staff' }]);
   // Birthday gifts' rolls are loyalty rolls
   giftShopify();
   assert.equal((await giveGift({ rolls: 2 })).status, 200);
   const { rolls } = (await call('GET', 'me', null, '1001')).data.loyalty;
-  assert.deepEqual(rolls, { available: 6, earned: { cards: 0, welcome: 1, birthday: 2, staff: 3 }, used: 0 });
+  assert.deepEqual(rolls, { available: 5, earned: { cards: 0, welcome: 0, birthday: 2, staff: 3, codes: 0 }, used: 0 });
 });
 
-test('customer since (round 6): staff set when someone became a customer (a date, a year, or cleared); years with us falls back to their Shopify account, then to when the Lair first saw them; birthdays suggest a roll a year', async () => {
+test('customer since (round 6): staff set when someone became a customer (a date, a year, or cleared); years with us falls back to their Shopify account, then to when the Lair first saw them; birthdays show it (round 7: no suggested rolls)', async () => {
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   const asked = [];
   lair.shopify.customersSince = async (ids) => {
@@ -4730,10 +4744,10 @@ test('customer since (round 6): staff set when someone became a customer (a date
   spend(3, '2002', 500, NOW - HOUR);
   members = await list();
   assert.deepEqual([members.get('2002').spendFy, members.get('2002').spendTotal], [2500, 5500], '31 March 11:30pm is last year; 1 April 12:30am is this one');
-  // Birthdays: a roll for every year with us, at least one
+  // Birthdays: years with us still show; round 7: no suggested rolls (Mo: staff add rolls to a gift by hand if they like)
   await since('2003', '2016-05-01');
-  const birthdays = new Map((await call('GET', 'members/birthdays', null, 'staff')).data.map((m) => [m.customerId, m.suggested.rolls]));
-  assert.deepEqual([...birthdays], [['2001', 1], ['2002', 5], ['2003', 10]]);
+  const birthdays = new Map((await call('GET', 'members/birthdays', null, 'staff')).data.map((m) => [m.customerId, [m.yearsWithUs, m.suggested.rolls]]));
+  assert.deepEqual([...birthdays], [['2001', [0, 0]], ['2002', [5, 0]], ['2003', [10, 0]]]);
 });
 
 test('spend report (round 6): the last 24 months (oldest first, empty months as 0) and up to 4 New Zealand financial years (1 April to 31 March, Lair time), the total and the first order', async () => {
@@ -4848,7 +4862,7 @@ test('session gifts (round 6): LAIR-GIFT-N lines make unlinked gift passes, once
     for (const code of paid.data.gifts) assert.ok(email.text.includes(code) && email.html.includes(code), code);
     assert.equal((email.text.match(/5 sessions at the Dice Goblin Lair/g) || []).length, 2);
     assert.equal((email.text.match(/10 sessions at the Dice Goblin Lair/g) || []).length, 1);
-    assert.equal((email.text.match(/Log in at dicegoblin\.nz, open My Lair › Wallet and enter the code under 'Got a pass code\?'/g) || []).length, 3, 'how to redeem, with every code');
+    assert.equal((email.text.match(/Log in at dicegoblin\.nz, open My Lair › Wallet and enter the code under 'Got a code\?'/g) || []).length, 3, 'how to redeem, with every code (round 7: "Got a code?")');
     assert.match(email.html, /font:800 30px[^>]*>DG-/, 'each code in big letters');
     // Shopify sends the webhook again: nothing new, no second email
     const again = await internal('orders-paid', order);
@@ -4916,7 +4930,7 @@ function libraryPeople() {
 const reserve = (body = {}, who = '1001') => call('POST', 'library/holds', { variantId: '4401', productId: '9901', title: 'Wingspan (Library)', shelfCode: 'dgl34', handle: 'wingspan-library', ...body }, who);
 const libraryStatus = async (ids, who = '') => (await call('GET', `library/status?ids=${ids}`, null, who)).data.games;
 
-test('library holds (round 6): members reserve by their plan (Simplee tags); held until 12pm on the third day; one hold a game each; anyone else sees it reserved and when it\'s back; cancelling frees it', async () => {
+test('library holds (round 6): members reserve by their plan (Simplee tags); held until midnight on the third day (round 7); one hold a game each; anyone else sees it reserved and when it\'s back; cancelling frees it', async () => {
   libraryPeople();
   for (const [id, name] of [['1001', 'Sam Jones'], ['1002', 'Kiri Smith'], ['1003', 'Leo Tane'], ['1004', 'Ari Moana'], ['1005', 'Tui Harper']]) {
     await call('POST', 'me/profile', { name, email: `${name.split(' ')[0].toLowerCase()}@example.com` }, id);
@@ -4932,27 +4946,27 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
     const { hold } = first.data;
     assert.deepEqual(hold, {
       id: hold.id, variantId: '4401', productId: '9901', title: 'Wingspan (Library)', shelfCode: 'DGL34', handle: 'wingspan-library',
-      until: at('2026-10-04', 12), status: 'held', createdAt: NOW, endedAt: null,
-    }, 'made Thursday, held until 12pm Sunday');
+      until: at('2026-10-04', 0), status: 'held', createdAt: NOW, endedAt: null, image: null,
+    }, 'round 7: made Thursday (day 1), held until midnight Saturday (00:00 Sunday)');
     assert.deepEqual(first.data.holds.map((h) => h.id), [hold.id]);
     const already = await reserve({ copies: 2 });
-    assert.deepEqual([already.status, already.data.error], [409, "You've already reserved this one, friend. It's held until Sun 4 Oct, 12pm."]);
+    assert.deepEqual([already.status, already.data.error], [409, "You've already reserved this one, friend. It's held until midnight, Sat 3 Oct."]);
     // Anyone can see what's free; Sam sees his own
-    assert.deepEqual((await libraryStatus('4401,gid://shopify/ProductVariant/4402'))['4401'], { copies: 2, held: 1, available: 1, nextFree: null, mine: null });
-    assert.deepEqual((await libraryStatus('4401', '1001'))['4401'].mine, { id: hold.id, until: at('2026-10-04', 12) });
-    assert.deepEqual((await libraryStatus('4402'))['4402'], { copies: 1, held: 0, available: 1, nextFree: null, mine: null }, 'a game the Lair has never seen: 1 copy');
+    assert.deepEqual((await libraryStatus('4401,gid://shopify/ProductVariant/4402'))['4401'], { copies: 2, held: 1, out: 0, available: 1, nextFree: null, mine: null, atHome: null });
+    assert.deepEqual((await libraryStatus('4401', '1001'))['4401'].mine, { id: hold.id, until: at('2026-10-04', 0) });
+    assert.deepEqual((await libraryStatus('4402'))['4402'], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null }, 'a game the Lair has never seen: 1 copy');
     // Kiri (library-member: 1 game) takes the other copy an hour later; then Leo (Grab) is told when it's back
     Date.now = () => NOW + HOUR;
     assert.equal((await reserve({ copies: 2 }, '1002')).status, 200);
     const full = await reserve({ copies: 2 }, '1003');
-    assert.deepEqual([full.status, full.data.error], [409, "Every copy is reserved right now. It's back on the shelf by Sun 12pm if nobody collects it."]);
-    assert.deepEqual((await libraryStatus('4401', '1003'))['4401'], { copies: 2, held: 2, available: 0, nextFree: at('2026-10-04', 12), mine: null });
+    assert.deepEqual([full.status, full.data.error], [409, "Every copy is reserved or out on loan right now. It's back on the shelf by midnight Sat if nobody collects it."]);
+    assert.deepEqual((await libraryStatus('4401', '1003'))['4401'], { copies: 2, held: 2, out: 0, available: 0, nextFree: at('2026-10-04', 0), mine: null, atHome: null });
     // Plan limits: Kiri has 1 at a time; Sam 3
     const limit = await reserve({ variantId: '4402', title: 'Azul (Library)' }, '1002');
-    assert.deepEqual([limit.status, limit.data.error], [409, "Your plan has 1 game at a time, and you've got 1 reserved. Collect or cancel one first."]);
+    assert.deepEqual([limit.status, limit.data.error], [409, "Your plan has 1 game at a time, and you've got 1: 1 reserved. Return one or cancel a hold first."]);
     for (const [variantId, title] of [['4402', 'Azul (Library)'], ['4403', 'Cascadia (Library)']]) assert.equal((await reserve({ variantId, title })).status, 200, title);
     const four = await reserve({ variantId: '4404', title: 'Root (Library)' });
-    assert.deepEqual([four.status, four.data.error], [409, "Your plan has 3 games at a time, and you've got 3 reserved. Collect or cancel one first."]);
+    assert.deepEqual([four.status, four.data.error], [409, "Your plan has 3 games at a time, and you've got 3: 3 reserved. Return one or cancel a hold first."]);
     // Cancelling: only the member it's for, or staff
     assert.deepEqual([(await call('POST', `library/holds/${hold.id}/cancel`, {}, '1003')).status], [403]);
     const cancelled = await call('POST', `library/holds/${hold.id}/cancel`, {}, '1001');
@@ -4966,13 +4980,13 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
     assert.equal(forAri.status, 200, forAri.data.error);
     assert.deepEqual([forAri.data.hold.title, forAri.data.holds.length], ['Catan (Library)', 1]);
     const again = await reserve({ customerId: '1004', variantId: '4405', title: 'Catan (Library)' }, 'staff');
-    assert.deepEqual([again.status, again.data.error], [409, 'Ari Moana already has this one on hold, until Mon 5 Oct, 12pm.']);
+    assert.deepEqual([again.status, again.data.error], [409, 'Ari Moana already has this one on hold, until midnight, Sun 4 Oct.']);
     // Emails: the staff (hold this game) and the member, for each hold
     await settle();
     const staffMail = mail.sent.filter((m) => m.to === 'staff@dicegoblin.test').map((m) => m.subject);
-    assert.ok(staffMail.includes('Hold this game: Wingspan (Library) (DGL34) for Sam Jones, until Sunday 4 October, 12pm'), staffMail.join('\n'));
+    assert.ok(staffMail.includes('Hold this game: Wingspan (Library) (DGL34) for Sam Jones, until midnight on Saturday 3 October'), staffMail.join('\n'));
     const sams = mail.sent.find((m) => m.to === 'sam@example.com' && /Wingspan/.test(m.subject));
-    assert.match(sams.text, /Wingspan \(Library\) is on hold for you until Sunday 4 October, 12pm\. Collect it at the counter with your member code\./);
+    assert.match(sams.text, /Wingspan \(Library\) is on hold for you until midnight on Saturday 3 October\. Collect it at the counter with your member code\./);
     assert.ok(sams.text.includes(lair.memberRow('1001').code), 'with their member code');
     const forStaff = mail.sent.find((m) => m.subject.startsWith('Hold this game: Wingspan (Library) (DGL34) for Sam Jones'));
     assert.ok(forStaff.text.includes(lair.memberRow('1001').code) && forStaff.text.includes('sam@example.com'));
@@ -4981,7 +4995,7 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
     assert.equal((await call('GET', 'library/holds', null, '1001')).status, 403);
     const active = (await call('GET', 'library/holds', null, 'staff')).data.holds;
     assert.deepEqual(active.slice(0, 4).map((h) => `${h.title}, ${h.name}`).sort(), ['Azul (Library), Sam Jones', 'Cascadia (Library), Sam Jones', 'Wingspan (Library), Kiri Smith', 'Wingspan (Library), Leo Tane']);
-    assert.deepEqual([active.length, active[4].title, active[4].until, active.slice(0, 4).every((h) => h.until === at('2026-10-04', 12))], [5, 'Catan (Library)', at('2026-10-05', 12), true], 'soonest until first: Friday\'s hold ends on Monday');
+    assert.deepEqual([active.length, active[4].title, active[4].until, active.slice(0, 4).every((h) => h.until === at('2026-10-04', 0))], [5, 'Catan (Library)', at('2026-10-05', 0), true], 'soonest until first: Friday\'s hold ends at midnight on Sunday');
     const leo = active.find((h) => h.name === 'Leo Tane');
     assert.deepEqual([leo.customerId, leo.email, leo.code, leo.staffNote], ['1003', 'leo@example.com', lair.memberRow('1003').code, '']);
     const all = (await call('GET', 'library/holds?status=all', null, 'staff')).data.holds;
@@ -4995,7 +5009,7 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
     assert.equal((await call('POST', `library/holds/${kiris.id}/update`, { status: 'released' }, 'staff')).data.hold.status, 'released');
     Date.now = () => at('2026-10-02', 15);
     const back = await call('POST', `library/holds/${kiris.id}/update`, { status: 'held' }, 'staff');
-    assert.deepEqual([back.data.hold.status, back.data.hold.until, back.data.hold.endedAt], ['held', at('2026-10-05', 12), null], 'released by mistake: held again until 12pm on the third day from now');
+    assert.deepEqual([back.data.hold.status, back.data.hold.until, back.data.hold.endedAt], ['held', at('2026-10-05', 0), null], 'released by mistake: held again until midnight on the third day, counting today');
     // GET /me holds: active, soonest first, then the ones that ended in the last 3 days
     const sam = (await call('GET', 'me', null, '1001')).data.holds;
     assert.deepEqual(sam.map((h) => [h.title, h.status]), [['Azul (Library)', 'held'], ['Cascadia (Library)', 'held'], ['Wingspan (Library)', 'cancelled']]);
@@ -5005,42 +5019,58 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
   }
 });
 
-test('library holds (round 6): held until 12pm Lair time on the third day after the day it\'s made, on every weekday and across both daylight saving changes', async () => {
-  const { holdUntil, HOLD_DAYS, HOLD_UNTIL_HOUR, addDays } = await import('../src/core.js');
-  assert.deepEqual([HOLD_DAYS, HOLD_UNTIL_HOUR], [3, 12]);
+test('library holds (round 7): held until midnight at the end of the third day, the day it\'s made counting as the first, on every weekday and across both daylight saving changes', async () => {
+  const core = await import('../src/core.js');
+  const { holdUntil, HOLD_DAYS, addDays } = core;
+  assert.deepEqual([HOLD_DAYS, 'HOLD_UNTIL_HOUR' in core], [3, false], 'HOLD_UNTIL_HOUR goes (round 7)');
   const iso = (ms) => new Date(ms).toISOString();
-  // Monday 5 October, 9am NZDT → Thursday 8 October, 12pm NZDT (11pm UTC on the 7th)
-  assert.equal(iso(holdUntil(time, Date.parse('2026-10-04T20:00:00Z'))), '2026-10-07T23:00:00.000Z');
-  // Saturday 3 October, 11pm NZDT → Tuesday 6 October, 12pm NZDT
-  assert.equal(iso(holdUntil(time, Date.parse('2026-10-03T10:00:00Z'))), '2026-10-05T23:00:00.000Z');
-  // Every weekday, from just after midnight to late at night: the third day after, at 12pm
+  // Monday 5 October, 9am NZDT → midnight on Wednesday 7 October: 00:00 Thursday 8 October NZDT (11am UTC on the 7th)
+  assert.equal(iso(holdUntil(time, Date.parse('2026-10-04T20:00:00Z'))), '2026-10-07T11:00:00.000Z');
+  // Saturday 3 October, 11pm NZDT → 00:00 Tuesday 6 October NZDT (midnight on Monday)
+  assert.equal(iso(holdUntil(time, Date.parse('2026-10-03T10:00:00Z'))), '2026-10-05T11:00:00.000Z');
+  // Mo's example: made any time Tuesday 6 October → until 00:00 Friday 9 October ("midnight, Thu 8 Oct")
+  for (const [h, m] of [[0, 0], [0, 1], [9, 30], [23, 59]]) assert.equal(holdUntil(time, at('2026-10-06', h, m)), at('2026-10-09', 0), `Tue ${h}:${m}`);
+  // Every weekday, from midnight to late at night: 00:00 on the day after the third day
   const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   for (let i = 0; i < 7; i += 1) {
     const day = addDays('2026-10-05', i);
-    for (const [h, m] of [[0, 1], [9, 0], [12, 0], [23, 59]]) {
+    for (const [h, m] of [[0, 0], [0, 1], [9, 0], [12, 0], [23, 59]]) {
       const until = holdUntil(time, at(day, h, m));
-      assert.equal(until, at(addDays(day, 3), 12), `${names[i]} ${h}:${m}`);
-      assert.equal(new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short', hour: 'numeric', hour12: true }).format(new Date(until)).replace(',', ''), `${names[(i + 3) % 7]} 12 pm`);
+      assert.equal(until, at(addDays(day, 3), 0), `${names[i]} ${h}:${m}`);
+      assert.equal(new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short', hour: 'numeric', hour12: true }).format(new Date(until)).replace(',', ''), `${names[(i + 3) % 7]} 12 am`);
     }
   }
   // April: daylight saving ends on Sunday 5 April 2026 (3am NZDT → 2am NZST). Made Thursday 2 April at 10am NZDT →
-  // Sunday 5 April 12pm NZST (midnight UTC); made Saturday 4 April at 11pm NZDT → Tuesday 7 April 12pm NZST.
-  assert.equal(iso(holdUntil(time, Date.parse('2026-04-01T21:00:00Z'))), '2026-04-05T00:00:00.000Z');
-  assert.equal(iso(holdUntil(time, Date.parse('2026-04-04T10:00:00Z'))), '2026-04-07T00:00:00.000Z');
-  // and made at 2:30am on the day it changes (that hour happens twice): Wednesday 8 April 12pm NZST
-  assert.equal(iso(holdUntil(time, Date.parse('2026-04-04T13:30:00Z'))), '2026-04-08T00:00:00.000Z');
+  // 00:00 Sunday 5 April, still NZDT (11am UTC on the 4th); made Friday 3 April at 12pm NZDT → 00:00 Monday 6 April NZST
+  // (12pm UTC on the 5th): 61 hours, since the clocks go back; made Saturday 4 April at 11pm NZDT → 00:00 Tuesday 7 April
+  // NZST.
+  assert.equal(iso(holdUntil(time, Date.parse('2026-04-01T21:00:00Z'))), '2026-04-04T11:00:00.000Z');
+  const friday = Date.parse('2026-04-02T23:00:00Z');
+  assert.equal(iso(holdUntil(time, friday)), '2026-04-05T12:00:00.000Z');
+  assert.equal(holdUntil(time, friday) - friday, 61 * HOUR);
+  assert.equal(iso(holdUntil(time, Date.parse('2026-04-04T10:00:00Z'))), '2026-04-06T12:00:00.000Z');
+  // and made at 2:30am on the day it changes (that hour happens twice): 00:00 Wednesday 8 April NZST
+  assert.equal(iso(holdUntil(time, Date.parse('2026-04-04T13:30:00Z'))), '2026-04-07T12:00:00.000Z');
   // September: daylight saving starts on Sunday 27 September 2026 (2am NZST → 3am NZDT). Made Thursday 24 September at
-  // 12pm NZST → Sunday 27 September 12pm NZDT (11pm UTC on the 26th): the day is counted, so that's 71 hours, not 72.
-  const made = Date.parse('2026-09-24T00:00:00Z');
-  assert.equal(iso(holdUntil(time, made)), '2026-09-26T23:00:00.000Z');
-  assert.equal(holdUntil(time, made) - made, 71 * HOUR);
-  // made at 1:30am on the day it changes (before the jump) → Wednesday 30 September 12pm NZDT
-  assert.equal(iso(holdUntil(time, Date.parse('2026-09-26T13:30:00Z'))), '2026-09-29T23:00:00.000Z');
-  // Through the app: a member reserving on Monday at 9am has it until Thursday at 12pm
+  // 12pm NZST → 00:00 Sunday 27 September, before the jump (NZST); made Friday 25 September at 12pm NZST → 00:00 Monday
+  // 28 September NZDT: the days are counted, so that's 59 hours, not 60.
+  assert.equal(iso(holdUntil(time, Date.parse('2026-09-24T00:00:00Z'))), '2026-09-26T12:00:00.000Z');
+  const made = Date.parse('2026-09-25T00:00:00Z');
+  assert.equal(iso(holdUntil(time, made)), '2026-09-27T11:00:00.000Z');
+  assert.equal(holdUntil(time, made) - made, 59 * HOUR);
+  // made at 1:30am on the day it changes (before the jump) → 00:00 Wednesday 30 September NZDT
+  assert.equal(iso(holdUntil(time, Date.parse('2026-09-26T13:30:00Z'))), '2026-09-29T11:00:00.000Z');
+  // Through the app: a member reserving on Monday at 9am has it until midnight on Wednesday, worded that way
   libraryPeople();
   Date.now = () => Date.parse('2026-10-04T20:00:00Z');
   const monday = await reserve({}, '1001');
-  assert.deepEqual([monday.status, iso(monday.data.hold.until)], [200, '2026-10-07T23:00:00.000Z']);
+  assert.deepEqual([monday.status, iso(monday.data.hold.until)], [200, '2026-10-07T11:00:00.000Z']);
+  const again = await reserve({}, '1001');
+  assert.equal(again.data.error, "You've already reserved this one, friend. It's held until midnight, Wed 7 Oct.");
+  assert.deepEqual([lair.holdWhen(monday.data.hold.until), lair.holdDate(monday.data.hold.until), lair.holdDay(monday.data.hold.until)], ['midnight on Wednesday 7 October', 'midnight, Wed 7 Oct', 'midnight Wed']);
+  // A hold from before round 7 keeps its 12pm, and reads as before
+  const noon = at('2026-10-08', 12);
+  assert.deepEqual([lair.holdWhen(noon), lair.holdDate(noon), lair.holdDay(noon)], ['Thursday 8 October, 12pm', 'Thu 8 Oct, 12pm', 'Thu 12pm']);
 });
 
 test('library holds (round 6): copies come from Shopify (each kept 10 minutes); untracked or none, and a failed lookup (scopes not approved yet), fall back to the page\'s copies, then 1; up to 60 games at once', async () => {
@@ -5061,7 +5091,7 @@ test('library holds (round 6): copies come from Shopify (each kept 10 minutes); 
   assert.equal(asked.length, 1, 'kept for 10 minutes');
   // Three copies: three people can hold it, then it's reserved
   for (const who of ['1001', '1005']) assert.equal((await reserve({}, who)).status, 200);
-  assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 3, held: 2, available: 1, nextFree: null, mine: null });
+  assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 3, held: 2, out: 0, available: 1, nextFree: null, mine: null, atHome: null });
   // The page's copies count when Shopify doesn't know: a hold with copies 4 on the untracked game
   assert.equal((await reserve({ variantId: '4402', title: 'Azul (Library)', copies: 4 }, '1001')).status, 200);
   assert.deepEqual(await copies('4402'), { 4402: 4 }, 'the copies the page sent with a hold');
@@ -5071,7 +5101,7 @@ test('library holds (round 6): copies come from Shopify (each kept 10 minutes); 
   assert.deepEqual(await copies('4401'), { 4401: 2 });
   assert.equal(asked.length, 2);
   const two = await reserve({}, '1002');
-  assert.deepEqual([two.status, two.data.error], [409, "Every copy is reserved right now. It's back on the shelf by Sun 12pm if nobody collects it."], 'two copies, both held');
+  assert.deepEqual([two.status, two.data.error], [409, "Every copy is reserved or out on loan right now. It's back on the shelf by midnight Sat if nobody collects it."], 'two copies, both held');
   // Before Mo approves the scopes, Shopify refuses: the page's copies, then 1, and it isn't asked again for 10 minutes
   lair.shopify.variantCopies = async (ids) => {
     asked.push(ids);
@@ -5081,7 +5111,7 @@ test('library holds (round 6): copies come from Shopify (each kept 10 minutes); 
   assert.deepEqual(await copies('4405,4406'), { 4405: 1, 4406: 1 });
   assert.equal(asked.length, 3);
   assert.equal((await reserve({ variantId: '4405', title: 'Root (Library)', copies: 2 }, '1001')).status, 200);
-  assert.deepEqual((await libraryStatus('4405'))['4405'], { copies: 2, held: 1, available: 1, nextFree: null, mine: null });
+  assert.deepEqual((await libraryStatus('4405'))['4405'], { copies: 2, held: 1, out: 0, available: 1, nextFree: null, mine: null, atHome: null });
   assert.equal(asked.length, 3, 'not asked again for 10 minutes');
   // At most 60 games at a time
   const many = Array.from({ length: 61 }, (_, i) => 5000 + i).join(',');
@@ -5100,14 +5130,14 @@ test('library holds (round 6): maintenance puts holds nobody collected back on t
   lair.shopify.variantCopies = async (ids) => new Map(ids.map((id) => [id, null]));
   const mail = captureEmails();
   try {
-    // Sunday 11:55am: still held
-    Date.now = () => at('2026-10-04', 11, 55);
+    // Saturday 11:55pm: still held (round 7: until midnight)
+    Date.now = () => at('2026-10-03', 23, 55);
     assert.equal((await maintenance()).data.libraryHolds, undefined);
     assert.equal((await reserve({}, '1002')).status, 409);
-    // 12:05pm: its time is up. Before maintenance runs it already counts as ended (nobody waits on it)
-    Date.now = () => at('2026-10-04', 12, 5);
-    assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 1, held: 0, available: 1, nextFree: null, mine: null });
-    assert.deepEqual((await call('GET', 'me', null, '1001')).data.holds.map((h) => [h.title, h.status, h.endedAt]), [['Wingspan (Library)', 'expired', at('2026-10-04', 12)], ['Azul (Library)', 'expired', at('2026-10-04', 12)]]);
+    // 12:05am Sunday: its time is up. Before maintenance runs it already counts as ended (nobody waits on it)
+    Date.now = () => at('2026-10-04', 0, 5);
+    assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null });
+    assert.deepEqual((await call('GET', 'me', null, '1001')).data.holds.map((h) => [h.title, h.status, h.endedAt]), [['Wingspan (Library)', 'expired', at('2026-10-04', 0)], ['Azul (Library)', 'expired', at('2026-10-04', 0)]]);
     const run = await maintenance();
     assert.deepEqual(run.data.libraryHolds, { expired: 2 });
     assert.equal((await maintenance()).data.libraryHolds, undefined, 'once');
@@ -5120,7 +5150,7 @@ test('library holds (round 6): maintenance puts holds nobody collected back on t
     assert.equal((await reserve({}, '1002')).status, 200, 'back on the shelf for anyone');
     // Staff put Azul back (expired by mistake): a fresh until from now
     const back = await call('POST', `library/holds/${azul.id}/update`, { status: 'held' }, 'staff');
-    assert.deepEqual([back.data.hold.status, back.data.hold.until], ['held', at('2026-10-07', 12)]);
+    assert.deepEqual([back.data.hold.status, back.data.hold.until], ['held', at('2026-10-07', 0)]);
     // GET /me: active first, then those that ended in the last 3 days; older ones drop off
     assert.deepEqual((await call('GET', 'me', null, '1001')).data.holds.map((h) => [h.title, h.status]), [['Azul (Library)', 'held'], ['Wingspan (Library)', 'expired']]);
     Date.now = () => at('2026-10-07', 13);
@@ -5132,7 +5162,7 @@ test('library holds (round 6): maintenance puts holds nobody collected back on t
   }
 });
 
-test('guest seats (round 6): anyone can join an open session without an account, with a name and a real email (a phone up to 30 characters); the same limits apply; the GM hears about each new player; the guest\'s email says how their seats join an account', async () => {
+test('guest seats (round 6): anyone can join an open session without an account, with a name, a real email and (round 7) a mobile number; the same limits apply; the GM hears about each new player; the guest\'s email says how their seats join an account', async () => {
   const mail = captureEmails();
   try {
     const game = await tonightsGame();
@@ -5141,7 +5171,9 @@ test('guest seats (round 6): anyone can join an open session without an account,
     const seat = (body = {}, who = '', headers = {}) => call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people: 1, name: 'Hemi Walker', email: 'hemi@example.com', ...body }, who, headers);
     assert.deepEqual([(await seat({ name: '' })).status, (await seat({ name: '' })).data.error], [422, 'Add your name.']);
     assert.deepEqual([(await seat({ email: 'hemi at example' })).status, (await seat({ email: 'hemi at example' })).data.error], [422, 'Add an email so we can send your confirmation.']);
-    assert.deepEqual((await seat({ phone: '0'.repeat(31) })).data.error, 'That phone number looks too long. Keep it to 30 characters.');
+    // Round 7: the optional phone (up to 30 characters) became a required mobile
+    assert.deepEqual([(await seat({ phone: '' })).status, (await seat({ phone: '' })).data.error], [422, 'Add a mobile number so we can reach you on the day.']);
+    assert.deepEqual([(await seat({ phone: '0'.repeat(31) })).status, (await seat({ phone: '0'.repeat(31) })).data.error], [422, "That mobile number doesn't look right. Try one like 021 123 4567."]);
     assert.equal((await seat({ gameId: 'gm_nope' })).status, 404);
     const res = await seat({
       people: 2, phone: '021 555 0199', notes: 'First time playing!',
@@ -5302,11 +5334,11 @@ test('calendar (round 6): a staff hold takes an optional game (up to 40 characte
   assert.deepEqual((await call('GET', 'floor')).data.events, [], 'the Lair app makes no calendar events of its own (they\'re lair_event metaobjects)');
 });
 
-test('live data: round 5\'s database (main, db8702b) moves to round 6 with every row kept; the loyalty card starts brand new, with birthday rolls and the welcome roll', async () => {
+test('live data: round 5\'s database (main, db8702b) moves to round 6 with every row kept; the loyalty card starts brand new, with birthday rolls (round 7: no welcome roll)', async () => {
   const { MIGRATIONS } = await import('../src/lair.js');
   assert.deepEqual(MIGRATIONS.slice(0, MAIN_MIGRATIONS.length + 1), [...MAIN_MIGRATIONS, R5_MIGRATION], 'the migrations the live app has run are never edited');
-  assert.equal(MIGRATIONS.length, MAIN_MIGRATIONS.length + 2, 'round 6 adds one migration');
-  assert.ok(MIGRATIONS.at(-1).every((s) => /^\s*(ALTER TABLE \w+ ADD COLUMN|CREATE (UNIQUE )?INDEX IF NOT EXISTS|CREATE TABLE IF NOT EXISTS)/.test(s)), 'only new columns, tables and indexes');
+  assert.ok(MIGRATIONS.length >= MAIN_MIGRATIONS.length + 2, 'round 6 adds one migration (later rounds add theirs after it)');
+  assert.ok(MIGRATIONS[MAIN_MIGRATIONS.length + 1].every((s) => /^\s*(ALTER TABLE \w+ ADD COLUMN|CREATE (UNIQUE )?INDEX IF NOT EXISTS|CREATE TABLE IF NOT EXISTS)/.test(s)), 'only new columns, tables and indexes');
   const ctx = fakeCtx();
   const { sql } = ctx.storage;
   sql.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
@@ -5334,14 +5366,14 @@ test('live data: round 5\'s database (main, db8702b) moves to round 6 with every
   assert.deepEqual(counts(), before, 'no rows lost or added');
   assert.deepEqual([lair.loyaltyFrom, lair.owedFrom], [NOW, NOW - 24 * HOUR], 'the loyalty card starts at round 6\'s first start; owed seats keep round 5\'s');
   // Sam: his round 4/5 check-ins (a seated table at noon today) don't count, nor do his old spend rolls; his birthday
-  // rolls do, and he gets the welcome roll on this visit
+  // rolls do (round 7: and there's no welcome roll on this visit)
   const me = (await call('GET', 'me', null, '1001')).data;
   assert.deepEqual(me.loyalty, {
-    stamps: 0, cardSize: 10, cards: 0, rolls: { available: 3, earned: { cards: 0, welcome: 1, birthday: 2, staff: 0 }, used: 0 }, recent: [], history: [],
+    stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 2, earned: { cards: 0, welcome: 0, birthday: 2, staff: 0, codes: 0 }, used: 0 }, recent: [], history: [],
   });
-  assert.deepEqual(me.rolls, { available: 3, toNext: null, per: null, bonus: 3 });
-  // Kai's seated session last week (round 4) earns nothing either; Mia hasn't visited, so no welcome roll yet
-  assert.deepEqual((await call('GET', 'members?q=kai', null, 'staff')).data[0].loyalty, { stamps: 0, cards: 0, rollsAvailable: 0 });
+  assert.deepEqual(me.rolls, { available: 2, toNext: null, per: null, bonus: 2 });
+  // Kai's seated session last week (round 4) earns nothing either; Mia hasn't visited (and no welcome roll waits for her)
+  assert.deepEqual((await call('GET', 'members?q=kai', null, 'staff')).data[0].loyalty, { stamps: 0, cards: 0, rollsAvailable: 0, card: 1 });
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM loyalty_grants WHERE customer_id = 'mia'").one().n, 0);
   // The old pending prize stays on the staff page until it's done, and old members read the new fields sensibly
   const sam = (await call('GET', 'members?q=1001', null, 'staff')).data[0];
@@ -5355,5 +5387,5 @@ test('live data: round 5\'s database (main, db8702b) moves to round 6 with every
   open();
   assert.deepEqual(counts(), after);
   assert.equal(lair.loyaltyFrom, NOW);
-  assert.equal(sql.exec("SELECT COUNT(*) AS n FROM loyalty_grants WHERE customer_id = '1001' AND kind = 'welcome'").one().n, 1);
+  assert.equal(sql.exec("SELECT COUNT(*) AS n FROM loyalty_grants WHERE customer_id = '1001' AND kind = 'welcome'").one().n, 0);
 });

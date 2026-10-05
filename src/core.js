@@ -553,9 +553,9 @@ export function checkSeatBooking(input, { state, rules, now, held = 0 }) {
   const email = clean(input.email, 120);
   if (!name) throw new RuleError('Add your name.');
   if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
-  // Round 6: a phone number is optional (the GM gets it with the player's details), up to 30 characters.
+  // Round 7: a mobile number is required on every customer booking. The Lair app checks it (checkMobile) and the GM
+  // gets it with the player's details.
   const phone = String(input.phone ?? '').trim();
-  if (phone.length > 30) throw new RuleError('That phone number looks too long. Keep it to 30 characters.');
   const players = seatPlayers(input.players, people, name);
   const unit = game.seatPrice || rules.prices.gmSeat;
   return {
@@ -730,12 +730,14 @@ export function loyaltyMessage(roll, pending = false) {
 }
 
 /* ---------- library holds (round 6): reserve a board game from the library ---------- */
-/** A hold lasts until 12pm (Lair time) on the third day after the day it's made: made any time Monday, held until 12pm Thursday. */
+/**
+ * Round 7 (Mo, 6 Oct): a hold lasts until midnight at the end of the third day, the day it's made counting as the
+ * first: made any time Tuesday, held until midnight Thursday (00:00 Friday, Lair time).
+ */
 export const HOLD_DAYS = 3;
-export const HOLD_UNTIL_HOUR = 12;
 
-/** When a hold made at `ms` ends, in Lair time (right across daylight saving changes: the day is counted, not 72 hours) */
-export const holdUntil = (time, ms) => time.at(addDays(time.key(ms), HOLD_DAYS), HOLD_UNTIL_HOUR * 60);
+/** When a hold made at `ms` ends, in Lair time (right across daylight saving changes: the days are counted, not hours) */
+export const holdUntil = (time, ms) => time.at(addDays(time.key(ms), HOLD_DAYS), 0);
 
 /**
  * A member's library plan from their Shopify customer tags (Simplee Memberships), matched without case: a tag containing
@@ -750,6 +752,36 @@ export function libraryPlan(tags) {
   if (has('grab', 'loot')) return { name: 'Grab', games: 1 };
   if (list.includes('library-member')) return { name: 'Library', games: 1 };
   return null;
+}
+
+/* ---------- mobile numbers (round 7): required on every customer booking ---------- */
+export const MOBILE_MISSING = 'Add a mobile number so we can reach you on the day.';
+export const MOBILE_WRONG = "That mobile number doesn't look right. Try one like 021 123 4567.";
+
+/**
+ * A mobile number, checked: spaces, dashes, dots and brackets don't count, and it's a New Zealand mobile (021 123 4567,
+ * +64 21 123 456) or an overseas number starting with + (not +64: a visitor's mobile). New Zealand landlines are
+ * refused, since Mo asked for a mobile. Returns it as typed (trimmed, runs of spaces made one, at most 20 characters; a
+ * longer one keeps just its digits and +), or '' when it's empty and not required.
+ */
+export function checkMobile(value, { required = true } = {}) {
+  const typed = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!typed) {
+    if (required) throw new RuleError(MOBILE_MISSING);
+    return '';
+  }
+  const bare = typed.replace(/[\s\-.()]/g, '');
+  const nz = /^(?:\+?64|0)2\d{7,9}$/.test(bare);
+  const overseas = /^\+[1-9]\d{6,14}$/.test(bare) && !bare.startsWith('+64');
+  if (!nz && !overseas) throw new RuleError(MOBILE_WRONG);
+  return typed.length <= 20 ? typed : bare;
+}
+
+/** A mobile number to compare: its digits, with a leading 0 read as +64 (021 123 4567 and +64 21 123 4567 are one) */
+export function mobileKey(value) {
+  const text = String(value ?? '').trim();
+  const digits = text.replace(/\D/g, '');
+  return !text.startsWith('+') && digits.startsWith('0') ? `64${digits.slice(1)}` : digits;
 }
 
 /* ---------- what the public may see ---------- */

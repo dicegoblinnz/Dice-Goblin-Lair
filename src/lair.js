@@ -14,6 +14,8 @@ import {
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
 import { hoursSummary, renderEmail } from './email.js';
+// Round 7: mobile numbers on customer bookings and in the player profile
+import { checkMobile, mobileKey } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -53,8 +55,8 @@ const SOLD_AT_COUNTER = 'Sold at the counter';
 const GIFT_CODE_DAYS = 30;
 /** A session gift sold as a product (round 6): an order line with this SKU makes `quantity` unlinked gift passes of N sessions. */
 const GIFT_SKU = /^LAIR-GIFT-(\d{1,3})$/i;
-/** How to redeem a session gift, in the buyer's email */
-const GIFT_REDEEM = "Log in at dicegoblin.nz, open My Lair › Wallet and enter the code under 'Got a pass code?'";
+/** How to redeem a session gift, in the buyer's email (round 7: one box for every code, "Got a code?") */
+const GIFT_REDEEM = "Log in at dicegoblin.nz, open My Lair › Wallet and enter the code under 'Got a code?'";
 /** The roll Mo retired in round 6, and what's said when it's asked for */
 const SPEND_RETIRED = 'The spend dice have retired. Fill your loyalty card: 10 sessions earn a roll.';
 /** A library game's copies from Shopify are kept this long (10 minutes) */
@@ -63,6 +65,28 @@ const COPIES_TTL = 10 * MIN;
 const STATUS_IDS = 60;
 /** A guest seat or sign-up joins the account with its email if it's upcoming or ended in the last 30 days */
 const ADOPT_DAYS = 30;
+/** Round 7: a barcode Shopify answered for (a tab item, or a code it didn't know) is kept 10 minutes */
+const LOOKUP_TTL = 10 * MIN;
+/** Round 7: tab barcode lookups a member can make in 10 minutes */
+const TAB_LOOKUPS = 60;
+/** Round 7: gifts from before round 7 whose product code is checked with Shopify, a maintenance run and a page view */
+const GIFT_CHECKS_A_RUN = 20;
+const GIFT_CHECKS_A_PAGE = 5;
+/** Round 7: a gift's product code, and a claimed gift in My Lair, last this long (the code's 30 days) */
+const GIFT_DAYS_MS = GIFT_CODE_DAYS * 24 * HOUR;
+/** Round 7: what a scanned or typed library or tab code may hold */
+const SCAN_CODE = /^[A-Za-z0-9._+-]{1,40}$/;
+/** Round 7: the welcome loot code everyone gets (made on the staff page), and loot codes' own rules */
+const ROLL_CODE_TEXT = /^[A-Z0-9-]{4,24}$/;
+const ROLL_CODE_MESSAGES = {
+  code: 'Codes are 4 to 24 letters, numbers or dashes, like ROLL-FOR-LOOT.',
+  taken: "That code's taken. Pick another, or leave it empty and Gobgob will make one.",
+  rolls: 'A code gives 1 to 20 rolls.',
+  limit: 'The limit is how many times it can be used in all, from 1 up. Leave it empty for no limit.',
+  date: 'Pick the last day it works from the calendar.',
+  past: 'That date has already passed.',
+  status: 'A code is active or inactive.',
+};
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -296,6 +320,55 @@ export const MIGRATIONS = [
     // Guest sign-ups are matched to an account by email (bookings already have this index)
     'CREATE INDEX IF NOT EXISTS event_joins_email_lower ON event_joins (lower(email), ends_at)',
   ],
+  // Round 7, backend-a (6 Oct 2026). New columns, tables and indexes only, plus two one-off copies into its own new
+  // tables, so the live rows stay as they are:
+  //  - members: the player profile (mobile, pronouns, favourite games as a JSON list, about me) and when it changed;
+  //    event_joins.phone: the mobile on a sign-up.
+  //  - roll_codes ("loot codes" to people): codes staff make that give loyalty rolls, once per customer
+  //    (roll_code_uses); their text is in the codes table with kind 'roll', so no code is ever used twice.
+  //  - gifts: when a gift's product code was used (and on which order), and when Shopify was last asked about it.
+  //  - library: a hold's picture; games at home (library_loans: 'out' or 'returned', linked to the hold that was
+  //    collected); the library games the Lair knows (library_games) and the codes that find them (library_codes:
+  //    shelf codes, SKUs and barcodes, filled in code). The games handed over in round 6 are at home until staff say
+  //    otherwise, and the games round 6's holds named are known.
+  [
+    'ALTER TABLE members ADD COLUMN mobile TEXT',
+    'ALTER TABLE members ADD COLUMN pronouns TEXT',
+    'ALTER TABLE members ADD COLUMN favourite_games TEXT',
+    'ALTER TABLE members ADD COLUMN about TEXT',
+    'ALTER TABLE members ADD COLUMN profile_updated_at INTEGER',
+    'ALTER TABLE event_joins ADD COLUMN phone TEXT',
+    `CREATE TABLE IF NOT EXISTS roll_codes (
+      id TEXT PRIMARY KEY, code TEXT NOT NULL, rolls INTEGER NOT NULL, total_limit INTEGER, expires_at INTEGER, status TEXT NOT NULL,
+      note TEXT, created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS roll_code_uses (
+      id TEXT PRIMARY KEY, code_id TEXT NOT NULL, customer_id TEXT NOT NULL, rolls INTEGER NOT NULL, grant_id TEXT, at INTEGER NOT NULL,
+      UNIQUE (code_id, customer_id))`,
+    'CREATE INDEX IF NOT EXISTS roll_code_uses_code ON roll_code_uses (code_id, at)',
+    'ALTER TABLE gifts ADD COLUMN product_used_at INTEGER',
+    'ALTER TABLE gifts ADD COLUMN product_order TEXT',
+    'ALTER TABLE gifts ADD COLUMN product_checked_at INTEGER',
+    'ALTER TABLE library_holds ADD COLUMN image TEXT',
+    `CREATE TABLE IF NOT EXISTS library_loans (
+      id TEXT PRIMARY KEY, variant_id TEXT NOT NULL, product_id TEXT, title TEXT NOT NULL, shelf_code TEXT, handle TEXT, image TEXT,
+      customer_id TEXT NOT NULL, hold_id TEXT, status TEXT NOT NULL, out_at INTEGER NOT NULL, returned_at INTEGER, out_by TEXT,
+      returned_by TEXT, staff_note TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS library_loans_variant ON library_loans (variant_id, status)',
+    'CREATE INDEX IF NOT EXISTS library_loans_customer ON library_loans (customer_id, status)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS library_loans_hold ON library_loans (hold_id) WHERE hold_id IS NOT NULL',
+    `CREATE TABLE IF NOT EXISTS library_games (
+      variant_id TEXT PRIMARY KEY, product_id TEXT, title TEXT NOT NULL, handle TEXT, shelf_code TEXT, image TEXT, checked_at INTEGER NOT NULL)`,
+    'CREATE TABLE IF NOT EXISTS library_codes (key TEXT PRIMARY KEY, variant_id TEXT NOT NULL)',
+    // the games handed over in round 6 are at home until staff say otherwise
+    `INSERT OR IGNORE INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at,
+      returned_at, out_by, returned_by, staff_note, created_at, updated_at)
+      SELECT 'ln_' || id, variant_id, product_id, title, shelf_code, handle, NULL, customer_id, id, 'out',
+        COALESCE(ended_at, updated_at, created_at), NULL, 'staff', NULL, NULL, COALESCE(ended_at, updated_at, created_at), COALESCE(ended_at, updated_at, created_at)
+      FROM library_holds WHERE status = 'collected'`,
+    // the games round 6's holds already named
+    `INSERT OR IGNORE INTO library_games (variant_id, product_id, title, handle, shelf_code, image, checked_at)
+      SELECT variant_id, MAX(product_id), MAX(title), MAX(handle), MAX(shelf_code), NULL, MAX(created_at) FROM library_holds GROUP BY variant_id`,
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -415,6 +488,17 @@ export class Lair {
     // The loyalty card (round 6) starts brand new: only sessions starting from round 6's first start earn stamps.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('loyalty-from', ?)", String(Date.now()));
     this.loyaltyFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'loyalty-from'").toArray()[0]?.value) || 0;
+    // Round 7: from its first start the orders/paid webhook notices a birthday gift's product code being used; gifts
+    // made before then are checked with Shopify once each (checkGiftCodes).
+    this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('gift-codes-from', ?)", String(Date.now()));
+    this.giftCodesFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'gift-codes-from'").toArray()[0]?.value) || 0;
+    // Round 7: the library games round 6's holds named are found by their shelf codes too, once (a scan of the label)
+    if (!this.sql.exec("SELECT value FROM meta WHERE key = 'library-codes-filled'").toArray().length) {
+      for (const g of this.sql.exec("SELECT variant_id, shelf_code FROM library_games WHERE shelf_code IS NOT NULL AND shelf_code != ''").toArray()) {
+        if (codeKey(g.shelf_code)) this.sql.exec('INSERT OR IGNORE INTO library_codes (key, variant_id) VALUES (?, ?)', codeKey(g.shelf_code), g.variant_id);
+      }
+      this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('library-codes-filled', ?)", String(Date.now()));
+    }
   }
 
   /** Every write goes through here, so cached floor data is dropped the moment anything changes. */
@@ -467,6 +551,8 @@ export class Lair {
       people: r.people, name: r.name, email: r.email, note: r.note || '', status: r.status, customerId: r.customer_id, arrivedAt: r.arrived_at || null,
       pay: r.pay || 'day', paid: Boolean(r.paid), amount: r.amount || 0, holdUntil: r.hold_until || null, draftOrderId: r.draft_order_id || null,
       orderId: r.order_id || null, refund: r.refund || null, paidAmount: r.paid_amount || 0,
+      // round 7: the mobile they gave (sign-ups from before have none)
+      phone: r.phone || '',
     };
   }
 
@@ -487,11 +573,11 @@ export class Lair {
     };
   }
 
-  /** A sign-up as staff see it, with who paid what (payments: from a list's paymentsIn, or looked up) */
+  /** A sign-up as staff see it, with who paid what (payments: from a list's paymentsIn, or looked up), and (round 7) their mobile */
   staffJoinView(j, payments = null) {
     return {
       ...this.joinView(j), email: j.email, note: j.note, arrivedAt: j.arrivedAt, customerId: j.customerId || null, orderId: j.orderId || null,
-      due: dueOf(j), payments: payments || this.paymentsOf('join', j.id),
+      due: dueOf(j), payments: payments || this.paymentsOf('join', j.id), phone: j.phone || '',
     };
   }
 
@@ -609,13 +695,28 @@ export class Lair {
     return ahead;
   }
 
-  /** Who's in a game's seats (for its GM and for staff) */
+  /**
+   * Who's in a game's seats (for its GM and for staff). Round 7: each player says whether the seat is on an account
+   * (member) and whether it's a weekly regular's (regular), and the first player of a seat on an account brings that
+   * account's pronouns, favourite games and about me from their player profile. Never a mobile, email or birthday.
+   */
   gamePlayers(st, gameId) {
+    const profiles = new Map();
+    const profileOf = (customerId) => {
+      if (!profiles.has(customerId)) {
+        const m = this.memberRow(customerId);
+        profiles.set(customerId, { pronouns: m?.pronouns || '', favouriteGames: parse(m?.favourite_games, []), about: m?.about || '' });
+      }
+      return profiles.get(customerId);
+    };
     return st.bookings
       .filter((b) => b.gameId === gameId && b.kind === 'gm-seat' && ACTIVE.has(b.status))
       .flatMap((b) => {
         const party = b.party?.length ? b.party : [{ name: b.name, character: '' }];
-        return party.map((p) => ({ name: p.name, character: p.character || '', ref: b.ref, paid: b.paid, arrived: Boolean(b.arrivedAt) || b.status === 'seated' }));
+        return party.map((p, i) => ({
+          name: p.name, character: p.character || '', ref: b.ref, paid: b.paid, arrived: Boolean(b.arrivedAt) || b.status === 'seated',
+          member: Boolean(b.customerId), regular: Boolean(b.seriesId), ...(i === 0 && b.customerId ? profileOf(b.customerId) : {}),
+        }));
       });
   }
 
@@ -911,13 +1012,18 @@ export class Lair {
       if (request.method === 'GET' && a === 'members' && !b) return json(await this.members(url, who));
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'spend') return json(await this.memberSpend(decodeURIComponent(b), who));
+      if (request.method === 'GET' && a === 'members' && b && !c) return json(await this.memberDetail(decodeURIComponent(b), who));
+      if (request.method === 'GET' && a === 'roll-codes' && !b) return json(this.listRollCodes(url, who));
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'status' && !c) return json(await this.libraryStatus(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'holds' && !c) return json(await this.listHolds(url, who));
+      if (request.method === 'GET' && a === 'library' && b === 'loans' && !c) return json(await this.listLoans(url, who));
+      if (request.method === 'GET' && a === 'tab' && b === 'lookup' && !c) return json(await this.tabLookup(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
       if (a === 'me' && b === 'passes' && c === 'claim') return json(await this.claimPass(body, who));
+      if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
       if (a === 'passes' && !b) return json(await this.createPass(body, who));
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
@@ -926,9 +1032,15 @@ export class Lair {
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
+      if (a === 'roll-codes' && !b) return json(await this.createRollCode(body, who));
+      if (a === 'roll-codes' && b && c === 'update') return json(await this.updateRollCode(decodeURIComponent(b), body, who));
       if (a === 'library' && b === 'holds' && !c) return json(await this.createHold(body, who));
       if (a === 'library' && b === 'holds' && c && d === 'cancel') return json(await this.cancelHold(decodeURIComponent(c), who));
       if (a === 'library' && b === 'holds' && c && d === 'update') return json(await this.updateHold(decodeURIComponent(c), body, who));
+      if (a === 'library' && b === 'scan' && !c) return json(await this.libraryScan(body, who));
+      if (a === 'library' && b === 'loans' && !c) return json(await this.checkOutLoan(body, who));
+      if (a === 'library' && b === 'loans' && c && d === 'return') return json(await this.returnLoan(decodeURIComponent(c), who));
+      if (a === 'library' && b === 'return' && !c) return json(await this.checkInLoan(body, who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
@@ -1063,6 +1175,8 @@ export class Lair {
       const checked = checkTableBooking(input, { state: st, rules, time, now, staff: override });
       booking = { kind, ...checked };
     }
+    // Round 7: a mobile number on every customer booking (tables, game seats); not on what staff make for someone
+    if (!override) booking.phone = checkMobile(input.phone);
     if (!who.staff) this.checkEmailLimit(booking.email, now);
     // usePass: the member's own session pass (staff may use any active one), saved for the check-in.
     const pass = input.usePass && ['table', 'gm-seat'].includes(kind) ? this.passForBooking(input.usePass, who, now) : null;
@@ -1076,7 +1190,7 @@ export class Lair {
       split: kind === 'table' && input.split === true,
     });
     this.saveBooking(booking, now);
-    if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email }, now);
+    if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email, mobile: booking.phone }, now);
     // --- saved: the table is ours ---
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
     if (game) this.tellGmNewPlayer(booking, game, rules);
@@ -1917,7 +2031,8 @@ export class Lair {
       id: seatId, ref: this.newCode(member.name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: session.id, seriesId: session.seriesId,
       tables: session.tables, room: session.room, start: session.start, end: session.end, people: member.people, name: member.name, email: member.email,
       amount: (session.seatPrice || rules.prices.gmSeat) * member.people, pay: 'day', paid: false, activity: 'rpg', party: parse(member.players, []),
-      customerId: member.customer_id,
+      // round 7: a regular's seat carries the mobile on their player profile
+      customerId: member.customer_id, phone: this.memberRow(member.customer_id)?.mobile || null,
     };
     this.saveBooking(seat, now);
     return { seat, created: true };
@@ -2037,6 +2152,8 @@ export class Lair {
     const email = trimmed(input.email, 120);
     if (!name) throw new RuleError('Add your name.');
     if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
+    // Round 7: a mobile number, saved to their profile, so their seats (this one and maintenance's) carry it
+    const mobile = checkMobile(input.phone);
     const players = seatPlayers(input.players, people, name);
     this.checkRate(who, client, now);
     // created_at is when they joined, which sets their place in the queue for seats (first to join is seated first).
@@ -2049,7 +2166,7 @@ export class Lair {
          updated_at = excluded.updated_at`,
       game.seriesId, who.customerId, people, JSON.stringify(players), name, email, now, now,
     );
-    this.touchMember(who.customerId, { name, email }, now);
+    this.touchMember(who.customerId, { name, email, mobile }, now);
     const member = this.seriesMember(game.seriesId, who.customerId);
     const code = this.memberRow(who.customerId)?.code || null;
     const booked = [];
@@ -2488,7 +2605,9 @@ export class Lair {
     const passes = this.issueOrderPasses(orderId, passLines, buyer, { pos, rules, now: Date.now() });
     const gifts = this.issueGiftPasses(orderId, giftLines, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules, now: Date.now() });
     if (gifts.length) this.sendGiftCodes(gifts, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules });
-    return { updated, tabs: tabsPaid, spend: counted, passes, gifts: gifts.map((g) => g.code) };
+    // Round 7: a birthday gift's product code on this order (online or at the POS) has been used
+    const giftCodes = this.markGiftCodesUsed(spend, Date.now());
+    return { updated, tabs: tabsPaid, spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes };
   }
 
   /**
@@ -3208,7 +3327,8 @@ export class Lair {
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
         rows: [...today, ...owed], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
-        loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available },
+        // round 7: card is the number of the card they're on
+        loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card },
       };
     }
     const row = found.type === 'join' ? this.joinRow(found.item) : this.bookingRow(found.item, rules);
@@ -3351,6 +3471,8 @@ export class Lair {
     const email = String(input.email || '').trim().slice(0, 120);
     if (!name) throw new RuleError('Add your name.');
     if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
+    // Round 7: a mobile number on every sign-up
+    const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
     const taken = this.sql
       .exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled'", occurrenceId)
@@ -3370,12 +3492,12 @@ export class Lair {
     };
     this.write(
       `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, pay, paid, amount,
-         hold_until, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+         hold_until, created_at, updated_at, phone)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
       join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, join.status, who.customerId || null,
-      join.pay, join.amount, join.holdUntil, now, now,
+      join.pay, join.amount, join.holdUntil, now, now, phone,
     );
-    this.touchMember(who.customerId, { name, email }, now);
+    this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // --- saved: the spaces are ours ---
     return { ...(await this.payOrConfirmJoin(join, rules, plan)), spacesLeft: left - people };
   }
@@ -3445,6 +3567,8 @@ export class Lair {
     const email = trimmed(input.email, 120);
     if (!name) throw new RuleError('Add a name for the booking.');
     if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
+    // Round 7: a mobile number on every game spot
+    const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
     if (!who.staff) this.checkEmailLimit(email, now);
     const free = this.freeSpots(occurrence, rules, this.state(occurrence.start - 1, occurrence.end + 1));
@@ -3458,12 +3582,12 @@ export class Lair {
     const spotId = makeId('bk');
     const booking = {
       id: spotId, ref: this.newCode(name, 'booking', spotId, now), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
-      name, email, phone: trimmed(input.phone, 40), notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: unit * people,
+      name, email, phone, notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: unit * people,
       occurrenceId: occurrence.id, pay: payNow ? 'now' : 'day', paid: false, status: payNow ? 'held' : 'confirmed',
       holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null, passId: pass?.id || null,
     };
     this.saveBooking(booking, now);
-    this.touchMember(who.customerId, { name, email }, now);
+    this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // --- saved: the spot is ours ---
     const result = await this.payOrConfirm(booking, rules, { ...plan, title: `Game spot at ${occurrence.title} (${free[0].join(', ')})` });
     return { ...result, spotsLeft: free.length - 1 };
@@ -3563,8 +3687,8 @@ export class Lair {
   /**
    * POST /roll: a d20 rolled on the server.
    *   fun (no body, { kind: 'fun' }, or not logged in): just the roll, never a prize. The home page uses this.
-   *   loyalty (logged in, round 6): uses one of their loyalty rolls (a full card, the welcome roll, birthday gifts or
-   *     rolls staff gave). Whatever the d20 shows is the prize: $1 to $20 store credit.
+   *   loyalty (logged in, round 6): uses one of their loyalty rolls (a full card, a round 6 welcome roll, birthday gifts,
+   *     rolls staff gave or, round 7, loot codes). Whatever the d20 shows is the prize: $1 to $20 store credit.
    *   spend and bonus: the spend dice retired in round 6 (410). daily: retired in round 4 (410).
    * The roll is claimed in the database before Shopify is asked for anything, so two quick taps can't spend one roll
    * twice. If Shopify can't add the store credit, the prize is kept as pending: the member shows the screen at the
@@ -3666,19 +3790,21 @@ export class Lair {
 
   /**
    * A member's loyalty card (GET /me, the roll, staff views): { stamps (0-9 on this card), cardSize, cards (full cards),
-   * rolls: { available, earned: { cards, welcome, birthday, staff }, used } }. A full card earns a roll; so do the
-   * welcome roll, birthday gifts' rolls and rolls staff give. used: loyalty rolls rolled (the old spend dice's rolls
-   * never count). details adds recent (the last 10 stamped sessions, newest first: { at, title, people }) and history
-   * (the last 20 loyalty rolls, newest first: { id, at, roll, amount, status: 'added'|'pending' }). No awaits.
+   * card (round 7: the number of the card they're on, cards + 1), rolls: { available, earned: { cards, welcome,
+   * birthday, staff, codes }, used } }. A full card earns a roll and the next card starts at once; so do the welcome
+   * rolls given in round 6, birthday gifts' rolls, rolls staff give and (round 7) loot codes' rolls. used: loyalty rolls
+   * rolled (the old spend dice's rolls never count). details adds recent (the last 10 stamped sessions, newest first:
+   * { at, title, people }) and history (the last 20 loyalty rolls, newest first: { id, at, roll, amount, status:
+   * 'added'|'pending' }). No awaits.
    */
   loyaltyOf(customerId, rules = this.rulesCache, { details = false } = {}) {
     const id = String(customerId);
     const { stamps, cards } = loyaltyCard(this.stampCount(id));
     const grants = new Map(this.sql.exec('SELECT kind, COALESCE(SUM(count), 0) AS n FROM loyalty_grants WHERE customer_id = ? GROUP BY kind', id).toArray().map((r) => [r.kind, r.n]));
-    const earned = { cards, welcome: grants.get('welcome') || 0, birthday: this.giftedRolls(id), staff: grants.get('staff') || 0 };
+    const earned = { cards, welcome: grants.get('welcome') || 0, birthday: this.giftedRolls(id), staff: grants.get('staff') || 0, codes: grants.get('code') || 0 };
     const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty'", id).one().n;
-    const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff - used);
-    const card = { stamps, cardSize: CARD_SIZE, cards, rolls: { available, earned, used } };
+    const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes - used);
+    const card = { stamps, cardSize: CARD_SIZE, cards, card: cards + 1, rolls: { available, earned, used } };
     if (!details) return card;
     const recent = this.stampedSessions(id, 10).map((s) => ({ at: s.at, title: this.stampTitle(s, rules), people: s.people }));
     const history = this.sql
@@ -3708,17 +3834,6 @@ export class Lair {
   }
 
   /**
-   * The welcome roll: one, once per member, the first time they have a member record after the loyalty start (members
-   * from before get theirs on their next visit). The unique index keeps it to one however often this runs. No awaits.
-   */
-  welcomeRoll(customerId, now = Date.now()) {
-    if (!customerId) return;
-    const id = String(customerId);
-    if (this.sql.exec("SELECT 1 AS n FROM loyalty_grants WHERE customer_id = ? AND kind = 'welcome'", id).toArray().length) return;
-    this.write("INSERT OR IGNORE INTO loyalty_grants (id, customer_id, kind, count, note, created_by, created_at) VALUES (?, ?, 'welcome', 1, NULL, 'lair', ?)", makeId('lg'), id, now);
-  }
-
-  /**
    * POST /members/:customerId/rolls { count, note? } (staff): extra loyalty rolls, 1 to 20 at a time. Each grant is a
    * row of its own, kept with who gave it. Returns { member } (as GET /members lists them).
    */
@@ -3736,6 +3851,195 @@ export class Lair {
       makeId('lg'), member.customer_id, count, trimmed(input?.note, 300) || null, who.customerId ? `staff:${who.customerId}` : 'staff', now,
     );
     return { member: this.memberListItem(member.customer_id, rules, now) };
+  }
+
+  /* ---------------- loot codes (round 7: "roll codes" in the code) ---------------- */
+  rollCodeRow(id) {
+    return id ? this.sql.exec('SELECT * FROM roll_codes WHERE id = ?', String(id)).toArray()[0] || null : null;
+  }
+
+  /** The loot code a typed code is (its text in the codes table, kind 'roll'), however it's typed, or null. No awaits. */
+  rollCodeByText(text) {
+    for (const key of codeKeys(text)) {
+      const row = this.sql.exec("SELECT target_id FROM codes WHERE key = ? AND kind = 'roll'", key).toArray()[0];
+      if (row) return this.rollCodeRow(row.target_id);
+    }
+    return null;
+  }
+
+  /** Whether a code is a birthday gift's product code (HBD-…), however it's typed. No awaits. */
+  isGiftProductCode(text) {
+    const key = codeKey(text);
+    return Boolean(key) && this.sql.exec("SELECT 1 AS n FROM gifts WHERE product_code IS NOT NULL AND replace(upper(product_code), '-', '') = ? LIMIT 1", key).toArray().length > 0;
+  }
+
+  /**
+   * A loot code as staff see it: { id, code, rolls, limit (null: none), uses, left (null with no limit), expiresAt (the
+   * last moment it works, or null), status: 'active' | 'inactive' | 'expired' | 'used-up', note, createdAt, createdBy,
+   * lastUsedAt, recent: the last 10 redeems, newest first ({ customerId, name, code (their member code), at }) }.
+   */
+  rollCodeView(r, now = Date.now()) {
+    const used = this.sql.exec('SELECT COUNT(*) AS n, MAX(at) AS last FROM roll_code_uses WHERE code_id = ?', r.id).one();
+    const recent = this.sql
+      .exec(
+        `SELECT u.customer_id AS customer_id, u.at AS at, m.name AS name, m.first_name AS first_name, m.code AS code FROM roll_code_uses u
+         LEFT JOIN members m ON m.customer_id = u.customer_id WHERE u.code_id = ? ORDER BY u.at DESC, u.rowid DESC LIMIT 10`,
+        r.id,
+      )
+      .toArray();
+    const limit = r.total_limit ?? null;
+    const status = r.status === 'inactive' ? 'inactive' : r.expires_at && r.expires_at < now ? 'expired' : limit != null && used.n >= limit ? 'used-up' : 'active';
+    return {
+      id: r.id, code: r.code, rolls: r.rolls, limit, uses: used.n, left: limit == null ? null : Math.max(0, limit - used.n), expiresAt: r.expires_at || null,
+      status, note: r.note || '', createdAt: r.created_at, createdBy: r.created_by || null, lastUsedAt: used.last || null,
+      recent: recent.map((u) => ({ customerId: u.customer_id, name: u.name || u.first_name || '', code: u.code || null, at: u.at })),
+    };
+  }
+
+  /**
+   * A staff form's loot code fields, checked (creating and updating share the rules; only what was sent is returned,
+   * and a new code gets 1 roll when none is sent): rolls 1 to 20; limit 1 to 100,000 in all, or null for none;
+   * expires 'YYYY-MM-DD' (the last day it works, until midnight Lair time) or null; note up to 300 characters; status
+   * 'active' or 'inactive'. No awaits.
+   */
+  rollCodeFields(input, rules, now, existing = null) {
+    const out = {};
+    const has = (key) => Object.prototype.hasOwnProperty.call(input, key) && !(existing && input[key] === undefined);
+    if (!existing || (has('rolls') && input.rolls != null && input.rolls !== '')) {
+      const rolls = input.rolls == null || input.rolls === '' ? 1 : Number(input.rolls);
+      if (!Number.isInteger(rolls) || rolls < 1 || rolls > 20) throw new RuleError(ROLL_CODE_MESSAGES.rolls);
+      out.rolls = rolls;
+    }
+    if (has('limit')) {
+      if (input.limit == null || input.limit === '') out.limit = null;
+      else {
+        const limit = Number(input.limit);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100000) throw new RuleError(ROLL_CODE_MESSAGES.limit);
+        out.limit = limit;
+      }
+    }
+    if (has('expires')) {
+      if (input.expires == null || input.expires === '') out.expiresAt = null;
+      else {
+        const text = String(input.expires).trim();
+        const real = /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T00:00:00Z`)) && new Date(`${text}T00:00:00Z`).toISOString().slice(0, 10) === text;
+        if (!real) throw new RuleError(ROLL_CODE_MESSAGES.date);
+        out.expiresAt = new LairTime(rules.tz).at(addDays(text, 1), 0) - 1;
+        if (out.expiresAt < now) throw new RuleError(ROLL_CODE_MESSAGES.past);
+      }
+    }
+    if (has('note')) out.note = trimmed(input.note, 300) || null;
+    if (existing && has('status')) {
+      if (!['active', 'inactive'].includes(input.status)) throw new RuleError(ROLL_CODE_MESSAGES.status);
+      out.status = input.status;
+    }
+    return out;
+  }
+
+  /** GET /roll-codes?status=active|all (staff): loot codes, newest first: active (the default) leaves out inactive ones; all is the last 200. */
+  listRollCodes(url, who) {
+    this.requireStaff(who);
+    const now = Date.now();
+    const all = url.searchParams.get('status') === 'all';
+    const rows = this.sql.exec(`SELECT * FROM roll_codes${all ? '' : " WHERE status != 'inactive'"} ORDER BY created_at DESC, rowid DESC LIMIT 200`).toArray();
+    return { codes: rows.map((r) => this.rollCodeView(r, now)) };
+  }
+
+  /**
+   * POST /roll-codes { code?, rolls?, limit?, expires?, note? } (staff): a loot code. Typed: 4 to 24 letters, numbers or
+   * dashes, kept in capitals, at least 4 letters or numbers; left empty, Gobgob makes one like GG-KOBOLD-14. Its text goes
+   * in the codes table (kind 'roll'), so no code of any kind is used twice, and it never changes. Returns { code }.
+   */
+  async createRollCode(input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const f = this.rollCodeFields(input || {}, rules, now);
+    const typed = String(input?.code ?? '').trim().toUpperCase();
+    let code;
+    if (typed) {
+      if (!ROLL_CODE_TEXT.test(typed) || codeKey(typed).length < 4) throw new RuleError(ROLL_CODE_MESSAGES.code);
+      if (this.codeTaken(codeKey(typed)) || this.isGiftProductCode(typed)) throw new RuleError(ROLL_CODE_MESSAGES.taken, 409);
+      code = typed;
+    } else {
+      code = uniqueCode('Gobgob Gift', (key) => this.codeTaken(key));
+    }
+    const id = makeId('rc');
+    this.write("INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, 'roll', ?, ?)", codeKey(code), code, id, now);
+    this.write(
+      `INSERT INTO roll_codes (id, code, rolls, total_limit, expires_at, status, note, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+      id, code, f.rolls, f.limit ?? null, f.expiresAt ?? null, f.note ?? null, who.customerId ? `staff:${who.customerId}` : 'staff', now, now,
+    );
+    return { code: this.rollCodeView(this.rollCodeRow(id), now) };
+  }
+
+  /** POST /roll-codes/:id/update { rolls?, limit?, expires?, note?, status? } (staff). The limit can't go below the uses so far. Returns { code }. */
+  async updateRollCode(id, input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const row = this.rollCodeRow(id);
+    if (!row) throw new RuleError('That code could not be found.', 404);
+    const f = this.rollCodeFields(input || {}, rules, now, row);
+    if (f.limit != null) {
+      const uses = this.sql.exec('SELECT COUNT(*) AS n FROM roll_code_uses WHERE code_id = ?', row.id).one().n;
+      if (f.limit < uses) throw new RuleError(`It's been used ${plural(uses, 'time', 'times')}, so the limit can't be lower than ${uses}.`, 409);
+    }
+    const columns = { rolls: 'rolls', limit: 'total_limit', expiresAt: 'expires_at', note: 'note', status: 'status' };
+    const keys = Object.keys(f).filter((k) => columns[k]);
+    if (keys.length) this.write(`UPDATE roll_codes SET ${keys.map((k) => `${columns[k]} = ?`).join(', ')}, updated_at = ? WHERE id = ?`, ...keys.map((k) => f[k] ?? null), now, row.id);
+    return { code: this.rollCodeView(this.rollCodeRow(row.id), now) };
+  }
+
+  /**
+   * POST /me/codes/redeem { code } (logged in): "Got a code?", one box for pass codes, session gift codes and loot codes.
+   * A pass nobody has claimed is claimed exactly as POST /me/passes/claim does ({ kind: 'pass', pass, message }). A loot
+   * code gives its rolls, once per customer ({ kind: 'roll', rolls, message, loyalty }). A birthday gift's product code
+   * is for the shop's checkout (422); anything else Gobgob doesn't know (404). Ten tries in ten minutes a member, shared
+   * with the claim route (a pass code counts once, in claimPass).
+   */
+  async redeemCode(input, who) {
+    if (!who.customerId) throw new RuleError('Log in to use a code.', 401);
+    const text = String(input?.code ?? '').trim();
+    if (!text) throw new RuleError('Type your code first.');
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const tries = (this.claimHits?.get(who.customerId) || []).filter((t) => now - t < 10 * MIN);
+    if (tries.length >= 10) throw new RuleError('Too many tries in a row. Give it ten minutes, or ask us at the counter.', 429);
+    // A pass or session gift: exactly the claim route (claimPass has no awaits of its own, so it reads, checks and saves
+    // straight through, and counts the try itself)
+    if (this.findCode(text)?.type === 'pass') {
+      const { pass } = await this.claimPass({ code: text }, who);
+      return { kind: 'pass', pass, message: `Added to your wallet: ${pass.label}.` };
+    }
+    this.claimHits = this.claimHits || new Map();
+    if (this.claimHits.size > 2000) this.claimHits.clear();
+    this.claimHits.set(who.customerId, [...tries, now]);
+    const loot = this.rollCodeByText(text);
+    if (loot) {
+      const me = String(who.customerId);
+      if (this.sql.exec('SELECT 1 AS n FROM roll_code_uses WHERE code_id = ? AND customer_id = ?', loot.id, me).toArray().length) {
+        throw new RuleError("You've used that code already, friend. It's one go each.", 409);
+      }
+      if (this.rollCodeView(loot, now).status !== 'active') throw new RuleError("That code isn't working any more. Ask us at the counter.", 410);
+      this.touchMember(me, {}, now);
+      const grantId = makeId('lg');
+      this.write(
+        "INSERT INTO loyalty_grants (id, customer_id, kind, count, note, created_by, created_at) VALUES (?, ?, 'code', ?, ?, ?, ?)",
+        grantId, me, loot.rolls, loot.code, `code:${loot.id}`, now,
+      );
+      this.write('INSERT INTO roll_code_uses (id, code_id, customer_id, rolls, grant_id, at) VALUES (?, ?, ?, ?, ?, ?)', makeId('ru'), loot.id, me, loot.rolls, grantId, now);
+      const message = loot.rolls === 1
+        ? "Loot! That's 1 roll for your loyalty card. Roll it on Home, friend."
+        : `Loot! That's ${loot.rolls} rolls for your loyalty card. Roll them on Home, friend.`;
+      return { kind: 'roll', rolls: loot.rolls, message, loyalty: this.loyaltyOf(me, rules, { details: true }) };
+    }
+    if (this.isGiftProductCode(text)) throw new RuleError("That's a shop discount code. Use it at checkout online, or show it at the counter.");
+    throw new RuleError("Gobgob doesn't know that code. Check it and try again, friend.", 404);
   }
 
   /** Extra dice rolls a member has been given as birthday gifts */
@@ -4256,7 +4560,7 @@ export class Lair {
     return {
       id: r.id, variantId: r.variant_id, productId: r.product_id || null, title: r.title, shelfCode: r.shelf_code || '', handle: r.handle || '',
       copies: r.copies || null, customerId: r.customer_id, status: r.status, until: r.until, staffNote: r.staff_note || '', createdAt: r.created_at,
-      endedAt: r.ended_at || null,
+      endedAt: r.ended_at || null, image: r.image || null,
     };
   }
 
@@ -4270,23 +4574,33 @@ export class Lair {
     return h.status === 'held' && h.until <= now ? 'expired' : h.status;
   }
 
-  /** A hold as its member sees it: { id, variantId, productId, title, shelfCode, handle, until, status, createdAt, endedAt } */
+  /**
+   * A hold as its member sees it: { id, variantId, productId, title, shelfCode, handle, until, status, createdAt,
+   * endedAt, image }. image (round 7): the game's picture (the one the page sent, else the one the Lair knows), or null.
+   */
   holdView(h, now = Date.now()) {
     const status = this.holdStatus(h, now);
     return {
       id: h.id, variantId: h.variantId, productId: h.productId, title: h.title, shelfCode: h.shelfCode, handle: h.handle, until: h.until, status,
-      createdAt: h.createdAt, endedAt: h.endedAt || (status === 'expired' ? h.until : null),
+      createdAt: h.createdAt, endedAt: h.endedAt || (status === 'expired' ? h.until : null), image: h.image || this.libraryGame(h.variantId)?.image || null,
     };
   }
 
-  /** A hold as staff see it: the member's view plus customerId, name, email, code (their member code) and staffNote */
+  /**
+   * A hold as staff see it: the member's view plus customerId, name, email, code (their member code) and staffNote, and
+   * (round 7) loanId on a collected one
+   */
   staffHoldView(h, now = Date.now(), memo = null) {
     let m = memo?.get(h.customerId);
     if (m === undefined) {
       m = this.memberRow(h.customerId);
       memo?.set(h.customerId, m);
     }
-    return { ...this.holdView(h, now), customerId: h.customerId, name: m?.name || m?.first_name || '', email: m?.email || '', code: m?.code || null, staffNote: h.staffNote };
+    const loan = h.status === 'collected' ? this.sql.exec('SELECT id FROM library_loans WHERE hold_id = ?', h.id).toArray()[0] : null;
+    return {
+      ...this.holdView(h, now), customerId: h.customerId, name: m?.name || m?.first_name || '', email: m?.email || '', code: m?.code || null, staffNote: h.staffNote,
+      ...(h.status === 'collected' ? { loanId: loan?.id || null } : {}),
+    };
   }
 
   /** A member's active holds, soonest end first. No awaits. */
@@ -4309,24 +4623,37 @@ export class Lair {
     return [...this.activeHolds(customerId, now), ...ended].map((h) => this.holdView(h, now));
   }
 
-  /** "Thursday 8 October, 12pm": when a hold ends, in Lair time */
+  /**
+   * Round 7: a hold that ends exactly at midnight (Lair time) ends with the day before: "midnight on Thursday 8 October"
+   * is 00:00 on Friday. Returns the moment to name the day by and whether it's midnight.
+   */
+  holdEnd(ms, tz) {
+    const { h, mi } = lairTime(tz).parts(ms);
+    return h === 0 && mi === 0 ? { day: ms - 1, midnight: true } : { day: ms, midnight: false };
+  }
+
+  /** "midnight on Thursday 8 October" (round 7), or "Thursday 8 October, 12pm" (holds from before): when a hold ends, in emails */
   holdWhen(ms, rules = this.rulesCache) {
     const tz = rules?.tz || 'Pacific/Auckland';
-    const day = new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(ms)).replace(',', '');
-    return `${day}, ${this.clockWord(ms, tz)}`;
+    const end = this.holdEnd(ms, tz);
+    const day = new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(end.day)).replace(',', '');
+    return end.midnight ? `midnight on ${day}` : `${day}, ${this.clockWord(ms, tz)}`;
   }
 
-  /** "Thu 8 Oct, 12pm": when a hold ends, as the library page shows it (for messages on the page) */
+  /** "midnight, Thu 8 Oct" (round 7), or "Thu 8 Oct, 12pm": when a hold ends, as the library page shows it (for messages on the page) */
   holdDate(ms, rules = this.rulesCache) {
     const tz = rules?.tz || 'Pacific/Auckland';
-    const day = new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ms)).replace(',', '');
-    return `${day}, ${this.clockWord(ms, tz)}`;
+    const end = this.holdEnd(ms, tz);
+    const day = new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(end.day)).replace(',', '');
+    return end.midnight ? `midnight, ${day}` : `${day}, ${this.clockWord(ms, tz)}`;
   }
 
-  /** "Thu 12pm": the weekday and time a hold ends */
+  /** "midnight Thu" (round 7), or "Thu 12pm": the weekday and time a hold ends */
   holdDay(ms, rules = this.rulesCache) {
     const tz = rules?.tz || 'Pacific/Auckland';
-    return `${new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'short' }).format(new Date(ms))} ${this.clockWord(ms, tz)}`;
+    const end = this.holdEnd(ms, tz);
+    const day = new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'short' }).format(new Date(end.day));
+    return end.midnight ? `midnight ${day}` : `${day} ${this.clockWord(ms, tz)}`;
   }
 
   /** "12pm", "4:30pm": a time of day in Lair time, the way Mo says it */
@@ -4393,11 +4720,24 @@ export class Lair {
     return /^\d{1,20}$/.test(id) ? id : '';
   }
 
+  /** Round 7: each variant's loans still out (games at home with members), longest out first, by variant ID. No awaits. */
+  outByVariant(variantIds) {
+    const ids = [...new Set(variantIds.map(String))];
+    const out = new Map(ids.map((id) => [id, []]));
+    if (!ids.length) return out;
+    const rows = this.sql
+      .exec(`SELECT * FROM library_loans WHERE status = 'out' AND variant_id IN (${ids.map(() => '?').join(', ')}) ORDER BY out_at, created_at`, ...ids)
+      .toArray();
+    for (const r of rows) out.get(r.variant_id)?.push(this.rowToLoan(r));
+    return out;
+  }
+
   /**
-   * GET /library/status?ids=<variantId>,… (anyone; at most 60): each game's { copies, held, available, nextFree, mine }.
-   * copies: Shopify's (shopifyCopies), else the copies a page last sent with a hold, else 1. available = copies less
-   * active holds. nextFree: when none is available, the soonest an active hold ends (ms), else null. mine: { id, until }
-   * when the logged-in member holds a copy, else null.
+   * GET /library/status?ids=<variantId>,… (anyone; at most 60): each game's { copies, held, out, available, nextFree,
+   * mine, atHome }. copies: Shopify's (shopifyCopies), else the copies a page last sent with a hold, else 1. out (round
+   * 7): copies at home with members. available = copies less active holds and copies out, never below 0. nextFree:
+   * when none is available and something's held, the soonest an active hold ends (ms), else null. mine: { id, until }
+   * when the logged-in member holds a copy; atHome: { id, outAt } when they have one at home; else null.
    */
   async libraryStatus(url, who) {
     const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map((x) => this.variantIdOf(x)).filter(Boolean))];
@@ -4406,22 +4746,31 @@ export class Lair {
     // --- no awaits from here on ---
     const now = Date.now();
     const held = this.heldByVariant(ids, now);
+    const loans = this.outByVariant(ids);
     const games = {};
     for (const id of ids) {
       const holds = held.get(id) || [];
+      const out = loans.get(id) || [];
       const copies = fromShopify.get(id) ?? this.pageCopies(id) ?? 1;
-      const available = Math.max(0, copies - holds.length);
+      const available = Math.max(0, copies - holds.length - out.length);
       const mine = who.customerId ? holds.find((h) => h.customerId === String(who.customerId)) : null;
-      games[id] = { copies, held: holds.length, available, nextFree: !available && holds.length ? holds[0].until : null, mine: mine ? { id: mine.id, until: mine.until } : null };
+      const home = who.customerId ? out.find((l) => l.customerId === String(who.customerId)) : null;
+      games[id] = {
+        copies, held: holds.length, out: out.length, available, nextFree: !available && holds.length ? holds[0].until : null,
+        mine: mine ? { id: mine.id, until: mine.until } : null, atHome: home ? { id: home.id, outAt: home.outAt } : null,
+      };
     }
     return { games };
   }
 
   /**
-   * POST /library/holds { variantId, productId, title, shelfCode, handle, copies? } (a library member): reserve a game
-   * until 12pm on the third day (holdUntil). Their plan (from their Shopify tags) says how many they can hold at once.
-   * Staff may add customerId to reserve for someone, with no plan limit. Copies: shopifyCopies, else the page's (1-10),
-   * else 1. The staff and the member are emailed. Returns { hold, holds } (holds: that member's active holds).
+   * POST /library/holds { variantId, productId, title, shelfCode, handle, copies?, image? } (a library member): reserve a
+   * game until midnight on the third day, the day it's made counting as the first (holdUntil). Their plan (from their
+   * Shopify tags) says how many games they can have at once: holds plus games at home (round 7). Staff may add
+   * customerId to reserve for someone, with no plan limit. Copies: shopifyCopies, else the page's (1-10), else 1; the
+   * copies reserved and at home aren't free. image (round 7): the game's picture from the page (a Shopify CDN address,
+   * else null). The game becomes one the Lair knows (library_games, and its shelf code in library_codes). The staff and
+   * the member are emailed. Returns { hold, holds } (holds: that member's active holds).
    */
   async createHold(input, who) {
     if (!who.customerId) throw new RuleError('Log in to reserve a game.', 401);
@@ -4449,27 +4798,32 @@ export class Lair {
         ? `${named ? `${named} already has` : 'They already have'} this one on hold, until ${this.holdDate(same.until, rules)}.`
         : `You've already reserved this one, friend. It's held until ${this.holdDate(same.until, rules)}.`, 409);
     }
-    if (plan && theirs.length >= plan.games) {
-      throw new RuleError(`Your plan has ${plural(plan.games, 'game', 'games')} at a time, and you've got ${theirs.length} reserved. Collect or cancel one first.`, 409);
-    }
+    // Round 7: a plan's limit counts holds and games at home
+    const home = this.loansOut(customerId);
+    if (plan && theirs.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, theirs.length, home.length), 409);
     const copies = fromShopify ?? fromPage ?? this.pageCopies(variantId) ?? 1;
     const holding = this.heldByVariant([variantId], now).get(variantId) || [];
-    if (holding.length >= copies) {
-      throw new RuleError(`Every copy is reserved right now. It's back on the shelf by ${this.holdDay(holding[0].until, rules)} if nobody collects it.`, 409);
+    const out = this.outByVariant([variantId]).get(variantId) || [];
+    if (holding.length + out.length >= copies) {
+      throw new RuleError(holding.length
+        ? `Every copy is reserved or out on loan right now. It's back on the shelf by ${this.holdDay(holding[0].until, rules)} if nobody collects it.`
+        : 'Every copy is out on loan right now. Check back soon, friend.', 409);
     }
     const handle = trimmed(input?.handle, 120);
     const productId = String(input?.productId ?? '').trim().replace(/^gid:\/\/shopify\/Product\//, '');
     const hold = {
       id: makeId('lh'), variantId, productId: /^\d{1,20}$/.test(productId) ? productId : null, title, shelfCode: trimmed(input?.shelfCode, 20).toUpperCase(),
       handle: /^[a-z0-9][a-z0-9-]*$/i.test(handle) ? handle.toLowerCase() : '', copies: fromPage, customerId, status: 'held',
-      until: holdUntil(new LairTime(rules.tz), now), createdAt: now,
+      until: holdUntil(new LairTime(rules.tz), now), createdAt: now, image: this.shopImage(input?.image),
     };
     this.write(
-      `INSERT INTO library_holds (id, variant_id, product_id, title, shelf_code, handle, copies, customer_id, status, until, staff_note, created_by, created_at, updated_at, ended_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, NULL, ?, ?, ?, NULL)`,
+      `INSERT INTO library_holds (id, variant_id, product_id, title, shelf_code, handle, copies, customer_id, status, until, staff_note, created_by, created_at, updated_at, ended_at, image)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'held', ?, NULL, ?, ?, ?, NULL, ?)`,
       hold.id, variantId, hold.productId, title, hold.shelfCode || null, hold.handle || null, fromPage, customerId, hold.until,
-      forSomeone ? `staff:${who.customerId}` : 'member', now, now,
+      forSomeone ? `staff:${who.customerId}` : 'member', now, now, hold.image,
     );
+    // Round 7: the Lair knows this game now, so a scan of its label finds it without asking Shopify
+    this.saveLibraryGame({ variantId, productId: hold.productId, title, handle: hold.handle, shelfCode: hold.shelfCode, image: hold.image }, now);
     if (!forSomeone) this.touchMember(customerId, {}, now);
     // --- saved: the copy is theirs until then ---
     this.tellHold(this.holdRow(hold.id), this.memberRow(customerId), rules);
@@ -4497,7 +4851,8 @@ export class Lair {
       intro: [`Kia ora ${first}!`, `${hold.title} is on hold for you until ${when}. Collect it at the counter with your member code.`],
       details: [['Game', hold.title], ['Shelf', hold.shelfCode], ['Held until', when], ['Your member code', member.code || '']],
       outro: "Changed your mind? Cancel the hold in My Lair, so someone else can grab it. If it's not collected by then, it goes back on the shelf.",
-      button: { label: 'See it in My Lair', url: this.page('myLair') },
+      // round 7: straight to My Library
+      button: { label: 'See it in My Lair', url: `${this.page('myLair')}?view=library` },
     })));
   }
 
@@ -4541,7 +4896,8 @@ export class Lair {
   /**
    * POST /library/holds/:id/update { status: 'collected'|'released'|'held', note? } (staff): handed over, put back on the
    * shelf early, or held again (a hold released or expired by mistake), with a fresh until. note: the staff note.
-   * Returns { hold }.
+   * Round 7: collected makes the game's loan (it's at home with them) in the same write; held again takes back a loan
+   * that's still out (it never went home). Returns { hold, loan } (loan: the collected hold's, as staff see it, or null).
    */
   async updateHold(id, input, who) {
     this.requireStaff(who);
@@ -4552,13 +4908,35 @@ export class Lair {
     if (!hold) throw new RuleError('That hold could not be found.', 404);
     const status = input?.status;
     if (status != null && !['collected', 'released', 'held'].includes(status)) throw new RuleError('A hold can be marked collected, released or held again.');
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
     if (status === 'held') {
       this.write("UPDATE library_holds SET status = 'held', until = ?, ended_at = NULL, updated_at = ? WHERE id = ?", holdUntil(new LairTime(rules.tz), now), now, hold.id);
+      this.write("DELETE FROM library_loans WHERE hold_id = ? AND status = 'out'", hold.id);
+    } else if (status === 'collected') {
+      this.collectHold(hold, now, by);
     } else if (status) {
       this.write('UPDATE library_holds SET status = ?, ended_at = ?, updated_at = ? WHERE id = ?', status, now, now, hold.id);
     }
     if (input?.note != null) this.write('UPDATE library_holds SET staff_note = ?, updated_at = ? WHERE id = ?', trimmed(input.note, 300) || null, now, hold.id);
-    return { hold: this.staffHoldView(this.holdRow(hold.id), now) };
+    const fresh = this.holdRow(hold.id);
+    const loan = fresh.status === 'collected' ? this.sql.exec('SELECT * FROM library_loans WHERE hold_id = ?', hold.id).toArray()[0] : null;
+    return { hold: this.staffHoldView(fresh, now), loan: loan ? this.staffLoanView(this.rowToLoan(loan), now) : null };
+  }
+
+  /**
+   * Round 7: a hold handed over: it's 'collected' and the game is at home with them, a loan linked to the hold (made
+   * once: the hold's loan is unique). Staff's own collected time stays when it's marked collected again. No awaits.
+   */
+  collectHold(hold, now, by) {
+    if (hold.status !== 'collected') this.write("UPDATE library_holds SET status = 'collected', ended_at = ?, updated_at = ? WHERE id = ?", now, now, hold.id);
+    const game = this.libraryGame(hold.variantId);
+    this.write(
+      `INSERT OR IGNORE INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at, returned_at,
+         out_by, returned_by, staff_note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, NULL, ?, ?)`,
+      makeId('ln'), hold.variantId, hold.productId || game?.product_id || null, hold.title, hold.shelfCode || game?.shelf_code || null, hold.handle || game?.handle || null,
+      hold.image || game?.image || null, hold.customerId, hold.id, now, by, now, now,
+    );
+    return this.rowToLoan(this.sql.exec('SELECT * FROM library_loans WHERE hold_id = ?', hold.id).one());
   }
 
   /**
@@ -4584,6 +4962,373 @@ export class Lair {
     return due.length;
   }
 
+  /* ---------------- library loans and scanning (round 7): games at home ---------------- */
+  rowToLoan(r) {
+    return {
+      id: r.id, variantId: r.variant_id, productId: r.product_id || null, title: r.title, shelfCode: r.shelf_code || '', handle: r.handle || '',
+      image: r.image || null, status: r.status, outAt: r.out_at, returnedAt: r.returned_at || null, holdId: r.hold_id || null,
+      customerId: r.customer_id, staffNote: r.staff_note || '',
+    };
+  }
+
+  loanRow(id) {
+    const row = id ? this.sql.exec('SELECT * FROM library_loans WHERE id = ?', String(id)).toArray()[0] : null;
+    return row ? this.rowToLoan(row) : null;
+  }
+
+  /**
+   * A game at home as its member sees it: { id, variantId, productId, title, shelfCode, handle, image, status: 'out' |
+   * 'returned', outAt, returnedAt, holdId }. image: the loan's picture, else the one the Lair knows for the game.
+   */
+  loanView(l) {
+    return {
+      id: l.id, variantId: l.variantId, productId: l.productId, title: l.title, shelfCode: l.shelfCode, handle: l.handle,
+      image: l.image || this.libraryGame(l.variantId)?.image || null, status: l.status, outAt: l.outAt, returnedAt: l.returnedAt, holdId: l.holdId,
+    };
+  }
+
+  /** A loan as staff see it: the member's view plus customerId, name, email, code (member code), days (whole Lair days at home) and staffNote */
+  staffLoanView(l, now = Date.now(), memo = null) {
+    let m = memo?.get(l.customerId);
+    if (m === undefined) {
+      m = this.memberRow(l.customerId);
+      memo?.set(l.customerId, m);
+    }
+    const time = lairTime(this.rulesCache?.tz);
+    return {
+      ...this.loanView(l), customerId: l.customerId, name: m?.name || m?.first_name || '', email: m?.email || '', code: m?.code || null,
+      days: Math.max(0, time.daysBetween(time.key(l.outAt), time.key(l.returnedAt || now))), staffNote: l.staffNote,
+    };
+  }
+
+  /** A member's games at home, longest out first. No awaits. */
+  loansOut(customerId) {
+    return this.sql.exec("SELECT * FROM library_loans WHERE customer_id = ? AND status = 'out' ORDER BY out_at, created_at", String(customerId)).toArray().map((r) => this.rowToLoan(r));
+  }
+
+  /** A library game the Lair knows (library_games), or null */
+  libraryGame(variantId) {
+    return variantId ? this.sql.exec('SELECT * FROM library_games WHERE variant_id = ?', String(variantId)).toArray()[0] || null : null;
+  }
+
+  /**
+   * Remember a library game (its title without " (Library)", handle, product, shelf code and picture) and the codes that
+   * find it: its shelf code, plus any SKU and barcode Shopify gave. What's known already stays unless there's something
+   * new. No awaits.
+   */
+  saveLibraryGame(game, now = Date.now(), codes = []) {
+    const title = String(game.title || '').replace(/\s*\(library\)\s*$/i, '').trim().slice(0, 120) || 'A library game';
+    this.write(
+      `INSERT INTO library_games (variant_id, product_id, title, handle, shelf_code, image, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(variant_id) DO UPDATE SET product_id = COALESCE(excluded.product_id, library_games.product_id), title = excluded.title,
+         handle = COALESCE(excluded.handle, library_games.handle), shelf_code = COALESCE(excluded.shelf_code, library_games.shelf_code),
+         image = COALESCE(excluded.image, library_games.image), checked_at = excluded.checked_at`,
+      String(game.variantId), game.productId || null, title, game.handle || null, game.shelfCode || null, game.image || null, now,
+    );
+    for (const code of [game.shelfCode, ...codes]) {
+      const key = codeKey(code);
+      if (key) this.write('INSERT OR REPLACE INTO library_codes (key, variant_id) VALUES (?, ?)', key, String(game.variantId));
+    }
+  }
+
+  /**
+   * A game's picture from a page or Shopify, kept only when it's a Shopify CDN address (cdn.shopify.com, or the store's
+   * own /cdn/shop/ path, which Liquid's image_url gives), up to 500 characters; a // address is kept as https:. Anything
+   * else is null.
+   */
+  shopImage(value) {
+    let text = String(value ?? '').trim();
+    if (!text || text.length > 500) return null;
+    if (text.startsWith('//')) text = `https:${text}`;
+    let url;
+    try {
+      url = new URL(text);
+    } catch {
+      return null;
+    }
+    if (url.protocol !== 'https:') return null;
+    const host = url.hostname.toLowerCase();
+    const shop = String(this.env.SHOP || '').toLowerCase();
+    const store = /(^|\.)dicegoblin\.nz$/.test(host) || host.endsWith('.myshopify.com') || (shop && host === shop);
+    return host === 'cdn.shopify.com' || (store && url.pathname.startsWith('/cdn/shop/')) ? url.toString() : null;
+  }
+
+  /** "Your plan has 3 games at a time, and you've got 3: 2 reserved and 1 at home. Return one or cancel a hold first." */
+  planFull(plan, holds, home) {
+    const parts = [holds ? `${holds} reserved` : '', home ? `${home} at home` : ''].filter(Boolean).join(' and ');
+    return `Your plan has ${plural(plan.games, 'game', 'games')} at a time, and you've got ${holds + home}${parts ? `: ${parts}` : ''}. Return one or cancel a hold first.`;
+  }
+
+  /**
+   * GET /me's library (round 7): { plan: { name, games } | null (from their Shopify tags), used (active holds + games at
+   * home), holds (active, soonest until first), atHome (out, longest at home first) }. No awaits.
+   */
+  libraryFor(customerId, tags, now = Date.now()) {
+    const plan = libraryPlan(tags);
+    const holds = this.activeHolds(customerId, now);
+    const atHome = this.loansOut(customerId);
+    return { plan: plan ? { name: plan.name, games: plan.games } : null, used: holds.length + atHome.length, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
+  }
+
+  /** A scanned or typed code, cleaned: trimmed, 1 to 40 letters, numbers and . _ - +. Anything else is a 422 with `message`. */
+  scanCode(value, message) {
+    const code = String(value ?? '').trim();
+    if (!SCAN_CODE.test(code)) throw new RuleError(message);
+    return code;
+  }
+
+  /**
+   * Which product variant a barcode or SKU is, from Shopify (LairVariantByCode): the one whose barcode, then SKU, equals
+   * the code (ignoring case), or null. Answers (a miss too) are kept 10 minutes. If Shopify refuses (read_products not
+   * approved yet) or is down, it isn't asked again for 10 minutes and this throws a 503 with `down`.
+   */
+  async variantForCode(code, down) {
+    const key = codeKey(code);
+    const now = Date.now();
+    this.codeLookups = this.codeLookups || new Map();
+    const hit = this.codeLookups.get(key);
+    if (hit && now - hit.at < LOOKUP_TTL) return hit.variant;
+    if (!this.shopify.configured || now < (this.retryAt.get('variant-code') || 0)) throw new RuleError(down, 503);
+    let found;
+    try {
+      found = await this.shopify.variantByCode(code);
+    } catch (error) {
+      this.backoff('variant-code');
+      this.note({ variantCodeError: { message: String(error.message || error).slice(0, 300), at: new Date().toISOString() } });
+      throw new RuleError(down, 503);
+    }
+    const same = (v) => String(v ?? '').trim().toUpperCase() === code.toUpperCase();
+    const variant = found.find((v) => same(v.barcode)) || found.find((v) => same(v.sku)) || null;
+    if (this.codeLookups.size > 2000) this.codeLookups.clear();
+    this.codeLookups.set(key, { at: Date.now(), variant });
+    return variant;
+  }
+
+  /**
+   * Which library game a scanned code is (section 6): one the Lair knows (library_codes), else Shopify's variant with that
+   * barcode or SKU when its product has custom.library_code. Returns { game, save } (save: from Shopify, to remember in
+   * the no-awaits part with saveLibraryGame). 422 for a bad code or a shop product, 404 when nothing has it, 503 when
+   * Shopify can't be asked.
+   */
+  async findLibraryGame(value) {
+    const code = this.scanCode(value, 'Scan the barcode on the box, or type the code on its label.');
+    const known = this.sql.exec('SELECT g.* FROM library_codes c JOIN library_games g ON g.variant_id = c.variant_id WHERE c.key = ?', codeKey(code)).toArray()[0];
+    if (known) return { game: this.libraryGameView(known), save: null };
+    const variant = await this.variantForCode(code, "Gobgob can't look that game up just now. Ask at the counter and we'll sort it.");
+    if (!variant) throw new RuleError("Gobgob can't find a library game with that code. Try the code on its label, or ask at the counter.", 404);
+    if (!variant.libraryCode) throw new RuleError("That's from the shop, not the library. Borrow games from the library shelves, friend.", 422);
+    const game = {
+      variantId: variant.variantId, productId: variant.productId, title: String(variant.productTitle || '').replace(/\s*\(library\)\s*$/i, '').trim(),
+      handle: variant.handle || '', shelfCode: String(variant.libraryCode).trim().toUpperCase().slice(0, 20), image: variant.productImage || variant.image || null,
+    };
+    return { game, save: { game, codes: [variant.sku, variant.barcode].filter(Boolean) } };
+  }
+
+  /** A library_games row as a game: { variantId, productId, title, handle, shelfCode, image } */
+  libraryGameView(row) {
+    return { variantId: row.variant_id, productId: row.product_id || null, title: row.title, handle: row.handle || '', shelfCode: row.shelf_code || '', image: row.image || null };
+  }
+
+  /** Copies of a game on the shelf now: copies less active holds and loans out (except what's left out), never below 0. No awaits. */
+  copiesFree(variantId, copies, now, { exceptHold = null } = {}) {
+    const holds = (this.heldByVariant([variantId], now).get(String(variantId)) || []).filter((h) => h.id !== exceptHold);
+    const out = this.outByVariant([variantId]).get(String(variantId)) || [];
+    return { free: Math.max(0, copies - holds.length - out.length), holds, out };
+  }
+
+  /** A new loan: the game goes home with the member. hold: the hold it collected, or null. No awaits. */
+  makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null } = {}) {
+    const id = makeId('ln');
+    this.write(
+      `INSERT INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at, returned_at,
+         out_by, returned_by, staff_note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, ?, ?, ?)`,
+      id, String(game.variantId), game.productId || null, game.title, game.shelfCode || null, game.handle || null, game.image || null, String(customerId),
+      holdId, now, by, note, now, now,
+    );
+    return this.loanRow(id);
+  }
+
+  /** A loan comes back: it's 'returned' (once; one already returned stays as it was). No awaits. */
+  endLoan(loan, now, by) {
+    if (loan.status === 'out') this.write("UPDATE library_loans SET status = 'returned', returned_at = ?, returned_by = ?, updated_at = ? WHERE id = ? AND status = 'out'", now, by, now, loan.id);
+    return this.loanRow(loan.id);
+  }
+
+  /**
+   * POST /library/scan { code, action? } (logged in): borrow or return a library game in the Lair with the camera.
+   * action 'borrow' or 'return'; left out, it's a return when the game is at home with them, otherwise a borrow.
+   *   return: { result: 'returned', loan, library, message } (404 when that game isn't on loan to them)
+   *   borrow: a library plan is needed (403). Held for them: the hold is collected and the loan made. Otherwise the plan
+   *     needs room (holds + games at home) and a copy must be free (409). { result: 'borrowed', loan, hold, library, message }
+   * library is their GET /me library, fresh. Every await (Shopify: the game, its copies) comes first.
+   */
+  async libraryScan(input, who) {
+    if (!who.customerId) throw new RuleError('Log in to borrow games.', 401);
+    const rules = await this.rules();
+    const action = ['borrow', 'return'].includes(input?.action) ? input.action : null;
+    const { game, save } = await this.findLibraryGame(input?.code);
+    const fromShopify = (await this.shopifyCopies([game.variantId])).get(game.variantId);
+    // --- no awaits from here on: read, check and save together, so two people can't take the last copy ---
+    const now = Date.now();
+    const me = String(who.customerId);
+    if (save) this.saveLibraryGame(save.game, now, save.codes);
+    const mine = this.loansOut(me).filter((l) => l.variantId === game.variantId);
+    if (action === 'return' || (!action && mine.length)) {
+      if (!mine.length) throw new RuleError("That game isn't on loan to you.", 404);
+      const loan = this.endLoan(mine[0], now, 'member');
+      return { result: 'returned', loan: this.loanView(loan), library: this.libraryFor(me, who.tags, now), message: `${game.title} is checked back in. Thanks, friend!` };
+    }
+    const plan = libraryPlan(who.tags);
+    if (!plan) throw new RuleError('Join the library to borrow games, friend.', 403);
+    const holds = this.activeHolds(me, now);
+    const hold = holds.find((h) => h.variantId === game.variantId) || null;
+    let loan;
+    if (hold) {
+      loan = this.collectHold(hold, now, 'member');
+    } else {
+      const home = this.loansOut(me);
+      if (holds.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, holds.length, home.length), 409);
+      const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
+      if (this.copiesFree(game.variantId, copies, now).free < 1) throw new RuleError(`Every copy of ${game.title} is reserved or out on loan. Ask us at the counter.`, 409);
+      loan = this.makeLoan(game, me, now);
+    }
+    this.touchMember(me, {}, now);
+    return {
+      result: 'borrowed', loan: this.loanView(loan), hold: hold ? this.holdView(this.holdRow(hold.id), now) : null, library: this.libraryFor(me, who.tags, now),
+      message: `${game.title} is yours to take home. Scan it again when you bring it back.`,
+    };
+  }
+
+  /**
+   * POST /library/loans/:id/return (the member it's with, or staff: "Back on the shelf"): the game is returned. One
+   * already returned comes back as it is. The member gets { loan, library }, staff { loan: staffLoan }.
+   */
+  async returnLoan(id, who) {
+    if (!who.customerId && !who.staff) throw new RuleError('Log in to borrow games.', 401);
+    await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const loan = this.loanRow(id);
+    if (!loan) throw new RuleError('That loan could not be found.', 404);
+    if (!who.staff && loan.customerId !== String(who.customerId)) throw new RuleError("That game isn't on loan to you.", 403);
+    const back = this.endLoan(loan, now, who.staff ? (who.customerId ? `staff:${who.customerId}` : 'staff') : 'member');
+    if (who.staff) return { loan: this.staffLoanView(back, now) };
+    return { loan: this.loanView(back), library: this.libraryFor(who.customerId, who.tags, now) };
+  }
+
+  /**
+   * POST /library/loans { customerId, code } (staff), or { customerId, variantId, title, shelfCode, handle } for a game
+   * typed in: check a game out to a member at the counter. Their hold on it, if any, is collected. No plan or copies
+   * check (what's in the staff member's hands goes out), but notice says when it's more than their plan or Shopify
+   * thinks every copy is out. Returns { loan, notice }.
+   */
+  async checkOutLoan(input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    const customerId = trimmed(input?.customerId, 40);
+    let found;
+    if (input?.code != null && String(input.code).trim() !== '') {
+      found = await this.findLibraryGame(input.code);
+    } else {
+      const variantId = this.variantIdOf(input?.variantId);
+      const title = trimmed(input?.title, 120);
+      if (!variantId || !title) throw new RuleError('Scan the barcode on the box, or type the code on its label.');
+      const known = this.libraryGame(variantId);
+      const handle = trimmed(input?.handle, 120);
+      const game = {
+        variantId, productId: known?.product_id || null, title: title.replace(/\s*\(library\)\s*$/i, '').trim(), shelfCode: trimmed(input?.shelfCode, 20).toUpperCase() || known?.shelf_code || '',
+        handle: /^[a-z0-9][a-z0-9-]*$/i.test(handle) ? handle.toLowerCase() : known?.handle || '', image: known?.image || null,
+      };
+      found = { game, save: { game, codes: [] } };
+    }
+    const { game, save } = found;
+    const person = customerId ? await this.person(customerId) : null;
+    const fromShopify = (await this.shopifyCopies([game.variantId])).get(game.variantId);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const member = this.memberRow(customerId);
+    if (!member) throw new RuleError('No member with that customer ID.', 404);
+    if (save) this.saveLibraryGame(save.game, now, save.codes);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    const hold = this.activeHolds(member.customer_id, now).find((h) => h.variantId === game.variantId) || null;
+    const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
+    const before = this.copiesFree(game.variantId, copies, now, { exceptHold: hold?.id });
+    const loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by });
+    const plan = libraryPlan(person?.tags);
+    const used = this.activeHolds(member.customer_id, now).length + this.loansOut(member.customer_id).length;
+    const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
+    const notices = [];
+    if (!plan) notices.push(`${name === 'They' ? 'They aren\'t' : `${name} isn't`} on a library plan.`);
+    else if (used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
+    if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
+    return { loan: this.staffLoanView(loan, now), notice: notices.length ? notices.join(' ') : null };
+  }
+
+  /**
+   * POST /library/return { code } (staff): check a game in by scanning it. One copy out: it's returned ({ result:
+   * 'returned', loan }). Several out: nothing changes, and staff pick one ({ result: 'pick', loans }). None: 404.
+   */
+  async checkInLoan(input, who) {
+    this.requireStaff(who);
+    await this.rules();
+    const { game, save } = await this.findLibraryGame(input?.code);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    if (save) this.saveLibraryGame(save.game, now, save.codes);
+    const out = this.outByVariant([game.variantId]).get(game.variantId) || [];
+    if (!out.length) throw new RuleError("That game isn't out on loan. It must be on the shelf already.", 404);
+    const memo = new Map();
+    if (out.length > 1) return { result: 'pick', loans: out.map((l) => this.staffLoanView(l, now, memo)) };
+    const loan = this.endLoan(out[0], now, who.customerId ? `staff:${who.customerId}` : 'staff');
+    return { result: 'returned', loan: this.staffLoanView(loan, now, memo) };
+  }
+
+  /** GET /library/loans?status=out|all (staff): out (the default), longest at home first; all, the last 200, newest first. */
+  async listLoans(url, who) {
+    this.requireStaff(who);
+    await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const rows = url.searchParams.get('status') === 'all'
+      ? this.sql.exec('SELECT * FROM library_loans ORDER BY out_at DESC, rowid DESC LIMIT 200').toArray()
+      : this.sql.exec("SELECT * FROM library_loans WHERE status = 'out' ORDER BY out_at, created_at").toArray();
+    const memo = new Map();
+    return { loans: rows.map((r) => this.staffLoanView(this.rowToLoan(r), now, memo)) };
+  }
+
+  /* ---------------- the tab's scanner (round 7) ---------------- */
+  /**
+   * GET /tab/lookup?code= (logged in): a scanned barcode or SKU → { item: { variantId, productId, handle, title,
+   * variantTitle ('' for "Default Title"), price (cents), image, available, barcode, sku } }. A tab takes an Active
+   * product that isn't a library copy, a gift card or something that needs a selling plan; stock isn't refused here
+   * (available is Shopify's availableForSale). 60 lookups a member in 10 minutes; Shopify's answers are kept 10 minutes.
+   */
+  async tabLookup(url, who) {
+    if (!who.customerId) throw new RuleError('Log in to start a tab.', 401);
+    const code = this.scanCode(url.searchParams.get('code'), 'Scan a barcode, or type the code under it.');
+    const now = Date.now();
+    const key = String(who.customerId);
+    this.tabHits = this.tabHits || new Map();
+    const hits = (this.tabHits.get(key) || []).filter((t) => now - t < 10 * MIN);
+    if (hits.length >= TAB_LOOKUPS) throw new RuleError('Easy, friend. Give the scanner a minute.', 429);
+    if (this.tabHits.size > 2000) this.tabHits.clear();
+    this.tabHits.set(key, [...hits, now]);
+    const library = "That's one of our library games. Borrow it in My Library, friend. It doesn't go on a tab.";
+    if (this.sql.exec('SELECT 1 AS n FROM library_codes WHERE key = ?', codeKey(code)).toArray().length) throw new RuleError(library, 422);
+    const v = await this.variantForCode(code, "Gobgob can't look up barcodes just now. Pick it from the menu instead.");
+    // --- no awaits from here on ---
+    if (!v) throw new RuleError("Gobgob doesn't know that one. Pick it from the menu instead.", 404);
+    if (v.libraryCode) throw new RuleError(library, 422);
+    if (v.status !== 'ACTIVE') throw new RuleError("That one isn't on sale right now. Ask us at the counter, friend.", 422);
+    if (v.giftCard || v.sellingPlan) throw new RuleError("That one can't go on a tab. Ask us at the counter, friend.", 422);
+    return {
+      item: {
+        variantId: v.variantId, productId: v.productId, handle: v.handle, title: v.productTitle, variantTitle: v.title === 'Default Title' ? '' : v.title || '',
+        price: v.price, image: v.image || v.productImage || null, available: v.available, barcode: v.barcode || '', sku: v.sku || '',
+      },
+    };
+  }
+
   /* ---------------- members ---------------- */
   memberRow(customerId) {
     return customerId ? this.sql.exec('SELECT * FROM members WHERE customer_id = ?', String(customerId)).toArray()[0] || null : null;
@@ -4598,9 +5343,11 @@ export class Lair {
   /**
    * A logged-in customer booked, joined or opened My Lair: remember them. A booking only fills in a name or email we
    * don't have yet (people book for friends and groups); My Lair's profile form sets them. A new member gets their
-   * code here, from the name we have (DG with none), and keeps it: renaming themselves doesn't change it. No awaits.
+   * code here, from the name we have (DG with none), and keeps it: renaming themselves doesn't change it. Round 7: no
+   * welcome roll any more (a loot code does that job), and mobile (checked already) is a booking's mobile: it becomes
+   * their profile's when they have none or a different one. No awaits.
    */
-  touchMember(customerId, { name, email } = {}, now = Date.now()) {
+  touchMember(customerId, { name, email, mobile } = {}, now = Date.now()) {
     if (!customerId) return;
     const full = trimmed(name, 80) || null;
     const first = full ? full.split(/\s+/)[0].slice(0, 40) : null;
@@ -4613,8 +5360,9 @@ export class Lair {
          updated_at = excluded.updated_at`,
       String(customerId), full, first, isEmail(email) ? trimmed(email, 120) : null, code, now, now, now,
     );
-    // Round 6: a member's welcome roll for the loyalty card, the first time the Lair sees them
-    this.welcomeRoll(customerId, now);
+    if (mobile && mobileKey(mobile) !== mobileKey(row?.mobile)) {
+      this.write('UPDATE members SET mobile = ?, profile_updated_at = ? WHERE customer_id = ?', mobile, now, String(customerId));
+    }
   }
 
   /** POST /members/:customerId/new-code (staff): a fresh member code (a lost or shared one). The old one stops working. */
@@ -4657,7 +5405,8 @@ export class Lair {
   /**
    * A member as staff see them. rollsFromSpend, rollsGifted and rollsUsed are the old spend dice's (staff history only).
    * Round 6 adds loyalty ({ stamps, cards, rollsAvailable }), customerSince ('YYYY-MM-DD' staff set, or null),
-   * yearsWithUs and spendFy (the financial year so far).
+   * yearsWithUs and spendFy (the financial year so far). Round 7 adds the player profile (mobile, pronouns,
+   * favouriteGames, about) and loyalty.card (the card they're on).
    */
   memberView(row, now = Date.now()) {
     const spend = this.spendOf(row.customer_id, now);
@@ -4669,18 +5418,36 @@ export class Lair {
       lastSeen: row.last_seen || null, code: row.code || null,
       // Dice prizes Shopify couldn't add: staff give them at the counter (POST /prizes/:id/done)
       pendingPrizes: this.memberPrizes(row.customer_id, { pending: true }),
-      loyalty: { stamps: card.stamps, cards: card.cards, rollsAvailable: card.rolls.available },
+      loyalty: { stamps: card.stamps, cards: card.cards, rollsAvailable: card.rolls.available, card: card.card },
       customerSince: row.customer_since || null, yearsWithUs: this.yearsWithUs(row, now), spendFy: this.spendFy(row.customer_id, now),
+      mobile: row.mobile || '', pronouns: row.pronouns || '', favouriteGames: parse(row.favourite_games, []), about: row.about || '',
     };
   }
 
-  /** One member as GET /members lists them: memberView plus owed, owedCount, openTab and giftedThisYear. No awaits. */
+  /**
+   * The player profile (round 7), as the member (GET /me) and staff see it: { name, firstName, email, mobile, birthday,
+   * pronouns, favouriteGames, about, updatedAt }.
+   */
+  profileView(row) {
+    return {
+      name: row?.name || '', firstName: row?.first_name || '', email: row?.email || '', mobile: row?.mobile || '', birthday: row?.birthday || '',
+      pronouns: row?.pronouns || '', favouriteGames: parse(row?.favourite_games, []), about: row?.about || '', updatedAt: row?.profile_updated_at || null,
+    };
+  }
+
+  /**
+   * One member as GET /members lists them: memberView plus owed, owedCount, openTab, giftedThisYear and (round 7)
+   * giftsThisYear ([{ id, at, words }], newest first). No awaits.
+   */
   memberListItem(customerId, rules, now = Date.now()) {
     const row = this.memberRow(customerId);
     if (!row) return null;
     const money = this.membersMoney(rules, now);
     const owed = money.owed.get(row.customer_id) || { amount: 0, count: 0 };
-    return { ...this.memberView(row, now), owed: owed.amount, owedCount: owed.count, openTab: money.tabs.get(row.customer_id) || 0, giftedThisYear: money.gifted.has(row.customer_id) };
+    return {
+      ...this.memberView(row, now), owed: owed.amount, owedCount: owed.count, openTab: money.tabs.get(row.customer_id) || 0, giftedThisYear: money.gifted.has(row.customer_id),
+      giftsThisYear: this.giftsThisYear(rules, now, row.customer_id).get(row.customer_id) || [],
+    };
   }
 
   /**
@@ -4721,7 +5488,12 @@ export class Lair {
     for (const [id, ms] of found) this.write('UPDATE members SET shopify_since = ? WHERE customer_id = ? AND shopify_since IS NULL', ms ?? 0, id);
   }
 
-  /** POST /me/profile: the member's own name, email and birthday ('MM-DD' or empty). Only the fields sent change. */
+  /**
+   * POST /me/profile: the member's own player profile (round 7): name, firstName, email, birthday ('MM-DD' or empty),
+   * mobile (section 1's rule, '' clears it), pronouns (up to 30 characters), favouriteGames (up to 8 names of 1 to 40
+   * characters, repeats dropped ignoring case), about (up to 300 characters, line breaks kept). Only the fields sent
+   * change; longer text is cut to its limit and a 9th game is dropped. Returns { member, profile }.
+   */
   async saveProfile(input, who) {
     if (!who.customerId) throw new RuleError('Log in to save your details.', 401);
     const now = Date.now();
@@ -4735,15 +5507,36 @@ export class Lair {
       if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
     }
     const birthday = has('birthday') ? parseBirthday(input.birthday) : row.birthday || null;
+    const mobile = has('mobile') ? checkMobile(input.mobile, { required: false }) || null : row.mobile || null;
+    const pronouns = has('pronouns') ? trimmed(input.pronouns, 30) || null : row.pronouns || null;
+    const games = has('favouriteGames') ? JSON.stringify(this.favouriteGames(input.favouriteGames)) : row.favourite_games || null;
+    const about = has('about') ? String(input.about ?? '').replace(/\r\n?/g, '\n').trim().slice(0, 300) || null : row.about || null;
     const code = row.code || this.newCode(name || firstName || '', 'member', who.customerId, now);
     this.write(
-      `INSERT INTO members (customer_id, name, first_name, email, birthday, code, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO members (customer_id, name, first_name, email, birthday, code, last_seen, created_at, updated_at, mobile, pronouns, favourite_games, about,
+         profile_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(customer_id) DO UPDATE SET name = excluded.name, first_name = excluded.first_name, email = excluded.email,
-         birthday = excluded.birthday, code = COALESCE(members.code, excluded.code), last_seen = excluded.last_seen, updated_at = excluded.updated_at`,
-      who.customerId, name, firstName, email, birthday, code, now, now, now,
+         birthday = excluded.birthday, code = COALESCE(members.code, excluded.code), last_seen = excluded.last_seen, updated_at = excluded.updated_at,
+         mobile = excluded.mobile, pronouns = excluded.pronouns, favourite_games = excluded.favourite_games, about = excluded.about,
+         profile_updated_at = excluded.profile_updated_at`,
+      who.customerId, name, firstName, email, birthday, code, now, now, now, mobile, pronouns, games === '[]' ? null : games, about, now,
     );
-    this.welcomeRoll(who.customerId, now);
-    return { member: this.memberView(this.memberRow(who.customerId), now) };
+    const fresh = this.memberRow(who.customerId);
+    return { member: this.memberView(fresh, now), profile: this.profileView(fresh) };
+  }
+
+  /** Favourite games from the profile form: up to 8 names, each trimmed to 40 characters, empty ones and repeats (ignoring case) dropped */
+  favouriteGames(value) {
+    const list = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,]+/) : [];
+    const seen = new Set();
+    const out = [];
+    for (const raw of list) {
+      const name = String(raw ?? '').trim().replace(/\s+/g, ' ').slice(0, 40).trim();
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      out.push(name);
+    }
+    return out.slice(0, 8);
   }
 
   /**
@@ -4793,9 +5586,41 @@ export class Lair {
       owing: (a, b) => b.owed.amount + b.openTab - (a.owed.amount + a.openTab) || recent(a, b),
     };
     list.sort(orders[sort] || ((a, b) => Number(b.row.customer_id === exact) - Number(a.row.customer_id === exact) || recent(a, b)));
+    // Round 7: what each was gifted this year, in words
+    const gifts = this.giftsThisYear(rules, now);
     return list.slice(0, q ? 25 : 100).map((x) => ({
       ...this.memberView(x.row, now), owed: x.owed.amount, owedCount: x.owed.count, openTab: x.openTab, giftedThisYear: x.gifted,
+      giftsThisYear: gifts.get(x.row.customer_id) || [],
     }));
+  }
+
+  /**
+   * GET /members/:customerId (staff, round 7): one member for their page: the GET /members item, plus their player
+   * profile (also as profile), every gift (newest first, as staff see them) and library: { plan (from their Shopify
+   * tags, null without one), holds (active), atHome }. Gifts from before round 7 are checked with Shopify first (up to 5).
+   */
+  async memberDetail(customerId, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    const id = trimmed(customerId, 40);
+    if (!this.memberRow(id)) throw new RuleError('No member with that customer ID.', 404);
+    const person = await this.person(id);
+    await this.checkGiftCodes({ customerId: id, limit: GIFT_CHECKS_A_PAGE });
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const row = this.memberRow(id);
+    const gifts = this.sql.exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? ORDER BY g.created_at DESC, g.rowid DESC', id).toArray();
+    const plan = libraryPlan(person?.tags);
+    const memo = new Map();
+    return {
+      member: {
+        ...this.memberListItem(id, rules, now), profile: this.profileView(row), gifts: gifts.map((g) => this.giftView(g, now)),
+        library: {
+          plan: plan ? { name: plan.name, games: plan.games } : null, holds: this.activeHolds(id, now).map((h) => this.staffHoldView(h, now, memo)),
+          atHome: this.loansOut(id).map((l) => this.staffLoanView(l, now, memo)),
+        },
+      },
+    };
   }
 
   /**
@@ -4984,9 +5809,9 @@ export class Lair {
   /**
    * GET /members/birthdays (staff): the next 30 days of birthdays, soonest first. Each is the member as GET /members
    * sends them (code is their member code, so the staff page can merge these rows into its members), plus date, days,
-   * suggested: { low, high } (dollars, see suggestedGift) and, round 6, rolls: a dice roll for every year they've been
-   * with Dice Goblin, at least 1 (max(1, yearsWithUs)); giftedThisYear and lastGift (their latest gift, or null).
-   * percent, birthdayCode and sent are the birthday discount code round 4 sent by itself (birthdayCode null when none).
+   * suggested: { low, high } (dollars, see suggestedGift) and rolls, always 0 since round 7 (Mo: no suggested rolls;
+   * staff can still add rolls to a gift by hand); giftedThisYear and lastGift (their latest gift, or null). percent,
+   * birthdayCode and sent are the birthday discount code round 4 sent by itself (birthdayCode null when none).
    */
   async birthdayList(who) {
     this.requireStaff(who);
@@ -5002,8 +5827,8 @@ export class Lair {
       const last = this.sql.exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? ORDER BY g.created_at DESC, g.rowid DESC LIMIT 1', row.customer_id).toArray()[0];
       return {
         ...view, date, days, percent: given?.percent ?? birthdayPercent(view.spendYear), code: view.code, birthdayCode: given?.code || null, sent: Boolean(given),
-        suggested: { ...this.suggestedGift(view.spendYear), rolls: Math.max(1, view.yearsWithUs) }, giftedThisYear: this.giftedIn(row.customer_id, year),
-        lastGift: last ? this.giftView(last) : null,
+        suggested: { ...this.suggestedGift(view.spendYear), rolls: 0 }, giftedThisYear: this.giftedIn(row.customer_id, year),
+        lastGift: last ? this.giftView(last, now) : null,
       };
     });
   }
@@ -5048,15 +5873,147 @@ export class Lair {
   }
 
   /**
-   * A gift as staff see it: { id, at, credit (cents), sessions, passCode, rolls, product: { title, code } | null,
-   * emailed, problems: [{ part, message }] }. product.code is null when Shopify couldn't make it.
+   * A gift as staff see it: { id, at, credit (cents), sessions, passCode, rolls, product: { title, code, status,
+   * expiresAt, usedAt, order } | null, emailed, problems: [{ part, message }], state, claimedAt, words, note }.
+   * product.code is null when Shopify couldn't make it. Round 7: the product code's status, the gift's state and what
+   * it was, in words (giftState, giftWords).
    */
-  giftView(r) {
+  giftView(r, now = Date.now()) {
+    const s = this.giftState(r, now);
     return {
       id: r.id, at: r.created_at, credit: r.credit || 0, sessions: r.sessions || 0, passCode: r.pass_code || null, rolls: r.rolls || 0,
-      product: r.product_title ? { title: r.product_title, code: r.product_status === 'added' ? r.product_code : null } : null,
-      emailed: Boolean(r.emailed), problems: this.giftProblems(r.problems),
+      product: s.product, emailed: Boolean(r.emailed), problems: this.giftProblems(r.problems), state: s.state, claimedAt: s.claimedAt,
+      words: this.giftWords(r, s.product, now), note: r.note || '',
     };
+  }
+
+  /**
+   * Round 7: where a birthday gift is at. Its product code is 'ready' (Shopify made it, it's unused and its 30 days
+   * aren't over), 'used' (an order carried it), 'expired' (30 days with no use) or 'failed' (Shopify couldn't make it,
+   * so they collect it at the counter). The gift is 'ready' while there's something left to collect (a ready code, or a
+   * failed one within its 30 days), else 'claimed': claimedAt is when the code was used, when it ran out, or for a gift
+   * with no product, when it was given. listed: My Lair shows it (ready, or claimed in the last 30 days; a failed one
+   * isn't listed once its 30 days are over). product is the staff view's ({ title, code, status, expiresAt, usedAt,
+   * order }). No awaits.
+   */
+  giftState(r, now = Date.now()) {
+    if (!r.product_title) {
+      return { product: null, state: 'claimed', claimedAt: r.created_at, listed: r.created_at > now - GIFT_DAYS_MS };
+    }
+    const expiresAt = r.created_at + GIFT_DAYS_MS;
+    const made = r.product_status === 'added';
+    const status = r.product_used_at && made ? 'used' : !made ? 'failed' : now >= expiresAt ? 'expired' : 'ready';
+    const product = {
+      title: r.product_title, code: made ? r.product_code : null, status, expiresAt, usedAt: status === 'used' ? r.product_used_at : null,
+      order: status === 'used' ? r.product_order || null : null,
+    };
+    const ready = status === 'ready' || (status === 'failed' && now < expiresAt);
+    const claimedAt = ready ? null : status === 'used' ? r.product_used_at : expiresAt;
+    return { product, state: ready ? 'ready' : 'claimed', claimedAt, listed: ready || (status !== 'failed' && claimedAt > now - GIFT_DAYS_MS) };
+  }
+
+  /**
+   * What a gift was, in words, one rule for staff and members: "$20 store credit, 5 rolls, Riftbound – Vendetta Booster
+   * Pack (code HBD-SJOWLBEAR17, used 6 Oct)". Store credit Shopify didn't add is "(to give at the counter)"; sessions are
+   * "3 sessions on pass SJ-KOBOLD-3"; a product's code is "until 5 Nov", "used 6 Oct" or "ran out 5 Nov", or "no code
+   * yet: give it at the counter". Dates in Lair time, with the year when it isn't this year. No awaits.
+   */
+  giftWords(r, product, now = Date.now()) {
+    const parts = [];
+    if (r.credit) parts.push(`${money(r.credit)} store credit${r.credit_status === 'added' ? '' : ' (to give at the counter)'}`);
+    if (r.sessions) parts.push(`${plural(r.sessions, 'session', 'sessions')}${r.pass_code ? ` on pass ${r.pass_code}` : ''}`);
+    if (r.rolls) parts.push(plural(r.rolls, 'roll', 'rolls'));
+    if (product) {
+      const day = (ms) => this.giftDate(ms, now);
+      const code = product.code;
+      const state = !code ? 'no code yet: give it at the counter'
+        : product.status === 'used' ? `code ${code}, used ${day(product.usedAt)}`
+          : product.status === 'expired' ? `code ${code}, ran out ${day(product.expiresAt)}`
+            : `code ${code}, until ${day(product.expiresAt)}`;
+      parts.push(`${product.title} (${state})`);
+    }
+    return parts.join(', ');
+  }
+
+  /** "6 Oct", or "6 Oct 2025" when it isn't this year: a day in Lair time */
+  giftDate(ms, now = Date.now()) {
+    const tz = this.rulesCache?.tz || 'Pacific/Auckland';
+    const time = lairTime(tz);
+    const thisYear = time.key(ms).slice(0, 4) === time.key(now).slice(0, 4);
+    return new Intl.DateTimeFormat('en-NZ', { timeZone: tz, day: 'numeric', month: 'short', ...(thisYear ? {} : { year: 'numeric' }) }).format(new Date(ms)).replace(',', '');
+  }
+
+  /** This Lair year's gifts, newest first, as GET /members lists them ({ id, at, words }), by customer ID (one member's, or everyone's). No awaits. */
+  giftsThisYear(rules, now = Date.now(), customerId = null) {
+    const year = new LairTime(rules.tz).key(now).slice(0, 4);
+    const rows = this.sql
+      .exec(
+        `SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.year = ?${customerId ? ' AND g.customer_id = ?' : ''}
+         ORDER BY g.created_at DESC, g.rowid DESC`,
+        year, ...(customerId ? [String(customerId)] : []),
+      )
+      .toArray();
+    const out = new Map();
+    for (const r of rows) {
+      if (!out.has(r.customer_id)) out.set(r.customer_id, []);
+      out.get(r.customer_id).push({ id: r.id, at: r.created_at, words: this.giftWords(r, this.giftState(r, now).product, now) });
+    }
+    return out;
+  }
+
+  /**
+   * Round 7: an order paid with a birthday gift's product code (its discount codes, from orderSpend): that gift's code is
+   * used, once, at the order's time (or now), with the order's name. Ignores case. No awaits. Returns the codes marked.
+   */
+  markGiftCodesUsed(spend, now = Date.now()) {
+    const marked = [];
+    for (const code of new Set((spend?.discountCodes || []).map((c) => String(c).trim().toUpperCase()).filter(Boolean))) {
+      const gift = this.sql.exec('SELECT id, product_code FROM gifts WHERE upper(product_code) = ? AND product_used_at IS NULL LIMIT 1', code).toArray()[0];
+      if (!gift) continue;
+      this.write('UPDATE gifts SET product_used_at = ?, product_order = ?, updated_at = ? WHERE id = ? AND product_used_at IS NULL', spend.processedAt || now, spend.name || null, now, gift.id);
+      marked.push(gift.product_code);
+    }
+    return marked;
+  }
+
+  /**
+   * Round 7: birthday gifts' product codes checked with Shopify (LairGiftCodeUse), for uses the orders/paid webhook
+   * couldn't see: each gift made before round 7 once, and (maintenance only, expired: true) each code that reached its
+   * 30 days with no recorded use, once more. Used once or more means used, dated when it was checked. Up to `limit`
+   * gifts (one member's, or anyone's), all asked first and saved afterwards with no awaits. A failed lookup waits 10
+   * minutes. Never throws. Returns how many were checked.
+   */
+  async checkGiftCodes({ customerId = null, limit = GIFT_CHECKS_A_RUN, expired = false } = {}) {
+    if (!this.shopify.configured || Date.now() < (this.retryAt.get('gift-codes') || 0)) return 0;
+    const now = Date.now();
+    const rows = this.sql
+      .exec(
+        `SELECT id, product_code FROM gifts WHERE product_code IS NOT NULL AND product_status = 'added' AND product_used_at IS NULL
+           AND ((created_at < ? AND product_checked_at IS NULL)${expired ? ' OR (created_at + ? <= ? AND (product_checked_at IS NULL OR product_checked_at < created_at + ?))' : ''})
+           ${customerId ? 'AND customer_id = ?' : ''} ORDER BY created_at, rowid LIMIT ?`,
+        this.giftCodesFrom, ...(expired ? [GIFT_DAYS_MS, now, GIFT_DAYS_MS] : []), ...(customerId ? [String(customerId)] : []), limit,
+      )
+      .toArray();
+    if (!rows.length) return 0;
+    const answers = await Promise.allSettled(rows.map((r) => this.shopify.giftCodeUse(r.product_code)));
+    // --- no awaits from here on: each gift's own row; a use the webhook noted meanwhile stays as it was ---
+    const at = Date.now();
+    let checked = 0;
+    answers.forEach((answer, i) => {
+      if (answer.status !== 'fulfilled') return;
+      const used = (answer.value?.uses || 0) >= 1;
+      this.write(
+        'UPDATE gifts SET product_checked_at = ?, product_used_at = CASE WHEN ? = 1 AND product_used_at IS NULL THEN ? ELSE product_used_at END, updated_at = ? WHERE id = ?',
+        at, used ? 1 : 0, at, at, rows[i].id,
+      );
+      checked += 1;
+    });
+    const failed = answers.find((a) => a.status === 'rejected');
+    if (failed) {
+      this.backoff('gift-codes');
+      this.note({ giftCodesError: { message: String(failed.reason?.message || failed.reason).slice(0, 300), at: new Date().toISOString() } });
+    }
+    return checked;
   }
 
   /**
@@ -5074,10 +6031,13 @@ export class Lair {
     });
   }
 
-  /** A gift as its member sees it in My Lair: { at, credit, sessions, rolls, product } */
-  memberGiftView(r) {
-    const { at, credit, sessions, rolls, product } = this.giftView(r);
-    return { at, credit, sessions, rolls, product };
+  /**
+   * A gift as its member sees it in My Lair: { id, at, credit, sessions, rolls, product: { title, code, status,
+   * expiresAt, usedAt } | null, state, claimedAt, words } (round 7: giftState, giftWords)
+   */
+  memberGiftView(r, now = Date.now()) {
+    const { id, at, credit, sessions, rolls, product, state, claimedAt, words } = this.giftView(r, now);
+    return { id, at, credit, sessions, rolls, product: product ? { title: product.title, code: product.code, status: product.status, expiresAt: product.expiresAt, usedAt: product.usedAt } : null, state, claimedAt, words };
   }
 
   /**
@@ -5202,6 +6162,8 @@ export class Lair {
     // Round 6: their Shopify account's verified email (asked at most once a day): guest bookings and sign-ups made with
     // it become theirs below.
     const account = await this.accountEmail(who.customerId);
+    // Round 7: their birthday gifts from before round 7 are checked with Shopify once (has the product code been used?)
+    await this.checkGiftCodes({ customerId: who.customerId, limit: GIFT_CHECKS_A_PAGE });
     // --- no awaits from here on ---
     const now = Date.now();
     this.touchMember(who.customerId, { name: trimmed(url?.searchParams.get('name'), 80) }, now);
@@ -5284,17 +6246,23 @@ export class Lair {
       prizes: this.memberPrizes(who.customerId),
       // Library holds (round 6): active ones, soonest first, then any that ended in the last 3 days
       holds: this.memberHolds(who.customerId, now),
+      // Round 7: My Library: their plan, how many they have (holds and games at home), their holds and games at home
+      library: this.libraryFor(who.customerId, who.tags, now),
+      // Round 7: the player profile (the GM profile stays its own block, gmProfile)
+      profile: this.profileView(this.memberRow(who.customerId)),
       // Session passes: active ones, and ones used up in the last 30 days
       passes: this.memberPasses(who.customerId, now),
       // Today's self-serve tab, or null
       tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
       // What they can pay at the counter now: { id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }
       dueNow,
-      // This year's birthday gifts: { at, credit, sessions, rolls, product: { title, code } | null }
+      // Birthday gifts (round 7): those with something left to collect ('ready'), and those claimed in the last 30 days,
+      // whatever year they were given: { id, at, credit, sessions, rolls, product, state, claimedAt, words }
       gifts: this.sql
-        .exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? AND g.year = ? ORDER BY g.created_at DESC, g.rowid DESC', who.customerId, new LairTime(rules.tz).key(now).slice(0, 4))
+        .exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? ORDER BY g.created_at DESC, g.rowid DESC', who.customerId)
         .toArray()
-        .map((r) => this.memberGiftView(r)),
+        .filter((r) => this.giftState(r, now).listed)
+        .map((r) => this.memberGiftView(r, now)),
     };
   }
 
@@ -5425,6 +6393,14 @@ export class Lair {
       if (expired) result.libraryHolds = { expired };
     } catch (error) {
       console.error('Lair: could not expire library holds', error);
+    }
+    // Round 7: birthday gifts' product codes the webhook couldn't see used (gifts from before round 7, and codes that ran
+    // out with no recorded use) are checked with Shopify, a few a run.
+    try {
+      const giftCodes = await this.checkGiftCodes({ limit: GIFT_CHECKS_A_RUN, expired: true });
+      if (giftCodes) result.giftCodes = { checked: giftCodes };
+    } catch (error) {
+      console.error('Lair: could not check gift codes', error);
     }
     this.note({ connection: result });
     return result;

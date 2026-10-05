@@ -269,6 +269,48 @@ export class ShopifyAdmin {
     }));
   }
 
+  /**
+   * Round 7: the product variants whose barcode or SKU is `code` (Shopify's search, up to 5), for scanning library games
+   * and tab items. Library copies' barcodes and SKUs are their shelf codes, and a library copy's product has its shelf
+   * code in custom.library_code. Needs read_products (waiting for Mo); until then Shopify refuses and this throws. Each:
+   * { variantId, productId, handle, title (the variant's), productTitle, sku, barcode, price (cents), available, image
+   * (the variant's), productImage, status, giftCard, sellingPlan, libraryCode }.
+   */
+  async variantByCode(code) {
+    const text = String(code ?? '').replace(/["\\]/g, '');
+    const data = await this.graphql(
+      `query LairVariantByCode($query: String!) { productVariants(first: 5, query: $query) { nodes { id title sku barcode price availableForSale
+        media(first: 1) { nodes { preview { image { url } } } }
+        product { id handle title status isGiftCard requiresSellingPlan featuredMedia { preview { image { url } } } libraryCode: metafield(namespace: "custom", key: "library_code") { value } } } } }`,
+      { query: `barcode:"${text}" OR sku:"${text}"` },
+    );
+    return (data.productVariants?.nodes || []).filter((n) => n?.id && n.product).map((n) => {
+      const cents = Math.round(Number(n.price || 0) * 100);
+      return {
+        variantId: String(n.id).split('/').pop(), productId: String(n.product.id).split('/').pop(), handle: n.product.handle || '', title: n.title || '',
+        productTitle: n.product.title || '', sku: n.sku || '', barcode: n.barcode || '', price: Number.isFinite(cents) ? cents : 0, available: n.availableForSale === true,
+        image: n.media?.nodes?.[0]?.preview?.image?.url || null, productImage: n.product.featuredMedia?.preview?.image?.url || null,
+        status: n.product.status || null, giftCard: n.product.isGiftCard === true, sellingPlan: n.product.requiresSellingPlan === true,
+        libraryCode: String(n.product.libraryCode?.value || '').trim() || null,
+      };
+    });
+  }
+
+  /**
+   * Round 7: a birthday gift's product code as Shopify sees it (read_discounts, part of write_discounts): how many times
+   * it's been used (asyncUsageCount), its status and when it ends. null when Shopify has no such code.
+   */
+  async giftCodeUse(code) {
+    const data = await this.graphql(
+      'query LairGiftCodeUse($code: String!) { codeDiscountNodeByCode(code: $code) { id codeDiscount { __typename ... on DiscountCodeBasic { status endsAt asyncUsageCount } } } }',
+      { code: String(code) },
+    );
+    const node = data.codeDiscountNodeByCode;
+    if (!node) return null;
+    const d = node.codeDiscount || {};
+    return { id: node.id, status: d.status || null, endsAt: d.endsAt ? Date.parse(d.endsAt) : null, uses: Number(d.asyncUsageCount) || 0 };
+  }
+
   /** A draft order with one custom line; its invoice URL is a normal Shopify checkout. */
   async createCheckout({ ref, title, unitPrice, quantity, email, currency, attributes }) {
     const data = await this.graphql(
@@ -299,11 +341,12 @@ export class ShopifyAdmin {
 
   /**
    * Who paid for an order and its subtotal after discounts (in cents), for members' spend, and the order's name
-   * ("#1550"). customerId is null when the order has no customer.
+   * ("#1550"). customerId is null when the order has no customer. Round 7: its discount codes and when it was processed
+   * (a birthday gift's product code on it has been used).
    */
   async orderSpend(orderId) {
     const data = await this.graphql(
-      'query OrderSpend($id: ID!) { order(id: $id) { id name sourceName customer { id } currentSubtotalPriceSet { shopMoney { amount currencyCode } } } }',
+      'query OrderSpend($id: ID!) { order(id: $id) { id name sourceName processedAt discountCodes customer { id } currentSubtotalPriceSet { shopMoney { amount currencyCode } } } }',
       { id: orderId },
     );
     const order = data.order;
@@ -314,6 +357,8 @@ export class ShopifyAdmin {
       amount: Number.isFinite(amount) ? amount : 0,
       source: order.sourceName || null,
       name: order.name || null,
+      discountCodes: (order.discountCodes || []).map(String),
+      processedAt: order.processedAt ? Date.parse(order.processedAt) || null : null,
     };
   }
 
