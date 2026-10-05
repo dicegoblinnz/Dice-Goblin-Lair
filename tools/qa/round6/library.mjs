@@ -146,9 +146,30 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await page.click('[data-reserve]');
   await page.waitForSelector('library-reserve .library-reserve__error', { timeout: 5000 }).catch(() => {});
   const limit = flat(await page.locator('library-reserve .library-reserve__error').textContent().catch(() => ''));
-  check(tag, limit === "Your plan has 1 game at a time, and you've got 1 reserved. Collect or cancel one first."
-    && (await page.getAttribute('library-reserve .library-reserve__error', 'role')) === 'alert', 'plan limit: the 409 message, as it comes', limit);
+  const mineLink = page.locator('library-reserve .library-reserve__error a[href$="my-lair#ml-library"]', { hasText: 'See my reserved games' });
+  check(tag, limit.startsWith("Your plan has 1 game at a time, and you've got 1 reserved. Collect or cancel one first.")
+    && (await page.getAttribute('library-reserve .library-reserve__error', 'role')) === 'alert' && (await mineLink.count()) === 1,
+  'plan limit: the 409 message, as it comes, and a link to their reserved games', limit);
   await page.locator('library-reserve').screenshot({ path: `${OUT}${tag}-library-limit.png` });
+
+  // 5b. Someone else got the last copy while the page was open: the 409 leaves the page saying it's reserved
+  await visit(page, STASH, GAME.codenames.path);
+  await page.evaluate((variantId) => {
+    const be = window.Lair.store.backend;
+    const now = Date.now();
+    be.libraryHoldList().push({ id: 'lh-race', customerId: '8394581110001', variantId, productId: null, title: 'Codenames', shelfCode: 'DGL7+-015', handle: 'codenames', until: be.holdUntil(now), status: 'held', createdAt: now, staffNote: '' });
+  }, GAME.codenames.variant);
+  await page.click('[data-reserve]');
+  await page.waitForSelector('library-reserve[data-state="reserved"]', { timeout: 5000 }).catch(() => {});
+  const race = await block(page);
+  const raceFocus = await page.evaluate(() => document.activeElement && document.activeElement.matches('[data-reserve-status]'));
+  check(tag, (await state(page)) === 'reserved' && race.includes("It's back on the shelf by Thu 8 Oct, 12pm") && !race.includes('Every copy') && raceFocus,
+    'beaten to the last copy: the page says it\'s reserved now, focus on the news', race);
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    be.state.libraryHolds = be.libraryHoldList().filter((h) => h.id !== 'lh-race');
+    be.save();
+  });
 
   // 6. Cancelling frees it, by keyboard: it asks first, and focus goes back to Reserve
   await visit(page, STASH, GAME.baker.path);
