@@ -12,7 +12,7 @@ const out = await page.evaluate(async () => {
   const r = {};
   const day = t.addDays(t.today(), 3);
   const st = t.at(day, 18 * 60);
-  const res = await store.mutate('createBooking', { kind: 'table', tables: ['T6', 'T7'], room: 'main-room', start: st, end: st + 2 * 3600000, people: 5, extras: [], name: 'Aroha Ngata', email: 'aroha.n@example.com', amount: 5000, split: true, paidAmount: 999, payments: [{ amount: 999 }] });
+  const res = await store.mutate('createBooking', { kind: 'table', tables: ['T6', 'T7'], room: 'main-room', start: st, end: st + 2 * 3600000, people: 5, extras: [], name: 'Aroha Ngata', email: 'aroha.n@example.com', phone: '021 555 0101', amount: 5000, split: true, paidAmount: 999, payments: [{ amount: 999 }] });
   r.created = { split: res.booking.split, paidAmount: res.booking.paidAmount, payments: res.booking.payments, due: res.booking.due };
   const walk = await store.mutate('createBooking', { kind: 'walkin', tables: ['T6'], room: 'main-room', start: Date.now(), end: Date.now() + 3600000, people: 2, name: 'W', split: true, staffOverride: true, amount: 2000 });
   r.walkinSplit = walk.booking.split;

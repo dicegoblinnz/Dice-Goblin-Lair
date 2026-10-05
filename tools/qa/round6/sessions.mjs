@@ -253,6 +253,7 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
       await page.waitForSelector('[data-session-join]');
       await page.fill('[data-session-join] [name="name"]', 'Busy Example');
       await page.fill('[data-session-join] [name="email"]', email);
+      await page.fill('[data-session-join] [name="phone"]', '021 000 0000'); // round 7: a mobile is required
       await page.click('[data-join-submit]');
       await page.waitForSelector('[data-session-join] [data-form-status] [role="alert"]', { timeout: 5000 }).catch(() => {});
       return flat(await page.locator('[data-session-join] [data-form-status]').innerText().catch(() => ''));
@@ -273,6 +274,7 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
     }, id);
     await page.fill('[data-session-join] [name="name"]', 'Late Example');
     await page.fill('[data-session-join] [name="email"]', 'late@example.com');
+    await page.fill('[data-session-join] [name="phone"]', '021 000 0000'); // round 7: a mobile is required
     await page.click('[data-join-submit]');
     await page.waitForSelector('[data-session-join] [data-form-status] [role="alert"]', { timeout: 5000 }).catch(() => {});
     const full = flat(await page.locator('[data-session-join] [data-form-status]').innerText().catch(() => ''));
@@ -506,6 +508,7 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
     await a.page.waitForSelector('[data-session-join]');
     const prefilled = flat(await a.page.locator('[data-booker-line]').innerText());
     check(`${S} member: the form is filled in from their account, with no log-in box`, /Booking as Ruby Tane/.test(prefilled) && !(await a.page.locator('.gm-join__who').count()), prefilled);
+    await a.page.fill('[data-session-join] [name="phone"]', '021 000 0000'); // round 7: a mobile is required (Ruby has none saved)
     await a.page.click('[data-join-submit]');
     await a.page.waitForSelector('.gm-done', { timeout: 8000 });
     const ref = flat(await a.page.locator('.gm-done .gm-qr__ref').innerText());
@@ -526,6 +529,7 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
     await c.page.waitForTimeout(300);
     await c.page.click('[data-dialog-foot] [data-lj-join]:not([data-every])');
     await c.page.waitForSelector('[data-session-join]');
+    await c.page.fill('[data-session-join] [name="phone"]', '021 000 0000'); // round 7: a mobile is required
     await c.page.click('[data-join-submit]');
     await c.page.waitForSelector('.gm-done', { timeout: 8000 });
     const cref = flat(await c.page.locator('.gm-done .gm-qr__ref').innerText());
