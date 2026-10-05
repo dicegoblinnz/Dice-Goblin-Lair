@@ -1,5 +1,6 @@
 // The staff page in live mode against a stand-in for the Lair app that answers only what the round 5 contract
-// promises: GET /members?q=&sort=&owing=1 (an array), GET /members/birthdays (suggested, giftedThisYear, lastGift),
+// promises (and, from round 6, GET /members/:id/spend, which a member's page asks for): GET /members?q=&sort=&owing=1
+// (an array; no round 6 loyalty fields, so the page copes without them), GET /members/birthdays (suggested, giftedThisYear, lastGift),
 // POST /members/:id/gift (problems as plain words), POST /checkin with a member code (rows with owed: true),
 // GET /passes (source, orderName), POST /bookings/:id/update { waived: true }, POST /games/:id/image, and from round 6
 // GET /library/holds (the Library tab's count, asked for as the page loads). It logs what the page asked for.
@@ -42,6 +43,15 @@ m.mockState.before = async (req, res, url) => {
       { ...members[0], date: '2026-10-09', days: 5, suggested: { low: 5, high: 12 }, giftedThisYear: false, lastGift: null },
       { ...members[1], date: '2026-10-12', days: 8, suggested: { low: 10, high: 26 }, giftedThisYear: true, lastGift: { at: now - DAY, credit: 1500, sessions: 2, rolls: 0, product: null } },
     ]);
+  }
+  // round 6: a member's page also asks for their spend by month and NZ financial year (contract v6, section 2)
+  const spendOf = route.match(/^\/members\/([^/]+)\/spend$/);
+  if (spendOf) {
+    const months = Array.from({ length: 24 }, (_, i) => {
+      const d = new Date(Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth() - 23 + i, 1));
+      return { month: d.toISOString().slice(0, 7), amount: i % 3 ? 2500 : 0, orders: i % 3 ? 1 : 0 };
+    });
+    return send(200, { months, years: [{ fy: '2026/27', from: '2026-04-01', to: '2027-03-31', amount: 15000, orders: 6 }], total: 61000, since: '2023-07-21' });
   }
   if (route === '/members/7101/gift') {
     return send(200, { gift: { id: 'gf1', at: now, credit: Math.round((body.credit || 0) * 100), sessions: body.sessions || 0, passCode: body.sessions ? 'SJ-CAKE-9' : null, rolls: 0, product: body.productVariantId ? { title: body.productTitle, code: 'HBD-SJOWLBEAR17' } : null, emailed: true, problems: body.rolls ? ['Dice rolls: no permission to add them, so add them by hand.'] : [] } });
