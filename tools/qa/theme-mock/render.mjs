@@ -120,7 +120,7 @@ const coll = (handle, title, products, count) => ({
   description: '', filters: [], sort_options: [{ value: 'created-descending', name: 'Newest' }, { value: 'price-ascending', name: 'Price, low to high' }], sort_by: '', default_sort_by: 'created-descending',
 });
 const collections = {
-  'new-additions': coll('new-additions', 'New Additions', arrivals, 376),
+  'new-additions': coll('new-additions', 'New Additions', arrivals, 376), // r7 shell: two sold-out products join it below
   'board-game': coll('board-game', 'Board Games', boardGames, 143),
   'family-games': coll('family-games', 'Family Games', [boardGames[2], boardGames[4], boardGames[1]], 190),
   'role-playing-game': coll('role-playing-game', 'Role Playing Game', rpgShelf, 105),
@@ -130,7 +130,16 @@ const collections = {
   'board-game-rental': coll('board-game-rental', 'Board Game Rental', [membership, ...library], 534),
 };
 membership.collections = [collections['board-game-rental']];
-const allProducts = Object.fromEntries([...arrivals, ...boardGames, ...library, membership, ...tcgShelf, ...rpgShelf].map((p) => [p.handle, p]));
+/* r7 shell: sold-out products (the store has about 130), which the shop must never show: first and fifth in New
+   Additions (so the home rail and the collection have to skip them) and one more in Trading Card Games. Inventory 0. */
+const soldOut = [
+  product('ark-nova', 'Ark Nova', 'Capstone Games', 120, 120, null, true, 0, 1000, 1000),
+  product('pokemon-tcg-mega-charizard-x-ex-upc', 'Pokémon TCG: Mega Charizard X ex Ultra-Premium Collection', 'The Pokémon Company', 350, 350, null, true, 0, 1000, 1000, { tags: ['Pokemon'] }),
+  product('dice-tower-dragon-keep', 'Dice tower: Dragon keep', 'Dice Goblin NZ', 45, 45, null, true, 0, 1000, 1000),
+];
+collections['new-additions'].products = [soldOut[0], ...arrivals.slice(0, 3), soldOut[2], ...arrivals.slice(3)];
+collections['trading-card-games'].products.splice(1, 0, soldOut[1]);
+const allProducts = Object.fromEntries([...arrivals, ...boardGames, ...library, membership, ...tcgShelf, ...rpgShelf, ...soldOut].map((p) => [p.handle, p]));
 const pages = {
   'book-a-table': { handle: 'book-a-table', title: 'Book a Table or Session', url: '/pages/book-a-table', content: '' },
   'gm-games': { handle: 'gm-games', title: 'Book a TTRPG session', url: '/pages/gm-games', content: '' },
@@ -189,6 +198,8 @@ const resolveSettings = (defs, values = {}) => {
 const globalSchema = readJson('config/settings_schema.json').flatMap((g) => g.settings || []);
 const globalSettings = resolveSettings(globalSchema, readJson('config/settings_data.json').current);
 export { globalSettings };
+/** r7 shell: the mock catalogue, so a check can mark a product sold out (or back in stock) while it runs */
+export { collections, allProducts };
 /** Test hooks: a logged-in customer and a request interceptor (used by live.mjs). */
 export const mockState = { customer: null, before: null };
 
@@ -478,7 +489,7 @@ const PAGES = {
   '/cart-open': () => renderPage('index', { cart: fullCart }),
   '/products/wingspan': () => renderPage('product', { product: boardGames[0], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
   '/products/library': () => renderPage('product', { product: library[1], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
-  '/collections/new-additions': () => renderPage('collection', { collection: collections['new-additions'], template: { name: 'collection' } }),
+  '/collections/new-additions': () => shopCollectionPage('new-additions'), // r7 shell: with the store's filters
   '/pages/book-a-table': () => renderPage('page.bookings', { page: pages['book-a-table'], template: { name: 'page', suffix: 'bookings' } }),
   '/pages/gm-games': () => renderPage('page.gm-games', { page: pages['gm-games'], template: { name: 'page', suffix: 'gm-games' } }),
   '/pages/events-calendar': () => renderPage('page.events-calendar', { page: pages['events-calendar'], template: { name: 'page', suffix: 'events-calendar' } }),
@@ -525,8 +536,14 @@ function libraryRoute(url) {
   }
   if (url.pathname === '/search') {
     const q = (url.searchParams.get('q') || '').toLowerCase();
-    const results = Object.values(allProducts).filter((p) => q && p.title.toLowerCase().includes(q)).map((p) => ({ ...p, object_type: 'product' }));
-    return () => renderPage('search', { search: { performed: Boolean(q), terms: q, results, results_count: results.length, filters: [], sort_options: [] }, request: { page_type: 'search', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'search' } });
+    let found = Object.values(allProducts).filter((p) => q && p.title.toLowerCase().includes(q));
+    // r7 shell: options[unavailable_products] as Shopify takes it (hide, show, or last by default), and the store's filters
+    const unavailable = url.searchParams.get('options[unavailable_products]') || 'last';
+    if (unavailable === 'hide') found = found.filter((p) => p.available);
+    else if (unavailable === 'last') found = [...found.filter((p) => p.available), ...found.filter((p) => !p.available)];
+    const { kept, filters } = storeFilters(found, url);
+    const results = kept.map((p) => ({ ...p, object_type: 'product' }));
+    return () => renderPage('search', { search: { performed: Boolean(q), terms: q, results, results_count: results.length, filters, sort_options: [] }, request: { page_type: 'search', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'search' } });
   }
   if (url.pathname === '/cart-membership') {
     const line = (p, qty, extra = {}) => ({ key: `${p.handle}:1`, url: p.url, image: p.featured_media, product: p, variant: { title: 'Default Title', quantity_rule: {} }, quantity: qty, final_line_price: p.price * qty, original_line_price: p.price * qty, properties: {}, line_level_discount_allocations: [], ...extra });
@@ -537,17 +554,53 @@ function libraryRoute(url) {
 }
 /* ---- shop sub-categories (nav worktree): the TCG and RPG collections, tag-filtered like the library
    (/collections/trading-card-games/pokemon), with collection.tags and all_tags ---- */
-function shopCollectionPage(handle, tags = [], sortBy = '') {
+/* ---- r7 shell: the store's filters (Search & Discovery: Availability, Price, Vendor) on shop collections and search,
+   read from the URL the way Shopify does (filter.v.availability=1|0, filter.v.price.gte/lte in dollars,
+   filter.p.vendor) and handed to Liquid as filter objects with counts, active values and add/remove links ---- */
+function storeFilters(products, url) {
+  const params = url.searchParams;
+  const list = (name) => params.getAll(name).flatMap((v) => v.split(',')).filter(Boolean);
+  const avail = list('filter.v.availability');
+  const vendors = list('filter.p.vendor');
+  const cents = (name) => (params.get(name) ? Math.round(parseFloat(params.get(name)) * 100) : null);
+  const min = cents('filter.v.price.gte');
+  const max = cents('filter.v.price.lte');
+  const pass = (p, skip) => (skip === 'a' || !avail.length || avail.includes(p.available ? '1' : '0'))
+    && (skip === 'v' || !vendors.length || vendors.includes(p.vendor))
+    && (skip === 'p' || ((min == null || p.price >= min) && (max == null || p.price <= max)));
+  const link = (edit) => { const u = new URL(url); u.searchParams.delete('page'); edit(u.searchParams); return `${u.pathname}${u.search}`; };
+  const listFilter = (label, param, chosen, skip, options) => {
+    const pool = products.filter((p) => pass(p, skip));
+    const values = options.map(([value, text, match]) => {
+      const active = chosen.includes(value);
+      return {
+        label: text, value, param_name: param, active, count: pool.filter(match).length,
+        url_to_add: link((s) => s.append(param, value)),
+        url_to_remove: link((s) => { s.delete(param); chosen.filter((c) => c !== value).forEach((c) => s.append(param, c)); }),
+      };
+    });
+    return { label, param_name: param, type: 'list', operator: 'OR', presentation: null, values, active_values: values.filter((v) => v.active), inactive_values: values.filter((v) => !v.active), url_to_remove: link((s) => s.delete(param)) };
+  };
+  const filters = [
+    listFilter('Availability', 'filter.v.availability', avail, 'a', [['1', 'In stock', (p) => p.available], ['0', 'Out of stock', (p) => !p.available]]),
+    { label: 'Price', param_name: 'filter.v.price', type: 'price_range', min_value: { param_name: 'filter.v.price.gte', value: min }, max_value: { param_name: 'filter.v.price.lte', value: max }, range_max: Math.max(0, ...products.map((p) => p.price)), url_to_remove: link((s) => { s.delete('filter.v.price.gte'); s.delete('filter.v.price.lte'); }) },
+    listFilter('Brand', 'filter.p.vendor', vendors, 'v', [...new Set(products.map((p) => p.vendor))].sort().map((v) => [v, v, (p) => p.vendor === v])),
+  ];
+  return { kept: products.filter((p) => pass(p)), filters, active: Boolean(avail.length || vendors.length || min != null || max != null) };
+}
+function shopCollectionPage(handle, tags = [], sortBy = '', url = new URL(`http://localhost/collections/${handle}`)) {
   const base = collections[handle];
-  const items = base.products.filter((p) => tags.every((t) => (p.tags || []).some((pt) => handleize(pt) === t)));
-  const view = { ...base, products: items, products_count: tags.length ? items.length : base.all_products_count, tags: [...new Set(items.flatMap((p) => p.tags || []))], all_tags: [...new Set(base.products.flatMap((p) => p.tags || []))], sort_by: sortBy };
+  const tagged = base.products.filter((p) => tags.every((t) => (p.tags || []).some((pt) => handleize(pt) === t)));
+  const { kept: items, filters, active } = storeFilters(tagged, url);
+  const view = { ...base, products: items, products_count: tags.length || active ? items.length : base.all_products_count, filters, tags: [...new Set(items.flatMap((p) => p.tags || []))], all_tags: [...new Set(base.products.flatMap((p) => p.tags || []))], sort_by: sortBy };
   return renderPage('collection', { collection: view, current_tags: tags.length ? tags : null, request: { page_type: 'collection', locale: { iso_code: 'en' }, origin: '', path: `/collections/${handle}` }, template: { name: 'collection', suffix: null } });
 }
 function shopCollectionRoute(url) {
-  const m = url.pathname.match(/^\/collections\/(trading-card-games|role-playing-game)(?:\/([^/]+))?\/?$/);
-  if (!m) return null;
+  // r7 shell: every shop collection (the library's has its own route), with the URL's filters
+  const m = url.pathname.match(/^\/collections\/([^/]+)(?:\/([^/]+))?\/?$/);
+  if (!m || m[1] === 'board-game-rental' || !collections[m[1]]) return null;
   const tags = m[2] ? m[2].split('+').map(handleize) : [];
-  return () => shopCollectionPage(m[1], tags, url.searchParams.get('sort_by') || '');
+  return () => shopCollectionPage(m[1], tags, url.searchParams.get('sort_by') || '', url);
 }
 PAGES['/collections/trading-card-games'] = () => shopCollectionPage('trading-card-games');
 PAGES['/collections/role-playing-game'] = () => shopCollectionPage('role-playing-game');
@@ -557,8 +610,13 @@ function librarySuggest(url) {
   const fields = url.searchParams.get('resources[options][fields]') || '';
   const byCode = (p) => (p.variants || []).some((v) => (fields.includes('variants.barcode') && v.barcode && String(v.barcode).toLowerCase() === q)
     || (fields.includes('variants.sku') && v.sku && String(v.sku).toLowerCase() === q));
-  const products = Object.values(allProducts).filter((p) => !p.unlisted && (p.title.toLowerCase().includes(q) || byCode(p))).slice(0, 6)
-    .map((p) => ({ title: p.title, handle: p.handle, url: p.url, price: (p.price / 100).toFixed(2), tags: p.tags || [], image: `/img/${encodeURIComponent(p.featured_media?.__seed || 'x')}.svg?x=1` }));
+  // r7 shell: resources[options][unavailable_products] as Shopify takes it (hide, show, or last by default)
+  const unavailable = url.searchParams.get('resources[options][unavailable_products]') || 'last';
+  let matches = Object.values(allProducts).filter((p) => !p.unlisted && (p.title.toLowerCase().includes(q) || byCode(p)));
+  if (unavailable === 'hide') matches = matches.filter((p) => p.available);
+  else if (unavailable === 'last') matches = [...matches.filter((p) => p.available), ...matches.filter((p) => !p.available)];
+  const products = matches.slice(0, 6)
+    .map((p) => ({ title: p.title, handle: p.handle, url: p.url, price: (p.price / 100).toFixed(2), available: Boolean(p.available), tags: p.tags || [], image: `/img/${encodeURIComponent(p.featured_media?.__seed || 'x')}.svg?x=1` }));
   return { resources: { results: { products, collections: [], pages: [] } } };
 }
 
@@ -842,7 +900,7 @@ export function serve(port = 4173) {
         res.end(JSON.stringify(librarySuggest(url)));
         return;
       }
-      const page = PAGES[url.pathname] || libraryRoute(url) || shopCollectionRoute(url);
+      const page = shopCollectionRoute(url) || PAGES[url.pathname] || libraryRoute(url); // r7 shell: shop collections read their filters first
       if (!page) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end('{}');
