@@ -4936,7 +4936,7 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
     }, 'made Thursday, held until 12pm Sunday');
     assert.deepEqual(first.data.holds.map((h) => h.id), [hold.id]);
     const already = await reserve({ copies: 2 });
-    assert.deepEqual([already.status, already.data.error], [409, "You've already reserved this one, friend. It's held until Sunday 4 October, 12pm."]);
+    assert.deepEqual([already.status, already.data.error], [409, "You've already reserved this one, friend. It's held until Sun 4 Oct, 12pm."]);
     // Anyone can see what's free; Sam sees his own
     assert.deepEqual((await libraryStatus('4401,gid://shopify/ProductVariant/4402'))['4401'], { copies: 2, held: 1, available: 1, nextFree: null, mine: null });
     assert.deepEqual((await libraryStatus('4401', '1001'))['4401'].mine, { id: hold.id, until: at('2026-10-04', 12) });
@@ -4965,6 +4965,8 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
     const forAri = await reserve({ customerId: '1004', variantId: '4405', title: 'Catan (Library)', shelfCode: 'DGLF' }, 'staff');
     assert.equal(forAri.status, 200, forAri.data.error);
     assert.deepEqual([forAri.data.hold.title, forAri.data.holds.length], ['Catan (Library)', 1]);
+    const again = await reserve({ customerId: '1004', variantId: '4405', title: 'Catan (Library)' }, 'staff');
+    assert.deepEqual([again.status, again.data.error], [409, 'Ari Moana already has this one on hold, until Mon 5 Oct, 12pm.']);
     // Emails: the staff (hold this game) and the member, for each hold
     await settle();
     const staffMail = mail.sent.filter((m) => m.to === 'staff@dicegoblin.test').map((m) => m.subject);

@@ -4316,6 +4316,13 @@ export class Lair {
     return `${day}, ${this.clockWord(ms, tz)}`;
   }
 
+  /** "Thu 8 Oct, 12pm": when a hold ends, as the library page shows it (for messages on the page) */
+  holdDate(ms, rules = this.rulesCache) {
+    const tz = rules?.tz || 'Pacific/Auckland';
+    const day = new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ms)).replace(',', '');
+    return `${day}, ${this.clockWord(ms, tz)}`;
+  }
+
   /** "Thu 12pm": the weekday and time a hold ends */
   holdDay(ms, rules = this.rulesCache) {
     const tz = rules?.tz || 'Pacific/Auckland';
@@ -4439,8 +4446,8 @@ export class Lair {
     if (same) {
       const named = forSomeone ? member.name || member.first_name : '';
       throw new RuleError(forSomeone
-        ? `${named ? `${named} already has` : 'They already have'} this one on hold, until ${this.holdWhen(same.until, rules)}.`
-        : `You've already reserved this one, friend. It's held until ${this.holdWhen(same.until, rules)}.`, 409);
+        ? `${named ? `${named} already has` : 'They already have'} this one on hold, until ${this.holdDate(same.until, rules)}.`
+        : `You've already reserved this one, friend. It's held until ${this.holdDate(same.until, rules)}.`, 409);
     }
     if (plan && theirs.length >= plan.games) {
       throw new RuleError(`Your plan has ${plural(plan.games, 'game', 'games')} at a time, and you've got ${theirs.length} reserved. Collect or cancel one first.`, 409);

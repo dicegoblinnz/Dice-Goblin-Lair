@@ -6,7 +6,7 @@
 // r6-travel.py runs out of time while wrangler is stopped; flow-r6-holds-expiry.mjs checks it went back on the shelf.
 import fs from 'node:fs';
 import { proxy, fake, check, summary } from './client.mjs';
-import { holdUntil, longWhen, shortWhen, sleep } from './r6-time.mjs';
+import { holdUntil, longWhen, pageWhen, shortWhen, sleep } from './r6-time.mjs';
 
 const HANA = '7211';
 const WIREMU = '7212';
@@ -47,7 +47,7 @@ const hanaMail = mails.find((e) => [].concat(e.to).includes('hana.k@example.com'
 check('the staff are emailed: hold this game, for whom, until when', staffMail?.subject === `Hold this game: Wingspan (Library) (DGL34) for Hana Kereama, until ${longWhen(until)}` && /hana\.k@example\.com/.test(staffMail.text), staffMail?.subject);
 check('Hana is emailed: on hold until then, collect it with her member code', hanaMail && hanaMail.text.includes(`Wingspan (Library) is on hold for you until ${longWhen(until)}. Collect it at the counter with your member code.`), hanaMail?.text?.slice(0, 300));
 const twice = await reserve(HANA, game(1, 'Wingspan (Library)'));
-check('reserving it again: "You\'ve already reserved this one"', twice.status === 409 && twice.data.error === `You've already reserved this one, friend. It's held until ${longWhen(until)}.`, twice.data);
+check('reserving it again: "You\'ve already reserved this one"', twice.status === 409 && twice.data.error === `You've already reserved this one, friend. It's held until ${pageWhen(until)}.`, twice.data);
 
 /* 3. Wiremu sees it reserved, and when it's back */
 const seen = (await status([V(1)], WIREMU))[V(1)];

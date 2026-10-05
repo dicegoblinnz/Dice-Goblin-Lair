@@ -32,8 +32,9 @@ export const wholeYears = (a, b) => {
   const [y2, m2, d2] = b.split('-').map(Number);
   return Math.max(0, y2 - y1 - (m2 < m1 || (m2 === m1 && d2 < d1) ? 1 : 0));
 };
-/** "Sunday 11 October, 12pm" and "Sun 12pm", the way the Lair app words a hold's end */
+/** "Sunday 11 October, 12pm" (emails), "Sun 11 Oct, 12pm" (messages on the page) and "Sun 12pm", the way the Lair app
+    words a hold's end */
 export const longWhen = (ms) => `${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(ms)).replace(',', '')}, 12pm`;
+export const pageWhen = (ms) => `${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ms)).replace(',', '')}, 12pm`;
 export const shortWhen = (ms) => `${new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'short' }).format(new Date(ms))} 12pm`;
-/** The emails the app has sent since `from` (an index into the fake's list), optionally only to one address */
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
