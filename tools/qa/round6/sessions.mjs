@@ -13,12 +13,14 @@
 //     null), on the calendar's cards and sheets and in the usual week.
 //   - Keyboard: focus moves into the sheet and the form, and back to the card that opened it.
 //   - No sideways scroll, no console errors.
-// Usage: DG_THEME=/path/to/theme QA_PORT=4712 node tools/qa/round6/sessions.mjs [phone|desktop]
+// Usage: DG_THEME=/path/to/theme QA_PORT=4712 [OUT=/dir] node tools/qa/round6/sessions.mjs [phone|desktop]
 // Needs npm install in tools/qa/theme-mock, Playwright at /opt/node-tools/node_modules/playwright, and python3 with
 // zxing-cpp and pillow for the QR codes (pip install zxing-cpp pillow).
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('/opt/node-tools/node_modules/playwright');
@@ -28,7 +30,8 @@ m.globalSettings.lair_mode = 'demo';
 
 const PORT = Number(process.env.QA_PORT || 4712);
 const BASE = `http://localhost:${PORT}`;
-const OUT = new URL('./shots/', import.meta.url).pathname;
+// Screenshots (and the QR crops it decodes) go outside the repo: OUT, or a folder in the system's temp directory
+const OUT = `${process.env.OUT || path.join(os.tmpdir(), 'dg-round6-sessions')}/`;
 fs.mkdirSync(OUT, { recursive: true });
 const DECODE = new URL('../round5/booking-qa/decode.py', import.meta.url).pathname;
 const SIZES = { phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
