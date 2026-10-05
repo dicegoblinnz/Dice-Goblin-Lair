@@ -271,15 +271,15 @@ for (const size of sizes) {
   await page.click('[data-group-new]');
   await page.waitForSelector('[data-group-form]');
   await page.fill('#sa-group-name', 'QA Dice Club');
-  await pick(page, 'lair-customer-pick[data-id="sa-group-organiser"]', 'sam', 'Sam Tautahi');
-  const organiserShown = flat(await page.textContent('lair-customer-pick[data-id="sa-group-organiser"] [data-pick-picked]'));
+  await pick(page, 'staff-customer-pick[data-id="sa-group-organiser"]', 'sam', 'Sam Tautahi');
+  const organiserShown = flat(await page.textContent('staff-customer-pick[data-id="sa-group-organiser"] [data-pick-picked]'));
   check(`${size}: the organiser is picked from the customer search`, /Sam Tautahi/.test(organiserShown), organiserShown);
-  await pick(page, 'lair-customer-pick[data-id="sa-group-people"]', 'aroha', 'Aroha Ngata');
-  await page.fill('lair-customer-pick[data-id="sa-group-people"] .sa-pick__input', 'mere');
-  await page.waitForSelector('lair-customer-pick[data-id="sa-group-people"] [data-pick]', { timeout: 5000 });
-  const nonMember = flat(await page.locator('lair-customer-pick[data-id="sa-group-people"] [data-pick]').first().innerText());
+  await pick(page, 'staff-customer-pick[data-id="sa-group-people"]', 'aroha', 'Aroha Ngata');
+  await page.fill('staff-customer-pick[data-id="sa-group-people"] .sa-pick__input', 'mere');
+  await page.waitForSelector('staff-customer-pick[data-id="sa-group-people"] [data-pick]', { timeout: 5000 });
+  const nonMember = flat(await page.locator('staff-customer-pick[data-id="sa-group-people"] [data-pick]').first().innerText());
   check(`${size}: the search finds a customer who isn't a Lair member yet`, /Mere Paewai/.test(nonMember) && /Not a Lair member yet/.test(nonMember), nonMember);
-  await page.locator('lair-customer-pick[data-id="sa-group-people"] [data-pick]').first().click();
+  await page.locator('staff-customer-pick[data-id="sa-group-people"] [data-pick]').first().click();
   await page.waitForTimeout(200);
   if (size === 'phone') await shot(page, `${size}-groups-new`, '[data-group-form]');
   await page.click('[data-group-form] button[type="submit"]');
@@ -287,7 +287,7 @@ for (const size of sizes) {
   const people = await page.$$eval('[data-group-people] .sa-person', (els) => els.map((el) => el.innerText.replace(/\s+/g, ' ').trim()));
   check(`${size}: made the group: organiser, a member and a new member`, people.length === 3 && people.some((p) => /Sam Tautahi Organiser/.test(p)) && people.some((p) => /Mere Paewai/.test(p) && /[A-Z]{2}-[A-Z]+-\d+/.test(p)), people);
   // add and take out
-  await pick(page, '[data-group-add] lair-customer-pick', 'grace', 'Grace Liu');
+  await pick(page, '[data-group-add] staff-customer-pick', 'grace', 'Grace Liu');
   await page.waitForTimeout(400);
   check(`${size}: someone added from the search is in`, (await page.locator('[data-group-people] .sa-person').count()) === 4 && /Grace Liu is in QA Dice Club/.test(await toast(page)), await toast(page));
   const aroha = page.locator('[data-group-people] .sa-person', { hasText: 'Aroha Ngata' });
@@ -336,7 +336,7 @@ for (const size of sizes) {
   check(`${size}: the pass form starts on Group`, await page.isChecked('[data-pass-owner-pick][value="group"]'));
   await page.check('[data-pass-owner-pick][value="customer"]', { force: true });
   await page.fill('#pass-new-label', 'Session pass: 5 sessions');
-  await pick(page, '[data-owner-panel="customer"] lair-customer-pick', 'hemi', 'Hemi Walker');
+  await pick(page, '[data-owner-panel="customer"] staff-customer-pick', 'hemi', 'Hemi Walker');
   const filled = await page.evaluate(() => ({ name: document.querySelector('#pass-new-cname').value, email: document.querySelector('#pass-new-cemail').value, ro: document.querySelector('#pass-new-cname').readOnly && document.querySelector('#pass-new-cemail').readOnly }));
   check(`${size}: a picked customer fills their name and email, read only`, filled.name === 'Hemi Walker' && filled.email === 'hemi@example.com' && filled.ro, filled);
   if (size === 'phone') await shot(page, `${size}-pass-customer`, '[data-pass-owner]');
