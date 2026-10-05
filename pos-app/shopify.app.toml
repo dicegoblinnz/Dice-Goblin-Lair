@@ -20,7 +20,9 @@ automatically_update_urls_on_dev = false
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 # read_products and read_inventory (round 6): how many copies of each library game there are, for library holds. Mo
 # approves them once in Shopify admin after the deploy; until then the Lair uses the copies the product page sends.
-scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory"
+# write_metaobjects and write_files (round 7): staff add and edit events (the lair_event metaobjects, and their
+# pictures) from the staff page instead of Shopify admin. Asked for now so Mo approves all four at once.
+scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory,write_metaobjects,write_files"
 use_legacy_install_flow = false
 
 [auth]
