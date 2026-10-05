@@ -130,6 +130,9 @@ function oneOffs() {
   ];
 }
 
+/** r7 shell: events a check adds while it runs (round7/shell.mjs adds a fortnightly and a monthly one), same shape as QA_EVENTS */
+export const extraEvents = [];
+
 export function lairEvents() {
   let rows = QA_EVENTS;
   try {
@@ -137,7 +140,7 @@ export function lairEvents() {
   } catch {
     // no events-data.json here: the stand-in
   }
-  rows = [...rows.map((e) => ({ ...e, ...(ROUND4[e.handle] || {}) })), ...oneOffs()];
+  rows = [...rows.map((e) => ({ ...e, ...(ROUND4[e.handle] || {}) })), ...oneOffs(), ...extraEvents];
   return rows.map((e) => ({
     system: { handle: e.handle, type: 'lair_event' },
     title: field(e.title),
