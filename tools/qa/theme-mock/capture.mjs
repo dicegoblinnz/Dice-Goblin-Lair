@@ -34,6 +34,8 @@ const ROUTES = [
   ['product-library-copy', '/products/library'],
   ['product-membership', '/products/board-game-rental-monthly'],
   ['collection', '/collections/new-additions'],
+  ['collection-tcg', '/collections/trading-card-games'],
+  ['collection-rpg', '/collections/role-playing-game'],
   ['collection-library', '/collections/board-game-rental'],
   ['library-landing', '/pages/board-game-rental'],
   ['library-terms', '/pages/dice-goblin-board-game-rental-membership'],

@@ -91,6 +91,23 @@ membership.variants[0].requires_selling_plan = true;
 membership.selected_or_first_available_selling_plan_allocation = membership.variants[0].selling_plan_allocations[0];
 membership.selected_selling_plan = null;
 membership.description = '<p>Mock membership description. The real one is set in Shopify admin.</p>';
+/* ---- shop sub-categories (nav worktree): the TCG and RPG collections carry the store's game and system tags, so their
+   chip rows render. Their first three products stay as they were (the home tiles show them). Nothing is tagged Gundam
+   or Star Wars Unlimited, so those two chips stay hidden. ---- */
+const tagged = (p, tags) => { p.tags = [...(p.tags || []), ...tags]; return p; };
+const tcgShelf = [
+  tagged(arrivals[2], ['One Piece']), tagged(arrivals[3], ['Cyberpunk TCG']), tagged(arrivals[7], ['Riftbound LOL']),
+  tagged(arrivals[4], ['Magic: The Gathering']), tagged(arrivals[15], ['Magic: The Gathering']),
+  tagged(product('pokemon-tcg-151-booster-bundle', 'Pokémon TCG: 151 Booster Bundle', 'The Pokémon Company', 55, 55, null, true, 6, 1000, 1000), ['Pokemon']),
+  tagged(arrivals[21], ['Yu-Gi-Oh']), tagged(arrivals[5], ['Riftbound LOL', 'Accessories']), tagged(arrivals[8], ['Accessories']),
+];
+const rpgShelf = [
+  arrivals[9], arrivals[10], arrivals[11],
+  tagged(product('dnd-players-handbook-2024', "D&D Player's Handbook (2024)", 'Wizards of the Coast', 85, 85, null, true, 5, 1000, 1000), ['Dungeons & Dragons']),
+  tagged(product('call-of-cthulhu-starter-set', 'Call of Cthulhu Starter Set', 'Chaosium', 45, 45, null, true, 3, 1000, 1000), ['Call of Cthulhu']),
+  tagged(product('mothership-core-set', 'Mothership: Core Set', 'Tuesday Knight Games', 70, 70, null, true, 2, 1000, 1000), ['Other RPGs']),
+  tagged(product('polyhedral-dice-set-moonstone', 'Polyhedral dice set: Moonstone', 'Dice Goblin NZ', 18, 18, null, true, 9, 1000, 1000), ['Accessories']),
+];
 const coll = (handle, title, products, count) => ({
   handle, title, url: `/collections/${handle}`, products, products_count: count ?? products.length, all_products_count: count ?? products.length,
   description: '', filters: [], sort_options: [{ value: 'created-descending', name: 'Newest' }, { value: 'price-ascending', name: 'Price, low to high' }], sort_by: '', default_sort_by: 'created-descending',
@@ -99,14 +116,14 @@ const collections = {
   'new-additions': coll('new-additions', 'New Additions', arrivals, 376),
   'board-game': coll('board-game', 'Board Games', boardGames, 143),
   'family-games': coll('family-games', 'Family Games', [boardGames[2], boardGames[4], boardGames[1]], 190),
-  'role-playing-game': coll('role-playing-game', 'Role Playing Game', [arrivals[9], arrivals[10], arrivals[11]], 105),
-  'trading-card-games': coll('trading-card-games', 'Trading Card Games', [arrivals[2], arrivals[3], arrivals[7]], 139),
+  'role-playing-game': coll('role-playing-game', 'Role Playing Game', rpgShelf, 105),
+  'trading-card-games': coll('trading-card-games', 'Trading Card Games', tcgShelf, 139),
   painting: coll('painting', 'Painting', [arrivals[0], arrivals[1], arrivals[5]], 4),
   'toys-plush': coll('toys-plush', 'Toys/Plush', [arrivals[1], arrivals[8], arrivals[6]], 8),
   'board-game-rental': coll('board-game-rental', 'Board Game Rental', [membership, ...library], 534),
 };
 membership.collections = [collections['board-game-rental']];
-const allProducts = Object.fromEntries([...arrivals, ...boardGames, ...library, membership].map((p) => [p.handle, p]));
+const allProducts = Object.fromEntries([...arrivals, ...boardGames, ...library, membership, ...tcgShelf, ...rpgShelf].map((p) => [p.handle, p]));
 const pages = {
   'book-a-table': { handle: 'book-a-table', title: 'Book a Table or Session', url: '/pages/book-a-table', content: '' },
   'gm-games': { handle: 'gm-games', title: 'GM games', url: '/pages/gm-games', content: '' },
@@ -122,14 +139,15 @@ const linklists = {
     title: 'Main menu',
     links: [
       link('Shop', '/collections/all', [link('New arrivals', '/collections/new-additions'), link('Board games', '/collections/board-game'), link('Family games', '/collections/family-games'), link('Role-playing games', '/collections/role-playing-game'), link('Trading card games', '/collections/trading-card-games'), link('Painting and hobby', '/collections/painting'), link('Plush and toys', '/collections/toys-plush'), link('Everything', '/collections/all')]),
-      link('The Lair', '/pages/book-a-table', [link('Book a table', '/pages/book-a-table'), link('GM games', '/pages/gm-games'), link('Events calendar', '/pages/events-calendar')]),
+      link('Book a table', '/pages/book-a-table'),
+      link('Book a TTRPG session', '/pages/gm-games'),
       link('Library', '/pages/board-game-rental'),
       link('Events', '/pages/events-calendar'),
       link('Contact', '/pages/contact'),
     ],
   },
   'dg-footer-shop': { title: 'Shop', links: [link('New arrivals', '/collections/new-additions'), link('Board games', '/collections/board-game'), link('Role-playing games', '/collections/role-playing-game'), link('Trading card games', '/collections/trading-card-games'), link('All products', '/collections/all')] },
-  'dg-footer-lair': { title: 'The Lair', links: [link('Book a table', '/pages/book-a-table'), link('GM games', '/pages/gm-games'), link('Events calendar', '/pages/events-calendar'), link('Board game library', '/pages/board-game-rental')] },
+  'dg-footer-lair': { title: 'The Lair', links: [link('Book a table', '/pages/book-a-table'), link('TTRPG sessions', '/pages/gm-games'), link('Events calendar', '/pages/events-calendar'), link('Board game library', '/pages/board-game-rental')] },
   footer: { title: 'Help', links: [link('Contact information', '/policies/contact-information'), link('Privacy policy', '/policies/privacy-policy'), link('Refund policy', '/policies/refund-policy'), link('Terms of service', '/policies/terms-of-service')] },
   'main-menu': { title: 'Main menu', links: [] },
 };
@@ -493,6 +511,22 @@ function libraryRoute(url) {
   }
   return null;
 }
+/* ---- shop sub-categories (nav worktree): the TCG and RPG collections, tag-filtered like the library
+   (/collections/trading-card-games/pokemon), with collection.tags and all_tags ---- */
+function shopCollectionPage(handle, tags = [], sortBy = '') {
+  const base = collections[handle];
+  const items = base.products.filter((p) => tags.every((t) => (p.tags || []).some((pt) => handleize(pt) === t)));
+  const view = { ...base, products: items, products_count: tags.length ? items.length : base.all_products_count, tags: [...new Set(items.flatMap((p) => p.tags || []))], all_tags: [...new Set(base.products.flatMap((p) => p.tags || []))], sort_by: sortBy };
+  return renderPage('collection', { collection: view, current_tags: tags.length ? tags : null, request: { page_type: 'collection', locale: { iso_code: 'en' }, origin: '', path: `/collections/${handle}` }, template: { name: 'collection', suffix: null } });
+}
+function shopCollectionRoute(url) {
+  const m = url.pathname.match(/^\/collections\/(trading-card-games|role-playing-game)(?:\/([^/]+))?\/?$/);
+  if (!m) return null;
+  const tags = m[2] ? m[2].split('+').map(handleize) : [];
+  return () => shopCollectionPage(m[1], tags, url.searchParams.get('sort_by') || '');
+}
+PAGES['/collections/trading-card-games'] = () => shopCollectionPage('trading-card-games');
+PAGES['/collections/role-playing-game'] = () => shopCollectionPage('role-playing-game');
 function librarySuggest(url) {
   const q = (url.searchParams.get('q') || '').toLowerCase();
   // resources[options][fields]=variants.barcode,variants.sku: a scanned code finds the product it's on (ml3)
@@ -784,7 +818,7 @@ export function serve(port = 4173) {
         res.end(JSON.stringify(librarySuggest(url)));
         return;
       }
-      const page = PAGES[url.pathname] || libraryRoute(url);
+      const page = PAGES[url.pathname] || libraryRoute(url) || shopCollectionRoute(url);
       if (!page) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end('{}');
