@@ -113,6 +113,7 @@ await p.click('[data-tab="passes"]');
 await p.waitForSelector('[data-pass-issue]');
 await p.click('[data-pass-issue]');
 await p.click('[data-pass-preset="Gift pack: 10 sessions"]');
+await p.check('[data-pass-owner-pick][value="name"]', { force: true }).catch(() => {}); // round 7: who it's for, Type a name
 await p.fill('[data-pass-new] [name="holderName"]', `Aroha ${L}`);
 await p.fill('[data-pass-new] [name="holderEmail"]', `aroha.${L}@example.com`);
 await p.fill('[data-pass-new] [name="pricePaid"]', '90');

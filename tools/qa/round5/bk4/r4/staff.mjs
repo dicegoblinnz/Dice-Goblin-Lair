@@ -191,9 +191,11 @@ await sleep(300);
 await page.click('[data-pass-issue]');
 await sleep(300);
 await page.click('[data-pass-preset="Gift pack: 10 sessions"]');
+// round 7: who it's for is a choice (a group, a customer or a typed name); a customer comes from the customer search
+await page.check('[data-pass-owner-pick][value="customer"]', { force: true });
 await page.fill('#find-pass', 'grace');
-await sleep(500);
-await page.click('[data-member-pick][data-key="pass"]');
+await page.waitForSelector('[data-owner-panel="customer"] [data-pick]', { timeout: 6000 });
+await page.click('[data-owner-panel="customer"] [data-pick]');
 await sleep(200);
 await page.fill('#pass-new-price', '90');
 const expires = await page.evaluate(() => window.Lair.store.time.addDays(window.Lair.store.time.today(), 120));
