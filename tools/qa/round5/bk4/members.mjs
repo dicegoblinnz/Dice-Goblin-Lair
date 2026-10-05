@@ -80,10 +80,13 @@ await sleep(500);
 await top();
 log('gift form:', (await text(page, '.staff-gift')).slice(0, 400));
 log('credit prefilled:', await page.inputValue('#gift-credit'));
+// round 6: the rolls start at 1 for each year with us (contract v6, suggested.rolls)
+log('rolls prefilled:', await page.inputValue('[data-gift-form] [name="rolls"]'), '|', await text(page, '#gift-rolls-hint'));
 await shot(page, `${tag}-m6-gift-form`);
 await check('gift form');
-// nothing picked: it says so
+// nothing picked: it says so (the prefilled rolls are cleared too, so nothing is picked)
 await page.fill('#gift-credit', '');
+await page.fill('[data-gift-form] [name="rolls"]', '0');
 await page.click('[data-gift-form] button[type="submit"]');
 await sleep(400);
 log('nothing picked:', await text(page, '[data-gift-form] [data-form-error]'));

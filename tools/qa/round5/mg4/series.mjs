@@ -33,7 +33,7 @@ for (const size of ['phone', 'desktop']) {
   await page.waitForSelector('[data-qr-dialog][open]');
   await page.waitForTimeout(450);
   const dlg = flat(await page.locator('[data-qr-dialog]').innerText());
-  want(tag, dlg, ['Your Goblin card', code, 'Show this at the counter to check in, pay your tab and earn rolls.'], 'big code');
+  want(tag, dlg, ['Your Goblin card', code, 'Show this at the counter to check in, stamp your card and pay your tab.'], 'big code');
   await shot(page, `${PREFIX}-bigcode-${size}`);
   await page.locator('[data-qr-dialog] [data-dialog-close]').click();
   // add to calendar
