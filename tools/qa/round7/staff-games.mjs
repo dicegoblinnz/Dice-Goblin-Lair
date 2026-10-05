@@ -152,6 +152,20 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
   await board.click(`${H} [data-sheet-foot] [data-game]`);
   await board.waitForTimeout(300);
   check(`${S} board: the GM sees their own game`, /Your game/.test(flat(await board.locator(`${H} .gm-own`).innerText().catch(() => ''))));
+  // Add a session uses the same day, time and table picker
+  await board.click(`${H} [data-add-session]`);
+  await board.waitForSelector(`${H} [data-session-form] gm-floor`);
+  await board.waitForTimeout(250);
+  const addPlan = await planFor(board, { days: 6 });
+  await board.click(`${H} [data-day="${addPlan.day}"]`);
+  await board.click(`${H} [data-slot="${18 * 60}"]`);
+  const already = await board.evaluate(() => [...document.querySelectorAll('[data-sheet] gm-floor [data-table].is-selected')].map((b) => b.dataset.table));
+  await tapTables(board, H, already.filter((id) => !addPlan.tables.includes(id)));
+  await tapTables(board, H, addPlan.tables.filter((id) => !already.includes(id)));
+  await board.click(`${H} [data-session-submit]`);
+  await board.waitForSelector(`${H} .gm-flash`, { timeout: 8000 }).catch(() => {});
+  const added = flat(await board.locator(`${H} .gm-flash`).innerText().catch(() => ''));
+  check(`${S} board: Add a session picks a day and tables on the map and adds the date`, /^Added \w+day \d{1,2} \w+\. Players can book it now\./.test(added), added);
   await board.locator(`${H} [data-close]`).first().click();
   await board.waitForTimeout(250);
   check(`${S} board: the new weekly game is on the board`, /Weekly/.test(flat(await board.locator('.gm-card', { hasText: `GM weekly (${S})` }).innerText().catch(() => ''))));
@@ -298,6 +312,29 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
   toast = flat(await staff.locator('.toast').innerText().catch(() => ''));
   check(`${S} players: Cancel invite cancels it, the seat stays`, /Invite cancelled/.test(toast) && (await staff.locator('[data-gm-uninvite]').count()) === 0
     && /Wren Invite/.test(flat(await staff.locator('[data-gm-players]').innerText())), toast);
+  // another invite, taken up when they log in with that email: they're a regular, and the reserved seat is theirs
+  const kahuEmail = `kahu.${S}@example.com`;
+  await staff.fill(`${A} [name="name"]`, 'Kahu Invite');
+  await staff.fill(`${A} [name="email"]`, kahuEmail);
+  await staff.check(`${A} [name="weekly"]`);
+  await staff.click(`${A} button[type="submit"]`);
+  await staff.waitForTimeout(700);
+  const KAHU = { id: 7700300077, first_name: 'Kahu', last_name: 'Rawiri', name: 'Kahu Rawiri', email: kahuEmail, phone: null, tags: [], orders_count: 0, orders: [], store_credit_account: { balance: 0 } };
+  await go(ctx, S, '/pages/gm-games', KAHU);
+  await (ctx.pages()[0]).waitForTimeout(800);
+  const taken = await demo(ctx.pages()[0]);
+  const kahuInvite = (taken.seriesInvites || []).find((x) => x.email === kahuEmail) || {};
+  const kahuRegular = (taken.seriesMembers || []).find((x) => x.seriesId === first.seriesId && x.customerId === '7700300077');
+  const kahuSeat = (taken.bookings || []).find((b) => b.id === kahuInvite.bookingId) || {};
+  check(`${S} players: logging in with the invited email makes them a regular, with the reserved seat`, kahuInvite.status === 'joined' && Boolean(kahuRegular) && kahuSeat.customerId === '7700300077' && kahuSeat.seriesId === first.seriesId,
+    JSON.stringify({ kahuInvite, kahuRegular, seat: kahuSeat.customerId }));
+  staff = await go(ctx, S, '/pages/lair-staff', STAFF);
+  await staff.click('[data-tab="games"]');
+  await staff.click(`.staff-gm-row[data-gm-manage="${first.id}"]`);
+  await staff.waitForSelector('[data-gm-players]');
+  await staff.waitForTimeout(300);
+  players = flat(await staff.locator('[data-gm-players]').innerText());
+  check(`${S} players: the staff view shows Kahu as a regular now`, /Kahu Invite Regular/.test(players) && (await staff.locator('[data-gm-stop]').count()) === 1, players);
 
   /* ---------- 4. staff move a session to another table (Edit this session) ---------- */
   await staff.click('[data-panel="games"] .staff-gm__more summary');
