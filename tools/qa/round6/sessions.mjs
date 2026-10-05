@@ -488,7 +488,7 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
     await guestJoin(page, { name: 'Ruby Tane', email: 'ruby@example.com', seats: 1 });
     await page.close();
     const mine = await open(size, '/pages/my-lair#ml-seats', { customer: RUBY, ctx });
-    const seats = flat(await mine.page.locator('[data-panel="seats"]').evaluate((el) => el.textContent));
+    const seats = flat(await mine.page.locator('[data-view="bookings"]').evaluate((el) => el.textContent)); // round 7: coming seats are in Bookings' one list
     check(`${S} My Lair: a guest's seat shows once they log in with that email`, seats.includes(title), `${title} | ${seats.slice(0, 300)}`);
     check(`${S} My Lair: no "GM game" on the seat cards`, !GM_GAME.test(await mainText(mine.page)));
     await ctx.close();

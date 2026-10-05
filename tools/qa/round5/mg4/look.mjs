@@ -10,7 +10,7 @@ for (const size of ['phone', 'desktop']) {
   await shotOf(page, '#ml-seats', `${PREFIX}-seats-${size}`);
   await view(page, 'wallet');
   await shotOf(page, '#ml-passes', `${PREFIX}-passes-${size}`);
-  await view(page, 'me');
+  await view(page, 'profile');
   await shotOf(page, '#ml-birthday', `${PREFIX}-bday-${size}`);
   const bill = await page.locator('[data-tab-card]').innerText().catch(() => 'no bill');
   console.log(tag, 'BILL:', bill.replace(/\s+/g, ' '));

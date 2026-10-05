@@ -48,6 +48,12 @@ const ROUTES = [
   ['contact', '/pages/contact'],
   ['my-lair-logged-out', '/pages/my-lair'],
   ['my-lair', '/pages/my-lair', { customer: CUSTOMER }],
+  // r7: My Lair's other sections (the row of six at the top)
+  ['my-lair-bookings', '/pages/my-lair#bookings', { customer: CUSTOMER }],
+  ['my-lair-wallet', '/pages/my-lair#wallet', { customer: CUSTOMER }],
+  ['my-lair-library', '/pages/my-lair#library', { customer: MEMBER }],
+  ['my-lair-tab', '/pages/my-lair#tab', { customer: CUSTOMER }],
+  ['my-lair-profile', '/pages/my-lair#profile', { customer: STAFF }],
   ['staff', '/pages/lair-staff', { customer: STAFF }],
   ['search', '/search?q=wing'],
   ['404', '/404'],

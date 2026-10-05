@@ -14,7 +14,7 @@ const run = Date.now() % 100000;
 await start();
 const problems = [];
 
-/** My Lair at one of its views: Home (the card and the dice), or #tab, #wallet, #bookings, #me. Everything is drawn into
+/** My Lair at one of its views: Home (the card and the dice), or #tab, #wallet, #bookings, #profile. Everything is drawn into
     every view, so text can be read from any of them; a click needs its view showing. */
 async function openLair(p, view = '') {
   if (p.url().includes('/pages/my-lair')) await p.goto('about:blank');
@@ -158,14 +158,15 @@ check(`${L}: My Lair shows the tab paid, and a fresh one can start`, /Paid\. Tha
 await shot(p, `mylair-tab-paid-${L}`);
 
 /* 5. Sam's bookings: the pass saved for check-in, what it covered */
-const bookingsText = await text(p, '[data-panel="bookings"]');
+const bookingsText = await text(p, '[data-view="bookings"]'); // round 7: what's coming is one list, the kinds' parts below it
 check(`${L}: Sam's Fancy room booking shows the pass covered $40 and it's paid`, bookingsText.includes(T.A.ref) && /\$40/.test(bookingsText), bookingsText.slice(0, 400));
 const joinsText = await text(p, '[data-panel="joins"]');
 check(`${L}: the cancelled online-paid sign-up says "Have a chat with us about a refund"`, /Have a chat with us about a refund/.test(joinsText), joinsText.slice(0, 400));
 problems.push(...p.problems);
 await sam.close();
 
-/* 6. Leo claims the unclaimed gift pack by its code; then nobody else can */
+/* 6. Leo claims the unclaimed gift pack by its code under "Got a code?" (round 7: POST /me/codes/redeem, one box for
+   pass, gift and loot codes); then nobody else can */
 const leo = await context(7104, DEVICE);
 const pl = await page(leo, `${L}/leo`);
 await openLair(pl, 'wallet');
@@ -173,15 +174,15 @@ await pl.fill('#ml-claim-code', 'zz nope 9');
 let cb = apiLog.length;
 await pl.click('[data-claim] [type="submit"]');
 await pl.waitForTimeout(800);
-let cc = apiLog.slice(cb).find((c) => c.method === 'POST' && c.route === 'me/passes/claim');
-check(`${L}: claiming an unknown code: 404 and the contract's words`, cc?.status === 404 && /No pass with that code\. Check it and try again, friend\./.test(await text(pl, '[data-claim-message]')), cc ? cc.text : 'no call');
+let cc = apiLog.slice(cb).find((c) => c.method === 'POST' && c.route === 'me/codes/redeem');
+check(`${L}: an unknown code: 404 and the contract's words`, cc?.status === 404 && /Gobgob doesn't know that code\. Check it and try again, friend\./.test(await text(pl, '[data-claim-message]')), cc ? cc.text : 'no call');
 await pl.fill('#ml-claim-code', seed.giftPass.code.toLowerCase().replace(/-/g, ' '));
 cb = apiLog.length;
 await pl.click('[data-claim] [type="submit"]');
 await pl.waitForTimeout(800);
-cc = apiLog.slice(cb).find((c) => c.method === 'POST' && c.route === 'me/passes/claim');
+cc = apiLog.slice(cb).find((c) => c.method === 'POST' && c.route === 'me/codes/redeem');
 const claimMsg = await text(pl, '[data-claim-message]');
-check(`${L}: Leo claims the gift pack (typed loosely): it's his`, cc?.status === 200 && JSON.parse(cc.text).pass?.code === seed.giftPass.code && /It's yours!/.test(claimMsg), cc ? `${cc.text.slice(0, 160)} | ${claimMsg}` : 'no call');
+check(`${L}: Leo claims the gift pack (typed loosely): it's his`, cc?.status === 200 && JSON.parse(cc.text).pass?.code === seed.giftPass.code && /^Added to your wallet: /.test(claimMsg), cc ? `${cc.text.slice(0, 160)} | ${claimMsg}` : 'no call');
 check(`${L}: his passes list shows it`, (await text(pl, '[data-passes]')).includes(seed.giftPass.code));
 await shot(pl, `mylair-claim-${L}`);
 problems.push(...pl.problems.filter((x) => !/404/.test(x)));
@@ -193,9 +194,9 @@ check(`${L}: someone else claiming it: 409 and the contract's words`, stolen.sta
 const kiri = await context(7102, DEVICE);
 const k = await page(kiri, `${L}/kiri`);
 await openLair(k, 'bookings');
-const kb = await text(k, '[data-panel="bookings"]');
+const kb = await text(k, '[data-view="bookings"]');
 check(`${L}: Kiri's booking: "Splitting the bill", paid $20 of $40, $20 left`, kb.includes(T.B.ref) && /Splitting the bill/.test(kb) && /Paid \$20 of \$40 · \$20 left/.test(kb), kb.slice(0, 500));
-await k.evaluate((ref) => [...document.querySelectorAll('[data-panel="bookings"] .ml-ticket, [data-panel="bookings"] article')].find((x) => x.textContent.includes(ref))?.scrollIntoView({ block: 'center' }), T.B.ref);
+await k.evaluate((ref) => [...document.querySelectorAll('[data-view="bookings"] .ml-ticket, [data-view="bookings"] article')].find((x) => x.textContent.includes(ref))?.scrollIntoView({ block: 'center' }), T.B.ref);
 await shot(k, `mylair-split-${L}`);
 problems.push(...k.problems);
 await kiri.close();
