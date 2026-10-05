@@ -511,6 +511,14 @@ for (const size of sizes) {
     }
   });
   check(`${size}: memberDetail of nobody is the 404`, missing === '404 No member with that customer ID.', missing);
+  // Issue a pass from their page: the form opens on them, their name and email filled in
+  await page.click('[data-person-card] [data-member-pass]');
+  await page.waitForSelector('[data-pass-new]');
+  await page.waitForFunction(() => document.querySelector('#pass-new-cname')?.value, null, { timeout: 5000 }).catch(() => {});
+  const prefill = await page.evaluate(() => ({ owner: document.querySelector('[data-pass-owner-pick]:checked')?.value, name: document.querySelector('#pass-new-cname').value, email: document.querySelector('#pass-new-cemail').value }));
+  check(`${size}: "Issue a pass" on a member's page opens on that customer`, prefill.owner === 'customer' && prefill.name === 'Sam Tautahi' && prefill.email === 'sam@example.com', prefill);
+  await page.click('[data-pass-back]');
+  await tab(page, 'members');
   await page.click('[data-members-back]');
   await page.waitForSelector('[data-birthdays] .staff-birthday', { timeout: 10000 });
   const bdays = await page.$$eval('[data-birthdays] .staff-birthday__meta', (els) => els.map((el) => el.innerText.replace(/\s+/g, ' ').trim()));
