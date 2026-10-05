@@ -1,10 +1,11 @@
 // Round 6, library holds: reserving a library game, in demo mode through the theme mock, phone (390x844) then desktop
 // (1280x800). Prints a PASS or FAIL line for each check and exits 1 on any FAIL.
 // Usage: DG_THEME=/path/to/theme [PORT=4732] node tools/qa/round6/library.mjs [phone|desktop]
-// The page clock is pinned to Monday 5 October 2026, 5pm in Auckland (NZDT), so a hold made then is held until 12pm on
-// Thursday 8 October. One more check pins it to Friday 2 April 2027, 9pm, two days before daylight saving ends: held
-// until 12pm (NZST) on Monday 5 April. The mock's library copies have fixed ids (theme-mock/render.mjs), and the demo
-// seeds a hold by another member on 7 Wonders Duel (assets/lair-demo.js).
+// The page clock is pinned to Monday 5 October 2026, 5pm in Auckland (NZDT), so a hold made then is held until midnight
+// at the end of Wednesday 7 October (round 7: the third day, counting the day it's made; the until is 00:00 Thursday).
+// One more check pins it to Friday 2 April 2027, 9pm, two days before daylight saving ends: held until midnight at the
+// end of Sunday 4 April (00:00 Monday NZST). The mock's library copies have fixed ids (theme-mock/render.mjs), and the
+// demo seeds a hold by another member on 7 Wonders Duel (assets/lair-demo.js).
 // Needs: npm install in tools/qa/theme-mock, and Playwright at /opt/node-tools/node_modules/playwright.
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -42,9 +43,9 @@ const clockAt = (ms) => `(() => { const OFFSET = ${ms} - Date.now(); const Real 
   class LairDate extends Real { constructor(...a) { if (a.length === 0) super(Real.now() + OFFSET); else super(...a); } static now() { return Real.now() + OFFSET; } }
   globalThis.Date = LairDate; })();`;
 const MONDAY_5PM = Date.UTC(2026, 9, 5, 4, 0); // Mon 5 Oct 2026, 5pm NZDT
-const THURSDAY_NOON = Date.UTC(2026, 9, 7, 23, 0); // Thu 8 Oct 2026, 12pm NZDT
+const WEDNESDAY_MIDNIGHT = Date.UTC(2026, 9, 7, 11, 0); // 00:00 Thu 8 Oct 2026 NZDT: "midnight, Wed 7 Oct" (round 7)
 const FRIDAY_9PM = Date.UTC(2027, 3, 2, 8, 0); // Fri 2 Apr 2027, 9pm NZDT (daylight saving ends Sun 4 Apr, 3am)
-const MONDAY_NOON_NZST = Date.UTC(2027, 3, 5, 0, 0); // Mon 5 Apr 2027, 12pm NZST
+const SUNDAY_MIDNIGHT_NZST = Date.UTC(2027, 3, 4, 12, 0); // 00:00 Mon 5 Apr 2027 NZST: "midnight, Sun 4 Apr" (round 7)
 
 let failed = 0;
 const results = [];
@@ -104,17 +105,18 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   const joinHref = (await join.count()) ? await join.getAttribute('href') : '';
   check(tag, /#plans$/.test(joinHref) && !(await page.locator('[data-reserve]').count()), 'no plan: Join the library to reserve games, no Reserve button', joinHref);
 
-  // 3. A member reserves it: held until 12pm on the third day (made Monday, held until 12pm Thursday)
+  // 3. A member reserves it: held until midnight on the third day, counting the day it's made (round 7: made Monday,
+  // held until midnight Wednesday)
   await visit(page, STASH, GAME.baker.path);
   const offer = await block(page);
-  check(tag, offer.includes('1 copy on the shelf') && offer.includes("we'll hold it until Thu 8 Oct, 12pm"), 'member: copies on the shelf and the hold time before reserving', offer);
+  check(tag, offer.includes('1 copy on the shelf') && offer.includes("we'll hold it until midnight, Wed 7 Oct"), 'member: copies on the shelf and the hold time before reserving', offer);
   await page.click('[data-reserve]');
   await page.waitForSelector('library-reserve[data-state="mine"]', { timeout: 5000 }).catch(() => {});
   const mine = await block(page);
   const made = (await holdsInDemo(page)).find((h) => h.variantId === GAME.baker.variant && h.customerId === String(STASH.id));
-  check(tag, (await state(page)) === 'mine' && mine.includes("You've reserved this") && mine.includes("We're holding it until Thu 8 Oct, 12pm."),
-    'member reserves: "You\'ve reserved this. We\'re holding it until Thu 8 Oct, 12pm."', mine);
-  check(tag, Boolean(made) && made.until === THURSDAY_NOON && made.status === 'held', 'the hold ends at 12pm Thursday, Lair time', made ? new Date(made.until).toISOString() : 'no hold');
+  check(tag, (await state(page)) === 'mine' && mine.includes("You've reserved this") && mine.includes("We're holding it until midnight, Wed 7 Oct."),
+    'member reserves: "You\'ve reserved this. We\'re holding it until midnight, Wed 7 Oct."', mine);
+  check(tag, Boolean(made) && made.until === WEDNESDAY_MIDNIGHT && made.status === 'held', 'the hold ends at midnight at the end of Wednesday, Lair time', made ? new Date(made.until).toISOString() : 'no hold');
   check(tag, mine.includes('Cancel my reservation') && (await page.locator('library-reserve a[href*="my-lair#ml-library"]').count()) === 1, 'theirs: Cancel my reservation and a link to My Lair');
   await page.waitForTimeout(200); // the live region speaks a moment later, so the same words twice still count
   const said = await page.locator('[data-reserve-say]').textContent();
@@ -125,11 +127,11 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   // 4. Another member sees it reserved, with when it's back on the shelf, and no button
   await visit(page, GRAB, GAME.baker.path);
   const other = await block(page);
-  check(tag, (await state(page)) === 'reserved' && other.includes("It's back on the shelf by Thu 8 Oct, 12pm if it isn't collected.") && !(await page.locator('[data-reserve]').count()),
-    'another member: "Reserved right now. It\'s back on the shelf by Thu 8 Oct, 12pm if it isn\'t collected."', other);
-  // and the demo's seeded hold: Aroha has 7 Wonders Duel until Wed 7 Oct, 12pm
+  check(tag, (await state(page)) === 'reserved' && other.includes("It's back on the shelf by midnight, Wed 7 Oct if it isn't collected.") && !(await page.locator('[data-reserve]').count()),
+    'another member: "Reserved right now. It\'s back on the shelf by midnight, Wed 7 Oct if it isn\'t collected."', other);
+  // and the demo's seeded hold: Aroha has 7 Wonders Duel until midnight at the end of Tuesday (made Sunday evening)
   await visit(page, GRAB, GAME.duel.path);
-  check(tag, (await state(page)) === 'reserved' && (await block(page)).includes('Wed 7 Oct, 12pm'), 'a seeded hold by another member shows as reserved', await block(page));
+  check(tag, (await state(page)) === 'reserved' && (await block(page)).includes('midnight, Tue 6 Oct'), 'a seeded hold by another member shows as reserved', await block(page));
   await page.locator('library-reserve').screenshot({ path: `${OUT}${tag}-library-reserved.png` });
 
   // 5. The plan's limit: a Grab member (1 game) with one reserved gets the app's own words
@@ -146,8 +148,8 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await page.click('[data-reserve]');
   await page.waitForSelector('library-reserve .library-reserve__error', { timeout: 5000 }).catch(() => {});
   const limit = flat(await page.locator('library-reserve .library-reserve__error').textContent().catch(() => ''));
-  const mineLink = page.locator('library-reserve .library-reserve__error a[href$="my-lair#ml-library"]', { hasText: 'See my reserved games' });
-  check(tag, limit.startsWith("Your plan has 1 game at a time, and you've got 1 reserved. Collect or cancel one first.")
+  const mineLink = page.locator('library-reserve .library-reserve__error a[href$="my-lair#ml-library"]', { hasText: 'See My Library' });
+  check(tag, limit.startsWith("Your plan has 1 game at a time, and you've got 1: 1 reserved. Return one or cancel a hold first.")
     && (await page.getAttribute('library-reserve .library-reserve__error', 'role')) === 'alert' && (await mineLink.count()) === 1,
   'plan limit: the 409 message, as it comes, and a link to their reserved games', limit);
   await page.locator('library-reserve').screenshot({ path: `${OUT}${tag}-library-limit.png` });
@@ -163,7 +165,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await page.waitForSelector('library-reserve[data-state="reserved"]', { timeout: 5000 }).catch(() => {});
   const race = await block(page);
   const raceFocus = await page.evaluate(() => document.activeElement && document.activeElement.matches('[data-reserve-status]'));
-  check(tag, (await state(page)) === 'reserved' && race.includes("It's back on the shelf by Thu 8 Oct, 12pm") && !race.includes('Every copy') && raceFocus,
+  check(tag, (await state(page)) === 'reserved' && race.includes("It's back on the shelf by midnight, Wed 7 Oct") && !race.includes('Every copy') && raceFocus,
     'beaten to the last copy: the page says it\'s reserved now, focus on the news', race);
   await page.evaluate(() => {
     const be = window.Lair.store.backend;
@@ -244,7 +246,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await baker.locator('[data-lib-act="held"]').click();
   await page.waitForTimeout(300);
   const again = (await holdsInDemo(page)).find((h) => h.id === released.id);
-  check(tag, again && again.status === 'held' && again.until === THURSDAY_NOON, 'staff: Undo holds it again, until 12pm on the third day');
+  check(tag, again && again.status === 'held' && again.until === WEDNESDAY_MIDNIGHT, 'staff: Undo holds it again, until midnight on the third day');
   await page.locator('[data-panel="library"]').screenshot({ path: `${OUT}${tag}-staff-library.png` });
   check(tag, (await overflow(page)) === 0, 'staff page: no sideways scroll');
   // a scanned member card says what they've reserved
@@ -258,13 +260,13 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   check(tag, page.errors.length === 0, 'no console or page errors', page.errors.slice(0, 3).join(' | '));
   await ctx.close();
 
-  // 9. Daylight saving: made Friday 2 April 2027 at 9pm (NZDT), held until 12pm Monday 5 April (NZST)
+  // 9. Daylight saving: made Friday 2 April 2027 at 9pm (NZDT), held until midnight at the end of Sunday 4 April (NZST)
   const late = await context(size, FRIDAY_9PM);
   await visit(late.page, STASH, GAME.codenames.path);
   await late.page.click('[data-reserve]');
   await late.page.waitForSelector('library-reserve[data-state="mine"]', { timeout: 5000 }).catch(() => {});
   const dst = (await holdsInDemo(late.page)).find((h) => h.variantId === GAME.codenames.variant && h.customerId === String(STASH.id));
-  check(tag, Boolean(dst) && dst.until === MONDAY_NOON_NZST && (await block(late.page)).includes('Mon 5 Apr, 12pm'), 'daylight saving: made Fri 9pm, held until 12pm Mon (NZST)', dst ? new Date(dst.until).toISOString() : 'no hold');
+  check(tag, Boolean(dst) && dst.until === SUNDAY_MIDNIGHT_NZST && (await block(late.page)).includes('midnight, Sun 4 Apr'), 'daylight saving: made Fri 9pm, held until midnight Sun (NZST)', dst ? new Date(dst.until).toISOString() : 'no hold');
   check(tag, late.page.errors.length === 0, 'no console or page errors (daylight saving)', late.page.errors.slice(0, 3).join(' | '));
   await late.ctx.close();
 }

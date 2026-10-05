@@ -76,6 +76,8 @@ m.mockState.before = async (req, res, url) => {
   if (route === '/games/g1/image') return send(200, { image: 'https://cdn.example/x.jpg' });
   // Round 6: the staff page loads the library holds for its Library tab's count (contract v6, section 4)
   if (route === '/library/holds') return send(200, { holds: [] });
+  // Round 7: and the games at home (contract v7, section 6), for that tab and a scanned member's card
+  if (route === '/library/loans') return send(200, { loans: [] });
   return send(404, { error: 'Not found' });
 };
 const server = await m.serve(PORT);
