@@ -213,7 +213,7 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   }));
   check(size, 'spend shows financial years and 24 months', spend.years.length >= 1 && spend.years.length <= 4 && /^\d{4}\/\d{2} \(this year\)/.test(spend.years[0])
     && spend.months === 24 && /in all/.test(spend.total || ''), `${spend.years.join(' | ')}; ${spend.months} months; ${spend.total}`);
-  // birthdays: the gift form's rolls start at max(1, years with us)
+  // birthdays: the gift form's rolls start at 0 (round 7, MO.md decision 5: no rolls by years with us; staff can still add some)
   await sp.click('[data-members-back]');
   await sp.waitForSelector('[data-birthdays] .staff-birthday', { timeout: 10000 });
   const people = await sp.evaluate(() => [...document.querySelectorAll('[data-birthdays] .staff-birthday [data-gift-open]')].slice(0, 3).map((b) => b.dataset.giftOpen));
@@ -225,13 +225,12 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
     const value = Number(await sp.inputValue('[data-gift-form] [name="rolls"]'));
     const hint = flat(await sp.locator('#gift-rolls-hint').innerText());
     const row = await sp.evaluate(async (x) => (await window.Lair.store.backend.members({ q: x }))[0], who);
-    const want = Math.min(20, Math.max(1, row.yearsWithUs));
     seenRolls.push(`${row.name}: ${value} (years ${row.yearsWithUs})`);
-    if (value !== want || !/1 roll for each year with us/.test(hint)) rollsOk = false;
+    if (value !== 0 || /each year with us/.test(hint)) rollsOk = false;
     await sp.click('[data-gift-back]');
     await sp.waitForSelector('[data-birthdays] .staff-birthday', { timeout: 5000 });
   }
-  check(size, 'birthday rolls default to max(1, years with us)', rollsOk, seenRolls.join('; '));
+  check(size, 'birthday gifts start with no rolls (round 7)', rollsOk, seenRolls.join('; '));
   // the gift pass on the staff page says where it came from
   await sp.click('[data-tab="passes"]');
   await sp.waitForSelector('.staff-pass-row', { timeout: 10000 });
