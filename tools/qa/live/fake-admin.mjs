@@ -92,9 +92,12 @@ const rooms = [
   { handle: 'fancy-room', name: 'Fancy room', code: 'F', table_count: '1', seats: '12', price: '15.0', min_people: '4', sort_order: '4' },
 ].map(({ handle, ...f }) => ({ handle, capabilities: { publishable: { status: 'ACTIVE' } }, fields: Object.entries(f).map(([key, value]) => ({ key, value })) }));
 
-/** The renderer's Liquid-shaped events as Admin API metaobject nodes (every value a string, like Shopify sends) */
+/**
+ * The renderer's Liquid-shaped events as Admin API metaobject nodes (every value a string, like Shopify sends). Round 7:
+ * with the events editor's writes on top (r7.eventEdits), so the Lair's own rules (LairData) see what it wrote.
+ */
 function eventNodes() {
-  return lairEvents().map((e) => {
+  return editedEvents(lairEvents().map((e) => {
     const out = [];
     for (const [key, v] of Object.entries(e)) {
       if (key === 'system' || key === 'image' || key === 'product' || key === 'link') continue;
@@ -108,8 +111,93 @@ function eventNodes() {
       out.push({ key, value: text });
     }
     return { handle: e.system.handle, capabilities: { publishable: { status: 'ACTIVE' } }, fields: out };
-  });
+  }));
 }
+
+/* ---------- round 7 (backend-b): the events editor's entries, event pictures and the staged upload target ----------
+   Operations: LairCustomers (the staff picker), LairEventsAdmin(Plain), LairEventHandle, LairEventCreate/Update/Delete,
+   LairStagedUpload and LairFileCreate (contract v7 section 13). Control routes:
+     POST /__fake/set { denyCustomers, denyEventRefs, denyEventWrites, denyFiles }   like a store that hasn't approved
+                                    protected customer data, read_files/read_products, write_metaobjects or write_files
+     GET  /__fake/events            every lair_event entry as the Admin API keeps it now
+     GET  /__fake/uploads           what was posted to the staged upload target (/__upload)                            */
+const r7 = {
+  // handle -> { id, fields: { key: value }, updatedAt, created, deleted }: what the editor wrote over the renderer's events
+  eventEdits: new Map(),
+  // MediaImage gid -> { url, alt, filename }; staged upload key -> { filename, size, type, names (the form's fields, in order) }
+  files: new Map(),
+  uploads: new Map(),
+  // ticket products an event can name
+  products: new Map([['gid://shopify/Product/9990001', { handle: 'riftbound-store-championship-ticket', title: 'Riftbound store championship ticket' }]]),
+};
+const EVENT_KEYS = ['title', 'event_type', 'starts_at', 'ends_at', 'repeat', 'repeat_until', 'skip_dates', 'description', 'image', 'capacity', 'price_note',
+  'product', 'link', 'tables', 'entry_fee', 'game_tables', 'lock_tables', 'payment', 'game'];
+const FIELD_TYPES = { event_type: 'single_line_text_field', starts_at: 'date_time', ends_at: 'date_time', repeat_until: 'date', skip_dates: 'list.date', description: 'multi_line_text_field', image: 'file_reference', capacity: 'number_integer', product: 'product_reference', link: 'url', entry_fee: 'number_decimal', lock_tables: 'boolean' };
+const BASE_UPDATED = '2026-10-05T08:05:47Z';
+/** A made-up metaobject gid that stays the same for a handle */
+const eventGid = (handle) => `gid://shopify/Metaobject/${611300000000 + [...handle].reduce((n, c) => (n * 31 + c.charCodeAt(0)) % 9999991, 7)}`;
+function editedEvents(base) {
+  const out = [];
+  for (const n of base) {
+    const edit = r7.eventEdits.get(n.handle);
+    if (edit?.deleted) continue;
+    out.push(edit ? { ...n, fields: Object.entries(edit.fields).filter(([, v]) => v != null).map(([key, value]) => ({ key, value })) } : n);
+  }
+  for (const [handle, edit] of r7.eventEdits) {
+    if (edit.created && !edit.deleted && !base.some((n) => n.handle === handle)) {
+      out.push({ handle, capabilities: { publishable: { status: 'ACTIVE' } }, fields: Object.entries(edit.fields).filter(([, v]) => v != null).map(([key, value]) => ({ key, value })) });
+    }
+  }
+  return out;
+}
+/** Every lair_event entry as the Admin API keeps it: { id, handle, updatedAt, fields: { key: value | null } } */
+const adminEvents = () => eventNodes().map((n) => {
+  const edit = r7.eventEdits.get(n.handle);
+  return { id: edit?.id || eventGid(n.handle), handle: n.handle, updatedAt: edit?.updatedAt || BASE_UPDATED, fields: Object.fromEntries(n.fields.map((f) => [f.key, f.value])) };
+});
+/** An entry as a metaobject node: every field of the definition (null when empty), with the picture's and product's details when asked */
+function adminNode(e, refs) {
+  return {
+    id: e.id, handle: e.handle, updatedAt: e.updatedAt,
+    fields: EVENT_KEYS.map((key) => {
+      const value = e.fields[key] ?? null;
+      const field = { key, type: FIELD_TYPES[key] || 'single_line_text_field', value };
+      if (refs && (key === 'image' || key === 'product')) {
+        const file = key === 'image' && value ? r7.files.get(value) : null;
+        const product = key === 'product' && value ? r7.products.get(value) : null;
+        field.reference = file ? { __typename: 'MediaImage', id: value, alt: file.alt, image: { url: file.url, width: 800, height: 450 } }
+          : product ? { __typename: 'Product', id: value, ...product } : null;
+      }
+      return field;
+    }),
+  };
+}
+/** What Shopify would say about a value the lair_event definition doesn't take, or null */
+function eventValueError(key, value) {
+  if (!EVENT_KEYS.includes(key)) return `Field definition "${key}" does not exist`;
+  if (value === '') return null;
+  const choices = { event_type: ['tcg', 'rpg', 'wargame', 'market', 'social', 'tournament', 'learn', 'launch', 'other'], repeat: ['weekly', 'fortnightly', 'monthly'], payment: ['In store', 'Online', 'Online or in store'] }[key];
+  if (choices && !choices.includes(value)) return `Value does not exist in provided choices: ${choices.join(', ')}`;
+  if ((key === 'starts_at' || key === 'ends_at') && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(value)) return 'Value must be in YYYY-MM-DDTHH:MM:SS format';
+  if (key === 'repeat_until' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Value must be in YYYY-MM-DD format';
+  if (key === 'skip_dates') {
+    try {
+      const list = JSON.parse(value);
+      if (!Array.isArray(list) || !list.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))) return 'Value must be a list of dates';
+    } catch {
+      return 'Value must be a list of dates';
+    }
+  }
+  if (key === 'capacity' && !(/^\d+$/.test(value) && Number(value) >= 1)) return 'Value must be greater than or equal to 1';
+  if (key === 'entry_fee' && !/^\d+(\.\d{1,2})?$/.test(value)) return 'Value must have at most 2 decimal places';
+  if (key === 'lock_tables' && !['true', 'false'].includes(value)) return 'Value must be true or false';
+  if (key === 'image' && !r7.files.has(value)) return 'Value must be a file reference string';
+  if (key === 'product' && !/^gid:\/\/shopify\/Product\/\d+$/.test(value)) return 'Value must be a product reference string';
+  if (key === 'game' && value.length > 40) return 'Value has a maximum length of 40';
+  if (key === 'link' && !/^https?:\/\/\S+$/.test(value)) return 'Value must be a valid URL';
+  return null;
+}
+const denied = (what, scope) => ({ __errors: [{ message: `Access denied for ${what} field. Required access: \`${scope}\` access scope.`, extensions: { code: 'ACCESS_DENIED' } }] });
 
 const settingsText = () => fs.readFileSync(path.join(THEME, 'config/settings_data.json'), 'utf8');
 
@@ -122,6 +210,91 @@ function answer(op, query, v) {
         main: { nodes: [{ id: 'gid://shopify/OnlineStoreTheme/150000000001', name: 'Dice Goblin (t5 preview)', files: { nodes: [{ body: { content: settingsText() } }] } }] },
         shop: { name: 'Dice Goblin NZ', shopAddress: { address1: '56/691 Manukau Road', address2: 'Royal Oak', city: 'Auckland', zip: '1023' } },
       };
+    // Round 7 (backend-b): the staff customer picker, Shopify's own search over names and emails (protected customer
+    // data: denyCustomers answers like a store without that approval)
+    case 'LairCustomers': {
+      if (state.denyCustomers) return denied('customers', 'read_customers');
+      const q = String(v.query || '').replace(/"/g, '').trim().toLowerCase();
+      const nodes = Object.entries(state.people)
+        .filter(([, p]) => [p.name, p.email].some((x) => String(x || '').toLowerCase().includes(q)))
+        .slice(0, 10)
+        .map(([id, p]) => {
+          const [first, ...rest] = String(p.name || '').split(/\s+/);
+          return { id: `gid://shopify/Customer/${id}`, displayName: p.name || p.email, firstName: first || null, lastName: rest.join(' ') || null, verifiedEmail: p.verified !== false, defaultEmailAddress: p.email ? { emailAddress: p.email } : null };
+        });
+      return { customers: { nodes } };
+    }
+    // Round 7 (backend-b): the events editor reads and writes the entries above (r7.eventEdits). denyEventRefs: no
+    // read_files or read_products yet (the Lair reads again without references); denyEventWrites: write_metaobjects not
+    // approved yet. Values are checked the way the definition checks them.
+    case 'LairEventsAdmin':
+    case 'LairEventsAdminPlain':
+      if (op === 'LairEventsAdmin' && state.denyEventRefs) return denied('reference', 'read_files');
+      return { metaobjects: { nodes: adminEvents().map((e) => adminNode(e, op === 'LairEventsAdmin')), pageInfo: { hasNextPage: false, endCursor: null } } };
+    case 'LairEventHandle': {
+      const e = v.handle?.type === 'lair_event' ? adminEvents().find((x) => x.handle === v.handle?.handle) : null;
+      return { metaobjectByHandle: e ? adminNode(e, false) : null };
+    }
+    case 'LairEventCreate':
+    case 'LairEventUpdate': {
+      const name = op === 'LairEventCreate' ? 'metaobjectCreate' : 'metaobjectUpdate';
+      if (state.denyEventWrites) return denied(name, 'write_metaobjects');
+      const existing = op === 'LairEventUpdate' ? adminEvents().find((x) => x.id === v.id) : null;
+      if (op === 'LairEventUpdate' && !existing) return { [name]: { metaobject: null, userErrors: [{ field: ['id'], message: 'Record not found', code: 'RECORD_NOT_FOUND' }] } };
+      const handle = existing ? existing.handle : String(v.metaobject?.handle || '');
+      const errors = [];
+      if (!existing && v.metaobject?.type !== 'lair_event') errors.push({ field: ['type'], message: 'Type is invalid', code: 'INVALID' });
+      if (!existing && !/^[a-z0-9][a-z0-9-]*$/.test(handle)) errors.push({ field: ['handle'], message: 'Handle is invalid', code: 'INVALID' });
+      if (!existing && adminEvents().some((x) => x.handle === handle)) errors.push({ field: ['handle'], message: 'Handle has already been taken', code: 'TAKEN' });
+      const fields = { ...(existing?.fields || {}) };
+      for (const f of v.metaobject?.fields || []) {
+        const problem = eventValueError(f.key, f.value);
+        if (problem) errors.push({ field: ['fields', f.key], message: problem, code: 'INVALID_VALUE' });
+        fields[f.key] = f.value === '' ? null : f.value;
+      }
+      if (!fields.title) errors.push({ field: ['fields', 'title'], message: "Title can't be blank", code: 'BLANK' });
+      if (!fields.starts_at) errors.push({ field: ['fields', 'starts_at'], message: "Starts can't be blank", code: 'BLANK' });
+      if (errors.length) return { [name]: { metaobject: null, userErrors: errors } };
+      const before = r7.eventEdits.get(handle);
+      r7.eventEdits.set(handle, { id: existing?.id || eventGid(handle), fields, updatedAt: new Date().toISOString(), created: existing ? Boolean(before?.created) : true, deleted: false });
+      return { [name]: { metaobject: adminNode(adminEvents().find((x) => x.handle === handle), false), userErrors: [] } };
+    }
+    case 'LairEventDelete': {
+      if (state.denyEventWrites) return denied('metaobjectDelete', 'write_metaobjects');
+      const e = adminEvents().find((x) => x.id === v.id);
+      if (!e) return { metaobjectDelete: { deletedId: null, userErrors: [{ field: ['id'], message: 'Record not found', code: 'RECORD_NOT_FOUND' }] } };
+      r7.eventEdits.set(e.handle, { ...(r7.eventEdits.get(e.handle) || { fields: e.fields }), id: e.id, deleted: true });
+      return { metaobjectDelete: { deletedId: e.id, userErrors: [] } };
+    }
+    // Round 7 (backend-b): event pictures. The upload target is this fake (/__upload, where the dev entry sends Shopify's
+    // storage host), and fileCreate only takes a file that was uploaded there. denyFiles: write_files not approved yet.
+    case 'LairStagedUpload': {
+      if (state.denyFiles) return denied('stagedUploadsCreate', 'write_files');
+      const [input] = v.input || [];
+      const key = `tmp/${(seq += 1)}/products/${input?.filename}`;
+      const ok = input?.resource === 'IMAGE' && input.httpMethod === 'POST' && /^image\/(jpeg|png|webp)$/.test(input.mimeType || '') && /^\d+$/.test(String(input.fileSize || ''));
+      if (!ok) return { stagedUploadsCreate: { stagedTargets: [], userErrors: [{ field: ['input'], message: 'Fake: that staged upload input is not what the Lair should send' }] } };
+      return {
+        stagedUploadsCreate: {
+          stagedTargets: [{
+            url: 'https://shopify-staged-uploads.storage.googleapis.com/', resourceUrl: `https://shopify-staged-uploads.storage.googleapis.com/${key}`,
+            parameters: [['Content-Type', input.mimeType], ['success_action_status', '201'], ['acl', 'private'], ['key', key], ['x-goog-date', '20261006T000000Z'], ['x-goog-credential', 'fake'], ['x-goog-algorithm', 'GOOG4-RSA-SHA256'], ['x-goog-signature', 'fake'], ['policy', 'ZmFrZQ==']]
+              .map(([n, value]) => ({ name: n, value })),
+          }],
+          userErrors: [],
+        },
+      };
+    }
+    case 'LairFileCreate': {
+      if (state.denyFiles) return denied('fileCreate', 'write_files');
+      const [file] = v.files || [];
+      const upload = r7.uploads.get(String(file?.originalSource || '').replace('https://shopify-staged-uploads.storage.googleapis.com/', ''));
+      if (!upload || file.contentType !== 'IMAGE') return { fileCreate: { files: [], userErrors: [{ field: ['files', '0', 'originalSource'], message: 'Image URL is invalid', code: 'INVALID' }] } };
+      const id = `gid://shopify/MediaImage/${(seq += 1)}`;
+      r7.files.set(id, { url: `https://cdn.shopify.com/s/files/1/0000/0001/files/${upload.filename}?v=${seq}`, alt: file.alt || '', filename: upload.filename });
+      // Shopify makes the picture in the background: no image yet in this answer
+      return { fileCreate: { files: [{ id, fileStatus: 'UPLOADED', alt: file.alt || '', image: null }], userErrors: [] } };
+    }
     case 'Scopes':
       return {
         currentAppInstallation: {
@@ -209,7 +382,7 @@ function answer(op, query, v) {
       const id = `gid://shopify/DraftOrder/${(seq += 1)}`;
       const n = id.split('/').pop();
       state.drafts[id] = { id, status: 'OPEN', orderId: null, input: v.input };
-      return { draftOrderCreate: { draftOrder: { id, invoiceUrl: `http://localhost:4180/__checkout/${n}` }, userErrors: [] } };
+      return { draftOrderCreate: { draftOrder: { id, invoiceUrl: `http://localhost:${process.env.QA_PORT || 4180}/__checkout/${n}` }, userErrors: [] } };
     }
     case 'DraftStatus':
     case 'DraftOpen': {
@@ -290,7 +463,9 @@ function answer(op, query, v) {
 async function body(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
-  return Buffer.concat(chunks).toString('utf8');
+  // round 7: the staged upload's multipart form, as bytes
+  req.rawBuffer = Buffer.concat(chunks);
+  return req.rawBuffer.toString('utf8');
 }
 const send = (res, status, data) => {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -326,6 +501,21 @@ const server = http.createServer(async (req, res) => {
       for (const m of list) state.emails.push({ at: new Date().toISOString(), to: m.to, subject: m.subject, text: m.text, reply_to: m.reply_to || null });
       return send(res, 200, url.pathname.endsWith('/batch') ? { data: list.map(() => ({ id: `em_${(seq += 1)}` })) } : { id: `em_${(seq += 1)}` });
     }
+    // Round 7 (backend-b): Shopify's staged upload target for event pictures (the dev entry sends
+    // shopify-staged-uploads.storage.googleapis.com here). Every parameter the target gave must come first, in order,
+    // then the file, as Google Cloud Storage wants.
+    if (url.pathname.startsWith('/__upload') && req.method === 'POST') {
+      const form = await new Request('http://fake/', { method: 'POST', headers: { 'content-type': req.headers['content-type'] || '' }, body: req.rawBuffer }).formData();
+      const names = [...form.keys()];
+      const file = form.get('file');
+      const key = form.get('key');
+      if (!key || names.at(-1) !== 'file' || !file || typeof file === 'string' || form.get('policy') !== 'ZmFrZQ==') return send(res, 400, { errors: `Fake upload: fields ${names.join(', ')}` });
+      r7.uploads.set(key, { filename: file.name, size: file.size, type: file.type, names });
+      res.writeHead(201, { 'Content-Type': 'application/xml' });
+      return res.end(`<PostResponse><Key>${key}</Key></PostResponse>`);
+    }
+    if (url.pathname === '/__fake/events') return send(res, 200, adminEvents());
+    if (url.pathname === '/__fake/uploads') return send(res, 200, Object.fromEntries(r7.uploads));
     if (url.pathname === '/__fake/emails') return send(res, 200, state.emails);
     if (url.pathname === '/__fake/state') return send(res, 200, { ...state, calls: state.calls.length, emails: state.emails.length });
     if (url.pathname === '/__fake/calls') return send(res, 200, state.calls);

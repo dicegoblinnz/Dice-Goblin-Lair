@@ -588,7 +588,7 @@ test('the floor sends event holds the way the app checks them: soft unless the e
   assert.deepEqual([eventHolds[1].start, eventHolds[1].end], [at('2026-10-03', 12), at('2026-10-03', 18)]);
 });
 
-test('soft reserves: GMs and the public can book an event\'s soft tables; locked ones block games too, except games staff list', async () => {
+test('soft reserves: GMs and the public can book an event\'s soft tables; locked ones block games too, games staff list included (round 7)', async () => {
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     { id: 'wh', title: 'Warhammer & other wargames', start: at('2026-10-01', 17), end: at('2026-10-01', 21), tables: 'T14', gameTables: 'T15+T16' },
     { id: 'paint', title: 'Painting tables', start: at('2026-10-01', 17), end: at('2026-10-01', 21), tables: 'A1-A2', lockTables: true },
@@ -597,7 +597,7 @@ test('soft reserves: GMs and the public can book an event\'s soft tables; locked
   assert.equal((await game(['T14'])).status, 200, "a soft-reserved table");
   assert.equal((await game(['T15'])).status, 200, 'a game-spot table is soft too');
   assert.equal((await game(['A1'])).status, 409, 'a locked table');
-  assert.equal((await game(['A2'], 'staff')).status, 200, 'staff can list a game on a locked table');
+  assert.equal((await game(['A2'], 'staff')).status, 409, 'round 7: staff-made sessions follow the GM rules, so a locked table blocks them too');
   assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T16'], start: at('2026-10-01', 18), end: at('2026-10-01', 19) }))).status, 200);
   // A staff move onto a locked table is fine; a walk-in too.
   const walkin = await call('POST', 'bookings', { kind: 'walkin', tables: ['A1'], start: at('2026-10-01', 17), end: at('2026-10-01', 19), people: 2 }, 'staff');
@@ -1202,7 +1202,9 @@ test('GM games: $0 fee means players pay the table fee only; flexible games add 
     title: 'Counter one-shot', system: 'Other', gm: 'Ana', gmEmail: 'ana@example.com', blurb: 'Listed for Ana.', seats: 4, tables: ['B3'], start: at('2026-10-02', 18), end: at('2026-10-02', 21),
   }, 'staff');
   assert.equal(listed.status, 200, listed.data.error);
-  assert.match(listed.data.notice, /isn't linked to their account/, 'no member has that email yet');
+  // Round 7: no member has that email yet, so the GM is invited to make an account (emails aren't set up in this test)
+  assert.equal(listed.data.invited, true);
+  assert.match(listed.data.notice, /ana@example\.com.+The game joins their account when they log in with that email\./);
   for (const id of [free.data.game.id, listed.data.game.id]) {
     const staffPic = await call('POST', `games/${id}/image`, { dataUrl: png }, 'staff');
     assert.equal(staffPic.status, 200, staffPic.data.error);
@@ -2429,14 +2431,17 @@ test('staff edit a game: details change for the series from this session on; tim
 
   const mail = captureEmails();
   try {
-    const moved = await edit({ title: 'Weekly Edit II', gmFee: 1000, seats: 6, start: at('2026-10-01', 19), end: at('2026-10-01', 22), tables: ['A3'] });
+    // Round 7: a staff move follows the GM rules, so 6 players need two tables
+    const crowded = await edit({ seats: 6, start: at('2026-10-01', 19), end: at('2026-10-01', 22), tables: ['A3'] });
+    assert.deepEqual([crowded.status, crowded.data.error], [422, '6 people need more tables (these seat 4).']);
+    const moved = await edit({ title: 'Weekly Edit II', gmFee: 1000, seats: 6, start: at('2026-10-01', 19), end: at('2026-10-01', 22), tables: ['A3', 'A4'] });
     assert.equal(moved.status, 200, moved.data.error);
     assert.equal(lair.gameBookings(second.id).find((b) => b.kind === 'gm').people, 7, "the GM's hold keeps up with the seats");
     assert.equal(lair.game(second.id).seats, 6);
     assert.equal(moved.data.sessions, listed.data.sessions.length);
-    assert.deepEqual([moved.data.game.title, moved.data.game.tables, moved.data.game.start, moved.data.game.seatPrice], ['Weekly Edit II', ['A3'], at('2026-10-01', 19), 2000]);
+    assert.deepEqual([moved.data.game.title, moved.data.game.tables, moved.data.game.start, moved.data.game.seatPrice], ['Weekly Edit II', ['A3', 'A4'], at('2026-10-01', 19), 2000]);
     const held = lair.gameBookings(first.id).filter((b) => ACTIVE_STATUSES.includes(b.status));
-    assert.ok(held.length === 3 && held.every((b) => b.tables[0] === 'A3' && b.start === at('2026-10-01', 19) && b.end === at('2026-10-01', 22)));
+    assert.ok(held.length === 3 && held.every((b) => b.tables.join() === 'A3,A4' && b.start === at('2026-10-01', 19) && b.end === at('2026-10-01', 22)));
     assert.equal(lair.booking(mia.id).amount, 4000, 'unpaid seats follow the new price');
     assert.equal(lair.booking(leo.id).amount, 1500, 'paid seats keep what they paid');
     const later = lair.game(second.id);
@@ -2473,7 +2478,7 @@ test('staff add players to a game: no payment, no rule but the seats left, linke
   assert.equal(late.data.game.status, 'full');
 });
 
-test('staff list a game for a GM: gmEmail is matched to a member, gmCustomerId links directly, and an unknown GM gets a notice', async () => {
+test('staff list a game for a GM: gmEmail is matched to a member, gmCustomerId links directly, and an unknown GM is invited by email (round 7)', async () => {
   await call('POST', 'me/profile', { name: 'Ellie GM', email: 'ellie@example.com' }, '2001');
   const base = { title: 'For a GM', system: 'Other', gm: 'Ellie', blurb: 'x', seats: 3, start: at('2026-10-01', 18), end: at('2026-10-01', 21) };
   const mail = captureEmails();
@@ -2489,8 +2494,13 @@ test('staff list a game for a GM: gmEmail is matched to a member, gmCustomerId l
 
     const unknown = await call('POST', 'games', { ...base, tables: ['B2'], gmEmail: 'new.gm@example.com' }, 'staff');
     assert.deepEqual([lair.game(unknown.data.game.id).gmCustomerId, lair.game(unknown.data.game.id).gmEmail], [null, 'new.gm@example.com']);
-    assert.match(unknown.data.notice, /isn't linked to their account/);
-    const byId = await call('POST', 'games', { ...base, tables: ['B3'], gmCustomerId: '3003' }, 'staff');
+    // Round 7: an email nobody has used yet is an invite to make an account
+    assert.deepEqual([unknown.data.invited, unknown.data.notice], [true, 'Gobgob emailed new.gm@example.com to make an account. The game joins their account when they log in with that email.']);
+    await settle();
+    assert.ok(mail.sent.some((m) => m.to === 'new.gm@example.com' && m.subject === "You're running For a GM at the Dice Goblin Lair"));
+    // Round 7: a customer picked from the search who isn't a member yet comes with their name (and email) from the picker
+    assert.deepEqual(await call('POST', 'games', { ...base, tables: ['B3'], gmCustomerId: '3003' }, 'staff').then((r) => [r.status, r.data.error]), [404, 'That customer could not be found. Pick them from the search again.']);
+    const byId = await call('POST', 'games', { ...base, tables: ['B3'], gmCustomerId: '3003', gmCustomerName: 'Kai Tane', gmEmail: 'kai.tane@example.com' }, 'staff');
     assert.equal(lair.game(byId.data.game.id).gmCustomerId, '3003');
     const own = await call('POST', 'games', { ...base, tables: ['B4'] }, 'staff');
     assert.equal(lair.game(own.data.game.id).gmCustomerId, 'staff');
@@ -2925,10 +2935,11 @@ test('passes: staff make, find and change them; the code comes from the holder; 
   await refused({ label: ' ' }, 422, 'Add a label, like "Warhammer league: 10 sessions".');
   await refused({ sessions: 0 }, 422, 'A pass has 1 to 100 sessions.');
   await refused({ sessions: 101 }, 422, 'A pass has 1 to 100 sessions.');
-  await refused({ holderName: '' }, 422, "Add the holder's name, or find them in the members.");
+  await refused({ holderName: '' }, 422, 'Pick a group, pick a customer, or type a name.');
   await refused({ expires: '2026-09-30' }, 422, 'That expiry date has already passed.');
   await refused({ expires: '2026-02-30' }, 422, 'Pick the expiry date from the calendar.');
-  await refused({ customerId: '4040' }, 404, 'That member could not be found.');
+  // Round 7: a customer the Lair doesn't know comes with their name from the picker; with none, it's still the 404
+  await refused({ customerId: '4040', holderName: '' }, 404, 'That member could not be found.');
   await refused({ holderEmail: 'not an email' }, 422, "Check the holder's email address.");
 
   // A holder email that matches a member links them, with their name; cover is in dollars.
@@ -3081,7 +3092,7 @@ test('usePass: members save their own pass on a booking for check-in; someone el
   const checked = await call('POST', 'checkin', { code: booked.data.booking.ref }, 'staff');
   assert.deepEqual([checked.data.pass.used, checked.data.pass.covered, checked.data.due], [4, 4000, 0]);
   const me = (await call('GET', 'me', null, '1001')).data;
-  assert.deepEqual(me.passes, [{ code: mine.code, label: mine.label, sessionsTotal: 10, sessionsLeft: 6, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null }]);
+  assert.deepEqual(me.passes, [{ code: mine.code, label: mine.label, sessionsTotal: 10, sessionsLeft: 6, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null, group: null }]);
   const mineBooked = me.bookings.find((b) => b.id === booked.data.booking.id);
   assert.deepEqual([mineBooked.pass, mineBooked.covered, mineBooked.due, mineBooked.payment, mineBooked.refund], [{ code: mine.code, label: mine.label, sessionsLeft: 6 }, 4000, 0, 'store', null]);
   assert.deepEqual([me.seats[0].pass.code, me.seats[0].covered], [mine.code, 0]);
@@ -3096,7 +3107,7 @@ test('claiming a pass: an unclaimed one joins the member\'s passes; someone else
   assert.equal((await call('POST', 'me/passes/claim', { code: ticket.ref }, '1001')).status, 404, "a booking's code isn't a pass");
   const claimed = await call('POST', 'me/passes/claim', { code: gift.code.toLowerCase().replace(/-/g, ' ') }, '1001');
   assert.equal(claimed.status, 200, claimed.data.error);
-  assert.deepEqual(claimed.data.pass, { code: gift.code, label: 'Gift pack: 10 sessions', sessionsTotal: 1, sessionsLeft: 1, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null });
+  assert.deepEqual(claimed.data.pass, { code: gift.code, label: 'Gift pack: 10 sessions', sessionsTotal: 1, sessionsLeft: 1, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null, group: null });
   assert.equal((await passNamed(gift.code)).holder.customerId, '1001');
   assert.equal((await call('POST', 'me/passes/claim', { code: gift.code }, '1001')).status, 200, 'your own again is fine');
   const taken = await call('POST', 'me/passes/claim', { code: gift.code }, '2002');

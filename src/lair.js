@@ -16,6 +16,7 @@ import { recordStatus, withConfig } from './config.js';
 import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
 import { checkMobile, mobileKey } from './core.js';
+import { eventPayment } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -26,7 +27,7 @@ const FALLBACK_ROOMS = [
 /** Permissions the Shopify app needs (checked by the health check) */
 const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions'];
 /** Permissions only some features need: everything else works without them */
-const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes', read_products: 'library copies on the shelf', read_inventory: 'library copies on the shelf' };
+const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes', read_products: 'library copies, scanning library games and tab items', read_inventory: 'library copies on the shelf', write_metaobjects: 'staff adding and editing events', write_files: 'event pictures' };
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -63,6 +64,21 @@ const SPEND_RETIRED = 'The spend dice have retired. Fill your loyalty card: 10 s
 const COPIES_TTL = 10 * MIN;
 /** At most this many library games in one GET /library/status */
 const STATUS_IDS = 60;
+/** Round 7: a group (a league or a club, with passes of its own) has up to this many people */
+const GROUP_MAX = 200;
+/** Round 7, the events editor: an event's kinds and repeats (the lair_event definition's choices), and its "How people
+    pay" words for the Lair's payment values */
+const EVENT_TYPES = ['tcg', 'rpg', 'wargame', 'market', 'social', 'tournament', 'learn', 'launch', 'other'];
+const EVENT_REPEATS = ['weekly', 'fortnightly', 'monthly'];
+const EVENT_PAYMENT_WORDS = { store: 'In store', online: 'Online', either: 'Online or in store' };
+/** How far ahead the events editor looks for an event's dates that people have signed up for */
+const EVENT_DAYS = 400;
+/** The events editor's answer while write_metaobjects or write_files waits for Mo's approval */
+const EVENTS_DENIED = "Shopify hasn't let the Lair change events yet. Approve the app's new permissions in Shopify admin (Apps › Dice Goblin Lair), then try again.";
+/** Shopify down (not a missing permission) while staff use the events editor */
+const SHOPIFY_DOWN = "Shopify didn't answer just now. Try again in a minute.";
+/** Picking a customer the Lair has never met, with no name to make their member record from */
+const PICK_AGAIN = 'That customer could not be found. Pick them from the search again.';
 /** A guest seat or sign-up joins the account with its email if it's upcoming or ended in the last 30 days */
 const ADOPT_DAYS = 30;
 /** Round 7: a barcode Shopify answered for (a tab item, or a code it didn't know) is kept 10 minutes */
@@ -368,6 +384,26 @@ export const MIGRATIONS = [
     // the games round 6's holds already named
     `INSERT OR IGNORE INTO library_games (variant_id, product_id, title, handle, shelf_code, image, checked_at)
       SELECT variant_id, MAX(product_id), MAX(title), MAX(handle), MAX(shelf_code), NULL, MAX(created_at) FROM library_holds GROUP BY variant_id`,
+  ],
+  // Round 7, groups and staff sessions (6 Oct 2026). Only new tables, columns and indexes:
+  //  - lair_groups and lair_group_members: groups of customers (GROUPS is an SQLite keyword); a pass can belong to a
+  //    group (passes.group_id), and any member of an active group can use it.
+  //  - series_invites: a seat staff reserved under a name and email at a weekly game, waiting for that person to make an
+  //    account ('waiting', 'joined' or 'cancelled'). A GM invite needs no table: a game with gm_email and no account.
+  [
+    `CREATE TABLE IF NOT EXISTS lair_groups (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, organiser_id TEXT, note TEXT, status TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL,
+      updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS lair_group_members (
+      group_id TEXT NOT NULL, customer_id TEXT NOT NULL, added_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (group_id, customer_id))`,
+    'CREATE INDEX IF NOT EXISTS lair_group_members_customer ON lair_group_members (customer_id)',
+    'ALTER TABLE passes ADD COLUMN group_id TEXT',
+    'CREATE INDEX IF NOT EXISTS passes_group ON passes (group_id)',
+    `CREATE TABLE IF NOT EXISTS series_invites (
+      id TEXT PRIMARY KEY, series_id TEXT NOT NULL, email TEXT NOT NULL, name TEXT NOT NULL, phone TEXT, people INTEGER NOT NULL, players TEXT,
+      status TEXT NOT NULL, customer_id TEXT, booking_id TEXT, created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS series_invites_email ON series_invites (lower(email), status)',
+    'CREATE INDEX IF NOT EXISTS games_gm_email ON games (lower(gm_email))',
   ],
 ];
 
@@ -1000,8 +1036,8 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library'].includes(a));
+        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
@@ -1015,6 +1051,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'members' && b && !c) return json(await this.memberDetail(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'roll-codes' && !b) return json(this.listRollCodes(url, who));
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
+      if (request.method === 'GET' && a === 'groups' && !b) return json(this.listGroups(url, who));
+      if (request.method === 'GET' && a === 'customers' && !b) return json(await this.findCustomers(url, who));
+      if (request.method === 'GET' && a === 'events' && !b) return json(await this.listEvents(who));
       if (request.method === 'GET' && a === 'library' && b === 'status' && !c) return json(await this.libraryStatus(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'holds' && !c) return json(await this.listHolds(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'loans' && !c) return json(await this.listLoans(url, who));
@@ -1028,6 +1067,9 @@ export class Lair {
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
       if (a === 'passes' && b && c === 'apply') return json(await this.applyPass(decodeURIComponent(b), body, who));
+      if (a === 'groups' && !b) return json(await this.createGroup(body, who));
+      if (a === 'groups' && b && c === 'update') return json(await this.updateGroup(decodeURIComponent(b), body, who));
+      if (a === 'groups' && b && c === 'members') return json(await this.groupMembers(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
@@ -1051,7 +1093,7 @@ export class Lair {
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
       if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
       if (a === 'games' && c === 'players') return json(await this.addPlayers(b, body, who));
-      if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who));
+      if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who, body));
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
       if (a === 'blocks' && !b) return json(await this.createBlock(body, who));
@@ -1062,6 +1104,10 @@ export class Lair {
       if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
+      if (a === 'events' && !b) return json(await this.createEvent(body, who));
+      if (a === 'events' && b === 'pictures' && !c) return json(await this.eventPicture(body, who));
+      if (a === 'events' && b && c === 'update') return json(await this.updateEvent(decodeURIComponent(b), body, who));
+      if (a === 'events' && b && c === 'delete') return json(await this.deleteEvent(decodeURIComponent(b), who));
       if (a === 'contact' && !b) return json(await this.contact(body, who, client));
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
       if (a === 'prizes' && b && c === 'done') return json(await this.prizeDone(decodeURIComponent(b), who));
@@ -1121,6 +1167,8 @@ export class Lair {
       const total = parseSpots(o.gameTables, rules.rooms).length;
       if (total) eventSpots[o.id] = { total, taken: total - this.freeSpots(o, rules, st).length };
     }
+    // Round 7: waiting series invites, by series, for the games below (staff and GMs only)
+    const waiting = who.staff || who.customerId ? this.waitingInvites() : new Map();
     return {
       now,
       bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
@@ -1129,6 +1177,13 @@ export class Lair {
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info);
         if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
+        // Round 7: for staff and the session's GM, the seats of its series reserved for someone who's still to make an
+        // account (a GM never sees a player's email on the board); for staff, the GM's email and whether the game is on
+        // their account ('linked'), waiting for them to make one ('invited': an email nobody has used yet) or neither ('none')
+        if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) {
+          game.invites = ((g.seriesId && waiting.get(g.seriesId)) || []).map((x) => (who.staff ? x : { ...x, email: '' }));
+        }
+        if (who.staff) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g) });
         return game;
       }),
       events: [],
@@ -1293,8 +1348,12 @@ export class Lair {
     return (party || []).map((p) => (p.character ? `${p.name} (${p.character})` : p.name)).join(', ');
   }
 
-  /** Booking confirmation email: tables, game seats and event game spots. Returns whether one was sent (needs RESEND_API_KEY and FROM_EMAIL). */
-  confirm(booking, rules, game = null) {
+  /**
+   * Booking confirmation email: tables, game seats and event game spots. Returns whether one was sent (needs RESEND_API_KEY
+   * and FROM_EMAIL). invite (round 7): the schedule of the game a seat staff reserved for someone without an account was
+   * also invited to every session of ('weekly', 'fortnightly' or 'flexible'), for its last line.
+   */
+  confirm(booking, rules, game = null, { invite = null } = {}) {
     if (!emailReady(this.env) || !isEmail(booking.email)) return false;
     const when = this.when(booking, rules);
     const online = Boolean(booking.paid && booking.pay === 'now');
@@ -1321,7 +1380,8 @@ export class Lair {
         outro: [
           pay, changes || "Can't make it after all? Drop your seat in My Lair and Gobgob will let your GM know.",
           // A seat with no account (a guest, or a player staff added): it joins their account once they make one (round 6).
-          ...(booking.customerId ? [] : ['Make an account with this email any time, and your seats will show up in My Lair.']),
+          // Round 7: a seat staff reserved at a weekly game says the account also saves their seat every week.
+          ...(booking.customerId ? [] : [invite ? this.inviteLine(invite) : 'Make an account with this email any time, and your seats will show up in My Lair.']),
         ],
       };
     } else {
@@ -1341,6 +1401,13 @@ export class Lair {
     }
     this.later(this.mail(this.letter(booking.email, subject, { ...content, button: { label: 'See it in My Lair', url: this.page('myLair') } })));
     return true;
+  }
+
+  /** The last line of a reserved seat's confirmation when its person is invited to every session (round 7) */
+  inviteLine(schedule) {
+    if (schedule === 'fortnightly') return "It's a fortnightly game: make your Dice Goblin account with this email and Gobgob will save your seat every fortnight.";
+    if (schedule === 'flexible') return "It's a regular game: make your Dice Goblin account with this email and Gobgob will save your seat every session.";
+    return "It's a weekly game: make your Dice Goblin account with this email and Gobgob will save your seat every week.";
   }
 
   /** An alert for the team (STAFF_EMAIL). content: { title, intro, details, outro }. extra: { replyTo }. */
@@ -1702,7 +1769,8 @@ export class Lair {
       if (start <= now) continue;
       const end = start + row.length;
       try {
-        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, staff: Boolean(details.staffCreated) });
+        // A staff-made series' dates follow the GM rules plus the shop tables, like its first session (round 7)
+        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, shopTables: Boolean(details.staffCreated) });
         const base = {
           ...details, gmCustomerId: row.gm_customer_id, gmEmail: details.gmEmail || null, seriesId: row.id, credited: null,
           status: row.approved ? 'open' : 'pending', feeApproved: true,
@@ -1752,19 +1820,30 @@ export class Lair {
     const time = new LairTime(rules.tz);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = checkGameDetails(input);
-    const first = checkGameSession(input, details, { state: st, rules, time, now, staff: who.staff });
-    // Staff can list a game for a GM: gmCustomerId, or gmEmail matched against members. A GM who isn't a member yet
-    // still gets the emails, but the game isn't linked to an account (their store credit is added by hand).
+    // Round 7: staff make sessions under the GMs' rules (hours, whole hours, lead time, horizon, locked event tables),
+    // with the shop tables open to them
+    const first = checkGameSession(input, details, { state: st, rules, time, now, shopTables: Boolean(who.staff) });
+    // Staff can list a game for a GM (round 7): gmCustomerId, picked from the customers (with gmCustomerName and gmEmail
+    // from the picker when they aren't a member yet), or gmEmail with the board name in gm. An email a member has links
+    // them; any other is an invite: the game waits on that email with no account, the GM is emailed to make one, and
+    // GET /me links it when they log in with it. Until then their store credit is added by hand.
     let gmCustomerId = who.customerId;
     let gmEmail = isEmail(input.email) ? trimmed(input.email, 120) : null;
     let notice = null;
+    let picked = null;
+    let invited = false;
     const forGm = Boolean(who.staff && (input.gmCustomerId || input.gmEmail));
-    if (forGm) {
-      const byEmail = this.memberByEmail(input.gmEmail);
-      gmCustomerId = input.gmCustomerId ? trimmed(input.gmCustomerId, 40) : byEmail?.customer_id || null;
-      gmEmail = isEmail(input.gmEmail) ? trimmed(input.gmEmail, 120) : this.memberRow(gmCustomerId)?.email || gmEmail;
-      if (!gmCustomerId) notice = "No member has that email yet, so this game isn't linked to their account. Add their store credit in Shopify admin after each session.";
+    if (forGm && input.gmCustomerId) {
+      picked = this.pickedCustomer({ customerId: input.gmCustomerId, name: input.gmCustomerName, email: input.gmEmail });
+      gmCustomerId = picked.customerId;
+      gmEmail = isEmail(input.gmEmail) ? trimmed(input.gmEmail, 120) : picked.email || null;
+    } else if (forGm) {
+      if (!isEmail(input.gmEmail)) throw new RuleError("That email address doesn't look right.");
+      gmEmail = trimmed(input.gmEmail, 120);
+      gmCustomerId = this.memberByEmail(gmEmail)?.customer_id || null;
+      invited = !gmCustomerId;
     }
+    if (picked) this.makeMember(picked, now);
     // Staff and trusted GMs (tagged gm) go straight on the board; anyone else waits for a manager's OK. GM fees of
     // $0, $5 and $10 never need one.
     const approved = Boolean(who.staff || who.gm);
@@ -1805,12 +1884,49 @@ export class Lair {
         ],
       });
     }
-    if (forGm) this.tellGmLive(game, rules, { listedForThem: true });
+    if (forGm && invited) {
+      // Round 7: a GM who isn't a customer yet: invited by email to make an account, which the game joins
+      this.inviteGm(game, rules);
+      notice = emailReady(this.env)
+        ? `Gobgob emailed ${gmEmail} to make an account. The game joins their account when they log in with that email.`
+        : `Emails aren't set up, so Gobgob couldn't email ${gmEmail}. The game joins their account when they log in with that email.`;
+    } else if (forGm) this.tellGmLive(game, rules, { listedForThem: true });
     const view = this.state(game.start - 1, game.end + 1);
     return {
       game: this.gameView(game, view, rules), sessions: sessions.map((g) => ({ id: g.id, start: g.start })), skipped, pending: !approved,
-      emailed: emailReady(this.env) && Boolean(gmEmail), ...(notice ? { notice } : {}),
+      emailed: emailReady(this.env) && Boolean(gmEmail), ...(invited ? { invited: true } : {}), ...(notice ? { notice } : {}),
     };
+  }
+
+  /**
+   * A game staff listed for a GM who isn't a customer yet (round 7): "You're running <title> at the Dice Goblin Lair",
+   * with the game's details and how its account works (make one with this email and the game joins it). No awaits.
+   */
+  inviteGm(game, rules) {
+    if (!emailReady(this.env) || !isEmail(game.gmEmail)) return false;
+    const credit = game.gmFee ?? rules.prices.gmCredit;
+    this.later(this.mail(this.letter(game.gmEmail, `You're running ${game.title} at the Dice Goblin Lair`, {
+      title: 'Your game is on the board!',
+      intro: `Kia ora ${game.gm}, the Dice Goblin team has put ${game.title} on the games board for you.`,
+      details: [
+        ['Game', game.title], [game.seriesId ? 'First session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
+        ['Player seats', String(game.seats)],
+        ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+      ],
+      outro: [
+        `Make your Dice Goblin account with this email (${game.gmEmail}): log in at dicegoblin.nz with it, and the game joins your account. Then you can see who's coming, message your players and add dates in My Lair, and your store credit goes straight onto your account after each session.`,
+        'Players can book already. Gobgob will email you each time someone joins.',
+      ],
+      button: { label: 'Open My Lair', url: this.page('myLair') },
+      signoff: 'Happy GMing!\nGobgob',
+    })));
+    return true;
+  }
+
+  /** Whose a game is, for staff (round 7): 'linked' (a GM's account), 'invited' (an email waiting for an account) or 'none' */
+  gmAccount(g) {
+    if (g.gmCustomerId) return 'linked';
+    return isEmail(g.gmEmail) ? 'invited' : 'none';
   }
 
   /** "Your game is on the board": when staff approve a game, or list one for a GM. */
@@ -1862,7 +1978,9 @@ export class Lair {
       const end = input.end != null ? Number(input.end) : game.end;
       const own = new Set(this.gameBookings(game.id).map((b) => b.id));
       const st = this.state(Math.min(start, game.start) - 24 * HOUR, Math.max(end, game.end) + 24 * HOUR);
-      const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, staff: true, ignore: own });
+      // Round 7: a move follows the GM rules too, skipping only the lead time and the horizon (tonight's session can
+      // still move); locked event tables, bookings and holds block it, and the shop tables are open to staff.
+      const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, ignore: own, shopTables: true, editing: true });
       place = { tables: moved.tables, start: moved.start, end: moved.end, room: moved.room };
     }
     const shared = {
@@ -1903,9 +2021,16 @@ export class Lair {
   }
 
   /**
-   * POST /games/:id/players { name, email, people, players, customerId? } (staff): seat someone at a game, with no
-   * payment and no rule but the seats left. Their account is linked when customerId is given or their email matches
-   * a member.
+   * POST /games/:id/players { customerId?, customerName?, name, email?, phone?, people, players?, weekly? } (staff): seat
+   * someone at a game, with no payment and no rule but the seats left. Their account is linked when customerId is given
+   * (picked from the customers: one the Lair hasn't met comes with customerName and email, and their member record is
+   * made) or their email matches a member. Round 7, weekly: true at a session of a series:
+   *  - a customer becomes a regular from now on, exactly as "Save my seat every week" makes one (this seat is their
+   *    first), and gets "You're a regular" too;
+   *  - someone without an account (their email needed) is invited: their seat is reserved under their name, and when
+   *    they log in with that email the invite becomes their regular membership (adoptGuestBookings). Until then it
+   *    holds no later seats.
+   * Returns { booking, game, emailed, regular: { seriesId, customerId } | null, invite: { id, email } | null }.
    */
   async addPlayers(id, input, who) {
     this.requireStaff(who);
@@ -1919,9 +2044,17 @@ export class Lair {
     if (!(people >= 1 && people <= 8)) throw new RuleError('Add between 1 and 8 players.');
     const name = trimmed(input.name, 80);
     if (!name) throw new RuleError('Add their name.');
-    const email = trimmed(input.email, 120);
+    let email = trimmed(input.email, 120);
     if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
-    const customerId = trimmed(input.customerId, 40) || this.memberByEmail(email)?.customer_id || null;
+    const weekly = input.weekly === true;
+    if (weekly && !game.seriesId) throw new RuleError("This game is a one-off, so a seat can't be saved every week.");
+    const series = weekly ? this.sql.exec('SELECT * FROM series WHERE id = ?', game.seriesId).toArray()[0] : null;
+    if (weekly && (!series || series.status !== 'active')) throw new RuleError("This game isn't running any more.", 409);
+    // A customer picked from the search (round 7: one the Lair hasn't met comes with their name and email)
+    const picked = String(input.customerId ?? '').trim() ? this.pickedCustomer({ customerId: input.customerId, name: input.customerName || name, email }) : null;
+    const customerId = picked?.customerId || this.memberByEmail(email)?.customer_id || null;
+    if (!email && picked?.email) email = picked.email;
+    if (weekly && !customerId && !email) throw new RuleError('Add their email, so Gobgob can invite them to keep the seat.');
     // Seats kept for the series' weekly regulars aren't free (unless it's a regular being added). The number kept is the
     // board's held: never more than the seats still free.
     const held = this.regularsWaiting(game, { except: customerId, now });
@@ -1933,16 +2066,80 @@ export class Lair {
       throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'seat' : 'seats'} left.${why}` : `This table is full.${why}`, 409);
     }
     const players = seatPlayers(input.players, people, name);
+    if (picked) this.makeMember(picked, now);
+    const regular = weekly && customerId ? { seriesId: game.seriesId, customerId } : null;
     const seatId = makeId('bk');
     const seat = {
       id: seatId, ref: this.newCode(name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: game.id, tables: game.tables, room: game.room,
       start: game.start, end: game.end, people, name, email, amount: (game.seatPrice || rules.prices.gmSeat) * people, pay: 'day', paid: false,
       activity: 'rpg', party: players, customerId, notes: 'Added by staff',
+      // Round 7: an optional phone (staff-made, so not required), and a new regular's first seat carries the series
+      phone: trimmed(input.phone, 40).replace(/\s+/g, ' ').slice(0, 20) || null, seriesId: regular ? game.seriesId : null,
     };
     this.saveBooking(seat, now);
+    let invite = null;
+    if (regular) {
+      // A regular from now on, as "Save my seat every week" makes one (joinSeries): later seats are theirs, and
+      // maintenance books each next session. Someone already a regular keeps their place in the queue.
+      this.write(
+        `INSERT INTO series_members (series_id, customer_id, people, players, name, email, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+         ON CONFLICT(series_id, customer_id) DO UPDATE SET people = excluded.people, players = excluded.players, name = excluded.name, email = excluded.email,
+           status = 'active', created_at = CASE WHEN series_members.status = 'active' THEN series_members.created_at ELSE excluded.created_at END,
+           updated_at = excluded.updated_at`,
+        game.seriesId, customerId, people, JSON.stringify(players), name, email || this.memberRow(customerId)?.email || null, now, now,
+      );
+    } else if (weekly) {
+      // An invite to be a regular, for someone still to make an account: one waiting invite per series and email
+      const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+      const waiting = this.sql.exec("SELECT id FROM series_invites WHERE series_id = ? AND lower(email) = lower(?) AND status = 'waiting'", game.seriesId, email).toArray()[0];
+      const inviteId = waiting?.id || makeId('si');
+      if (waiting) {
+        this.write(
+          'UPDATE series_invites SET name = ?, phone = ?, people = ?, players = ?, booking_id = ?, updated_at = ? WHERE id = ?',
+          name, seat.phone, people, JSON.stringify(players), seatId, now, inviteId,
+        );
+      } else {
+        this.write(
+          `INSERT INTO series_invites (id, series_id, email, name, phone, people, players, status, customer_id, booking_id, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', NULL, ?, ?, ?, ?)`,
+          inviteId, game.seriesId, email, name, seat.phone, people, JSON.stringify(players), seatId, by, now, now,
+        );
+      }
+      invite = { id: inviteId, email };
+    }
     this.tellGmNewPlayer(seat, game, rules);
-    const emailed = this.confirm(seat, rules, game);
-    return { booking: { ...this.ownView(seat), players, customerId }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed };
+    const emailed = this.confirm(seat, rules, game, { invite: invite ? game.schedule : null });
+    if (regular) this.tellStaffRegular(seat, game, rules);
+    return {
+      booking: { ...this.ownView(seat), players, customerId }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed,
+      regular, invite,
+    };
+  }
+
+  /**
+   * "You're a regular: <title>" for someone staff made a regular (round 7): round 5's email, with the team saving their
+   * seat every week (fortnight, or session, to match the game). No awaits.
+   */
+  tellStaffRegular(seat, game, rules) {
+    const member = this.memberRow(seat.customerId);
+    const to = isEmail(seat.email) ? seat.email : member?.email;
+    if (!emailReady(this.env) || !isEmail(to)) return false;
+    const every = game.schedule === 'weekly' ? 'week' : game.schedule === 'fortnightly' ? 'fortnight' : 'session';
+    this.later(this.mail(this.letter(to, `You're a regular: ${game.title}`, {
+      title: "You're a regular!",
+      intro: `Kia ora ${seat.name}, the Dice Goblin team has saved your seat at ${game.title}${game.gm ? ` with GM ${game.gm}` : ''} every ${every}.`,
+      details: [
+        ['Game', game.title], ['Players', this.partyLine(seat.party)], ['Next session', this.when(game, rules)],
+        ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * seat.people)} a session, paid at the counter`], ['Your code', member?.code || ''],
+      ],
+      outro: [
+        "Your member code is your ticket every session (it's in My Lair). Show it at the counter and we'll ring up your seat.",
+        "Can't make one? Cancel that session's seat in My Lair before it starts. A seat you keep is yours to pay for, even if you don't come.",
+        'To stop coming, leave the game in My Lair.',
+      ],
+      button: { label: 'See it in My Lair', url: this.page('myLair') },
+    })));
+    return true;
   }
 
   /** A GM (or staff) adds a date to a flexible or repeating game. A one-shot becomes a flexible series. */
@@ -1959,7 +2156,8 @@ export class Lair {
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = this.gameDetails(game);
     const tables = Array.isArray(input.tables) && input.tables.length ? input.tables : game.tables;
-    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, staff: who.staff });
+    // Round 7: staff adding a date follow the GM rules too, with the shop tables open to them
+    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, shopTables: Boolean(who.staff) });
     let seriesId = game.seriesId;
     let series = seriesId ? this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).toArray()[0] : null;
     if (!seriesId) {
@@ -2211,17 +2409,29 @@ export class Lair {
     return { member: { seriesId: game.seriesId, people, players }, booked, full };
   }
 
-  /** POST /series/:id/leave (logged in): stop being seated at every session, and free the upcoming seats it made. */
-  async leaveSeries(seriesId, who) {
+  /**
+   * POST /series/:id/leave (logged in): stop being seated at every session, and free the upcoming seats it made. Round
+   * 7, staff: { customerId } stops a regular (the same as them leaving, with the GM's email), and { inviteId } cancels a
+   * waiting invite (the seat reserved with it stays until staff remove it).
+   */
+  async leaveSeries(seriesId, who, input = {}) {
     if (!who.customerId) throw new RuleError('Log in to manage your games.', 401);
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
-    const member = this.seriesMember(seriesId, who.customerId);
-    if (!member || member.status !== 'active') throw new RuleError("You're not signed up for every session of that game.", 404);
-    this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, who.customerId);
+    if (who.staff && input?.inviteId) {
+      const invite = this.sql.exec('SELECT * FROM series_invites WHERE id = ? AND series_id = ?', trimmed(input.inviteId, 40), String(seriesId)).toArray()[0];
+      if (!invite || invite.status !== 'waiting') throw new RuleError('That invite could not be found.', 404);
+      this.write("UPDATE series_invites SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'waiting'", now, invite.id);
+      return { ok: true, cancelled: 0, invite: { id: invite.id, email: invite.email, status: 'cancelled' } };
+    }
+    const forThem = Boolean(who.staff && input?.customerId);
+    const customerId = forThem ? trimmed(input.customerId, 40) : String(who.customerId);
+    const member = this.seriesMember(seriesId, customerId);
+    if (!member || member.status !== 'active') throw new RuleError(forThem ? "They're not a regular at that game." : "You're not signed up for every session of that game.", 404);
+    this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, customerId);
     const seats = this.sql
-      .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, who.customerId, now)
+      .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, customerId, now)
       .toArray().map((r) => this.rowToBooking(r));
     for (const seat of seats) {
       const refund = refundFor(seat, rules, now);
@@ -3683,6 +3893,546 @@ export class Lair {
     return { ok: true };
   }
 
+  /* ---------------- the events editor (round 7) ---------------- */
+  // Events are the lair_event metaobjects: the Lair reads and writes them through the Admin API and copies nothing in.
+  // Every change is checked against the sign-ups first (a date people signed up for can't move or go); Shopify's write
+  // comes after that check, so a sign-up landing in between is the one case staff sort by hand.
+
+  /** A Shopify call in the events editor failed: a missing permission is the 503 Mo fixes by approving it; anything else, try again */
+  eventsFailed(error) {
+    if (error instanceof RuleError) return error;
+    const message = String(error?.message || error);
+    this.note({ eventsError: { message: message.slice(0, 300), at: new Date().toISOString() } });
+    return /access denied|access_denied|required access|not approved/i.test(message) ? new RuleError(EVENTS_DENIED, 503) : new RuleError(SHOPIFY_DOWN, 502);
+  }
+
+  /** After every write: the next request loads the events again (a failed load keeps the ones the Lair has), so sign-ups, game spots and table holds follow at once */
+  dropEvents() {
+    this.rulesLoadedAt = 0;
+  }
+
+  /** A metaobject's fields as { key: value } (null when empty), remembering any picture or product it names for later views */
+  eventFieldMap(fields) {
+    this.eventRefs = this.eventRefs || new Map();
+    if (this.eventRefs.size > 2000) this.eventRefs.clear();
+    const out = {};
+    for (const f of fields || []) {
+      out[f.key] = f.value == null || f.value === '' ? null : String(f.value);
+      const ref = f.reference;
+      if (ref?.__typename === 'MediaImage' && ref.id) this.eventRefs.set(ref.id, { url: ref.image?.url || null, alt: ref.alt ?? '' });
+      if (ref?.__typename === 'Product' && ref.id) this.eventRefs.set(ref.id, { handle: ref.handle || null, title: ref.title || null });
+    }
+    return out;
+  }
+
+  /** An event's fields the way the Lair's rules hold events (as shopify.js loadLairData reads them), for its dates */
+  eventRule(handle, f) {
+    const start = Date.parse(f.starts_at || '');
+    const fee = Math.round(Number(f.entry_fee || 0) * 100);
+    return {
+      id: handle, title: f.title || '', start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * HOUR, tables: f.tables || '',
+      repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: this.eventSkipDates(f.skip_dates),
+      capacity: f.capacity ? Number(f.capacity) : null, entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
+      payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
+    };
+  }
+
+  eventSkipDates(value) {
+    try {
+      const list = JSON.parse(value || '[]');
+      return Array.isArray(list) ? list.map((d) => String(d).slice(0, 10)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** "Weekly · Thursdays 6pm", "Fortnightly · Thursdays 6:30pm", "Monthly · Third Saturday 11am" (the calendar's tag), or null for a one-off */
+  repeatTag(ev, rules) {
+    const repeat = String(ev.repeat || '').trim().toLowerCase();
+    if (!EVENT_REPEATS.includes(repeat) || !Number.isFinite(ev.start)) return null;
+    const weekday = new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long' }).format(new Date(ev.start));
+    const clock = this.clockWord(ev.start, rules.tz);
+    if (repeat === 'monthly') {
+      const nth = ['First', 'Second', 'Third', 'Fourth', 'Fifth'][Math.ceil(Number(lairTime(rules.tz).key(ev.start).slice(8, 10)) / 7) - 1];
+      return `Monthly · ${nth} ${weekday} ${clock}`;
+    }
+    return `${repeat === 'weekly' ? 'Weekly' : 'Fortnightly'} · ${weekday}s ${clock}`;
+  }
+
+  /**
+   * An event's dates from now: upcoming (every date that hasn't ended, up to 400 days ahead), next (the first one's start)
+   * and last (the last date to come: a one-off's own, a repeating event's last before Repeat until, null when it goes on)
+   */
+  eventDatesFrom(ev, rules, now) {
+    if (!Number.isFinite(ev.start)) return { upcoming: [], next: null, last: null };
+    const one = { tz: rules.tz, events: [ev] };
+    const upcoming = eventOccurrences(one, now, now + EVENT_DAYS * 24 * HOUR);
+    const next = upcoming[0]?.start ?? null;
+    let last = null;
+    if (!ev.repeat) last = next;
+    else if (ev.repeatUntil) {
+      const until = lairTime(rules.tz).at(addDays(ev.repeatUntil, 1), 0);
+      const all = until > now ? eventOccurrences(one, now, until) : [];
+      last = all.length ? all[all.length - 1].start : null;
+    }
+    return { upcoming, next, last };
+  }
+
+  /**
+   * An event's upcoming dates with anyone on them, soonest first: [{ occurrenceId, start, people (sign-ups that aren't
+   * cancelled), spots (game spots: active bookings) }]. No awaits.
+   */
+  eventBookings(handle, now) {
+    // Its dates' ids are `<handle>@YYYY-MM-DD`: everything from "<handle>@" up to "<handle>A" ('A' follows '@'), on the index
+    const [from, to] = [`${handle}@`, `${handle}A`];
+    const byDate = new Map();
+    const add = (r, key) => {
+      const item = byDate.get(r.occurrence_id) || { occurrenceId: r.occurrence_id, start: r.start, people: 0, spots: 0 };
+      item.start = Math.min(item.start, r.start);
+      item[key] += r.n;
+      byDate.set(r.occurrence_id, item);
+    };
+    for (const r of this.sql.exec(
+      "SELECT occurrence_id, MIN(starts_at) AS start, COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id >= ? AND occurrence_id < ? AND status != 'cancelled' AND ends_at > ? GROUP BY occurrence_id",
+      from, to, now,
+    ).toArray()) add(r, 'people');
+    for (const r of this.sql.exec(
+      "SELECT occurrence_id, MIN(starts_at) AS start, COUNT(*) AS n FROM bookings WHERE occurrence_id >= ? AND occurrence_id < ? AND status IN ('held', 'confirmed', 'seated') AND ends_at > ? GROUP BY occurrence_id",
+      from, to, now,
+    ).toArray()) add(r, 'spots');
+    return [...byDate.values()].filter((x) => x.people > 0 || x.spots > 0).sort((a, b) => a.start - b.start || a.occurrenceId.localeCompare(b.occurrenceId));
+  }
+
+  /** A picture's address at a width, the way the theme's image_url filter asks for one */
+  withWidth(url, width) {
+    return url ? `${url}${url.includes('?') ? '&' : '?'}width=${width}` : null;
+  }
+
+  /**
+   * An event as the staff page's editor sees it (contract v7 section 10), with config: the event exactly as
+   * lair-config.liquid writes it, for the staff page's store.cfg.events. booked: its dates with sign-ups (looked up when
+   * not given). Returns { view, ev } (ev: the event as the Lair's rules hold it). No awaits.
+   */
+  eventEntry(node, rules, now, booked = null) {
+    const f = this.eventFieldMap(node.fields);
+    const ev = this.eventRule(node.handle, f);
+    const dates = this.eventDatesFrom(ev, rules, now);
+    const refs = this.eventRefs || new Map();
+    const picture = f.image ? refs.get(f.image) || null : null;
+    const ticket = f.product ? refs.get(f.product) || null : null;
+    const fee = f.entry_fee != null ? Math.round(Number(f.entry_fee) * 100) : null;
+    const productUrl = ticket?.handle ? `/products/${ticket.handle}` : null;
+    const view = {
+      id: node.id, handle: node.handle, title: f.title || '', type: f.event_type || 'other', game: f.game || '', start: Number.isFinite(ev.start) ? ev.start : null,
+      end: f.ends_at ? Date.parse(f.ends_at) : null, repeat: ev.repeat, repeatUntil: ev.repeatUntil, skipDates: ev.skipDates, description: f.description || '',
+      image: f.image ? { id: f.image, url: picture?.url || null, alt: picture ? picture.alt ?? '' : null } : null,
+      capacity: ev.capacity, priceNote: f.price_note || '', entryFee: Number.isFinite(fee) ? fee : null, payment: ev.payment, tables: f.tables || '',
+      gameTables: f.game_tables || '', lockTables: ev.lockTables, link: f.link || '',
+      product: f.product ? { id: f.product, handle: ticket?.handle || null, title: ticket?.title || null } : null,
+      repeatTag: this.repeatTag(ev, rules), next: dates.next, last: dates.last, booked: booked || this.eventBookings(node.handle, now),
+      updatedAt: Date.parse(node.updatedAt || '') || null,
+      config: {
+        id: node.handle, title: f.title || '', type: f.event_type || 'other', game: f.game || '', start: f.starts_at, end: f.ends_at, repeat: ev.repeat,
+        repeatUntil: ev.repeatUntil, skipDates: ev.skipDates, capacity: ev.capacity, tables: f.tables, entryFee: Number.isFinite(fee) ? fee : null,
+        gameTables: f.game_tables, payment: ev.payment, lockTables: ev.lockTables, price: f.price_note, url: productUrl || f.link, link: f.link,
+        product: productUrl ? { url: productUrl, title: ticket.title || '', price: null, available: null, stock: null } : null,
+        blurb: f.description, image: this.withWidth(picture?.url || null, 800), imageAlt: picture?.alt || '',
+      },
+    };
+    return { view, ev, upcoming: dates.upcoming };
+  }
+
+  /**
+   * GET /events (staff): every lair_event entry, those with dates to come first (soonest next), then the rest (the most
+   * recent first). Read with the pictures and products (read_files, read_products); if Shopify won't give those yet,
+   * read again without them (ids only).
+   */
+  async listEvents(who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    let nodes;
+    try {
+      nodes = await this.shopify.lairEventsAdmin({ refs: true });
+    } catch (error) {
+      if (!/access denied|access_denied|required access/i.test(String(error?.message || error))) throw this.eventsFailed(error);
+      try {
+        nodes = await this.shopify.lairEventsAdmin({ refs: false });
+      } catch (again) {
+        throw this.eventsFailed(again);
+      }
+    }
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const entries = nodes.map((n) => this.eventEntry(n, rules, now));
+    const latest = (x) => {
+      if (!Number.isFinite(x.ev.start)) return 0;
+      const past = eventOccurrences({ tz: rules.tz, events: [x.ev] }, x.ev.start - 1, now);
+      return past.length ? past[past.length - 1].start : x.ev.start;
+    };
+    const coming = entries.filter((x) => x.view.next != null).sort((a, b) => a.view.next - b.view.next || a.view.title.localeCompare(b.view.title));
+    const done = entries.filter((x) => x.view.next == null).map((x) => ({ x, at: latest(x) })).sort((a, b) => b.at - a.at || a.x.view.title.localeCompare(b.x.view.title)).map((y) => y.x);
+    return { events: [...coming, ...done].map((x) => x.view) };
+  }
+
+  /** A real date, 'YYYY-MM-DD', or null */
+  dayOf(value) {
+    const text = String(value ?? '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+    const ms = Date.parse(`${text}T00:00:00Z`);
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === text ? text : null;
+  }
+
+  /** A moment as the events keep it in Shopify: Lair wall-clock time with its offset, like 2026-10-08T18:00:00+13:00 */
+  lairIso(ms, tz) {
+    const time = lairTime(tz);
+    const p = time.parts(ms);
+    const offset = Math.round(time.offset(ms) / MIN);
+    const pad = (n) => String(Math.abs(n)).padStart(2, '0');
+    return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.h)}:${pad(p.mi)}:00${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
+  }
+
+  /** Whether "Tables reserved" reads as tables that exist: table codes and ranges (T20-T21), rooms by name, or all */
+  tablesExist(spec, rooms) {
+    const text = String(spec).trim();
+    if (/^all$/i.test(text)) return true;
+    const index = tableIndex(rooms);
+    const parts = text.split(/[,;]+/).map((p) => p.trim()).filter(Boolean);
+    if (!parts.length) return false;
+    return parts.every((part) => {
+      if (rooms.some((r) => r.id.toLowerCase() === part.toLowerCase() || r.name.toLowerCase() === part.toLowerCase())) return true;
+      return part.split(/\s+/).every((token) => {
+        const range = token.match(/^([A-Za-z]+)(\d+)-(?:([A-Za-z]+))?(\d+)$/);
+        if (!range) return index.has(token.toUpperCase());
+        if (range[3] && range[3].toUpperCase() !== range[1].toUpperCase()) return false;
+        if (+range[2] > +range[4]) return false;
+        for (let i = +range[2]; i <= +range[4]; i += 1) if (!index.has(`${range[1].toUpperCase()}${i}`)) return false;
+        return true;
+      });
+    });
+  }
+
+  /** Whether "Game tables" reads as spots of tables that exist, each spot in one room: T14+T15, T16+T17 */
+  spotsExist(spec, rooms) {
+    const index = tableIndex(rooms);
+    const parts = String(spec).split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
+    if (!parts.length) return false;
+    return parts.every((part) => {
+      const tables = part.split('+').map((t) => t.trim().toUpperCase());
+      return tables.every((t) => index.has(t)) && tables.every((t) => index.get(t).roomObj.id === index.get(tables[0]).roomObj.id);
+    });
+  }
+
+  /**
+   * The editor's fields, checked (contract v7 section 10), as the lair_event fields to write: { set: { key: value } }
+   * with only what was sent ('' clears an optional field), and merged: the entry after the change. current: the entry's
+   * fields now ({} for a new one). A one-off keeps no Repeat until or skip dates. No awaits.
+   */
+  eventFields(input, rules, current = {}) {
+    const creating = !Object.keys(current).length;
+    const has = (k) => Object.prototype.hasOwnProperty.call(input, k);
+    const empty = (k) => input[k] == null || String(input[k]).trim() === '';
+    const set = {};
+    if (creating || has('title')) {
+      const title = trimmed(input.title, 80);
+      if (!title) throw new RuleError('Give the event a title.');
+      set.title = title;
+    }
+    if (creating || has('type')) {
+      if (!EVENT_TYPES.includes(input.type)) throw new RuleError('Pick what kind of event it is.');
+      set.event_type = input.type;
+    }
+    if (has('game')) {
+      const game = String(input.game ?? '').trim();
+      if (game.length > 40) throw new RuleError("The game's name is 40 characters at most.");
+      set.game = game;
+    }
+    if (creating || has('start')) {
+      const start = Number(input.start);
+      if (empty('start') || !Number.isFinite(start)) throw new RuleError('Pick when it starts.');
+      set.starts_at = this.lairIso(start, rules.tz);
+    }
+    if (has('end')) {
+      const end = Number(input.end);
+      if (!empty('end') && !Number.isFinite(end)) throw new RuleError('It has to finish after it starts.');
+      set.ends_at = empty('end') ? '' : this.lairIso(end, rules.tz);
+    }
+    if (has('repeat')) {
+      const repeat = empty('repeat') ? '' : String(input.repeat).trim().toLowerCase();
+      if (repeat && !EVENT_REPEATS.includes(repeat)) throw new RuleError('Pick how often it repeats: weekly, fortnightly or monthly. Or leave it as a one-off.');
+      set.repeat = repeat;
+    }
+    if (has('repeatUntil')) {
+      const day = empty('repeatUntil') ? '' : this.dayOf(input.repeatUntil);
+      if (day === null) throw new RuleError("'Repeat until' has to be on or after the first date.");
+      set.repeat_until = day;
+    }
+    if (has('skipDates')) {
+      const raw = Array.isArray(input.skipDates) ? input.skipDates : String(input.skipDates ?? '').split(/[\s,;]+/);
+      const days = raw.map((d) => String(d ?? '').trim()).filter(Boolean).map((d) => this.dayOf(d));
+      if (days.some((d) => d === null) || days.length > 52) throw new RuleError('Skip dates have to be real dates, on or after the first date.');
+      set.skip_dates = days.length ? JSON.stringify([...new Set(days)].sort()) : '';
+    }
+    if (has('description')) set.description = String(input.description ?? '').replace(/\r\n?/g, '\n').trim().slice(0, 2000);
+    if (has('imageId')) {
+      const id = String(input.imageId ?? '').trim();
+      const digits = id.match(/^(?:gid:\/\/shopify\/MediaImage\/)?(\d{1,20})$/);
+      if (id && !digits) throw new RuleError('Pick a JPEG, PNG or WebP picture.');
+      set.image = id ? `gid://shopify/MediaImage/${digits[1]}` : '';
+    }
+    if (has('capacity')) {
+      const capacity = Number(input.capacity);
+      if (!empty('capacity') && !(Number.isInteger(capacity) && capacity >= 1 && capacity <= 500)) throw new RuleError('Capacity is a number of people, from 1 to 500.');
+      set.capacity = empty('capacity') ? '' : String(capacity);
+    }
+    if (has('priceNote')) {
+      const note = String(input.priceNote ?? '').trim();
+      if (note.length > 60) throw new RuleError('Keep the price note short: 60 characters at most.');
+      set.price_note = note;
+    }
+    if (has('entryFee')) {
+      const fee = Number(input.entryFee);
+      if (!empty('entryFee') && !(Number.isFinite(fee) && fee >= 0 && fee <= 1000)) throw new RuleError('The entry fee is in dollars, from $0 to $1000.');
+      set.entry_fee = empty('entryFee') ? '' : (Math.round(fee * 100) / 100).toFixed(2);
+    }
+    if (has('payment')) {
+      if (!empty('payment') && !EVENT_PAYMENT_WORDS[input.payment]) throw new RuleError('Pick how people pay: in store, online, or either.');
+      set.payment = empty('payment') ? '' : EVENT_PAYMENT_WORDS[input.payment];
+    }
+    if (has('tables')) {
+      const tables = String(input.tables ?? '').trim();
+      if (tables && !this.tablesExist(tables, rules.rooms)) throw new RuleError("Some of those tables don't exist. Use table codes like T20-T21, a room's name, or all.");
+      set.tables = tables;
+    }
+    if (has('gameTables')) {
+      const spots = String(input.gameTables ?? '').trim();
+      if (spots && !this.spotsExist(spots, rules.rooms)) throw new RuleError('Game tables are pairs like T14+T15, T16+T17, with tables that exist.');
+      set.game_tables = spots;
+    }
+    if (has('lockTables')) set.lock_tables = input.lockTables === true || input.lockTables === 'true' ? 'true' : 'false';
+    if (has('link')) {
+      const link = String(input.link ?? '').trim();
+      let ok = !link;
+      if (link && /^https?:\/\//i.test(link) && link.length <= 300) {
+        try {
+          ok = Boolean(new URL(link).hostname);
+        } catch {
+          ok = false;
+        }
+      }
+      if (!ok) throw new RuleError('Links start with https://.');
+      set.link = link;
+    }
+    if (has('productId')) {
+      const id = String(input.productId ?? '').trim();
+      const digits = id.match(/^(?:gid:\/\/shopify\/Product\/)?(\d{1,20})$/);
+      if (id && !digits) throw new RuleError("That ticket product doesn't look right. Pick it again.");
+      set.product = id ? `gid://shopify/Product/${digits[1]}` : '';
+    }
+    // The entry after the change, checked as a whole: the end after the start (24 hours at most), and Repeat until and the
+    // skip dates on or after the first date. A one-off keeps neither (a skip date would hide its only date).
+    const merged = { ...current };
+    for (const [key, value] of Object.entries(set)) merged[key] = value === '' ? null : value;
+    const start = Date.parse(merged.starts_at || '');
+    const first = Number.isFinite(start) ? lairTime(rules.tz).key(start) : null;
+    if ((set.starts_at || set.ends_at) && merged.ends_at) {
+      const end = Date.parse(merged.ends_at);
+      if (!(end > start)) throw new RuleError('It has to finish after it starts.');
+      if (end - start > 24 * HOUR) throw new RuleError('Keep an event to 24 hours or less. Use Repeats for more dates.');
+    }
+    if (!merged.repeat) {
+      for (const key of ['repeat_until', 'skip_dates']) {
+        if (merged[key] != null) {
+          set[key] = '';
+          merged[key] = null;
+        }
+      }
+    } else {
+      if ((set.repeat_until || set.starts_at || 'repeat' in set) && merged.repeat_until && first && merged.repeat_until < first) {
+        throw new RuleError("'Repeat until' has to be on or after the first date.");
+      }
+      if ((set.skip_dates || set.starts_at || 'repeat' in set) && first && this.eventSkipDates(merged.skip_dates).some((d) => d < first)) {
+        throw new RuleError('Skip dates have to be real dates, on or after the first date.');
+      }
+    }
+    // Only what changes goes to Shopify
+    for (const [key, value] of Object.entries(set)) {
+      const now = current[key] ?? '';
+      const same = ['starts_at', 'ends_at'].includes(key) ? now && value && Date.parse(now) === Date.parse(value)
+        : key === 'entry_fee' ? now !== '' && value !== '' && Number(now) === Number(value)
+          : key === 'skip_dates' ? JSON.stringify(this.eventSkipDates(now)) === JSON.stringify(this.eventSkipDates(value))
+            : String(now) === String(value);
+      if (same || (!creating ? false : value === '')) delete set[key];
+    }
+    return { set, merged };
+  }
+
+  /** Lower case, letters, numbers and dashes from the title, up to 50 characters (with room for a -2) */
+  eventHandleBase(title, room = 0) {
+    const slug = String(title || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return (slug || 'event').slice(0, 50 - room).replace(/-+$/, '') || 'event';
+  }
+
+  /** A handle nobody has: the title's, then -2, -3… (joins and pictures are routes, never handles) */
+  async freeEventHandle(title) {
+    for (let n = 1; n <= 20; n += 1) {
+      const suffix = n === 1 ? '' : `-${n}`;
+      const handle = `${this.eventHandleBase(title, suffix.length)}${suffix}`;
+      if (['joins', 'pictures'].includes(handle)) continue;
+      if (!(await this.shopify.lairEventByHandle(handle))) return handle;
+    }
+    return `${this.eventHandleBase(title, 7)}-${makeId('x').slice(2, 8)}`;
+  }
+
+  /**
+   * Save an event in Shopify, once more after a second if Shopify says its picture isn't ready yet (a file still being
+   * processed). Returns { metaobject, userErrors }.
+   */
+  async writeEvent(write, picture) {
+    let result = await write();
+    const notReady = (e) => /image|file|media/i.test(`${(e.field || []).join(' ')} ${e.message || ''}`);
+    if (picture && result.userErrors?.some(notReady)) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      result = await write();
+    }
+    return result;
+  }
+
+  /** Shopify's userErrors, as the editor shows them */
+  shopifySaidNo(userErrors) {
+    return new RuleError(`Shopify said no: ${userErrors.map((e) => e.message).filter(Boolean).join('; ') || 'it would not save that'}`, 422);
+  }
+
+  /** POST /events { …fields } (staff): a new event. Its handle comes from the title and never changes. Returns { event, notice }. */
+  async createEvent(input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    const { set } = this.eventFields(input || {}, rules);
+    let result;
+    try {
+      const handle = await this.freeEventHandle(set.title);
+      // A new handle has no sign-ups, so there's nothing to check before Shopify saves it
+      result = await this.writeEvent(() => this.shopify.createLairEvent(handle, Object.entries(set).map(([key, value]) => ({ key, value }))), Boolean(set.image));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.userErrors?.length || !result.metaobject) throw this.shopifySaidNo(result.userErrors || []);
+    // --- no awaits from here on ---
+    this.dropEvents();
+    return { event: this.eventEntry(result.metaobject, rules, Date.now()).view, notice: null };
+  }
+
+  /**
+   * POST /events/:handle/update { …the fields that change } (staff). A date people have signed up for (sign-ups or game
+   * spots) can't move or go: 409, and nothing changes. A lower capacity is fine (notice: nobody's cancelled). Returns
+   * { event, notice }.
+   */
+  async updateEvent(handle, input, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    let node;
+    try {
+      node = await this.shopify.lairEventByHandle(String(handle || '').slice(0, 120));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (!node) throw new RuleError('That event could not be found.', 404);
+    // --- no awaits until Shopify saves it: the sign-up check ---
+    const now = Date.now();
+    const current = this.eventFieldMap(node.fields);
+    const { set, merged } = this.eventFields(input || {}, rules, current);
+    const booked = this.eventBookings(node.handle, now);
+    const before = this.eventDatesFrom(this.eventRule(node.handle, current), rules, now).upcoming;
+    const after = new Map(this.eventDatesFrom(this.eventRule(node.handle, merged), rules, now).upcoming.map((o) => [o.id, o]));
+    const was = new Map(before.map((o) => [o.id, o]));
+    for (const b of booked) {
+      const old = was.get(b.occurrenceId);
+      if (!old) continue;
+      const next = after.get(b.occurrenceId);
+      if (!next || next.start !== old.start || next.end !== old.end) {
+        throw new RuleError(`People have signed up for ${this.shortDay(old.start, rules)}, so that date can't move or go. Cancel their sign-ups on the staff page first, or make the change from a date nobody's signed up for.`, 409);
+      }
+    }
+    const capacity = merged.capacity ? Number(merged.capacity) : null;
+    const over = 'capacity' in set && capacity ? booked.find((b) => after.has(b.occurrenceId) && b.people > capacity) : null;
+    const notice = over ? `${this.shortDay(over.start, rules)} already has ${plural(over.people, 'person', 'people')}, more than the new capacity. Nobody's been cancelled.` : null;
+    const fields = Object.entries(set).map(([key, value]) => ({ key, value }));
+    if (!fields.length) return { event: this.eventEntry(node, rules, now, booked).view, notice };
+    let result;
+    try {
+      result = await this.writeEvent(() => this.shopify.updateLairEvent(node.id, fields), Boolean(set.image));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.userErrors?.length || !result.metaobject) throw this.shopifySaidNo(result.userErrors || []);
+    // --- no awaits from here on ---
+    this.dropEvents();
+    return { event: this.eventEntry(result.metaobject, rules, Date.now()).view, notice };
+  }
+
+  /** POST /events/:handle/delete (staff): not while any date to come has people on it (409). The picture stays in Shopify's Files. */
+  async deleteEvent(handle, who) {
+    this.requireStaff(who);
+    const rules = await this.rules();
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    let node;
+    try {
+      node = await this.shopify.lairEventByHandle(String(handle || '').slice(0, 120));
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (!node) throw new RuleError('That event could not be found.', 404);
+    // --- no awaits until Shopify deletes it: the sign-up check ---
+    const booked = this.eventBookings(node.handle, Date.now());
+    if (booked.length) {
+      throw new RuleError(`People have signed up for ${this.shortDay(booked[0].start, rules)}. Cancel their sign-ups first, or end the event after that date with Repeat until.`, 409);
+    }
+    let result;
+    try {
+      result = await this.shopify.deleteLairEvent(node.id);
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.userErrors?.length) throw this.shopifySaidNo(result.userErrors);
+    // --- no awaits from here on ---
+    this.dropEvents();
+    return { ok: true, handle: node.handle };
+  }
+
+  /**
+   * POST /events/pictures { dataUrl, alt? } (staff): a picture for an event, into Shopify's Files. The browser shrinks it
+   * first (JPEG, PNG or WebP, 700 KB at most); the Worker sends it to Shopify's upload target itself. Returns { image:
+   * { id, url, alt, status } }: id is the MediaImage to save as imageId; url can be null while Shopify processes it.
+   */
+  async eventPicture(input, who) {
+    this.requireStaff(who);
+    const match = String(input?.dataUrl || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
+    if (!match) throw new RuleError('Pick a JPEG, PNG or WebP picture.');
+    let raw;
+    try {
+      raw = atob(match[2].replace(/\s+/g, ''));
+    } catch {
+      throw new RuleError('Pick a JPEG, PNG or WebP picture.');
+    }
+    if (raw.length > IMAGE_LIMIT) throw new RuleError('That picture is too big. Try a smaller one.', 413);
+    if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    const filename = `lair-event-${makeId('x').slice(2, 14)}.${match[1].split('/')[1].replace('jpeg', 'jpg')}`;
+    let result;
+    try {
+      result = await this.shopify.uploadEventPicture({ bytes, mimeType: match[1], filename, alt: trimmed(input?.alt, 200) });
+    } catch (error) {
+      throw this.eventsFailed(error);
+    }
+    if (result.problem) throw new RuleError(`Shopify didn't take the picture (${String(result.problem).slice(0, 160)}). Try again.`, 502);
+    this.eventRefs = this.eventRefs || new Map();
+    this.eventRefs.set(result.image.id, { url: result.image.url, alt: result.image.alt ?? '' });
+    return { image: result.image };
+  }
+
   /* ---------------- dice ---------------- */
   /**
    * POST /roll: a d20 rolled on the server.
@@ -4197,6 +4947,8 @@ export class Lair {
       // Where it came from: 'staff' (made on the staff page; older passes have no source), 'order' (bought as a product)
       // or 'birthday' (a birthday gift). orderName is the order that bought it, like "#1550".
       source: r.source || 'staff', orderId: r.order_id || null, orderName: r.order_name || null,
+      // Round 7: the group it belongs to (any member of the group can use it), or null
+      groupId: r.group_id || null,
     };
   }
 
@@ -4232,7 +4984,16 @@ export class Lair {
       code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), cover: p.cover,
       expiresAt: p.expiresAt, status: this.passStatus(p, now), source: p.source, orderName: bought ? p.orderName || null : null,
       ...(bought ? { note: this.boughtNote(p.note) } : {}),
+      // Round 7: a group's pass, which shows in each member's Wallet with the group's name ("Warhammer League group")
+      group: this.passGroup(p),
     };
+  }
+
+  /** The group a pass belongs to, as pass views show it: { id, name }, or null (round 7). No awaits. */
+  passGroup(p) {
+    if (!p?.groupId) return null;
+    const g = this.groupRow(p.groupId);
+    return g ? { id: g.id, name: g.name } : null;
   }
 
   /** How a pass from an order was bought, from the note the order gave it: "Bought online", "Bought at the counter", or '' */
@@ -4249,10 +5010,13 @@ export class Lair {
    * to claim in My Lair.
    */
   passView(p, { uses = true, now = Date.now() } = {}) {
+    // Round 7: a group's pass reads as the group: { customerId: null, name: <group name>, email: '' }
+    const group = this.passGroup(p);
     const view = {
       id: p.id, code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsUsed: p.sessionsUsed, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed),
-      cover: p.cover, holder: { customerId: p.customerId, name: p.holderName, email: p.holderEmail }, note: p.note, pricePaid: p.pricePaid,
-      expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt, source: p.source, orderName: p.orderName,
+      cover: p.cover, holder: group ? { customerId: null, name: group.name, email: '' } : { customerId: p.customerId, name: p.holderName, email: p.holderEmail },
+      note: p.note, pricePaid: p.pricePaid, expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt, source: p.source, orderName: p.orderName,
+      group,
     };
     if (uses) {
       view.uses = this.sql
@@ -4280,13 +5044,16 @@ export class Lair {
     return p ? { code: p.code, label: p.label, sessionsLeft: p.left } : null;
   }
 
-  /** A member's passes for My Lair: active ones, and ones used up in the last 30 days */
+  /**
+   * A member's passes for My Lair: active ones, and ones used up in the last 30 days. Round 7: their own, plus the passes
+   * of the active groups they're in (each with its group).
+   */
   memberPasses(customerId, now) {
     return this.sql
       .exec(
         `SELECT p.*, (SELECT MAX(u.at) FROM pass_uses u WHERE u.pass_id = p.id AND u.undone_at IS NULL) AS last_used
-         FROM passes p WHERE p.customer_id = ? AND p.status = 'active' ORDER BY p.created_at DESC, p.rowid DESC`,
-        String(customerId),
+         FROM passes p WHERE (p.customer_id = ? OR p.group_id IN (${this.memberGroupsSql()})) AND p.status = 'active' ORDER BY p.created_at DESC, p.rowid DESC`,
+        String(customerId), String(customerId),
       )
       .toArray()
       .filter((r) => {
@@ -4296,12 +5063,23 @@ export class Lair {
       .map((r) => this.memberPassView(this.rowToPass(r), now));
   }
 
-  /** A member's passes that can be used now, as staff see them (the POS shows them when it scans a member code) */
+  /**
+   * A member's passes that can be used now, as staff see them (the POS shows them when it scans a member code, and so
+   * does check-in). Round 7: their own, plus their active groups' passes, each with its group.
+   */
   activePasses(customerId, now) {
-    return this.sql.exec("SELECT * FROM passes WHERE customer_id = ? AND status = 'active' ORDER BY created_at DESC, rowid DESC", String(customerId)).toArray()
+    return this.sql.exec(
+      `SELECT * FROM passes WHERE (customer_id = ? OR group_id IN (${this.memberGroupsSql()})) AND status = 'active' ORDER BY created_at DESC, rowid DESC`,
+      String(customerId), String(customerId),
+    ).toArray()
       .map((r) => this.rowToPass(r))
       .filter((p) => this.passStatus(p, now) === 'active')
       .map((p) => this.passView(p, { uses: false, now }));
+  }
+
+  /** SQL for the ids of the active groups a customer (one bound value) is in: for `group_id IN (…)` (round 7) */
+  memberGroupsSql() {
+    return "SELECT m.group_id FROM lair_group_members m JOIN lair_groups g ON g.id = m.group_id AND g.status = 'active' WHERE m.customer_id = ?";
   }
 
   /** The last moment of a Lair day ('YYYY-MM-DD'): a pass that expires that day works until midnight. */
@@ -4314,7 +5092,10 @@ export class Lair {
 
   /**
    * A staff form's pass fields (creating and updating share the rules). Only what was sent is returned. A holder email
-   * that matches a member links them; a pass needs a member or a holder's name. No awaits.
+   * that matches a member links them. Round 7: a pass belongs to exactly one of a group (groupId: any active member can
+   * use it), a customer (customerId, picked from the search: one the Lair hasn't met comes with holderName and
+   * holderEmail, and out.picked makes their member record), or a name typed by hand (holderName, holderEmail optional).
+   * On an update, groupId: null takes it off its group. No awaits, no writes.
    */
   passFields(input, rules, now, existing = null) {
     const out = {};
@@ -4352,10 +5133,26 @@ export class Lair {
     const email = input.holderEmail != null ? trimmed(input.holderEmail, 120) : null;
     if (email && !isEmail(email)) throw new RuleError("Check the holder's email address.");
     const wanted = input.customerId != null && input.customerId !== '' ? trimmed(input.customerId, 40) : null;
+    // Round 7: the owner. A group, or a person (a customer or a typed name), never both.
+    const groupSent = Object.prototype.hasOwnProperty.call(input, 'groupId');
+    const groupWanted = groupSent && input.groupId != null && String(input.groupId).trim() !== '' ? trimmed(input.groupId, 40) : null;
+    if (groupWanted && (wanted || trimmed(input.holderName, 80))) throw new RuleError('A pass belongs to a group or a person, not both.');
+    if (groupWanted) {
+      const group = this.groupRow(groupWanted);
+      if (!group) throw new RuleError('That group could not be found.', 404);
+      if (group.status !== 'active') throw new RuleError('That group is archived. Pick another, or bring it back first.', 409);
+      Object.assign(out, { groupId: group.id, customerId: null, holderName: '', holderEmail: '', groupName: group.name });
+      return out;
+    }
+    if (groupSent) out.groupId = null;
     const member = (wanted && this.memberRow(wanted)) || (email && this.memberByEmail(email)) || null;
-    if (wanted && !member) throw new RuleError('That member could not be found.', 404);
     if (member) {
       Object.assign(out, { customerId: member.customer_id, holderName: trimmed(input.holderName, 80) || member.name || member.first_name || '', holderEmail: email || member.email || '' });
+    } else if (wanted) {
+      // A customer the Lair hasn't met, picked from the search with their name and email: their member record is made
+      // with the pass. With no name it's the round 4 404.
+      out.picked = this.pickedCustomer({ customerId: wanted, name: input.holderName, email }, { missing: 'That member could not be found.' });
+      Object.assign(out, { customerId: out.picked.customerId, holderName: out.picked.name, holderEmail: out.picked.email });
     } else {
       if (input.customerId === null || input.customerId === '') out.customerId = null;
       if (input.holderName != null) out.holderName = trimmed(input.holderName, 80);
@@ -4363,7 +5160,9 @@ export class Lair {
     }
     const holderName = out.holderName ?? existing?.holderName ?? '';
     const customerId = out.customerId !== undefined ? out.customerId : existing?.customerId ?? null;
-    if (!customerId && !holderName) throw new RuleError("Add the holder's name, or find them in the members.");
+    const groupId = out.groupId !== undefined ? out.groupId : existing?.groupId ?? null;
+    if (groupId && (customerId || holderName)) throw new RuleError('A pass belongs to a group or a person, not both.');
+    if (!groupId && !customerId && !holderName) throw new RuleError('Pick a group, pick a customer, or type a name.');
     return out;
   }
 
@@ -4378,18 +5177,23 @@ export class Lair {
     // --- no awaits from here on ---
     const now = Date.now();
     const f = this.passFields(input, rules, now);
+    if (f.picked) this.makeMember(f.picked, now);
     const id = makeId('ps');
-    const code = this.newCode(f.holderName || '', 'pass', id, now);
+    // A group's pass takes its code from the group's name (Warhammer League: WL-…), round 7
+    const code = this.newCode(f.groupName || f.holderName || '', 'pass', id, now);
     this.write(
       `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
-         created_by, expires_at, status) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+         created_by, expires_at, status, group_id) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
       id, code, f.label, f.sessionsTotal, f.cover ?? rules.prices.table, f.customerId || null, f.holderName || null, f.holderEmail || null, f.note || null,
-      f.pricePaid || 0, now, who.customerId || 'staff', f.expiresAt || null,
+      f.pricePaid || 0, now, who.customerId || 'staff', f.expiresAt || null, f.groupId || null,
     );
     return { pass: this.passView(this.passRow(id), { now }) };
   }
 
-  /** GET /passes?q=&status=active|void|all (staff): newest first, up to 100. q looks in the label, holder, code and order name. */
+  /**
+   * GET /passes?q=&status=active|void|all (staff): newest first, up to 100. q looks in the label, holder, code and order
+   * name, and (round 7) the name of the group a pass belongs to.
+   */
   listPasses(url, who) {
     this.requireStaff(who);
     const now = Date.now();
@@ -4398,13 +5202,16 @@ export class Lair {
     const wanted = url.searchParams.get('status');
     const status = ['active', 'void', 'all'].includes(wanted) ? wanted : 'active';
     const rows = status === 'all'
-      ? this.sql.exec('SELECT * FROM passes ORDER BY created_at DESC, rowid DESC').toArray()
-      : this.sql.exec('SELECT * FROM passes WHERE status = ? ORDER BY created_at DESC, rowid DESC', status).toArray();
-    const matches = (r) => !q || [r.label, r.holder_name, r.holder_email, r.order_name].some((v) => String(v || '').toLowerCase().includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key));
+      ? this.sql.exec('SELECT p.*, g.name AS group_name FROM passes p LEFT JOIN lair_groups g ON g.id = p.group_id ORDER BY p.created_at DESC, p.rowid DESC').toArray()
+      : this.sql.exec('SELECT p.*, g.name AS group_name FROM passes p LEFT JOIN lair_groups g ON g.id = p.group_id WHERE p.status = ? ORDER BY p.created_at DESC, p.rowid DESC', status).toArray();
+    const matches = (r) => !q || [r.label, r.holder_name, r.holder_email, r.order_name, r.group_name].some((v) => String(v || '').toLowerCase().includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key));
     return { passes: rows.filter(matches).slice(0, 100).map((r) => this.passView(this.rowToPass(r), { now })) };
   }
 
-  /** POST /passes/:id/update (staff): label, sessions (never below the sessions used), note, expires, status or holder. */
+  /**
+   * POST /passes/:id/update (staff): label, sessions (never below the sessions used), note, expires, status or holder; round
+   * 7: groupId (a group, or null to take it off its group, when it then needs a customer or a holder's name).
+   */
   async updatePass(id, input, who) {
     this.requireStaff(who);
     const rules = await this.rules();
@@ -4413,9 +5220,10 @@ export class Lair {
     const p = this.passRow(id);
     if (!p) throw new RuleError('That pass could not be found.', 404);
     const f = this.passFields(input, rules, now, p);
+    if (f.picked) this.makeMember(f.picked, now);
     const columns = {
       label: 'label', sessionsTotal: 'sessions_total', note: 'note', expiresAt: 'expires_at', status: 'status', pricePaid: 'price_paid', cover: 'cover',
-      customerId: 'customer_id', holderName: 'holder_name', holderEmail: 'holder_email',
+      customerId: 'customer_id', holderName: 'holder_name', holderEmail: 'holder_email', groupId: 'group_id',
     };
     const keys = Object.keys(f).filter((k) => columns[k]);
     if (keys.length) this.write(`UPDATE passes SET ${keys.map((k) => `${columns[k]} = ?`).join(', ')} WHERE id = ?`, ...keys.map((k) => (f[k] === '' ? null : f[k] ?? null)), p.id);
@@ -4474,6 +5282,8 @@ export class Lair {
     this.claimHits.set(who.customerId, [...tries, now]);
     const p = this.passByCode(input.code);
     if (!p || p.status === 'void') throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
+    // Round 7: a group's pass stays the group's (its members use it as it is)
+    if (p.groupId) throw new RuleError('That pass belongs to a group. Ask us at the counter.', 409);
     const me = String(who.customerId);
     if (p.customerId && p.customerId !== me) throw new RuleError('That pass already belongs to someone. Ask us at the counter.', 409);
     if (!p.customerId) {
@@ -4490,17 +5300,283 @@ export class Lair {
 
   /**
    * usePass on POST /bookings and POST /events/:id/reserve: the code of a pass linked to the logged-in member, saved on
-   * the booking for its check-in. Staff may use any active pass; anyone else's is a 403. No awaits.
+   * the booking for its check-in. Staff may use any active pass; anyone else's is a 403. Round 7: a member may use the
+   * pass of an active group they're in. No awaits.
    */
   passForBooking(code, who, now) {
     const p = this.passByCode(code);
     if (!p && who.staff) throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
-    if (!p || (!who.staff && (!who.customerId || p.customerId !== String(who.customerId)))) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
+    const mine = Boolean(p && who.customerId && (p.customerId === String(who.customerId) || (p.groupId && this.inActiveGroup(p.groupId, who.customerId))));
+    if (!p || (!who.staff && !mine)) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
     const status = this.passStatus(p, now);
     if (status === 'void') throw new RuleError('That pass has been cancelled. Ask us at the counter.', 409);
     if (status === 'expired') throw new RuleError('That pass has expired. Ask us at the counter about a new one.', 409);
     if (status === 'used') throw new RuleError('That pass has no sessions left. Book without it, friend, or ask us about a new one.', 409);
     return p;
+  }
+
+  /* ---------------- finding a customer, and groups (round 7) ---------------- */
+  /**
+   * GET /customers?q= (staff): the picker that groups, pass owners, GMs and players all use. Lair members first, matched
+   * like GET /members?q= (name, email, member code or customer ID), up to 10; then Shopify's customers not already
+   * listed (LairCustomers: Shopify's own search over name and email), up to 20 in all. member: false is someone the
+   * Lair hasn't met (no code yet): routes that take their customerId also take the name and email the picker gave, and
+   * make their member record. shopify: false when Shopify couldn't be asked (protected customer data not approved, or
+   * Shopify down; then it isn't asked again for 10 minutes), so only Lair members show.
+   */
+  async findCustomers(url, who) {
+    this.requireStaff(who);
+    const q = trimmed(url.searchParams.get('q'), 80);
+    if (q.length < 2) throw new RuleError('Type at least 2 letters to search.');
+    // Shopify's search gets letters, numbers, spaces and @ . _ - + ' only, in quotes
+    const clean = q.replace(/[^\p{L}\p{N}\s@._+'-]/gu, ' ').replace(/\s+/g, ' ').trim();
+    let found = null;
+    if (this.shopify.configured && Date.now() >= (this.retryAt.get('customers') || 0)) {
+      try {
+        found = clean ? await this.shopify.searchCustomers(`"${clean}"`) : [];
+      } catch (error) {
+        found = null;
+        this.backoff('customers');
+        this.note({ customersError: { message: String(error.message || error).slice(0, 300), at: new Date().toISOString() } });
+      }
+    }
+    // --- no awaits from here on ---
+    const customers = this.matchMembers(q, 10).map((row) => this.customerItem(row));
+    const listed = new Set(customers.map((c) => c.customerId));
+    for (const c of found || []) {
+      if (customers.length >= 20) break;
+      if (!c.customerId || listed.has(c.customerId)) continue;
+      listed.add(c.customerId);
+      const row = this.memberRow(c.customerId);
+      customers.push(row ? this.customerItem(row) : { customerId: c.customerId, name: c.name, firstName: c.firstName, email: c.email, code: null, member: false });
+    }
+    return { customers, shopify: found !== null };
+  }
+
+  /** Members whose name, email or code has `text` in it, or whose member code or customer ID it is (exact first). No awaits. */
+  matchMembers(text, limit) {
+    const q = String(text || '').toLowerCase();
+    const found = this.findCode(q);
+    const exact = found?.type === 'member' ? found.item.customer_id : /^\d{3,20}$/.test(q) ? q : '';
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    return this.sql
+      .exec(
+        `SELECT * FROM members WHERE customer_id = ? OR lower(name) LIKE ? ESCAPE '\\' OR lower(first_name) LIKE ? ESCAPE '\\' OR lower(email) LIKE ? ESCAPE '\\'
+           OR lower(code) LIKE ? ESCAPE '\\' ORDER BY (customer_id = ?) DESC, COALESCE(last_seen, 0) DESC, customer_id LIMIT ?`,
+        exact, like, like, like, like, exact, limit,
+      )
+      .toArray();
+  }
+
+  /** A member as the picker lists them */
+  customerItem(row) {
+    return { customerId: row.customer_id, name: row.name || row.first_name || '', firstName: row.first_name || '', email: row.email || '', code: row.code || null, member: true };
+  }
+
+  /**
+   * A customer staff picked: { customerId, name?, email? }, from GET /customers. A member is theirs as they are. Someone
+   * the Lair hasn't met (member: false in the search) comes with the name and email the picker showed, to make their
+   * member record from (makeMember, once every check has passed). A customerId the Lair doesn't know, sent with no
+   * name (or one that isn't a Shopify customer ID): a 404 (`missing`). Returns { customerId, row (null until it's
+   * made), name, email }. No awaits, no writes.
+   */
+  pickedCustomer(person, { missing = PICK_AGAIN } = {}) {
+    const raw = person && typeof person === 'object' ? person : { customerId: person };
+    const customerId = trimmed(raw.customerId, 40);
+    const row = customerId ? this.memberRow(customerId) : null;
+    if (row) return { customerId: row.customer_id, row, name: row.name || row.first_name || '', email: row.email || '' };
+    const name = trimmed(raw.name, 80);
+    if (!/^\d{1,20}$/.test(customerId) || !name) throw new RuleError(missing, 404);
+    const email = trimmed(raw.email, 120);
+    return { customerId, row: null, name, email: isEmail(email) ? email : '' };
+  }
+
+  /**
+   * The member record of a customer staff picked who the Lair hadn't met (round 7): a member code from their name, and
+   * the name and email from the picker. No welcome roll (those are codes now). One already made is left as it is. No
+   * awaits. Returns their member row.
+   */
+  makeMember(picked, now = Date.now()) {
+    const existing = this.memberRow(picked.customerId);
+    if (existing) return existing;
+    const name = trimmed(picked.name, 80) || null;
+    this.write(
+      `INSERT INTO members (customer_id, name, first_name, email, code, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+       ON CONFLICT(customer_id) DO NOTHING`,
+      String(picked.customerId), name, name ? name.split(/\s+/)[0].slice(0, 40) : null, isEmail(picked.email) ? trimmed(picked.email, 120) : null,
+      this.newCode(name || '', 'member', picked.customerId, now), now, now,
+    );
+    return this.memberRow(picked.customerId);
+  }
+
+  groupRow(id) {
+    return id ? this.sql.exec('SELECT * FROM lair_groups WHERE id = ?', String(id)).toArray()[0] || null : null;
+  }
+
+  /** Whether a customer is in a group that's active (so they can use its passes). No awaits. */
+  inActiveGroup(groupId, customerId) {
+    return this.sql
+      .exec("SELECT 1 AS n FROM lair_group_members m JOIN lair_groups g ON g.id = m.group_id AND g.status = 'active' WHERE m.group_id = ? AND m.customer_id = ?", String(groupId), String(customerId))
+      .toArray().length > 0;
+  }
+
+  /**
+   * A group as staff see it: { id, name, organiser, members: [{ customerId, name, email, code }], note, status, passes:
+   * [{ id, code, label, sessionsLeft, sessionsTotal, status }], createdAt, updatedAt }. No awaits.
+   */
+  groupView(g, now = Date.now()) {
+    const members = this.sql
+      .exec(
+        `SELECT m.customer_id, x.name, x.first_name, x.email, x.code FROM lair_group_members m LEFT JOIN members x ON x.customer_id = m.customer_id
+         WHERE m.group_id = ? ORDER BY m.created_at, m.rowid`,
+        g.id,
+      )
+      .toArray()
+      .map((r) => ({ customerId: r.customer_id, name: r.name || r.first_name || '', email: r.email || '', code: r.code || null }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+    const organiser = g.organiser_id ? members.find((m) => m.customerId === g.organiser_id) || null : null;
+    const passes = this.sql.exec('SELECT * FROM passes WHERE group_id = ? ORDER BY created_at DESC, rowid DESC', g.id).toArray()
+      .map((r) => this.rowToPass(r))
+      .map((p) => ({ id: p.id, code: p.code, label: p.label, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), sessionsTotal: p.sessionsTotal, status: this.passStatus(p, now) }));
+    return {
+      id: g.id, name: g.name, organiser, members, note: g.note || '', status: g.status, passes, createdAt: g.created_at, updatedAt: g.updated_at || g.created_at,
+    };
+  }
+
+  /** A group's name from a staff form: 2 to 60 characters, spaces tidied. No awaits. */
+  groupName(value) {
+    const name = String(value ?? '').trim().replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > 60) throw new RuleError('Give the group a name (up to 60 characters).');
+    return name;
+  }
+
+  /** No two active groups share a name (ignoring case). except: the group being changed. No awaits. */
+  checkGroupName(name, except = null) {
+    const taken = this.sql.exec("SELECT id, name FROM lair_groups WHERE status = 'active'").toArray()
+      .find((g) => g.id !== except && g.name.toLocaleLowerCase('en') === name.toLocaleLowerCase('en'));
+    if (taken) throw new RuleError(`There's already a group called ${taken.name}.`, 409);
+  }
+
+  /** The customers a staff form sent (people, or customer IDs), checked and without repeats. No awaits, no writes. */
+  pickedPeople(list) {
+    const out = new Map();
+    for (const person of [].concat(list ?? [])) {
+      const picked = this.pickedCustomer(person);
+      if (!out.has(picked.customerId)) out.set(picked.customerId, picked);
+    }
+    return [...out.values()];
+  }
+
+  /**
+   * GET /groups?q=&status=active|archived|all (staff): up to 100, by name. active is the default. q looks in the group's
+   * name and its members' names, emails and member codes.
+   */
+  listGroups(url, who) {
+    this.requireStaff(who);
+    const now = Date.now();
+    const q = trimmed(url.searchParams.get('q'), 80).toLocaleLowerCase('en');
+    const key = codeKey(q);
+    const wanted = url.searchParams.get('status');
+    const status = ['active', 'archived', 'all'].includes(wanted) ? wanted : 'active';
+    let rows = (status === 'all'
+      ? this.sql.exec('SELECT * FROM lair_groups').toArray()
+      : this.sql.exec('SELECT * FROM lair_groups WHERE status = ?', status).toArray());
+    if (q) {
+      const hits = new Set(this.sql
+        .exec('SELECT m.group_id, x.name, x.first_name, x.email, x.code FROM lair_group_members m JOIN members x ON x.customer_id = m.customer_id')
+        .toArray()
+        .filter((r) => [r.name, r.first_name, r.email, r.code].some((v) => String(v || '').toLocaleLowerCase('en').includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key)))
+        .map((r) => r.group_id));
+      rows = rows.filter((g) => g.name.toLocaleLowerCase('en').includes(q) || hits.has(g.id));
+    }
+    rows.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) || a.created_at - b.created_at);
+    return { groups: rows.slice(0, 100).map((g) => this.groupView(g, now)) };
+  }
+
+  /**
+   * POST /groups { name, organiser?: person, members?: [person], note? } (staff): a group of customers. person is
+   * { customerId, name?, email? } from the picker (GET /customers). The organiser is always one of its members.
+   * Returns { group }.
+   */
+  async createGroup(input, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const name = this.groupName(input?.name);
+    this.checkGroupName(name);
+    const organiser = input?.organiser ? this.pickedCustomer(input.organiser) : null;
+    const people = this.pickedPeople(input?.members);
+    if (organiser && !people.some((p) => p.customerId === organiser.customerId)) people.unshift(organiser);
+    if (people.length > GROUP_MAX) throw new RuleError(`A group can have up to ${GROUP_MAX} people.`);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    for (const p of people) this.makeMember(p, now);
+    const id = makeId('gr');
+    this.write(
+      "INSERT INTO lair_groups (id, name, organiser_id, note, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+      id, name, organiser?.customerId || null, trimmed(input?.note, 300) || null, by, now, now,
+    );
+    for (const p of people) this.write('INSERT OR IGNORE INTO lair_group_members (group_id, customer_id, added_by, created_at) VALUES (?, ?, ?, ?)', id, p.customerId, by, now);
+    return { group: this.groupView(this.groupRow(id), now) };
+  }
+
+  /**
+   * POST /groups/:id/update { name?, organiser?: person (null: none), note?, status?: 'active'|'archived' } (staff). An
+   * organiser who isn't in the group yet joins it. Archiving stops its members using its passes (staff can still use
+   * them by code at the counter). Returns { group }.
+   */
+  async updateGroup(id, input, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const group = this.groupRow(id);
+    if (!group) throw new RuleError('That group could not be found.', 404);
+    const has = (k) => Object.prototype.hasOwnProperty.call(input || {}, k);
+    if (has('status') && !['active', 'archived'].includes(input.status)) throw new RuleError('A group is active or archived.');
+    const status = has('status') ? input.status : group.status;
+    const name = has('name') ? this.groupName(input.name) : group.name;
+    if (status === 'active') this.checkGroupName(name, group.id);
+    const organiser = has('organiser') && input.organiser ? this.pickedCustomer(input.organiser) : null;
+    const joining = organiser && !this.sql.exec('SELECT 1 AS n FROM lair_group_members WHERE group_id = ? AND customer_id = ?', group.id, organiser.customerId).toArray().length;
+    if (joining && this.groupSize(group.id) + 1 > GROUP_MAX) throw new RuleError(`A group can have up to ${GROUP_MAX} people.`);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    if (organiser) this.makeMember(organiser, now);
+    if (joining) this.write('INSERT OR IGNORE INTO lair_group_members (group_id, customer_id, added_by, created_at) VALUES (?, ?, ?, ?)', group.id, organiser.customerId, by, now);
+    this.write(
+      'UPDATE lair_groups SET name = ?, organiser_id = ?, note = ?, status = ?, updated_at = ? WHERE id = ?',
+      name, has('organiser') ? organiser?.customerId || null : group.organiser_id, has('note') ? trimmed(input.note, 300) || null : group.note, status, now, group.id,
+    );
+    return { group: this.groupView(this.groupRow(group.id), now) };
+  }
+
+  groupSize(groupId) {
+    return this.sql.exec('SELECT COUNT(*) AS n FROM lair_group_members WHERE group_id = ?', String(groupId)).one().n;
+  }
+
+  /**
+   * POST /groups/:id/members { add?: [person], remove?: [customerId] } (staff). Someone removed stops using the group's
+   * passes. The organiser can't be removed until there's a new one. Returns { group }.
+   */
+  async groupMembers(id, input, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const group = this.groupRow(id);
+    if (!group) throw new RuleError('That group could not be found.', 404);
+    const remove = [...new Set([].concat(input?.remove ?? []).map((x) => trimmed(x && typeof x === 'object' ? x.customerId : x, 40)).filter(Boolean))];
+    if (group.organiser_id && remove.includes(group.organiser_id)) throw new RuleError("That's the organiser. Pick a new organiser first.", 409);
+    const add = this.pickedPeople(input?.add);
+    const current = new Set(this.sql.exec('SELECT customer_id FROM lair_group_members WHERE group_id = ?', group.id).toArray().map((r) => r.customer_id));
+    const joining = add.filter((p) => !current.has(p.customerId));
+    const leaving = remove.filter((c) => current.has(c) && !joining.some((p) => p.customerId === c));
+    if (current.size + joining.length - leaving.length > GROUP_MAX) throw new RuleError(`A group can have up to ${GROUP_MAX} people.`);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    for (const p of joining) {
+      this.makeMember(p, now);
+      this.write('INSERT OR IGNORE INTO lair_group_members (group_id, customer_id, added_by, created_at) VALUES (?, ?, ?, ?)', group.id, p.customerId, by, now);
+    }
+    for (const c of leaving) this.write('DELETE FROM lair_group_members WHERE group_id = ? AND customer_id = ?', group.id, c);
+    if (joining.length || leaving.length) this.write('UPDATE lair_groups SET updated_at = ? WHERE id = ?', now, group.id);
+    return { group: this.groupView(this.groupRow(group.id), now) };
   }
 
   /**
@@ -6307,7 +7383,72 @@ export class Lair {
     const joins = this.sql.exec('SELECT COUNT(*) AS n FROM event_joins WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', email, since).one().n;
     if (bookings) this.write("UPDATE bookings SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND kind != 'gm' AND lower(email) = lower(?) AND ends_at > ?", id, now, email, since);
     if (joins) this.write('UPDATE event_joins SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', id, now, email, since);
-    return bookings + joins;
+    return bookings + joins + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now);
+  }
+
+  /**
+   * Round 7: a GM staff invited by email makes their account. Sessions with no GM account whose GM email is theirs
+   * (ignoring case), upcoming or ended in the last 30 days, become theirs, with their series (so later dates are theirs
+   * too) and the GM's own table holds. No awaits. Returns how many sessions joined.
+   */
+  adoptGmGames(id, email, now) {
+    const since = now - ADOPT_DAYS * 24 * HOUR;
+    const games = this.sql.exec('SELECT COUNT(*) AS n FROM games WHERE gm_customer_id IS NULL AND lower(gm_email) = lower(?) AND ends_at > ?', email, since).one().n;
+    if (!games) return 0;
+    this.write('UPDATE games SET gm_customer_id = ?, updated_at = ? WHERE gm_customer_id IS NULL AND lower(gm_email) = lower(?) AND ends_at > ?', id, now, email, since);
+    this.write(
+      `UPDATE series SET gm_customer_id = ?, updated_at = ? WHERE gm_customer_id IS NULL
+         AND id IN (SELECT series_id FROM games WHERE series_id IS NOT NULL AND gm_customer_id = ? AND lower(gm_email) = lower(?))`,
+      id, now, id, email,
+    );
+    this.write(
+      `UPDATE bookings SET customer_id = ?, updated_at = ? WHERE kind = 'gm' AND customer_id IS NULL
+         AND game_id IN (SELECT id FROM games WHERE gm_customer_id = ? AND lower(gm_email) = lower(?) AND ends_at > ?)`,
+      id, now, id, email, since,
+    );
+    return games;
+  }
+
+  /**
+   * Round 7: someone staff reserved a weekly seat for makes their account. Each waiting invite with their email becomes
+   * their regular membership, queued from when they were invited (a regular already keeps their place), or is cancelled
+   * when its series has ended. No awaits. Returns how many invites there were.
+   */
+  takeUpInvites(id, email, now) {
+    const invites = this.sql
+      .exec(
+        `SELECT i.*, s.status AS series_status FROM series_invites i LEFT JOIN series s ON s.id = i.series_id
+         WHERE i.status = 'waiting' AND lower(i.email) = lower(?) ORDER BY i.created_at, i.id`,
+        email,
+      )
+      .toArray();
+    for (const invite of invites) {
+      if (invite.series_status !== 'active') {
+        this.write("UPDATE series_invites SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'waiting'", now, invite.id);
+        continue;
+      }
+      const already = this.seriesMember(invite.series_id, id);
+      if (already?.status !== 'active') {
+        this.write(
+          `INSERT INTO series_members (series_id, customer_id, people, players, name, email, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+           ON CONFLICT(series_id, customer_id) DO UPDATE SET people = excluded.people, players = excluded.players, name = excluded.name, email = excluded.email,
+             status = 'active', created_at = excluded.created_at, updated_at = excluded.updated_at`,
+          invite.series_id, id, invite.people, invite.players || '[]', invite.name, invite.email, invite.created_at, now,
+        );
+      }
+      this.write("UPDATE series_invites SET status = 'joined', customer_id = ?, updated_at = ? WHERE id = ? AND status = 'waiting'", id, now, invite.id);
+    }
+    return invites.length;
+  }
+
+  /** Waiting series invites by series id, for the floor: { id, name, email, people } each (round 7). No awaits. */
+  waitingInvites() {
+    const out = new Map();
+    for (const r of this.sql.exec("SELECT * FROM series_invites WHERE status = 'waiting' ORDER BY created_at, id").toArray()) {
+      if (!out.has(r.series_id)) out.set(r.series_id, []);
+      out.get(r.series_id).push({ id: r.id, name: r.name, email: r.email, people: r.people });
+    }
+    return out;
   }
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
