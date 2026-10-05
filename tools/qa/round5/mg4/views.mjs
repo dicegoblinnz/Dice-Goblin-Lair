@@ -195,7 +195,7 @@ for (const size of ['phone', 'desktop']) {
   await page.waitForSelector('[data-tab-bar]:not([hidden])');
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(250);
-  // the bar rises into place (lair.css): measure where it settles
+  // the bar rises into place (lair-my.css): measure where it settles
   await page.evaluate(() => Promise.all(document.querySelector('[data-tab-bar]').getAnimations().map((a) => a.finished.catch(() => {}))));
   const bars = await page.evaluate(() => {
     const add = document.querySelector('[data-tab-bar]').getBoundingClientRect();

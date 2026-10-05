@@ -337,7 +337,13 @@ engine.registerFilter('color_lighten', (c, amt) => { const [h, s, l] = hsl(c); r
 engine.registerFilter('color_darken', (c, amt) => { const [h, s, l] = hsl(c); return hex(h, s, Math.max(0, l - amt)); });
 engine.registerFilter('asset_url', (n) => `/assets/${n}`);
 engine.registerFilter('shopify_asset_url', () => '#');
-engine.registerFilter('stylesheet_tag', (u) => `<link rel="stylesheet" href="${u}">`);
+/* Stylesheets a page asks to preload (stylesheet_tag: preload: true). Shopify sends them as a Link response header,
+   rel=preload; as=style (the tag itself is unchanged); serve() does the same. Reset for each page render. */
+let preloads = [];
+engine.registerFilter('stylesheet_tag', (u, ...args) => {
+  if (args.some((a) => Array.isArray(a) && a[0] === 'preload' && a[1] === true)) preloads.push(u);
+  return `<link rel="stylesheet" href="${u}">`;
+});
 engine.registerFilter('preload_tag', (u) => `<link rel="preload" href="${u}" as="font" crossorigin>`);
 engine.registerFilter('image_url', (o, ...args) => {
   if (!o) return '';
@@ -398,6 +404,7 @@ function makeScope(extra) {
 }
 
 async function renderPage(templateName, extra = {}) {
+  preloads = [];
   scope = makeScope(extra);
   engine.options.globals = scope;
   const tpl = readJson(`templates/${templateName}.json`);
@@ -784,7 +791,9 @@ export function serve(port = 4173) {
         return;
       }
       const html = await page();
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      const headers = { 'Content-Type': 'text/html; charset=utf-8' };
+      if (preloads.length) headers.Link = [...new Set(preloads)].map((u) => `<${u}>; rel=preload; as=style`).join(', ');
+      res.writeHead(200, headers);
       res.end(html);
     } catch (error) {
       res.writeHead(500, { 'Content-Type': 'text/plain' });
