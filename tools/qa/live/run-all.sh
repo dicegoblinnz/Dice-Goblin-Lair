@@ -57,6 +57,7 @@ done
 step flow-r6-loyalty.mjs
 step flow-r6-spend.mjs
 step flow-r6-gifts.mjs
+step flow-r7-a.mjs
 step flow-r6-guests.mjs
 step live-smoke.mjs
 say ""
