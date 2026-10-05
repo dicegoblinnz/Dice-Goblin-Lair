@@ -5197,7 +5197,7 @@ export class Lair {
     const account = await this.accountEmail(who.customerId);
     // --- no awaits from here on ---
     const now = Date.now();
-    this.touchMember(who.customerId, { name: trimmed(url?.searchParams.get('name'), 80), email: account.email }, now);
+    this.touchMember(who.customerId, { name: trimmed(url?.searchParams.get('name'), 80) }, now);
     if (account.fetched) this.write('UPDATE members SET account_email = ?, account_email_at = ? WHERE customer_id = ?', account.email, now, String(who.customerId));
     if (account.email) this.adoptGuestBookings(who.customerId, account.email, now);
     const member = this.memberView(this.memberRow(who.customerId), now);

@@ -5267,7 +5267,7 @@ test('guest seats join an account (round 6): on GET /me, bookings and sign-ups w
   assert.equal(lair.booking('bk_long_ago').customerId, null, 'ended more than 30 days ago: left alone');
   assert.equal(lair.booking(someoneElse.id).customerId, null);
   assert.deepEqual([me.loyalty.stamps, me.loyalty.recent.map((r) => r.title)], [2, ['Tomb of Annihilation']], 'the checked-in seat\'s stamps follow it');
-  assert.equal(lair.memberRow('2001').email, 'Hemi@Example.com', 'their member email is filled in from the account');
+  assert.deepEqual([lair.memberRow('2001').account_email, lair.memberRow('2001').email], ['Hemi@Example.com', null], 'the account email is kept for matching; their Lair email is still theirs to fill in');
   // The account email is asked at most once a day
   const before = asked.length;
   await call('GET', 'me', null, '2001');
