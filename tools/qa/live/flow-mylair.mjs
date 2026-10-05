@@ -1,5 +1,5 @@
-// My Lair, live, phone first: the member code and its QR; dice from spend (a signed orders/paid webhook gives the
-// spend, then rolls until store credit is won: added, then pending when Shopify can't add it); passes and claiming
+// My Lair, live, phone first: the member code and its QR; dice (round 6: the round 5 theme's spend roll gets the 410,
+// and loyalty rolls staff give pay their face in store credit, then pending when Shopify can't); passes and claiming
 // one; the tab (add, edit, clear, add again, in the cart after POST /pos/tab/:id/added, paid after a webhook with
 // _tab); and bookings with refund labels and a split bill.
 import fs from 'node:fs';
@@ -42,43 +42,32 @@ await p.waitForTimeout(300);
 await shot(p, `mylair-card-${L}`);
 await p.evaluate(() => window.scrollTo(0, 0));
 
-/* 2. dice: roll until a "1" pays, Shopify adds the credit */
+/* 2. dice (round 6): the spend dice retired. This round 5 theme's roll button still sends { kind: 'spend' }, which the
+   app now answers with a 410 and the loyalty card's words (the round 6 theme rolls { kind: 'loyalty' }). The loyalty
+   roll itself goes through the app here: staff give Sam two rolls, the first pays its face in store credit (added) and
+   the second is pending when Shopify can't add it. */
+const given = await proxy('POST', 'members/7101/rolls', { customer: '7001', body: { count: 2, note: `QA ${L}` } });
+check(`${L}: staff give Sam two loyalty rolls`, given.status === 200 && given.data.member?.loyalty?.rollsAvailable >= 2, given.data.error || given.data.member?.loyalty);
+await openLair(p);
+const b0 = apiLog.length;
+await p.click('[data-roll]');
+await p.waitForFunction(() => !document.querySelector('my-lair').rolling, null, { timeout: 8000 }).catch(() => {});
+const retired = apiLog.slice(b0).find((c) => c.method === 'POST' && c.route.startsWith('roll'));
+check(`${L}: the round 5 roll button (kind 'spend') gets the 410: the spend dice have retired`, retired && JSON.parse(retired.body).kind === 'spend' && retired.status === 410 && JSON.parse(retired.text).error === 'The spend dice have retired. Fill your loyalty card: 10 sessions earn a roll.', retired ? `${retired.status} ${retired.text.slice(0, 200)}` : 'no call');
+const note = await text(p, '[data-roll-slots] .ml-roll__error');
+check(`${L}: the page shows the app's words`, /The spend dice have retired/.test(note), note.slice(0, 200));
 const credits0 = (await fake('GET', 'state')).credits.length;
-let won = null;
-for (let i = 0; i < 12 && !won; i += 1) {
-  const b = apiLog.length;
-  await p.click('[data-roll]');
-  await p.waitForFunction(() => !document.querySelector('my-lair').rolling, null, { timeout: 8000 }).catch(() => {});
-  const call = apiLog.slice(b).find((c) => c.method === 'POST' && c.route.startsWith('roll'));
-  const data = call ? JSON.parse(call.text) : {};
-  if (i === 0) check(`${L}: My Lair sends { kind: 'spend' } and gets the contract shape`, call && JSON.parse(call.body).kind === 'spend' && 'roll' in data && data.kind === 'spend' && 'prize' in data && data.rolls?.per === 2000, call ? `${call.body} → ${call.text.slice(0, 200)}` : 'no call');
-  if (data.prize) won = data;
-}
-check(`${L}: a winning roll: store credit, added`, won && won.prize.status === 'added' && won.prize.kind === 'credit' && [100, 200, 2000].includes(won.prize.amount), won);
+const won = (await proxy('POST', 'roll', { customer: '7101', body: { kind: 'loyalty' } })).data;
+check(`${L}: a loyalty roll: its face in store credit, added`, won && won.kind === 'loyalty' && won.prize?.status === 'added' && won.prize.kind === 'credit' && won.prize.amount === won.roll * 100, won);
 const credits1 = (await fake('GET', 'state')).credits;
 check(`${L}: Shopify was asked to add that credit (storeCreditAccountCredit)`, won && credits1.length === credits0 + 1 && credits1.at(-1).customerId === '7101' && credits1.at(-1).amount === won.prize.amount, credits1.at(-1));
-const result = await text(p, '[data-roll-slots] [data-result]');
-check(`${L}: the result card says it was added`, /Added to your account/.test(result) && result.includes(won ? won.message.replace(/ Show this.*$/, '').slice(0, 20) : '?'), result.slice(0, 200));
-await shot(p, `mylair-dice-${L}`);
-/* the pending path: Shopify refuses the credit */
 await fake('POST', 'set', { failCredit: true });
-let pending = null;
-for (let i = 0; i < 12 && !pending; i += 1) {
-  const left = await p.$('[data-roll]');
-  if (!left) break;
-  const b = apiLog.length;
-  await left.click();
-  await p.waitForFunction(() => !document.querySelector('my-lair').rolling, null, { timeout: 8000 }).catch(() => {});
-  const call = apiLog.slice(b).find((c) => c.method === 'POST' && c.route.startsWith('roll'));
-  const data = call ? JSON.parse(call.text) : {};
-  if (data.prize) pending = data;
-}
+const pending = (await proxy('POST', 'roll', { customer: '7101', body: { kind: 'loyalty' } })).data;
 await fake('POST', 'set', { failCredit: false });
-check(`${L}: Shopify down: the prize is saved as pending, "show this screen"`, pending && pending.prize.status === 'pending' && /Show this screen at the counter to claim it\.$/.test(pending.message), pending);
-const pendingCard = await text(p, '[data-roll-slots] [data-result]');
-check(`${L}: the pending card says to show it at the counter`, /Show this screen at the counter to claim it/.test(pendingCard), pendingCard.slice(0, 200));
+check(`${L}: Shopify down: the prize is saved as pending, "show this screen"`, pending && pending.prize?.status === 'pending' && /Show this screen at the counter to claim it\.$/.test(pending.message), pending);
+await openLair(p);
 const prizes = await text(p, '[data-prizes]');
-check(`${L}: recent prizes list the pending one`, /Show this at the counter to claim it/.test(prizes) && /Added/.test(prizes), prizes.slice(0, 300));
+check(`${L}: recent prizes list the pending one and the added one`, /Show this at the counter to claim it/.test(prizes) && /Added/.test(prizes), prizes.slice(0, 300));
 await shot(p, `mylair-dice-pending-${L}`);
 fs.writeFileSync(new URL(`./pending-prize-${L}.json`, import.meta.url), JSON.stringify(pending?.prize || null));
 

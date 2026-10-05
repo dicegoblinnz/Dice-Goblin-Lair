@@ -6,15 +6,23 @@
 //   events  = the mock renderer's lair_event metaobjects (events-mock.mjs: round 4 payment / lock_tables included)
 //   theme   = dg-theme-t5's config/settings_data.json (hours, shop tables, prices)
 // and keeps draft orders, orders (for orders/paid spend and session pass buyers), store credit and discount codes in
-// memory.
+// memory. Round 6 adds library copies (VariantCopies), a customer's orders (CustomerOrders: the last 60 days unless
+// the scopes include read_all_orders, like Shopify), when accounts were made (CustomersSince), account emails
+// (CustomerEmail) and session gift buyers (OrderGiftBuyer).
 //
 // Control routes for the test scripts (never part of Shopify):
 //   GET  /__fake/state                       everything it holds
-//   POST /__fake/set { failCheckout, failCredit, failDiscount, failBuyer }
+//   POST /__fake/set { failCheckout, failCredit, failDiscount, failBuyer, failVariant, failOrders, scopes }
 //                                            failDiscount: discountCodeBasicCreate answers with a userError;
-//                                            failBuyer: OrderBuyer fails like a store without protected data approval
-//   POST /__fake/customer { id, tags, name, email }
-//   POST /__fake/order { id, customerId, subtotal (cents), source, name ("#1550"), billingName, shippingName }
+//                                            failBuyer: OrderBuyer and OrderGiftBuyer fail like a store without protected
+//                                            data approval; failVariant: VariantCopies is refused like a store that
+//                                            hasn't approved read_products and read_inventory yet; failOrders:
+//                                            CustomerOrders fails (Shopify down); scopes: the scopes the app has (null:
+//                                            the usual ones, read_products and read_inventory included)
+//   POST /__fake/customer { id, tags, name, email, createdAt (ISO), verified (false: the account email isn't verified) }
+//   POST /__fake/order { id, customerId, subtotal (cents), source, name ("#1550"), billingName, shippingName, email,
+//                        createdAt (ISO, default now), status ('PAID' default), cancelled }
+//   POST /__fake/variant { id, quantity, tracked }   a library copy's inventory (round 6)
 //   POST /__fake/draft-paid { draftId, orderId }  the checkout was paid: the draft order turned into orderId
 //   GET  /__fake/calls                       every GraphQL call so far (operation, variables)
 //   GET  /__fake/emails                      every email the app sent (Resend stand-in at /resend/emails[/batch])
@@ -34,6 +42,10 @@ const state = {
   failCredit: false,
   failDiscount: false,
   failBuyer: false,
+  failVariant: false,
+  failOrders: false,
+  scopes: null,
+  variants: {}, // round 6: variant id -> { quantity, tracked }
   customers: {
     7001: ['staff'], // Mo, staff
     7101: [], // Sam Jones, member
@@ -105,7 +117,7 @@ function answer(op, query, v) {
     case 'Scopes':
       return {
         currentAppInstallation: {
-          accessScopes: ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions', 'write_discounts'].map((handle) => ({ handle })),
+          accessScopes: (state.scopes || ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions', 'write_discounts', 'read_products', 'read_inventory']).map((handle) => ({ handle })),
           app: { title: 'Dice Goblin Lair (fake)' },
         },
         shop: { name: 'Dice Goblin NZ', ianaTimezone: 'Pacific/Auckland' },
@@ -114,6 +126,46 @@ function answer(op, query, v) {
       const id = String(v.id || '').split('/').pop();
       const tags = state.customers[id];
       return { customer: tags ? { id: v.id, tags } : null };
+    }
+    // Round 6: the account email guest bookings are matched to, and when accounts were made (years with us)
+    case 'CustomerEmail': {
+      const id = String(v.id || '').split('/').pop();
+      const person = state.people[id];
+      if (!state.customers[id] && !person) return { customer: null };
+      return { customer: { id: v.id, verifiedEmail: person?.verified !== false, defaultEmailAddress: person?.email ? { emailAddress: person.email } : null } };
+    }
+    case 'CustomersSince':
+      return {
+        nodes: (v.ids || []).map((gid) => {
+          const id = String(gid).split('/').pop();
+          return state.customers[id] || state.people[id] ? { id: gid, createdAt: state.people[id]?.createdAt || '2025-02-01T00:00:00Z' } : null;
+        }),
+      };
+    // Round 6: library copies need read_products and read_inventory; failVariant answers like a store that hasn't
+    // approved them yet
+    case 'VariantCopies':
+      if (state.failVariant) return { __errors: [{ message: 'Access denied for inventoryQuantity field. Required access: `read_inventory` access scope.', extensions: { code: 'ACCESS_DENIED' } }] };
+      return {
+        nodes: (v.ids || []).map((gid) => {
+          const x = state.variants[String(gid).split('/').pop()];
+          return x ? { id: gid, inventoryQuantity: x.quantity, inventoryItem: { tracked: x.tracked !== false } } : null;
+        }),
+      };
+    // Round 6: a customer's orders for the spend report's backfill. Without read_all_orders, Shopify shows the last
+    // 60 days only, so this does too.
+    case 'CustomerOrders': {
+      if (state.failOrders) return { __errors: [{ message: 'Fake: Shopify is having a moment (CustomerOrders)' }] };
+      const id = String(v.id || '').split('/').pop();
+      if (!state.customers[id] && !state.people[id]) return { customer: null };
+      const all = (state.scopes || []).includes('read_all_orders');
+      const nodes = Object.entries(state.orders)
+        .filter(([, o]) => o.customerId === id && (all || Date.parse(o.createdAt) > Date.now() - 60 * 86400000))
+        .sort(([, a], [, b]) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+        .map(([gid, o]) => ({
+          id: gid, name: o.name, createdAt: o.createdAt, processedAt: o.createdAt, sourceName: o.source || 'web', cancelledAt: o.cancelled ? o.createdAt : null,
+          displayFinancialStatus: o.status || 'PAID', subtotalPriceSet: { shopMoney: { amount: (o.subtotal / 100).toFixed(2), currencyCode: 'NZD' } },
+        }));
+      return { customer: { id: v.id, createdAt: state.people[id]?.createdAt || '2025-02-01T00:00:00Z', orders: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } } };
     }
     case 'Draft': {
       if (state.failCheckout) return { draftOrderCreate: { draftOrder: null, userErrors: [{ field: ['input'], message: 'Fake: checkout is switched off' }] } };
@@ -155,6 +207,22 @@ function answer(op, query, v) {
           shippingAddress: o.shippingName ? { name: o.shippingName } : null,
           customer: o.customerId
             ? { id: `gid://shopify/Customer/${o.customerId}`, displayName: person.name || '', defaultEmailAddress: person.email ? { emailAddress: person.email } : null }
+            : null,
+        },
+      };
+    }
+    // Round 6: who bought a session gift (the order's email and the buyer's first name: protected customer data)
+    case 'OrderGiftBuyer': {
+      if (state.failBuyer) return { __errors: [{ message: 'Access denied for email field. This app is not approved to access protected customer data.' }] };
+      const o = state.orders[v.id];
+      if (!o) return { order: null };
+      const person = o.customerId ? state.people[o.customerId] || {} : {};
+      return {
+        order: {
+          id: v.id, name: o.name, email: o.email || person.email || null,
+          billingAddress: o.billingName ? { firstName: o.billingName.split(/\s+/)[0], name: o.billingName } : null,
+          customer: o.customerId
+            ? { id: `gid://shopify/Customer/${o.customerId}`, firstName: (person.name || '').split(/\s+/)[0] || null, displayName: person.name || '', defaultEmailAddress: person.email ? { emailAddress: person.email } : null }
             : null,
         },
       };
@@ -224,13 +292,23 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/__fake/calls') return send(res, 200, state.calls);
     if (url.pathname === '/__fake/set' && req.method === 'POST') {
       Object.assign(state, JSON.parse(raw || '{}'));
-      return send(res, 200, { ok: true, failCheckout: state.failCheckout, failCredit: state.failCredit, failDiscount: state.failDiscount, failBuyer: state.failBuyer });
+      return send(res, 200, {
+        ok: true, failCheckout: state.failCheckout, failCredit: state.failCredit, failDiscount: state.failDiscount, failBuyer: state.failBuyer, failVariant: state.failVariant,
+        failOrders: state.failOrders, scopes: state.scopes,
+      });
     }
     if (url.pathname === '/__fake/customer' && req.method === 'POST') {
-      const { id, tags, name, email } = JSON.parse(raw || '{}');
+      const { id, tags, name, email, createdAt, verified } = JSON.parse(raw || '{}');
       state.customers[String(id)] = tags || [];
-      if (name || email) state.people[String(id)] = { name: name || '', email: email || '' };
+      if (name || email || createdAt || verified != null) {
+        state.people[String(id)] = { name: name || '', email: email || '', ...(createdAt ? { createdAt } : {}), ...(verified != null ? { verified } : {}) };
+      }
       return send(res, 200, { ok: true });
+    }
+    if (url.pathname === '/__fake/variant' && req.method === 'POST') {
+      const { id, quantity, tracked } = JSON.parse(raw || '{}');
+      state.variants[String(id)] = { quantity: Number(quantity), tracked: tracked !== false };
+      return send(res, 200, { ok: true, variant: state.variants[String(id)] });
     }
     if (url.pathname === '/__fake/order' && req.method === 'POST') {
       const o = JSON.parse(raw || '{}');
@@ -238,6 +316,8 @@ const server = http.createServer(async (req, res) => {
       state.orders[gid] = {
         customerId: o.customerId ? String(o.customerId) : null, subtotal: Number(o.subtotal || 0), source: o.source || 'web',
         name: o.name || `#${String(gid).split('/').pop()}`, billingName: o.billingName || '', shippingName: o.shippingName || '',
+        // round 6: the order's email (session gifts), when it was made, its financial status and whether it was cancelled
+        email: o.email || '', createdAt: o.createdAt || new Date().toISOString(), status: o.status || 'PAID', cancelled: Boolean(o.cancelled),
       };
       return send(res, 200, { ok: true, gid });
     }
