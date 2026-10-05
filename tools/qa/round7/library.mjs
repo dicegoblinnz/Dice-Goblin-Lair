@@ -67,6 +67,8 @@ async function shopifyEscapes(ctx) {
     const body = (await response.text()).replace(/(<script type="application\/json" data-reserve-words>)([\s\S]*?)(<\/script>)/, (all, open, json, close) => {
       try {
         const words = JSON.parse(json);
+        // Since the round 7 merge the mock's t escapes like Shopify (shell's render.mjs): then the words already are
+        if (Object.values(words).some((v) => /&#39;|&amp;|&quot;/.test(String(v)))) return all;
         return `${open}${JSON.stringify(Object.fromEntries(Object.entries(words).map(([k, v]) => [k, escapeHtml(v)])))}${close}`;
       } catch {
         return all;
