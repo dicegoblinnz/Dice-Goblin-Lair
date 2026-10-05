@@ -1,8 +1,10 @@
 // Round 6 nav checks, on the mock store in demo mode, at 390px and 1280px (and the header at six desktop widths):
-// - the main menu: six items (Shop, Book a table, Book a TTRPG session, Library, Events, Contact), only Shop with a submenu
+// - the main menu: six items (Shop, Book a table, Book a TTRPG session, Events, Library, Contact; round 7 moved Library
+//   below Events), only Shop with a submenu
 // - the side menu: Join our Discord right under Book a table (a lighter button, new tab, gone when the setting is blank)
-// - the home hero: Join our Discord under the two main buttons, lighter than both
-// - the header scrolls away: 1,000px down it's above the screen; anchor jumps, the skip link and the events day strip
+// - the home hero: Join our Discord as big as the two main buttons (round 7; round 6 had it lighter, under them)
+// - the header sticks (round 7; round 6 had it scroll away): 1,000px down it's at the top; anchor jumps, the skip link
+//   and the events day strip sit under it
 // - the header at 990, 1000, 1100, 1180, 1280 and 1440px: one line, nothing overlapping, wrapping or clipped
 // - the shop chips: a Game row on Trading Card Games and a System row on Role Playing Game only, empty tags hidden,
 //   and the library's Shelf and Type rows as they were
@@ -56,8 +58,8 @@ const MENU = [
   ['Shop', null],
   ['Book a table', '/pages/book-a-table'],
   ['Book a TTRPG session', '/pages/gm-games'],
-  ['Library', '/pages/board-game-rental'],
   ['Events', '/pages/events-calendar'],
+  ['Library', '/pages/board-game-rental'], // round 7: below Events
   ['Contact', '/pages/contact'],
 ];
 
@@ -141,27 +143,31 @@ try {
   /* ---------- 3. the hero's Discord button ---------- */
   for (const width of [390, 1280]) {
     const { ctx, page } = await open(width, '/');
+    // Round 7 (Mo: "as big and long as new arrivals and book a table"): the third button of the hero's list
     const h = await page.evaluate(() => {
       const link = document.querySelector('.hero__discord');
       if (!link) return null;
-      const pair = link.previousElementSibling;
-      const first = pair && pair.querySelector('.signpost');
+      const list = link.closest('.hero__actions');
+      const buttons = list ? [...list.querySelectorAll('.signpost')] : [];
+      const first = buttons[0];
       const box = (el) => el.getBoundingClientRect();
-      const a = box(link), p = box(pair), f = box(first);
+      const a = box(link), l = box(list), f = box(first);
       return {
-        afterPair: Boolean(pair && pair.classList.contains('hero__actions')), pairLabels: [...pair.querySelectorAll('.signpost')].map((s) => s.textContent.trim()),
+        inList: Boolean(list) && buttons.indexOf(link) === 2, labels: buttons.map((s) => s.textContent.replace(/\s+/g, ' ').trim()),
         href: link.getAttribute('href'), target: link.getAttribute('target'), rel: link.getAttribute('rel'), text: link.textContent.replace(/\s+/g, ' ').trim(),
-        icon: Boolean(link.querySelector('.icon--discord')), gap: Math.round(a.top - p.bottom), leftDiff: Math.round(a.left - p.left),
+        icon: Boolean(link.querySelector('.icon--discord')), width: Math.round(a.width), listWidth: Math.round(l.width), top: Math.round(a.top), firstTop: Math.round(f.top),
         height: Math.round(a.height), firstHeight: Math.round(f.height), right: Math.round(a.right),
-        bg: getComputedStyle(link).backgroundColor, firstBg: getComputedStyle(first).backgroundColor,
+        size: getComputedStyle(link).fontSize, firstSize: getComputedStyle(first).fontSize,
         weight: Number(getComputedStyle(link).fontWeight), firstWeight: Number(getComputedStyle(first).fontWeight),
       };
     });
     const tag = width < 700 ? 'phone' : 'desktop';
-    check(`hero (${tag}): Join our Discord sits right under the two main buttons`, Boolean(h) && h.afterPair && h.gap >= 0 && h.gap <= 16 && Math.abs(h.leftDiff) <= 1, h ? `under "${h.pairLabels.join('" + "')}", gap ${h.gap}px` : 'missing');
+    check(`hero (${tag}): Join our Discord is the third of the hero's buttons`, Boolean(h) && h.inList, h ? h.labels.join(' | ') : 'missing');
     if (!h) continue;
     check(`hero (${tag}): it opens the Discord invite in a new tab, with the discord icon`, h.href === DISCORD && h.target === '_blank' && /noopener/.test(h.rel || '') && h.icon && /^Join our Discord/.test(h.text), `${h.href} | ${h.text}`);
-    check(`hero (${tag}): lighter than the main pair (no fill, lighter type, no taller), still 44px to tap`, h.bg === 'rgba(0, 0, 0, 0)' && h.firstBg !== 'rgba(0, 0, 0, 0)' && h.weight < h.firstWeight && h.height >= 44 && h.height <= h.firstHeight, `${h.height}px vs ${h.firstHeight}px, weight ${h.weight} vs ${h.firstWeight}`);
+    check(`hero (${tag}): as big as the main pair (same height, type size and weight)`, h.height === h.firstHeight && h.size === h.firstSize && h.weight === h.firstWeight && h.height >= 44, `${h.height}px vs ${h.firstHeight}px, ${h.size} ${h.weight} vs ${h.firstSize} ${h.firstWeight}`);
+    if (width < 700) check(`hero (${tag}): the full width under the pair`, Math.abs(h.width - h.listWidth) <= 1 && h.top > h.firstTop, `${h.width} of ${h.listWidth}`);
+    else check(`hero (${tag}): on one row with the pair`, h.top === h.firstTop, `${h.top} vs ${h.firstTop}`);
     check(`hero (${tag}): fits the screen`, h.right <= width && (await overflowX(page)) === 0);
     await ctx.close();
   }
@@ -176,24 +182,25 @@ try {
     await ctx.close();
   }
 
-  /* ---------- 4. the header scrolls away ---------- */
+  /* ---------- 4. the header sticks (round 7: Mo wants it always there; round 6 had it scroll away) ---------- */
   for (const [width, url] of [[390, '/'], [1280, '/'], [390, '/collections/trading-card-games'], [1280, '/pages/book-a-table']]) {
     const { ctx, page } = await open(width, url);
     const s = await page.evaluate(async () => {
       window.scrollTo(0, 1000);
       await new Promise((r) => setTimeout(r, 250));
       const header = document.querySelector('.site-header');
+      const wrap = header.closest('.shopify-section') || header;
       const b = header.getBoundingClientRect();
-      return { y: Math.round(window.scrollY), top: Math.round(b.top), bottom: Math.round(b.bottom), position: getComputedStyle(header).position };
+      return { y: Math.round(window.scrollY), top: Math.round(b.top), bottom: Math.round(b.bottom), position: getComputedStyle(wrap).position };
     });
-    check(`header (${width}px ${url}): scrolled 1,000px down, it's gone above the screen`, s.y === 1000 && s.bottom <= 0 && !['sticky', 'fixed'].includes(s.position), `scrollY ${s.y}, header top ${s.top}, bottom ${s.bottom}, position ${s.position}`);
+    check(`header (${width}px ${url}): scrolled 1,000px down, it's still at the top (its section sticks)`, s.y === 1000 && s.top === 0 && s.bottom > 0 && s.position === 'sticky', `scrollY ${s.y}, header top ${s.top}, bottom ${s.bottom}, position ${s.position}`);
     await ctx.close();
   }
   {
     const { ctx, page } = await open(390, '/#contact');
     await page.waitForTimeout(300);
-    const a = await page.evaluate(() => ({ pad: getComputedStyle(document.documentElement).scrollPaddingTop, top: Math.round(document.querySelector('#contact').getBoundingClientRect().top), y: Math.round(window.scrollY) }));
-    check('anchor jump: /#contact lands 16px under the top edge (scroll-padding is --sticky-top, no header to clear)', a.pad === '16px' && Math.abs(a.top - 16) <= 1 && a.y > 0, `scroll-padding ${a.pad}, #contact at ${a.top}px`);
+    const a = await page.evaluate(() => ({ pad: getComputedStyle(document.documentElement).scrollPaddingTop, header: Math.round(document.querySelector('.site-header').getBoundingClientRect().bottom), top: Math.round(document.querySelector('#contact').getBoundingClientRect().top), y: Math.round(window.scrollY) }));
+    check('anchor jump: /#contact lands 16px under the sticky header (scroll-padding is --sticky-top plus 1rem)', a.pad === `${a.header + 16}px` && Math.abs(a.top - a.header - 16) <= 1 && a.y > 0, `scroll-padding ${a.pad}, header bottom ${a.header}, #contact at ${a.top}px`);
     await ctx.close();
   }
   {
@@ -202,8 +209,8 @@ try {
     const first = await page.evaluate(() => document.activeElement.className);
     await page.keyboard.press('Enter');
     await page.waitForTimeout(300);
-    const k = await page.evaluate(() => ({ focus: document.activeElement.id, top: Math.round(document.querySelector('#main').getBoundingClientRect().top) }));
-    check('skip link: first Tab stop, Enter moves focus to main and brings it to the top', /skip-link/.test(first) && k.focus === 'main' && k.top <= 17, `first stop .${first}, focus #${k.focus}, main at ${k.top}px`);
+    const k = await page.evaluate(() => ({ focus: document.activeElement.id, top: Math.round(document.querySelector('#main').getBoundingClientRect().top), header: Math.round(document.querySelector('.site-header').getBoundingClientRect().bottom) }));
+    check('skip link: first Tab stop, Enter moves focus to main and brings it to the top (under the sticky header)', /skip-link/.test(first) && k.focus === 'main' && k.top >= k.header - 1 && k.top <= k.header + 17, `first stop .${first}, focus #${k.focus}, main at ${k.top}px, header bottom ${k.header}px`);
     await ctx.close();
   }
   {
@@ -212,15 +219,17 @@ try {
     const c = await page.evaluate(async () => {
       const strip = document.querySelector('lair-calendar .cal-strip');
       if (!strip) return null;
-      // it sticks only while its week is on screen, so scroll a little way into the week (header long gone by then)
+      // it sticks only while its week is on screen, so scroll just past where it starts sticking under the header
+      // (round 7: the header stays, so that's the header's height above the strip's own place)
       const startTop = strip.getBoundingClientRect().top + window.scrollY;
       const room = strip.parentElement.getBoundingClientRect().height - strip.offsetHeight;
-      window.scrollTo(0, startTop + Math.max(20, Math.min(150, room - 20)));
+      const headerH = document.querySelector('.site-header').getBoundingClientRect().bottom;
+      window.scrollTo(0, startTop - headerH + Math.max(5, Math.min(60, room - 5)));
       await new Promise((r) => setTimeout(r, 400));
       const cal = document.querySelector('lair-calendar');
-      return { position: getComputedStyle(strip).position, var: cal.style.getPropertyValue('--cal-sticky-top'), top: Math.round(strip.getBoundingClientRect().top), headerBottom: Math.round(document.querySelector('.site-header').getBoundingClientRect().bottom) };
+      return { position: getComputedStyle(strip).position, top: Math.round(strip.getBoundingClientRect().top), headerBottom: Math.round(document.querySelector('.site-header').getBoundingClientRect().bottom) };
     });
-    check('events calendar (phone): once the header has gone, the day strip sticks at the very top', Boolean(c) && c.position === 'sticky' && c.var === '0px' && Math.abs(c.top) <= 1 && c.headerBottom <= 0, c ? JSON.stringify(c) : 'no day strip');
+    check('events calendar (phone): the day strip sticks right under the sticky header', Boolean(c) && c.position === 'sticky' && c.headerBottom > 0 && Math.abs(c.top - c.headerBottom) <= 1, c ? JSON.stringify(c) : 'no day strip');
     await ctx.close();
   }
 
@@ -277,7 +286,7 @@ try {
       const { ctx, page, errors } = await open(width, '/collections/trading-card-games');
       const r = await rows(page);
       const row = r.rows[0] || { chips: [] };
-      const want = GAME.map(([t, h]) => `${t} -> /collections/trading-card-games/${h}`);
+      const want = GAME.map(([t, h]) => `${t} -> /collections/trading-card-games/${h}?filter.v.availability=1`); // round 7: in stock only
       const got = row.chips.slice(1).map((c) => `${c.text} -> ${c.href}`);
       check(`TCG (${tag}): one Game row: All, then each game's tag link`, r.rows.length === 1 && row.label === 'Game' && row.chips[0].text === 'All' && row.chips[0].current && JSON.stringify(got) === JSON.stringify(want), got.map((g) => g.split(' -> ')[0]).join(', '));
       check(`TCG (${tag}): Gundam and Star Wars: Unlimited hidden (no products carry their tags)`, !row.chips.some((c) => /Gundam|Star Wars/.test(c.text)));
@@ -293,7 +302,7 @@ try {
         const chosen = after.rows[0] && after.rows[0].chips.find((c) => c.current);
         const count = await page.$$eval('.product-grid > li', (lis) => lis.length);
         const clear = await page.$('.collection__clear');
-        check(`TCG (${tag}): tapping Pokémon filters to its tag, the chip is chosen and Clear filters shows`, new URL(page.url()).pathname === '/collections/trading-card-games/pokemon' && chosen && /^Pokémon/.test(chosen.text) && chosen.href === '/collections/trading-card-games' && count >= 1 && Boolean(clear), `${page.url()} | ${count} product(s)`);
+        check(`TCG (${tag}): tapping Pokémon filters to its tag, the chip is chosen and Clear filters shows`, new URL(page.url()).pathname === '/collections/trading-card-games/pokemon' && chosen && /^Pokémon/.test(chosen.text) && chosen.href === '/collections/trading-card-games?filter.v.availability=1' && count >= 1 && Boolean(clear), `${page.url()} | ${count} product(s)`);
       } else {
         check(`TCG (${tag}): tapping Pokémon filters to its tag, the chip is chosen and Clear filters shows`, false, 'no Pokémon chip');
       }
@@ -304,7 +313,7 @@ try {
       const { ctx, page } = await open(width, '/collections/role-playing-game');
       const r = await rows(page);
       const row = r.rows[0] || { chips: [] };
-      const want = SYSTEM.map(([t, h]) => `${t} -> /collections/role-playing-game/${h}`);
+      const want = SYSTEM.map(([t, h]) => `${t} -> /collections/role-playing-game/${h}?filter.v.availability=1`); // round 7: in stock only
       const got = row.chips.slice(1).map((c) => `${c.text} -> ${c.href}`);
       check(`RPG (${tag}): one System row: All, then each system's tag link`, r.rows.length === 1 && row.label === 'System' && JSON.stringify(got) === JSON.stringify(want), got.map((g) => g.split(' -> ')[0]).join(', '));
       await ctx.close();

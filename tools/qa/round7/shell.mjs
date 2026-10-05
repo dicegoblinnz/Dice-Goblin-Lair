@@ -159,7 +159,8 @@ try {
         if (!strip) return null;
         const startTop = strip.getBoundingClientRect().top + window.scrollY;
         const room = strip.parentElement.getBoundingClientRect().height - strip.offsetHeight;
-        window.scrollTo(0, startTop + Math.max(20, Math.min(150, room - 20)));
+        const headerH = document.querySelector('.site-header').getBoundingClientRect().bottom;
+        window.scrollTo(0, startTop - headerH + Math.max(5, Math.min(60, room - 5)));
         await new Promise((res) => setTimeout(res, 400));
         const header = document.querySelector('.site-header').closest('.shopify-section').getBoundingClientRect();
         return { position: getComputedStyle(strip).position, top: Math.round(strip.getBoundingClientRect().top), headerBottom: Math.round(header.bottom), headerTop: Math.round(header.top) };
