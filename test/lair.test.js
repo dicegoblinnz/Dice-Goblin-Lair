@@ -2911,10 +2911,11 @@ test('passes: staff make, find and change them; the code comes from the holder; 
   await refused({ label: ' ' }, 422, 'Add a label, like "Warhammer league: 10 sessions".');
   await refused({ sessions: 0 }, 422, 'A pass has 1 to 100 sessions.');
   await refused({ sessions: 101 }, 422, 'A pass has 1 to 100 sessions.');
-  await refused({ holderName: '' }, 422, "Add the holder's name, or find them in the members.");
+  await refused({ holderName: '' }, 422, 'Pick a group, pick a customer, or type a name.');
   await refused({ expires: '2026-09-30' }, 422, 'That expiry date has already passed.');
   await refused({ expires: '2026-02-30' }, 422, 'Pick the expiry date from the calendar.');
-  await refused({ customerId: '4040' }, 404, 'That member could not be found.');
+  // Round 7: a customer the Lair doesn't know comes with their name from the picker; with none, it's still the 404
+  await refused({ customerId: '4040', holderName: '' }, 404, 'That member could not be found.');
   await refused({ holderEmail: 'not an email' }, 422, "Check the holder's email address.");
 
   // A holder email that matches a member links them, with their name; cover is in dollars.
@@ -3067,7 +3068,7 @@ test('usePass: members save their own pass on a booking for check-in; someone el
   const checked = await call('POST', 'checkin', { code: booked.data.booking.ref }, 'staff');
   assert.deepEqual([checked.data.pass.used, checked.data.pass.covered, checked.data.due], [4, 4000, 0]);
   const me = (await call('GET', 'me', null, '1001')).data;
-  assert.deepEqual(me.passes, [{ code: mine.code, label: mine.label, sessionsTotal: 10, sessionsLeft: 6, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null }]);
+  assert.deepEqual(me.passes, [{ code: mine.code, label: mine.label, sessionsTotal: 10, sessionsLeft: 6, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null, group: null }]);
   const mineBooked = me.bookings.find((b) => b.id === booked.data.booking.id);
   assert.deepEqual([mineBooked.pass, mineBooked.covered, mineBooked.due, mineBooked.payment, mineBooked.refund], [{ code: mine.code, label: mine.label, sessionsLeft: 6 }, 4000, 0, 'store', null]);
   assert.deepEqual([me.seats[0].pass.code, me.seats[0].covered], [mine.code, 0]);
@@ -3082,7 +3083,7 @@ test('claiming a pass: an unclaimed one joins the member\'s passes; someone else
   assert.equal((await call('POST', 'me/passes/claim', { code: ticket.ref }, '1001')).status, 404, "a booking's code isn't a pass");
   const claimed = await call('POST', 'me/passes/claim', { code: gift.code.toLowerCase().replace(/-/g, ' ') }, '1001');
   assert.equal(claimed.status, 200, claimed.data.error);
-  assert.deepEqual(claimed.data.pass, { code: gift.code, label: 'Gift pack: 10 sessions', sessionsTotal: 1, sessionsLeft: 1, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null });
+  assert.deepEqual(claimed.data.pass, { code: gift.code, label: 'Gift pack: 10 sessions', sessionsTotal: 1, sessionsLeft: 1, cover: 1000, expiresAt: null, status: 'active', source: 'staff', orderName: null, group: null });
   assert.equal((await passNamed(gift.code)).holder.customerId, '1001');
   assert.equal((await call('POST', 'me/passes/claim', { code: gift.code }, '1001')).status, 200, 'your own again is fine');
   const taken = await call('POST', 'me/passes/claim', { code: gift.code }, '2002');
@@ -5305,8 +5306,8 @@ test('calendar (round 6): a staff hold takes an optional game (up to 40 characte
 test('live data: round 5\'s database (main, db8702b) moves to round 6 with every row kept; the loyalty card starts brand new, with birthday rolls and the welcome roll', async () => {
   const { MIGRATIONS } = await import('../src/lair.js');
   assert.deepEqual(MIGRATIONS.slice(0, MAIN_MIGRATIONS.length + 1), [...MAIN_MIGRATIONS, R5_MIGRATION], 'the migrations the live app has run are never edited');
-  assert.equal(MIGRATIONS.length, MAIN_MIGRATIONS.length + 2, 'round 6 adds one migration');
-  assert.ok(MIGRATIONS.at(-1).every((s) => /^\s*(ALTER TABLE \w+ ADD COLUMN|CREATE (UNIQUE )?INDEX IF NOT EXISTS|CREATE TABLE IF NOT EXISTS)/.test(s)), 'only new columns, tables and indexes');
+  assert.ok(MIGRATIONS.length >= MAIN_MIGRATIONS.length + 2, 'round 6 adds one migration (later rounds add theirs after it)');
+  assert.ok(MIGRATIONS[MAIN_MIGRATIONS.length + 1].every((s) => /^\s*(ALTER TABLE \w+ ADD COLUMN|CREATE (UNIQUE )?INDEX IF NOT EXISTS|CREATE TABLE IF NOT EXISTS)/.test(s)), 'only new columns, tables and indexes');
   const ctx = fakeCtx();
   const { sql } = ctx.storage;
   sql.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');

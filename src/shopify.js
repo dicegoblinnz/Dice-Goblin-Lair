@@ -221,6 +221,23 @@ export class ShopifyAdmin {
     };
   }
 
+  /**
+   * Round 7, the staff customer picker: Shopify's own customer search (name and email), most recently updated first, up
+   * to 10. read_customers, plus protected customer data approval for names and emails: without it this throws.
+   * Returns [{ customerId, name, firstName, email }].
+   */
+  async searchCustomers(query) {
+    const data = await this.graphql(
+      'query LairCustomers($query: String!) { customers(first: 10, query: $query, sortKey: UPDATED_AT, reverse: true) { nodes { id displayName firstName lastName verifiedEmail defaultEmailAddress { emailAddress } } } }',
+      { query },
+    );
+    return (data.customers?.nodes || []).map((c) => {
+      const display = String(c.displayName || '').trim();
+      const name = [c.firstName, c.lastName].map((x) => String(x || '').trim()).filter(Boolean).join(' ') || (display.includes('@') ? '' : display);
+      return { customerId: String(c.id || '').split('/').pop(), name: name.slice(0, 80), firstName: String(c.firstName || '').trim().slice(0, 40), email: String(c.defaultEmailAddress?.emailAddress || '').trim() };
+    });
+  }
+
   async customerTags(customerId) {
     const data = await this.graphql('query C($id: ID!) { customer(id: $id) { id tags } }', { id: `gid://shopify/Customer/${customerId}` });
     return data.customer ? data.customer.tags.map((t) => t.toLowerCase()) : [];

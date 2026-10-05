@@ -61,6 +61,10 @@ const SPEND_RETIRED = 'The spend dice have retired. Fill your loyalty card: 10 s
 const COPIES_TTL = 10 * MIN;
 /** At most this many library games in one GET /library/status */
 const STATUS_IDS = 60;
+/** Round 7: a group (a league or a club, with passes of its own) has up to this many people */
+const GROUP_MAX = 200;
+/** Picking a customer the Lair has never met, with no name to make their member record from */
+const PICK_AGAIN = 'That customer could not be found. Pick them from the search again.';
 /** A guest seat or sign-up joins the account with its email if it's upcoming or ended in the last 30 days */
 const ADOPT_DAYS = 30;
 
@@ -295,6 +299,26 @@ export const MIGRATIONS = [
     'ALTER TABLE blocks ADD COLUMN game TEXT',
     // Guest sign-ups are matched to an account by email (bookings already have this index)
     'CREATE INDEX IF NOT EXISTS event_joins_email_lower ON event_joins (lower(email), ends_at)',
+  ],
+  // Round 7, groups and staff sessions (6 Oct 2026). Only new tables, columns and indexes:
+  //  - lair_groups and lair_group_members: groups of customers (GROUPS is an SQLite keyword); a pass can belong to a
+  //    group (passes.group_id), and any member of an active group can use it.
+  //  - series_invites: a seat staff reserved under a name and email at a weekly game, waiting for that person to make an
+  //    account ('waiting', 'joined' or 'cancelled'). A GM invite needs no table: a game with gm_email and no account.
+  [
+    `CREATE TABLE IF NOT EXISTS lair_groups (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, organiser_id TEXT, note TEXT, status TEXT NOT NULL, created_by TEXT, created_at INTEGER NOT NULL,
+      updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS lair_group_members (
+      group_id TEXT NOT NULL, customer_id TEXT NOT NULL, added_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (group_id, customer_id))`,
+    'CREATE INDEX IF NOT EXISTS lair_group_members_customer ON lair_group_members (customer_id)',
+    'ALTER TABLE passes ADD COLUMN group_id TEXT',
+    'CREATE INDEX IF NOT EXISTS passes_group ON passes (group_id)',
+    `CREATE TABLE IF NOT EXISTS series_invites (
+      id TEXT PRIMARY KEY, series_id TEXT NOT NULL, email TEXT NOT NULL, name TEXT NOT NULL, phone TEXT, people INTEGER NOT NULL, players TEXT,
+      status TEXT NOT NULL, customer_id TEXT, booking_id TEXT, created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS series_invites_email ON series_invites (lower(email), status)',
+    'CREATE INDEX IF NOT EXISTS games_gm_email ON games (lower(gm_email))',
   ],
 ];
 
@@ -899,8 +923,8 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library'].includes(a));
+        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
@@ -912,6 +936,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'spend') return json(await this.memberSpend(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
+      if (request.method === 'GET' && a === 'groups' && !b) return json(this.listGroups(url, who));
+      if (request.method === 'GET' && a === 'customers' && !b) return json(await this.findCustomers(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'status' && !c) return json(await this.libraryStatus(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'holds' && !c) return json(await this.listHolds(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
@@ -922,6 +948,9 @@ export class Lair {
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
       if (a === 'passes' && b && c === 'apply') return json(await this.applyPass(decodeURIComponent(b), body, who));
+      if (a === 'groups' && !b) return json(await this.createGroup(body, who));
+      if (a === 'groups' && b && c === 'update') return json(await this.updateGroup(decodeURIComponent(b), body, who));
+      if (a === 'groups' && b && c === 'members') return json(await this.groupMembers(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
@@ -3893,6 +3922,8 @@ export class Lair {
       // Where it came from: 'staff' (made on the staff page; older passes have no source), 'order' (bought as a product)
       // or 'birthday' (a birthday gift). orderName is the order that bought it, like "#1550".
       source: r.source || 'staff', orderId: r.order_id || null, orderName: r.order_name || null,
+      // Round 7: the group it belongs to (any member of the group can use it), or null
+      groupId: r.group_id || null,
     };
   }
 
@@ -3928,7 +3959,16 @@ export class Lair {
       code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), cover: p.cover,
       expiresAt: p.expiresAt, status: this.passStatus(p, now), source: p.source, orderName: bought ? p.orderName || null : null,
       ...(bought ? { note: this.boughtNote(p.note) } : {}),
+      // Round 7: a group's pass, which shows in each member's Wallet with the group's name ("Warhammer League group")
+      group: this.passGroup(p),
     };
+  }
+
+  /** The group a pass belongs to, as pass views show it: { id, name }, or null (round 7). No awaits. */
+  passGroup(p) {
+    if (!p?.groupId) return null;
+    const g = this.groupRow(p.groupId);
+    return g ? { id: g.id, name: g.name } : null;
   }
 
   /** How a pass from an order was bought, from the note the order gave it: "Bought online", "Bought at the counter", or '' */
@@ -3945,10 +3985,13 @@ export class Lair {
    * to claim in My Lair.
    */
   passView(p, { uses = true, now = Date.now() } = {}) {
+    // Round 7: a group's pass reads as the group: { customerId: null, name: <group name>, email: '' }
+    const group = this.passGroup(p);
     const view = {
       id: p.id, code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsUsed: p.sessionsUsed, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed),
-      cover: p.cover, holder: { customerId: p.customerId, name: p.holderName, email: p.holderEmail }, note: p.note, pricePaid: p.pricePaid,
-      expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt, source: p.source, orderName: p.orderName,
+      cover: p.cover, holder: group ? { customerId: null, name: group.name, email: '' } : { customerId: p.customerId, name: p.holderName, email: p.holderEmail },
+      note: p.note, pricePaid: p.pricePaid, expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt, source: p.source, orderName: p.orderName,
+      group,
     };
     if (uses) {
       view.uses = this.sql
@@ -3976,13 +4019,16 @@ export class Lair {
     return p ? { code: p.code, label: p.label, sessionsLeft: p.left } : null;
   }
 
-  /** A member's passes for My Lair: active ones, and ones used up in the last 30 days */
+  /**
+   * A member's passes for My Lair: active ones, and ones used up in the last 30 days. Round 7: their own, plus the passes
+   * of the active groups they're in (each with its group).
+   */
   memberPasses(customerId, now) {
     return this.sql
       .exec(
         `SELECT p.*, (SELECT MAX(u.at) FROM pass_uses u WHERE u.pass_id = p.id AND u.undone_at IS NULL) AS last_used
-         FROM passes p WHERE p.customer_id = ? AND p.status = 'active' ORDER BY p.created_at DESC, p.rowid DESC`,
-        String(customerId),
+         FROM passes p WHERE (p.customer_id = ? OR p.group_id IN (${this.memberGroupsSql()})) AND p.status = 'active' ORDER BY p.created_at DESC, p.rowid DESC`,
+        String(customerId), String(customerId),
       )
       .toArray()
       .filter((r) => {
@@ -3992,12 +4038,23 @@ export class Lair {
       .map((r) => this.memberPassView(this.rowToPass(r), now));
   }
 
-  /** A member's passes that can be used now, as staff see them (the POS shows them when it scans a member code) */
+  /**
+   * A member's passes that can be used now, as staff see them (the POS shows them when it scans a member code, and so
+   * does check-in). Round 7: their own, plus their active groups' passes, each with its group.
+   */
   activePasses(customerId, now) {
-    return this.sql.exec("SELECT * FROM passes WHERE customer_id = ? AND status = 'active' ORDER BY created_at DESC, rowid DESC", String(customerId)).toArray()
+    return this.sql.exec(
+      `SELECT * FROM passes WHERE (customer_id = ? OR group_id IN (${this.memberGroupsSql()})) AND status = 'active' ORDER BY created_at DESC, rowid DESC`,
+      String(customerId), String(customerId),
+    ).toArray()
       .map((r) => this.rowToPass(r))
       .filter((p) => this.passStatus(p, now) === 'active')
       .map((p) => this.passView(p, { uses: false, now }));
+  }
+
+  /** SQL for the ids of the active groups a customer (one bound value) is in: for `group_id IN (…)` (round 7) */
+  memberGroupsSql() {
+    return "SELECT m.group_id FROM lair_group_members m JOIN lair_groups g ON g.id = m.group_id AND g.status = 'active' WHERE m.customer_id = ?";
   }
 
   /** The last moment of a Lair day ('YYYY-MM-DD'): a pass that expires that day works until midnight. */
@@ -4010,7 +4067,10 @@ export class Lair {
 
   /**
    * A staff form's pass fields (creating and updating share the rules). Only what was sent is returned. A holder email
-   * that matches a member links them; a pass needs a member or a holder's name. No awaits.
+   * that matches a member links them. Round 7: a pass belongs to exactly one of a group (groupId: any active member can
+   * use it), a customer (customerId, picked from the search: one the Lair hasn't met comes with holderName and
+   * holderEmail, and out.picked makes their member record), or a name typed by hand (holderName, holderEmail optional).
+   * On an update, groupId: null takes it off its group. No awaits, no writes.
    */
   passFields(input, rules, now, existing = null) {
     const out = {};
@@ -4048,10 +4108,26 @@ export class Lair {
     const email = input.holderEmail != null ? trimmed(input.holderEmail, 120) : null;
     if (email && !isEmail(email)) throw new RuleError("Check the holder's email address.");
     const wanted = input.customerId != null && input.customerId !== '' ? trimmed(input.customerId, 40) : null;
+    // Round 7: the owner. A group, or a person (a customer or a typed name), never both.
+    const groupSent = Object.prototype.hasOwnProperty.call(input, 'groupId');
+    const groupWanted = groupSent && input.groupId != null && String(input.groupId).trim() !== '' ? trimmed(input.groupId, 40) : null;
+    if (groupWanted && (wanted || trimmed(input.holderName, 80))) throw new RuleError('A pass belongs to a group or a person, not both.');
+    if (groupWanted) {
+      const group = this.groupRow(groupWanted);
+      if (!group) throw new RuleError('That group could not be found.', 404);
+      if (group.status !== 'active') throw new RuleError('That group is archived. Pick another, or bring it back first.', 409);
+      Object.assign(out, { groupId: group.id, customerId: null, holderName: '', holderEmail: '', groupName: group.name });
+      return out;
+    }
+    if (groupSent) out.groupId = null;
     const member = (wanted && this.memberRow(wanted)) || (email && this.memberByEmail(email)) || null;
-    if (wanted && !member) throw new RuleError('That member could not be found.', 404);
     if (member) {
       Object.assign(out, { customerId: member.customer_id, holderName: trimmed(input.holderName, 80) || member.name || member.first_name || '', holderEmail: email || member.email || '' });
+    } else if (wanted) {
+      // A customer the Lair hasn't met, picked from the search with their name and email: their member record is made
+      // with the pass. With no name it's the round 4 404.
+      out.picked = this.pickedCustomer({ customerId: wanted, name: input.holderName, email }, { missing: 'That member could not be found.' });
+      Object.assign(out, { customerId: out.picked.customerId, holderName: out.picked.name, holderEmail: out.picked.email });
     } else {
       if (input.customerId === null || input.customerId === '') out.customerId = null;
       if (input.holderName != null) out.holderName = trimmed(input.holderName, 80);
@@ -4059,7 +4135,9 @@ export class Lair {
     }
     const holderName = out.holderName ?? existing?.holderName ?? '';
     const customerId = out.customerId !== undefined ? out.customerId : existing?.customerId ?? null;
-    if (!customerId && !holderName) throw new RuleError("Add the holder's name, or find them in the members.");
+    const groupId = out.groupId !== undefined ? out.groupId : existing?.groupId ?? null;
+    if (groupId && (customerId || holderName)) throw new RuleError('A pass belongs to a group or a person, not both.');
+    if (!groupId && !customerId && !holderName) throw new RuleError('Pick a group, pick a customer, or type a name.');
     return out;
   }
 
@@ -4074,18 +4152,23 @@ export class Lair {
     // --- no awaits from here on ---
     const now = Date.now();
     const f = this.passFields(input, rules, now);
+    if (f.picked) this.makeMember(f.picked, now);
     const id = makeId('ps');
-    const code = this.newCode(f.holderName || '', 'pass', id, now);
+    // A group's pass takes its code from the group's name (Warhammer League: WL-…), round 7
+    const code = this.newCode(f.groupName || f.holderName || '', 'pass', id, now);
     this.write(
       `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
-         created_by, expires_at, status) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+         created_by, expires_at, status, group_id) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
       id, code, f.label, f.sessionsTotal, f.cover ?? rules.prices.table, f.customerId || null, f.holderName || null, f.holderEmail || null, f.note || null,
-      f.pricePaid || 0, now, who.customerId || 'staff', f.expiresAt || null,
+      f.pricePaid || 0, now, who.customerId || 'staff', f.expiresAt || null, f.groupId || null,
     );
     return { pass: this.passView(this.passRow(id), { now }) };
   }
 
-  /** GET /passes?q=&status=active|void|all (staff): newest first, up to 100. q looks in the label, holder, code and order name. */
+  /**
+   * GET /passes?q=&status=active|void|all (staff): newest first, up to 100. q looks in the label, holder, code and order
+   * name, and (round 7) the name of the group a pass belongs to.
+   */
   listPasses(url, who) {
     this.requireStaff(who);
     const now = Date.now();
@@ -4094,13 +4177,16 @@ export class Lair {
     const wanted = url.searchParams.get('status');
     const status = ['active', 'void', 'all'].includes(wanted) ? wanted : 'active';
     const rows = status === 'all'
-      ? this.sql.exec('SELECT * FROM passes ORDER BY created_at DESC, rowid DESC').toArray()
-      : this.sql.exec('SELECT * FROM passes WHERE status = ? ORDER BY created_at DESC, rowid DESC', status).toArray();
-    const matches = (r) => !q || [r.label, r.holder_name, r.holder_email, r.order_name].some((v) => String(v || '').toLowerCase().includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key));
+      ? this.sql.exec('SELECT p.*, g.name AS group_name FROM passes p LEFT JOIN lair_groups g ON g.id = p.group_id ORDER BY p.created_at DESC, p.rowid DESC').toArray()
+      : this.sql.exec('SELECT p.*, g.name AS group_name FROM passes p LEFT JOIN lair_groups g ON g.id = p.group_id WHERE p.status = ? ORDER BY p.created_at DESC, p.rowid DESC', status).toArray();
+    const matches = (r) => !q || [r.label, r.holder_name, r.holder_email, r.order_name, r.group_name].some((v) => String(v || '').toLowerCase().includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key));
     return { passes: rows.filter(matches).slice(0, 100).map((r) => this.passView(this.rowToPass(r), { now })) };
   }
 
-  /** POST /passes/:id/update (staff): label, sessions (never below the sessions used), note, expires, status or holder. */
+  /**
+   * POST /passes/:id/update (staff): label, sessions (never below the sessions used), note, expires, status or holder; round
+   * 7: groupId (a group, or null to take it off its group, when it then needs a customer or a holder's name).
+   */
   async updatePass(id, input, who) {
     this.requireStaff(who);
     const rules = await this.rules();
@@ -4109,9 +4195,10 @@ export class Lair {
     const p = this.passRow(id);
     if (!p) throw new RuleError('That pass could not be found.', 404);
     const f = this.passFields(input, rules, now, p);
+    if (f.picked) this.makeMember(f.picked, now);
     const columns = {
       label: 'label', sessionsTotal: 'sessions_total', note: 'note', expiresAt: 'expires_at', status: 'status', pricePaid: 'price_paid', cover: 'cover',
-      customerId: 'customer_id', holderName: 'holder_name', holderEmail: 'holder_email',
+      customerId: 'customer_id', holderName: 'holder_name', holderEmail: 'holder_email', groupId: 'group_id',
     };
     const keys = Object.keys(f).filter((k) => columns[k]);
     if (keys.length) this.write(`UPDATE passes SET ${keys.map((k) => `${columns[k]} = ?`).join(', ')} WHERE id = ?`, ...keys.map((k) => (f[k] === '' ? null : f[k] ?? null)), p.id);
@@ -4170,6 +4257,8 @@ export class Lair {
     this.claimHits.set(who.customerId, [...tries, now]);
     const p = this.passByCode(input.code);
     if (!p || p.status === 'void') throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
+    // Round 7: a group's pass stays the group's (its members use it as it is)
+    if (p.groupId) throw new RuleError('That pass belongs to a group. Ask us at the counter.', 409);
     const me = String(who.customerId);
     if (p.customerId && p.customerId !== me) throw new RuleError('That pass already belongs to someone. Ask us at the counter.', 409);
     if (!p.customerId) {
@@ -4186,17 +4275,283 @@ export class Lair {
 
   /**
    * usePass on POST /bookings and POST /events/:id/reserve: the code of a pass linked to the logged-in member, saved on
-   * the booking for its check-in. Staff may use any active pass; anyone else's is a 403. No awaits.
+   * the booking for its check-in. Staff may use any active pass; anyone else's is a 403. Round 7: a member may use the
+   * pass of an active group they're in. No awaits.
    */
   passForBooking(code, who, now) {
     const p = this.passByCode(code);
     if (!p && who.staff) throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
-    if (!p || (!who.staff && (!who.customerId || p.customerId !== String(who.customerId)))) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
+    const mine = Boolean(p && who.customerId && (p.customerId === String(who.customerId) || (p.groupId && this.inActiveGroup(p.groupId, who.customerId))));
+    if (!p || (!who.staff && !mine)) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
     const status = this.passStatus(p, now);
     if (status === 'void') throw new RuleError('That pass has been cancelled. Ask us at the counter.', 409);
     if (status === 'expired') throw new RuleError('That pass has expired. Ask us at the counter about a new one.', 409);
     if (status === 'used') throw new RuleError('That pass has no sessions left. Book without it, friend, or ask us about a new one.', 409);
     return p;
+  }
+
+  /* ---------------- finding a customer, and groups (round 7) ---------------- */
+  /**
+   * GET /customers?q= (staff): the picker that groups, pass owners, GMs and players all use. Lair members first, matched
+   * like GET /members?q= (name, email, member code or customer ID), up to 10; then Shopify's customers not already
+   * listed (LairCustomers: Shopify's own search over name and email), up to 20 in all. member: false is someone the
+   * Lair hasn't met (no code yet): routes that take their customerId also take the name and email the picker gave, and
+   * make their member record. shopify: false when Shopify couldn't be asked (protected customer data not approved, or
+   * Shopify down; then it isn't asked again for 10 minutes), so only Lair members show.
+   */
+  async findCustomers(url, who) {
+    this.requireStaff(who);
+    const q = trimmed(url.searchParams.get('q'), 80);
+    if (q.length < 2) throw new RuleError('Type at least 2 letters to search.');
+    // Shopify's search gets letters, numbers, spaces and @ . _ - + ' only, in quotes
+    const clean = q.replace(/[^\p{L}\p{N}\s@._+'-]/gu, ' ').replace(/\s+/g, ' ').trim();
+    let found = null;
+    if (this.shopify.configured && Date.now() >= (this.retryAt.get('customers') || 0)) {
+      try {
+        found = clean ? await this.shopify.searchCustomers(`"${clean}"`) : [];
+      } catch (error) {
+        found = null;
+        this.backoff('customers');
+        this.note({ customersError: { message: String(error.message || error).slice(0, 300), at: new Date().toISOString() } });
+      }
+    }
+    // --- no awaits from here on ---
+    const customers = this.matchMembers(q, 10).map((row) => this.customerItem(row));
+    const listed = new Set(customers.map((c) => c.customerId));
+    for (const c of found || []) {
+      if (customers.length >= 20) break;
+      if (!c.customerId || listed.has(c.customerId)) continue;
+      listed.add(c.customerId);
+      const row = this.memberRow(c.customerId);
+      customers.push(row ? this.customerItem(row) : { customerId: c.customerId, name: c.name, firstName: c.firstName, email: c.email, code: null, member: false });
+    }
+    return { customers, shopify: found !== null };
+  }
+
+  /** Members whose name, email or code has `text` in it, or whose member code or customer ID it is (exact first). No awaits. */
+  matchMembers(text, limit) {
+    const q = String(text || '').toLowerCase();
+    const found = this.findCode(q);
+    const exact = found?.type === 'member' ? found.item.customer_id : /^\d{3,20}$/.test(q) ? q : '';
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    return this.sql
+      .exec(
+        `SELECT * FROM members WHERE customer_id = ? OR lower(name) LIKE ? ESCAPE '\\' OR lower(first_name) LIKE ? ESCAPE '\\' OR lower(email) LIKE ? ESCAPE '\\'
+           OR lower(code) LIKE ? ESCAPE '\\' ORDER BY (customer_id = ?) DESC, COALESCE(last_seen, 0) DESC, customer_id LIMIT ?`,
+        exact, like, like, like, like, exact, limit,
+      )
+      .toArray();
+  }
+
+  /** A member as the picker lists them */
+  customerItem(row) {
+    return { customerId: row.customer_id, name: row.name || row.first_name || '', firstName: row.first_name || '', email: row.email || '', code: row.code || null, member: true };
+  }
+
+  /**
+   * A customer staff picked: { customerId, name?, email? }, from GET /customers. A member is theirs as they are. Someone
+   * the Lair hasn't met (member: false in the search) comes with the name and email the picker showed, to make their
+   * member record from (makeMember, once every check has passed). A customerId the Lair doesn't know, sent with no
+   * name (or one that isn't a Shopify customer ID): a 404 (`missing`). Returns { customerId, row (null until it's
+   * made), name, email }. No awaits, no writes.
+   */
+  pickedCustomer(person, { missing = PICK_AGAIN } = {}) {
+    const raw = person && typeof person === 'object' ? person : { customerId: person };
+    const customerId = trimmed(raw.customerId, 40);
+    const row = customerId ? this.memberRow(customerId) : null;
+    if (row) return { customerId: row.customer_id, row, name: row.name || row.first_name || '', email: row.email || '' };
+    const name = trimmed(raw.name, 80);
+    if (!/^\d{1,20}$/.test(customerId) || !name) throw new RuleError(missing, 404);
+    const email = trimmed(raw.email, 120);
+    return { customerId, row: null, name, email: isEmail(email) ? email : '' };
+  }
+
+  /**
+   * The member record of a customer staff picked who the Lair hadn't met (round 7): a member code from their name, and
+   * the name and email from the picker. No welcome roll (those are codes now). One already made is left as it is. No
+   * awaits. Returns their member row.
+   */
+  makeMember(picked, now = Date.now()) {
+    const existing = this.memberRow(picked.customerId);
+    if (existing) return existing;
+    const name = trimmed(picked.name, 80) || null;
+    this.write(
+      `INSERT INTO members (customer_id, name, first_name, email, code, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+       ON CONFLICT(customer_id) DO NOTHING`,
+      String(picked.customerId), name, name ? name.split(/\s+/)[0].slice(0, 40) : null, isEmail(picked.email) ? trimmed(picked.email, 120) : null,
+      this.newCode(name || '', 'member', picked.customerId, now), now, now,
+    );
+    return this.memberRow(picked.customerId);
+  }
+
+  groupRow(id) {
+    return id ? this.sql.exec('SELECT * FROM lair_groups WHERE id = ?', String(id)).toArray()[0] || null : null;
+  }
+
+  /** Whether a customer is in a group that's active (so they can use its passes). No awaits. */
+  inActiveGroup(groupId, customerId) {
+    return this.sql
+      .exec("SELECT 1 AS n FROM lair_group_members m JOIN lair_groups g ON g.id = m.group_id AND g.status = 'active' WHERE m.group_id = ? AND m.customer_id = ?", String(groupId), String(customerId))
+      .toArray().length > 0;
+  }
+
+  /**
+   * A group as staff see it: { id, name, organiser, members: [{ customerId, name, email, code }], note, status, passes:
+   * [{ id, code, label, sessionsLeft, sessionsTotal, status }], createdAt, updatedAt }. No awaits.
+   */
+  groupView(g, now = Date.now()) {
+    const members = this.sql
+      .exec(
+        `SELECT m.customer_id, x.name, x.first_name, x.email, x.code FROM lair_group_members m LEFT JOIN members x ON x.customer_id = m.customer_id
+         WHERE m.group_id = ? ORDER BY m.created_at, m.rowid`,
+        g.id,
+      )
+      .toArray()
+      .map((r) => ({ customerId: r.customer_id, name: r.name || r.first_name || '', email: r.email || '', code: r.code || null }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+    const organiser = g.organiser_id ? members.find((m) => m.customerId === g.organiser_id) || null : null;
+    const passes = this.sql.exec('SELECT * FROM passes WHERE group_id = ? ORDER BY created_at DESC, rowid DESC', g.id).toArray()
+      .map((r) => this.rowToPass(r))
+      .map((p) => ({ id: p.id, code: p.code, label: p.label, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), sessionsTotal: p.sessionsTotal, status: this.passStatus(p, now) }));
+    return {
+      id: g.id, name: g.name, organiser, members, note: g.note || '', status: g.status, passes, createdAt: g.created_at, updatedAt: g.updated_at || g.created_at,
+    };
+  }
+
+  /** A group's name from a staff form: 2 to 60 characters, spaces tidied. No awaits. */
+  groupName(value) {
+    const name = String(value ?? '').trim().replace(/\s+/g, ' ');
+    if (name.length < 2 || name.length > 60) throw new RuleError('Give the group a name (up to 60 characters).');
+    return name;
+  }
+
+  /** No two active groups share a name (ignoring case). except: the group being changed. No awaits. */
+  checkGroupName(name, except = null) {
+    const taken = this.sql.exec("SELECT id, name FROM lair_groups WHERE status = 'active'").toArray()
+      .find((g) => g.id !== except && g.name.toLocaleLowerCase('en') === name.toLocaleLowerCase('en'));
+    if (taken) throw new RuleError(`There's already a group called ${taken.name}.`, 409);
+  }
+
+  /** The customers a staff form sent (people, or customer IDs), checked and without repeats. No awaits, no writes. */
+  pickedPeople(list) {
+    const out = new Map();
+    for (const person of [].concat(list ?? [])) {
+      const picked = this.pickedCustomer(person);
+      if (!out.has(picked.customerId)) out.set(picked.customerId, picked);
+    }
+    return [...out.values()];
+  }
+
+  /**
+   * GET /groups?q=&status=active|archived|all (staff): up to 100, by name. active is the default. q looks in the group's
+   * name and its members' names, emails and member codes.
+   */
+  listGroups(url, who) {
+    this.requireStaff(who);
+    const now = Date.now();
+    const q = trimmed(url.searchParams.get('q'), 80).toLocaleLowerCase('en');
+    const key = codeKey(q);
+    const wanted = url.searchParams.get('status');
+    const status = ['active', 'archived', 'all'].includes(wanted) ? wanted : 'active';
+    let rows = (status === 'all'
+      ? this.sql.exec('SELECT * FROM lair_groups').toArray()
+      : this.sql.exec('SELECT * FROM lair_groups WHERE status = ?', status).toArray());
+    if (q) {
+      const hits = new Set(this.sql
+        .exec('SELECT m.group_id, x.name, x.first_name, x.email, x.code FROM lair_group_members m JOIN members x ON x.customer_id = m.customer_id')
+        .toArray()
+        .filter((r) => [r.name, r.first_name, r.email, r.code].some((v) => String(v || '').toLocaleLowerCase('en').includes(q)) || (key.length >= 2 && codeKey(r.code).includes(key)))
+        .map((r) => r.group_id));
+      rows = rows.filter((g) => g.name.toLocaleLowerCase('en').includes(q) || hits.has(g.id));
+    }
+    rows.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) || a.created_at - b.created_at);
+    return { groups: rows.slice(0, 100).map((g) => this.groupView(g, now)) };
+  }
+
+  /**
+   * POST /groups { name, organiser?: person, members?: [person], note? } (staff): a group of customers. person is
+   * { customerId, name?, email? } from the picker (GET /customers). The organiser is always one of its members.
+   * Returns { group }.
+   */
+  async createGroup(input, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const name = this.groupName(input?.name);
+    this.checkGroupName(name);
+    const organiser = input?.organiser ? this.pickedCustomer(input.organiser) : null;
+    const people = this.pickedPeople(input?.members);
+    if (organiser && !people.some((p) => p.customerId === organiser.customerId)) people.unshift(organiser);
+    if (people.length > GROUP_MAX) throw new RuleError(`A group can have up to ${GROUP_MAX} people.`);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    for (const p of people) this.makeMember(p, now);
+    const id = makeId('gr');
+    this.write(
+      "INSERT INTO lair_groups (id, name, organiser_id, note, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+      id, name, organiser?.customerId || null, trimmed(input?.note, 300) || null, by, now, now,
+    );
+    for (const p of people) this.write('INSERT OR IGNORE INTO lair_group_members (group_id, customer_id, added_by, created_at) VALUES (?, ?, ?, ?)', id, p.customerId, by, now);
+    return { group: this.groupView(this.groupRow(id), now) };
+  }
+
+  /**
+   * POST /groups/:id/update { name?, organiser?: person (null: none), note?, status?: 'active'|'archived' } (staff). An
+   * organiser who isn't in the group yet joins it. Archiving stops its members using its passes (staff can still use
+   * them by code at the counter). Returns { group }.
+   */
+  async updateGroup(id, input, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const group = this.groupRow(id);
+    if (!group) throw new RuleError('That group could not be found.', 404);
+    const has = (k) => Object.prototype.hasOwnProperty.call(input || {}, k);
+    if (has('status') && !['active', 'archived'].includes(input.status)) throw new RuleError('A group is active or archived.');
+    const status = has('status') ? input.status : group.status;
+    const name = has('name') ? this.groupName(input.name) : group.name;
+    if (status === 'active') this.checkGroupName(name, group.id);
+    const organiser = has('organiser') && input.organiser ? this.pickedCustomer(input.organiser) : null;
+    const joining = organiser && !this.sql.exec('SELECT 1 AS n FROM lair_group_members WHERE group_id = ? AND customer_id = ?', group.id, organiser.customerId).toArray().length;
+    if (joining && this.groupSize(group.id) + 1 > GROUP_MAX) throw new RuleError(`A group can have up to ${GROUP_MAX} people.`);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    if (organiser) this.makeMember(organiser, now);
+    if (joining) this.write('INSERT OR IGNORE INTO lair_group_members (group_id, customer_id, added_by, created_at) VALUES (?, ?, ?, ?)', group.id, organiser.customerId, by, now);
+    this.write(
+      'UPDATE lair_groups SET name = ?, organiser_id = ?, note = ?, status = ?, updated_at = ? WHERE id = ?',
+      name, has('organiser') ? organiser?.customerId || null : group.organiser_id, has('note') ? trimmed(input.note, 300) || null : group.note, status, now, group.id,
+    );
+    return { group: this.groupView(this.groupRow(group.id), now) };
+  }
+
+  groupSize(groupId) {
+    return this.sql.exec('SELECT COUNT(*) AS n FROM lair_group_members WHERE group_id = ?', String(groupId)).one().n;
+  }
+
+  /**
+   * POST /groups/:id/members { add?: [person], remove?: [customerId] } (staff). Someone removed stops using the group's
+   * passes. The organiser can't be removed until there's a new one. Returns { group }.
+   */
+  async groupMembers(id, input, who) {
+    this.requireStaff(who);
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const group = this.groupRow(id);
+    if (!group) throw new RuleError('That group could not be found.', 404);
+    const remove = [...new Set([].concat(input?.remove ?? []).map((x) => trimmed(x && typeof x === 'object' ? x.customerId : x, 40)).filter(Boolean))];
+    if (group.organiser_id && remove.includes(group.organiser_id)) throw new RuleError("That's the organiser. Pick a new organiser first.", 409);
+    const add = this.pickedPeople(input?.add);
+    const current = new Set(this.sql.exec('SELECT customer_id FROM lair_group_members WHERE group_id = ?', group.id).toArray().map((r) => r.customer_id));
+    const joining = add.filter((p) => !current.has(p.customerId));
+    const leaving = remove.filter((c) => current.has(c) && !joining.some((p) => p.customerId === c));
+    if (current.size + joining.length - leaving.length > GROUP_MAX) throw new RuleError(`A group can have up to ${GROUP_MAX} people.`);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    for (const p of joining) {
+      this.makeMember(p, now);
+      this.write('INSERT OR IGNORE INTO lair_group_members (group_id, customer_id, added_by, created_at) VALUES (?, ?, ?, ?)', group.id, p.customerId, by, now);
+    }
+    for (const c of leaving) this.write('DELETE FROM lair_group_members WHERE group_id = ? AND customer_id = ?', group.id, c);
+    if (joining.length || leaving.length) this.write('UPDATE lair_groups SET updated_at = ? WHERE id = ?', now, group.id);
+    return { group: this.groupView(this.groupRow(group.id), now) };
   }
 
   /**
