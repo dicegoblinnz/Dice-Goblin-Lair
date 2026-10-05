@@ -59,7 +59,7 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const boxes = (codes || []).filter((c) => c && String(c.code ?? '').trim()).map((c) => ({ code: String(c.code).trim(), lines: list(c.lines) }));
   const rows = (details || []).filter((row) => row && String(row[1] ?? '').trim()).map(([label, value]) => [String(label), String(value).trim()]);
   const link = button && safeUrl(button.url) ? { label: String(button.label || 'Open'), url: safeUrl(button.url) } : null;
-  const signed = list(signoff ?? 'See you at the Lair!\nGobgob, the Dice Goblin goblin');
+  const signed = list(signoff ?? 'See you at the Lair!\nGobgob, the Dice Goblin');
   const foot = [footer.name || 'Dice Goblin Lair', footer.address, [footer.phone, footer.hours].filter(Boolean).join(' · ')].filter(Boolean);
   const said = String(quote ?? '').trim();
 
