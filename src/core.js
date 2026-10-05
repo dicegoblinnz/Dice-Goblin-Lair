@@ -553,9 +553,14 @@ export function checkSeatBooking(input, { state, rules, now, held = 0 }) {
   const email = clean(input.email, 120);
   if (!name) throw new RuleError('Add your name.');
   if (!isEmail(email)) throw new RuleError('Add an email so we can send your confirmation.');
+  // Round 6: a phone number is optional (the GM gets it with the player's details), up to 30 characters.
+  const phone = String(input.phone ?? '').trim();
+  if (phone.length > 30) throw new RuleError('That phone number looks too long. Keep it to 30 characters.');
   const players = seatPlayers(input.players, people, name);
   const unit = game.seatPrice || rules.prices.gmSeat;
-  return { game, people, name, email, players, tables: game.tables, start: game.start, end: game.end, amount: unit * people };
+  return {
+    game, people, name, email, players, tables: game.tables, start: game.start, end: game.end, amount: unit * people, phone, notes: clean(input.notes, 500),
+  };
 }
 
 /**
@@ -652,6 +657,40 @@ export function nextBirthday(mmdd, fromKey) {
   return null;
 }
 
+/** Whole years from one day key to another, the way birthdays count them (never below 0). */
+export function wholeYears(fromKey, toKey) {
+  const [y1, m1, d1] = String(fromKey).split('-').map(Number);
+  const [y2, m2, d2] = String(toKey).split('-').map(Number);
+  if (![y1, m1, d1, y2, m2, d2].every(Number.isFinite)) return 0;
+  return Math.max(0, y2 - y1 - (m2 < m1 || (m2 === m1 && d2 < d1) ? 1 : 0));
+}
+
+/**
+ * When a member became a customer, as staff set it (round 6): 'YYYY-MM-DD', or 'YYYY' for 1 January that year. null or
+ * empty clears it (null). A date that doesn't exist, or one after today (todayKey), is refused.
+ */
+export function parseSince(value, todayKey) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const key = /^\d{4}$/.test(text) ? `${text}-01-01` : text;
+  const real = /^\d{4}-\d{2}-\d{2}$/.test(key) && !Number.isNaN(Date.parse(`${key}T00:00:00Z`)) && new Date(`${key}T00:00:00Z`).toISOString().slice(0, 10) === key;
+  if (!real || key < '1900-01-01') throw new RuleError('Pick a real date, like 2019-06-01, or just the year, like 2019.');
+  if (key > todayKey) throw new RuleError("That date hasn't happened yet. Pick when they first became a customer.");
+  return key;
+}
+
+/**
+ * The New Zealand financial year (1 April to 31 March) that starts in `start`: { fy: '2026/27', from: '2026-04-01',
+ * to: '2027-03-31', start }.
+ */
+export const financialYearFrom = (start) => ({ fy: `${start}/${String((start + 1) % 100).padStart(2, '0')}`, from: `${start}-04-01`, to: `${start + 1}-03-31`, start });
+
+/** The financial year a Lair day key ('YYYY-MM-DD') falls in: 31 March is the old year, 1 April the new one. */
+export function financialYear(key) {
+  const [y, m] = String(key).split('-').map(Number);
+  return financialYearFrom(m >= 4 ? y : y - 1);
+}
+
 /** Spend earns a dice roll every $20. Rolls stack and never expire. */
 export const ROLL_EVERY = 2000;
 
@@ -663,6 +702,54 @@ export function rollPrize(roll) {
   if (roll === 20) return { kind: 'credit', amount: 2000 };
   const ones = [...String(roll)].filter((c) => c === '1').length;
   return ones ? { kind: 'credit', amount: ones * 100 } : null;
+}
+
+/* ---------- the loyalty card (round 6: it replaces the spend dice) ----------
+   A stamp for each person at each session they turn up to; 10 stamps fill a card, and a full card earns a d20 roll
+   whose face is the prize in store credit ($1 to $20). */
+export const CARD_SIZE = 10;
+
+/** The card from all the stamps someone has: { stamps (0-9 on the current card), cards (full cards so far) } */
+export const loyaltyCard = (total) => {
+  const n = Math.max(0, Math.floor(Number(total) || 0));
+  return { stamps: n % CARD_SIZE, cards: Math.floor(n / CARD_SIZE) };
+};
+
+/** A loyalty roll's prize: whatever the d20 shows, in store credit */
+export const loyaltyPrize = (roll) => ({ kind: 'credit', amount: roll * 100 });
+
+/**
+ * What Gobgob says about a loyalty roll. pending: Shopify couldn't add the credit, so it's claimed at the counter. "An"
+ * for 8, 11 and 18, the faces said with a vowel sound.
+ */
+export function loyaltyMessage(roll, pending = false) {
+  const said = roll === 20 ? 'Natural 20! $20 store credit is yours.'
+    : roll === 1 ? "A 1! $1 store credit, and Gobgob's still proud of it."
+      : `You rolled ${[8, 11, 18].includes(roll) ? 'an' : 'a'} ${roll}: $${roll} store credit is yours.`;
+  return pending ? `${said} Show this screen at the counter to claim it.` : said;
+}
+
+/* ---------- library holds (round 6): reserve a board game from the library ---------- */
+/** A hold lasts until 12pm (Lair time) on the third day after the day it's made: made any time Monday, held until 12pm Thursday. */
+export const HOLD_DAYS = 3;
+export const HOLD_UNTIL_HOUR = 12;
+
+/** When a hold made at `ms` ends, in Lair time (right across daylight saving changes: the day is counted, not 72 hours) */
+export const holdUntil = (time, ms) => time.at(addDays(time.key(ms), HOLD_DAYS), HOLD_UNTIL_HOUR * 60);
+
+/**
+ * A member's library plan from their Shopify customer tags (Simplee Memberships), matched without case: a tag containing
+ * "hoard" is 5 games at a time, "stash" or "treasure" 3, "grab" or "loot" 1, and a plain "library-member" tag with none
+ * of those 1. null: no plan.
+ */
+export function libraryPlan(tags) {
+  const list = (Array.isArray(tags) ? tags : []).map((t) => String(t).trim().toLowerCase());
+  const has = (...words) => list.some((t) => words.some((w) => t.includes(w)));
+  if (has('hoard')) return { name: 'Hoard', games: 5 };
+  if (has('stash', 'treasure')) return { name: 'Stash', games: 3 };
+  if (has('grab', 'loot')) return { name: 'Grab', games: 1 };
+  if (list.includes('library-member')) return { name: 'Library', games: 1 };
+  return null;
 }
 
 /* ---------- what the public may see ---------- */
