@@ -803,9 +803,15 @@ const sendJson = (res, status, data) => {
 async function shopJson(req, res, url) {
   const productFile = url.pathname.match(/^\/products\/([^/]+)\.js$/);
   if (productFile) {
-    const p = allProducts[decodeURIComponent(productFile[1])];
+    const handle = decodeURIComponent(productFile[1]);
+    const p = allProducts[handle];
     if (p) sendJson(res, 200, productJs(p));
-    else sendJson(res, 404, { status: 404, message: 'Not Found', description: 'Not Found' });
+    // The live harness's library holds and loans name copies the mock's catalogue doesn't have (azul-library,
+    // wingspan-library): on the store every library copy has its page, so answer like a copy with no picture
+    else if (/-library$/.test(handle)) {
+      const title = `${handle.replace(/-library$/, '').split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')} (Library)`;
+      sendJson(res, 200, { id: 0, title, handle, description: '', vendor: 'Dice Goblin NZ', type: 'Board Game', tags: ['Board Game Rental'], price: 0, price_min: 0, price_max: 0, available: true, url: `/products/${handle}`, featured_image: null, variants: [] });
+    } else sendJson(res, 404, { status: 404, message: 'Not Found', description: 'Not Found' });
     return true;
   }
   if (url.pathname === '/collections/all/products.json') {

@@ -116,17 +116,17 @@ check('staff see it waiting for Rua', staffFloor.games?.find((x) => x.id === g.i
 const emails1 = (await fake('GET', 'emails')).length;
 const kiri = await proxy('POST', `games/${g.id}/players`, { customer: STAFF, body: { customerId: '7102', name: 'Kiri Smith', email: 'kiri@example.com', people: 1, weekly: true } });
 check('Kiri, every week: a regular from now on', kiri.status === 200 && kiri.data.regular?.customerId === '7102' && kiri.data.regular.seriesId === g.seriesId && kiri.data.invite === null, kiri.data.error || kiri.data);
-const mereana = await proxy('POST', `games/${g.id}/players`, { customer: STAFF, body: { name: 'Mereana Rawiri', email: 'mereana.r7@example.com', people: 1, weekly: true } });
-check('Mereana, no account: a reserved seat and an invite', mereana.status === 200 && mereana.data.invite?.email === 'mereana.r7@example.com' && mereana.data.booking?.customerId === null, mereana.data.error || mereana.data);
+const mereana = await proxy('POST', `games/${g.id}/players`, { customer: STAFF, body: { name: 'Mereana Rawiri', email: 'mereana.r7b@example.com', people: 1, weekly: true } });
+check('Mereana, no account: a reserved seat and an invite', mereana.status === 200 && mereana.data.invite?.email === 'mereana.r7b@example.com' && mereana.data.booking?.customerId === null, mereana.data.error || mereana.data);
 await sleep(800);
 check('Kiri gets "You\'re a regular" from the team', (await emails(emails1, 'kiri@example.com')).some((e) => e.subject === "You're a regular: Rua's Mothership (r7)" && e.text.includes("the Dice Goblin team has saved your seat at Rua's Mothership (r7) with GM Rua every week.")));
-check('Mereana\'s confirmation says her account keeps the seat every week', (await emails(emails1, 'mereana.r7@example.com')).some((e) => e.text.includes("It's a weekly game: make your Dice Goblin account with this email and Gobgob will save your seat every week.")));
+check('Mereana\'s confirmation says her account keeps the seat every week', (await emails(emails1, 'mereana.r7b@example.com')).some((e) => e.text.includes("It's a weekly game: make your Dice Goblin account with this email and Gobgob will save your seat every week.")));
 check('Rua hears about both new players at the invited address', (await emails(emails1, 'rua.gm@example.com')).filter((e) => /^New player for Rua's Mothership \(r7\)/.test(e.subject)).length === 2);
 staffFloor = (await proxy('GET', `floor?from=${at(D, 0)}&to=${at(addDays(D, 1), 0)}`, { customer: STAFF })).data;
-check('staff see Mereana\'s invite on the session', JSON.stringify(staffFloor.games?.find((x) => x.id === g.id)?.invites) === JSON.stringify([{ id: mereana.data.invite?.id, name: 'Mereana Rawiri', email: 'mereana.r7@example.com', people: 1 }]), staffFloor.games?.find((x) => x.id === g.id)?.invites);
+check('staff see Mereana\'s invite on the session', JSON.stringify(staffFloor.games?.find((x) => x.id === g.id)?.invites) === JSON.stringify([{ id: mereana.data.invite?.id, name: 'Mereana Rawiri', email: 'mereana.r7b@example.com', people: 1 }]), staffFloor.games?.find((x) => x.id === g.id)?.invites);
 // Rua and Mereana make their accounts with those emails and open My Lair
 await fake('POST', 'customer', { id: '7302', tags: [], name: 'Rua Tamati', email: 'rua.gm@example.com', verified: true });
-await fake('POST', 'customer', { id: '7303', tags: [], name: 'Mereana Rawiri', email: 'Mereana.R7@example.com', verified: true });
+await fake('POST', 'customer', { id: '7303', tags: [], name: 'Mereana Rawiri', email: 'Mereana.R7b@example.com', verified: true });
 const rua = (await proxy('GET', `me?name=${encodeURIComponent('Rua Tamati')}`, { customer: '7302' })).data;
 check('Rua logs in with that email: the game is in Games I run', (rua.games || []).some((x) => x.id === g.id) && (rua.games || []).every((x) => x.seriesId === g.seriesId), (rua.games || []).map((x) => x.title));
 staffFloor = (await proxy('GET', `floor?from=${at(D, 0)}&to=${at(addDays(D, 1), 0)}`, { customer: STAFF })).data;
