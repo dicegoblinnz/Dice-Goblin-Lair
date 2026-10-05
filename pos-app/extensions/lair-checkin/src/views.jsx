@@ -15,7 +15,7 @@ import {
   tabPlan,
   withGroups,
 } from './flow.js';
-import { customerIdNumber, dateLabel, firstName, longDay, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
+import { customerIdNumber, dateLabel, firstName, longDay, loyaltyLine, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
 import { tabItems } from './lines.js';
 import {
   amountProblem,
@@ -510,7 +510,7 @@ function SplitPanel({ row, split, ctx }) {
               Scan their member code
             </s-button>
             <CodeEntry label="Or type their member code" placeholder="AK-KIWI-3" busy={Boolean(busy)} onFind={(text) => act.lookUp(text, 'payer')} />
-            <s-text color="subdued">No member code? Go ahead anyway: it just won't count toward anyone's dice rolls.</s-text>
+            <s-text color="subdued">No member code? Go ahead anyway: it just won't count toward anyone's spend.</s-text>
           </s-stack>
         )}
 
@@ -541,6 +541,7 @@ function MemberView({ screen, ctx }) {
   const plan = everything.today;
   const tab = tabPlan(screen.tab, cart.tabs);
   const { items, bad } = tabItems(screen.tab);
+  const card = loyaltyLine(screen.loyalty);
   return (
     <Page heading={name} subheading={member.code ? `Member ${member.code}` : 'Member'} action={<ScanAction ctx={ctx} />}>
       <BackButton ctx={ctx} />
@@ -553,6 +554,7 @@ function MemberView({ screen, ctx }) {
           </s-button>
         )}
       </s-stack>
+      {card ? <s-text color="subdued">{card}</s-text> : null}
 
       {everything.show ? (
         <s-stack direction="block" gap="small">

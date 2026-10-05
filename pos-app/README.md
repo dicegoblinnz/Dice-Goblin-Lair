@@ -39,7 +39,7 @@ Some people choose "Split the bill at the counter" when they book; the screen sa
 2. Pick **One person's share** (the screen shows how many are left to pay and how much each) or **A different
    amount** and type it.
 3. **Who's paying this share?** Tap the booker's name, tap **Scan their member code** (the code in their My Lair),
-   or type their member code and tap **Find**. They go on the sale, so their spend earns *their* dice rolls. No
+   or type their member code and tap **Find**. They go on the sale, so their spend counts for *them*. No
    member code? Go ahead anyway.
 4. Tap **Add $X to cart**, close the check-in screen and take payment on the Verifone.
 5. For the next friend, open the booking again (scan the booker's code, or find them in the list). It shows what's
@@ -59,7 +59,9 @@ they owe from earlier weeks, their tab, and their passes. A weekly regular's tic
   - The tab goes in as the real products, so the till charges the shop's own prices.
 - Only want one part? **Check in everyone and add to cart** (under Today) does just today's bookings, and **Add tab
   to cart** just the tab. To add one owed session on its own, tap it under **Owed**.
-- **Put Sam on this sale** makes their spend count toward their dice rolls.
+- **Put Sam on this sale** makes their spend count for them.
+- Under their name it shows their loyalty card, like "Loyalty card: 7 of 10 stamps · 1 roll waiting in My Lair". It's
+  for show: stamps come from check-ins, and they roll in My Lair.
 - Tap a pass to see it.
 
 ### Weekly regulars and owed sessions

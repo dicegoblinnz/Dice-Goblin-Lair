@@ -9,6 +9,7 @@ import {
   firstName,
   fold,
   longDay,
+  loyaltyLine,
   money,
   peopleLabel,
   plural,
@@ -45,6 +46,19 @@ test('people, tables, names and plurals', () => {
   assert.equal(plural(1, 'item'), '1 item');
   assert.equal(plural(2, 'item'), '2 items');
   assert.equal(fold('  Zoë VAN der Berg'), 'zoe van der berg');
+});
+
+test('the loyalty card line: stamps of the card, and rolls waiting in My Lair when there are any', () => {
+  assert.equal(loyaltyLine({ stamps: 7, cardSize: 10, rollsAvailable: 1 }), 'Loyalty card: 7 of 10 stamps · 1 roll waiting in My Lair');
+  assert.equal(loyaltyLine({ stamps: 0, cardSize: 10, rollsAvailable: 3 }), 'Loyalty card: 0 of 10 stamps · 3 rolls waiting in My Lair');
+  assert.equal(loyaltyLine({ stamps: 9, cardSize: 10, rollsAvailable: 0 }), 'Loyalty card: 9 of 10 stamps');
+  assert.equal(loyaltyLine({ stamps: 4, cardSize: 10 }), 'Loyalty card: 4 of 10 stamps');
+  // Nothing from an older Lair app, or nothing that makes sense: no line
+  assert.equal(loyaltyLine(undefined), '');
+  assert.equal(loyaltyLine(null), '');
+  assert.equal(loyaltyLine('7 stamps'), '');
+  assert.equal(loyaltyLine({ stamps: 3 }), '');
+  assert.equal(loyaltyLine({ stamps: 'lots', cardSize: 10, rollsAvailable: -2 }), 'Loyalty card: 0 of 10 stamps');
 });
 
 test('times are short and in Auckland time', () => {

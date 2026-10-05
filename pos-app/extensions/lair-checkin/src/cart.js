@@ -51,7 +51,7 @@ export function cartProblem(error) {
 }
 
 /**
- * Puts a customer on the sale, so what they spend counts toward their dice rolls. Leaves someone else already on
+ * Puts a customer on the sale, so what they spend counts for them. Leaves someone else already on
  * the sale alone unless `replace` is set (staff picked who's paying).
  * @param {unknown} id
  * @param {boolean} [replace]
