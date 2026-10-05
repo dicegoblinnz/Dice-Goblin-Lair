@@ -356,7 +356,8 @@ try {
     check(`Maps (${tag}): the contact card's address and Get directions open the Google Maps listing`, g.address === MAPS && g.directions === 'Get directions', g.address);
     check(`Maps (${tag}): "Read our Google reviews" just under Get directions, same link, new tab, 44px tall`, g.reviews === MAPS && /^Read our Google reviews/.test(g.reviewsText) && g.reviewsTarget === '_blank' && /noopener/.test(g.reviewsRel || '') && g.reviewsH >= 44 && g.under >= -1 && g.under <= 12, `${g.reviewsText}, ${g.reviewsH}px, ${g.under}px under`);
     check(`Maps (${tag}): the footer's address opens the listing`, g.footer === MAPS && /Manukau Road/.test(g.footerText), g.footer);
-    if (width < 700) check('Maps: the home Reviews section stays switched off (no quotes yet)', g.reviewsSection === 0);
+    // Mo sent the reviews he picked (5 Oct): the section is on, with his six quotes
+    if (width < 700) check('Maps: the home Reviews section is on, once', g.reviewsSection === 1, g.reviewsSection);
     await ctx.close();
   }
   {
@@ -378,7 +379,7 @@ try {
   {
     const raw = fs.readFileSync(path.join(THEME, 'templates/index.json'), 'utf8').replace(/^\s*\/\*[\s\S]*?\*\//, '');
     const reviews = JSON.parse(raw).sections.reviews;
-    check('Maps: index.json\'s Reviews section links to the listing and stays disabled', reviews.disabled === true && reviews.settings.link === MAPS, `${reviews.settings.link_label} -> ${reviews.settings.link}`);
+    check('Maps: index.json\'s Reviews section links to the listing, is on, and holds Mo\'s six reviews', reviews.disabled !== true && reviews.settings.link === MAPS && reviews.block_order.length === 6, `${reviews.settings.link_label} -> ${reviews.settings.link}, ${reviews.block_order.length} reviews`);
     check('Maps: the theme setting defaults to the listing', m.globalSettings.google_maps_url === MAPS, m.globalSettings.google_maps_url);
   }
 } catch (error) {
