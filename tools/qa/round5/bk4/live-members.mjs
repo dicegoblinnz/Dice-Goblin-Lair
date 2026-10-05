@@ -53,6 +53,13 @@ m.mockState.before = async (req, res, url) => {
     });
     return send(200, { months, years: [{ fy: '2026/27', from: '2026-04-01', to: '2027-03-31', amount: 15000, orders: 6 }], total: 61000, since: '2023-07-21' });
   }
+  // round 7: a member's page asks for the member by customer ID (contract v7, section 5): the list's item, their profile,
+  // every gift and their library
+  const memberOf = route.match(/^\/members\/(\d+)$/);
+  if (memberOf) {
+    const found = members.find((x) => x.customerId === memberOf[1]);
+    return found ? send(200, { member: { ...found, mobile: '', pronouns: '', favouriteGames: [], about: '', gifts: [], library: { plan: null, holds: [], atHome: [] } } }) : send(404, { error: 'No member with that customer ID.' });
+  }
   if (route === '/members/7101/gift') {
     return send(200, { gift: { id: 'gf1', at: now, credit: Math.round((body.credit || 0) * 100), sessions: body.sessions || 0, passCode: body.sessions ? 'SJ-CAKE-9' : null, rolls: 0, product: body.productVariantId ? { title: body.productTitle, code: 'HBD-SJOWLBEAR17' } : null, emailed: true, problems: body.rolls ? ['Dice rolls: no permission to add them, so add them by hand.'] : [] } });
   }
