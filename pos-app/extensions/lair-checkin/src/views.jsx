@@ -16,7 +16,7 @@ import {
   withGroups,
 } from './flow.js';
 import { customerIdNumber, dateLabel, firstName, longDay, loyaltyLine, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
-import { tabItems } from './lines.js';
+import { accountLine, tabItems } from './lines.js';
 import {
   amountProblem,
   bookerPayer,
@@ -555,6 +555,11 @@ function MemberView({ screen, ctx }) {
         )}
       </s-stack>
       {card ? <s-text color="subdued">{card}</s-text> : null}
+      {accountLine(screen.account) ? (
+        <s-banner tone="info" heading="Monthly account">
+          {accountLine(screen.account)}
+        </s-banner>
+      ) : null}
 
       {everything.show ? (
         <s-stack direction="block" gap="small">
@@ -597,7 +602,11 @@ function MemberView({ screen, ctx }) {
       {owedRows.length ? (
         <s-section heading="Owed">
           <s-stack direction="block" gap="small">
-            <s-text color="subdued">Sessions they kept a seat for and haven't paid. Tap one to add just that.</s-text>
+            <s-text color="subdued">
+              {owedRows.some(({ row }) => row.onAccount)
+                ? 'What they owe on their account, and any sessions they kept a seat for. Tap one to add just that.'
+                : "Sessions they kept a seat for and haven't paid. Tap one to add just that."}
+            </s-text>
             <RowList
               items={owedRows.map(({ row, group }) => ({ row, group, details: [whatLabel(row), owedWhen(row)].filter(Boolean).join(' · ') }))}
               cart={cart}

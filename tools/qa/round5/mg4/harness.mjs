@@ -47,6 +47,18 @@ export async function open(size, path = '/pages/my-lair', opts = {}) {
   if (path.startsWith('/pages/my-lair') && m.mockState.customer) {
     // My Lair is five views (Home, Bookings, Tab, Wallet, Me) and only one shows: the bookings panel is drawn either way
     await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached', timeout: 10000 });
+    // Round 9: the demo puts its customer on a monthly account; these checks are about paying each visit, so the demo
+    // customer pays each visit here (opts.billing 'monthly' keeps the account; round9/tab.mjs checks it)
+    const switched = opts.billing === 'monthly' ? false : await page.evaluate(() => {
+      const be = window.Lair && window.Lair.store && window.Lair.store.backend;
+      if (!be || typeof be.demoBilling !== 'function' || (be.tabAccountOf(window.Lair.store.cfg.customer && window.Lair.store.cfg.customer.id) || {}).billing !== 'monthly') return false;
+      be.demoBilling('visit');
+      return true;
+    });
+    if (switched) {
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.waitForSelector('[data-panel="bookings"]:not([aria-busy])', { state: 'attached', timeout: 10000 });
+    }
   }
   if (path.startsWith('/pages/gm-games')) await page.waitForSelector('.gm-card, .gm-empty', { timeout: 10000 });
   await page.waitForTimeout(400);

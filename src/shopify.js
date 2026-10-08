@@ -443,6 +443,44 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 9: a member's Lair bill as a draft order for that customer (purchasingEntity), so it's their order and Shopify
+   * can take their store credit at checkout. lines: { title, cents, attributes } custom lines (bookings, seats, sign-ups),
+   * or { variantId, qty, cents, title, attributes } product lines (tab items, at the price on the tab). Every line
+   * carries its attributes (_booking or _tab, and _bill), and the draft carries _bill. Nothing is shipped: a $0
+   * "Collected at the Lair" shipping line goes on when there are products. Returns { draftOrderId, invoiceUrl }.
+   */
+  async createBill({ billId, customerId, email, note, lines, currency }) {
+    const moneyOf = (cents) => ({ amount: (cents / 100).toFixed(2), currencyCode: currency });
+    const attrs = (list) => Object.entries(list || {}).filter(([, v]) => v != null && v !== '').map(([key, value]) => ({ key, value: String(value) }));
+    const products = lines.some((l) => l.variantId);
+    const data = await this.graphql(
+      `mutation LairBill($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id invoiceUrl totalPriceSet { shopMoney { amount currencyCode } } } userErrors { field message } } }`,
+      {
+        input: {
+          purchasingEntity: { customerId: `gid://shopify/Customer/${customerId}` },
+          email: email || undefined,
+          tags: ['lair-bill'],
+          note: note || `Lair bill ${billId}`,
+          customAttributes: [{ key: '_bill', value: billId }],
+          ...(products ? { shippingLine: { title: 'Collected at the Lair', priceWithCurrency: moneyOf(0) } } : {}),
+          lineItems: lines.map((l) => (l.variantId
+            ? {
+              variantId: `gid://shopify/ProductVariant/${l.variantId}`, quantity: l.qty, priceOverride: moneyOf(l.cents), requiresShipping: false,
+              customAttributes: attrs(l.attributes),
+            }
+            : {
+              title: String(l.title).slice(0, 255), quantity: 1, originalUnitPriceWithCurrency: moneyOf(l.cents), requiresShipping: false, taxable: true,
+              customAttributes: attrs(l.attributes),
+            })),
+        },
+      },
+    );
+    const result = data.draftOrderCreate;
+    if (result.userErrors.length) throw new Error(result.userErrors.map((e) => e.message).join('; '));
+    return { draftOrderId: result.draftOrder.id, invoiceUrl: result.draftOrder.invoiceUrl };
+  }
+
+  /**
    * Who paid for an order and its subtotal after discounts (in cents), for members' spend, and the order's name
    * ("#1550"). customerId is null when the order has no customer. Round 7: its discount codes and when it was processed
    * (a birthday gift's product code on it has been used).

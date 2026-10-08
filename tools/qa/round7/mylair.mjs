@@ -201,7 +201,11 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   check(tag, 'Wallet card: store credit, sessions on passes, rolls ready, gifts ready', wallet.includes('$5') && wallet.includes(`${sessions} sessions on passes`) && wallet.includes(`${ready} roll${ready === 1 ? '' : 's'} ready`) && wallet.includes(`${giftsReady} gift${giftsReady === 1 ? '' : 's'} ready`), wallet);
   check(tag, 'Library card: no plan, so it offers to join', sums.library === 'Join' && sums['library-label'] === 'the library', sums);
   const tabTotal = (data.tab && ['open', 'in-cart'].includes(data.tab.status) ? data.tab.total : 0) + (data.dueNow || []).reduce((sum, d) => sum + (Number(d.due) || 0), 0);
-  check(tag, "Tab card: today's total, with what's due", sums.tab === money(tabTotal) && /session/.test(sums['tab-more'] || ''), `${sums.tab} vs ${money(tabTotal)}; ${sums['tab-more']}`);
+  // round 9: on a monthly account (the demo puts its customer on one) the card is what's on the account and what's left
+  const acct = data.account && data.account.billing === 'monthly' ? data.account : null;
+  check(tag, "Tab card: today's total, with what's due (round 9: a monthly account's total and what's left)", acct
+    ? sums.tab === money(acct.owed.total) && (sums['tab-label'] || '').startsWith('on your account') && /left of \$/.test(sums['tab-more'] || '')
+    : sums.tab === money(tabTotal) && /session/.test(sums['tab-more'] || ''), `${sums.tab} vs ${money(acct ? acct.owed.total : tabTotal)}; ${sums['tab-more']}`);
   check(tag, "Profile card: what's missing first", sums.profile === 'Add your mobile' && /birthday/.test(sums['profile-more']), `${sums.profile} / ${sums['profile-more']}`);
   const opens = [];
   for (const [selector, name] of [['.ml-sum--wallet', 'wallet'], ['.ml-sum--library', 'library'], ['.ml-sum--tab', 'tab'], ['.ml-sum--profile', 'profile'], ['.ml-sum--bookings .ml-sum__link', 'bookings']]) {

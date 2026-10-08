@@ -32,7 +32,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
 const STAFF = { id: 7001, first_name: 'Mo', name: 'Mo Ashgrove', email: 'mo@example.com', phone: '', tags: ['staff'] };
 const SIZES = { phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
 // round 9: the main account also has the Team tab, last
-const TABS = ['Floor', 'Today’s bookings', 'Passes', 'Groups', 'Members', 'Loot codes', 'Holds and openings', 'GM games', 'Events', 'Library', 'Team'];
+const TABS = ['Floor', 'Today’s bookings', 'Passes', 'Groups', 'Members', 'Loot codes', 'Holds and openings', 'GM games', 'Events', 'Library', 'Accounts', 'Community', 'Team'];
 
 // The page clock: LAIR_AT, or 5pm today in Auckland
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland' }).format(new Date());
@@ -105,7 +105,7 @@ for (const size of sizes) {
   {
     const { ctx, page } = await open(size, '/pages/lair-staff#events');
     const tabs = await page.$$eval('.staff-tab', (els) => els.map((el) => ({ text: el.childNodes[0].textContent.trim(), id: el.dataset.tab, on: el.getAttribute('aria-selected') })));
-    check(`${size}: the tabs in the contract's order (round 9: Team last)`, JSON.stringify(tabs.map((x) => x.text)) === JSON.stringify(TABS), tabs.map((x) => x.text));
+    check(`${size}: the tabs in the contract's order (round 9: Accounts, Community, then Team last)`, JSON.stringify(tabs.map((x) => x.text)) === JSON.stringify(TABS), tabs.map((x) => x.text));
     const panels = await page.$$eval('.staff-panel', (els) => els.map((el) => el.id));
     check(`${size}: groups, codes and events panels sit right after passes`, panels.join(',').includes('panel-passes,panel-groups,panel-codes,panel-events'), panels.join(','));
     check(`${size}: #events opens the Events tab`, tabs.find((x) => x.id === 'events').on === 'true' && !(await page.isHidden('#panel-events')), tabs);

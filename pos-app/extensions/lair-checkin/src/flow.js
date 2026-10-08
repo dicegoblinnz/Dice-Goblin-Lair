@@ -29,8 +29,10 @@ import { dueOf, findRow, isArrived, isOwed, passSummary, passUsable, rowState } 
  * @typedef {{ heading: string, body: string }} Note a banner the person view shows, like "Pass undone. $45 to pay."
  * @typedef {{ name: 'person', row: Row, groupKey: string | null, groupTitle: string, passes: PassLike[],
  *   choice: string | null, result: CheckinAnswer | null, split: SplitState, uses: KnownUse[], note: Note | null }} PersonScreen
- * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], notices: string[], loyalty?: object | null }} MemberScreen
+ * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], notices: string[], loyalty?: object | null,
+ *   account?: { billing?: string, creditLimit?: number, owed?: number, available?: number | null, warning?: string | null } | null }} MemberScreen
  *   loyalty: their loyalty card from the scan (`{ stamps, cardSize, rollsAvailable }`, round 6), for show only
+ *   account: their billing from the scan (round 9): `{ billing: 'visit' }`, or a monthly account's limit and what's owed
  * @typedef {{ name: 'pass', pass: PassLike & Record<string, any>, picking: boolean }} PassScreen
  * @typedef {{ name: 'home' } | { name: 'group', key: string } | PersonScreen | MemberScreen | PassScreen} Screen
  */
@@ -99,6 +101,7 @@ export function nextScreen(answer) {
       passes: Array.isArray(answer.passes) ? answer.passes : [],
       notices: [],
       loyalty: answer.loyalty && typeof answer.loyalty === 'object' ? answer.loyalty : null,
+      account: answer.account && typeof answer.account === 'object' ? answer.account : null,
     };
   }
   if (type === 'pass' && answer.pass && typeof answer.pass === 'object') return { name: 'pass', pass: answer.pass, picking: false };

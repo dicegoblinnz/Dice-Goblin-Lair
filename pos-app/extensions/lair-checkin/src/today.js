@@ -12,7 +12,7 @@ import { firstName, fold, money, peopleLabel, plural, shortDay, tablesLabel, tim
  *   amount?: number, covered?: number, due?: number, paidAmount?: number, payments?: Payment[], split?: boolean,
  *   customerId?: unknown, pass?: PassLike | null, refund?: string | null, note?: string, title?: string,
  *   players?: unknown[], party?: unknown[], gameId?: string | null, occurrenceId?: string | null,
- *   seriesId?: string | null, owed?: boolean, waived?: boolean, line?: unknown }} Row
+ *   seriesId?: string | null, owed?: boolean, waived?: boolean, line?: unknown, onAccount?: boolean }} Row
  *   seriesId: a weekly regular's seat. owed: a regular's seat whose session ended unpaid (paid like any fee, never
  *   checked in); the Lair app sends its cart line as `line` with a member's rows. waived: staff let them off.
  * @typedef {{ key: string, kind?: string, title?: string, start?: number, end?: number, tables?: string[], rows: Row[] }} Group
@@ -192,6 +192,8 @@ export function tileSubheading(today) {
  * @param {Row} row
  */
 export function whatLabel(row) {
+  // round 9: a monthly account's tab from an earlier day
+  if (row?.type === 'tab') return 'Tab';
   const title = String(row?.title || '').trim();
   if (row?.type === 'join') return title ? `Event entry: ${title}` : 'Event entry';
   if (row?.kind === 'gm-seat') return title ? `GM seat: ${title}` : 'GM seat';

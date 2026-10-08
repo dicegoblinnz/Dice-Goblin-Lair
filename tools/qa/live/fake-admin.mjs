@@ -388,6 +388,22 @@ function answer(op, query, v) {
       state.drafts[id] = { id, status: 'OPEN', orderId: null, input: v.input };
       return { draftOrderCreate: { draftOrder: { id, invoiceUrl: `http://localhost:${process.env.QA_PORT || 4180}/__checkout/${n}` }, userErrors: [] } };
     }
+    // round 9: a member's Lair bill, a draft order for that customer (purchasingEntity), every line tagged _bill.
+    // POST /__fake/set { failBill: true } makes Shopify say no.
+    case 'LairBill': {
+      if (state.failBill) return { draftOrderCreate: { draftOrder: null, userErrors: [{ field: ['input'], message: 'Fake: bills are switched off' }] } };
+      const id = `gid://shopify/DraftOrder/${(seq += 1)}`;
+      const n = id.split('/').pop();
+      state.drafts[id] = { id, status: 'OPEN', orderId: null, input: v.input, bill: true };
+      const cents = (m) => Math.round(Number(m?.amount || 0) * 100);
+      const total = (v.input?.lineItems || []).reduce((sum, l) => sum + cents(l.priceOverride || l.originalUnitPriceWithCurrency) * (Number(l.quantity) || 1), 0);
+      return {
+        draftOrderCreate: {
+          draftOrder: { id, invoiceUrl: `http://localhost:${process.env.QA_PORT || 4180}/__checkout/${n}`, totalPriceSet: { shopMoney: { amount: (total / 100).toFixed(2), currencyCode: 'NZD' } } },
+          userErrors: [],
+        },
+      };
+    }
     case 'DraftStatus':
     case 'DraftOpen': {
       const d = state.drafts[v.id];
