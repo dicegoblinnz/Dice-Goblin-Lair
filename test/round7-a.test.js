@@ -559,7 +559,8 @@ test('gifts (5): staff see each member\'s gifts this year in words, birthdays su
   assert.deepEqual(birthdays[0].lastGift.words, '2 rolls');
   const page = (await call('GET', 'members/1001', null, 'staff')).data.member;
   assert.deepEqual(page.gifts.map((g) => g.id), [g2.id, g1.id, 'gf_last_year'], 'every gift, newest first');
-  assert.deepEqual(page.library, { plan: { name: 'Stash', games: 3 }, holds: [], atHome: [] });
+  // round 9: and the last few games they brought back
+  assert.deepEqual(page.library, { plan: { name: 'Stash', games: 3 }, holds: [], atHome: [], returns: [] });
   assert.deepEqual((await call('GET', 'members/1004', null, 'staff')).status, 404);
 });
 

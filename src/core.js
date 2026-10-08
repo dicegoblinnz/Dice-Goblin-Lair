@@ -123,6 +123,51 @@ export function sameBarcode(a, b) {
   return x.toUpperCase() === y.toUpperCase();
 }
 
+/**
+ * Round 9, team: what a helper can be given on the staff page (Mo: "they will gain access to what ever I allow but mainly
+ * about checking people in and booking tables out"). The owner (tagged staff in Shopify) has every one of these and
+ * 'team' (managing helpers), which is never given to a helper.
+ */
+export const STAFF_PERMS = ['checkin', 'tables', 'sessions', 'events', 'members', 'money', 'library', 'community'];
+/** Round 9: a new helper starts with Check-in and Tables ticked */
+export const HELPER_DEFAULT = ['checkin', 'tables'];
+/** Round 9: the staff page's words for what each permission lets a helper do (the Team tab shows them) */
+export const PERM_WORDS = {
+  checkin: 'Check people in, today’s bookings and taking payment at the desk',
+  tables: 'The floor, walk-ins, table bookings, holds and openings',
+  sessions: 'GM games: sessions, players, regulars and invites',
+  events: 'The events editor and adding people to events',
+  members: 'Members, birthdays, gifts and rolls, member codes and emailing members',
+  money: 'Store credit, passes, groups, loot codes, tabs and refunds',
+  library: 'Library holds, check out and check in',
+  community: 'Turnouts, lists and early access',
+};
+
+/**
+ * Round 9: a helper's permissions as sent ([...keys]): known keys only, each once, in STAFF_PERMS's order. 'team' and
+ * anything else unknown are dropped. Not a list: null (the caller decides the default).
+ */
+export function cleanPerms(list) {
+  if (!Array.isArray(list)) return null;
+  const wanted = new Set(list.map((p) => String(p ?? '').trim().toLowerCase()));
+  return STAFF_PERMS.filter((p) => wanted.has(p));
+}
+
+/**
+ * Round 9: may this person do something that needs `perm` (a key, or a list of keys where any one will do)? The owner
+ * may do everything. A helper needs one of the keys in their perms. 'team', a missing key and an unknown one are the
+ * owner's alone. A who made in code with staff: true and no role (the POS's own routes, older tests) is the owner, as
+ * every staff check was before round 9; person() always gives a role.
+ */
+export function canDo(who, perm) {
+  if (!who || !who.staff) return false;
+  if (who.role === 'owner' || who.role === undefined) return true;
+  if (who.role !== 'helper') return false;
+  const asked = Array.isArray(perm) ? perm : [perm];
+  const mine = Array.isArray(who.perms) ? who.perms : [];
+  return asked.some((p) => STAFF_PERMS.includes(p) && mine.includes(p));
+}
+
 /** A code nobody has had (taken(key) says): 40 tries with a d20, then numbers from 21 to 99. */
 export function uniqueCode(name, taken, { random = randomNumbers } = {}) {
   for (let i = 0; i < 40; i += 1) {

@@ -576,6 +576,49 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 9, the staff member page: a customer's store credit balance in `currency`, in cents (0 when they have no
+   * account in it). Needs read_store_credit_accounts (an access-denied error until Mo approves it).
+   */
+  async storeCreditBalance(customerId, currency) {
+    const data = await this.graphql(
+      'query LairCredit($id: ID!) { customer(id: $id) { id storeCreditAccounts(first: 5) { nodes { id balance { amount currencyCode } } } } }',
+      { id: `gid://shopify/Customer/${customerId}` },
+    );
+    if (!data.customer) throw new Error('No such customer in Shopify');
+    const account = (data.customer.storeCreditAccounts?.nodes || []).find((a) => a.balance?.currencyCode === currency);
+    return account ? Math.round(Number(account.balance.amount) * 100) : 0;
+  }
+
+  /**
+   * Round 9, the staff member page: add (cents > 0) or take off (cents < 0) store credit, with no email from Shopify.
+   * Returns { id, balanceAfter (cents, or null) }. A take-off bigger than the balance fails with Shopify's
+   * INSUFFICIENT_FUNDS (error.code).
+   */
+  async changeStoreCredit(customerId, cents, currency) {
+    const take = cents < 0;
+    const money = { amount: (Math.abs(cents) / 100).toFixed(2), currencyCode: currency };
+    const fields = 'storeCreditAccountTransaction { id amount { amount currencyCode } balanceAfterTransaction { amount currencyCode } } userErrors { field message code }';
+    const data = take
+      ? await this.graphql(
+        `mutation LairDebit($id: ID!, $debitInput: StoreCreditAccountDebitInput!) { storeCreditAccountDebit(id: $id, debitInput: $debitInput) { ${fields} } }`,
+        { id: `gid://shopify/Customer/${customerId}`, debitInput: { debitAmount: money } },
+      )
+      : await this.graphql(
+        `mutation LairCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) { storeCreditAccountCredit(id: $id, creditInput: $creditInput) { ${fields} } }`,
+        { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: money, notify: false } },
+      );
+    const result = take ? data.storeCreditAccountDebit : data.storeCreditAccountCredit;
+    if (result.userErrors.length) {
+      const error = new Error(result.userErrors.map((e) => e.message).join('; '));
+      error.code = result.userErrors[0].code || null;
+      throw error;
+    }
+    const tx = result.storeCreditAccountTransaction || {};
+    const after = tx.balanceAfterTransaction?.amount;
+    return { id: tx.id || null, balanceAfter: after != null ? Math.round(Number(after) * 100) : null };
+  }
+
+  /**
    * A one-use discount code (dice prizes, birthday codes), valid until endsAt. percent: 0-1 off everything, or 1 off
    * the given variant only, with an optional minimum subtotal. customerId makes it that customer's own code.
    * combinesWith: { productDiscounts, orderDiscounts, shippingDiscounts }; all false means it works on its own only.

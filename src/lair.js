@@ -23,6 +23,8 @@ import { GUEST_MESSAGES, guestList } from './core.js';
 import { sameBarcode } from './core.js';
 // Round 8: staff table holds that repeat weekly or fortnightly
 import { HOLD_REPEATS, holdSeriesDays } from './core.js';
+// Round 9, team: helpers and what they can do on the staff page
+import { HELPER_DEFAULT, PERM_WORDS, STAFF_PERMS, canDo, cleanPerms } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -34,6 +36,8 @@ const FALLBACK_ROOMS = [
 const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'read_orders', 'write_draft_orders', 'write_store_credit_account_transactions'];
 /** Permissions only some features need: everything else works without them */
 const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes', read_products: 'library copies, scanning library games and tab items', read_inventory: 'library copies on the shelf', write_metaobjects: 'staff adding and editing events', write_files: 'event pictures' };
+// Round 9, team: a member's store credit balance on their staff page
+FEATURE_SCOPES.read_store_credit_accounts = 'store credit balances on the staff member page';
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -109,6 +113,24 @@ const ROLL_CODE_MESSAGES = {
   past: 'That date has already passed.',
   status: 'A code is active or inactive.',
 };
+/** Round 9, team: the staff page's member tools. Store credit goes on or off up to $1000 at a time (the birthday gift's
+    cap); a staff member's emails to members are 120 and 4,000 characters at most, and 30 a day each. */
+const CREDIT_MAX = 100000;
+const MEMBER_EMAIL = { subject: 120, message: 4000, perDay: 30 };
+const TEAM_WORDS = {
+  notYours: "That's not one of your staff permissions. Ask the main account to tick it on the Team tab.",
+  owner: 'Only the main account can change who helps on the staff page.',
+  pickMember: 'Pick a member from the search, or type their member code.',
+  noMember: 'No member has that code. Check it, or find them in the search.',
+  ownerAlready: "That's the main account. It can do everything already.",
+  self: "You can't change your own permissions. Ask the main account.",
+  notHelper: "They're not a helper.",
+  noPerms: 'Tick at least one thing they can do.',
+};
+/** Round 9: the permissions that see the floor as staff do (the desk, the floor, GM games and events all work from it) */
+const FLOOR_STAFF = ['checkin', 'tables', 'sessions', 'events'];
+/** Round 9: who changes a booking at the desk or on the floor (status, paid, people, moves); refunds and waiving are money */
+const BOOKING_STAFF = ['checkin', 'tables'];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -431,6 +453,32 @@ export const MIGRATIONS = [
       id TEXT PRIMARY KEY, join_id TEXT NOT NULL, customer_id TEXT, name TEXT NOT NULL, code TEXT, created_at INTEGER NOT NULL)`,
     'CREATE INDEX IF NOT EXISTS event_join_guests_join ON event_join_guests (join_id)',
     'CREATE INDEX IF NOT EXISTS event_join_guests_customer ON event_join_guests (customer_id)',
+  ],
+  // Round 9, team (9 Oct 2026): helpers and the staff page's member tools. New tables and one new column only:
+  //  - staff_helpers: members the owner made helpers (perms: a JSON list of permission keys), 'active' or 'removed' (a
+  //    removed helper's row stays for the record), who made them and since when.
+  //  - staff_log: every grant, change and removal (customer, action, perms after, by, when).
+  //  - member_credit: store credit staff added (+) or took off (−), in cents, with the note, who, when, and Shopify's
+  //    transaction and balance after ('pending' while Shopify is asked, then 'done' or 'failed'). key: the page's own
+  //    key for one change, so a repeated request never moves money twice.
+  //  - member_emails: emails staff sent a member from their page (subject, 'sending', 'sent' or 'failed', who, when).
+  //  - event_joins.added_by: the staff member who added a sign-up for someone (staff:<customer id>), else empty.
+  [
+    `CREATE TABLE IF NOT EXISTS staff_helpers (
+      customer_id TEXT PRIMARY KEY, perms TEXT NOT NULL, status TEXT NOT NULL, made_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS staff_log (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, action TEXT NOT NULL, perms TEXT, by TEXT, at INTEGER NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS staff_log_customer ON staff_log (customer_id, at)',
+    `CREATE TABLE IF NOT EXISTS member_credit (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, amount INTEGER NOT NULL, note TEXT, status TEXT NOT NULL, transaction_id TEXT,
+      balance_after INTEGER, message TEXT, key TEXT UNIQUE, by TEXT, at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS member_credit_customer ON member_credit (customer_id, at)',
+    `CREATE TABLE IF NOT EXISTS member_emails (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, email TEXT NOT NULL, subject TEXT NOT NULL, status TEXT NOT NULL, message TEXT, by TEXT,
+      at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS member_emails_customer ON member_emails (customer_id, at)',
+    'CREATE INDEX IF NOT EXISTS member_emails_by ON member_emails (by, at)',
+    'ALTER TABLE event_joins ADD COLUMN added_by TEXT',
   ],
 ];
 
@@ -1060,8 +1108,18 @@ export class Lair {
     return this.rulesCache;
   }
 
-  /** Staff and trusted GMs are customers tagged "staff" or "gm" in Shopify. */
+  /**
+   * Staff and trusted GMs are customers tagged "staff" or "gm" in Shopify. Round 9: role 'owner' (tagged staff: every
+   * permission, 'team' too), 'helper' (made a helper on the staff page: staff, with the permissions ticked) or null, and
+   * perms. Tags are kept for 5 minutes; whether someone is a helper is read fresh every time, so a change on the Team tab
+   * counts straight away.
+   */
   async person(customerId) {
+    return this.withRole(await this.taggedPerson(customerId));
+  }
+
+  /** Round 9: a person from their tags (person() before round 9), not yet with their role. */
+  async taggedPerson(customerId) {
     if (!customerId) return { customerId: null, staff: false, gm: false };
     const cached = this.people.get(customerId);
     if (cached && Date.now() - cached.at < PERSON_TTL) return cached.person;
@@ -1080,6 +1138,22 @@ export class Lair {
       this.people.set(customerId, { at: Date.now(), person });
     }
     return person;
+  }
+
+  /** Round 9: a tagged person with their role and perms, read now (a new object: the cached one never changes). No awaits. */
+  withRole(person) {
+    if (!person?.customerId) return { ...person, role: null, perms: [] };
+    if (person.staff) return { ...person, role: 'owner', perms: [...STAFF_PERMS, 'team'] };
+    const helper = this.helperRow(person.customerId);
+    if (helper) return { ...person, staff: true, role: 'helper', perms: cleanPerms(parse(helper.perms, [])) || [] };
+    return { ...person, role: null, perms: [] };
+  }
+
+  /** Round 9: an active helper's row, or null. No awaits. */
+  helperRow(customerId) {
+    return customerId
+      ? this.sql.exec("SELECT * FROM staff_helpers WHERE customer_id = ? AND status = 'active'", String(customerId)).toArray()[0] || null
+      : null;
   }
 
   /** A soft limit per client address, so one person can't flood the floor with fake bookings. */
@@ -1139,6 +1213,11 @@ export class Lair {
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'spend') return json(await this.memberSpend(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'members' && b && !c) return json(await this.memberDetail(decodeURIComponent(b), who));
+      // Round 9, team: who's using the staff page, the team, and a member's store credit and emails
+      if (request.method === 'GET' && a === 'staff' && b === 'me' && !c) return json(this.staffMe(who));
+      if (request.method === 'GET' && a === 'team' && !b) return json(await this.listTeam(who));
+      if (request.method === 'GET' && a === 'members' && b && c === 'credit') return json(await this.memberCredit(decodeURIComponent(b), who));
+      if (request.method === 'GET' && a === 'members' && b && c === 'emails') return json(this.memberEmails(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'roll-codes' && !b) return json(this.listRollCodes(url, who));
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
       if (request.method === 'GET' && a === 'groups' && !b) return json(this.listGroups(url, who));
@@ -1164,6 +1243,12 @@ export class Lair {
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
+      // Round 9, team: helpers, and store credit and emails from a member's page
+      if (a === 'team' && !b) return json(await this.addHelper(body, who));
+      if (a === 'team' && b && c === 'remove' && !d) return json(await this.removeHelper(decodeURIComponent(b), who));
+      if (a === 'team' && b && !c) return json(await this.updateHelper(decodeURIComponent(b), body, who));
+      if (a === 'members' && b && c === 'credit') return json(await this.changeMemberCredit(decodeURIComponent(b), body, who));
+      if (a === 'members' && b && c === 'email') return json(await this.emailMember(decodeURIComponent(b), body, who));
       if (a === 'roll-codes' && !b) return json(await this.createRollCode(body, who));
       if (a === 'roll-codes' && b && c === 'update') return json(await this.updateRollCode(decodeURIComponent(b), body, who));
       if (a === 'library' && b === 'holds' && !c) return json(await this.createHold(body, who));
@@ -1193,6 +1278,8 @@ export class Lair {
       if (a === 'checkin' && !b) return json(await this.checkIn(body, who));
       if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
+      // Round 9, team: staff add someone to an event date's sign-ups, by member code or by name and email
+      if (a === 'events' && b && b !== 'joins' && c === 'joins' && !d) return json(await this.staffJoin(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
       if (a === 'events' && !b) return json(await this.createEvent(body, who));
       if (a === 'events' && b === 'pictures' && !c) return json(await this.eventPicture(body, who));
@@ -1212,8 +1299,159 @@ export class Lair {
     }
   }
 
-  requireStaff(who) {
+  /**
+   * The one staff gate. Round 9: perm says what the route needs (a key, or a list where any one will do: see canDo). The
+   * owner passes every gate; a helper passes when they were given it; a missing or unknown perm is the owner's alone.
+   */
+  requireStaff(who, perm) {
     if (!who.staff) throw new RuleError('Staff only. Log in with your staff account.', 403);
+    if (!canDo(who, perm)) throw new RuleError(TEAM_WORDS.notYours, 403);
+  }
+
+  /** Round 9: whether this person may do what perm covers (canDo). For the reads that only add staff fields. No awaits. */
+  can(who, perm) {
+    return canDo(who, perm);
+  }
+
+  /* ---------------- the team: the owner and helpers (round 9) ---------------- */
+  /**
+   * GET /staff/me (logged in): who's using the staff page, for it to build itself. { staff: false }, or { staff: true,
+   * role: 'owner' | 'helper', perms (the owner's include 'team'), name (their first name) }. No awaits.
+   */
+  staffMe(who) {
+    if (!who.customerId) throw new RuleError('Log in to use the staff page.', 401);
+    if (!who.staff) return { staff: false };
+    const row = this.memberRow(who.customerId);
+    const owner = who.role !== 'helper';
+    return { staff: true, role: owner ? 'owner' : 'helper', perms: owner ? [...STAFF_PERMS, 'team'] : cleanPerms(who.perms) || [], name: row?.first_name || row?.name || '' };
+  }
+
+  /** Round 9: a helper as the Team tab shows them. No awaits. */
+  helperView(row) {
+    const m = this.memberRow(row.customer_id);
+    const by = String(row.made_by || '').replace(/^staff:/, '');
+    const maker = by ? this.memberRow(by) : null;
+    return {
+      customerId: row.customer_id, name: m?.name || m?.first_name || '', firstName: m?.first_name || '', email: m?.email || '', code: m?.code || null,
+      perms: cleanPerms(parse(row.perms, [])) || [], since: row.created_at, updatedAt: row.updated_at || row.created_at,
+      madeBy: by ? { customerId: by, name: maker?.name || maker?.first_name || '' } : null,
+    };
+  }
+
+  /** Round 9: one line in the team's log (who, when, what). No awaits. */
+  logTeam(customerId, action, perms, who, now) {
+    this.write(
+      'INSERT INTO staff_log (id, customer_id, action, perms, by, at) VALUES (?, ?, ?, ?, ?, ?)',
+      makeId('tl'), String(customerId), action, perms ? JSON.stringify(perms) : null, who.customerId ? `staff:${who.customerId}` : 'staff', now,
+    );
+  }
+
+  /**
+   * GET /team (owner): who can use the staff page. { owners: [{ customerId, name, email, code }] (tagged staff in Shopify:
+   * whoever's asking, and the others Shopify finds), helpers (helperView, newest first), perms: [{ key, words }] (what can
+   * be ticked, in order), defaults (ticked for a new helper), log: the last 30 grants, changes and removals ({ at, action:
+   * 'added' | 'changed' | 'removed', customerId, name, perms, by: { customerId, name } }) }.
+   */
+  async listTeam(who) {
+    this.requireStaff(who, 'team');
+    let tagged = [];
+    if (this.shopify.configured) {
+      try {
+        tagged = await this.shopify.searchCustomers('tag:staff');
+      } catch (error) {
+        tagged = [];
+        this.note({ teamError: { message: String(error.message || error).slice(0, 300), at: new Date().toISOString() } });
+      }
+    }
+    // --- no awaits from here on ---
+    const owners = new Map();
+    const ownerOf = (id, fallback = {}) => {
+      const m = this.memberRow(id);
+      return { customerId: String(id), name: m?.name || m?.first_name || fallback.name || '', email: m?.email || fallback.email || '', code: m?.code || null };
+    };
+    if (who.customerId) owners.set(String(who.customerId), ownerOf(who.customerId));
+    for (const c of tagged) if (c.customerId && !owners.has(c.customerId) && !this.helperRow(c.customerId)) owners.set(c.customerId, ownerOf(c.customerId, c));
+    const helpers = this.sql.exec("SELECT * FROM staff_helpers WHERE status = 'active' ORDER BY created_at DESC, rowid DESC").toArray().map((r) => this.helperView(r));
+    const log = this.sql.exec('SELECT * FROM staff_log ORDER BY at DESC, rowid DESC LIMIT 30').toArray().map((r) => {
+      const m = this.memberRow(r.customer_id);
+      const by = String(r.by || '').replace(/^staff:/, '');
+      const maker = by && by !== 'staff' ? this.memberRow(by) : null;
+      return {
+        at: r.at, action: r.action, customerId: r.customer_id, name: m?.name || m?.first_name || '', perms: cleanPerms(parse(r.perms, [])),
+        by: by && by !== 'staff' ? { customerId: by, name: maker?.name || maker?.first_name || '' } : null,
+      };
+    });
+    return { owners: [...owners.values()], helpers, perms: STAFF_PERMS.map((key) => ({ key, words: PERM_WORDS[key] })), defaults: HELPER_DEFAULT, log };
+  }
+
+  /**
+   * POST /team { code } or { customerId, name?, email? } (owner), and perms ([keys]; Check-in and Tables when left out):
+   * make a member a helper. A customer from the search the Lair hasn't met becomes a member first. Someone tagged staff
+   * is the main account already (409). Already a helper: their permissions change. Returns { helper }.
+   */
+  async addHelper(input, who) {
+    this.requireStaff(who, 'team');
+    const typed = String(input?.code ?? '').trim();
+    const byCode = typed ? this.memberByCode(typed) : null;
+    if (typed && !byCode) throw new RuleError(TEAM_WORDS.noMember, 404);
+    if (!byCode && !String(input?.customerId ?? '').trim()) throw new RuleError(TEAM_WORDS.pickMember);
+    const picked = byCode
+      ? { customerId: String(byCode.customer_id), row: byCode }
+      : this.pickedCustomer({ customerId: input.customerId, name: input.name, email: input.email });
+    const perms = input?.perms === undefined ? HELPER_DEFAULT.slice() : cleanPerms(input.perms);
+    if (!perms || !perms.length) throw new RuleError(TEAM_WORDS.noPerms);
+    if (String(picked.customerId) === String(who.customerId)) throw new RuleError(TEAM_WORDS.ownerAlready, 409);
+    // the main account is tagged staff in Shopify (asked first: no awaits after this)
+    const tagged = await this.taggedPerson(picked.customerId);
+    // --- no awaits from here on ---
+    if (tagged.staff) throw new RuleError(TEAM_WORDS.ownerAlready, 409);
+    const now = Date.now();
+    if (!picked.row) this.makeMember(picked, now);
+    const was = this.helperRow(picked.customerId);
+    this.write(
+      `INSERT INTO staff_helpers (customer_id, perms, status, made_by, created_at, updated_at) VALUES (?, ?, 'active', ?, ?, ?)
+       ON CONFLICT(customer_id) DO UPDATE SET perms = excluded.perms, status = 'active',
+         made_by = CASE WHEN staff_helpers.status = 'active' THEN staff_helpers.made_by ELSE excluded.made_by END,
+         created_at = CASE WHEN staff_helpers.status = 'active' THEN staff_helpers.created_at ELSE excluded.created_at END,
+         updated_at = excluded.updated_at`,
+      String(picked.customerId), JSON.stringify(perms), who.customerId ? `staff:${who.customerId}` : 'staff', now, now,
+    );
+    this.logTeam(picked.customerId, was ? 'changed' : 'added', perms, who, now);
+    return { helper: this.helperView(this.helperRow(picked.customerId)) };
+  }
+
+  /** POST /team/:customerId { perms } (owner): what a helper can do. Returns { helper }. */
+  async updateHelper(customerId, input, who) {
+    this.requireStaff(who, 'team');
+    // --- no awaits from here on ---
+    const id = trimmed(customerId, 40);
+    if (id === String(who.customerId)) throw new RuleError(TEAM_WORDS.self, 403);
+    const row = this.helperRow(id);
+    if (!row) throw new RuleError(TEAM_WORDS.notHelper, 404);
+    const perms = cleanPerms(input?.perms);
+    if (!perms || !perms.length) throw new RuleError(TEAM_WORDS.noPerms);
+    const now = Date.now();
+    this.write('UPDATE staff_helpers SET perms = ?, updated_at = ? WHERE customer_id = ?', JSON.stringify(perms), now, id);
+    this.logTeam(id, 'changed', perms, who, now);
+    return { helper: this.helperView(this.helperRow(id)) };
+  }
+
+  /**
+   * POST /team/:customerId/remove (owner): they stop being a helper, straight away. The main account can't be removed
+   * here (409). Returns { ok, customerId }.
+   */
+  async removeHelper(customerId, who) {
+    this.requireStaff(who, 'team');
+    const id = trimmed(customerId, 40);
+    if (id === String(who.customerId)) throw new RuleError("That's you, the main account. It can't be removed here.", 409);
+    const tagged = /^\d{1,20}$/.test(id) ? await this.taggedPerson(id) : { staff: false };
+    // --- no awaits from here on ---
+    if (tagged.staff) throw new RuleError("That's the main account. It can't be removed here.", 409);
+    if (!this.helperRow(id)) throw new RuleError(TEAM_WORDS.notHelper, 404);
+    const now = Date.now();
+    this.write("UPDATE staff_helpers SET status = 'removed', updated_at = ? WHERE customer_id = ?", now, id);
+    this.logTeam(id, 'removed', null, who, now);
+    return { ok: true, customerId: id };
   }
 
   async floor(url, who) {
@@ -1223,10 +1461,13 @@ export class Lair {
     const to = Math.min(Number(url.searchParams.get('to')) || now + rules.horizonDays * 24 * HOUR, now + 400 * 24 * HOUR);
     const st = this.cachedState(from, to);
     const memo = new Map();
-    const paid = who.staff ? { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) } : null;
+    // Round 9: the floor's staff view (names, emails, payments, every sign-up) for the owner and helpers who run the desk,
+    // the floor, GM games or events; anyone else sees the public floor
+    const staffView = this.can(who, FLOOR_STAFF);
+    const paid = staffView ? { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) } : null;
     const view = (bk) => {
       // Staff see everything, plus the saved pass, what passes covered, what's due, the refund state and who paid.
-      if (who.staff) return this.staffBooking(bk, memo, paid.booking.get(bk.id) || []);
+      if (staffView) return this.staffBooking(bk, memo, paid.booking.get(bk.id) || []);
       if (who.customerId && bk.customerId === who.customerId) return { ...publicBooking(bk), ref: bk.ref, name: bk.name, people: bk.people, paid: bk.paid };
       return publicBooking(bk);
     };
@@ -1235,7 +1476,7 @@ export class Lair {
     if (!st.seriesInfo) st.seriesInfo = this.seriesInfo(now);
     const info = st.seriesInfo;
     const visibleGames = st.games.filter((g) => {
-      if (who.staff) return true;
+      if (staffView) return true;
       const own = Boolean(who.customerId && g.gmCustomerId === who.customerId);
       if (!['open', 'full'].includes(g.status) && !(own && g.status === 'pending')) return false;
       return own || !g.seriesId || info.next.get(g.seriesId) === g.id;
@@ -1246,7 +1487,7 @@ export class Lair {
     // Staff see every sign-up, like every booking: a cancelled one can still be waiting on a refund ('ask' or 'due')
     // under "Refunds to sort". Places taken only count the ones still on.
     const joinRows = this.sql
-      .exec(`SELECT * FROM event_joins WHERE ends_at > ? AND starts_at < ?${who.staff ? '' : " AND status != 'cancelled'"}`, from, to)
+      .exec(`SELECT * FROM event_joins WHERE ends_at > ? AND starts_at < ?${staffView ? '' : " AND status != 'cancelled'"}`, from, to)
       .toArray()
       .map((r) => this.rowToJoin(r));
     const eventJoins = {};
@@ -1258,32 +1499,32 @@ export class Lair {
       if (total) eventSpots[o.id] = { total, taken: total - this.freeSpots(o, rules, st).length };
     }
     // Round 7: waiting series invites, by series, for the games below (staff and GMs only)
-    const waiting = who.staff || who.customerId ? this.waitingInvites() : new Map();
+    const waiting = staffView || who.customerId ? this.waitingInvites() : new Map();
     return {
       now,
-      bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
+      bookings: st.bookings.filter((bk) => staffView || ACTIVE.has(bk.status)).map(view),
       // Round 8: staff see a hold's series (seriesId, repeat, repeatTag, until); the public see nothing new
-      blocks: who.staff ? this.staffBlocks(st.blocks, rules) : st.blocks.map(({ seriesId, ...bl }) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
+      blocks: staffView ? this.staffBlocks(st.blocks, rules) : st.blocks.map(({ seriesId, ...bl }) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
       eventHolds: holds,
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info);
-        if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
+        if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
         // Round 7: for staff and the session's GM, the seats of its series reserved for someone who's still to make an
         // account (a GM never sees a player's email on the board); for staff, the GM's email and whether the game is on
         // their account ('linked'), waiting for them to make one ('invited': an email nobody has used yet) or neither ('none')
-        if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) {
-          game.invites = ((g.seriesId && waiting.get(g.seriesId)) || []).map((x) => (who.staff ? x : { ...x, email: '' }));
+        if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) {
+          game.invites = ((g.seriesId && waiting.get(g.seriesId)) || []).map((x) => (staffView ? x : { ...x, email: '' }));
         }
-        if (who.staff) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g) });
+        if (staffView) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g) });
         return game;
       }),
       events: [],
       eventJoins,
       eventSpots,
-      ...(who.staff ? { joins: this.staffJoins(joinRows, paid.join, from, to) } : {}),
+      ...(staffView ? { joins: this.staffJoins(joinRows, paid.join, from, to) } : {}),
       shopTables: rules.shopTables || [],
-      openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
-      staff: who.staff,
+      openings: st.openings.map((o) => (staffView ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
+      staff: staffView,
       // payOnline: Shopify checkout works, for events paid online. Tables, seats and walk-ins are paid at the counter.
       features: { email: emailReady(this.env), payOnline: this.shopify.configured },
     };
@@ -1298,7 +1539,9 @@ export class Lair {
     const time = new LairTime(rules.tz);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const kind = input.kind === 'gm-seat' ? 'gm-seat' : input.kind === 'walkin' ? 'walkin' : 'table';
-    if (kind === 'walkin') this.requireStaff(who);
+    if (kind === 'walkin') this.requireStaff(who, 'tables');
+    // Round 9: a staff booking from the staff page needs Tables too
+    if (kind === 'table' && input.staffOverride === true && who.staff) this.requireStaff(who, 'tables');
     // The public booking page applies the house rules to everyone, staff included. Only the staff page skips them:
     // walk-ins, and table bookings sent with staffOverride. Those are made for someone else, so they aren't linked
     // to the staff member's own account.
@@ -1603,10 +1846,16 @@ export class Lair {
     if (!booking) {
       // An event sign-up: staff mark its entry fee paid or refunded here too (cancelling is POST /events/joins/:id/cancel).
       const join = who.staff ? this.joinById(id) : null;
+      // Round 9: checked in or paid at the desk or on the Events tab; refunded is money
+      if (join) for (const need of this.joinPerms(patch)) this.requireStaff(who, need);
       if (join) return this.updateJoin(join, patch, now);
       throw new RuleError('Booking not found.', 404);
     }
-    if (!who.staff) {
+    // Round 9: staff change a booking with the permission each change needs (bookingPerms). A helper without them is a
+    // member here: they can still cancel their own booking.
+    const staffEdit = Boolean(who.staff) && this.bookingPerms(patch).every((need) => this.can(who, need));
+    if (who.staff && !staffEdit && !(who.customerId && booking.customerId === who.customerId)) throw new RuleError(TEAM_WORDS.notYours, 403);
+    if (!staffEdit) {
       const own = who.customerId && booking.customerId === who.customerId;
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
@@ -1736,6 +1985,27 @@ export class Lair {
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
     return { booking: this.staffBooking(this.booking(next.id)), refund };
+  }
+
+  /**
+   * Round 9: what a staff change to a booking needs, one entry per kind of change (each a key, or a list where any one
+   * will do): status, paid and people at the desk or on the floor (Check-in or Tables), a move (Tables), and refunded or
+   * waived (Money). An empty patch needs Check-in or Tables. No awaits.
+   */
+  bookingPerms(patch = {}) {
+    const needs = [];
+    if (patch.status != null || typeof patch.paid === 'boolean' || patch.people != null) needs.push(BOOKING_STAFF);
+    if (Array.isArray(patch.tables) || patch.end != null) needs.push('tables');
+    if (typeof patch.refunded === 'boolean' || typeof patch.waived === 'boolean') needs.push('money');
+    return needs.length ? needs : [BOOKING_STAFF];
+  }
+
+  /** Round 9: what a staff change to an event sign-up needs: checked in or paid (Check-in or Events), refunded (Money) */
+  joinPerms(patch = {}) {
+    const needs = [];
+    if (patch.status != null || typeof patch.paid === 'boolean') needs.push(['checkin', 'events']);
+    if (typeof patch.refunded === 'boolean') needs.push('money');
+    return needs.length ? needs : [['checkin', 'events']];
   }
 
   /**
@@ -1920,6 +2190,9 @@ export class Lair {
 
   async createGame(input, who, client = '') {
     if (!who.customerId && !who.staff) throw new RuleError('Log in to run a game, so we know who to pay your store credit to.', 401);
+    // Round 9: listing a game for a GM needs GM games; staff games (shop tables, straight on the board) need it too
+    if (who.staff && (input.gmCustomerId || input.gmEmail)) this.requireStaff(who, 'sessions');
+    const staffGames = this.can(who, 'sessions');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -1929,7 +2202,7 @@ export class Lair {
     const details = checkGameDetails(input);
     // Round 7: staff make sessions under the GMs' rules (hours, whole hours, lead time, horizon, locked event tables),
     // with the shop tables open to them
-    const first = checkGameSession(input, details, { state: st, rules, time, now, shopTables: Boolean(who.staff) });
+    const first = checkGameSession(input, details, { state: st, rules, time, now, shopTables: staffGames });
     // Staff can list a game for a GM (round 7): gmCustomerId, picked from the customers (with gmCustomerName and gmEmail
     // from the picker when they aren't a member yet), or gmEmail with the board name in gm. An email a member has links
     // them; any other is an invite: the game waits on that email with no account, the GM is emailed to make one, and
@@ -1939,7 +2212,7 @@ export class Lair {
     let notice = null;
     let picked = null;
     let invited = false;
-    const forGm = Boolean(who.staff && (input.gmCustomerId || input.gmEmail));
+    const forGm = Boolean(staffGames && (input.gmCustomerId || input.gmEmail));
     if (forGm && input.gmCustomerId) {
       picked = this.pickedCustomer({ customerId: input.gmCustomerId, name: input.gmCustomerName, email: input.gmEmail });
       gmCustomerId = picked.customerId;
@@ -1953,14 +2226,14 @@ export class Lair {
     if (picked) this.makeMember(picked, now);
     // Staff and trusted GMs (tagged gm) go straight on the board; anyone else waits for a manager's OK. GM fees of
     // $0, $5 and $10 never need one.
-    const approved = Boolean(who.staff || who.gm);
+    const approved = Boolean(staffGames || who.gm);
     const feeApproved = true;
     const seriesId = details.schedule === 'one-shot' ? null : makeId('sr');
     if (seriesId) {
       this.write(
         `INSERT INTO series (id, schedule, gm_customer_id, details, tables, clock, length, first_day, status, approved, image_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)`,
-        seriesId, details.schedule, gmCustomerId, JSON.stringify({ ...details, gmEmail, staffCreated: Boolean(who.staff) }), JSON.stringify(first.tables),
+        seriesId, details.schedule, gmCustomerId, JSON.stringify({ ...details, gmEmail, staffCreated: staffGames }), JSON.stringify(first.tables),
         time.minutesOf(first.start), first.end - first.start, time.key(first.start), approved ? 1 : 0, now, now,
       );
     }
@@ -2060,7 +2333,7 @@ export class Lair {
    * Unpaid seats follow a new price; paid ones keep what they paid. Players hear if the time changes.
    */
   async editGame(id, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'sessions');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -2140,13 +2413,18 @@ export class Lair {
    * Returns { booking, game, emailed, regular: { seriesId, customerId } | null, invite: { id, email } | null }.
    */
   async addPlayers(id, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'sessions');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
+    // Round 9: a member code finds the member at once (their name and email come from their member record)
+    const typed = String(input.code ?? '').trim();
+    const byCode = typed ? this.memberByCode(typed) : null;
+    if (typed && !byCode) throw new RuleError(TEAM_WORDS.noMember, 404);
+    if (byCode) input = { ...input, customerId: byCode.customer_id, name: trimmed(input.name, 80) || byCode.name || byCode.first_name || byCode.code, email: trimmed(input.email, 120) || byCode.email || '' };
     const people = Math.floor(Number(input.people ?? 1));
     if (!(people >= 1 && people <= 8)) throw new RuleError('Add between 1 and 8 players.');
     const name = trimmed(input.name, 80);
@@ -2257,14 +2535,16 @@ export class Lair {
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     const own = who.customerId && game.gmCustomerId === who.customerId;
-    if (!who.staff && !own) throw new RuleError('Only the GM or staff can add a session.', 403);
+    // Round 9: staff here means GM games
+    const staffGames = this.can(who, 'sessions');
+    if (!staffGames && !own) throw new RuleError('Only the GM or staff can add a session.', 403);
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled. List it again as a new game.', 409);
     const time = new LairTime(rules.tz);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = this.gameDetails(game);
     const tables = Array.isArray(input.tables) && input.tables.length ? input.tables : game.tables;
     // Round 7: staff adding a date follow the GM rules too, with the shop tables open to them
-    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, shopTables: Boolean(who.staff) });
+    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, shopTables: staffGames });
     let seriesId = game.seriesId;
     let series = seriesId ? this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).toArray()[0] : null;
     if (!seriesId) {
@@ -2278,7 +2558,7 @@ export class Lair {
       this.write("UPDATE games SET series_id = ?, schedule = 'flexible', updated_at = ? WHERE id = ?", seriesId, now, game.id);
       series = this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).one();
     }
-    const approved = Boolean(series?.approved) || game.status === 'open' || who.staff;
+    const approved = Boolean(series?.approved) || game.status === 'open' || staffGames;
     const base = {
       ...details, schedule: game.seriesId ? game.schedule : 'flexible', gmCustomerId: game.gmCustomerId, gmEmail: game.gmEmail, seriesId,
       status: approved ? 'open' : 'pending', credited: null, feeApproved: true, imageId: game.imageId,
@@ -2526,6 +2806,8 @@ export class Lair {
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
+    // Round 9: stopping someone else's seat or invite needs GM games
+    if (who.staff && (input?.inviteId || input?.customerId)) this.requireStaff(who, 'sessions');
     if (who.staff && input?.inviteId) {
       const invite = this.sql.exec('SELECT * FROM series_invites WHERE id = ? AND series_id = ?', trimmed(input.inviteId, 40), String(seriesId)).toArray()[0];
       if (!invite || invite.status !== 'waiting') throw new RuleError('That invite could not be found.', 404);
@@ -2571,13 +2853,15 @@ export class Lair {
     const game = this.game(gameId);
     if (!game) throw new RuleError('Game not found.', 404);
     const own = Boolean(who.customerId && game.gmCustomerId === who.customerId);
-    if (!who.staff && !own) throw new RuleError('Only the GM or staff can message the players.', 403);
+    // Round 9: staff here means GM games
+    const staffGames = this.can(who, 'sessions');
+    if (!staffGames && !own) throw new RuleError('Only the GM or staff can message the players.', 403);
     const text = String(input.text ?? '').trim().slice(0, 2000);
     if (!text) throw new RuleError('Write a message first.');
     const scope = input.scope === 'series' && game.seriesId ? 'series' : 'session';
     if (!emailReady(this.env)) throw new RuleError("Emails aren't set up yet, so messages can't go out. Call the shop instead.", 503);
     const limitKey = game.seriesId || game.id;
-    if (!who.staff) {
+    if (!staffGames) {
       const recent = this.sql.exec('SELECT COUNT(*) AS n FROM messages WHERE limit_key = ? AND created_at > ?', limitKey, now - 24 * HOUR).one().n;
       if (recent >= LIMITS.messagesPerGamePerDay) throw new RuleError("That's 5 messages for this game today. Try again tomorrow, or ask the team to pass it on.", 429);
     }
@@ -2594,7 +2878,7 @@ export class Lair {
     const id = makeId('ms');
     this.write(
       'INSERT INTO messages (id, game_id, limit_key, scope, text, recipients, sent, sender, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)',
-      id, game.id, limitKey, scope, text, recipients.size, who.staff && !own ? 'staff' : 'gm', now,
+      id, game.id, limitKey, scope, text, recipients.size, staffGames && !own ? 'staff' : 'gm', now,
     );
     const next = scope === 'series'
       ? this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status = 'open' AND ends_at > ? ORDER BY starts_at LIMIT 1", game.seriesId, now).toArray().map((r) => this.rowToGame(r))[0] || game
@@ -2674,7 +2958,8 @@ export class Lair {
     const scope = patch.scope === 'series' && game.seriesId ? 'series' : 'session';
     // GMs can cancel a session until an hour after it starts (the group didn't show, the GM is sick).
     const cancellable = (g) => now <= g.start + HOUR;
-    if (!who.staff) {
+    // Round 9: staff here means GM games
+    if (!this.can(who, 'sessions')) {
       if (!own || patch.status !== 'cancelled') throw new RuleError('Only staff can change that game.', 403);
       if (scope === 'session' && !cancellable(game)) throw new RuleError('This session started more than an hour ago. Talk to staff at the counter.', 403);
     }
@@ -2710,7 +2995,8 @@ export class Lair {
   }
 
   async creditGm(id, who) {
-    this.requireStaff(who);
+    // Round 9: the GM's store credit is money
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits until the game is claimed, so two staff tapping "credit" at once can't pay twice ---
     const now = Date.now();
@@ -2753,7 +3039,7 @@ export class Lair {
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     const own = who.customerId && game.gmCustomerId === who.customerId;
-    if (!who.staff && !own) throw new RuleError('Only the GM or staff can change the picture.', 403);
+    if (!this.can(who, 'sessions') && !own) throw new RuleError('Only the GM or staff can change the picture.', 403);
     const match = String(input.dataUrl || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
     if (!match) throw new RuleError('Pick a JPEG, PNG or WebP picture.');
     const raw = atob(match[2].replace(/\s+/g, ''));
@@ -2801,7 +3087,7 @@ export class Lair {
    * at any date made, [{ ref, start }]. Answer: { block (the first hold), clashes, series: seriesView | null }.
    */
   async createBlock(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'tables');
     const rules = await this.rules();
     // --- no awaits from here on: the checks, the holds and their clashes in one go ---
     const now = Date.now();
@@ -2949,7 +3235,7 @@ export class Lair {
    * there removes nothing, so a second tap isn't an error.
    */
   async removeBlock(id, who, input = {}) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'tables');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -3395,7 +3681,7 @@ export class Lair {
   /* ---------------- shop tables ---------------- */
   /** Managers open shop tables (T1-T3 by default) for public bookings for a while. */
   async createOpening(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'tables');
     const rules = await this.rules();
     const now = Date.now();
     const tables = (Array.isArray(input.tables) ? input.tables : parseTableList(input.tables, rules.rooms)).map(String);
@@ -3413,7 +3699,7 @@ export class Lair {
   }
 
   async removeOpening(id, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'tables');
     this.write('DELETE FROM openings WHERE id = ?', id);
     return { ok: true };
   }
@@ -3428,7 +3714,7 @@ export class Lair {
    * customer, due } and the round 3 fields (found, kind, booking or join, game, checkedIn, reason, message).
    */
   async checkIn(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'checkin');
     const rules = await this.rules();
     // --- no awaits from here on ---
     // A member code on the staff page also lists what they owe from earlier sessions (owed rows), for Waive and Mark paid,
@@ -4052,6 +4338,90 @@ export class Lair {
   }
 
   /**
+   * POST /events/:occurrenceId/joins (Events, round 9): staff add someone to an event date's sign-ups. Who: { code }
+   * (their member code: found at once), { customerId, name?, email? } (picked from the search), or { name, email } for
+   * someone without an account (an email a member has links them; otherwise they're invited, and the sign-up joins their
+   * account when they log in with that email, like everything else staff add under it). people (1 to 6, 1 when left
+   * out), phone? and note?. The same places and rules as a customer's sign-up, paid at the counter (no checkout, no
+   * mobile needed). Someone already on that date's list is a 409. They get the usual "You're on the list" email; an
+   * invitee's also says how their account picks it up. Returns { join (as staff see it), spacesLeft, emailed, invited }.
+   */
+  async staffJoin(occurrenceId, input, who) {
+    this.requireStaff(who, 'events');
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const occurrence = findOccurrence(rules, occurrenceId);
+    if (!occurrence) throw new RuleError('That event date could not be found.', 404);
+    if (!occurrence.capacity) throw new RuleError("This one doesn't take sign-ups: people just turn up.", 422);
+    if (occurrence.end <= now) throw new RuleError('That one has already finished.');
+    const people = input?.people == null || input.people === '' ? 1 : Math.floor(Number(input.people));
+    if (!(people >= 1 && people <= 6)) throw new RuleError('Add between 1 and 6 people.');
+    const typed = String(input?.code ?? '').trim();
+    const byCode = typed ? this.memberByCode(typed) : null;
+    if (typed && !byCode) throw new RuleError(TEAM_WORDS.noMember, 404);
+    const picked = !byCode && String(input?.customerId ?? '').trim()
+      ? this.pickedCustomer({ customerId: input.customerId, name: input.name, email: input.email })
+      : null;
+    let email = trimmed(input?.email, 120);
+    if (email && !isEmail(email)) throw new RuleError("That email address doesn't look right.");
+    const row = byCode || picked?.row || (!picked && email ? this.memberByEmail(email) : null);
+    const customerId = row?.customer_id || picked?.customerId || null;
+    const name = trimmed(row?.name || row?.first_name || picked?.name || input?.name, 80) || (row?.code ?? '');
+    if (!name) throw new RuleError('Add their name.');
+    if (!email) email = trimmed((isEmail(row?.email) ? row.email : '') || (isEmail(row?.account_email) ? row.account_email : '') || picked?.email || '', 120);
+    if (!customerId && !isEmail(email)) throw new RuleError('Add their email, so they get the confirmation and an invite to make an account.');
+    const already = customerId
+      ? this.sql.exec("SELECT ref FROM event_joins WHERE occurrence_id = ? AND customer_id = ? AND status != 'cancelled'", occurrenceId, String(customerId)).toArray()[0]
+      : this.sql.exec("SELECT ref FROM event_joins WHERE occurrence_id = ? AND customer_id IS NULL AND lower(email) = lower(?) AND status != 'cancelled'", occurrenceId, email).toArray()[0];
+    if (already) throw new RuleError(`${name} is already on the list for this one (${already.ref}).`, 409);
+    const taken = this.sql
+      .exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled'", occurrenceId)
+      .one().n;
+    const left = occurrence.capacity - taken;
+    if (people > left) throw new RuleError(left > 0 ? `Only ${left} ${left === 1 ? 'space' : 'spaces'} left.` : 'This one is full.', 409);
+    const phone = trimmed(input?.phone, 40).replace(/\s+/g, ' ').slice(0, 20) || null;
+    if (picked && !picked.row) this.makeMember(picked, now);
+    const joinId = makeId('ej');
+    const fee = occurrence.entryFee || 0;
+    this.write(
+      `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, pay, paid, amount,
+         hold_until, created_at, updated_at, phone, added_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, 'day', 0, ?, NULL, ?, ?, ?, ?)`,
+      joinId, this.newCode(name, 'join', joinId, now), occurrenceId, occurrence.eventId, occurrence.title, occurrence.start, occurrence.end, people, name,
+      email || null, trimmed(input?.note, 300), customerId ? String(customerId) : null, fee * people, now, now, phone,
+      who.customerId ? `staff:${who.customerId}` : 'staff',
+    );
+    // --- saved: the spaces are theirs ---
+    const join = this.joinById(joinId);
+    const invited = !customerId;
+    const emailed = this.confirmStaffJoin(join, rules, { invited });
+    return { join: this.staffJoinView(join), spacesLeft: left - people, emailed, invited };
+  }
+
+  /**
+   * Round 9: the confirmation for a sign-up staff added: the usual "You're on the list" (confirmJoin) for a member; for
+   * someone invited by email, the same email with how their account picks it up. No awaits. Returns whether one went.
+   */
+  confirmStaffJoin(join, rules, { invited = false } = {}) {
+    if (!invited) return this.confirmJoin(join, rules);
+    if (!emailReady(this.env) || !isEmail(join.email)) return false;
+    const fee = join.amount ? `${dollars(join.amount)}, pay at the counter` : '';
+    this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`, {
+      title: "You're on the list!",
+      intro: `Kia ora ${join.name}, the Dice Goblin team has signed you up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
+      details: [['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Entry', fee], ['Your code', join.ref]],
+      outro: [
+        dueOf(join) > 0 ? COUNTER : SHOW_CODE,
+        `Make your Dice Goblin account with this email (${join.email}), or log in with it if you have one: this sign-up shows up in My Lair, and so does anything else the team adds for you.`,
+        "Can't make it? Reply to this email, so someone else can have your spot.",
+      ],
+      button: { label: 'Make your account', url: this.page('myLair') },
+    })));
+    return true;
+  }
+
+  /**
    * After a sign-up is saved: send it to checkout (paying online) or email the confirmation. Like payOrConfirm: when
    * online is the only way and Shopify can't make the checkout, the sign-up is taken back and refused.
    */
@@ -4192,16 +4562,19 @@ export class Lair {
     const join = this.joinById(id);
     if (!join) throw new RuleError('Sign-up not found.', 404);
     const own = who.customerId && join.customerId === who.customerId;
+    // Round 9: staff here means the desk or the Events tab
+    const staffJoin = this.can(who, ['checkin', 'events']);
     // Round 8: someone else signed a guest up, so only that person (or the counter) changes it
-    const guest = !who.staff && !own && who.customerId && this.joinGuests(join.id).some((g) => String(g.customer_id || '') === String(who.customerId));
+    const guest = !staffJoin && !own && who.customerId && this.joinGuests(join.id).some((g) => String(g.customer_id || '') === String(who.customerId));
     if (guest) throw new RuleError(GUEST_MESSAGES.guestOnly, 403);
-    if (!who.staff && !own) throw new RuleError('Only staff can change that sign-up.', 403);
+    if (who.staff && !staffJoin && !own) throw new RuleError(TEAM_WORDS.notYours, 403);
+    if (!staffJoin && !own) throw new RuleError('Only staff can change that sign-up.', 403);
     if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
     const paid = join.paidAmount > 0;
     let refund;
     let flag = join.refund;
     let notice = null;
-    if (who.staff) {
+    if (staffJoin) {
       // Staff cancelling (the event's off, or they've sorted it out with the person): what was paid comes back.
       refund = paid ? { due: true, amount: join.paidAmount, orderId: join.orderId || null, reason: 'cancelled by staff' } : { due: false, amount: 0, reason: 'nothing paid' };
       if (paid && flag !== 'done') flag = 'due';
@@ -4409,7 +4782,7 @@ export class Lair {
    * read again without them (ids only).
    */
   async listEvents(who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'events');
     const rules = await this.rules();
     if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
     let nodes;
@@ -4666,7 +5039,7 @@ export class Lair {
 
   /** POST /events { …fields } (staff): a new event. Its handle comes from the title and never changes. Returns { event, notice }. */
   async createEvent(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'events');
     const rules = await this.rules();
     if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
     const { set } = this.eventFields(input || {}, rules);
@@ -4690,7 +5063,7 @@ export class Lair {
    * { event, notice }.
    */
   async updateEvent(handle, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'events');
     const rules = await this.rules();
     if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
     let node;
@@ -4735,7 +5108,7 @@ export class Lair {
 
   /** POST /events/:handle/delete (staff): not while any date to come has people on it (409). The picture stays in Shopify's Files. */
   async deleteEvent(handle, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'events');
     const rules = await this.rules();
     if (!this.shopify.configured) throw new RuleError(SHOPIFY_DOWN, 503);
     let node;
@@ -4768,7 +5141,7 @@ export class Lair {
    * { id, url, alt, status } }: id is the MediaImage to save as imageId; url can be null while Shopify processes it.
    */
   async eventPicture(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'events');
     const match = String(input?.dataUrl || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
     if (!match) throw new RuleError('Pick a JPEG, PNG or WebP picture.');
     let raw;
@@ -4961,7 +5334,7 @@ export class Lair {
    * row of its own, kept with who gave it. Returns { member } (as GET /members lists them).
    */
   async giveRolls(customerId, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -5061,7 +5434,7 @@ export class Lair {
 
   /** GET /roll-codes?status=active|all (staff): loot codes, newest first: active (the default) leaves out inactive ones; all is the last 200. */
   listRollCodes(url, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     const now = Date.now();
     const all = url.searchParams.get('status') === 'all';
     const rows = this.sql.exec(`SELECT * FROM roll_codes${all ? '' : " WHERE status != 'inactive'"} ORDER BY created_at DESC, rowid DESC LIMIT 200`).toArray();
@@ -5074,7 +5447,7 @@ export class Lair {
    * in the codes table (kind 'roll'), so no code of any kind is used twice, and it never changes. Returns { code }.
    */
   async createRollCode(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -5100,7 +5473,7 @@ export class Lair {
 
   /** POST /roll-codes/:id/update { rolls?, limit?, expires?, note?, status? } (staff). The limit can't go below the uses so far. Returns { code }. */
   async updateRollCode(id, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -5197,7 +5570,8 @@ export class Lair {
 
   /** POST /prizes/:id/done (staff): a dice prize waiting at the counter has been given. */
   async prizeDone(id, who) {
-    this.requireStaff(who);
+    // Round 9: a dice prize handed over at the counter, from the desk or a member's page
+    this.requireStaff(who, ['checkin', 'members']);
     // --- no awaits from here on ---
     const prize = this.prizeRow(id);
     if (!prize || prize.source === 'birthday') throw new RuleError('That prize could not be found.', 404);
@@ -5545,7 +5919,7 @@ export class Lair {
    * table price unless it says otherwise. The code comes from the holder's name (DG with none). Returns { pass }.
    */
   async createPass(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -5568,7 +5942,8 @@ export class Lair {
    * name, and (round 7) the name of the group a pass belongs to.
    */
   listPasses(url, who) {
-    this.requireStaff(who);
+    // Round 9: Passes is money; the desk and a member's page read a member's passes too
+    this.requireStaff(who, ['money', 'checkin', 'members']);
     const now = Date.now();
     const q = trimmed(url.searchParams.get('q'), 80).toLowerCase();
     const key = codeKey(q);
@@ -5586,7 +5961,7 @@ export class Lair {
    * 7: groupId (a group, or null to take it off its group, when it then needs a customer or a holder's name).
    */
   async updatePass(id, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -5605,7 +5980,8 @@ export class Lair {
 
   /** POST /passes/:id/apply { bookingId } (staff): save the pass on a booking, to be used when they check in. */
   async applyPass(id, input, who) {
-    this.requireStaff(who);
+    // Round 9: using a member's pass at the desk is check-in, as checking in with a pass is
+    this.requireStaff(who, ['checkin', 'money']);
     // --- no awaits from here on ---
     const now = Date.now();
     const p = this.passRow(id);
@@ -5623,7 +5999,7 @@ export class Lair {
 
   /** POST /passes/uses/:useId/undo (staff): the sessions go back on the pass, and the booking owes what the pass covered. */
   async undoPassUse(useId, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, ['checkin', 'money']);
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -5678,9 +6054,11 @@ export class Lair {
    */
   passForBooking(code, who, now) {
     const p = this.passByCode(code);
-    if (!p && who.staff) throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
+    // Round 9: staff who make bookings, check people in or run passes may use any pass
+    const anyPass = this.can(who, ['checkin', 'tables', 'money']);
+    if (!p && anyPass) throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
     const mine = Boolean(p && who.customerId && (p.customerId === String(who.customerId) || (p.groupId && this.inActiveGroup(p.groupId, who.customerId))));
-    if (!p || (!who.staff && !mine)) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
+    if (!p || (!anyPass && !mine)) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
     const status = this.passStatus(p, now);
     if (status === 'void') throw new RuleError('That pass has been cancelled. Ask us at the counter.', 409);
     if (status === 'expired') throw new RuleError('That pass has expired. Ask us at the counter about a new one.', 409);
@@ -5698,7 +6076,8 @@ export class Lair {
    * Shopify down; then it isn't asked again for 10 minutes), so only Lair members show.
    */
   async findCustomers(url, who) {
-    this.requireStaff(who);
+    // Round 9: the picker every staff form uses (members, passes and groups, GM games, events, the library desk, team)
+    this.requireStaff(who, ['members', 'money', 'sessions', 'events', 'library', 'checkin', 'tables', 'community']);
     const q = trimmed(url.searchParams.get('q'), 80);
     if (q.length < 2) throw new RuleError('Type at least 2 letters to search.');
     // Shopify's search gets letters, numbers, spaces and @ . _ - + ' only, in quotes
@@ -5845,7 +6224,7 @@ export class Lair {
    * name and its members' names, emails and member codes.
    */
   listGroups(url, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     const now = Date.now();
     const q = trimmed(url.searchParams.get('q'), 80).toLocaleLowerCase('en');
     const key = codeKey(q);
@@ -5872,7 +6251,7 @@ export class Lair {
    * Returns { group }.
    */
   async createGroup(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     // --- no awaits from here on ---
     const now = Date.now();
     const name = this.groupName(input?.name);
@@ -5898,7 +6277,7 @@ export class Lair {
    * them by code at the counter). Returns { group }.
    */
   async updateGroup(id, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     // --- no awaits from here on ---
     const now = Date.now();
     const group = this.groupRow(id);
@@ -5930,7 +6309,7 @@ export class Lair {
    * passes. The organiser can't be removed until there's a new one. Returns { group }.
    */
   async groupMembers(id, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'money');
     // --- no awaits from here on ---
     const now = Date.now();
     const group = this.groupRow(id);
@@ -6228,6 +6607,8 @@ export class Lair {
     if (!variantId) throw new RuleError('Pick a game from the library to reserve.');
     const title = trimmed(input?.title, 120);
     if (!title) throw new RuleError('Pick a game from the library to reserve.');
+    // Round 9: reserving for someone else is the library's staff side
+    if (who.staff && String(input?.customerId ?? '').trim()) this.requireStaff(who, 'library');
     const forSomeone = Boolean(who.staff && String(input?.customerId ?? '').trim());
     const plan = forSomeone ? null : libraryPlan(who.tags);
     if (!forSomeone && !plan) throw new RuleError('Join the library to reserve games, friend.', 403);
@@ -6313,7 +6694,9 @@ export class Lair {
     const now = Date.now();
     const hold = this.holdRow(id);
     if (!hold) throw new RuleError('That hold could not be found.', 404);
-    if (!who.staff && hold.customerId !== String(who.customerId)) throw new RuleError("That hold isn't yours to cancel.", 403);
+    // Round 9: staff here means the library
+    const staffLibrary = this.can(who, 'library');
+    if (!staffLibrary && hold.customerId !== String(who.customerId)) throw new RuleError("That hold isn't yours to cancel.", 403);
     const status = this.holdStatus(hold, now);
     if (status === 'held') {
       this.write("UPDATE library_holds SET status = 'cancelled', ended_at = ?, updated_at = ? WHERE id = ? AND status = 'held'", now, now, hold.id);
@@ -6322,7 +6705,7 @@ export class Lair {
     }
     const fresh = this.holdRow(hold.id);
     const memo = new Map();
-    const view = (h) => (who.staff ? this.staffHoldView(h, now, memo) : this.holdView(h, now));
+    const view = (h) => (staffLibrary ? this.staffHoldView(h, now, memo) : this.holdView(h, now));
     return { hold: view(fresh), holds: this.activeHolds(fresh.customerId, now).map(view) };
   }
 
@@ -6331,7 +6714,7 @@ export class Lair {
    * first; all: the last 200, newest first.
    */
   async listHolds(url, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'library');
     await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -6349,7 +6732,7 @@ export class Lair {
    * that's still out (it never went home). Returns { hold, loan } (loan: the collected hold's, as staff see it, or null).
    */
   async updateHold(id, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'library');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -6657,11 +7040,13 @@ export class Lair {
     await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
+    // Round 9: staff here means the library
+    const staffLibrary = this.can(who, 'library');
     const loan = this.loanRow(id);
     if (!loan) throw new RuleError('That loan could not be found.', 404);
-    if (!who.staff && loan.customerId !== String(who.customerId)) throw new RuleError("That game isn't on loan to you.", 403);
-    const back = this.endLoan(loan, now, who.staff ? (who.customerId ? `staff:${who.customerId}` : 'staff') : 'member');
-    if (who.staff) return { loan: this.staffLoanView(back, now) };
+    if (!staffLibrary && loan.customerId !== String(who.customerId)) throw new RuleError("That game isn't on loan to you.", 403);
+    const back = this.endLoan(loan, now, staffLibrary ? (who.customerId ? `staff:${who.customerId}` : 'staff') : 'member');
+    if (staffLibrary) return { loan: this.staffLoanView(back, now) };
     return { loan: this.loanView(back), library: this.libraryFor(who.customerId, who.tags, now) };
   }
 
@@ -6672,7 +7057,7 @@ export class Lair {
    * thinks every copy is out. Returns { loan, notice }.
    */
   async checkOutLoan(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'library');
     const rules = await this.rules();
     const customerId = trimmed(input?.customerId, 40);
     let found;
@@ -6718,7 +7103,7 @@ export class Lair {
    * 'returned', loan }). Several out: nothing changes, and staff pick one ({ result: 'pick', loans }). None: 404.
    */
   async checkInLoan(input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'library');
     await this.rules();
     const { game, save } = await this.findLibraryGame(input?.code);
     // --- no awaits from here on ---
@@ -6734,7 +7119,7 @@ export class Lair {
 
   /** GET /library/loans?status=out|all (staff): out (the default), longest at home first; all, the last 200, newest first. */
   async listLoans(url, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'library');
     await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -6816,7 +7201,7 @@ export class Lair {
 
   /** POST /members/:customerId/new-code (staff): a fresh member code (a lost or shared one). The old one stops working. */
   async newMemberCode(customerId, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     // --- no awaits from here on ---
     const now = Date.now();
     const row = this.memberRow(trimmed(customerId, 40));
@@ -6904,7 +7289,7 @@ export class Lair {
    * 'YYYY' (taken as 1 January) or null to clear it. Returns { member } (as GET /members lists them).
    */
   async setCustomerSince(customerId, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -6997,7 +7382,7 @@ export class Lair {
    * day, or today's open tab) and giftedThisYear.
    */
   async members(url, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     const rules = await this.rules();
     // Round 6: when their Shopify accounts were made (years with us), asked once per member, before anything is read
     await this.fillShopifySince(this.sql.exec('SELECT customer_id FROM members WHERE shopify_since IS NULL ORDER BY last_seen DESC LIMIT 100').toArray().map((r) => r.customer_id));
@@ -7049,7 +7434,7 @@ export class Lair {
    * tags, null without one), holds (active), atHome }. Gifts from before round 7 are checked with Shopify first (up to 5).
    */
   async memberDetail(customerId, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     const rules = await this.rules();
     const id = trimmed(customerId, 40);
     if (!this.memberRow(id)) throw new RuleError('No member with that customer ID.', 404);
@@ -7067,6 +7452,8 @@ export class Lair {
         library: {
           plan: plan ? { name: plan.name, games: plan.games } : null, holds: this.activeHolds(id, now).map((h) => this.staffHoldView(h, now, memo)),
           atHome: this.loansOut(id).map((l) => this.staffLoanView(l, now, memo)),
+          // Round 9: the last 5 games they brought back, newest first
+          returns: this.sql.exec("SELECT * FROM library_loans WHERE customer_id = ? AND status = 'returned' ORDER BY returned_at DESC, rowid DESC LIMIT 5", id).toArray().map((r) => this.staffLoanView(this.rowToLoan(r), now, memo)),
         },
       },
     };
@@ -7113,13 +7500,199 @@ export class Lair {
    * The first time (once per customer), their older orders are filled in from Shopify first (backfillSpend).
    */
   async memberSpend(customerId, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     const rules = await this.rules();
     const id = trimmed(customerId, 40);
     if (!this.memberRow(id)) throw new RuleError('No member with that customer ID.', 404);
     await this.backfillSpend(id);
     // --- no awaits from here on ---
     return this.spendReport(id, rules, Date.now());
+  }
+
+  /* ---------------- store credit and emails from a member's page (round 9, team) ---------------- */
+  /** Round 9: a member's first name for staff words ("Ruby"), else their name or code. No awaits. */
+  memberFirst(row) {
+    return trimmed(row?.first_name || String(row?.name || '').split(/\s+/)[0] || row?.code || 'They', 40);
+  }
+
+  /** Round 9: why Shopify wouldn't show or change store credit, in staff words */
+  creditTrouble(error, doing) {
+    const message = String(error?.message || error);
+    this.note({ creditError: { message: message.slice(0, 300), at: new Date().toISOString() } });
+    if (/access denied|access_denied|required access|not approved/i.test(message)) {
+      return doing === 'read'
+        ? "Shopify hasn't let the Lair read store credit balances yet. Approve the app's new permission in Shopify admin (Apps › Dice Goblin Lair)."
+        : "Shopify hasn't let the Lair change store credit. Check the app's permissions in Shopify admin (Apps › Dice Goblin Lair).";
+    }
+    return doing === 'read' ? "Shopify didn't answer just now, so the balance isn't showing. Try again in a minute." : null;
+  }
+
+  /** Round 9: a store credit change as the member page lists it. No awaits. */
+  creditView(r) {
+    const by = String(r.by || '').replace(/^staff:/, '');
+    const m = by && by !== 'staff' ? this.memberRow(by) : null;
+    return {
+      id: r.id, amount: r.amount, note: r.note || '', status: r.status, balanceAfter: r.balance_after ?? null, message: r.message || null, at: r.at,
+      by: by && by !== 'staff' ? { customerId: by, name: m?.first_name || m?.name || '' } : null,
+    };
+  }
+
+  /**
+   * GET /members/:customerId/credit (Money): { balance (cents, or null when Shopify won't say), currency, problem (why
+   * there's no balance, or null), history: the last 20 changes from the staff page, newest first (creditView) }.
+   */
+  async memberCredit(customerId, who) {
+    this.requireStaff(who, 'money');
+    const id = trimmed(customerId, 40);
+    if (!this.memberRow(id)) throw new RuleError('No member with that customer ID.', 404);
+    const currency = this.env.CURRENCY || 'NZD';
+    let balance = null;
+    let problem = null;
+    if (!this.shopify.configured) problem = "Shopify isn't connected, so the balance can't show.";
+    else {
+      try {
+        balance = await this.shopify.storeCreditBalance(id, currency);
+      } catch (error) {
+        problem = this.creditTrouble(error, 'read');
+      }
+    }
+    // --- no awaits from here on ---
+    const history = this.sql.exec('SELECT * FROM member_credit WHERE customer_id = ? ORDER BY at DESC, rowid DESC LIMIT 20', id).toArray().map((r) => this.creditView(r));
+    return { balance, currency, problem, history };
+  }
+
+  /**
+   * POST /members/:customerId/credit { amount (cents: + adds, − takes off), note (needed to take off), key? } (Money):
+   * change their Shopify store credit (no email from Shopify). Up to $1000 at a time; a take-off can't take the balance
+   * below zero. key: the page's own key for this change, so sending it again never moves money twice (the first
+   * answer comes back, with repeated: true). Logged first ('pending'), then 'done' or 'failed'. Returns { change, balance }.
+   */
+  async changeMemberCredit(customerId, input, who) {
+    this.requireStaff(who, 'money');
+    const id = trimmed(customerId, 40);
+    const member = this.memberRow(id);
+    if (!member) throw new RuleError('No member with that customer ID.', 404);
+    const amount = Number(input?.amount);
+    if (!Number.isInteger(amount) || amount === 0) throw new RuleError('Say how much to add or take off.');
+    if (Math.abs(amount) > CREDIT_MAX) throw new RuleError('Store credit changes go up to $1000 at a time. Check the amount.');
+    const note = trimmed(input?.note, 300);
+    if (amount < 0 && !note) throw new RuleError('Add a note to say why the credit is coming off.');
+    const key = trimmed(input?.key, 64) || null;
+    const first = this.memberFirst(member);
+    const repeat = () => (key ? this.sql.exec('SELECT * FROM member_credit WHERE key = ?', key).toArray()[0] : null);
+    const again = repeat();
+    if (again) return { change: this.creditView(again), balance: again.balance_after ?? null, repeated: true };
+    if (!this.shopify.configured) throw new RuleError("Shopify isn't connected, so store credit can't change right now.", 503);
+    const currency = this.env.CURRENCY || 'NZD';
+    // Taking off: the balance first, when Shopify will say, so it never goes below zero (Shopify refuses that too)
+    let balance = null;
+    if (amount < 0) {
+      try {
+        balance = await this.shopify.storeCreditBalance(id, currency);
+      } catch {
+        balance = null;
+      }
+    }
+    // --- no awaits until the change is claimed ---
+    const raced = repeat();
+    if (raced) return { change: this.creditView(raced), balance: raced.balance_after ?? null, repeated: true };
+    const tooMuch = (left) => (left > 0
+      ? `${first} has ${money(left)} of store credit, so you can take off ${money(left)} at most.`
+      : `${first} has no store credit to take off.`);
+    if (amount < 0 && balance != null && balance + amount < 0) throw new RuleError(tooMuch(balance), 409);
+    const changeId = makeId('mc');
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    this.write(
+      "INSERT INTO member_credit (id, customer_id, amount, note, status, key, by, at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+      changeId, id, amount, note || null, key, by, Date.now(), Date.now(),
+    );
+    // --- claimed: now Shopify. Afterwards only this change's own row is touched ---
+    let done;
+    try {
+      done = await this.shopify.changeStoreCredit(id, amount, currency);
+    } catch (error) {
+      const insufficient = error?.code === 'INSUFFICIENT_FUNDS';
+      const message = insufficient
+        ? `${first} doesn't have that much store credit, so nothing came off. Check their balance and take off less.`
+        : this.creditTrouble(error, 'change') || `Shopify didn't change the store credit (${String(error?.message || error).replace(/^Shopify API:\s*/, '').slice(0, 160)}). Nothing changed. Try again.`;
+      this.write("UPDATE member_credit SET status = 'failed', message = ?, updated_at = ? WHERE id = ?", message, Date.now(), changeId);
+      throw new RuleError(message, insufficient ? 409 : 502);
+    }
+    this.write(
+      "UPDATE member_credit SET status = 'done', transaction_id = ?, balance_after = ?, updated_at = ? WHERE id = ?",
+      done.id, done.balanceAfter, Date.now(), changeId,
+    );
+    const row = this.sql.exec('SELECT * FROM member_credit WHERE id = ?', changeId).toArray()[0];
+    return { change: this.creditView(row), balance: done.balanceAfter };
+  }
+
+  /** Round 9: an email staff sent a member, as their page lists it. No awaits. */
+  memberEmailView(r) {
+    const by = String(r.by || '').replace(/^staff:/, '');
+    const m = by && by !== 'staff' ? this.memberRow(by) : null;
+    return {
+      id: r.id, subject: r.subject, email: r.email, status: r.status, message: r.message || null, at: r.at,
+      by: by && by !== 'staff' ? { customerId: by, name: m?.first_name || m?.name || '' } : null,
+    };
+  }
+
+  /** Round 9: emails this staff member sent (or is sending) in the last 24 hours. No awaits. */
+  emailsToday(who, now) {
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    return this.sql.exec("SELECT COUNT(*) AS n FROM member_emails WHERE by = ? AND at > ? AND status != 'failed'", by, now - 24 * HOUR).one().n;
+  }
+
+  /**
+   * GET /members/:customerId/emails (Members): { to (their email, or ''), emails: the last 20 staff sent them, newest
+   * first (memberEmailView), left: how many more this staff member can send today, limit }. No awaits.
+   */
+  memberEmails(customerId, who) {
+    this.requireStaff(who, 'members');
+    const id = trimmed(customerId, 40);
+    const member = this.memberRow(id);
+    if (!member) throw new RuleError('No member with that customer ID.', 404);
+    const now = Date.now();
+    const emails = this.sql.exec('SELECT * FROM member_emails WHERE customer_id = ? ORDER BY at DESC, rowid DESC LIMIT 20', id).toArray().map((r) => this.memberEmailView(r));
+    const to = isEmail(member.email) ? member.email : isEmail(member.account_email) ? member.account_email : '';
+    return { to, emails, left: Math.max(0, MEMBER_EMAIL.perDay - this.emailsToday(who, now)), limit: MEMBER_EMAIL.perDay };
+  }
+
+  /**
+   * POST /members/:customerId/email { subject, message, signedAs? } (Members): an email to the member from the shop's
+   * address, in the shop's email look, with the message as written (paragraphs kept, no HTML), signed "<first name>,
+   * Dice Goblin" (signedAs, else the sender's first name). Replies go to the shop (STAFF_EMAIL). 30 a day per staff
+   * member. Logged ('sending', then 'sent' or 'failed'). Returns { email (memberEmailView), left }.
+   */
+  async emailMember(customerId, input, who) {
+    this.requireStaff(who, 'members');
+    const now = Date.now();
+    const id = trimmed(customerId, 40);
+    const member = this.memberRow(id);
+    if (!member) throw new RuleError('No member with that customer ID.', 404);
+    const to = isEmail(member.email) ? trimmed(member.email, 120) : isEmail(member.account_email) ? trimmed(member.account_email, 120) : '';
+    if (!to) throw new RuleError(`${this.memberFirst(member)} has no email on file, so there's nothing to send to.`, 422);
+    const subject = String(input?.subject ?? '').replace(/\s+/g, ' ').trim();
+    if (!subject || subject.length > MEMBER_EMAIL.subject) throw new RuleError(`Add a subject, up to ${MEMBER_EMAIL.subject} characters.`);
+    const message = String(input?.message ?? '').replace(/\r\n?/g, '\n').trim();
+    if (!message || message.length > MEMBER_EMAIL.message) throw new RuleError('Write the message, up to 4,000 characters.');
+    if (!emailReady(this.env)) throw new RuleError("Emails aren't set up, so nothing can be sent from here yet.", 503);
+    if (this.emailsToday(who, now) >= MEMBER_EMAIL.perDay) throw new RuleError(`That's ${MEMBER_EMAIL.perDay} emails from you today. Try again tomorrow.`, 429);
+    const sender = who.customerId ? this.memberRow(who.customerId) : null;
+    const signer = trimmed(String(input?.signedAs ?? '').replace(/\s+/g, ' '), 40) || this.memberFirst(sender || { first_name: 'The team' });
+    const emailId = makeId('me');
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    this.write(
+      "INSERT INTO member_emails (id, customer_id, email, subject, status, message, by, at, updated_at) VALUES (?, ?, ?, ?, 'sending', NULL, ?, ?, ?)",
+      emailId, id, to, subject, by, now, now,
+    );
+    // --- claimed (it counts towards today's 30): now Resend. Afterwards only this email's own row is touched ---
+    const paragraphs = message.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    const sent = await this.mail(this.letter(to, subject, { title: subject, intro: paragraphs, button: null, signoff: `${signer}, Dice Goblin` }, { replyTo: this.env.STAFF_EMAIL || null }));
+    const failure = sent.ok ? null : `It didn't send (${String(sent.message || 'no answer').slice(0, 160)}).`;
+    this.write('UPDATE member_emails SET status = ?, message = ?, updated_at = ? WHERE id = ?', sent.ok ? 'sent' : 'failed', failure, Date.now(), emailId);
+    if (!sent.ok) throw new RuleError(`${failure} Try again in a minute.`, 502);
+    const row = this.sql.exec('SELECT * FROM member_emails WHERE id = ?', emailId).toArray()[0];
+    return { email: this.memberEmailView(row), left: Math.max(0, MEMBER_EMAIL.perDay - this.emailsToday(who, Date.now())) };
   }
 
   /** The spend report from the spend table (see memberSpend). No awaits. */
@@ -7263,7 +7836,7 @@ export class Lair {
    * birthdayCode and sent are the birthday discount code round 4 sent by itself (birthdayCode null when none).
    */
   async birthdayList(who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     const rules = await this.rules();
     // Their years with us can fall back to when their Shopify account was made: asked once per member, first
     await this.fillShopifySince(this.upcomingBirthdays(rules, Date.now(), 30).filter((x) => x.row.shopify_since == null).map((x) => x.row.customer_id));
@@ -7499,7 +8072,7 @@ export class Lair {
    * Returns { gift }.
    */
   async giveGift(customerId, input, who) {
-    this.requireStaff(who);
+    this.requireStaff(who, 'members');
     const rules = await this.rules();
     // --- no awaits until the gift is saved ---
     const now = Date.now();
