@@ -17,10 +17,10 @@ import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
 import { checkMobile, mobileKey } from './core.js';
 import { eventPayment } from './core.js';
-// Round 8: staff table holds that repeat weekly or fortnightly
-import { HOLD_REPEATS, holdSeriesDays } from './core.js';
 // Round 8: barcodes match with or without leading zeros
 import { sameBarcode } from './core.js';
+// Round 8: staff table holds that repeat weekly or fortnightly
+import { HOLD_REPEATS, holdSeriesDays } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
