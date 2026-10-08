@@ -62,6 +62,7 @@ step flow-r8-holds.mjs
 step flow-r6-guests.mjs
 step flow-r7-b.mjs
 step flow-r8-guests.mjs
+step flow-r9-community.mjs
 step live-smoke.mjs
 say ""
 say "===== totals"

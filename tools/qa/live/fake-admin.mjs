@@ -29,6 +29,10 @@
 //        like a store without read_products. POST /__fake/discount-use { code, count }: how often a code was used
 //        (LairGiftCodeUse); orders take discountCodes (OrderSpend answers them, with processedAt)
 //   POST /__fake/draft-paid { draftId, orderId }  the checkout was paid: the draft order turned into orderId
+//   POST /__fake/product { id, title, handle, status ('ACTIVE'), published, image, variants: [{ id, title, price ('219.00'),
+//        quantity }] }   round 9: a product early access offers find (LairOfferProducts, LairOfferProduct); their
+//        checkouts are LairOfferDraft draft orders (kept with the others, so DraftStatus, DraftOpen and D work on them).
+//        POST /__fake/set { denyOfferStock } answers like a store without read_inventory (the Lair asks again without it)
 //   GET  /__fake/calls                       every GraphQL call so far (operation, variables)
 //   GET  /__fake/emails                      every email the app sent (Resend stand-in at /resend/emails[/batch])
 import http from 'node:http';
@@ -76,6 +80,7 @@ const state = {
     7107: { name: 'Ari Moana', email: 'ari@example.com' },
   },
   drafts: {}, // id -> { id, status, orderId, input }
+  products: {}, // round 9: product id -> { id, title, handle, status, published, image, variants: [{ id, title, price, quantity }] }
   orders: {}, // gid -> { customerId, subtotal, source, name, billingName, shippingName }
   credits: [], // { customerId, amount }
   discounts: [],
@@ -384,6 +389,33 @@ function answer(op, query, v) {
       state.drafts[id] = { id, status: 'OPEN', orderId: null, input: v.input };
       return { draftOrderCreate: { draftOrder: { id, invoiceUrl: `http://localhost:${process.env.QA_PORT || 4180}/__checkout/${n}` }, userErrors: [] } };
     }
+    // Round 9 (community): early access. The products staff search for an offer, one product by its id, and a claim's
+    // checkout: a draft order made for the member (purchasingEntity), one line (the variant and quantity)
+    case 'LairOfferProducts':
+    case 'LairOfferProductsPlain':
+    case 'LairOfferProduct':
+    case 'LairOfferProductPlain': {
+      const stock = !op.endsWith('Plain');
+      if (stock && state.denyOfferStock) return denied('inventoryQuantity', 'read_inventory');
+      const node = (p) => ({
+        id: `gid://shopify/Product/${p.id}`, handle: p.handle || '', title: p.title, status: p.status || 'ACTIVE', onlineStoreUrl: p.published ? `https://www.dicegoblin.nz/products/${p.handle}` : null,
+        featuredMedia: p.image ? { preview: { image: { url: p.image } } } : null,
+        variants: { nodes: (p.variants || []).map((x) => ({ id: `gid://shopify/ProductVariant/${x.id}`, title: x.title || 'Default Title', price: String(x.price), ...(stock ? { inventoryQuantity: x.quantity ?? null } : {}), availableForSale: (p.status || 'ACTIVE') !== 'DRAFT', media: { nodes: [] } })) },
+      });
+      if (op.startsWith('LairOfferProducts')) {
+        const q = String(v.query || '').toLowerCase();
+        return { products: { nodes: Object.values(state.products).filter((p) => p.title.toLowerCase().includes(q)).slice(0, 10).map(node) } };
+      }
+      const p = state.products[String(v.id || '').split('/').pop()];
+      return { product: p ? node(p) : null };
+    }
+    case 'LairOfferDraft': {
+      if (state.failCheckout) return { draftOrderCreate: { draftOrder: null, userErrors: [{ field: ['input'], message: 'Fake: checkout is switched off' }] } };
+      const id = `gid://shopify/DraftOrder/${(seq += 1)}`;
+      const n = id.split('/').pop();
+      state.drafts[id] = { id, status: 'OPEN', orderId: null, input: v.input };
+      return { draftOrderCreate: { draftOrder: { id, invoiceUrl: `http://localhost:${process.env.QA_PORT || 4180}/__checkout/${n}` }, userErrors: [] } };
+    }
     case 'DraftStatus':
     case 'DraftOpen': {
       const d = state.drafts[v.id];
@@ -561,6 +593,11 @@ const server = http.createServer(async (req, res) => {
         discountCodes: Array.isArray(o.discountCodes) ? o.discountCodes.map(String) : [],
       };
       return send(res, 200, { ok: true, gid });
+    }
+    if (url.pathname === '/__fake/product' && req.method === 'POST') {
+      const p = JSON.parse(raw || '{}');
+      state.products[String(p.id)] = { ...p, id: String(p.id), variants: (p.variants || []).map((x) => ({ ...x, id: String(x.id) })) };
+      return send(res, 200, { ok: true, product: state.products[String(p.id)] });
     }
     if (url.pathname === '/__fake/draft-paid' && req.method === 'POST') {
       const { draftId, orderId } = JSON.parse(raw || '{}');
