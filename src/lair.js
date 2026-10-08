@@ -23,6 +23,8 @@ import { GUEST_MESSAGES, guestList } from './core.js';
 import { sameBarcode } from './core.js';
 // Round 8: staff table holds that repeat weekly or fortnightly
 import { HOLD_REPEATS, holdSeriesDays } from './core.js';
+// Round 9, play: "I'm interested" for TTRPG sessions and "Maybe" for event dates (src/interest.js)
+import { interestMethods } from './interest.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -431,6 +433,20 @@ export const MIGRATIONS = [
       id TEXT PRIMARY KEY, join_id TEXT NOT NULL, customer_id TEXT, name TEXT NOT NULL, code TEXT, created_at INTEGER NOT NULL)`,
     'CREATE INDEX IF NOT EXISTS event_join_guests_join ON event_join_guests (join_id)',
     'CREATE INDEX IF NOT EXISTS event_join_guests_customer ON event_join_guests (customer_id)',
+  ],
+  // Round 9, play (9 Oct 2026): "I'm interested" in a TTRPG session and "Maybe" (or "I'm coming", for an event with no
+  // sign-ups) for an event date. A new table only: one row per person (customer_id, or their email) per session or date
+  // (kind 'session' with target_id the game's id, or 'event' with the occurrence id), level 'interested', 'maybe' or
+  // 'coming', status 'active' or 'removed'. remove_key lets a guest take theirs back from the browser that made it.
+  [
+    `CREATE TABLE IF NOT EXISTS interests (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, target_id TEXT NOT NULL, level TEXT NOT NULL, status TEXT NOT NULL, name TEXT NOT NULL,
+      email TEXT NOT NULL, phone TEXT, note TEXT, customer_id TEXT, remove_key TEXT, title TEXT, starts_at INTEGER NOT NULL,
+      ends_at INTEGER NOT NULL, notified_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS interests_target ON interests (kind, target_id, status)',
+    'CREATE INDEX IF NOT EXISTS interests_time ON interests (ends_at, starts_at)',
+    'CREATE INDEX IF NOT EXISTS interests_customer ON interests (customer_id, ends_at)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS interests_one ON interests (kind, target_id, lower(email)) WHERE status = \'active\'',
   ],
 ];
 
@@ -1194,6 +1210,9 @@ export class Lair {
       if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
+      // Round 9, play: "I'm interested" in a TTRPG session, "Maybe" for an event date, and taking it back
+      if (a === 'interest' && !b) return json(await this.addInterest(body, who, client));
+      if (a === 'interest' && b && c === 'remove') return json(await this.removeInterest(decodeURIComponent(b), body, who));
       if (a === 'events' && !b) return json(await this.createEvent(body, who));
       if (a === 'events' && b === 'pictures' && !c) return json(await this.eventPicture(body, who));
       if (a === 'events' && b && c === 'update') return json(await this.updateEvent(decodeURIComponent(b), body, who));
@@ -1259,6 +1278,9 @@ export class Lair {
     }
     // Round 7: waiting series invites, by series, for the games below (staff and GMs only)
     const waiting = who.staff || who.customerId ? this.waitingInvites() : new Map();
+    // Round 9, play: who's interested in sessions and maybe (or coming) to event dates: counts for everyone, names for
+    // staff and a session's own GM only
+    const interest = this.interestsIn(from, to);
     return {
       now,
       bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
@@ -1275,11 +1297,17 @@ export class Lair {
           game.invites = ((g.seriesId && waiting.get(g.seriesId)) || []).map((x) => (who.staff ? x : { ...x, email: '' }));
         }
         if (who.staff) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g) });
+        // Round 9, play: how many are interested (everyone), and who (staff and the session's GM)
+        game.interested = interest.sessions[g.id] || 0;
+        if (who.staff || (who.customerId && g.gmCustomerId === who.customerId)) game.interest = interest.rows.filter((r) => r.kind === 'session' && r.target_id === g.id).map((r) => this.interestPerson(r));
         return game;
       }),
       events: [],
       eventJoins,
       eventSpots,
+      // Round 9, play: "Maybe" and "I'm coming" (events with no sign-ups) per event date, as counts; staff get the names
+      eventInterest: interest.events,
+      ...(who.staff ? { interests: interest.rows.filter((r) => r.kind === 'event').map((r) => this.staffInterest(r)) } : {}),
       ...(who.staff ? { joins: this.staffJoins(joinRows, paid.join, from, to) } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
@@ -7707,6 +7735,8 @@ export class Lair {
       tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
       // What they can pay at the counter now: { id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }
       dueNow,
+      // Round 9, play: the sessions they're interested in and the event dates they said maybe (or coming) to, still to come
+      interests: this.memberInterests(who.customerId, now),
       // Birthday gifts (round 7): those with something left to collect ('ready'), and those claimed in the last 30 days,
       // whatever year they were given: { id, at, credit, sessions, rolls, product, state, claimedAt, words }
       gifts: this.sql
@@ -7778,6 +7808,8 @@ export class Lair {
     const joins = this.sql.exec('SELECT COUNT(*) AS n FROM event_joins WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', email, since).one().n;
     if (bookings) this.write("UPDATE bookings SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND kind != 'gm' AND lower(email) = lower(?) AND ends_at > ?", id, now, email, since);
     if (joins) this.write('UPDATE event_joins SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', id, now, email, since);
+    // Round 9, play: and their "I'm interested" and "Maybe"
+    this.adoptInterests(id, email, now);
     return bookings + joins + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now);
   }
 
@@ -7949,3 +7981,6 @@ export class Lair {
     return result;
   }
 }
+
+// Round 9, play: "I'm interested" and "Maybe" (src/interest.js)
+Object.assign(Lair.prototype, interestMethods);
