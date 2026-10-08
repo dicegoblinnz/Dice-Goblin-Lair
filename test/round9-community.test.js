@@ -474,6 +474,8 @@ test('offers: the checks on making one: a draft product is refused, a published 
 test('offers: opened for a list and picked people, emailed; only they see it in My Lair; a claim makes a draft order for that customer', async () => {
   await members();
   const list = (await call('POST', 'community/lists', { name: 'Riftbound crew', customerIds: [SAM, KIRI] }, 'staff')).data.list;
+  // Tama never typed an email into the Lair: his Shopify account's verified email (read when he opened My Lair) is used
+  lair.write("UPDATE members SET email = NULL, account_email = 'tama.account@example.com' WHERE customer_id = ?", TAMA);
   const o = await offerFor([TAMA], { listId: list.id });
   assert.deepEqual(o.people.map((p) => p.customerId).sort(), [KIRI, SAM, TAMA].sort());
   assert.deepEqual(o.list, { id: list.id, name: 'Riftbound crew' });
@@ -489,6 +491,7 @@ test('offers: opened for a list and picked people, emailed; only they see it in 
     assert.match(toSam.text, /Grab it in My Lair before Sunday 18 October, 6pm\./);
     assert.match(toSam.text, /Two a person, friends\./);
     assert.ok(!mail.sent.some((m) => m.to === 'leo@example.com'));
+    assert.ok(mail.sent.some((m) => m.to === 'tama.account@example.com'), 'no Lair email: the verified account email');
   } finally {
     mail.restore();
   }

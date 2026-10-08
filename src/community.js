@@ -866,10 +866,12 @@ export const communityMethods = {
   emailOffer(o, now) {
     if (!emailReady(this.env)) return 0;
     const tz = this.rulesCache?.tz || 'Pacific/Auckland';
+    // the email in their Lair profile, else their Shopify account's verified email (read when they open My Lair)
     const people = this.sql
       .exec('SELECT m.* FROM early_offer_members x JOIN members m ON m.customer_id = x.customer_id WHERE x.offer_id = ?', o.id)
       .toArray()
-      .filter((m) => isEmail(m.email));
+      .map((m) => ({ ...m, email: isEmail(m.email) ? m.email : isEmail(m.account_email) ? m.account_email : null }))
+      .filter((m) => m.email);
     this.write('UPDATE early_offers SET emailed_at = ? WHERE id = ?', now, o.id);
     if (!people.length) return 0;
     const when = this.offerWhen(o.closes_at, tz, { long: true });
