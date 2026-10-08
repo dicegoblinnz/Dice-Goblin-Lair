@@ -101,7 +101,10 @@ voidReason ('replaced'|'staff'|'part-paid'|'changed'), madeBy, emailedAt, remind
 in for from now goes on their account, and their bill comes on the 1st." · "Sam's credit limit went from $100 to $150." ·
 "Sam pays each visit now. They still owe $29 from their account. That stays owed until they pay it, online or at the
 counter." · "Saved." Plus the warning when at or over the limit: "At their $100 limit: $100 owed." / "Over their $100
-limit: $120 owed." `said` (bill now): "Bill for $29.00 emailed to sam@example.com." (resend: "… again.")
+limit: $120 owed." `said` (bill now): "Bill for $29.00 emailed to sam@example.com." (resend: "… again."); with no
+link yet: "Bill made for $29.00, but Shopify didn't make its payment link yet, so it wasn't emailed. The Lair tries again
+in 10 minutes, then sends it."; with no email: "Bill made for $29.00. There's no email for Sam Jones, so the bill can't be
+sent. Add one to their profile, or give them the link." (the staff page shows an open bill's Payment link).
 
 ### Errors, word for word
 - Staff routes: 403 "Staff only. Log in with your staff account."
@@ -111,7 +114,7 @@ limit: $120 owed." `said` (bill now): "Bill for $29.00 emailed to sam@example.co
 - 409 "Sam Jones pays each visit, so there's no account to bill. Switch them to a monthly account first."
 - 409 "Sam Jones doesn't owe anything right now, so there's nothing to bill."
 - 409 "That bill is paid already." · 409 "That bill was cancelled. Make a new one with Bill now."
-- 409 "There's no email for Sam Jones, so the bill can't be sent. Add one to their profile, or give them the link." ·
+- Resend: 409 "There's no email for Sam Jones, so the bill can't be sent. Add one to their profile, or give them the link." ·
   409 "Emails aren't set up yet, so the bill can't be sent."
 - 503 "Shopify didn't make the bill's payment link just now. Try again in a minute."
 - Member: 401 "Log in to see your account." · 409 "You pay each visit, so there's nothing to pay online. Show your
