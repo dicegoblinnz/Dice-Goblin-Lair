@@ -186,8 +186,28 @@ try {
         await o.page.waitForTimeout(200);
         const opened = await o.page.evaluate(() => { const d = document.querySelector('[data-footer-menu]'); return { open: d.open, visible: [...d.querySelectorAll('.site-footer__list a')].filter((a) => a.getBoundingClientRect().height >= 44).length }; });
         check(`${tag} footer: tapping Shop opens its links, 44px each`, opened.open && opened.visible >= 4, opened);
+        // the keyboard: the second menu's summary opens with Enter and closes with Space, with a focus ring
+        await o.page.evaluate(() => { document.querySelectorAll('[data-footer-menu]')[0].open = false; });
+        await o.page.locator('.site-footer__nav').nth(0).locator('summary').focus();
+        await o.page.keyboard.press('Tab');
+        const ringOn = await o.page.evaluate(() => { const cs = getComputedStyle(document.activeElement); return `${document.activeElement.tagName} ${cs.outlineStyle} ${cs.outlineWidth}`; });
+        await o.page.keyboard.press('Enter');
+        await o.page.waitForTimeout(150);
+        const afterEnter = await o.page.evaluate(() => document.querySelectorAll('[data-footer-menu]')[1].open);
+        await o.page.keyboard.press('Space');
+        await o.page.waitForTimeout(150);
+        const afterSpace = await o.page.evaluate(() => document.querySelectorAll('[data-footer-menu]')[1].open);
+        check(`${tag} footer keys: a menu row takes the focus (ring shown), Enter opens it, Space closes it`, /^SUMMARY solid 3px/.test(ringOn) && afterEnter && !afterSpace, `${ringOn}, Enter ${afterEnter}, Space ${afterSpace}`);
       } else {
         check(`${tag} footer: the menus open as columns with their headings, no accordion rows`, f.menus.every((mn) => mn.open && mn.summaryH === 0 && mn.heading === 'block'), f.menus.map((mn) => `${mn.open} ${mn.summaryH} ${mn.heading}`).join(', '));
+        // the keyboard: Tab from the newsletter's button goes through the visit links, never a hidden menu row
+        await o.page.focus('.site-footer__news button[type="submit"]');
+        const stops = [];
+        for (let i = 0; i < 5; i += 1) {
+          await o.page.keyboard.press('Tab');
+          stops.push(await o.page.evaluate(() => { const el = document.activeElement; const cs = getComputedStyle(el); return { tag: el.tagName, text: el.textContent.replace(/\s+/g, ' ').trim().slice(0, 30), ring: `${cs.outlineStyle} ${cs.outlineWidth}`, summary: Boolean(el.closest('summary')) }; }));
+        }
+        check(`${tag} footer keys: Tab moves through the address, phone and Hours and directions with a focus ring, no hidden menu rows`, stops.slice(0, 3).every((st) => st.tag === 'A' && /solid 3px/.test(st.ring)) && !stops.some((st) => st.summary) && /Manukau/.test(stops[0].text) && /Hours and directions/.test(stops[2].text), stops.map((st) => `${st.tag} ${st.text}`).join(' > '));
       }
 
       /* ---------- 5. reviews ---------- */
