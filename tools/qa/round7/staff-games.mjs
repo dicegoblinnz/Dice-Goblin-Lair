@@ -222,7 +222,7 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
   check(`${S} staff: shop tables T1 to T3 are free for staff`, map.shop.length === 3 && map.shop.every((x) => x.endsWith(':free:true')), map.shop);
   const takenId = map.taken.split(':')[0];
   await tapTables(staff, F, [takenId]);
-  check(`${S} staff: tapping a taken table says so`, new RegExp(`${takenId} is taken then`).test(flat(await staff.locator(`${F} [data-picked]`).innerText())));
+  check(`${S} staff: tapping a taken table says so`, new RegExp(`${takenId} is booked at that time`).test(flat(await staff.locator(`${F} [data-picked]`).innerText())));
   await tapTables(staff, F, ['T1', 'T2']);
   const staffPicked = flat(await staff.locator(`${F} [data-picked]`).innerText());
   check(`${S} staff: two shop tables picked`, /T1/.test(staffPicked) && /T2/.test(staffPicked) && /Room for its 5 players/.test(staffPicked), staffPicked);
