@@ -9,6 +9,8 @@
 // memory. Round 6 adds library copies (VariantCopies), a customer's orders (CustomerOrders: the last 60 days unless
 // the scopes include read_all_orders, like Shopify), when accounts were made (CustomersSince), account emails
 // (CustomerEmail) and session gift buyers (OrderGiftBuyer).
+// Round 9 (team) adds a store credit balance per customer (LairCreditBalance; POST /__fake/set { denyCreditRead } refuses
+// it like a store without read_store_credit_accounts) and adding and taking off credit (LairCreditAdd, LairCreditTake).
 //
 // Control routes for the test scripts (never part of Shopify):
 //   GET  /__fake/state                       everything it holds
@@ -78,6 +80,8 @@ const state = {
   drafts: {}, // id -> { id, status, orderId, input }
   orders: {}, // gid -> { customerId, subtotal, source, name, billingName, shippingName }
   credits: [], // { customerId, amount }
+  creditBalances: {}, // round 9 (team): customer id -> store credit in cents (every Credit adds to it)
+  denyCreditRead: false, // round 9 (team): LairCreditBalance refused, like a store without read_store_credit_accounts
   discounts: [],
   webhooks: [],
   calls: [],
@@ -444,7 +448,30 @@ function answer(op, query, v) {
       const customerId = String(v.id || '').split('/').pop();
       const amount = Math.round(Number(v.creditInput?.creditAmount?.amount || 0) * 100);
       state.credits.push({ customerId, amount, at: Date.now() });
+      state.creditBalances[customerId] = (state.creditBalances[customerId] || 0) + amount; // round 9
       return { storeCreditAccountCredit: { storeCreditAccountTransaction: { amount: { amount: (amount / 100).toFixed(2) } }, userErrors: [] } };
+    }
+    // Round 9 (team): a member's store credit on the staff page: the balance (denyCreditRead: no
+    // read_store_credit_accounts yet), adding (no email) and taking off (never below zero: INSUFFICIENT_FUNDS)
+    case 'LairCreditBalance': {
+      if (state.denyCreditRead) return denied('storeCreditAccounts', 'read_store_credit_accounts');
+      const customerId = String(v.id || '').split('/').pop();
+      const cents = state.creditBalances[customerId] || 0;
+      return { customer: { id: v.id, storeCreditAccounts: { nodes: cents ? [{ id: `gid://shopify/StoreCreditAccount/${customerId}`, balance: { amount: (cents / 100).toFixed(2), currencyCode: 'NZD' } }] : [] } } };
+    }
+    case 'LairCreditAdd':
+    case 'LairCreditTake': {
+      const take = op === 'LairCreditTake';
+      const key = take ? 'storeCreditAccountDebit' : 'storeCreditAccountCredit';
+      if (state.failCredit) return { [key]: { storeCreditAccountTransaction: null, userErrors: [{ field: ['id'], message: 'Fake: store credit is switched off', code: 'FAKE' }] } };
+      const customerId = String(v.id || '').split('/').pop();
+      const amount = Math.round(Number((take ? v.debitInput?.debitAmount : v.creditInput?.creditAmount)?.amount || 0) * 100);
+      const now = state.creditBalances[customerId] || 0;
+      if (take && amount > now) return { [key]: { storeCreditAccountTransaction: null, userErrors: [{ field: ['debitInput', 'debitAmount'], message: 'Insufficient funds', code: 'INSUFFICIENT_FUNDS' }] } };
+      state.creditBalances[customerId] = now + (take ? -amount : amount);
+      state.credits.push({ customerId, amount: take ? -amount : amount, at: Date.now(), notify: take ? null : v.creditInput?.notify ?? null });
+      const money = (c) => ({ amount: (c / 100).toFixed(2), currencyCode: 'NZD' });
+      return { [key]: { storeCreditAccountTransaction: { id: `gid://shopify/StoreCreditAccountDebitTransaction/${(seq += 1)}`, amount: money(take ? -amount : amount), balanceAfterTransaction: money(state.creditBalances[customerId]) }, userErrors: [] } };
     }
     case 'Prize':
       if (state.failDiscount) return { discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ field: ['basicCodeDiscount'], message: 'Fake: discounts are switched off', code: 'FAKE' }] } };

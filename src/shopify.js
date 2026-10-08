@@ -581,7 +581,7 @@ export class ShopifyAdmin {
    */
   async storeCreditBalance(customerId, currency) {
     const data = await this.graphql(
-      'query LairCredit($id: ID!) { customer(id: $id) { id storeCreditAccounts(first: 5) { nodes { id balance { amount currencyCode } } } } }',
+      'query LairCreditBalance($id: ID!) { customer(id: $id) { id storeCreditAccounts(first: 5) { nodes { id balance { amount currencyCode } } } } }',
       { id: `gid://shopify/Customer/${customerId}` },
     );
     if (!data.customer) throw new Error('No such customer in Shopify');
@@ -600,11 +600,11 @@ export class ShopifyAdmin {
     const fields = 'storeCreditAccountTransaction { id amount { amount currencyCode } balanceAfterTransaction { amount currencyCode } } userErrors { field message code }';
     const data = take
       ? await this.graphql(
-        `mutation LairDebit($id: ID!, $debitInput: StoreCreditAccountDebitInput!) { storeCreditAccountDebit(id: $id, debitInput: $debitInput) { ${fields} } }`,
+        `mutation LairCreditTake($id: ID!, $debitInput: StoreCreditAccountDebitInput!) { storeCreditAccountDebit(id: $id, debitInput: $debitInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, debitInput: { debitAmount: money } },
       )
       : await this.graphql(
-        `mutation LairCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) { storeCreditAccountCredit(id: $id, creditInput: $creditInput) { ${fields} } }`,
+        `mutation LairCreditAdd($id: ID!, $creditInput: StoreCreditAccountCreditInput!) { storeCreditAccountCredit(id: $id, creditInput: $creditInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: money, notify: false } },
       );
     const result = take ? data.storeCreditAccountDebit : data.storeCreditAccountCredit;

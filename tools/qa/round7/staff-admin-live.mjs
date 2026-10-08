@@ -65,6 +65,11 @@ m.mockState.before = async (req, res, url) => {
   if (route === '/library/holds') return send(200, { holds: [] });
   // the library tab (round 7, merged after this check was written) asks for games at home as the page loads
   if (route === '/library/loans') return send(200, { loans: [] });
+  // round 9: the staff page asks who's using it first, and a member's page asks for their store credit and emails
+  if (route === '/staff/me') return send(200, { staff: true, role: 'owner', perms: ['checkin', 'tables', 'sessions', 'events', 'members', 'money', 'library', 'community', 'team'], name: 'Mo' });
+  if (route === '/team') return send(200, { owners: [{ customerId: '7001', name: 'Mo Ashgrove', email: 'mo@example.com', code: null }], helpers: [], perms: [], defaults: ['checkin', 'tables'], log: [] });
+  if (/^\/members\/\d+\/credit$/.test(route)) return send(200, { balance: 0, currency: 'NZD', problem: null, history: [] });
+  if (/^\/members\/\d+\/emails$/.test(route)) return send(200, { to: 'sam@example.com', emails: [], left: 30, limit: 30 });
   if (route === '/members/birthdays') return send(200, []);
   if (route === '/members' && req.method === 'GET') return send(200, [{ ...SAM, spendYear: 1000, spendTotal: 1000, lastSeen: now, owed: 0, owedCount: 0, openTab: 0, pendingPrizes: [], giftedThisYear: true, giftsThisYear: [{ id: 'g1', at: now - DAY, words: '$20 store credit, 5 rolls' }] }]);
   if (route === '/members/7101') return send(200, { member: { ...SAM, spendYear: 1000, spendTotal: 1000, lastSeen: now, owed: 0, owedCount: 0, openTab: 0, pendingPrizes: [], giftedThisYear: true, mobile: '021 555 0101', pronouns: 'they/them', favouriteGames: ['Root'], about: '', gifts: [{ id: 'g1', at: now - DAY, credit: 2000, sessions: 0, passCode: null, rolls: 5, product: null, state: 'claimed', claimedAt: now - DAY, words: '$20 store credit, 5 rolls', emailed: true, note: '' }], library: { plan: null, holds: [], atHome: [] } } });
