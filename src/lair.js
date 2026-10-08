@@ -29,6 +29,8 @@ import { HELPER_DEFAULT, PERM_WORDS, STAFF_PERMS, canDo, cleanPerms } from './co
 import { runningTabMethods } from './tab.js';
 // Round 9, play: "I'm interested" for TTRPG sessions and "Maybe" for event dates (src/interest.js)
 import { interestMethods } from './interest.js';
+// Round 9: turnouts, lists of members and early access offers for regulars (their own file, mixed in at the end)
+import { communityMethods } from './community.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -516,6 +518,34 @@ export const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS interests_time ON interests (ends_at, starts_at)',
     'CREATE INDEX IF NOT EXISTS interests_customer ON interests (customer_id, ends_at)',
     'CREATE UNIQUE INDEX IF NOT EXISTS interests_one ON interests (kind, target_id, lower(email)) WHERE status = \'active\'',
+  ],
+  // Round 9, community (9 Oct 2026). Only a new column, new tables and indexes, so the live rows stay as they are:
+  //  - event_joins.source: 'walk-in' for someone staff checked in at an event they hadn't signed up for (null otherwise).
+  //  - community_lists and community_list_members: lists of members staff save ("Pokémon regulars, Oct").
+  //  - early_offers, early_offer_members and early_offer_claims: early access to a Shopify product for some members, who
+  //    it's for (a copy of the list and the people picked when it was saved), and each member's claims ('creating' while
+  //    the checkout is made, 'waiting' unpaid, 'paid', 'released' when let go, with the reason).
+  [
+    'ALTER TABLE event_joins ADD COLUMN source TEXT',
+    `CREATE TABLE IF NOT EXISTS community_lists (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, note TEXT, created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS community_list_members (
+      list_id TEXT NOT NULL, customer_id TEXT NOT NULL, added_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (list_id, customer_id))`,
+    'CREATE INDEX IF NOT EXISTS community_list_members_customer ON community_list_members (customer_id)',
+    `CREATE TABLE IF NOT EXISTS early_offers (
+      id TEXT PRIMARY KEY, product_id TEXT NOT NULL, product_title TEXT NOT NULL, product_handle TEXT, image TEXT, product_status TEXT, published INTEGER,
+      variants TEXT NOT NULL, per_person INTEGER NOT NULL, total_units INTEGER, opens_at INTEGER, closes_at INTEGER NOT NULL, message TEXT, status TEXT NOT NULL,
+      list_id TEXT, email INTEGER NOT NULL DEFAULT 0, emailed_at INTEGER, created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER, opened_at INTEGER,
+      closed_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS early_offer_members (
+      offer_id TEXT NOT NULL, customer_id TEXT NOT NULL, source TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (offer_id, customer_id))`,
+    'CREATE INDEX IF NOT EXISTS early_offer_members_customer ON early_offer_members (customer_id)',
+    `CREATE TABLE IF NOT EXISTS early_offer_claims (
+      id TEXT PRIMARY KEY, offer_id TEXT NOT NULL, customer_id TEXT NOT NULL, variant_id TEXT NOT NULL, variant_title TEXT, price INTEGER, quantity INTEGER NOT NULL,
+      status TEXT NOT NULL, reason TEXT, draft_order_id TEXT, checkout_url TEXT, order_id TEXT, expires_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER,
+      paid_at INTEGER, ended_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS early_offer_claims_offer ON early_offer_claims (offer_id, status)',
+    'CREATE INDEX IF NOT EXISTS early_offer_claims_customer ON early_offer_claims (customer_id, offer_id)',
   ],
 ];
 
@@ -1241,8 +1271,8 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups'].includes(a));
+        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
@@ -1266,6 +1296,12 @@ export class Lair {
       if (request.method === 'GET' && a === 'groups' && !b) return json(this.listGroups(url, who));
       if (request.method === 'GET' && a === 'customers' && !b) return json(await this.findCustomers(url, who));
       if (request.method === 'GET' && a === 'events' && !b) return json(await this.listEvents(who));
+      // Round 9 (community): turnouts by game, saved lists, early access offers and the product search for them
+      if (request.method === 'GET' && a === 'community' && !b) return json(await this.communityStats(url, who));
+      if (request.method === 'GET' && a === 'community' && b === 'lists' && !c) return json(this.communityLists(who));
+      if (request.method === 'GET' && a === 'offers' && !b) return json(this.listOffers(who));
+      if (request.method === 'GET' && a === 'offers' && b && !c) return json(this.offerDetail(decodeURIComponent(b), who));
+      if (request.method === 'GET' && a === 'products' && b === 'search' && !c) return json(await this.productSearch(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'status' && !c) return json(await this.libraryStatus(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'holds' && !c) return json(await this.listHolds(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'loans' && !c) return json(await this.listLoans(url, who));
@@ -1284,6 +1320,15 @@ export class Lair {
       if (a === 'groups' && !b) return json(await this.createGroup(body, who));
       if (a === 'groups' && b && c === 'update') return json(await this.updateGroup(decodeURIComponent(b), body, who));
       if (a === 'groups' && b && c === 'members') return json(await this.groupMembers(decodeURIComponent(b), body, who));
+      // Round 9 (community): lists of members, early access offers, and a member claiming one
+      if (a === 'community' && b === 'lists' && !c) return json(await this.createCommunityList(body, who));
+      if (a === 'community' && b === 'lists' && c && !d) return json(await this.updateCommunityList(decodeURIComponent(c), body, who));
+      if (a === 'community' && b === 'lists' && c && d === 'remove') return json(await this.removeCommunityList(decodeURIComponent(c), who));
+      if (a === 'offers' && !b) return json(await this.createOffer(body, who));
+      if (a === 'offers' && b && !c) return json(await this.updateOffer(decodeURIComponent(b), body, who));
+      if (a === 'offers' && b && c === 'open') return json(await this.openOffer(decodeURIComponent(b), body, who));
+      if (a === 'offers' && b && c === 'close') return json(await this.closeOffer(decodeURIComponent(b), who));
+      if (a === 'offers' && b && c === 'claim') return json(await this.claimOffer(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
@@ -1330,6 +1375,7 @@ export class Lair {
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
       // Round 9, team: staff add someone to an event date's sign-ups, by member code or by name and email
       if (a === 'events' && b && b !== 'joins' && c === 'joins' && !d) return json(await this.staffJoin(decodeURIComponent(b), body, who));
+      if (a === 'events' && b && c === 'attend') return json(await this.attendEvent(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
       // Round 9, play: "I'm interested" in a TTRPG session, "Maybe" for an event date, and taking it back
       if (a === 'interest' && !b) return json(await this.addInterest(body, who, client));
@@ -3430,6 +3476,8 @@ export class Lair {
     const spend = await this.orderSpend(orderId);
     const buyer = await this.passBuyer(order, orderId, spend, passLines);
     const giver = await this.giftBuyer(orderId, spend, giftLines);
+    // Round 9: a paid early access checkout marks its claim paid (its own awaits, then its own writes)
+    await this.offerClaimsPaid(order, orderId);
     // --- no awaits from here on ---
     // The order's customer paid: a friend paying their share with their own member code attached is the payer.
     if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
@@ -8376,6 +8424,8 @@ export class Lair {
       profile: this.profileView(this.memberRow(who.customerId)),
       // Session passes: active ones, and ones used up in the last 30 days
       passes: this.memberPasses(who.customerId, now),
+      // Round 9: early access offers open to them now, each with their own claim (and only their own checkout link)
+      offers: this.memberOffers(who.customerId, now),
       // Today's self-serve tab, or null
       tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
       // What they can pay at the counter now: { id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }
@@ -8616,6 +8666,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not expire library holds', error);
     }
+    // Round 9: early access: unpaid claims let go after 48 hours, offers past their closing time closed (their unpaid claims
+    // let go), and the emails of offers that open later sent when they open
+    try {
+      const offers = this.offerUpkeep(Date.now());
+      if (offers) result.offers = offers;
+    } catch (error) {
+      console.error('Lair: early access upkeep failed', error);
+    }
     // Round 7: birthday gifts' product codes the webhook couldn't see used (gifts from before round 7, and codes that ran
     // out with no recorded use) are checked with Shopify, a few a run.
     try {
@@ -8641,3 +8699,5 @@ export class Lair {
 Object.assign(Lair.prototype, runningTabMethods);
 // Round 9, play: "I'm interested" and "Maybe" (src/interest.js)
 Object.assign(Lair.prototype, interestMethods);
+// Round 9: turnouts, lists and early access offers (src/community.js)
+Object.assign(Lair.prototype, communityMethods);
