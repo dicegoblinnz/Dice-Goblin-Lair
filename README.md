@@ -59,7 +59,7 @@ The Worker is connected to the GitHub repository and the keys are in the config 
 2. Create a version with:
    - **App URL:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Embedding in the Shopify admin: off.
    - **Access scopes:**
-     `read_customers, read_metaobjects, read_themes, read_orders, write_draft_orders, write_store_credit_account_transactions, write_discounts, write_app_proxy, read_products, read_inventory, write_metaobjects, write_files`
+     `read_customers, read_metaobjects, read_themes, read_orders, write_draft_orders, write_store_credit_account_transactions, write_discounts, write_app_proxy, read_products, read_inventory, write_metaobjects, write_files, read_store_credit_accounts`
      (`write_discounts` makes the codes for birthday gifts from the shop; without it staff give those at the counter instead.
      `read_products` and `read_inventory` say how many copies of each library game there are; without them the library page's number is used.
      These come from `pos-app/shopify.app.toml` on every app deploy; after a deploy that adds one, approve it in Shopify admin.

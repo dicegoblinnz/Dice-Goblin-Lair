@@ -22,7 +22,9 @@ automatically_update_urls_on_dev = false
 # approves them once in Shopify admin after the deploy; until then the Lair uses the copies the product page sends.
 # write_metaobjects and write_files (round 7): staff add and edit events (the lair_event metaobjects, and their
 # pictures) from the staff page instead of Shopify admin. Asked for now so Mo approves all four at once.
-scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory,write_metaobjects,write_files"
+# read_store_credit_accounts (round 9): a member's store credit balance on the staff member page. Mo approves it once
+# in Shopify admin after the deploy; until then the page says so, and adding or taking off credit still works.
+scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory,write_metaobjects,write_files,read_store_credit_accounts"
 use_legacy_install_flow = false
 
 [auth]
