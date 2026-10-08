@@ -121,12 +121,20 @@ const staffJoins = (await proxy('GET', `floor?from=${Date.now()}&to=${Date.now()
 check('6: both on the floor\'s sign-ups for staff', [byCode.data.join?.id, byEmail.data.join?.id].every((id) => staffJoins.some((j) => j.id === id)));
 
 /* 7. three times under one email, one sign-up */
-// a different week each run, so a rerun on the same state finds the tables free
-const week = 7 * (Math.floor(Date.now() / 60000) % 4);
-const WED = nextDow(3, today, 16 + week);
-const THU = nextDow(4, today, 16 + week);
-const oneOff = await proxy('POST', 'games', { customer: OWNER, body: { title: 'Round 9 one-shot', system: 'Mothership', gm: 'Mo', blurb: 'Space horror for three.', tables: ['P3'], start: at(WED, 18), end: at(WED, 21), seats: 3, schedule: 'one-shot', gmFee: 500 } });
-const weekly = await proxy('POST', 'games', { customer: OWNER, body: { title: 'Round 9 weekly', system: 'Pathfinder', gm: 'Mo', blurb: 'A weekly campaign.', tables: ['P4'], start: at(THU, 18), end: at(THU, 21), seats: 3, schedule: 'weekly', gmFee: 500 } });
+// a rerun on the same state finds its tables taken by the last run's games: try the next free week and table
+const makeGame = async (body, dow, tables) => {
+  let res;
+  for (const table of tables) {
+    for (let w = 0; w < 4; w += 1) {
+      const day = nextDow(dow, today, 16 + 7 * w);
+      res = await proxy('POST', 'games', { customer: OWNER, body: { ...body, tables: [table], start: at(day, 18), end: at(day, 21) } });
+      if (res.status !== 409) return res;
+    }
+  }
+  return res;
+};
+const oneOff = await makeGame({ title: 'Round 9 one-shot', system: 'Mothership', gm: 'Mo', blurb: 'Space horror for three.', seats: 3, schedule: 'one-shot', gmFee: 500 }, 3, ['P3', 'P2']);
+const weekly = await makeGame({ title: 'Round 9 weekly', system: 'Pathfinder', gm: 'Mo', blurb: 'A weekly campaign.', seats: 3, schedule: 'weekly', gmFee: 500 }, 4, ['P4', 'G1', 'G2', 'G3', 'G4']);
 check('7: two staff games to add Ari to', oneOff.status === 200 && weekly.status === 200, [said(oneOff), said(weekly)]);
 const seat = await proxy('POST', `games/${oneOff.data.game?.id}/players`, { customer: OWNER, body: { name: 'Ari Newbie', email: NEW_EMAIL } });
 const regular = await proxy('POST', `games/${weekly.data.game?.id}/players`, { customer: OWNER, body: { name: 'Ari Newbie', email: NEW_EMAIL, weekly: true } });
