@@ -114,9 +114,12 @@ afterEach(() => {
 
 /* ---------------- the table, and the guest list's shape ---------------- */
 
-test('guests (round 8): one new table for guests on sign-ups, in the last migration, with its two indexes', () => {
-  const last = MIGRATIONS[MIGRATIONS.length - 1].join('\n');
-  assert.match(last, /CREATE TABLE IF NOT EXISTS event_join_guests/);
+test('guests (round 8): one new table for guests on sign-ups, in one migration entry, with its two indexes', () => {
+  // by what it makes, not where it sits: at the merge it goes after holds' entry, and later rounds append more
+  const mine = MIGRATIONS.filter((m) => m.some((s) => /event_join_guests/.test(s)));
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].length, 3);
+  assert.match(mine[0][0], /CREATE TABLE IF NOT EXISTS event_join_guests/);
   const cols = lair.sql.exec("SELECT name FROM pragma_table_info('event_join_guests')").toArray().map((c) => c.name);
   assert.deepEqual(cols, ['id', 'join_id', 'customer_id', 'name', 'code', 'created_at']);
   const indexes = lair.sql.exec("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'event_join_guests' AND name NOT LIKE 'sqlite_%' ORDER BY name").toArray().map((r) => r.name);
