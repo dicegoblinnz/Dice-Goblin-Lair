@@ -104,9 +104,9 @@ None new. Staff read interest on `GET /floor` (staff view), as they read sign-up
 The booking page's month view shades each open day by how busy it is from what `GET /floor` already sends for the
 booking horizon (the store loads it in one request): table-hours booked (active bookings, TTRPG sessions' tables) or
 held (staff holds and locked event tables) during opening hours, over the bookable tables × open hours. Event tables
-that are only set aside (soft) don't count as busy; they show as event marks. Steps: Quiet (under 25%), Filling (25%
-to 50%), Busy (50% to 80%), Full (80% or more, or no free table at any time that day). Closed days are greyed. No
-summary route was needed, so none was added.
+that are only set aside (soft) don't count as busy; they show as event marks. Shop tables count only while a manager
+has them open. Steps: Quiet (under 25%), Filling up (25% to 50%), Busy (50% to 80%), Full (80% or more). Closed and
+past days are greyed. No summary route was needed, so none was added.
 
 ## Contract notes
 - "I'm coming" for events without sign-ups is a count (`level: 'coming'`), not a ticket: those events are "just turn
