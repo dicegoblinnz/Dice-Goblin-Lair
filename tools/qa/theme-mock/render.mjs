@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
-import { Liquid, Tag } from 'liquidjs';
+import { Liquid, Tag, Drop } from 'liquidjs';
 import { lairEvents } from './events-mock.mjs'; // the real weekly Lair events (events worktree)
 
 const THEME = process.env.DG_THEME || '/home/claude/dg-theme';
@@ -139,7 +139,79 @@ const soldOut = [
 ];
 collections['new-additions'].products = [soldOut[0], ...arrivals.slice(0, 3), soldOut[2], ...arrivals.slice(3)];
 collections['trading-card-games'].products.splice(1, 0, soldOut[1]);
-const allProducts = Object.fromEntries([...arrivals, ...boardGames, ...library, membership, ...tcgShelf, ...rpgShelf, ...soldOut].map((p) => [p.handle, p]));
+/* ---- r9 site: products with many variants, each with its own picture, for the product page's dropdown with pictures.
+   "Vallejo - Game Colour" (the first new arrival) becomes what it is in the store: one option, Colours, a variant per
+   colour (196 there, 48 here, four sold out), each with its own image. Its option values are Drops like Shopify's
+   product_option_value (name, available, selected, variant). A paint set has two options (Colour, 12, and Size, 2),
+   its values plain strings, so the theme finds each colour's picture from the first variant that has it.
+   /products/<handle>?variant=<id> picks a variant the way Shopify does (selected_variant and the chosen values). ---- */
+class OptionValue extends Drop {
+  constructor(name, variant, selected) {
+    super();
+    this.name = name;
+    this.variant = variant;
+    this.available = Boolean(variant && variant.available);
+    this.selected = selected;
+    this.id = variant ? variant.id + 7 : 0;
+  }
+  valueOf() {
+    return this.name;
+  }
+}
+const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const VGC = ['Dead White', 'Bone White', 'Pale Flesh', 'Elf Skintone', 'Dwarf Skin', 'Bronzed Flesh', 'Tan', 'Dark Fleshtone',
+  'Sunblast Yellow', 'Moon Yellow', 'Gold Yellow', 'Fiery Orange', 'Hot Orange', 'Bloody Red', 'Gory Red', 'Scarlett Red',
+  'Squid Pink', 'Warlord Purple', 'Hexed Lichen', 'Royal Purple', 'Imperial Blue', 'Ultramarine Blue', 'Magic Blue',
+  'Electric Blue', 'Turquoise', 'Foul Green', 'Jade Green', 'Scorpy Green', 'Goblin Green', 'Sick Green', 'Dark Green',
+  'Camouflage Green', 'Livery Green', 'Earth', 'Beasty Brown', 'Charred Brown', 'Leather Brown', 'Khaki', 'Desert Yellow',
+  'Plague Brown', 'Stonewall Grey', 'Cold Grey', 'Wolf Grey', 'Sombre Grey', 'Black', 'Silver', 'Polished Gold', 'Gunmetal Metal'];
+export const VGC_SOLD_OUT = ['Pale Flesh', 'Gory Red', 'Livery Green', 'Wolf Grey'];
+const manyVariants = (p, options, rows) => {
+  const variants = rows.map((values, i) => {
+    const media = img(`${p.handle}-${slug(values.join(' '))}__800x800`, 800, 800, '');
+    media.preview_image = media;
+    const sold = values.some((v) => VGC_SOLD_OUT.includes(v));
+    return {
+      id: 49200000000000 + (p.handle === 'vallejo-game-colour' ? 0 : 1000) + i + 1, title: values.join(' / '), price: p.price, compare_at_price: null,
+      available: !sold, inventory_management: 'shopify', inventory_quantity: sold ? 0 : 5 + (i % 4), options: values, option1: values[0], option2: values[1] || null,
+      featured_media: media, featured_image: media, image: media, sku: `${slug(p.vendor).toUpperCase()}-${String(i + 1).padStart(3, '0')}`, barcode: '', quantity_rule: {},
+    };
+  });
+  p.variants = variants;
+  p.media = [p.featured_media, ...variants.map((v) => v.featured_media)];
+  p.has_only_default_variant = false;
+  p.available = true;
+  p.selected_variant = null;
+  p.selected_or_first_available_variant = variants.find((v) => v.available) || variants[0];
+  p.optionDefs = options;
+  return p;
+};
+/** The product as Shopify hands it to Liquid with one variant chosen (by ?variant=, or the first available) */
+const withVariant = (p, id) => {
+  if (!p.optionDefs) return p;
+  const chosen = (id && p.variants.find((v) => String(v.id) === String(id))) || null;
+  const current = chosen || p.selected_or_first_available_variant;
+  const q = { ...p, selected_variant: chosen, selected_or_first_available_variant: current };
+  q.options_with_values = p.optionDefs.map(([name, values, drops], i) => ({
+    name, position: i + 1, selected_value: current.options[i],
+    values: drops ? values.map((v) => new OptionValue(v, p.variants.find((x) => x.options[i] === v && x.options.every((o, j) => j === i || o === current.options[j])), v === current.options[i])) : values,
+  }));
+  return q;
+};
+{
+  const vgc = arrivals[0];
+  manyVariants(vgc, [['Colours', VGC, true]], VGC.map((c) => [c]));
+  Object.assign(vgc, withVariant(vgc, null));
+  vgc.description = '<p><strong>Gobgob hates crusty paint.</strong></p><p><strong>Vallejo Game Colour</strong> is a range of acrylic paints for miniatures, in 17ml dropper bottles. Mock description for the theme checks.</p>';
+}
+const paintSet = product('paint-set-starter', 'Paint set: starter colours', 'Vallejo', 24, 24, null, false, 10, 800, 800);
+{
+  const colours = VGC.slice(10, 22);
+  manyVariants(paintSet, [['Colour', colours, false], ['Size', ['17ml', '60ml'], false]], colours.flatMap((c) => [[c, '17ml'], [c, '60ml']]));
+  Object.assign(paintSet, withVariant(paintSet, null));
+}
+const allProducts = Object.fromEntries([...arrivals, ...boardGames, ...library, membership, ...tcgShelf, ...rpgShelf, ...soldOut, paintSet].map((p) => [p.handle, p]));
+export { withVariant };
 const pages = {
   'book-a-table': { handle: 'book-a-table', title: 'Book a Table or Session', url: '/pages/book-a-table', content: '' },
   'gm-games': { handle: 'gm-games', title: 'Book a TTRPG session', url: '/pages/gm-games', content: '' },
@@ -489,6 +561,11 @@ const PAGES = {
   '/cart-open': () => renderPage('index', { cart: fullCart }),
   '/products/wingspan': () => renderPage('product', { product: boardGames[0], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
   '/products/library': () => renderPage('product', { product: library[1], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
+  // r9 site: the dropdown with pictures (48 colours), one colour chosen by ?variant=, and two options (12 colours, 2 sizes).
+  // Keys for render.mjs check only: a browser's /products/<handle>?variant=… goes through libraryRoute, which reads it.
+  '/products/vallejo-game-colour?colours=48': () => renderPage('product', { product: arrivals[0], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
+  '/products/vallejo-game-colour?variant=49200000000022': () => renderPage('product', { product: withVariant(arrivals[0], 49200000000022), request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
+  '/products/paint-set-starter?options=2': () => renderPage('product', { product: paintSet, request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
   '/collections/new-additions': () => shopCollectionPage('new-additions'), // r7 shell: with the store's filters
   '/pages/book-a-table': () => renderPage('page.bookings', { page: pages['book-a-table'], template: { name: 'page', suffix: 'bookings' } }),
   '/pages/gm-games': () => renderPage('page.gm-games', { page: pages['gm-games'], template: { name: 'page', suffix: 'gm-games' } }),
@@ -530,7 +607,7 @@ function libraryRoute(url) {
     return () => productPage(p);
   }
   const pm = url.pathname.match(/^\/products\/([^/]+)$/);
-  if (pm && allProducts[pm[1]]) return () => productPage(allProducts[pm[1]]);
+  if (pm && allProducts[pm[1]]) return () => productPage(withVariant(allProducts[pm[1]], url.searchParams.get('variant'))); // r9 site: ?variant=
   if (url.pathname === '/pages/dice-goblin-board-game-rental-membership') {
     return () => renderPage('page.rent-terms-and-conditions', { page: pages['dice-goblin-board-game-rental-membership'], template: { name: 'page', suffix: 'rent-terms-and-conditions' } });
   }
