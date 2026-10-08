@@ -73,8 +73,9 @@ const title = await text(page, '[data-panel="games"] .staff-gm__head h3');
 const grace = await page.evaluate(() => window.Lair.store.backend.staffMembers().find((x) => x.firstName === 'Grace').code);
 await page.fill('#find-add', grace.toLowerCase());
 await sleep(600);
-log('member finder by code:', (await text(page, '[data-member-results="add"]')).slice(0, 120));
-await page.click('[data-member-pick][data-key="add"]');
+// round 9: a member code picks them at once, so there's no list to tap (a name still lists them)
+log('member finder by code:', ((await text(page, '[data-member-picked="add"]')) || (await text(page, '[data-member-results="add"]'))).slice(0, 120));
+if (await page.isHidden('[data-member-picked="add"]')) await page.click('[data-member-pick][data-key="add"]');
 await sleep(200);
 await page.click('[data-gm-add] button[type="submit"]');
 await sleep(500);
