@@ -64,6 +64,22 @@ const monthly = { handle: 'oddity-alley-qa', title: 'Oddity Alley market', event
 }
 ev.extraEvents.push(fortnight, monthly);
 
+/** The booking's n-th day (0 today): its day strip's chip, or (round 9, the one booking page) the same day on the page's
+    month view, which picks the booking's day there (the booking's own strip steps aside) */
+async function bookingDay(p, n) {
+  await p.waitForSelector('[data-dates] [data-day]', { state: 'attached' });
+  const day = await p.$$eval('[data-dates] [data-day]', (els, i) => els.map((e) => e.dataset.day)[i], n);
+  if (await p.locator('lair-play [data-play-date]').count()) {
+    await p.waitForFunction(() => document.querySelector('lair-play')?.ready === true);
+    for (let i = 0; i < 3 && !(await p.locator(`lair-play [data-play-date="${day}"]`).count()); i += 1) await p.click('lair-play [data-play-month="1"]');
+    await p.click(`lair-play [data-play-date="${day}"]`);
+  } else {
+    await p.click(`[data-dates] [data-day="${day}"]`);
+  }
+  await p.waitForTimeout(250);
+  return day;
+}
+
 let fails = 0;
 const check = (name, ok, detail = '') => {
   if (!ok) fails += 1;
@@ -151,8 +167,14 @@ try {
         await done(o);
       }
     } else {
-      // the calendar's day strip sits right under the header
+      // the calendar's day strip sits right under the header. Round 9: the events calendar is the Events tab of the one
+      // booking page (lair-play), whose month view picks the day: no week strip to stick
       const o = await open(width, '/pages/events-calendar', { height });
+      const playPage = await o.page.waitForSelector('lair-play [data-play-date]', { timeout: 15000 }).then(() => true).catch(() => false);
+      if (playPage) {
+        const v = await o.page.evaluate(() => ({ days: document.querySelectorAll('lair-play [data-play-date]').length, strip: Boolean(document.querySelector('lair-calendar .cal-strip')), tab: document.querySelector('lair-play').dataset.activeTab }));
+        check(`${tag} calendar: the one booking page opens on Events, its month view picking the day (no week strip to stick)`, v.days >= 28 && !v.strip && v.tab === 'events', v);
+      } else {
       await o.page.waitForSelector('lair-calendar .cal-strip', { timeout: 15000 }).catch(() => {});
       const c = await o.page.evaluate(async () => {
         const strip = document.querySelector('lair-calendar .cal-strip');
@@ -166,6 +188,7 @@ try {
         return { position: getComputedStyle(strip).position, top: Math.round(strip.getBoundingClientRect().top), headerBottom: Math.round(header.bottom), headerTop: Math.round(header.top) };
       });
       check(`${tag} calendar: the day strip sticks right under the header`, Boolean(c) && c.position === 'sticky' && Math.abs(c.top - c.headerBottom) <= 1 && c.headerTop === 0, c);
+      }
       await done(o);
     }
     {
@@ -391,10 +414,7 @@ try {
       // the table booking, logged out: missing, a landline, then an overseas number books it
       const o = await open(width, '/pages/book-a-table', { height });
       const p = o.page;
-      await p.waitForSelector('[data-dates] [data-day]');
-      const day = await p.$$eval('[data-dates] [data-day]', (els) => els.map((e) => e.dataset.day)[1]);
-      await p.click(`[data-dates] [data-day="${day}"]`);
-      await p.waitForTimeout(250);
+      await bookingDay(p, 1);
       const slot = await p.$$eval('[data-slot]', (els) => els.filter((e) => !e.disabled).map((e) => e.dataset.slot)[2]);
       await p.click(`[data-slot="${slot}"]`);
       await p.waitForTimeout(250);
@@ -482,12 +502,10 @@ try {
       const savedOf = (page) => page.evaluate((id) => (window.Lair.store.backend.state.members || []).find((x) => String(x.customerId) === String(id))?.mobile || '', HEMI.id);
       let o = await open(width, '/pages/book-a-table', { customer: HEMI, ctx });
       let p = o.page;
-      await p.waitForSelector('[data-dates] [data-day]');
+      await p.waitForSelector('[data-dates] [data-day]', { state: 'attached' });
       await p.waitForTimeout(400);
       check(`${tag} member: the booking's Mobile starts with the shop account's phone`, (await p.inputValue('#bk-phone')) === '021 777 8888', await p.inputValue('#bk-phone'));
-      const day = await p.$$eval('[data-dates] [data-day]', (els) => els.map((e) => e.dataset.day)[2]);
-      await p.click(`[data-dates] [data-day="${day}"]`);
-      await p.waitForTimeout(250);
+      await bookingDay(p, 2);
       const slot = await p.$$eval('[data-slot]', (els) => els.filter((e) => !e.disabled).map((e) => e.dataset.slot)[1]);
       await p.click(`[data-slot="${slot}"]`);
       await p.waitForTimeout(250);
@@ -618,30 +636,47 @@ try {
         };
       }, { T1, S1, S2 });
       const DAYS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+      // Round 9: on the one booking page the calendar lists the month (its regulars as cards, each once with its tag and
+      // next date), and the page's month view moves between months
+      const listView = await p.locator('lair-play .cal-listview').count();
+      if (listView) {
+        const L = await p.evaluate(() => {
+          const cal = document.querySelector('lair-calendar');
+          return [...document.querySelectorAll('.cal-listview .cal-regulars .cal-card')].map((card) => {
+            const item = cal.find(card.dataset.item);
+            return { id: card.dataset.item, day: item && item.date, repeat: item && item.repeat, tag: card.querySelector('.cal-card__repeat')?.textContent.trim() || '', next: card.querySelector('.cal-card__next')?.textContent.trim() || '' };
+          });
+        });
+        const handles = L.map((c) => c.id.split('@')[0]);
+        r.cards = L.map((c) => ({ day: c.day, repeat: c.repeat, tag: c.tag }));
+        check(`${tag} calendar list: the month's regulars once each, each card with its tag and "Next: …"`, L.length >= 4 && new Set(handles).size === handles.length && L.every((c) => /^(Weekly|Fortnightly|Monthly) · /.test(c.tag) && /^Next: \w{3} \d{1,2} \w{3}$/.test(c.next)), L.slice(0, 4).map((c) => `${c.id} ${c.tag} ${c.next}`).join(' | '));
+      }
       const repeating = r.cards.filter((c) => c.repeat);
-      check(`${tag} calendar week: each repeating event's card carries its tag, on its own day`, repeating.length >= 4 && repeating.every((c) => new RegExp(`^(Weekly|Fortnightly|Monthly) · .*${DAYS[dow(c.day)].slice(0, -1)}`).test(c.tag)) && r.cards.filter((c) => !c.repeat).every((c) => !c.tag), repeating.slice(0, 3).map((c) => `${c.day} ${c.tag}`).join(' | '));
+      check(`${tag} calendar ${listView ? 'list' : 'week'}: each repeating event's card carries its tag, on its own day`, repeating.length >= 4 && repeating.every((c) => new RegExp(`^(Weekly|Fortnightly|Monthly) · .*${DAYS[dow(c.day)].slice(0, -1)}`).test(c.tag)) && r.cards.filter((c) => !c.repeat).every((c) => !c.tag), repeating.slice(0, 3).map((c) => `${c.day} ${c.tag}`).join(' | '));
       check('the tag, word for word: "Weekly · Thursdays 6pm", "Fortnightly · Thursdays 6:30pm", "Monthly · Third Saturday 11am", none for a one-off', JSON.stringify(r.tags) === JSON.stringify(['Weekly · Thursdays 6pm', 'Fortnightly · Thursdays 6:30pm', 'Monthly · Third Saturday 11am', '']), r.tags);
       check(`${tag} Repeat until: the fortnightly event stops at its last date`, r.kt.includes(T1) && !r.kt.some((d) => d > fortnight.repeat_until), r.kt.join(', '));
       check(`${tag} skip dates: the monthly event's skipped date isn't on the calendar`, !r.oa.includes(S1) && r.oa.includes(S2), r.oa.join(', '));
       // the month: the regulars once each, with their tag and next date
       const monthOf = (key) => key.slice(0, 7);
-      await p.click('[data-view="month"]');
+      if (!listView) await p.click('[data-view="month"]');
       await p.waitForTimeout(300);
-      // move to the month of S2 so the monthly one is listed
+      // move to the month of S2 so the monthly one is listed (round 9: the page's month view, when it has one)
       for (let i = 0; i < 3; i += 1) {
-        const shown = await p.evaluate(() => document.querySelector('[data-title]').textContent);
+        const shown = await p.evaluate(() => (document.querySelector('[data-play-month-title]') || document.querySelector('[data-title]')).textContent);
         const want = new Date(`${S2}T12:00:00Z`).toLocaleString('en-NZ', { month: 'long', timeZone: 'UTC' });
         if (shown.startsWith(want)) break;
-        await p.click('[data-step="1"]');
+        await p.click(listView ? 'lair-play [data-play-month="1"]' : '[data-step="1"]');
         await p.waitForTimeout(250);
       }
-      const regs = await p.evaluate(() => [...document.querySelectorAll('.cal-regular')].map((b) => ({ id: b.dataset.item, title: b.querySelector('.cal-regular__title').textContent.trim(), tag: b.querySelector('.cal-regular__tag').textContent.trim(), next: b.querySelector('.cal-regular__next').textContent.trim() })));
+      const regs = await p.evaluate(() => (document.querySelector('.cal-listview')
+        ? [...document.querySelectorAll('.cal-listview .cal-regulars .cal-card')].map((b) => ({ id: b.dataset.item, title: b.querySelector('.cal-card__title').textContent.trim(), tag: b.querySelector('.cal-card__repeat').textContent.trim(), next: b.querySelector('.cal-card__next').textContent.trim() }))
+        : [...document.querySelectorAll('.cal-regular')].map((b) => ({ id: b.dataset.item, title: b.querySelector('.cal-regular__title').textContent.trim(), tag: b.querySelector('.cal-regular__tag').textContent.trim(), next: b.querySelector('.cal-regular__next').textContent.trim() }))));
       const keys = regs.map((x) => `${x.title}|${x.tag}`);
       const oddity = regs.find((x) => x.title === 'Oddity Alley market');
       check(`${tag} month view: the month's regulars listed once each, each with its tag and "Next: …"`, regs.length >= 4 && new Set(keys).size === keys.length && regs.every((x) => /^(Weekly|Fortnightly|Monthly) · /.test(x.tag) && /^Next: \w{3} \d{1,2} \w{3}$/.test(x.next)), keys.slice(0, 4).join(' / '));
       check(`${tag} month view: the monthly market reads "Monthly · Third Saturday 11am", next after the skipped date (${SHORT(S2)})`, Boolean(oddity) && oddity.tag === 'Monthly · Third Saturday 11am' && oddity.next === `Next: ${SHORT(S2)}` && oddity.id === `oddity-alley-qa@${S2}`, oddity);
       if (oddity) {
-        await p.click(`.cal-regular[data-item="${oddity.id}"]`);
+        await p.click(listView ? `.cal-listview .cal-card[data-item="${oddity.id}"]` : `.cal-regular[data-item="${oddity.id}"]`);
         await p.waitForTimeout(500);
         const sheet = await p.evaluate(() => ({ open: document.querySelector('lair-calendar dialog')?.open, text: (document.querySelector('[data-dialog-body]')?.textContent || '').replace(/\s+/g, ' ') }));
         check(`${tag} month view: a regular opens its next date, with its tag`, sheet.open && /Monthly · Third Saturday 11am/.test(sheet.text), sheet.text.slice(0, 120));

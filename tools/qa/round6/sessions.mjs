@@ -569,7 +569,10 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
       await page.keyboard.press('Enter');
       await page.waitForTimeout(500);
     }
-    const inForm = (await active(page)).id === (cal ? 'cal-sheet-title' : 'gm-sheet-title') && (await page.locator('[data-session-join]').count()) === 1;
+    // Round 9: on the one booking page (lair-play) a session always opens in the sessions board's sheet (its TTRPG tab),
+    // from the events door too; the calendar's own sheet is for events
+    const sheetTitle = cal && !(await page.locator('lair-play').count()) ? 'cal-sheet-title' : 'gm-sheet-title';
+    const inForm = (await active(page)).id === sheetTitle && (await page.locator('[data-session-join]').count()) === 1;
     await page.keyboard.press('Escape');
     await page.waitForTimeout(350);
     const back = await active(page);

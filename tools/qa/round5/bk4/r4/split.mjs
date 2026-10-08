@@ -14,7 +14,10 @@ const out = await page.evaluate(async () => {
   const st = t.at(day, 18 * 60);
   const res = await store.mutate('createBooking', { kind: 'table', tables: ['T6', 'T7'], room: 'main-room', start: st, end: st + 2 * 3600000, people: 5, extras: [], name: 'Aroha Ngata', email: 'aroha.n@example.com', phone: '021 555 0101', amount: 5000, split: true, paidAmount: 999, payments: [{ amount: 999 }] });
   r.created = { split: res.booking.split, paidAmount: res.booking.paidAmount, payments: res.booking.payments, due: res.booking.due };
-  const walk = await store.mutate('createBooking', { kind: 'walkin', tables: ['T6'], room: 'main-room', start: Date.now(), end: Date.now() + 3600000, people: 2, name: 'W', split: true, staffOverride: true, amount: 2000 });
+  // Round 9: the booking page also runs the sessions board and the calendar, whose GET /me sets up the demo member's
+  // account (a seated table today), so the walk-in takes a main-room table that's free now
+  const freeNow = store.cfg.tables.find((tb) => tb.room === 'main-room' && !store.isShopTable(tb.id) && store.isFree(tb.id, Date.now(), Date.now() + 3600000))?.id || 'T6';
+  const walk = await store.mutate('createBooking', { kind: 'walkin', tables: [freeNow], room: 'main-room', start: Date.now(), end: Date.now() + 3600000, people: 2, name: 'W', split: true, staffOverride: true, amount: 2000 });
   r.walkinSplit = walk.booking.split;
   const b = be.state.bookings.find((x) => x.id === res.booking.id);
   r.first = be.recordPayment('booking', b, { amount: 1000, name: 'Aroha Ngata', orderId: 'o1', lineId: 'l1' });
