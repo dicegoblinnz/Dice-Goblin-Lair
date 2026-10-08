@@ -23,6 +23,8 @@ import { GUEST_MESSAGES, guestList } from './core.js';
 import { sameBarcode } from './core.js';
 // Round 8: staff table holds that repeat weekly or fortnightly
 import { HOLD_REPEATS, holdSeriesDays } from './core.js';
+// Round 9: the running tab and monthly accounts (their methods are copied onto Lair at the end of this file)
+import { runningTabMethods } from './tab.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -432,6 +434,25 @@ export const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS event_join_guests_join ON event_join_guests (join_id)',
     'CREATE INDEX IF NOT EXISTS event_join_guests_customer ON event_join_guests (customer_id)',
   ],
+  // Round 9, the running tab (9 Oct 2026). Only new tables, so the live rows stay as they are:
+  //  - tab_accounts: a member staff put on a monthly account ('monthly') or back to paying each visit ('visit'), with
+  //    their credit limit in cents, a note, who set it and when. periods: a JSON list of [from, until] (until null while
+  //    it's monthly): what was checked in, or put on a tab, in a monthly period is on their account until it's paid.
+  //  - tab_bills: a member's bill ('month': the monthly bill, one per member and month; 'now': one made on request) with
+  //    its items (JSON), total, status ('open', 'paid' or 'void'), the Shopify draft order and its invoice URL, and how
+  //    it was paid ('online' or 'counter').
+  [
+    `CREATE TABLE IF NOT EXISTS tab_accounts (
+      customer_id TEXT PRIMARY KEY, billing TEXT NOT NULL, credit_limit INTEGER NOT NULL DEFAULT 0, note TEXT, periods TEXT NOT NULL DEFAULT '[]',
+      set_by TEXT, set_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS tab_bills (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, kind TEXT NOT NULL, month TEXT, items TEXT NOT NULL, total INTEGER NOT NULL, status TEXT NOT NULL,
+      draft_order_id TEXT, invoice_url TEXT, order_id TEXT, paid_how TEXT, void_reason TEXT, made_by TEXT, created_at INTEGER NOT NULL,
+      emailed_at INTEGER, reminded_at INTEGER, paid_at INTEGER, voided_at INTEGER, updated_at INTEGER)`,
+    "CREATE UNIQUE INDEX IF NOT EXISTS tab_bills_month ON tab_bills (customer_id, month) WHERE kind = 'month'",
+    'CREATE INDEX IF NOT EXISTS tab_bills_customer ON tab_bills (customer_id, status)',
+    'CREATE INDEX IF NOT EXISTS tab_bills_status ON tab_bills (status, created_at)',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -548,6 +569,10 @@ export class Lair {
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
     this.owedFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'owed-from'").toArray()[0]?.value) || 0;
+    // Round 9: the running tab only counts what's checked in (or put on a tab) from its first start, so old records
+    // never start nagging.
+    this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('tab-from', ?)", String(Date.now()));
+    this.tabFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'tab-from'").toArray()[0]?.value) || 0;
     // The loyalty card (round 6) starts brand new: only sessions starting from round 6's first start earn stamps.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('loyalty-from', ?)", String(Date.now()));
     this.loyaltyFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'loyalty-from'").toArray()[0]?.value) || 0;
@@ -1139,6 +1164,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'spend') return json(await this.memberSpend(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'members' && b && !c) return json(await this.memberDetail(decodeURIComponent(b), who));
+      // Round 9: monthly accounts for staff (the Accounts tab)
+      if (request.method === 'GET' && a === 'accounts' && !b) return json(await this.listAccounts(who));
       if (request.method === 'GET' && a === 'roll-codes' && !b) return json(this.listRollCodes(url, who));
       if (request.method === 'GET' && a === 'passes' && !b) return json(this.listPasses(url, who));
       if (request.method === 'GET' && a === 'groups' && !b) return json(this.listGroups(url, who));
@@ -1153,6 +1180,8 @@ export class Lair {
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
       if (a === 'me' && b === 'passes' && c === 'claim') return json(await this.claimPass(body, who));
       if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
+      // Round 9: "Pay online now" for everything on a monthly account
+      if (a === 'me' && b === 'account' && c === 'pay') return json(await this.payAccountNow(who));
       if (a === 'passes' && !b) return json(await this.createPass(body, who));
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
@@ -1164,6 +1193,11 @@ export class Lair {
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
+      // Round 9: a member's billing (pay each visit or a monthly account) and credit limit, and their bills
+      if (a === 'members' && b && c === 'account') return json(await this.setMemberAccount(decodeURIComponent(b), body, who));
+      if (a === 'accounts' && b && c === 'bill') return json(await this.billNow(decodeURIComponent(b), who));
+      if (a === 'bills' && b && c === 'void') return json(await this.voidBillRoute(decodeURIComponent(b), who));
+      if (a === 'bills' && b && c === 'resend') return json(await this.resendBill(decodeURIComponent(b), who));
       if (a === 'roll-codes' && !b) return json(await this.createRollCode(body, who));
       if (a === 'roll-codes' && b && c === 'update') return json(await this.updateRollCode(decodeURIComponent(b), body, who));
       if (a === 'library' && b === 'holds' && !c) return json(await this.createHold(body, who));
@@ -1281,6 +1315,8 @@ export class Lair {
       eventJoins,
       eventSpots,
       ...(who.staff ? { joins: this.staffJoins(joinRows, paid.join, from, to) } : {}),
+      // Round 9: staff see who's on a monthly account, so their fees read "On their account"
+      ...(who.staff ? { monthlyAccounts: this.monthlyIds() } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: who.staff,
@@ -1324,6 +1360,8 @@ export class Lair {
     // Round 7: a mobile number on every customer booking (tables, game seats); not on what staff make for someone
     if (!override) booking.phone = checkMobile(input.phone);
     if (!who.staff) this.checkEmailLimit(booking.email, now);
+    // Round 9: on a monthly account, not over its credit limit (staff booking for someone, the override, skip this)
+    if (!override) this.checkAccountLimit(who.customerId, booking.amount, rules, now, 'book');
     // usePass: the member's own session pass (staff may use any active one), saved for the check-in.
     const pass = input.usePass && ['table', 'gm-seat'].includes(kind) ? this.passForBooking(input.usePass, who, now) : null;
     // Tables, walk-ins and game seats are paid at the counter on the day (show the code, we ring it up): `pay` is ignored.
@@ -1735,6 +1773,8 @@ export class Lair {
       }
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
+    // Round 9: a bill with this on it stays true (paid by hand, waived or changed: see reconcileBills)
+    this.reconcileBills(rules, now);
     return { booking: this.staffBooking(this.booking(next.id)), refund };
   }
 
@@ -1761,6 +1801,8 @@ export class Lair {
       refund = patch.refunded ? 'done' : null;
     }
     this.write('UPDATE event_joins SET paid = ?, paid_amount = ?, refund = ?, updated_at = ? WHERE id = ?', paid ? 1 : 0, paidAmount || 0, refund || null, now, join.id);
+    // Round 9: a bill with this sign-up on it stays true
+    this.reconcileBills(this.rulesCache, now);
     return { join: this.staffJoinView(this.joinById(join.id)) };
   }
 
@@ -2220,6 +2262,8 @@ export class Lair {
     return {
       booking: { ...this.ownView(seat), players, customerId }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed,
       regular, invite,
+      // Round 9: staff can still add someone whose monthly account is at its limit, and see a warning
+      ...this.accountWarning(customerId, rules, now),
     };
   }
 
@@ -2461,6 +2505,8 @@ export class Lair {
     const mobile = checkMobile(input.phone);
     const players = seatPlayers(input.players, people, name);
     this.checkRate(who, client, now);
+    // Round 9: a weekly seat on a monthly account: not over its credit limit
+    this.checkAccountLimit(who.customerId, (game.seatPrice || rules.prices.gmSeat) * people, rules, now, 'book');
     // created_at is when they joined, which sets their place in the queue for seats (first to join is seated first).
     // Joining again to change who's coming keeps it; someone who left and comes back joins at the back, so they never
     // take a seat held for a regular who stayed.
@@ -3047,6 +3093,8 @@ export class Lair {
         if (linked === orderId || (linked === null && source === 'shopify_draft_order')) verified.push(item);
       }
     }
+    // Round 9: the Lair bills this order pays (its _bill lines), each checked against the bill's own draft order
+    const bills = await this.verifiedBills(order, orderId, { pos, fromDraft, source });
     // --- no awaits from here on: read each booking or sign-up fresh and record what this order paid ---
     const now = Date.now();
     const paying = [];
@@ -3058,6 +3106,10 @@ export class Lair {
     }
     const updated = this.recordPayments(paying, orderId, rules, { pos, now });
     const tabsPaid = this.markTabsPaid([...tabs].slice(0, 10), orderId, now);
+    // Round 9: a bill paid (its items too), then every open bill kept true: one whose items were all paid at the counter
+    // is paid and its draft order deleted, so it can't be paid twice; one partly paid or changed is cancelled
+    const billsPaid = this.payBills(bills, order, orderId, rules, { pos, now });
+    this.reconcileBills(rules, now, { orderId, pos });
 
     // Payments are recorded, so if Shopify can't say who the customer is right now, failing the webhook (Shopify
     // sends it again) only repeats work that's already done.
@@ -3077,7 +3129,7 @@ export class Lair {
     if (gifts.length) this.sendGiftCodes(gifts, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules });
     // Round 7: a birthday gift's product code on this order (online or at the POS) has been used
     const giftCodes = this.markGiftCodesUsed(spend, Date.now());
-    return { updated, tabs: tabsPaid, spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes };
+    return { updated, tabs: tabsPaid, spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid };
   }
 
   /**
@@ -3709,6 +3761,8 @@ export class Lair {
         checkedIn: here(x), due: x.due, gameId: x.gameId, occurrenceId: x.occurrenceId,
       })),
       message: owed.length ? `${said} They owe ${money(owedDue)} from ${plural(owed.length, 'earlier session', 'earlier sessions')}.` : said,
+      // Round 9: their billing; a monthly account's fees go on it (with what's owed, the limit and any warning)
+      account: this.accountSummary(customerId, rules, now),
     };
   }
 
@@ -3832,9 +3886,12 @@ export class Lair {
       const card = this.loyaltyOf(customerId, rules);
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
-        rows: [...today, ...owed], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
+        // round 9: after their weekly seats, what a monthly account owes from earlier days (none for pay-each-visit members)
+        rows: [...today, ...owed, ...this.accountOwedRows(customerId, rules, now)], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
         // round 7: card is the number of the card they're on
         loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card },
+        // round 9: their billing ({ billing: 'visit' }, or a monthly account's limit and what's owed)
+        account: this.accountSummary(customerId, rules, now),
       };
     }
     const row = found.type === 'join' ? this.joinRow(found.item) : this.bookingRow(found.item, rules);
@@ -3869,7 +3926,8 @@ export class Lair {
     const now = Date.now();
     const customerId = trimmed(input.customerId, 40);
     const { member, bookings, joins } = customerId ? this.memberToday(customerId, rules, now) : {};
-    const owed = customerId ? this.owedRows(customerId, rules, now) : [];
+    // round 9: and what a monthly account owes from earlier days, as /pos/scan lists it
+    const owed = customerId ? [...this.owedRows(customerId, rules, now), ...this.accountOwedRows(customerId, rules, now)] : [];
     if (!customerId || (!member && !bookings.length && !joins.length && !owed.length)) throw new RuleError('No member with that customer ID.', 404);
     const notices = [];
     const rows = [];
@@ -3998,6 +4056,8 @@ export class Lair {
     const fee = occurrence.entryFee || 0;
     const plan = this.paymentPlan(fee > 0 ? occurrence.payment : 'store', input.pay);
     const { payNow } = plan;
+    // Round 9: paid at the counter on a monthly account: not over its credit limit (paid online now, nothing goes on it)
+    if (!payNow) this.checkAccountLimit(who.customerId, fee * people, rules, now, 'join');
     const joinId = makeId('ej');
     const join = {
       id: joinId, ref: this.newCode(name, 'join', joinId, now), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
@@ -4128,6 +4188,8 @@ export class Lair {
     const unit = occurrence.entryFee || room.price;
     const plan = this.paymentPlan(unit > 0 ? occurrence.payment : 'store', input.pay);
     const { payNow } = plan;
+    // Round 9: paid at the counter on a monthly account: not over its credit limit
+    if (!payNow) this.checkAccountLimit(who.customerId, unit * people, rules, now, 'book');
     // usePass: a session pass covers a game spot's price a person at check-in, like a table.
     const pass = input.usePass ? this.passForBooking(input.usePass, who, now) : null;
     const spotId = makeId('bk');
@@ -5260,9 +5322,13 @@ export class Lair {
     if (open?.status === 'in-cart') throw new RuleError('Your tab is at the counter already. Pay for that one, then start a fresh one.', 409);
     if (!items.length) {
       if (open) this.write("DELETE FROM tabs WHERE id = ? AND status = 'open'", open.id);
+      // Round 9: a bill with this tab on it is cancelled (what it charges has changed)
+      if (open) this.reconcileBills(rules, now);
       return { tab: this.tabView(this.todayTabRow(who.customerId, rules, now)) };
     }
     const total = items.reduce((sum, x) => sum + x.price * x.qty, 0);
+    // Round 9: on a monthly account, more on the tab can't take it over its credit limit
+    this.checkAccountLimit(who.customerId, total - (open?.total || 0), rules, now, 'tab');
     let id = open?.id;
     if (open) {
       this.write("UPDATE tabs SET items = ?, total = ?, updated_at = ? WHERE id = ? AND status = 'open'", JSON.stringify(items), total, now, id);
@@ -5273,6 +5339,8 @@ export class Lair {
         id, String(who.customerId), new LairTime(rules.tz).key(now), JSON.stringify(items), total, now, now,
       );
     }
+    // Round 9: a bill with this tab on it is cancelled (what it charges has changed)
+    if (open) this.reconcileBills(rules, now);
     this.touchMember(who.customerId, {}, now);
     return { tab: this.tabView(this.sql.exec('SELECT * FROM tabs WHERE id = ?', id).one()) };
   }
@@ -5286,6 +5354,8 @@ export class Lair {
     const current = this.todayTabRow(who.customerId, rules, now);
     if (current?.status === 'in-cart') throw new RuleError('Your tab is at the counter already. Pay for that one, then start a fresh one.', 409);
     if (current?.status === 'open') this.write("DELETE FROM tabs WHERE id = ? AND status = 'open'", current.id);
+    // Round 9: a bill with this tab on it is cancelled
+    if (current?.status === 'open') this.reconcileBills(rules, now);
     return { tab: this.tabView(this.todayTabRow(who.customerId, rules, now)) };
   }
 
@@ -7068,6 +7138,8 @@ export class Lair {
           plan: plan ? { name: plan.name, games: plan.games } : null, holds: this.activeHolds(id, now).map((h) => this.staffHoldView(h, now, memo)),
           atHome: this.loansOut(id).map((l) => this.staffLoanView(l, now, memo)),
         },
+        // Round 9: their tab and account (GET /me's, plus the note, who set it, their bills and a limit warning)
+        account: this.memberAccount(id, rules, now, { staff: true }),
       },
     };
   }
@@ -7707,6 +7779,8 @@ export class Lair {
       tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
       // What they can pay at the counter now: { id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }
       dueNow,
+      // Round 9: the running tab (owed now, coming up) and, on a monthly account, the limit and the open bill
+      account: this.memberAccount(who.customerId, rules, now),
       // Birthday gifts (round 7): those with something left to collect ('ready'), and those claimed in the last 30 days,
       // whatever year they were given: { id, at, credit, sessions, rolls, product, state, claimedAt, words }
       gifts: this.sql
@@ -7945,7 +8019,18 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not check gift codes', error);
     }
+    // Round 9: monthly accounts' bills on the 1st, bills whose payment link couldn't be made yet, and one reminder after
+    // 14 days
+    try {
+      const bills = await this.billMaintenance(rules, Date.now());
+      if (bills.made.length || bills.retried.length || bills.reminded.length) result.bills = bills;
+    } catch (error) {
+      console.error('Lair: could not make monthly bills', error);
+    }
     this.note({ connection: result });
     return result;
   }
 }
+
+// Round 9: the running tab and monthly accounts (src/tab.js)
+Object.assign(Lair.prototype, runningTabMethods);
