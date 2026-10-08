@@ -247,7 +247,7 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
       return 0.2126 * r + 0.7152 * g + 0.0722 * b;
     };
     const probe = document.createElement('span');
-    probe.style.color = cs.getPropertyValue('--ml-logo-green');
+    probe.style.color = cs.getPropertyValue('--ml-forest'); // round 9: the card is deep forest green
     document.body.append(probe);
     const green = getComputedStyle(probe).color;
     probe.remove();
@@ -256,11 +256,18 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
     return {
       count: el.querySelector('[data-stamp-count] strong')?.textContent.trim(), next: el.querySelector('[data-stamp-count] span')?.textContent.trim(),
       stamped: el.querySelectorAll('[data-stamps] .ml-stamp.is-stamped').length, green, text, contrast: Math.round(((a + 0.05) / (b + 0.05)) * 10) / 10,
-      border: cs.borderTopWidth, holder: el.querySelector('.ml-stampcard__holder')?.textContent.trim(),
+      border: cs.borderTopWidth, edge: cs.borderTopColor, holder: el.querySelector('.ml-stampcard__holder')?.textContent.trim(),
+      panel: getComputedStyle(el.querySelector('[data-stamps]')).backgroundColor, tagBg: getComputedStyle(el.querySelector('.ml-stampcard__tag')).backgroundColor,
     };
   });
   check(tag, `the card says "Card ${L.card} · ${L.stamps} of 10 stamps", its stamps in the slots`, card.count === `Card ${L.card} · ${L.stamps} of ${L.cardSize} stamps` && card.stamped === L.stamps && L.card === L.cards + 1, card);
-  check(tag, "the card is in the logo's colours: bright green, black outline, text at 4.5:1 or better", /rgb\((\d+), (2[0-4]\d|25[0-5]), (\d+)\)/.test(card.green) && Number(card.green.match(/\d+/g)[1]) > 200 && card.border === '3px' && card.contrast >= 4.5, card);
+  // Round 9 (Mo: the card's green against the logo's green "is not working"): a deep forest green card, so the logo's
+  // bright green stands out; a bright goblin-green rim; cream slots; a gold tag; cream text at 4.5:1 or better.
+  const [fr, fg, fb] = (card.green.match(/\d+/g) || []).map(Number);
+  const [er, eg, eb] = (card.edge.match(/\d+/g) || []).map(Number);
+  check(tag, 'the card is deep forest green with a bright green rim, cream slots and a gold tag, text at 4.5:1 or better',
+    fg > fr && fg > fb && fg < 90 && eg > 150 && eg > er && eg > eb && card.border === '2px' && card.contrast >= 4.5
+      && card.panel !== 'rgb(255, 255, 255)' && card.panel !== 'rgba(0, 0, 0, 0)' && card.tagBg !== 'rgba(0, 0, 0, 0)', card);
   check(tag, "the card carries the holder's name", card.holder === 'Ruby Tane', card.holder);
   const readyText = flat(await page.locator('[data-rolls-ready]').innerText());
   check(tag, `rolls ready: "${L.rolls.available} roll${L.rolls.available === 1 ? '' : 's'} ready"`, readyText.startsWith(`${L.rolls.available} roll${L.rolls.available === 1 ? '' : 's'} ready`), readyText);
