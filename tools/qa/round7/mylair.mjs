@@ -481,7 +481,11 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   const gmSaid = flat(await page.locator('[data-profile-message]').innerText());
   check(tag, 'the GM profile saves', gmSaid === 'Saved. Players see this on your games.' && (await me(page)).gmProfile.name === 'Ruby the Bold', gmSaid);
   // log out, and no staff tools for a customer
-  const out = await page.evaluate(() => ({ logout: document.querySelector('[data-view="profile"] .ml-logout a')?.getAttribute('href'), staff: document.querySelectorAll('.ml-staff').length, sw: document.querySelectorAll('.view-switch').length }));
+  // round 9: they're on the page for every customer, hidden, and shown once the Lair app says they're staff (a helper)
+  const out = await page.evaluate(() => {
+    const shown = (sel) => [...document.querySelectorAll(sel)].filter((el) => !el.closest('[hidden]')).length;
+    return { logout: document.querySelector('[data-view="profile"] .ml-logout a')?.getAttribute('href'), staff: shown('.ml-staff'), sw: shown('.view-switch') };
+  });
   check(tag, 'Profile ends with log out; a customer sees no staff tools or switch', out.logout === '/account/logout' && !out.staff && !out.sw, out);
   check(tag, 'Profile: no sideways scroll', (await overflow(page)) <= 0);
   await page.screenshot({ path: `${OUT}mylair-profile-${size}.png`, fullPage: true });

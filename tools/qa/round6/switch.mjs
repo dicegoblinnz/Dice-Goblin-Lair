@@ -34,7 +34,8 @@ async function look(path, customer, width) {
   await page.goto(`http://localhost:${PORT}${path}`, { waitUntil: 'networkidle', timeout: 60000 });
   await page.waitForTimeout(600);
   const r = await page.evaluate(() => {
-    const nav = document.querySelector('.view-switch');
+    // round 9: every logged-in customer has it on the page, hidden until the Lair app says they're staff (a helper)
+    const nav = document.querySelector('.view-switch:not([hidden])');
     if (!nav) return null;
     const box = nav.getBoundingClientRect();
     return {
