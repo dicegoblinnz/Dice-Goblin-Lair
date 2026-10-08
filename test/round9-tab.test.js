@@ -634,3 +634,85 @@ test('tab (round 9): weekly seats owed are on the running tab for everyone, as r
   const { account } = await me();
   assert.deepEqual(account.owed.items.map((i) => [i.ref, i.amount, i.weekly, i.settle]), [['SJ-WYVERN-3', 1500, true, 'day']]);
 });
+
+test('tab (round 9): the counter takes everything on the account at once: /pos/checkin-member lines include earlier days and tabs, tagged', async () => {
+  await september();
+  setNow(at('2026-09-18', 18));
+  const all = (await internal('pos/checkin-member', { customerId: SAM })).data;
+  const tabId = lair.sql.exec('SELECT id FROM tabs').one().id;
+  assert.deepEqual(all.lines.map((l) => [l.price, l.properties._booking || null, l.properties._tab || null]), [['20.00', all.rows[0].ref, null], ['9.00', null, tabId]]);
+  assert.ok(all.rows.every((r) => r.owed && r.onAccount));
+});
+
+test('tab (round 9): a bill whose link is paid after it was replaced still records the payment, and the newer bill reconciles as paid', async () => {
+  const visit = await september();
+  setNow(at('2026-10-01', 9));
+  await maintenance();
+  const first = lair.sql.exec('SELECT * FROM tab_bills').one();
+  // the member asks to pay now after something changed (a new tab item): the September bill is replaced
+  setNow(at('2026-10-01', 12));
+  assert.equal((await call('POST', 'tab', { items: pocky(1) }, SAM)).status, 200);
+  const now = (await call('POST', 'me/account/pay', {}, SAM)).data;
+  assert.equal(lair.billRow(first.id).status, 'void');
+  // ...but the old link was already open in their browser and gets paid
+  await internal('orders-paid', paidDraft(shop, first.draft_order_id, 7101));
+  assert.equal(lair.booking(visit.id).paid, true, "the payment counts: it's real money");
+  assert.equal(lair.billRow(first.id).order_id, 'gid://shopify/Order/7101');
+  // the newer bill had the table and September's tab, plus today's: it's no longer all owed, so it's cancelled, and today's tab stays owed
+  const newer = lair.billRow(now.bill.id);
+  assert.equal(newer.status, 'void');
+  const { account } = await me();
+  assert.deepEqual(account.owed.items.map((i) => [i.kind, i.amount]), [['tab', 450]]);
+});
+
+test('tab (round 9): a tab a bill pays that another order already paid is flagged for staff, never marked twice', async () => {
+  await september();
+  setNow(at('2026-10-01', 9));
+  await maintenance();
+  const bill = lair.sql.exec('SELECT * FROM tab_bills').one();
+  const tab = lair.sql.exec('SELECT * FROM tabs').one();
+  const mail = captureEmails();
+  try {
+    // paid at the counter on its own first (the bill is cancelled, its link deleted)...
+    await internal('orders-paid', { id: 7201, admin_graphql_api_id: 'gid://shopify/Order/7201', source_name: 'pos', line_items: [{ id: 1, price: '4.50', quantity: 2, properties: [{ name: '_tab', value: tab.id }] }] });
+    assert.equal(lair.billRow(bill.id).status, 'void');
+    // ...then the bill's link is paid anyway: the tab stays paid by the first order, and staff hear about it
+    await internal('orders-paid', paidDraft(shop, bill.draft_order_id, 7202));
+    await settle();
+    assert.equal(lair.sql.exec('SELECT order_id FROM tabs WHERE id = ?', tab.id).one().order_id, 'gid://shopify/Order/7201');
+    assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /Paid twice: a tab/.test(m.subject)));
+  } finally {
+    mail.restore();
+  }
+});
+
+test('tab (round 9): an event paid at the counter checks the limit; one paid online now never does', async () => {
+  await members();
+  await book('2026-09-15', 18, { checkIn: true });
+  setNow(at('2026-09-15', 19));
+  assert.equal((await monthly(1000)).status, 200);
+  // $20 owed (today's visit) of a $10 limit: an event paid online now isn't on the account, so it isn't refused
+  lair.rulesCache = rulesFromSettings({ lair_hours: HOURS, lair_shop_tables: '' }, ROOMS, [...EVENTS, { id: 'champs', title: 'Championship', start: at('2026-09-20', 11), end: at('2026-09-20', 17), tables: '', capacity: 30, entryFee: 2500, payment: 'online' }]);
+  lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/1', checkoutUrl: 'https://shop.test/checkout/1' });
+  const online = await call('POST', 'events/champs@2026-09-20/join', { name: 'Sam Jones', email: 'sam@example.com', phone: MOBILE, people: 1 }, SAM);
+  assert.equal(online.status, 200, online.data.error);
+  assert.equal(online.data.checkoutUrl, 'https://shop.test/checkout/1');
+  const counter = await call('POST', 'events/quiz@2026-09-17/join', { name: 'Sam Jones', email: 'sam@example.com', phone: MOBILE, people: 1 }, SAM);
+  assert.equal(said(counter), '409 Your Lair account is at its $10 limit. Pay your bill online or at the counter, then sign up again.');
+});
+
+test('tab (round 9): reminders go only for bills that were emailed; a bill a member made to pay now gets none', async () => {
+  await september();
+  const mail = captureEmails();
+  try {
+    setNow(at('2026-09-20', 12));
+    const paying = await call('POST', 'me/account/pay', {}, SAM);
+    assert.equal(paying.status, 200, paying.data.error);
+    setNow(at('2026-09-30', 12));
+    await maintenance();
+    await settle();
+    assert.equal(mail.sent.filter((m) => /Lair bill/.test(m.subject)).length, 0, 'no email for a bill the member made, and no reminder');
+  } finally {
+    mail.restore();
+  }
+});
