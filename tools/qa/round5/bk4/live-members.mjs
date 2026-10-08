@@ -85,6 +85,12 @@ m.mockState.before = async (req, res, url) => {
   if (route === '/library/holds') return send(200, { holds: [] });
   // Round 7: and the games at home (contract v7, section 6), for that tab and a scanned member's card
   if (route === '/library/loans') return send(200, { loans: [] });
+  // Round 9 (team): the staff page asks who's using it first (the main account here), the Team tab's list, and a member's
+  // page asks for their store credit and the emails staff sent them
+  if (route === '/staff/me') return send(200, { staff: true, role: 'owner', perms: ['checkin', 'tables', 'sessions', 'events', 'members', 'money', 'library', 'community', 'team'], name: 'Mo' });
+  if (route === '/team') return send(200, { owners: [{ customerId: '7001', name: 'Mo Ashgrove', email: 'mo@example.com', code: null }], helpers: [], perms: [], defaults: ['checkin', 'tables'], log: [] });
+  if (/^\/members\/\d+\/credit$/.test(route)) return send(200, { balance: 2500, currency: 'NZD', problem: null, history: [] });
+  if (/^\/members\/\d+\/emails$/.test(route)) return send(200, { to: 'sam@example.com', emails: [], left: 30, limit: 30 });
   return send(404, { error: 'Not found' });
 };
 const server = await m.serve(PORT);
