@@ -191,7 +191,7 @@ export const communityMethods = {
    * from 9 Jul), the last 12 months likewise.
    */
   async communityStats(url, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -275,7 +275,7 @@ export const communityMethods = {
    * sign-ups too (card nights). A second one for the same person and date is refused. Returns { join, row, message, notice }.
    */
   async attendEvent(occurrenceId, input, who) {
-    this.requireStaff(who); // perm: checkin
+    this.requireStaff(who, 'checkin');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -399,13 +399,13 @@ export const communityMethods = {
 
   /** GET /community/lists (staff, perm community) → { lists }, the latest changed first */
   communityLists(who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     return { lists: this.sql.exec('SELECT * FROM community_lists ORDER BY COALESCE(updated_at, created_at) DESC, rowid DESC').toArray().map((r) => this.listView(r)) };
   },
 
   /** POST /community/lists { name, note?, customerIds } (staff, perm community) → { list } */
   async createCommunityList(input, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     // --- no awaits from here on ---
     const now = Date.now();
     const fields = this.listFields(input);
@@ -423,7 +423,7 @@ export const communityMethods = {
 
   /** POST /community/lists/:id { name?, note?, add?: [customerId], remove?: [customerId] } (staff, perm community) → { list } */
   async updateCommunityList(id, input, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     // --- no awaits from here on ---
     const now = Date.now();
     const row = this.listRow(id);
@@ -450,7 +450,7 @@ export const communityMethods = {
    * who's on them. → { ok: true, id } (one that's gone already answers the same, so a second tap isn't an error)
    */
   async removeCommunityList(id, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     // --- no awaits from here on ---
     const row = this.listRow(id);
     if (row) {
@@ -502,7 +502,7 @@ export const communityMethods = {
    * it's on the online store (anyone can buy it there). stock is null without read_inventory.
    */
   async productSearch(url, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     const q = trimmed(url.searchParams.get('q'), 80);
     if (q.length < 2) throw new RuleError("Type at least 2 letters of the product's name.", 422);
     if (!this.shopify.configured) throw new RuleError(SHOPIFY_QUIET, 503);
@@ -685,7 +685,7 @@ export const communityMethods = {
 
   /** GET /offers (staff, perm community) → { offers }: open and waiting ones first (soonest closing), then drafts, then closed, newest first */
   listOffers(who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     const now = Date.now();
     const rank = { open: 0, scheduled: 1, draft: 2, closed: 3 };
     const offers = this.sql.exec('SELECT * FROM early_offers ORDER BY created_at DESC, rowid DESC LIMIT 200').toArray().map((o) => this.offerView(o, now));
@@ -695,7 +695,7 @@ export const communityMethods = {
 
   /** GET /offers/:id (staff, perm community) → { offer, claims }: every claim, newest first, with who, what, paid or waiting */
   offerDetail(id, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     const now = Date.now();
     const o = this.offerRow(id);
     if (!o) throw new RuleError(NOT_FOUND, 404);
@@ -709,7 +709,7 @@ export const communityMethods = {
    * archived) is refused, and one on the online store comes back with `warning`. → { offer, warning }
    */
   async createOffer(input, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     const rules = await this.rules();
     const fields = this.offerInput(input, rules, Date.now());
     if (!this.shopify.configured) throw new RuleError(SHOPIFY_QUIET, 503);
@@ -744,7 +744,7 @@ export const communityMethods = {
    * notice }
    */
   async updateOffer(id, input, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     const rules = await this.rules();
     const before = this.offerRow(id);
     if (!before) throw new RuleError(NOT_FOUND, 404);
@@ -799,7 +799,7 @@ export const communityMethods = {
    * when it opens). → { offer, emailed, warning }
    */
   async openOffer(id, input, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     await this.rules();
     const before = this.offerRow(id);
     if (!before) throw new RuleError(NOT_FOUND, 404);
@@ -835,7 +835,7 @@ export const communityMethods = {
 
   /** POST /offers/:id/close (staff, perm community): early access ends now; unpaid claims are let go. → { offer, released } */
   async closeOffer(id, who) {
-    this.requireStaff(who); // perm: community
+    this.requireStaff(who, 'community');
     // --- no awaits from here on ---
     const now = Date.now();
     const o = this.offerRow(id);

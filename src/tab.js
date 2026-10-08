@@ -276,7 +276,7 @@ export const runningTabMethods = {
    * pay each visit ends it, and whatever they owe from it stays owed. Returns { account, said, before }.
    */
   async setMemberAccount(customerId, input, who) {
-    this.requireStaff(who); // perm: money
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -327,7 +327,7 @@ export const runningTabMethods = {
    * { customerId, name, code, billing, creditLimit, owed, available, overLimit, bill (the open one), lastPaid }.
    */
   async listAccounts(who) {
-    this.requireStaff(who); // perm: money
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -541,7 +541,7 @@ export const runningTabMethods = {
    * an open one. Returns { bill, emailed, said, account }.
    */
   async billNow(customerId, who) {
-    this.requireStaff(who); // perm: money
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     const id = trimmed(customerId, 40);
     const member = this.memberRow(id);
@@ -562,7 +562,7 @@ export const runningTabMethods = {
 
   /** POST /bills/:id/void (staff, perm money): cancel an open bill and delete its draft order. Returns { bill, account }. */
   async voidBillRoute(id, who) {
-    this.requireStaff(who); // perm: money
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
@@ -575,7 +575,7 @@ export const runningTabMethods = {
 
   /** POST /bills/:id/resend (staff, perm money): email an open bill again (making its link first if it has none). */
   async resendBill(id, who) {
-    this.requireStaff(who); // perm: money
+    this.requireStaff(who, 'money');
     const rules = await this.rules();
     const found = this.billRow(id);
     if (!found) throw new RuleError(TAB_MESSAGES.noBill, 404);
