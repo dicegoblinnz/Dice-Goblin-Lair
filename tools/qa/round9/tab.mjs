@@ -152,6 +152,17 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await scan(page, `${tag} My Lair account panel`, '[data-tab-account]');
   if (panel.coming) await scan(page, `${tag} My Lair coming up`, '[data-tab-coming]');
 
+  // keyboard: Pay online, then Tab to "Pay online now", each with a visible focus ring
+  await page.focus('[data-demo-bill]');
+  const ring = () => page.evaluate(() => {
+    const a = document.activeElement;
+    const cs = a && getComputedStyle(a);
+    return { el: a && (a.matches('[data-demo-bill]') ? 'bill' : a.matches('[data-account-pay]') ? 'paynow' : a.tagName), ring: Boolean(cs && cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) };
+  });
+  const k1 = await ring();
+  await page.keyboard.press('Tab');
+  const k2 = await ring();
+  check(`${tag}: keyboard: Pay online, then Tab to "Pay online now", both with a visible focus ring`, k1.el === 'bill' && k1.ring && (owed > account.bill.total ? k2.el === 'paynow' && k2.ring : true), { k1, k2 });
   // the pretend invoice pays the bill: it goes, and what was on it comes off
   await page.click('[data-demo-bill]');
   await page.waitForFunction(() => !document.querySelector('[data-demo-bill]'), null, { timeout: 10000 });
@@ -213,11 +224,13 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await scan(page, `${tag} staff member "Tab and account"`, '[data-person-account]');
   // raise the limit: it asks first, saying what it was and what it becomes; then it says so
   await page.fill('[data-acct-limit]', '120');
-  await page.click('[data-acct-form] button[type="submit"]');
+  await page.press('[data-acct-limit]', 'Enter');
   await page.waitForSelector('[data-acct-yes]');
   const ask = await page.evaluate(() => ({ words: document.querySelector('[data-person-account] .staff-acct__ask-text').textContent.trim(), focus: document.activeElement && document.activeElement.matches('.staff-acct__ask-text') }));
-  check(`${tag}: changing the limit asks first: "Change …'s credit limit from $50 to $120?"`, /^Change \w+'s credit limit from \$50 to \$120\?$/.test(ask.words) && ask.focus, ask);
-  await page.click('[data-acct-yes]');
+  check(`${tag}: changing the limit asks first (Enter in the limit field): "Change …'s credit limit from $50 to $120?"`, /^Change \w+'s credit limit from \$50 to \$120\?$/.test(ask.words) && ask.focus, ask);
+  await page.keyboard.press('Tab');
+  check(`${tag}: keyboard: Tab from the question reaches "Yes, save it"`, await page.evaluate(() => document.activeElement && document.activeElement.matches('[data-acct-yes]')));
+  await page.keyboard.press('Enter');
   await page.waitForSelector('[data-acct-said]');
   const saidLimit = await page.evaluate(() => ({ said: document.querySelector('[data-acct-said]').textContent.trim(), focus: document.activeElement && document.activeElement.matches('[data-acct-said]'), mode: document.querySelector('.staff-acct__mode').textContent.replace(/\s+/g, ' ').trim() }));
   check(`${tag}: then it says what it was and what it is now, focus on it`, /^\w+'s credit limit went from \$50 to \$120\./.test(saidLimit.said) && saidLimit.focus && /of \$120/.test(saidLimit.mode), saidLimit);
