@@ -8,7 +8,8 @@
 // - the header at 990, 1000, 1100, 1180, 1280 and 1440px: one line, nothing overlapping, wrapping or clipped
 // - the shop chips: a Game row on Trading Card Games and a System row on Role Playing Game only, empty tags hidden,
 //   and the library's Shelf and Type rows as they were
-// - the Google Maps link: address, Get directions, Read our Google reviews, the footer, the fallback when blank
+// - the Google Maps link: address, Get directions, Read our Google reviews (round 9: once on the home page, in its Reviews
+//   section; the contact page's card keeps its own), the footer, the fallback when blank
 // Usage: DG_THEME=/path/to/theme PORT=4722 node tools/qa/round6/nav.mjs   (exits 1 if anything fails)
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -360,10 +361,28 @@ try {
         reviewsH: reviews ? Math.round(box(reviews).height) : 0, under: reviews ? Math.round(box(reviews).top - box(address).bottom) : null,
         footer: foot.getAttribute('href'), footerText: foot.textContent.replace(/\s+/g, ' ').trim(),
         reviewsSection: document.querySelectorAll('.reviews').length,
+        sectionLink: [...document.querySelectorAll('.reviews a')].filter((a) => /Google reviews/.test(a.textContent)).map((a) => a.getAttribute('href')),
       };
     });
     check(`Maps (${tag}): the contact card's address and Get directions open the Google Maps listing`, g.address === MAPS && g.directions === 'Get directions', g.address);
-    check(`Maps (${tag}): "Read our Google reviews" just under Get directions, same link, new tab, 44px tall`, g.reviews === MAPS && /^Read our Google reviews/.test(g.reviewsText) && g.reviewsTarget === '_blank' && /noopener/.test(g.reviewsRel || '') && g.reviewsH >= 44 && g.under >= -1 && g.under <= 12, `${g.reviewsText}, ${g.reviewsH}px, ${g.under}px under`);
+    // round 9: the home page says "Read our Google reviews" once, in its Reviews section, so its contact card leaves it
+    // out (show_reviews_link off); the contact page's card keeps it, just under Get directions
+    check(`Maps (${tag}): on the home page "Read our Google reviews" is the Reviews section's (the listing), not the card's`, g.reviews === null && g.sectionLink.length === 1 && g.sectionLink[0] === MAPS, `${g.sectionLink.join(' ')} card ${g.reviews}`);
+    {
+      const c = await open(width, '/pages/contact');
+      const k = await c.page.evaluate(() => {
+        const card = document.querySelector('.contact-card');
+        const address = card.querySelector('.contact-card__address');
+        const reviews = card.querySelector('.contact-card__reviews');
+        const box = (el) => el.getBoundingClientRect();
+        return {
+          reviews: reviews && reviews.getAttribute('href'), reviewsText: reviews && reviews.textContent.replace(/\s+/g, ' ').trim(), reviewsTarget: reviews && reviews.getAttribute('target'),
+          reviewsRel: reviews && reviews.getAttribute('rel'), reviewsH: reviews ? Math.round(box(reviews).height) : 0, under: reviews ? Math.round(box(reviews).top - box(address).bottom) : null,
+        };
+      });
+      check(`Maps (${tag}): on the contact page "Read our Google reviews" is just under Get directions, same link, new tab, 44px tall`, k.reviews === MAPS && /^Read our Google reviews/.test(k.reviewsText) && k.reviewsTarget === '_blank' && /noopener/.test(k.reviewsRel || '') && k.reviewsH >= 44 && k.under >= -1 && k.under <= 12, `${k.reviewsText}, ${k.reviewsH}px, ${k.under}px under`);
+      await c.ctx.close();
+    }
     check(`Maps (${tag}): the footer's address opens the listing`, g.footer === MAPS && /Manukau Road/.test(g.footerText), g.footer);
     // Mo sent the reviews he picked (5 Oct): the section is on, with his six quotes
     if (width < 700) check('Maps: the home Reviews section is on, once', g.reviewsSection === 1, g.reviewsSection);
