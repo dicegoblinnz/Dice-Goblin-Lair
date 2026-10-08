@@ -3,7 +3,7 @@
 // once a month either up front or compiled. The idea is to track it all in the Shopify." And: "increase credit limit
 // or decrease it".
 // Demo mode on the theme mock, phone (390px) then desktop (1280px), each in a fresh browser (a fresh demo):
-//   1. My Lair as Ruby, who the demo puts on a monthly account ($150 limit, last month's bill open): Home's Tab card says
+//   1. My Lair as Ruby, who the demo puts on a monthly account ($500 limit, last month's bill open): Home's Tab card says
 //      what's on the account and the next thing coming up; the Tab view's panel has the limit, a bar of how much is
 //      used, the open bill with Pay online, what's on the account, store credit, and coming up (each with its date,
 //      price and "Goes on your monthly bill"); the pretend invoice pays the bill; "Pay online now" makes a bill for
@@ -117,9 +117,9 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   }));
   const owed = account.owed.total;
   const money = (c) => `$${c % 100 === 0 ? c / 100 : (c / 100).toFixed(2)}`;
-  check(`${tag}: the demo puts Ruby on a monthly account with last month's bill open`, account.billing === 'monthly' && account.creditLimit === 15000 && account.bill && account.bill.label === lastMonth, account);
+  check(`${tag}: the demo puts Ruby on a monthly account with last month's bill open`, account.billing === 'monthly' && account.creditLimit === 50000 && account.bill && account.bill.label === lastMonth, account);
   check(`${tag}: Home's Tab card: the running total on the account, what's left, and the next thing coming up`,
-    home.value === money(owed) && home.label === 'on your account' && home.more.includes(`${money(15000 - owed)} left of $150`)
+    home.value === money(owed) && home.label === 'on your account' && home.more.includes(`${money(account.creditLimit - owed)} left of ${money(account.creditLimit)}`)
       && (account.comingUp.items.length ? home.more.includes(`Next: ${account.comingUp.items[0].title}`) : true), { home, owed });
   await shot(page, `${tag}-home`, '.ml-sums, [data-sum="tab"]');
 
@@ -139,7 +139,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     };
   });
   check(`${tag}: the panel: "Your Lair account", what's used of the limit, and a bar that says it`,
-    panel.title === 'Your Lair account' && panel.used === `${money(owed)} used of your $150 limit` && panel.bar === `${money(owed)} of $150 used`, panel);
+    panel.title === 'Your Lair account' && panel.used === `${money(owed)} used of your ${money(account.creditLimit)} limit` && panel.bar === `${money(owed)} of ${money(account.creditLimit)} used`, panel);
   check(`${tag}: the open bill: "Your ${lastMonth} bill", its total and Pay online`, panel.billLabel === `Your ${lastMonth} bill` && panel.billTotal === money(account.bill.total) && panel.pay, panel);
   check(`${tag}: what's on the account, one line each, and store credit used when you pay`, panel.lines === account.owed.items.length && panel.credit === 'Store credit: $5, used when you pay.', panel);
   check(`${tag}: "Pay online now" for everything owed (more than the bill)`, owed > account.bill.total ? panel.payNow === `Pay online now (${money(owed)})` : !panel.payNow, panel);
@@ -157,7 +157,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await page.waitForFunction(() => !document.querySelector('[data-demo-bill]'), null, { timeout: 10000 });
   const paid = await page.evaluate(() => ({ notice: (document.querySelector('[data-notice]') || {}).textContent || '', used: document.querySelector('.ml-acct__used').textContent.replace(/\s+/g, ' ').trim() }));
   const after = owed - account.bill.total;
-  check(`${tag}: Pay online (the demo's pretend invoice) pays the bill and what was on it`, /Paid online\. Thanks, friend!/.test(paid.notice) && paid.used === `${money(after)} used of your $150 limit`, paid);
+  check(`${tag}: Pay online (the demo's pretend invoice) pays the bill and what was on it`, /Paid online\. Thanks, friend!/.test(paid.notice) && paid.used === `${money(after)} used of your ${money(account.creditLimit)} limit`, paid);
   // "Pay online now": a bill for everything still owed (the demo shows its pretend invoice on the bill)
   if (after > 0) {
     await page.click('[data-account-pay]');
@@ -174,11 +174,11 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
       await be.saveTab({ items: [{ variantId: '9100000001', title: 'Pocky', variantTitle: 'Strawberry', price: Math.min(100000, room + 100), qty: 1 }] });
       return { ok: true };
     } catch (e) {
-      return { ok: false, status: e.status, message: e.message, room };
+      return { ok: false, status: e.status, message: e.message, room, limit: a.creditLimit };
     }
   });
   check(`${tag}: a tab item over the limit is refused (409) with the app's words`,
-    !refused.ok && refused.status === 409 && refused.message === `That would take your Lair account over its $150 limit (${money(refused.room)} left). Pay your bill online or at the counter, then add to your tab again.`, refused);
+    !refused.ok && refused.status === 409 && refused.message === `That would take your Lair account over its ${money(refused.limit)} limit (${money(refused.room)} left). Pay your bill online or at the counter, then add to your tab again.`, refused);
 
   /* ---------- 2. the staff page ---------- */
   await open('/pages/lair-staff#accounts', STAFF);

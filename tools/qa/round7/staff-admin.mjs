@@ -104,7 +104,8 @@ for (const size of sizes) {
   {
     const { ctx, page } = await open(size, '/pages/lair-staff#events');
     const tabs = await page.$$eval('.staff-tab', (els) => els.map((el) => ({ text: el.childNodes[0].textContent.trim(), id: el.dataset.tab, on: el.getAttribute('aria-selected') })));
-    check(`${size}: ten tabs in the contract's order`, JSON.stringify(tabs.map((x) => x.text)) === JSON.stringify(TABS), tabs.map((x) => x.text));
+    // round 9: later rounds' tabs come after these ten (tab's Accounts, say)
+    check(`${size}: ten tabs in the contract's order, then later rounds' (round 9: Accounts)`, JSON.stringify(tabs.slice(0, TABS.length).map((x) => x.text)) === JSON.stringify(TABS) && tabs.map((x) => x.text).includes('Accounts'), tabs.map((x) => x.text));
     const panels = await page.$$eval('.staff-panel', (els) => els.map((el) => el.id));
     check(`${size}: groups, codes and events panels sit right after passes`, panels.join(',').includes('panel-passes,panel-groups,panel-codes,panel-events'), panels.join(','));
     check(`${size}: #events opens the Events tab`, tabs.find((x) => x.id === 'events').on === 'true' && !(await page.isHidden('#panel-events')), tabs);
