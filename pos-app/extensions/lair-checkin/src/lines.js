@@ -196,6 +196,19 @@ export function itemCount(items) {
 }
 
 /**
+ * Round 9: the member view's word about a monthly account (the scan's `account`), or '' for someone paying each visit:
+ * "Today's fees go on their account ($45 owed of $100). Add to the cart only if they want to pay now."
+ * @param {{ billing?: string, creditLimit?: number, owed?: number, warning?: string | null } | null | undefined} account
+ */
+export function accountLine(account) {
+  if (account?.billing !== 'monthly') return '';
+  const owed = Math.max(0, Math.round(Number(account.owed) || 0));
+  const limit = Math.max(0, Math.round(Number(account.creditLimit) || 0));
+  const said = `Today's fees go on their account (${money(owed)} owed of ${money(limit)}). Add to the cart only if they want to pay now.`;
+  return account.warning ? `${said} ${account.warning}` : said;
+}
+
+/**
  * "Warhammer league covered $10 · 6 sessions left", from the `pass` in a check-in answer.
  * @param {UsedPass | null | undefined} pass
  */
