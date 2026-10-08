@@ -17,6 +17,8 @@ import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
 import { checkMobile, mobileKey } from './core.js';
 import { eventPayment } from './core.js';
+// Round 8: friends on event sign-ups, each by member code or by name
+import { GUEST_MESSAGES, guestList } from './core.js';
 // Round 8: barcodes match with or without leading zeros
 import { sameBarcode } from './core.js';
 
@@ -407,6 +409,14 @@ export const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS series_invites_email ON series_invites (lower(email), status)',
     'CREATE INDEX IF NOT EXISTS games_gm_email ON games (lower(gm_email))',
   ],
+  // Round 8, guests (9 Oct 2026): friends on event sign-ups. A new table only: one row for each person coming with
+  // whoever signed up, by member code (their customer ID, the name the Lair has for them and their code) or by name.
+  [
+    `CREATE TABLE IF NOT EXISTS event_join_guests (
+      id TEXT PRIMARY KEY, join_id TEXT NOT NULL, customer_id TEXT, name TEXT NOT NULL, code TEXT, created_at INTEGER NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS event_join_guests_join ON event_join_guests (join_id)',
+    'CREATE INDEX IF NOT EXISTS event_join_guests_customer ON event_join_guests (customer_id)',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -617,22 +627,65 @@ export class Lair {
 
   /**
    * A sign-up as its owner sees it. payment: how it is or will be paid ('online' once it went to checkout, otherwise
-   * 'store', at the counter). refund: null, 'ask' (staff decide), 'due' or 'done'.
+   * 'store', at the counter). refund: null, 'ask' (staff decide), 'due' or 'done'. Round 8: guests, who's coming with
+   * them ({ name, member }: member when they have an account; never a code or an ID). guests: the sign-up's guest rows
+   * when a list has them already (guestsIn), or they're looked up.
    */
-  joinView(j) {
+  joinView(j, guests = null) {
     return {
       id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, name: j.name, status: j.status,
       pay: j.pay, paid: j.paid, amount: j.amount, payment: j.pay === 'now' ? 'online' : 'store', refund: j.refund || null,
       paidAmount: j.paidAmount || 0, due: dueOf(j),
+      guests: (guests || this.joinGuests(j.id)).map((g) => ({ name: g.name, member: Boolean(g.customer_id) })),
     };
   }
 
-  /** A sign-up as staff see it, with who paid what (payments: from a list's paymentsIn, or looked up), and (round 7) their mobile */
-  staffJoinView(j, payments = null) {
+  /**
+   * A sign-up as staff see it, with who paid what (payments: from a list's paymentsIn, or looked up), and (round 7) their
+   * mobile. Round 8: guests adds each one's customerId and member code (their code now, if staff have given them a new
+   * one since). guests: as joinView.
+   */
+  staffJoinView(j, payments = null, guests = null) {
+    const list = guests || this.joinGuests(j.id);
     return {
-      ...this.joinView(j), email: j.email, note: j.note, arrivedAt: j.arrivedAt, customerId: j.customerId || null, orderId: j.orderId || null,
-      due: dueOf(j), payments: payments || this.paymentsOf('join', j.id), phone: j.phone || '',
+      ...this.joinView(j, list), email: j.email, note: j.note, arrivedAt: j.arrivedAt, customerId: j.customerId || null, orderId: j.orderId || null,
+      due: dueOf(j), payments: payments || this.paymentsOf('join', j.id), phone: j.phone || '', guests: list.map((g) => this.staffGuest(g)),
     };
+  }
+
+  /** The floor's sign-ups for staff (round 8: with their guests): staffJoinView for each, the window's payments and guests read once */
+  staffJoins(joinRows, payments, from, to) {
+    const guests = this.guestsIn(from, to);
+    return joinRows.map((j) => this.staffJoinView(j, payments.get(j.id) || [], guests.get(j.id) || []));
+  }
+
+  /** Round 8: a guest on a sign-up as staff see it: { name, member, customerId, code } */
+  staffGuest(g) {
+    return { name: g.name, member: Boolean(g.customer_id), customerId: g.customer_id || null, code: g.member_code || g.code || null };
+  }
+
+  /** Round 8: one sign-up's guest rows, in the order they were added, with each member's code now (member_code). No awaits. */
+  joinGuests(joinId) {
+    return this.sql
+      .exec('SELECT g.*, m.code AS member_code FROM event_join_guests g LEFT JOIN members m ON m.customer_id = g.customer_id WHERE g.join_id = ? ORDER BY g.rowid', String(joinId))
+      .toArray();
+  }
+
+  /** Round 8: the guest rows of every sign-up in [from, to), by its id, for lists (as joinGuests). No awaits. */
+  guestsIn(from, to) {
+    const byJoin = new Map();
+    const rows = this.sql
+      .exec(
+        `SELECT g.*, m.code AS member_code FROM event_join_guests g JOIN event_joins j ON j.id = g.join_id LEFT JOIN members m ON m.customer_id = g.customer_id
+         WHERE j.ends_at > ? AND j.starts_at < ? ORDER BY g.rowid`,
+        from, to,
+      )
+      .toArray();
+    for (const r of rows) {
+      if (!byJoin.has(r.join_id)) byJoin.set(r.join_id, []);
+      byJoin.get(r.join_id).push(r);
+    }
+    return byJoin;
   }
 
   /** A game picture's public address (pictures are served by the Worker at /img/<id>) */
@@ -1207,7 +1260,7 @@ export class Lair {
       events: [],
       eventJoins,
       eventSpots,
-      ...(who.staff ? { joins: joinRows.map((j) => this.staffJoinView(j, paid.join.get(j.id) || [])) } : {}),
+      ...(who.staff ? { joins: this.staffJoins(joinRows, paid.join, from, to) } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (who.staff ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: who.staff,
@@ -3189,15 +3242,17 @@ export class Lair {
     this.requireStaff(who);
     const rules = await this.rules();
     // --- no awaits from here on ---
-    // A member code on the staff page also lists what they owe from earlier sessions (owed rows), for Waive and Mark paid.
-    return this.ticketCheckIn(input, rules, Date.now(), who.customerId ? `staff:${who.customerId}` : 'staff', { owed: true });
+    // A member code on the staff page also lists what they owe from earlier sessions (owed rows), for Waive and Mark paid,
+    // and (round 8) today's sign-ups someone else put them on as a guest.
+    return this.ticketCheckIn(input, rules, Date.now(), who.customerId ? `staff:${who.customerId}` : 'staff', { owed: true, guests: true });
   }
 
   /**
    * The check-in itself, shared by the staff page and the POS. by: who did it, kept with any pass use. owed: a member
-   * code also lists their owed rows (the staff page asks for them; the POS's round 3 member-code lines don't). No awaits.
+   * code also lists their owed rows (the staff page asks for them; the POS's round 3 member-code lines don't). guests
+   * (round 8, the staff page): and the sign-ups today they're a guest on. No awaits.
    */
-  ticketCheckIn(input, rules, now, by = null, { owed = false } = {}) {
+  ticketCheckIn(input, rules, now, by = null, { owed = false, guests = false } = {}) {
     const options = { force: input.force === true, pass: input.pass, by };
     if (input.id != null && input.id !== '') {
       const id = String(input.id);
@@ -3209,7 +3264,7 @@ export class Lair {
     }
     const found = this.findCode(input.code);
     if (!found) throw new RuleError('No booking, member or pass with that code.', 404);
-    if (found.type === 'member') return this.memberCard(found.item.customer_id, rules, now, { owed });
+    if (found.type === 'member') return this.memberCard(found.item.customer_id, rules, now, { owed, guests });
     if (found.type === 'pass') {
       const pass = this.passView(found.item, { now });
       return {
@@ -3368,14 +3423,18 @@ export class Lair {
     };
   }
 
-  /** An event sign-up as a check-in row. Its entry fee is never covered by a pass. payments: see bookingRow. */
-  joinRow(j, { payments = null } = {}) {
+  /**
+   * An event sign-up as a check-in row. Its entry fee is never covered by a pass. payments: see bookingRow. Round 8: guests,
+   * who's coming with them, as staff see them (staffGuest); guests: the sign-up's guest rows when a list has them (guestsIn).
+   */
+  joinRow(j, { payments = null, guests = null } = {}) {
     return {
       id: j.id, type: 'join', kind: 'join', ref: j.ref, name: j.name || '', people: j.people, tables: [], start: j.start, end: j.end,
       status: j.status, arrivedAt: j.arrivedAt || null, paid: j.paid, amount: j.amount || 0, covered: 0, due: dueOf(j),
       paidAmount: j.paidAmount || 0, payments: payments || this.paymentsOf('join', j.id), split: false,
       customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
       gameId: null, occurrenceId: j.occurrenceId, seriesId: null, owed: false, waived: false,
+      guests: (guests || this.joinGuests(j.id)).map((g) => this.staffGuest(g)),
     };
   }
 
@@ -3430,11 +3489,15 @@ export class Lair {
    * their owed rows come after today's, oldest first (owedRows, owed: true), the ones not already among today's. They
    * are never checked in, only paid or waived; due counts them, and the message says what they owe.
    */
-  memberCard(customerId, rules, now, { owed: withOwed = false } = {}) {
+  memberCard(customerId, rules, now, { owed: withOwed = false, guests: withGuests = false } = {}) {
     const { member, bookings, joins } = this.memberToday(customerId, rules, now);
-    if (!member && !bookings.length && !joins.length) throw new RuleError('No booking, member or pass with that code.', 404);
+    // Round 8 (the staff page): today's sign-ups someone else put them on, as rows with guestOf (who signed them up).
+    // What's due on one is the signer's, so it isn't in their total; checking it in checks in everyone on it.
+    const guestOf = withGuests ? this.guestSignUps(customerId, rules, now).filter((j) => !joins.some((x) => x.id === j.id)) : [];
+    if (!member && !bookings.length && !joins.length && !guestOf.length) throw new RuleError('No booking, member or pass with that code.', 404);
     const memo = new Map();
     const rows = [...bookings.map((b) => this.bookingRow(b, rules, { memo })), ...joins.map((j) => this.joinRow(j))].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
+    const along = guestOf.map((j) => ({ ...this.joinRow(j), guestOf: { name: this.firstNameOf(j.name) } }));
     const today = new Set(rows.map((x) => x.id));
     // The staff page's rows, without the POS's cart line
     const owed = withOwed ? this.owedRows(customerId, rules, now, memo).filter((x) => !today.has(x.id)).map(({ line, ...x }) => x) : [];
@@ -3443,17 +3506,43 @@ export class Lair {
     const owedDue = owed.reduce((sum, x) => sum + x.due, 0);
     const here = (x) => Boolean(x.arrivedAt) || ['seated', 'done', 'attended'].includes(x.status);
     const list = rows.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${here(x) ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
-    const said = rows.length ? `${name} has ${plural(rows.length, 'booking', 'bookings')} today. ${list}.` : `${name} has nothing booked today.`;
+    let said = rows.length ? `${name} has ${plural(rows.length, 'booking', 'bookings')} today. ${list}.` : `${name} has nothing booked today.`;
+    if (along.length) {
+      if (!rows.length) said = `${name} has no booking of their own today.`;
+      said += ` ${along.map((x) => `${x.guestOf.name} signed them up for ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''})`).join('; ')}.`;
+    }
     return {
       found: true, kind: 'member', type: 'member', checkedIn: false, customer: { id: String(customerId) },
       member: { customerId: String(customerId), name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null },
-      rows: [...rows, ...owed], passes: this.activePasses(customerId, now), due,
+      rows: [...[...rows, ...along].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name)), ...owed], passes: this.activePasses(customerId, now), due,
       bookings: rows.map((x) => ({
         kind: x.type, id: x.id, ref: x.ref, title: x.title, start: x.start, end: x.end, people: x.people, tables: x.tables, status: x.status,
         checkedIn: here(x), due: x.due, gameId: x.gameId, occurrenceId: x.occurrenceId,
       })),
       message: owed.length ? `${said} They owe ${money(owedDue)} from ${plural(owed.length, 'earlier session', 'earlier sessions')}.` : said,
     };
+  }
+
+  /**
+   * Round 8: today's sign-ups (not cancelled) a member is a guest on: someone else signed them up. One they signed up
+   * themselves (their own account on it) isn't one. No awaits.
+   */
+  guestSignUps(customerId, rules, now) {
+    const { from, to } = this.dayWindow(rules, now);
+    return this.sql
+      .exec(
+        `SELECT j.* FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
+         WHERE x.customer_id = ? AND j.ends_at > ? AND j.starts_at < ? AND j.status != 'cancelled' AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
+         ORDER BY j.starts_at`,
+        String(customerId), from, to,
+      )
+      .toArray()
+      .map((r) => this.rowToJoin(r));
+  }
+
+  /** Round 8: the first name on a sign-up ("Sam" for Sam Jones): who signed a guest up, as their My Lair and staff say it */
+  firstNameOf(name) {
+    return String(name || '').trim().split(/\s+/)[0] || 'A friend';
   }
 
   /* ---------------- the POS at the counter ---------------- */
@@ -3685,6 +3774,11 @@ export class Lair {
   }
 
   /* ---------------- events ---------------- */
+  /**
+   * POST /events/:occurrenceId/join { name, email, phone, note?, pay?, guests? | people }. Round 8: guests, the people
+   * coming along ([{ code?, name? }], up to 5): a member code finds that member, a name is for someone without one, and
+   * people is 1 + guests. Without guests it's people (1 to 6, friends unnamed), as before.
+   */
   async joinEvent(occurrenceId, input, who, client = '') {
     const rules = await this.rules();
     // --- no awaits from here on ---
@@ -3693,7 +3787,8 @@ export class Lair {
     if (!occurrence) throw new RuleError('That event date could not be found.', 404);
     if (!occurrence.capacity) throw new RuleError("No need to sign up for this one. Just turn up!", 422);
     if (occurrence.end <= now) throw new RuleError('That one has already finished.');
-    const people = Math.floor(Number(input.people));
+    const listed = Array.isArray(input.guests) ? guestList(input.guests) : null;
+    const people = listed ? 1 + listed.length : Math.floor(Number(input.people));
     if (!(people >= 1 && people <= 6)) throw new RuleError('Sign up between 1 and 6 people.');
     const name = String(input.name || '').trim().slice(0, 80);
     const email = String(input.email || '').trim().slice(0, 120);
@@ -3702,6 +3797,8 @@ export class Lair {
     // Round 7: a mobile number on every sign-up
     const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
+    // Round 8: after the rate limit, so trying member codes counts towards it
+    const guests = listed ? this.findGuests(listed, who) : [];
     const taken = this.sql
       .exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled'", occurrenceId)
       .one().n;
@@ -3725,9 +3822,44 @@ export class Lair {
       join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, join.status, who.customerId || null,
       join.pay, join.amount, join.holdUntil, now, now, phone,
     );
+    for (const g of guests) {
+      this.write('INSERT INTO event_join_guests (id, join_id, customer_id, name, code, created_at) VALUES (?, ?, ?, ?, ?, ?)', makeId('eg'), join.id, g.customerId, g.name, g.code, now);
+    }
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // --- saved: the spaces are ours ---
     return { ...(await this.payOrConfirmJoin(join, rules, plan)), spacesLeft: left - people };
+  }
+
+  /**
+   * Round 8: who's coming with someone who signs up (guestList's entries, in order). A code finds that member, however
+   * it's typed, and keeps their customer ID, the name the Lair has for them and their code; a name is just a name. The
+   * 422s: a code nobody has, the person's own code (logged in) and the same member twice. No awaits.
+   */
+  findGuests(listed, who) {
+    const seen = new Set();
+    return listed.map((g) => {
+      if (!g.key) return { customerId: null, name: g.name, code: null };
+      const member = this.memberByCode(g.code);
+      if (!member) throw new RuleError(GUEST_MESSAGES.unknown(g.code));
+      if (who.customerId && String(member.customer_id) === String(who.customerId)) throw new RuleError(GUEST_MESSAGES.own);
+      const name = trimmed(member.name || member.first_name || g.name, 80) || member.code;
+      if (seen.has(String(member.customer_id))) throw new RuleError(GUEST_MESSAGES.twice(name));
+      seen.add(String(member.customer_id));
+      return { customerId: String(member.customer_id), name, code: member.code };
+    });
+  }
+
+  /**
+   * Round 8: the member a typed member code belongs to (any case, dashes optional, as check-in reads codes), or null. Only
+   * a member's code now counts: one staff replaced finds nobody. No awaits.
+   */
+  memberByCode(text) {
+    for (const key of codeKeys(text)) {
+      const row = this.sql.exec("SELECT target_id FROM codes WHERE key = ? AND kind = 'member'", key).toArray()[0];
+      const member = row ? this.memberRow(row.target_id) : null;
+      if (member && codeKey(member.code) === key) return member;
+    }
+    return null;
   }
 
   /**
@@ -3827,7 +3959,10 @@ export class Lair {
     return parseSpots(occurrence.gameTables, rules.rooms).filter((spot) => spot.every((t) => isFree(st, rules, t, occurrence.start, occurrence.end, ignore)));
   }
 
-  /** "You're on the list" email for an event sign-up ("You're locked in" once it's paid online) */
+  /**
+   * "You're on the list" email for an event sign-up ("You're locked in" once it's paid online). Round 8: with more than
+   * one person, Coming says who (comingLine). Guests aren't emailed.
+   */
   confirmJoin(join, rules) {
     if (!emailReady(this.env) || !isEmail(join.email)) return false;
     const online = Boolean(join.paid && join.pay === 'now');
@@ -3835,7 +3970,10 @@ export class Lair {
     this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`, {
       title: online ? "You're locked in!" : "You're on the list!",
       intro: `Kia ora ${join.name}, you're signed up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
-      details: [['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Entry', fee], ['Your code', join.ref]],
+      details: [
+        ['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Coming', join.people > 1 ? this.comingLine(join) : ''],
+        ['Entry', fee], ['Your code', join.ref],
+      ],
       outro: [
         dueOf(join) > 0 ? COUNTER : SHOW_CODE,
         online ? LOCKED_IN_EMAIL : "Can't make it? Cancel in My Lair or reply to this email, so someone else can have your spot.",
@@ -3845,6 +3983,17 @@ export class Lair {
     return true;
   }
 
+  /**
+   * Round 8: who's coming on a sign-up, in its email: "Sam Jones, Kiri Smith, a friend". Whoever signed up, each guest,
+   * then anyone unnamed (an older page's friends): "a friend", or "2 friends". No awaits.
+   */
+  comingLine(join, guests = this.joinGuests(join.id)) {
+    const unnamed = Math.max(0, (join.people || 1) - 1 - guests.length);
+    const names = [join.name, ...guests.map((g) => g.name)];
+    if (unnamed) names.push(unnamed === 1 ? 'a friend' : `${unnamed} friends`);
+    return names.filter(Boolean).join(', ');
+  }
+
   async cancelJoin(id, who) {
     const rules = await this.rules();
     // --- no awaits from here on ---
@@ -3852,6 +4001,9 @@ export class Lair {
     const join = this.joinById(id);
     if (!join) throw new RuleError('Sign-up not found.', 404);
     const own = who.customerId && join.customerId === who.customerId;
+    // Round 8: someone else signed a guest up, so only that person (or the counter) changes it
+    const guest = !who.staff && !own && who.customerId && this.joinGuests(join.id).some((g) => String(g.customer_id || '') === String(who.customerId));
+    if (guest) throw new RuleError(GUEST_MESSAGES.guestOnly, 403);
     if (!who.staff && !own) throw new RuleError('Only staff can change that sign-up.', 403);
     if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
     const paid = join.paidAmount > 0;
@@ -4525,7 +4677,10 @@ export class Lair {
    * checked in ('seated', or 'done' once they left) and their event sign-ups that were 'attended', for sessions that
    * start on or after the loyalty start. Each is a stamp for every person on it (friends without an account go on the
    * booker's card). No-shows, cancellations and holds never count, and undoing a check-in takes its stamps back,
-   * because nothing is stored: it's counted here every time. A GM's own table isn't one. No awaits.
+   * because nothing is stored: it's counted here every time. A GM's own table isn't one. Round 8: a guest with an
+   * account on someone's sign-up gets their own stamp (one person, on their card), so the sign-up's own card counts its
+   * people less its guests with an account. One who signed up is never their own guest too (a guest row with the sign-up's
+   * own account, from before it joined their account, counts once). No awaits.
    */
   stampedSessions(customerId, limit = -1) {
     return this.sql
@@ -4535,10 +4690,15 @@ export class Lair {
            FROM bookings b LEFT JOIN games g ON g.id = b.game_id
           WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.status IN ('seated', 'done') AND b.starts_at >= ?
          UNION ALL
-         SELECT j.id, 'join', j.starts_at, j.people, '[]', j.occurrence_id, NULL, j.title
+         SELECT j.id, 'join', j.starts_at, MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0),
+             '[]', j.occurrence_id, NULL, j.title
            FROM event_joins j WHERE j.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ?
+         UNION ALL
+         SELECT j.id, 'join', j.starts_at, 1, '[]', j.occurrence_id, NULL, j.title
+           FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
+          WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
          ORDER BY at DESC, id DESC LIMIT ?`,
-        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, limit,
+        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, limit,
       )
       .toArray();
   }
@@ -4550,8 +4710,12 @@ export class Lair {
         `SELECT COALESCE(SUM(people), 0) AS n FROM (
            SELECT people FROM bookings WHERE customer_id = ? AND kind IN ('table', 'walkin', 'gm-seat') AND status IN ('seated', 'done') AND starts_at >= ?
            UNION ALL
-           SELECT people FROM event_joins WHERE customer_id = ? AND status = 'attended' AND starts_at >= ?)`,
-        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
+           SELECT MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0)
+             FROM event_joins j WHERE j.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ?
+           UNION ALL
+           SELECT 1 FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
+            WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id))`,
+        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
       )
       .one().n;
   }
@@ -7302,6 +7466,8 @@ export class Lair {
       .map((c) => ({ gameId: c.game_id, title: c.title, players: c.players, amount: c.amount, status: c.status, at: c.created_at }));
     const joins = this.sql.exec('SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray()
       .map((r) => withLink(this.rowToJoin(r), r));
+    // Round 8: and the sign-ups they're a guest on (someone else signed them up), in among their own, soonest first
+    const joinList = [...joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })), ...this.guestJoins(who.customerId, since, memberRow)].sort((a, b) => a.start - b.start);
     return {
       customer: { id: who.customerId, staff: who.staff, gm: who.gm },
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
@@ -7314,7 +7480,7 @@ export class Lair {
         };
       }),
       games: gameRows.map((g) => ({ ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id) })),
-      joins: joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })),
+      joins: joinList,
       credits,
       member: {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
@@ -7358,6 +7524,26 @@ export class Lair {
         .filter((r) => this.giftState(r, now).listed)
         .map((r) => this.memberGiftView(r, now)),
     };
+  }
+
+  /**
+   * Round 8: GET /me's sign-ups a member is a guest on (someone else signed them up), from `since` on: joinView without
+   * its money (amount, due and paidAmount 0, no refund) or the other guests' names, with their own name, guestOf (the
+   * first name of whoever signed them up), canCancel: false and their member code as the ticket (ticketCode: check-in
+   * finds the sign-up by it). No awaits.
+   */
+  guestJoins(customerId, since, member) {
+    return this.sql
+      .exec(
+        `SELECT j.*, x.name AS guest_name FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
+         WHERE x.customer_id = ? AND j.ends_at > ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id) ORDER BY j.starts_at, x.rowid`,
+        String(customerId), since,
+      )
+      .toArray()
+      .map((r) => ({
+        ...this.joinView(this.rowToJoin(r), []), name: r.guest_name, amount: 0, due: 0, paidAmount: 0, refund: null,
+        guestOf: { name: this.firstNameOf(r.name) }, canCancel: false, ...(member?.code ? { ticketCode: member.code } : {}),
+      }));
   }
 
   /**

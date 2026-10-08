@@ -71,6 +71,35 @@ export function makeCode(name, { big = false, random = randomNumbers } = {}) {
 /** What a code is matched on: letters and digits only, in capitals ("sj owlbear 17" → SJOWLBEAR17) */
 export const codeKey = (code) => String(code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+/** Round 8: the most people one event sign-up brings along (6 in all, with whoever signs up), and the words for a guest list */
+export const GUEST_LIMIT = 5;
+export const GUEST_MESSAGES = {
+  missing: 'Add a name or a member code for each person coming, or take them off the list.',
+  unknown: (code) => `Gobgob doesn't know the member code ${code}. Check it, or put their name instead.`,
+  own: "That's your own member code, friend. Add the people coming with you.",
+  twice: (name) => `${name} is on the list twice.`,
+  many: 'Sign up between 1 and 6 people.',
+  guestOnly: 'Only the person who signed up can change this. Ask them, or the counter.',
+};
+
+/**
+ * Round 8: the people coming with someone who signs up for an event, as sent ([{ code?, name? }], up to 5), checked for
+ * shape only. Each comes back as { code (as typed, in capitals, or '' with none), key (its codeKey), name (trimmed, runs
+ * of spaces made one, up to 80 characters) }; a code wins over a name, and finding its member is the Lair's job. Throws
+ * the 422s for too many people and for someone with neither a code nor a name.
+ */
+export function guestList(value) {
+  const list = Array.isArray(value) ? value : [];
+  if (list.length > GUEST_LIMIT) throw new RuleError(GUEST_MESSAGES.many);
+  return list.map((guest) => {
+    const code = String(guest?.code ?? '').trim().replace(/\s+/g, ' ').toUpperCase().slice(0, 40);
+    const name = String(guest?.name ?? '').trim().replace(/\s+/g, ' ').slice(0, 80).trim();
+    const key = codeKey(code);
+    if (!key && !name) throw new RuleError(GUEST_MESSAGES.missing);
+    return { code: key ? code : '', key, name };
+  });
+}
+
 /**
  * Round 8: the forms a product barcode can be read in. A 12-digit UPC-A (195166315386) is the same code as the 13-digit
  * EAN-13 with a 0 in front (0195166315386) and the 14-digit GTIN with two, and phone cameras report either, while
