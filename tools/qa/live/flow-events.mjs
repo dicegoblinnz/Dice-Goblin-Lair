@@ -49,7 +49,13 @@ async function join(p, id, { pay = null, people = 1 } = {}) {
   await openEvent(p, id);
   await p.click(`[data-join="${id}"]`);
   await p.waitForSelector('[data-join-form]');
-  if (people > 1) await p.check(`[data-join-form] input[name="people"][value="${people}"]`, { force: true });
+  // round 8: "Who's coming?" adds each person after you (by name here); round 7's form had How many? chips
+  if (people > 1 && await p.$('[data-join-form] [data-guest-add]')) {
+    for (let i = 1; i < people; i += 1) {
+      await p.click('[data-join-form] [data-guest-add]');
+      await p.locator('[data-join-form] [data-guest] [name="guestName"]').last().fill(`Friend ${i}`);
+    }
+  } else if (people > 1) await p.check(`[data-join-form] input[name="people"][value="${people}"]`, { force: true });
   if (pay) await p.check(`[data-join-form] input[name="pay"][value="${pay}"]`, { force: true });
   // round 7: a mobile is required; round 6's calendar form has no field for one (so its joins fail until round 7's theme)
   const mobile = p.locator('[data-join-form] input[type="tel"], [data-join-form] input[name="phone"]');

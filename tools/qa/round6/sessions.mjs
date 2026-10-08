@@ -67,7 +67,8 @@ async function open(size, path, { customer = null, ctx = null } = {}) {
   m.mockState.customer = customer;
   await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
   if (path.startsWith('/pages/gm-games')) await page.waitForSelector('.gm-card, .gm-empty', { timeout: 10000 });
-  if (path.startsWith('/pages/events-calendar')) await page.waitForSelector('.cal-card, .cal-empty', { timeout: 10000 });
+  // attached, not visible: on a phone the week's first card can be on a day before today, which the day strip hides
+  if (path.startsWith('/pages/events-calendar')) await page.waitForSelector('.cal-card, .cal-empty', { state: 'attached', timeout: 10000 });
   if (path.startsWith('/pages/my-lair') && customer) await page.waitForSelector('[data-panel="seats"]:not([aria-busy])', { state: 'attached', timeout: 10000 });
   await page.waitForTimeout(400);
   return { ctx: context, page };
@@ -546,8 +547,15 @@ for (const size of Object.keys(SIZES).filter((s) => !ONLY || s === ONLY)) {
   for (const path of ['/pages/gm-games', '/pages/events-calendar']) {
     const { ctx, page } = await open(size, path);
     const cal = path.includes('calendar');
-    const opener = page.locator(cal ? '.cal-card[data-item^="game:"]' : '.gm-card__link').first();
+    // the calendar: the week's first game still to come with room (earlier in the day or week they're past, with no
+    // Join), and on a phone its day picked first, since the day strip shows one day at a time
+    const opener = page.locator(cal ? '.cal-card[data-item^="game:"]:not(.is-past):not(:has(.is-full))' : '.gm-card__link').first();
     const key = await opener.getAttribute(cal ? 'data-item' : 'data-game');
+    if (cal && !(await opener.isVisible())) {
+      const day = await opener.evaluate((el) => el.closest('.cal-col')?.dataset.day || '');
+      if (day) await page.click(`[data-tab="${day}"]`);
+      await page.waitForTimeout(300);
+    }
     await opener.focus();
     await page.keyboard.press('Enter');
     await page.waitForTimeout(350);
