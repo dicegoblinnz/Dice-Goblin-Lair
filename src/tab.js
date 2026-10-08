@@ -555,7 +555,7 @@ export const runningTabMethods = {
     const bill = this.billRow(made.bill.id);
     const sent = made.reused ? this.sendBill(bill, rules) : made.sent;
     const said = !bill.invoice_url
-      ? `Bill made for ${dollars(bill.total)}, but Shopify didn't make its payment link yet, so it wasn't emailed. Gobgob tries again in 10 minutes.`
+      ? `Bill made for ${dollars(bill.total)}, but Shopify didn't make its payment link yet, so it wasn't emailed. The Lair tries again in 10 minutes, then sends it.`
       : sent?.ok ? `Bill for ${dollars(bill.total)} emailed to ${sent.to}.` : `Bill made for ${dollars(bill.total)}. ${sent?.message || ''}`.trim();
     return { bill: this.billView(bill, rules, { staff: true }), emailed: Boolean(sent?.ok), said, account: this.memberAccount(id, rules, Date.now(), { staff: true }) };
   },
