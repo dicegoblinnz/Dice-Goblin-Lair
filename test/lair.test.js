@@ -435,7 +435,8 @@ test('cancelling a game frees its seats; staff holds report clashing bookings', 
   const free = await call('POST', 'bookings', tableBooking({ tables: ['A1'], start: at('2026-10-01', 18), end: at('2026-10-01', 19) }));
   assert.equal(free.status, 200);
   const hold = await call('POST', 'blocks', { tables: 'A1-A2', start: at('2026-10-01', 18), end: at('2026-10-01', 20), label: 'Market' }, 'staff');
-  assert.deepEqual(hold.data.clashes, [free.data.booking.ref]);
+  // round 8: each clash is { ref, start } (a repeating hold lists them across its dates)
+  assert.deepEqual(hold.data.clashes, [{ ref: free.data.booking.ref, start: free.data.booking.start }]);
 });
 
 test('the payment webhook registers itself once, accepts "already taken", and backs off after errors', async () => {

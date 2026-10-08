@@ -767,6 +767,30 @@ export const HOLD_DAYS = 3;
 /** When a hold made at `ms` ends, in Lair time (right across daylight saving changes: the days are counted, not hours) */
 export const holdUntil = (time, ms) => time.at(addDays(time.key(ms), HOLD_DAYS), 0);
 
+/* ---------- staff table holds that repeat (round 8) ---------- */
+/** How often a staff table hold can repeat, in days */
+export const HOLD_REPEATS = { weekly: 7, fortnightly: 14 };
+
+/**
+ * Round 8: the days ('YYYY-MM-DD', Lair days) a repeating table hold falls on from `fromKey` to `toKey`, both included:
+ * every `every` days from its first day, up to its last day (`until`, included) when it has one, leaving out its skipped
+ * days. Only days: each date starts at the same Lair clock time (time.at(day, startMin)), so daylight saving never moves
+ * one.
+ */
+export function holdSeriesDays({ firstDay, every, until = null, skip = [] }, fromKey, toKey) {
+  const step = Math.floor(Number(every));
+  if (!(step > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(String(firstDay || ''))) return [];
+  const skipped = new Set(skip);
+  const last = until && until < toKey ? until : toKey;
+  // straight to the first date on or after fromKey (a series can run for years)
+  const behind = Math.round((Date.parse(`${fromKey}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) / (24 * HOUR));
+  const days = [];
+  for (let day = behind > 0 ? addDays(firstDay, Math.ceil(behind / step) * step) : firstDay; day <= last; day = addDays(day, step)) {
+    if (!skipped.has(day)) days.push(day);
+  }
+  return days;
+}
+
 /**
  * A member's library plan from their Shopify customer tags (Simplee Memberships), matched without case: a tag containing
  * "hoard" is 5 games at a time, "stash" or "treasure" 3, "grab" or "loot" 1, and a plain "library-member" tag with none

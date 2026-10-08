@@ -17,6 +17,8 @@ import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
 import { checkMobile, mobileKey } from './core.js';
 import { eventPayment } from './core.js';
+// Round 8: staff table holds that repeat weekly or fortnightly
+import { HOLD_REPEATS, holdSeriesDays } from './core.js';
 // Round 8: barcodes match with or without leading zeros
 import { sameBarcode } from './core.js';
 
@@ -407,6 +409,19 @@ export const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS series_invites_email ON series_invites (lower(email), status)',
     'CREATE INDEX IF NOT EXISTS games_gm_email ON games (lower(gm_email))',
   ],
+  // Round 8, weekly table holds (9 Oct 2026). Only a new column, index and table, so the live rows stay as they are:
+  //  - block_series: a staff hold that repeats every 7 or 14 days (every_days) from first_day at the same Lair clock time
+  //    (start_min) for `minutes`, up to until_day (included) when it has one, leaving out skip_days (a JSON list of
+  //    'YYYY-MM-DD'). status 'active' or 'stopped'. Its dates are ordinary blocks rows with series_id, so availability,
+  //    the floor and every check read them as before.
+  [
+    'ALTER TABLE blocks ADD COLUMN series_id TEXT',
+    'CREATE INDEX IF NOT EXISTS blocks_series ON blocks (series_id, starts_at)',
+    `CREATE TABLE IF NOT EXISTS block_series (
+      id TEXT PRIMARY KEY, tables TEXT NOT NULL, start_min INTEGER NOT NULL, minutes INTEGER NOT NULL, every_days INTEGER NOT NULL,
+      first_day TEXT NOT NULL, until_day TEXT, skip_days TEXT, label TEXT, type TEXT, game TEXT, status TEXT NOT NULL,
+      created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -591,8 +606,12 @@ export class Lair {
   }
 
   rowToBlock(r) {
-    // game (round 6): what a staff hold is for, like "Pokémon", for the calendar's sub-categories (null when not said)
-    return { id: r.id, tables: parse(r.tables, []), start: r.starts_at, end: r.ends_at, label: r.label, type: r.type, game: r.game || null };
+    // game (round 6): what a staff hold is for, like "Pokémon", for the calendar's sub-categories (null when not said).
+    // seriesId (round 8): the weekly or fortnightly hold it's a date of, or null (only staff see it: floor()).
+    return {
+      id: r.id, tables: parse(r.tables, []), start: r.starts_at, end: r.ends_at, label: r.label, type: r.type, game: r.game || null,
+      seriesId: r.series_id || null,
+    };
   }
 
   rowToOpening(r) {
@@ -1115,7 +1134,7 @@ export class Lair {
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
       if (a === 'blocks' && !b) return json(await this.createBlock(body, who));
-      if (a === 'blocks' && c === 'delete') return json(await this.removeBlock(b, who));
+      if (a === 'blocks' && c === 'delete') return json(await this.removeBlock(b, who, body));
       if (a === 'openings' && !b) return json(await this.createOpening(body, who));
       if (a === 'openings' && c === 'delete') return json(await this.removeOpening(b, who));
       if (a === 'checkin' && !b) return json(await this.checkIn(body, who));
@@ -1190,7 +1209,8 @@ export class Lair {
     return {
       now,
       bookings: st.bookings.filter((bk) => who.staff || ACTIVE.has(bk.status)).map(view),
-      blocks: who.staff ? st.blocks : st.blocks.map((bl) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
+      // Round 8: staff see a hold's series (seriesId, repeat, repeatTag, until); the public see nothing new
+      blocks: who.staff ? this.staffBlocks(st.blocks, rules) : st.blocks.map(({ seriesId, ...bl }) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
       eventHolds: holds,
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info);
@@ -1825,6 +1845,22 @@ export class Lair {
           details: skipped.map((x) => [new LairTime(rules.tz).label(x.start), x.reason]),
         });
       }
+    }
+    return report;
+  }
+
+  /**
+   * Round 8: every maintenance run, top up each hold series that's still going (active, and not past its last day) to
+   * the booking horizon plus 7 days, as extendSeries does for TTRPG sessions (topUpHoldSeries: skipped days, dates
+   * already made and anything in the past are left alone). Returns [{ series, created }] for the ones that got dates.
+   * No awaits.
+   */
+  extendHoldSeries(rules, now) {
+    const today = new LairTime(rules.tz).key(now);
+    const report = [];
+    for (const row of this.sql.exec("SELECT * FROM block_series WHERE status = 'active' AND (until_day IS NULL OR until_day >= ?)", today).toArray()) {
+      const made = this.topUpHoldSeries(row, rules, now);
+      if (made.length) report.push({ series: row.id, created: made.length });
     }
     return report;
   }
@@ -2704,35 +2740,188 @@ export class Lair {
     return { profile: { name, bio } };
   }
 
+  /**
+   * Staff hold tables. Round 8: a hold can repeat (`repeat`: 'weekly' or 'fortnightly'; '' or left out is a one-off, as
+   * before) up to `until` ('YYYY-MM-DD', the last day one can start on; empty: no end). Then it's a hold series
+   * (block_series) and one blocks row a date, made up to the booking horizon plus 7 days (maintenance makes the rest as
+   * the days go by: extendHoldSeries). Holding never moves a booking: clashes lists the active bookings on those tables
+   * at any date made, [{ ref, start }]. Answer: { block (the first hold), clashes, series: seriesView | null }.
+   */
   async createBlock(input, who) {
     this.requireStaff(who);
     const rules = await this.rules();
+    // --- no awaits from here on: the checks, the holds and their clashes in one go ---
     const now = Date.now();
+    const time = new LairTime(rules.tz);
     const tables = (Array.isArray(input.tables) ? input.tables : parseTableList(input.tables, rules.rooms)).map(String);
     const index = tableIndex(rules.rooms);
     if (!tables.length || tables.some((t) => !index.has(t))) throw new RuleError('Pick tables that exist, like T11-T20.');
     const start = Number(input.start);
     const end = Number(input.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start)) throw new RuleError('The hold needs an end time after the start.');
+    const repeat = String(input.repeat ?? '').trim().toLowerCase();
+    if (repeat && !HOLD_REPEATS[repeat]) throw new RuleError('Pick how often it repeats: weekly or fortnightly. Or leave it as a one-off.');
+    const firstDay = time.key(start);
+    const untilText = repeat ? String(input.until ?? '').trim() : '';
+    if (untilText && !(/^\d{4}-\d{2}-\d{2}$/.test(untilText) && addDays(untilText, 0) === untilText && untilText >= firstDay)) {
+      throw new RuleError("'Repeat until' has to be a date on or after the first one.");
+    }
     // game (round 6): what it's for, like "Pokémon" or "Magic: The Gathering", up to 40 characters, for the calendar's
     // sub-categories
     const block = {
       id: makeId('bl'), tables, start, end, label: String(input.label || 'Held').slice(0, 80), type: String(input.type || 'event').slice(0, 20),
       game: trimmed(input.game, 40) || null,
     };
-    this.write(
-      'INSERT INTO blocks (id, tables, starts_at, ends_at, label, type, created_by, created_at, game) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      block.id, JSON.stringify(tables), start, end, block.label, block.type, who.customerId, now, block.game,
-    );
-    const st = this.state(start, end);
-    const clashes = st.bookings.filter((bk) => ACTIVE.has(bk.status) && bk.tables.some((t) => tables.includes(t))).map((bk) => bk.ref);
-    return { block, clashes };
+    let series = null;
+    if (repeat) {
+      series = {
+        id: makeId('hs'), tables: JSON.stringify(tables), start_min: time.minutesOf(start), minutes: Math.max(1, Math.round((end - start) / MIN)),
+        every_days: HOLD_REPEATS[repeat], first_day: firstDay, until_day: untilText || null, skip_days: '[]', label: block.label, type: block.type,
+        game: block.game, status: 'active', created_by: who.customerId || null, created_at: now, updated_at: now,
+      };
+      this.write(
+        `INSERT INTO block_series (id, tables, start_min, minutes, every_days, first_day, until_day, skip_days, label, type, game, status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        series.id, series.tables, series.start_min, series.minutes, series.every_days, series.first_day, series.until_day, series.skip_days,
+        series.label, series.type, series.game, series.status, series.created_by, now, now,
+      );
+    }
+    // The first hold is the one asked for, as it was asked for (even beyond the horizon); a series' later dates follow
+    this.insertBlock({ ...block, seriesId: series?.id || null }, who.customerId, now);
+    const made = [block, ...(series ? this.topUpHoldSeries(series, rules, now) : [])];
+    return { block, clashes: this.holdClashes(made, tables), series: series ? this.seriesView(series, rules, now) : null };
   }
 
-  async removeBlock(id, who) {
+  /** One staff hold's row (a series' date carries its seriesId). No awaits. */
+  insertBlock(b, by, now) {
+    this.write(
+      'INSERT INTO blocks (id, tables, starts_at, ends_at, label, type, created_by, created_at, game, series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      b.id, JSON.stringify(b.tables), b.start, b.end, b.label, b.type, by || null, now, b.game || null, b.seriesId || null,
+    );
+  }
+
+  /** Round 8: the active bookings on any of these tables at any of these holds' times, once each, soonest first: [{ ref, start }]. No awaits. */
+  holdClashes(holds, tables) {
+    if (!holds.length) return [];
+    const from = Math.min(...holds.map((h) => h.start));
+    const to = Math.max(...holds.map((h) => h.end));
+    const found = new Map();
+    for (const bk of this.sql.exec('SELECT * FROM bookings WHERE ends_at > ? AND starts_at < ?', from, to).toArray().map((r) => this.rowToBooking(r))) {
+      if (!ACTIVE.has(bk.status) || found.has(bk.id) || !bk.tables.some((t) => tables.includes(t))) continue;
+      if (holds.some((h) => bk.start < h.end && h.start < bk.end)) found.set(bk.id, { ref: bk.ref, start: bk.start });
+    }
+    return [...found.values()].sort((a, b) => a.start - b.start || a.ref.localeCompare(b.ref));
+  }
+
+  /**
+   * Round 8: a hold series' dates still to make, made: each day it falls on (holdSeriesDays: up to its last day, not the
+   * skipped ones) that has no hold yet, hasn't ended (one under way is held, as its first date would be) and starts no
+   * more than the booking horizon plus 7 days ahead, at its Lair clock time for its length (so daylight saving never
+   * moves one). Returns the holds made. No awaits.
+   */
+  topUpHoldSeries(row, rules, now) {
+    const time = new LairTime(rules.tz);
+    const latest = now + (rules.horizonDays + 7) * 24 * HOUR;
+    // from yesterday: a hold that crosses midnight can still be under way
+    const yesterday = addDays(time.key(now), -1);
+    const have = new Set(
+      this.sql.exec('SELECT starts_at FROM blocks WHERE series_id = ? AND starts_at >= ?', row.id, time.at(yesterday, 0)).toArray().map((r) => time.key(r.starts_at)),
+    );
+    const days = holdSeriesDays({ firstDay: row.first_day, every: row.every_days, until: row.until_day, skip: parse(row.skip_days, []) }, yesterday, time.key(latest));
+    const made = [];
+    for (const day of days) {
+      if (have.has(day)) continue;
+      const start = time.at(day, row.start_min);
+      if (start + row.minutes * MIN <= now || start > latest) continue;
+      const hold = {
+        id: makeId('bl'), tables: parse(row.tables, []), start, end: start + row.minutes * MIN, label: row.label, type: row.type, game: row.game || null,
+        seriesId: row.id,
+      };
+      this.insertBlock(hold, row.created_by, now);
+      made.push(hold);
+    }
+    return made;
+  }
+
+  /** Round 8: 'weekly' or 'fortnightly' for a hold series' row */
+  holdRepeat(row) {
+    return row.every_days === HOLD_REPEATS.fortnightly ? 'fortnightly' : 'weekly';
+  }
+
+  /** Round 8: "Weekly · Thursdays 6pm", like an event's tag (its first date's weekday and Lair clock time) */
+  holdRepeatTag(row, rules) {
+    return this.repeatTag({ repeat: this.holdRepeat(row), start: new LairTime(rules.tz).at(row.first_day, row.start_min) }, rules);
+  }
+
+  /**
+   * Round 8: a hold series as staff see it: { id, label, type, game, tables, repeat, repeatTag, startTime ('18:00'),
+   * minutes, firstDay, until, skipDays, status, next: [{ id, start, end }] (up to 6 dates to come: holds not started yet) }.
+   * status: 'stopped' (staff stopped it from its first date to come), 'ended' (it has a last day and nothing's left to
+   * come) or 'active'. No awaits.
+   */
+  seriesView(row, rules, now = Date.now()) {
+    const time = new LairTime(rules.tz);
+    const next = this.sql.exec('SELECT id, starts_at, ends_at FROM blocks WHERE series_id = ? AND starts_at > ? ORDER BY starts_at, id LIMIT 6', row.id, now).toArray();
+    const skipDays = parse(row.skip_days, []);
+    let status = row.status === 'stopped' ? 'stopped' : 'active';
+    if (status === 'active' && row.until_day && !next.length) {
+      // nothing to come: ended, unless a date before its last day is still to be made
+      const left = holdSeriesDays({ firstDay: row.first_day, every: row.every_days, until: row.until_day, skip: skipDays }, time.key(now), row.until_day);
+      if (!left.some((day) => time.at(day, row.start_min) > now)) status = 'ended';
+    }
+    return {
+      id: row.id, label: row.label, type: row.type, game: row.game || null, tables: parse(row.tables, []), repeat: this.holdRepeat(row),
+      repeatTag: this.holdRepeatTag(row, rules), startTime: `${String(Math.floor(row.start_min / 60)).padStart(2, '0')}:${String(row.start_min % 60).padStart(2, '0')}`,
+      minutes: row.minutes, firstDay: row.first_day, until: row.until_day || null, skipDays, status,
+      next: next.map((r) => ({ id: r.id, start: r.starts_at, end: r.ends_at })),
+    };
+  }
+
+  /** Round 8: the staff floor's holds, each with its series: seriesId, repeat, repeatTag and until (nulls for a one-off). No awaits. */
+  staffBlocks(blocks, rules) {
+    const ids = [...new Set(blocks.map((bl) => bl.seriesId).filter(Boolean))];
+    const rows = ids.length ? this.sql.exec(`SELECT * FROM block_series WHERE id IN (${ids.map(() => '?').join(', ')})`, ...ids).toArray() : [];
+    const series = new Map(rows.map((r) => [r.id, { repeat: this.holdRepeat(r), repeatTag: this.holdRepeatTag(r, rules), until: r.until_day || null }]));
+    return blocks.map((bl) => {
+      const s = (bl.seriesId && series.get(bl.seriesId)) || null;
+      return { ...bl, seriesId: s ? bl.seriesId : null, repeat: s?.repeat || null, repeatTag: s?.repeatTag || null, until: s?.until || null };
+    });
+  }
+
+  /**
+   * Staff release a hold. Round 8, a date of a hold series: on its own (no `later`) its day goes on the series' skip list,
+   * so maintenance never makes it again; with `later: true`, it goes with every later date that hasn't ended, and the
+   * series ends the day before the first of them (until_day). Stopped from its first date to come (nothing of it left to
+   * come), the series is 'stopped'. Holds that have ended are never removed that way. { ok, removed }: an id that isn't
+   * there removes nothing, so a second tap isn't an error.
+   */
+  async removeBlock(id, who, input = {}) {
     this.requireStaff(who);
-    this.write('DELETE FROM blocks WHERE id = ?', id);
-    return { ok: true };
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const time = new LairTime(rules.tz);
+    const row = this.sql.exec('SELECT * FROM blocks WHERE id = ?', String(id || '')).toArray()[0];
+    if (!row) return { ok: true, removed: 0 };
+    const series = row.series_id ? this.sql.exec('SELECT * FROM block_series WHERE id = ?', row.series_id).toArray()[0] : null;
+    if (!series || input?.later !== true) {
+      this.write('DELETE FROM blocks WHERE id = ?', row.id);
+      if (series) {
+        const skip = new Set(parse(series.skip_days, []));
+        skip.add(time.key(row.starts_at));
+        this.write('UPDATE block_series SET skip_days = ?, updated_at = ? WHERE id = ?', JSON.stringify([...skip].sort()), now, series.id);
+      }
+      return { ok: true, removed: 1 };
+    }
+    const going = this.sql.exec('SELECT id, starts_at FROM blocks WHERE series_id = ? AND starts_at >= ? AND ends_at > ? ORDER BY starts_at, id', series.id, row.starts_at, now).toArray();
+    for (const x of going) this.write('DELETE FROM blocks WHERE id = ?', x.id);
+    // the series ends the day before the first date that went (never later than the last day it had); nothing went
+    // (the hold had ended, and nothing after it was left): it ends today
+    let until = going.length ? addDays(time.key(going[0].starts_at), -1) : time.key(now);
+    if (series.until_day && series.until_day < until) until = series.until_day;
+    const toCome = this.sql.exec('SELECT 1 AS n FROM blocks WHERE series_id = ? AND starts_at > ? LIMIT 1', series.id, now).toArray().length > 0;
+    this.write('UPDATE block_series SET until_day = ?, status = ?, updated_at = ? WHERE id = ?', until, toCome ? series.status : 'stopped', now, series.id);
+    return { ok: true, removed: going.length };
   }
 
   /**
@@ -7531,6 +7720,13 @@ export class Lair {
       if (extended.length) result.series = extended;
     } catch (error) {
       console.error('Lair: could not extend game series', error);
+    }
+    // Round 8: weekly and fortnightly table holds get their dates up to the horizon plus 7 days, every run
+    try {
+      const holds = this.extendHoldSeries(rules, Date.now());
+      if (holds.length) result.holdSeries = holds;
+    } catch (error) {
+      console.error('Lair: could not extend table hold series', error);
     }
     // Weekly regulars roll forward: once a session ends, they get a seat in the next one.
     try {
