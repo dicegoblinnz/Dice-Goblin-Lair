@@ -3109,7 +3109,7 @@ export class Lair {
     // Round 9: a bill paid (its items too), then every open bill kept true: one whose items were all paid at the counter
     // is paid and its draft order deleted, so it can't be paid twice; one partly paid or changed is cancelled
     const billsPaid = this.payBills(bills, order, orderId, rules, { pos, now });
-    this.reconcileBills(rules, now, { orderId, pos });
+    if (updated.length || tabsPaid.length || billsPaid.length) this.reconcileBills(rules, now, { orderId, pos });
 
     // Payments are recorded, so if Shopify can't say who the customer is right now, failing the webhook (Shopify
     // sends it again) only repeats work that's already done.
