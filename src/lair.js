@@ -17,6 +17,8 @@ import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
 import { checkMobile, mobileKey } from './core.js';
 import { eventPayment } from './core.js';
+// Round 8: barcodes match with or without leading zeros
+import { sameBarcode } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -6189,8 +6191,8 @@ export class Lair {
       this.note({ variantCodeError: { message: String(error.message || error).slice(0, 300), at: new Date().toISOString() } });
       throw new RuleError(down, 503);
     }
-    const same = (v) => String(v ?? '').trim().toUpperCase() === code.toUpperCase();
-    const variant = found.find((v) => same(v.barcode)) || found.find((v) => same(v.sku)) || null;
+    // Round 8: a barcode matches in any of its forms (sameBarcode: leading zeros don't count), a SKU ignoring case
+    const variant = found.find((v) => sameBarcode(v.barcode, code)) || found.find((v) => sameBarcode(v.sku, code)) || null;
     if (this.codeLookups.size > 2000) this.codeLookups.clear();
     this.codeLookups.set(key, { at: Date.now(), variant });
     return variant;

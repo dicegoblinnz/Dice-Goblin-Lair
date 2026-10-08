@@ -71,6 +71,29 @@ export function makeCode(name, { big = false, random = randomNumbers } = {}) {
 /** What a code is matched on: letters and digits only, in capitals ("sj owlbear 17" → SJOWLBEAR17) */
 export const codeKey = (code) => String(code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+/**
+ * Round 8: the forms a product barcode can be read in. A 12-digit UPC-A (195166315386) is the same code as the 13-digit
+ * EAN-13 with a 0 in front (0195166315386) and the 14-digit GTIN with two, and phone cameras report either, while
+ * Shopify keeps whichever was typed in. For 8 to 14 digits: the code as given, then without its leading zeros, then
+ * padded to 12, 13 and 14 digits (at least 8). Anything else: just the code.
+ */
+export function barcodeForms(code) {
+  const text = String(code ?? '').trim();
+  if (!/^\d{8,14}$/.test(text)) return text ? [text] : [];
+  const bare = text.replace(/^0+/, '');
+  const forms = [text, bare, bare.padStart(12, '0'), bare.padStart(13, '0'), bare.padStart(14, '0')];
+  return [...new Set(forms.filter((f) => f.length >= 8 && f.length <= 14))];
+}
+
+/** Round 8: the same barcode or SKU? All digits on both sides: equal once leading zeros go. Otherwise ignoring case. */
+export function sameBarcode(a, b) {
+  const x = String(a ?? '').trim();
+  const y = String(b ?? '').trim();
+  if (!x || !y) return false;
+  if (/^\d+$/.test(x) && /^\d+$/.test(y)) return x.replace(/^0+/, '') === y.replace(/^0+/, '');
+  return x.toUpperCase() === y.toUpperCase();
+}
+
 /** A code nobody has had (taken(key) says): 40 tries with a d20, then numbers from 21 to 99. */
 export function uniqueCode(name, taken, { random = randomNumbers } = {}) {
   for (let i = 0; i < 40; i += 1) {

@@ -1,5 +1,6 @@
 // Dice Goblin Lair — talking to Shopify: request signatures, Admin API token and GraphQL calls.
 import { eventPayment } from './core.js';
+import { barcodeForms } from './core.js';
 
 const enc = new TextEncoder();
 
@@ -378,11 +379,13 @@ export class ShopifyAdmin {
    */
   async variantByCode(code) {
     const text = String(code ?? '').replace(/["\\]/g, '');
+    // Round 8: a barcode in every form it can be read in (barcodeForms: a UPC-A read as EAN-13 gains a leading 0)
+    const query = [...barcodeForms(text).map((form) => `barcode:"${form}"`), `sku:"${text}"`].join(' OR ');
     const data = await this.graphql(
       `query LairVariantByCode($query: String!) { productVariants(first: 5, query: $query) { nodes { id title sku barcode price availableForSale
         media(first: 1) { nodes { preview { image { url } } } }
         product { id handle title status isGiftCard requiresSellingPlan featuredMedia { preview { image { url } } } libraryCode: metafield(namespace: "custom", key: "library_code") { value } } } } }`,
-      { query: `barcode:"${text}" OR sku:"${text}"` },
+      { query },
     );
     return (data.productVariants?.nodes || []).filter((n) => n?.id && n.product).map((n) => {
       const cents = Math.round(Number(n.price || 0) * 100);
