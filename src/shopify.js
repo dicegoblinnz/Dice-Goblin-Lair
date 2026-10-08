@@ -202,6 +202,8 @@ export class ShopifyAdmin {
           // payment: "In store" (or empty), "Online" or "Online or in store". tables ("Tables reserved") are only marked
           // for the event unless lock_tables ("Lock these tables") is on.
           payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
+          // Round 9: what it's for (game) and its kind (event_type), for turnouts by game
+          game: String(f.game || '').trim() || null, type: String(f.event_type || '').trim() || null,
         };
       })
       .filter((e) => Number.isFinite(e.start));
