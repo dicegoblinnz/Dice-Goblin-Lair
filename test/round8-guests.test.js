@@ -212,6 +212,13 @@ test('guests (round 8): places count everyone, the entry fee is for everyone, an
   assert.equal(online.status, 200, online.data.error);
   assert.deepEqual([online.data.join.status, online.data.join.amount, checkouts[0].quantity, checkouts[0].unitPrice], ['held', 7500, 3, 2500]);
   assert.deepEqual(online.data.join.guests, [{ name: 'Kiri Smith', member: true }, { name: 'Jo', member: false }]);
+  // Online is the only way and Shopify can't make the checkout: the sign-up is taken back, and its guests with it
+  const kept = guestRows().length;
+  lair.shopify.createCheckout = async () => { throw new Error('Shopify API error 503'); };
+  const down = await join(CHAMPS, { guests: [{ code: codes[TAMA] }, { name: 'Ana' }] }, KIRI);
+  assert.equal(down.status, 503, down.data.error);
+  assert.equal(guestRows().length, kept);
+  assert.equal(guestRows().filter((g) => g.customer_id === TAMA || g.name === 'Ana').length, 0);
 });
 
 test('guests (round 8): an older page without guests works exactly as before (people 1 to 6, friends unnamed)', async () => {

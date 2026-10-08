@@ -3892,6 +3892,8 @@ export class Lair {
         if (required) {
           // --- only this sign-up's own row changes: it was never confirmed, so it goes ---
           this.write("DELETE FROM event_joins WHERE id = ? AND status = 'held' AND paid = 0", join.id);
+          // Round 8: and the people coming with them go with it (only once it's gone)
+          this.write('DELETE FROM event_join_guests WHERE join_id = ? AND NOT EXISTS (SELECT 1 FROM event_joins WHERE id = ?)', join.id, join.id);
           throw new RuleError(ONLINE_DOWN, 503);
         }
         this.write(
