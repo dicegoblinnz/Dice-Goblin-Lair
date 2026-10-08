@@ -535,7 +535,7 @@ try {
       // the calendar: a sign-up (a landline refused, an overseas number saved), then a game table filled with it
       o = await open(width, '/pages/events-calendar', { customer: HEMI, ctx });
       p = o.page;
-      await p.waitForSelector('lair-calendar .cal-card', { timeout: 15000 });
+      await p.waitForSelector('lair-calendar .cal-card', { state: 'attached', timeout: 15000 }); // a phone's day strip hides the days before today
       const ids = await p.evaluate(() => {
         const cal = document.querySelector('lair-calendar');
         const now = Date.now();
@@ -599,7 +599,7 @@ try {
     {
       const o = await open(width, '/pages/events-calendar', { height });
       const p = o.page;
-      await p.waitForSelector('lair-calendar .cal-card', { timeout: 15000 });
+      await p.waitForSelector('lair-calendar .cal-card', { state: 'attached', timeout: 15000 }); // a phone's day strip hides the days before today
       const r = await p.evaluate(({ T1, S1, S2 }) => {
         const cal = document.querySelector('lair-calendar');
         const items = cal.all();
