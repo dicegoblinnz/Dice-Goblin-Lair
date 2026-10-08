@@ -63,6 +63,8 @@ m.mockState.before = async (req, res, url) => {
   const write = () => (denied ? send(503, { error: "Shopify hasn't let the Lair change events yet. Approve the app's new permissions in Shopify admin (Apps › Dice Goblin Lair), then try again." }) : null);
   if (route === '/floor') return send(200, { bookings: [], blocks: [], games: [], events: [], features: {}, shopTables: ['T1', 'T2', 'T3'], openings: [], joins: [] });
   if (route === '/library/holds') return send(200, { holds: [] });
+  // the library tab (round 7, merged after this check was written) asks for games at home as the page loads
+  if (route === '/library/loans') return send(200, { loans: [] });
   if (route === '/members/birthdays') return send(200, []);
   if (route === '/members' && req.method === 'GET') return send(200, [{ ...SAM, spendYear: 1000, spendTotal: 1000, lastSeen: now, owed: 0, owedCount: 0, openTab: 0, pendingPrizes: [], giftedThisYear: true, giftsThisYear: [{ id: 'g1', at: now - DAY, words: '$20 store credit, 5 rolls' }] }]);
   if (route === '/members/7101') return send(200, { member: { ...SAM, spendYear: 1000, spendTotal: 1000, lastSeen: now, owed: 0, owedCount: 0, openTab: 0, pendingPrizes: [], giftedThisYear: true, mobile: '021 555 0101', pronouns: 'they/them', favouriteGames: ['Root'], about: '', gifts: [{ id: 'g1', at: now - DAY, credit: 2000, sessions: 0, passCode: null, rolls: 5, product: null, state: 'claimed', claimedAt: now - DAY, words: '$20 store credit, 5 rolls', emailed: true, note: '' }], library: { plan: null, holds: [], atHome: [] } } });
