@@ -73,7 +73,7 @@ const back = await takeBack(maybe.data.interest.id, { key: maybe.data.interest.k
 check('3: the guest takes hers back with the key her browser kept', back.status === 200 && back.data.interest?.status === 'removed', back.data);
 
 /* 4. a member, logged in */
-await fake('POST', 'customer', { id: HINE, tags: [], name: 'Hine Example', email: 'hine.r9@example.com', verified: true });
+await fake('POST', 'customer', { id: HINE, tags: [], name: 'Hine Example', email: 'hine.r9play@example.com', verified: true });
 await proxy('GET', `me?name=${encodeURIComponent('Hine Example')}`, { customer: HINE });
 const hine = await interest({ kind: 'event', id: COMMANDER }, HINE);
 check('4: logged in, her account fills in her name and email (no mobile needed)', hine.status === 200 && hine.data.interest?.name === 'Hine Example' && hine.data.interest?.key === undefined, hine.data);
@@ -85,7 +85,7 @@ check('4: she can', (await takeBack(hine.data.interest.id, {}, HINE)).data.inter
 /* 5. adoption */
 const guest = await interest({ kind: 'session', id: game.id, name: 'Wiremu Example', email: 'Wiremu.R9@example.com', phone: '021 555 0194', note: 'Keen!' });
 check('5: a guest says he\'s interested', guest.status === 200, guest.data);
-await fake('POST', 'customer', { id: WIREMU, tags: [], name: 'Wiremu Example', email: 'wiremu.r9@example.com', verified: true });
+await fake('POST', 'customer', { id: WIREMU, tags: [], name: 'Wiremu Example', email: 'wiremu.r9play@example.com', verified: true });
 const his = (await proxy('GET', `me?name=${encodeURIComponent('Wiremu Example')}`, { customer: WIREMU })).data.interests || [];
 check('5: when he makes an account with that email, it\'s his (GET /me)', his.some((i) => i.targetId === game.id && i.note === 'Keen!'), his);
 const gmNow = ((await floor(ANA)).games || []).find((g) => g.id === game.id) || {};

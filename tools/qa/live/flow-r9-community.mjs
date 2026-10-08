@@ -11,21 +11,21 @@
 //      (2 units, 1 each), opened with emails ("Early access: …"), only they see it in My Lair, Kahu's claim is a 404, each
 //      claim is a draft order made for that customer, the units run out, claiming again replaces (the old checkout is
 //      deleted), the paid webhook marks the claim paid (and counts the spend), closing lets the unpaid claim go
-// Customers 7901 to 7903. Run after the seeds (it needs tonight's D&D from the mock events).
+// Customers 7941 to 7943 (team uses 7901–7903, play 7911–7912, tab 7921–7923). Run after the seeds (it needs tonight's D&D from the mock events).
 import { proxy, fake, check, summary, webhook } from './client.mjs';
 import { key, addDays, nextDow, sleep } from './r6-time.mjs';
 
 const STAFF = '7001';
-const HANA = '7901'; // signs up and gets early access
-const WIREMU = '7902'; // comes along by his code, on the list
-const KAHU = '7903'; // a walk-in, not on the offer
+const HANA = '7941'; // signs up and gets early access
+const WIREMU = '7942'; // comes along by his code, on the list
+const KAHU = '7943'; // a walk-in, not on the offer
 const today = key(Date.now());
 const TONIGHT = `dnd-tonight@${today}`;
 const LATER = `dnd-sunday-10am@${addDays(nextDow(0), 7)}`;
 const said = (res) => `${res.status} ${res.data?.error || ''}`.trim();
 const run = Date.now() % 100000;
 for (const [id, name] of [[HANA, 'Hana Rawiri'], [WIREMU, 'Wiremu Kingi'], [KAHU, 'Kahu Peters']]) {
-  await fake('POST', 'customer', { id, tags: [], name, email: `${name.split(' ')[0].toLowerCase()}.r9@example.com` });
+  await fake('POST', 'customer', { id, tags: [], name, email: `${name.split(' ')[0].toLowerCase()}.r9c@example.com` });
   await proxy('GET', `me?name=${encodeURIComponent(name)}`, { customer: id });
 }
 const me = async (id) => (await proxy('GET', 'me', { customer: id })).data;
@@ -41,7 +41,7 @@ for (const who of [HANA, KAHU]) {
 /* 1. turnouts */
 check('1: not staff: GET /community is a 403', said(await proxy('GET', 'community', { customer: HANA })) === '403 Staff only. Log in with your staff account.');
 const before = { hana: await turnoutsOf(HANA), wiremu: await turnoutsOf(WIREMU) };
-const signed = await proxy('POST', `events/${TONIGHT}/join`, { customer: HANA, body: { name: 'Hana Rawiri', email: 'hana.r9@example.com', guests: [{ code: codes.wiremu.toLowerCase() }] } });
+const signed = await proxy('POST', `events/${TONIGHT}/join`, { customer: HANA, body: { name: 'Hana Rawiri', email: 'hana.r9c@example.com', guests: [{ code: codes.wiremu.toLowerCase() }] } });
 const J = signed.data.join || {};
 check('1: Hana signs up for tonight with Wiremu by his code', signed.status === 200 && J.people === 2, signed.data.error || J);
 check('1: signing up is not a turnout', JSON.stringify(await turnoutsOf(HANA)) === JSON.stringify(before.hana));
@@ -107,9 +107,9 @@ const opened = await proxy('POST', `offers/${O.id}/open`, { customer: STAFF, bod
 check('4: opened, and both emailed', opened.data.offer?.status === 'open' && opened.data.emailed === 2, opened.data);
 await sleep(400);
 const mails = (await fake('GET', 'emails')).slice(emails0);
-const toHana = mails.find((e) => [].concat(e.to).includes('hana.r9@example.com'));
+const toHana = mails.find((e) => [].concat(e.to).includes('hana.r9c@example.com'));
 check('4: the email: "Early access: <product>", Gobgob saved them a spot, grab it in My Lair before…', toHana && toHana.subject === `Early access: QA booster box ${run}` && /Gobgob saved you a spot before anyone else\./.test(toHana.text) && /Grab it in My Lair before \w+ \d{1,2} \w+, 6pm\./.test(toHana.text), toHana ? toHana.text.slice(0, 300) : mails.map((e) => e.subject));
-check('4: Kahu isn\'t emailed', !mails.some((e) => [].concat(e.to).includes('kahu.r9@example.com')));
+check('4: Kahu isn\'t emailed', !mails.some((e) => [].concat(e.to).includes('kahu.r9c@example.com')));
 const hanaOffer = ((await me(HANA)).offers || []).find((o) => o.id === O.id);
 check('4: Hana\'s My Lair has it: limit 1, 2 units left, no claim', hanaOffer && hanaOffer.limit === 1 && hanaOffer.unitsLeft === 2 && hanaOffer.claim === null && hanaOffer.variants[0].price === 21900, hanaOffer);
 check('4: Kahu\'s doesn\'t, and his claim is a 404', !((await me(KAHU)).offers || []).some((o) => o.id === O.id) && said(await proxy('POST', `offers/${O.id}/claim`, { customer: KAHU, body: { variantId: '99101', quantity: 1 } })) === '404 That offer could not be found.');

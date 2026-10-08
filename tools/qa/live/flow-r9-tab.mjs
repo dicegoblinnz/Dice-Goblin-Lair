@@ -17,10 +17,10 @@ import { proxy, pos, webhook, fake, check, summary } from './client.mjs';
 import { key, addDays, nextDow, at, sleep } from './r6-time.mjs';
 
 const STAFF = '7001';
-const TAMA = '7901'; // monthly account, pays online
-const HINE = '7902'; // monthly account, pays at the counter, then back to pay each visit
-const RANGI = '7903'; // pays each visit
-const PEOPLE = [[TAMA, 'Tama Ruru', 'tama.r9@example.com'], [HINE, 'Hine Kawa', 'hine.r9@example.com'], [RANGI, 'Rangi Pou', 'rangi.r9@example.com']];
+const TAMA = '7921'; // monthly account, pays online
+const HINE = '7922'; // monthly account, pays at the counter, then back to pay each visit
+const RANGI = '7923'; // pays each visit
+const PEOPLE = [[TAMA, 'Tama Ruru', 'tama.r9tab@example.com'], [HINE, 'Hine Kawa', 'hine.r9tab@example.com'], [RANGI, 'Rangi Pou', 'rangi.r9tab@example.com']];
 for (const [id, name, email] of PEOPLE) {
   await fake('POST', 'customer', { id, tags: [], name, email });
   await proxy('GET', `me?name=${encodeURIComponent(name)}`, { customer: id });
@@ -37,7 +37,7 @@ const emailsNow = async () => (await fake('GET', 'emails')).length;
 const switched = await proxy('POST', `members/${TAMA}/account`, { customer: STAFF, body: { billing: 'monthly', creditLimit: 4000, note: 'Round 9 QA' } });
 check('1: staff put Tama on a monthly account: the words', switched.status === 200 && switched.data.said === 'Tama is on a monthly account now, with a $40 limit. What they check in for from now goes on their account, and their bill comes on the 1st.', switched.data);
 check('1: not staff: 403', said(await proxy('POST', `members/${TAMA}/account`, { customer: TAMA, body: { billing: 'monthly', creditLimit: 900000 } })) === '403 Staff only. Log in with your staff account.');
-const booked = await proxy('POST', 'bookings', { customer: TAMA, body: { kind: 'table', tables: ['T20'], start: at(D, 18), end: at(D, 20), people: 2, name: 'Tama Ruru', email: 'tama.r9@example.com' } });
+const booked = await proxy('POST', 'bookings', { customer: TAMA, body: { kind: 'table', tables: ['T20'], start: at(D, 18), end: at(D, 20), people: 2, name: 'Tama Ruru', email: 'tama.r9tab@example.com' } });
 const B = booked.data.booking || {};
 check('1: Tama books a table: on the account, nothing owed yet', booked.status === 200 && B.amount > 0, booked.data.error || B);
 let account = (await me(TAMA)).account || {};
@@ -52,14 +52,14 @@ check('1: checked in, the table is owed on the account, and the tab with it', ac
 const room = 4000 - owed1;
 const over = await proxy('POST', 'tab', { customer: TAMA, body: { items: pocky(2 + Math.ceil((room + 1) / 450)) } });
 check('1: a tab item past the limit: 409 with the words', said(over) === `409 That would take your Lair account over its $40 limit (${money(room)} left). Pay your bill online or at the counter, then add to your tab again.`, said(over));
-const overBooking = await proxy('POST', 'bookings', { customer: TAMA, body: { kind: 'table', tables: ['T21'], start: at(D, 18), end: at(D, 20), people: 4, name: 'Tama Ruru', email: 'tama.r9@example.com' } });
+const overBooking = await proxy('POST', 'bookings', { customer: TAMA, body: { kind: 'table', tables: ['T21'], start: at(D, 18), end: at(D, 20), people: 4, name: 'Tama Ruru', email: 'tama.r9tab@example.com' } });
 check('1: a booking past the limit: 409 with the words', said(overBooking).startsWith(`409 That would take your Lair account over its $40 limit (${money(room)} left).`) && said(overBooking).endsWith('then book again.'), said(overBooking));
 
 /* 2. Bill now, and Pay online now */
 const e0 = await emailsNow();
 const billNow = await proxy('POST', `accounts/${TAMA}/bill`, { customer: STAFF, body: {} });
 const bill = billNow.data.bill || {};
-check('2: Bill now: made and emailed, the words', billNow.status === 200 && billNow.data.said === `Bill for $${(owed1 / 100).toFixed(2)} emailed to tama.r9@example.com.` && bill.status === 'open' && bill.total === owed1 && bill.kind === 'now', billNow.data);
+check('2: Bill now: made and emailed, the words', billNow.status === 200 && billNow.data.said === `Bill for $${(owed1 / 100).toFixed(2)} emailed to tama.r9tab@example.com.` && bill.status === 'open' && bill.total === owed1 && bill.kind === 'now', billNow.data);
 const drafts = (await fake('GET', 'state')).drafts;
 const draft = drafts[bill.draftOrderId] || {};
 const input = draft.input || {};
@@ -69,7 +69,7 @@ check('2: the draft order is Tama\'s (purchasingEntity), tagged lair-bill, with 
 check('2: the table is a custom line "Table for 2 · <day> · <code>" tagged _booking and _bill', lines.some((l) => !l.variantId && /^Table for 2 · \w{3} \d{1,2} \w{3,4} · /.test(l.title) && attr(l, '_booking') === B.ref && attr(l, '_bill') === bill.id && l.originalUnitPriceWithCurrency?.amount === (B.amount / 100).toFixed(2)), lines);
 check('2: the tab is its product at the tab\'s price, tagged _tab and _bill, and nothing is shipped', lines.some((l) => l.variantId === 'gid://shopify/ProductVariant/9190000001' && l.quantity === 2 && l.priceOverride?.amount === '4.50' && attr(l, '_tab') && attr(l, '_bill') === bill.id) && input.shippingLine?.title === 'Collected at the Lair', { lines, ship: input.shippingLine });
 await sleep(400);
-const billMail = (await fake('GET', 'emails')).slice(e0).find((m) => [].concat(m.to).includes('tama.r9@example.com'));
+const billMail = (await fake('GET', 'emails')).slice(e0).find((m) => [].concat(m.to).includes('tama.r9tab@example.com'));
 check('2: the email: "Your Lair bill: $…", Pay online with the invoice link, or the counter', billMail?.subject === `Your Lair bill: $${(owed1 / 100).toFixed(2)}`
   && billMail.text.includes(`__checkout/${String(bill.draftOrderId).split('/').pop()}`) && /Or pay at the counter next time you're in/.test(billMail.text) && billMail.text.includes(B.ref), billMail);
 const payNow = await proxy('POST', 'me/account/pay', { customer: TAMA, body: {} });
@@ -96,7 +96,7 @@ const acct = await detail(TAMA);
 const tableNow = (tama.bookings || []).find((b) => b.ref === B.ref) || {};
 check('3: the bill says paid online, the table is paid in full, the tab paid, nothing owed', acct.bills?.[0]?.status === 'paid' && acct.bills[0].paidHow === 'online' && tableNow.paid === true && tableNow.paidAmount === B.amount && tama.account.owed.total === 0 && tama.account.bill === null && tama.tab?.status === 'paid', { bill: acct.bills?.[0], tableNow, owed: tama.account.owed, tab: tama.tab });
 await sleep(400);
-check('3: no booking email for a bill', !(await fake('GET', 'emails')).slice(e1).some((m) => [].concat(m.to).includes('tama.r9@example.com')));
+check('3: no booking email for a bill', !(await fake('GET', 'emails')).slice(e1).some((m) => [].concat(m.to).includes('tama.r9tab@example.com')));
 await webhook(order);
 tama = await me(TAMA);
 check('3: the webhook again pays nothing twice', ((tama.bookings || []).find((b) => b.ref === B.ref) || {}).paidAmount === B.amount);
