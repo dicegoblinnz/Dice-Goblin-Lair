@@ -561,10 +561,11 @@ const PAGES = {
   '/cart-open': () => renderPage('index', { cart: fullCart }),
   '/products/wingspan': () => renderPage('product', { product: boardGames[0], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
   '/products/library': () => renderPage('product', { product: library[1], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
-  // r9 site: the dropdown with pictures (48 colours), one colour chosen by ?variant=, and two options (12 colours, 2 sizes)
-  '/products/vallejo-game-colour': () => renderPage('product', { product: arrivals[0], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
-  '/products/vallejo-game-colour?variant': () => renderPage('product', { product: withVariant(arrivals[0], 49200000000022), request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
-  '/products/paint-set-starter': () => renderPage('product', { product: paintSet, request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
+  // r9 site: the dropdown with pictures (48 colours), one colour chosen by ?variant=, and two options (12 colours, 2 sizes).
+  // Keys for render.mjs check only: a browser's /products/<handle>?variant=… goes through libraryRoute, which reads it.
+  '/products/vallejo-game-colour?colours=48': () => renderPage('product', { product: arrivals[0], request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
+  '/products/vallejo-game-colour?variant=49200000000022': () => renderPage('product', { product: withVariant(arrivals[0], 49200000000022), request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
+  '/products/paint-set-starter?options=2': () => renderPage('product', { product: paintSet, request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } }),
   '/collections/new-additions': () => shopCollectionPage('new-additions'), // r7 shell: with the store's filters
   '/pages/book-a-table': () => renderPage('page.bookings', { page: pages['book-a-table'], template: { name: 'page', suffix: 'bookings' } }),
   '/pages/gm-games': () => renderPage('page.gm-games', { page: pages['gm-games'], template: { name: 'page', suffix: 'gm-games' } }),
