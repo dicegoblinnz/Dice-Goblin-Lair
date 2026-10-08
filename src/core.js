@@ -135,9 +135,9 @@ export const HELPER_DEFAULT = ['checkin', 'tables'];
 export const PERM_WORDS = {
   checkin: 'Check people in, today’s bookings and taking payment at the desk',
   tables: 'The floor, walk-ins, table bookings, holds and openings',
-  sessions: 'GM games: sessions, players, regulars and invites',
+  sessions: 'Making and editing sessions, players, regulars and GM invites',
   events: 'The events editor and adding people to events',
-  members: 'Members, birthdays, gifts and rolls, member codes and emailing members',
+  members: 'Member pages, birthdays, gifts and rolls, member codes and emailing members',
   money: 'Store credit, passes, groups, loot codes, tabs and refunds',
   library: 'Library holds, check out and check in',
   community: 'Turnouts, lists and early access',
