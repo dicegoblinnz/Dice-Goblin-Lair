@@ -215,6 +215,15 @@ try {
   }
   {
     const { ctx, page } = await open(390, '/pages/events-calendar');
+    // Round 9: the events calendar is the Events tab of the one booking page (lair-play): its month view picks the day,
+    // and the calendar lists the month, so there's no week day strip to stick
+    const play = await page.waitForSelector('lair-play [data-play-date]', { timeout: 15000 }).then(() => true).catch(() => false);
+    if (play) {
+      const v = await page.evaluate(() => ({ days: document.querySelectorAll('lair-play [data-play-date]').length, strip: Boolean(document.querySelector('lair-calendar .cal-strip')), tab: document.querySelector('lair-play').dataset.activeTab }));
+      check('events calendar (phone): the one booking page opens on Events, with the month view picking the day (no week strip to stick)', v.days >= 28 && !v.strip && v.tab === 'events', JSON.stringify(v));
+      await ctx.close();
+    }
+    if (!play) {
     await page.waitForSelector('lair-calendar .cal-strip', { timeout: 15000 }).catch(() => {});
     const c = await page.evaluate(async () => {
       const strip = document.querySelector('lair-calendar .cal-strip');
@@ -231,6 +240,7 @@ try {
     });
     check('events calendar (phone): the day strip sticks right under the sticky header', Boolean(c) && c.position === 'sticky' && c.headerBottom > 0 && Math.abs(c.top - c.headerBottom) <= 1, c ? JSON.stringify(c) : 'no day strip');
     await ctx.close();
+    }
   }
 
   /* ---------- 5. the header at desktop widths: one line, nothing overlapping or clipped ---------- */

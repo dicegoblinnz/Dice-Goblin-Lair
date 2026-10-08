@@ -24,9 +24,18 @@ const SUN2 = addDays(nextDow(0), 7); // Riftbound championship (locked T4-T13)
 
 async function openBooking(p) {
   await p.goto(`${BASE}/pages/book-a-table`, { waitUntil: 'networkidle' });
-  await p.waitForSelector('[data-dates] [data-day]');
+  // Round 9: the one booking page (lair-play): its month view picks the day, and the booking's own day strip steps aside
+  await p.waitForSelector('lair-play [data-play-date], [data-dates] [data-day]');
+  await p.waitForSelector('lair-booking [data-dates] [data-day]', { state: 'attached' });
 }
 async function pickDay(p, key) {
+  if (await p.locator('lair-play [data-play-date]').count()) {
+    // the month view: on to the day's month (the next-month arrow), then tap the day
+    for (let i = 0; i < 3 && !(await p.locator(`lair-play [data-play-date="${key}"]`).count()); i += 1) await p.click('lair-play [data-play-month="1"]');
+    await p.click(`lair-play [data-play-date="${key}"]`);
+    await p.waitForTimeout(200);
+    return;
+  }
   const chip = p.locator(`[data-dates] [data-day="${key}"]`);
   if (await chip.count()) await chip.first().click();
   else {
