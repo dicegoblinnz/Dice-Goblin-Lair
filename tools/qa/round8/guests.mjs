@@ -12,11 +12,14 @@
 //   4. the staff page: Today's sign-ups with the guests (members marked, with their code); Mia's member code at
 //      check-in shows the sign-up she's on; "Check in all 3"; a loyalty stamp for Mia (and 2 for Ruby: her and Jo)
 //   5. axe (WCAG 2.1 A and AA) on the form, My Lair and the staff page, and a keyboard pass on the form
-// Screenshots go to OUT (default SP/r8/guests-shots).
+// Screenshots go to OUT, or a folder in the system's temp directory. Without AXE (axe-core's axe.min.js) the axe part is
+// skipped, and says so.
 // Usage: DG_THEME=/path/to/theme PORT=4921 [AXE=/path/to/axe.min.js] [OUT=/dir] node tools/qa/round8/guests.mjs [phone|desktop]
 // Exits 1 on a FAIL.
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('/opt/node-tools/node_modules/playwright');
@@ -24,10 +27,9 @@ if (!process.env.DG_THEME) {
   console.error('Set DG_THEME to the theme checkout.');
   process.exit(2);
 }
-const SP = '/tmp/claude-0/-home-claude/5328840b-74f5-55ee-90fc-cbd04e2b255c/scratchpad';
-const OUT = process.env.OUT || `${SP}/r8/guests-shots`;
-const AXE = process.env.AXE || `${SP}/audit/performance/node_modules/axe-core/axe.min.js`;
-const axe = fs.existsSync(AXE) ? fs.readFileSync(AXE, 'utf8') : null;
+const OUT = process.env.OUT || path.join(os.tmpdir(), 'dg-round8-guests');
+const AXE = process.env.AXE || '';
+const axe = AXE && fs.existsSync(AXE) ? fs.readFileSync(AXE, 'utf8') : null;
 fs.mkdirSync(OUT, { recursive: true });
 const m = await import(new URL('../theme-mock/render.mjs', import.meta.url).href);
 const ev = await import(new URL('../theme-mock/events-mock.mjs', import.meta.url).href);
@@ -357,6 +359,6 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
 }
 await browser.close();
 server.close();
-if (!axe) console.log(`(axe skipped: ${AXE} not found)`);
+if (!axe) console.log(`(axe skipped: ${AXE ? `${AXE} not found` : 'set AXE to axe-core\'s axe.min.js'})`);
 console.log(`guests: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
