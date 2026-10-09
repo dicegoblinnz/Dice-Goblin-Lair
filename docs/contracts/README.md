@@ -4,12 +4,18 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v10-memberships.md` | Round 10, library memberships | 9 Oct 2026 |
 | `lair-api-contract-v7.md` | Round 7 | 6 Oct 2026 |
 | `lair-api-contract-v6.md` | Round 6, part 1 | 5 Oct 2026 |
 | `lair-api-contract-v5.md` | Round 5 | 4 Oct 2026 |
 | `lair-api-contract-v4.md` | Round 4 | 3 Oct 2026 |
 | `lair-api-contract-v3.md` | Round 3 | |
 | `lair-api-contract-v1.md` | Base contract | |
+
+Round 10, library memberships, covers: the Lair billing Grab, Stash and Hoard itself through a second Shopify app (Lair
+Memberships) in place of Simplee; failed payments, bank checks and retries; plan changes and cancelling; damage
+charges on the member's next bill after a 7-day notice; the staff Memberships and Damage routes; setting it up and
+switching over; and what to check on a development store before billing goes on.
 
 Round 7 covers: mobile numbers on bookings, the player profile, roll codes and "Got a code?", the loyalty card's number, birthday gifts in words and claimed gifts, library holds until midnight with games at home and scanning, the tab scanner, the customer picker, groups and their passes, the events editor, staff TTRPG sessions with GM invites, and seats staff add or reserve. Its last sections split the theme work into modules for parallel agents.
 
