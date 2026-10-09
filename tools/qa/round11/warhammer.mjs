@@ -313,6 +313,13 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   /* ---------- 7. the staff page: an opponent's code at check-in ---------- */
   await open('/pages/lair-staff#today', STAFF);
   await page.waitForTimeout(800);
+  const stampsOf = (cid) => page.evaluate((x) => {
+    const be = window.Lair.store.backend;
+    const mem = be.staffMembers().find((p) => String(p.customerId) === String(x));
+    const L = be.loyaltyView(mem);
+    return L.cards * 10 + L.stamps;
+  }, cid);
+  const stampsBefore = { tama: await stampsOf(people.tama.id), hemi: await stampsOf(people.hemi.id), kai: await stampsOf(String(KAI.id)) };
   await page.click('[data-tab="floor"]').catch(() => {});
   await page.fill('#checkin-code', people.tama.code);
   await page.press('#checkin-code', 'Enter');
@@ -340,6 +347,9 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     /Checked in/.test(done) && /Playing/.test(done) && /2 v 2/.test(done) && done.includes(people.tama.code) && done.includes(people.hemi.code) && /jo@example\.com/.test(done) && /Invited/.test(done), done.slice(0, 400));
   const seated = await page.evaluate((occ) => window.Lair.store.backend.state.bookings.filter((b) => b.occurrenceId === occ && b.people === 4).map((b) => b.status), id);
   check(`${tag}: the game is checked in`, seated.length === 1 && ['seated', 'checked-in'].includes(seated[0]), seated);
+  const stampsAfter = { tama: await stampsOf(people.tama.id), hemi: await stampsOf(people.hemi.id), kai: await stampsOf(String(KAI.id)) };
+  check(`${tag}: a loyalty stamp each for Tama and Hemi (members), 2 for Kai (him and the invited player)`,
+    stampsAfter.tama === stampsBefore.tama + 1 && stampsAfter.hemi === stampsBefore.hemi + 1 && stampsAfter.kai === stampsBefore.kai + 2, { stampsBefore, stampsAfter });
   await shot(page, `${tag}-7-staff-checked-in`, '[data-checkin-result]');
   check(`${tag}: no script errors`, !errors.length, errors.slice(0, 3));
   await ctx.close();

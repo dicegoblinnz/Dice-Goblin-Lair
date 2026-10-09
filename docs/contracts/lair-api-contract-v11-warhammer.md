@@ -175,8 +175,10 @@ account. `invited_at`: when their email went out. No cron work.
   together). No per-player payment table.
 - **Players are required** on the new form (both sizes), matching "games needing to be organized"; the app still takes an
   older page's booking with none.
-- **Loyalty stamps** stay as they were: the booker's account gets the game's stamps when it's checked in. Named players
-  with accounts don't get their own stamp yet (round 8 did that for event guests); a small follow-up if Mo wants it.
+- **Loyalty stamps** follow round 8's rule for guests: once the game is checked in, each named player with an account
+  gets their own stamp, and the booker's card counts the game's people less them (so an invited player's stamp is the
+  booker's until they make an account). Staff turnouts (Community) count each named member at the event the same way.
+  A game with no named players (an older page) stamps the booker for everyone, as before.
 - **Cancelling:** only the booker (or staff) cancels; the named players see it as cancelled in My Lair. Nobody is emailed
   about a cancellation (none is today for game spots either).
 - **No new staff route or permission.** The coordinator's own round 11 work (two-day events, GM game import, players
