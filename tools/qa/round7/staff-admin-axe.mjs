@@ -23,6 +23,10 @@ const browser = await chromium.launch();
 let total = 0;
 
 async function scan(page, label, selector = 'lair-staff') {
+  // Round 9: axe reads colours mid-transition (a chip fading to its picked colour gave a flaky contrast hit), so
+  // transitions and animations stop first and the page settles; what's checked is the colours people end up seeing
+  await page.addStyleTag({ content: '*, *::before, *::after { transition: none !important; animation: none !important; }' });
+  await page.waitForTimeout(200);
   await page.addScriptTag({ content: axe });
   const result = await page.evaluate(async (sel) => {
     const r = await window.axe.run(document.querySelector(sel), { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } });
