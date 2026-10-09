@@ -62,7 +62,7 @@ await page.goto('http://localhost:4178/pages/book-a-table', { waitUntil: 'networ
 await page.waitForTimeout(800);
 check('pay-now option hidden while the app is not connected to Shopify', await page.locator('[data-pay-now]').isHidden());
 await page.click('.date-chip:not([disabled]) >> nth=1');
-await page.click('[data-slot]:not([disabled]) >> nth=0');
+await page.click('[data-play-start]:not([disabled]), [data-slot]:not([disabled]) >> visible=true >> nth=0');
 await page.waitForTimeout(200);
 const picked = (await page.textContent('[data-picked]')).replace(/\s+/g, ' ').trim();
 await page.fill('#bk-name', 'Live Goblin');
@@ -83,7 +83,7 @@ watch(page2, 'book2');
 await page2.goto('http://localhost:4178/pages/book-a-table', { waitUntil: 'networkidle' });
 await page2.waitForTimeout(800);
 await page2.click('.date-chip:not([disabled]) >> nth=1');
-await page2.click('[data-slot]:not([disabled]) >> nth=0');
+await page2.click('[data-play-start]:not([disabled]), [data-slot]:not([disabled]) >> visible=true >> nth=0');
 await page2.waitForTimeout(300);
 const takenIds = picked.match(/[A-Z]\d+/g) || [];
 const statuses = [];

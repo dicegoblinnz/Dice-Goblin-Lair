@@ -16,7 +16,8 @@ const state = (ref) => page.evaluate((r) => {
   return `${b ? `due ${b.due} covered ${b.covered} pass ${b.pass && b.pass.code} status ${b.status}` : 'no booking'} | ${passes}`;
 }, ref);
 await page.waitForSelector('[data-pass]:not([hidden])', { timeout: 4000 }).catch(() => log('NO PASS TOGGLE'));
-await page.click('[data-slot]:not([disabled])');
+// round 10: the one booking page's start times sit under the day (the booking's own When card steps aside there)
+await page.click('[data-play-start]:not([disabled]), [data-slot]:not([disabled]) >> visible=true');
 await sleep(250);
 for (let i = 0; i < 2; i += 1) await page.click('[data-stepper="people"] [data-step-up]');
 await page.click('.booking__pass .booking__toggle');

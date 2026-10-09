@@ -80,6 +80,17 @@ async function bookingDay(p, n) {
   return day;
 }
 
+/** The booking's n-th start time that can be picked: (round 10) the one booking page's start times under the day, as
+    its other tabs' times sit (the booking's own When card steps aside there), else the booking's own */
+async function bookingSlot(p, n) {
+  const play = (await p.locator('lair-play [data-play-start]').count()) > 0;
+  const [sel, key] = play ? ['lair-play [data-play-start]', 'playStart'] : ['[data-slot]', 'slot'];
+  const slot = await p.$$eval(sel, (els, [i, k]) => els.filter((e) => !e.disabled).map((e) => e.dataset[k])[i], [n, key]);
+  await p.click(play ? `lair-play [data-play-start="${slot}"]` : `[data-slot="${slot}"]`);
+  await p.waitForTimeout(250);
+  return slot;
+}
+
 let fails = 0;
 const check = (name, ok, detail = '') => {
   if (!ok) fails += 1;
@@ -415,9 +426,7 @@ try {
       const o = await open(width, '/pages/book-a-table', { height });
       const p = o.page;
       await bookingDay(p, 1);
-      const slot = await p.$$eval('[data-slot]', (els) => els.filter((e) => !e.disabled).map((e) => e.dataset.slot)[2]);
-      await p.click(`[data-slot="${slot}"]`);
-      await p.waitForTimeout(250);
+      await bookingSlot(p, 2);
       check(`${tag} booking: one Mobile field (tel, required, autocomplete tel) with the hint`, fieldOk(await fieldOf(p, '#bk-phone')), await fieldOf(p, '#bk-phone'));
       await p.fill('#bk-name', 'Moana Test');
       await p.fill('#bk-email', 'moana.test@example.com');
@@ -506,9 +515,7 @@ try {
       await p.waitForTimeout(400);
       check(`${tag} member: the booking's Mobile starts with the shop account's phone`, (await p.inputValue('#bk-phone')) === '021 777 8888', await p.inputValue('#bk-phone'));
       await bookingDay(p, 2);
-      const slot = await p.$$eval('[data-slot]', (els) => els.filter((e) => !e.disabled).map((e) => e.dataset.slot)[1]);
-      await p.click(`[data-slot="${slot}"]`);
-      await p.waitForTimeout(250);
+      await bookingSlot(p, 1);
       await p.fill('#bk-phone', '027 123 4567');
       await p.click('[data-submit]');
       await p.waitForTimeout(700);

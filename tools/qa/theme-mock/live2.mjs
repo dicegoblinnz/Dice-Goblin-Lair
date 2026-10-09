@@ -87,7 +87,7 @@ check('pending message shown', /check/i.test(done), done.slice(0, 160));
 await page.goto('http://localhost:4179/pages/book-a-table', { waitUntil: 'networkidle' });
 await page.waitForTimeout(800);
 await page.click('.date-chip:not([disabled]) >> nth=1');
-await page.click('[data-slot]:not([disabled]) >> nth=0');
+await page.click('[data-play-start]:not([disabled]), [data-slot]:not([disabled]) >> visible=true >> nth=0');
 await page.waitForTimeout(300);
 await page.fill('#bk-name', 'Ellie');
 await page.fill('#bk-email', 'ellie@example.com');

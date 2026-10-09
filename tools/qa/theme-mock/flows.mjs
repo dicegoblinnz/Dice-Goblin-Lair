@@ -12,7 +12,7 @@ await page.goto('http://localhost:4177/pages/book-a-table', { waitUntil: 'networ
 await page.waitForTimeout(600);
 // pick tomorrow, first enabled slot
 await page.click('.date-chip:not([disabled]) >> nth=1');
-await page.click('[data-slot]:not([disabled]) >> nth=0');
+await page.click('[data-play-start]:not([disabled]), [data-slot]:not([disabled]) >> visible=true >> nth=0');
 await page.check('input[name="extra"][value="wargame"]');
 await page.waitForTimeout(200);
 const picked = await page.textContent('[data-picked]');

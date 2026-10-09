@@ -44,11 +44,12 @@ m.mockState.customer = CUSTOMER;
 await go('/pages/book-a-table');
 await page.waitForSelector('[data-pass]:not([hidden])', { timeout: 4000 }).catch(() => log('NO PASS TOGGLE'));
 const today = await page.evaluate(() => window.Lair.store.time.today());
+// round 10: the one booking page picks the day on its month view and the start time under the day (the booking's own
+// When card, with its strip of days, steps aside there; the strip still says whether today can be booked)
 const todayOpen = await page.$(`[data-day="${today}"]:not([disabled])`);
-if (todayOpen) await todayOpen.click();
+if (todayOpen) await page.click(`[data-play-date="${today}"], [data-day="${today}"] >> visible=true`);
 await sleep(200);
-const slot = await page.$('[data-slot]:not([disabled])');
-await slot.click();
+await page.click('[data-play-start]:not([disabled]), [data-slot]:not([disabled]) >> visible=true');
 await sleep(250);
 await page.click('[data-table="F1"]').catch(() => {});
 for (let i = 0; i < 2; i += 1) await page.click('[data-stepper="people"] [data-step-up]');

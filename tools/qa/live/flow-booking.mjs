@@ -45,7 +45,10 @@ async function pickDay(p, key) {
   await p.waitForTimeout(200);
 }
 async function pickSlot(p, minutes) {
-  await p.click(`[data-slot="${minutes}"]`);
+  // Round 10: on the one booking page the start times sit under the day (as the other tabs' times do), and the
+  // booking's own When card steps aside
+  if (await p.locator('lair-play [data-play-start]').count()) await p.click(`lair-play [data-play-start="${minutes}"]`);
+  else await p.click(`[data-slot="${minutes}"]`);
   await p.waitForTimeout(200);
 }
 async function setPeople(p, n) {

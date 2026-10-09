@@ -204,8 +204,9 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   });
   await page.click(`[data-play-date="${tomorrow}"]`);
   await page.waitForTimeout(250);
-  const slot = await page.evaluate(() => [...document.querySelectorAll('lair-booking [data-slot]:not([disabled])')].map((b) => b.dataset.slot).find((v) => Number(v) >= 18 * 60) || document.querySelector('lair-booking [data-slot]:not([disabled])')?.dataset.slot);
-  await page.click(`lair-booking [data-slot="${slot}"]`);
+  // round 10: the start times sit under the day, as the other tabs' times do (the booking's own When card steps aside)
+  const slot = await page.evaluate(() => [...document.querySelectorAll('lair-play [data-play-start]:not([disabled])')].map((b) => b.dataset.playStart).find((v) => Number(v) >= 18 * 60) || document.querySelector('lair-play [data-play-start]:not([disabled])')?.dataset.playStart);
+  await page.click(`lair-play [data-play-start="${slot}"]`);
   await page.fill('#bk-name', 'Aroha Example');
   await page.fill('#bk-email', 'aroha@example.com');
   await page.fill('#bk-phone', '021 555 0101');
