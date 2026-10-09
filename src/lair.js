@@ -663,6 +663,15 @@ export const MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS damage_payments_open ON damage_payments (fee_id) WHERE status IN ('claimed', 'checking', 'pending', 'challenged')",
     'CREATE TABLE IF NOT EXISTS membership_events (webhook_id TEXT PRIMARY KEY, topic TEXT, at INTEGER NOT NULL)',
   ],
+  // Round 12, the simulation's fixes (10 Oct 2026). Only new tables, so the live rows stay as they are:
+  //  - series_skips: a date a weekly or fortnightly game series couldn't have (its tables taken, or an event locking
+  //    them) that staff have been told about, so the top-up tells them once for each date, not on every run.
+  //  - gone_dates: an event date people are on (sign-ups, game tables, I'm coming, maybe, the waitlist) that isn't on
+  //    the calendar any more (deleted, moved or skipped in Shopify), told to staff once (goneDates).
+  [
+    'CREATE TABLE IF NOT EXISTS series_skips (series_id TEXT NOT NULL, day TEXT NOT NULL, reason TEXT, told_at INTEGER NOT NULL, PRIMARY KEY (series_id, day))',
+    'CREATE TABLE IF NOT EXISTS gone_dates (occurrence_id TEXT PRIMARY KEY, title TEXT, starts_at INTEGER, told_at INTEGER NOT NULL)',
+  ],
 ];
 /** Round 10 (library memberships) is MIGRATIONS[ROUND10 - 1]: the step that makes the memberships table */
 const ROUND10 = MIGRATIONS.findIndex((step) => step.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS memberships ('))) + 1;
@@ -1786,7 +1795,9 @@ export class Lair {
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) {
           game.invites = ((g.seriesId && waiting.get(g.seriesId)) || []).map((x) => (staffView ? x : { ...x, email: '' }));
         }
-        if (staffView) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g) });
+        // Round 12: and the players the group already has who don't book through the Lair (they're in taken), so the staff
+        // page can say why seats are taken with no players listed
+        if (staffView) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g), offlinePlayers: g.offlinePlayers || 0 });
         // Round 9, play: how many are interested (everyone), and who (staff and the session's GM)
         game.interested = interest.sessions[g.id] || 0;
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.interest = interest.rows.filter((r) => r.kind === 'session' && r.target_id === g.id).map((r) => this.interestPerson(r));
@@ -2402,7 +2413,9 @@ export class Lair {
 
   /**
    * Add the missing weekly or fortnightly sessions of a series up to the booking horizon. A date whose tables are
-   * taken (or that breaks a rule) is skipped and reported. No awaits.
+   * taken (or that breaks a rule) is skipped and reported. Round 12: a session that starts after the horizon (later in
+   * the day than now, on the horizon's last day) isn't bookable yet, so it's left for a later top-up rather than
+   * reported as skipped. No awaits.
    */
   planSessions(row, rules, now, st) {
     const step = row.schedule === 'weekly' ? 7 : row.schedule === 'fortnightly' ? 14 : 0;
@@ -2411,7 +2424,8 @@ export class Lair {
     const details = parse(row.details, {});
     const tables = parse(row.tables, []);
     const have = new Set(this.sql.exec('SELECT starts_at FROM games WHERE series_id = ?', row.id).toArray().map((r) => time.key(r.starts_at)));
-    const lastKey = time.key(now + rules.horizonDays * 24 * HOUR);
+    const horizon = now + rules.horizonDays * 24 * HOUR;
+    const lastKey = time.key(horizon);
     const created = [];
     const skipped = [];
     const sample = this.sql.exec('SELECT * FROM games WHERE series_id = ? ORDER BY starts_at DESC LIMIT 1', row.id).toArray()[0];
@@ -2419,7 +2433,7 @@ export class Lair {
     for (let key = row.first_day; key <= lastKey; key = addDays(key, step)) {
       if (have.has(key)) continue;
       const start = time.at(key, row.clock);
-      if (start <= now) continue;
+      if (start <= now || start > horizon) continue;
       const end = start + row.length;
       try {
         // A staff-made series' dates follow the GM rules plus the shop tables, like its first session (round 7)
@@ -2440,28 +2454,121 @@ export class Lair {
     return { created, skipped };
   }
 
-  /** Once a day, top up every weekly and fortnightly series so its sessions stay bookable as far ahead as anything else. */
+  /**
+   * Every maintenance run, top up every weekly and fortnightly series so its sessions stay bookable as far ahead as
+   * anything else: a session is added as soon as its start is inside the booking horizon. A date it can't have (its
+   * tables taken, an event locking them) is tried again each run, and staff hear about it once (series_skips).
+   * Round 12: this ran once a day by a note kept in memory only, so a Lair that had been asleep ran it again, and every
+   * run emailed staff about the same dates (and about horizon-day sessions that weren't bookable yet) again. No awaits.
+   */
   extendSeries(rules, now) {
-    const day = new LairTime(rules.tz).key(now);
-    if (this.seriesDay === day) return [];
-    this.seriesDay = day;
     const rows = this.sql.exec("SELECT * FROM series WHERE status = 'active' AND schedule IN ('weekly', 'fortnightly')").toArray();
     if (!rows.length) return [];
+    const time = new LairTime(rules.tz);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const report = [];
     for (const row of rows) {
       const { created, skipped } = this.planSessions(row, rules, now, st);
-      if (created.length || skipped.length) report.push({ series: row.id, created: created.length, skipped: skipped.length });
-      if (skipped.length) {
+      // only the dates staff haven't heard about yet
+      const fresh = skipped.filter((x) => {
+        const day = time.key(x.start);
+        if (this.sql.exec('SELECT 1 FROM series_skips WHERE series_id = ? AND day = ?', row.id, day).toArray().length) return false;
+        this.sql.exec('INSERT INTO series_skips (series_id, day, reason, told_at) VALUES (?, ?, ?, ?)', row.id, day, String(x.reason || '').slice(0, 300), now);
+        return true;
+      });
+      if (created.length || fresh.length) report.push({ series: row.id, created: created.length, skipped: fresh.length });
+      if (fresh.length) {
         const details = parse(row.details, {});
         this.notifyStaff(`Game series needs a table: ${details.title}`, {
           title: 'A game series needs a table',
-          intro: `${details.gm}'s ${row.schedule} game ${details.title} couldn't get its tables on these dates. Find them another table on the staff page, or let the GM know.`,
-          details: skipped.map((x) => [new LairTime(rules.tz).label(x.start), x.reason]),
+          intro: `${details.gm}'s ${row.schedule} game ${details.title} couldn't get its tables on these dates. Find them another table on the staff page, or let the GM know. Gobgob tells you once for each date.`,
+          details: fresh.map((x) => [time.label(x.start), x.reason]),
         });
       }
     }
+    // dates that are over don't need remembering
+    this.sql.exec('DELETE FROM series_skips WHERE day < ?', time.key(now - 7 * 24 * HOUR));
     return report;
+  }
+
+  /** Round 12: the events are Shopify's (not the built-in defaults of a Lair that couldn't reach it) */
+  eventsKnown() {
+    return this.rulesSource !== 'built-in defaults';
+  }
+
+  /** Round 12: an event date id (handle@YYYY-MM-DD) that isn't on the calendar any more. Only with Shopify's events. No awaits. */
+  dateGone(rules, occurrenceId) {
+    return this.eventsKnown() && /@\d{4}-\d{2}-\d{2}$/.test(String(occurrenceId || '')) && !findOccurrence(rules, occurrenceId);
+  }
+
+  /**
+   * Round 12: event dates people are on that aren't on the calendar any more: the event deleted (or made a draft) in
+   * Shopify, or the date moved, skipped or ended there. The staff page won't do that while anyone's on a date, but
+   * Shopify's own editor will. Their sign-ups, game tables, I'm coming, maybe and waitlist places stay as they are (put
+   * the date back and it's all as it was); staff get one email for each such date, with who's on it, so they can put
+   * it back or let them know. A date that comes back is forgotten, so going again tells them again. Only with the
+   * events read from Shopify, never the built-in defaults (a Lair that couldn't reach Shopify). Every maintenance run.
+   * Returns [{ occurrenceId, title, start, people, signUps, spots, said, waiting }] for the dates told about. No awaits.
+   */
+  goneDates(rules, now) {
+    if (!this.eventsKnown()) return [];
+    const dates = new Map();
+    const dateOf = (id, title, start) => {
+      if (!dates.has(id)) dates.set(id, { occurrenceId: id, title: '', start, people: 0, signUps: 0, spots: 0, said: 0, waiting: 0, who: [] });
+      const d = dates.get(id);
+      if (!d.title && title) d.title = title;
+      d.start = Math.min(d.start, start);
+      return d;
+    };
+    const reach = (r) => [r.ref, r.email, r.phone].filter(Boolean).join(', ');
+    for (const r of this.sql.exec("SELECT * FROM event_joins WHERE status != 'cancelled' AND ends_at > ?", now).toArray()) {
+      const d = dateOf(r.occurrence_id, r.title, r.starts_at);
+      d.signUps += 1;
+      d.people += Number(r.people) || 1;
+      d.who.push(`${r.name || 'Someone'}: signed up, ${plural(Number(r.people) || 1, 'person', 'people')} (${reach(r)})`);
+    }
+    for (const r of this.sql.exec("SELECT * FROM bookings WHERE occurrence_id IS NOT NULL AND status IN ('held', 'confirmed', 'seated') AND ends_at > ?", now).toArray()) {
+      const d = dateOf(r.occurrence_id, '', r.starts_at);
+      d.spots += 1;
+      d.who.push(`${r.name || 'Someone'}: game table ${parse(r.tables, []).join(' + ')} (${reach(r)})`);
+    }
+    for (const r of this.sql.exec("SELECT * FROM interests WHERE kind = 'event' AND status = 'active' AND ends_at > ?", now).toArray()) {
+      const d = dateOf(r.target_id, r.title, r.starts_at);
+      if (r.level === 'waitlist') {
+        d.waiting += Number(r.people) || 1;
+        d.who.push(`${r.name || 'Someone'}: on the waitlist, ${plural(Number(r.people) || 1, 'person', 'people')} (${reach(r)})`);
+      } else d.said += 1;
+    }
+    const told = [];
+    for (const d of dates.values()) {
+      if (!this.dateGone(rules, d.occurrenceId)) {
+        this.sql.exec('DELETE FROM gone_dates WHERE occurrence_id = ?', d.occurrenceId);
+        continue;
+      }
+      if (this.sql.exec('SELECT 1 FROM gone_dates WHERE occurrence_id = ?', d.occurrenceId).toArray().length) continue;
+      if (!d.title) d.title = (rules.events || []).find((e) => e.id === d.occurrenceId.split('@')[0])?.title || 'An event';
+      this.sql.exec('INSERT INTO gone_dates (occurrence_id, title, starts_at, told_at) VALUES (?, ?, ?, ?)', d.occurrenceId, d.title, d.start, now);
+      told.push(d);
+    }
+    // dates that are over don't need remembering
+    this.sql.exec('DELETE FROM gone_dates WHERE starts_at < ?', now - 7 * 24 * HOUR);
+    const time = new LairTime(rules.tz);
+    for (const d of told) {
+      const said = [d.said ? `${plural(d.said, 'person', 'people')} said I'm coming or Maybe` : '', d.waiting ? `${plural(d.waiting, 'person', 'people')} on the waitlist` : ''].filter(Boolean);
+      const who = d.who.length > 60 ? [...d.who.slice(0, 60), `and ${d.who.length - 60} more`] : d.who;
+      this.notifyStaff(`Not on the calendar any more: ${d.title}, ${this.shortDay(d.start, rules)}`, {
+        title: 'An event date people are on has gone',
+        intro: `${d.title} on ${time.label(d.start)} isn't on the events calendar any more (deleted, moved or skipped in Shopify), but people are still on it. Nothing's been cancelled and nobody's been told. If it went by mistake, put the date back in Shopify and everything is as it was. If it's off, let them know.`,
+        details: [
+          ['Date', time.label(d.start)],
+          d.signUps ? ['Signed up', `${plural(d.people, 'person', 'people')} (${plural(d.signUps, 'sign-up', 'sign-ups')})`] : null,
+          d.spots ? ['Game tables', String(d.spots)] : null,
+          said.length ? ['Also', said.join(', ')] : null,
+          who.length ? ['Who', who.join('\n')] : null,
+        ].filter(Boolean),
+      });
+    }
+    return told.map(({ who, ...d }) => d);
   }
 
   /**
@@ -8627,11 +8734,14 @@ export class Lair {
     const joinList = [...joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })), ...this.guestJoins(who.customerId, since, memberRow)].sort((a, b) => a.start - b.start);
     // Round 11: the games they're a named player in (someone else booked them), in among their own bookings, soonest first
     const playing = this.playerBookings(who.customerId, since, memberRow, rules);
+    // Round 12: a sign-up, game table or interest whose event date isn't on the calendar any more (gone in Shopify) says
+    // so (gone: true), so My Lair doesn't show it as if nothing had changed
+    const gone = (x, id = x.occurrenceId) => (id && x.end > now && this.dateGone(rules, id) ? { ...x, gone: true } : x);
     return {
       customer: { id: who.customerId, staff: who.staff, gm: who.gm },
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
       // Round 11: their own game tables list their players (gamePlayers, gameSize)
-      bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start),
+      bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start).map((b) => gone(b)),
       seats: own.filter((b) => b.kind === 'gm-seat').map((b) => {
         const g = seatGames.get(b.gameId);
         return {
@@ -8640,7 +8750,7 @@ export class Lair {
         };
       }),
       games: gameRows.map((g) => ({ ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id) })),
-      joins: joinList,
+      joins: joinList.map((j) => gone(j)),
       credits,
       member: {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
@@ -8683,7 +8793,7 @@ export class Lair {
       // Round 9: the running tab (owed now, coming up) and, on a monthly account, the limit and the open bill
       account: this.memberAccount(who.customerId, rules, now),
       // Round 9, play: the sessions they're interested in and the event dates they said maybe (or coming) to, still to come
-      interests: this.memberInterests(who.customerId, now),
+      interests: this.memberInterests(who.customerId, now).map((x) => (x.kind === 'event' ? gone(x, x.targetId) : x)),
       // Birthday gifts (round 7): those with something left to collect ('ready'), and those claimed in the last 30 days,
       // whatever year they were given: { id, at, credit, sessions, rolls, product, state, claimedAt, words }
       gifts: this.sql
@@ -8889,6 +8999,13 @@ export class Lair {
       if (extended.length) result.series = extended;
     } catch (error) {
       console.error('Lair: could not extend game series', error);
+    }
+    // Round 12: event dates people are on that have gone from the calendar in Shopify: staff hear once for each
+    try {
+      const gone = this.goneDates(rules, Date.now());
+      if (gone.length) result.goneDates = gone;
+    } catch (error) {
+      console.error('Lair: could not check for event dates that have gone', error);
     }
     // Round 8: weekly and fortnightly table holds get their dates up to the horizon plus 7 days, every run
     try {

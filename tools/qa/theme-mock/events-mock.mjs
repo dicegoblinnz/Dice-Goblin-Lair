@@ -141,6 +141,9 @@ export function lairEvents() {
     // no events-data.json here: the stand-in
   }
   rows = [...rows.map((e) => ({ ...e, ...(ROUND4[e.handle] || {}) })), ...oneOffs(), ...extraEvents];
+  // A real-data simulation (tools/qa/sim): DG_SIM_EVENTS is a JSON list of the store's own events, in QA_EVENTS' shape,
+  // and they're the only ones (no stand-ins, no one-offs)
+  if (process.env.DG_SIM_EVENTS) rows = JSON.parse(fs.readFileSync(process.env.DG_SIM_EVENTS, 'utf8'));
   return rows.map((e) => ({
     system: { handle: e.handle, type: 'lair_event' },
     title: field(e.title),

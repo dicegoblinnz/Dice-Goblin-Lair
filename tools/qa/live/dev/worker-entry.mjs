@@ -24,6 +24,19 @@ export { Lair };
 // (the cron's maintenance runs them at the real time), so a live check can be "the day before" without moving the clock
 async function devFetch(request, env, ctx) {
   const url = new URL(request.url);
+  // Round 11 (simulation): POST /__dev/admin-job { kind, payload } runs one of the owner's jobs (src/admin.js) at once,
+  // as the cron would from the config database's admin_jobs
+  if (url.pathname === '/__dev/admin-job' && request.method === 'POST') {
+    const lair = env.LAIR.get(env.LAIR.idFromName('dice-goblin'));
+    return lair.fetch(new Request(`${url.origin}/internal/admin-job`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: await request.text() }));
+  }
+  // Round 12 (simulation): POST /__dev/maintenance runs the cron's maintenance once, now (series top-ups, event dates
+  // gone from the calendar, reminders…), so a check can see what it does and what it emails
+  if (url.pathname === '/__dev/maintenance' && request.method === 'POST') {
+    const lair = env.LAIR.get(env.LAIR.idFromName('dice-goblin'));
+    const body = JSON.stringify({ webhookUrl: `${url.origin}/webhooks/orders-paid` });
+    return lair.fetch(new Request(`${url.origin}/internal/maintenance`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body }));
+  }
   if (url.pathname === '/__dev/reminders' && request.method === 'POST') {
     const lair = env.LAIR.get(env.LAIR.idFromName('dice-goblin'));
     return lair.fetch(new Request(`${url.origin}/internal/reminders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: await request.text() }));
