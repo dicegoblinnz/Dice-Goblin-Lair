@@ -45,6 +45,8 @@ const at = (day, hh, mm = 0) => time.at(day, hh * 60 + mm);
 const EVENTS = [
   { id: 'warhammer-night', title: 'Warhammer night', start: at('2026-10-15', 18), end: at('2026-10-16', 0), repeat: 'weekly', tables: 'T8-T21', lockTables: true },
   { id: 'oddity-alley', title: 'Oddity Alley', start: at('2026-10-17', 10), end: at('2026-10-17', 16), repeat: 'monthly', tables: 'T1-T21', lockTables: true, days: 2 },
+  // sign-ups (events.reset): a Wednesday quiz with places
+  { id: 'quiz-night', title: 'Quiz night', start: at('2026-10-14', 18), end: at('2026-10-14', 21), repeat: 'weekly', capacity: 20 },
 ];
 const PICTURE = 'https://cdn.shopify.com/s/files/1/0638/6253/8343/files/game-01-fanova.jpg?v=1';
 
@@ -213,4 +215,26 @@ test('round 11: games.reset takes every game, series and seat off the board, sil
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM series WHERE status != 'cancelled'").one().n, 0);
   // the daily top-up doesn't bring them back
   assert.deepEqual(lair.extendSeries(lair.rulesCache, NOW + DAY), []);
+});
+
+test('round 11: events.reset takes the sign-ups and interest for dates to come off, silently; a paid one stays and is listed', async () => {
+  const join = (date) => call('POST', `events/quiz-night@${date}/join`, { name: 'Sam Example', email: 'sam@example.com', phone: '021 555 0100', people: 2 }, '1001');
+  const first = await join('2026-10-14');
+  assert.equal(first.status, 200, JSON.stringify(first.data));
+  const second = await join('2026-10-21');
+  assert.equal(second.status, 200, JSON.stringify(second.data));
+  lair.sql.exec('UPDATE event_joins SET paid_amount = 1000 WHERE id = ?', second.data.join.id);
+  const maybe = await call('POST', 'interest', { kind: 'event', id: 'warhammer-night@2026-10-15', name: 'Kiri Example', email: 'kiri@example.com', phone: '021 555 0101' });
+  assert.equal(maybe.status, 200, JSON.stringify(maybe.data));
+  const res = await job('events.reset');
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.deepEqual([res.data.joins, res.data.spots, res.data.interests], [1, 0, 1]);
+  assert.deepEqual(res.data.paidLeft.map((p) => [p.kind, p.title]), [['sign-up', 'Quiz night']]);
+  const rows = lair.sql.exec('SELECT id, status FROM event_joins ORDER BY starts_at').toArray();
+  assert.equal(rows[0].status, 'cancelled');
+  assert.notEqual(rows[1].status, 'cancelled', 'the paid one is left for staff');
+  assert.equal(lair.sql.exec("SELECT status FROM interests WHERE kind = 'event'").one().status, 'removed');
+  // nothing to do the second time
+  const again = await job('events.reset');
+  assert.deepEqual([again.data.joins, again.data.interests], [0, 0]);
 });

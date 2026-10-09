@@ -10,6 +10,9 @@
  *  - games.reset {}: every GM game and series off the board, silently (they were tests): games and series cancelled,
  *    the GMs' table holds and the seats cancelled, the regulars and seat invites ended, the interest in them closed.
  *    → { games, series, bookings }
+ *  - events.reset {}: every sign-up, game spot, "I'm coming", "Maybe" and waitlist place on an event date still to come
+ *    off the board, silently (Mo: the ones there were tests). Ones paid online are left for staff, and listed.
+ *    → { joins, spots, interests, paidLeft: [{ ref, kind, title, start }] }
  *  - games.add { games: [spec] }: GM games for named GMs who have no account here yet (nobody is emailed), straight on
  *    the board, each checked like a game staff list (opening hours, free tables, tables events lock), except that a
  *    start may fall between the hours. spec: { title, system, gm, blurb, seats, offlinePlayers (players already in
@@ -34,6 +37,7 @@ export const adminMethods = {
     const kind = String(body?.kind || '');
     const payload = body && typeof body.payload === 'object' && body.payload ? body.payload : {};
     if (kind === 'games.reset') return this.adminResetGames(Date.now());
+    if (kind === 'events.reset') return this.adminResetEvents(Date.now());
     if (kind === 'games.add') {
       const rules = await this.rules();
       // --- no awaits from here on ---
@@ -55,6 +59,24 @@ export const adminMethods = {
     this.write("UPDATE series_invites SET status = 'cancelled', updated_at = ? WHERE status = 'waiting'", now);
     this.write("UPDATE interests SET status = 'removed', updated_at = ? WHERE kind = 'session' AND status = 'active'", now);
     return { games, series, bookings };
+  },
+
+  /** events.reset: the sign-ups, game spots and interest for event dates still to come, without emails. No awaits. */
+  adminResetEvents(now) {
+    const count = (sql) => Number(this.sql.exec(sql, now).one().n) || 0;
+    const JOINS = "FROM event_joins WHERE status NOT IN ('cancelled', 'attended') AND ends_at > ?";
+    const SPOTS = "FROM bookings WHERE occurrence_id IS NOT NULL AND status IN ('held', 'confirmed', 'seated') AND ends_at > ?";
+    const paidLeft = [
+      ...this.sql.exec(`SELECT ref, title, starts_at ${JOINS} AND paid_amount > 0`, now).toArray().map((r) => ({ ref: r.ref, kind: 'sign-up', title: r.title, start: r.starts_at })),
+      ...this.sql.exec(`SELECT ref, starts_at ${SPOTS} AND paid_amount > 0`, now).toArray().map((r) => ({ ref: r.ref, kind: 'game spot', title: null, start: r.starts_at })),
+    ];
+    const joins = count(`SELECT COUNT(*) AS n ${JOINS} AND paid_amount = 0`);
+    const spots = count(`SELECT COUNT(*) AS n ${SPOTS} AND paid_amount = 0`);
+    const interests = count("SELECT COUNT(*) AS n FROM interests WHERE kind = 'event' AND status = 'active' AND ends_at > ?");
+    this.write(`UPDATE event_joins SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE id IN (SELECT id ${JOINS} AND paid_amount = 0)`, now, now);
+    this.write(`UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE id IN (SELECT id ${SPOTS} AND paid_amount = 0)`, now, now);
+    this.write("UPDATE interests SET status = 'removed', updated_at = ? WHERE kind = 'event' AND status = 'active' AND ends_at > ?", now, now);
+    return { joins, spots, interests, paidLeft };
   },
 
   /** games.add: each game on its own, so one that doesn't fit doesn't stop the rest. No awaits. */
