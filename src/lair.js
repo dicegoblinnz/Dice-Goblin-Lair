@@ -31,6 +31,8 @@ import { runningTabMethods } from './tab.js';
 import { interestMethods } from './interest.js';
 // Round 9: turnouts, lists of members and early access offers for regulars (their own file, mixed in at the end)
 import { communityMethods } from './community.js';
+// Round 10: library memberships (Grab, Stash and Hoard) billed by the Lair through Shopify (src/memberships.js)
+import { membershipMethods, membershipUpkeep } from './memberships.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -546,6 +548,43 @@ export const MIGRATIONS = [
       paid_at INTEGER, ended_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS early_offer_claims_offer ON early_offer_claims (offer_id, status)',
     'CREATE INDEX IF NOT EXISTS early_offer_claims_customer ON early_offer_claims (customer_id, offer_id)',
+  ],
+  // Round 10, library memberships (9 Oct 2026). Only new tables, so the live rows stay as they are:
+  //  - memberships: one row per Shopify subscription contract (id: the contract's number). status 'active', 'past_due'
+  //    (a renewal failed and another try is set), 'cancelling' (runs to cancel_at, the end of the paid month), 'ending'
+  //    (to be ended in Shopify), 'paused' (paused in Shopify) or 'ended'. tier: the plan they can borrow on now;
+  //    billing_tier: the plan the next bill charges (a change takes effect when that bill is paid). next_cycle and
+  //    next_bill_at: the Shopify billing cycle to bill next and when. card: the card's brand, last digits and expiry.
+  //  - membership_charges: each try at billing a cycle ('renewal', or 'fees': damage charges billed on their own),
+  //    claimed before Shopify is asked, with its idempotency key (unique), Shopify's billing attempt, and how it went.
+  //  - damage_charges: missing parts, damage or a lost game: 'notice' (emailed, 7 days to sort it), 'due', 'billing' (on
+  //    a bill being paid), 'paid', 'waived', 'disputed' or 'unpaid' (staff sort it at the counter).
+  //  - membership_events: Lair Memberships webhooks already handled (Shopify can send one twice), kept a week.
+  [
+    `CREATE TABLE IF NOT EXISTS memberships (
+      id TEXT PRIMARY KEY, contract_gid TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, status TEXT NOT NULL, shopify_status TEXT, tier TEXT NOT NULL,
+      billing_tier TEXT NOT NULL, line_id TEXT, variant_id TEXT, selling_plan_id TEXT, price INTEGER, currency TEXT, payment_method_id TEXT, card TEXT,
+      next_cycle INTEGER, next_bill_at INTEGER, paid_through INTEGER, retry_at INTEGER, failed_at INTEGER, fail_count INTEGER NOT NULL DEFAULT 0,
+      cancel_at INTEGER, cancel_requested_at INTEGER, cancel_by TEXT, plan_changed_at INTEGER, card_email_at INTEGER, ended_at INTEGER, end_reason TEXT,
+      origin_order_id TEXT, revision_id TEXT, source TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS memberships_customer ON memberships (customer_id, status)',
+    'CREATE INDEX IF NOT EXISTS memberships_due ON memberships (status, next_bill_at)',
+    'CREATE INDEX IF NOT EXISTS memberships_payment_method ON memberships (payment_method_id)',
+    `CREATE TABLE IF NOT EXISTS membership_charges (
+      id TEXT PRIMARY KEY, membership_id TEXT NOT NULL, cycle INTEGER NOT NULL, attempt INTEGER NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
+      attempt_gid TEXT, kind TEXT NOT NULL, status TEXT NOT NULL, amount INTEGER NOT NULL, fees TEXT NOT NULL DEFAULT '[]', tier TEXT, error_code TEXT,
+      error_message TEXT, order_id TEXT, next_action_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER, completed_at INTEGER)`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS membership_charges_try ON membership_charges (membership_id, cycle, attempt)',
+    'CREATE INDEX IF NOT EXISTS membership_charges_status ON membership_charges (status, updated_at)',
+    'CREATE INDEX IF NOT EXISTS membership_charges_attempt ON membership_charges (attempt_gid)',
+    `CREATE TABLE IF NOT EXISTS damage_charges (
+      id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, membership_id TEXT, loan_id TEXT, variant_id TEXT, title TEXT NOT NULL, reason TEXT NOT NULL,
+      details TEXT, amount INTEGER NOT NULL, status TEXT NOT NULL, due_at INTEGER NOT NULL, charge_id TEXT, dispute_note TEXT, created_by TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER, resolved_at INTEGER, resolved_by TEXT, note TEXT, emailed_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS damage_charges_customer ON damage_charges (customer_id, status)',
+    'CREATE INDEX IF NOT EXISTS damage_charges_membership ON damage_charges (membership_id, status)',
+    'CREATE INDEX IF NOT EXISTS damage_charges_status ON damage_charges (status, due_at)',
+    'CREATE TABLE IF NOT EXISTS membership_events (webhook_id TEXT PRIMARY KEY, topic TEXT, at INTEGER NOT NULL)',
   ],
 ];
 
@@ -1251,8 +1290,13 @@ export class Lair {
         if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
-        if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true }));
-        if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false }));
+        // Round 10: Lair Memberships' webhooks (the Worker checked their signature), and its address for setup and upkeep
+        if (b === 'memberships-webhook') return json(await this.membershipWebhook(body));
+        const membershipsUrl = body.membershipsUrl || (typeof body.webhookUrl === 'string' ? body.webhookUrl.replace(/\/webhooks\/orders-paid$/, '/webhooks/memberships') : null);
+        if (b === 'setup') {
+          return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true, membershipsUrl, membershipsSetup: body.memberships === 'plans' }));
+        }
+        if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false, membershipsUrl }));
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
         if (b === 'pos' && c === 'today') return json(await this.posToday());
@@ -1271,8 +1315,8 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest'].includes(a));
+        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
@@ -1305,6 +1349,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'library' && b === 'status' && !c) return json(await this.libraryStatus(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'holds' && !c) return json(await this.listHolds(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'loans' && !c) return json(await this.listLoans(url, who));
+      // Round 10: library memberships and damage charges for staff
+      if (request.method === 'GET' && a === 'memberships' && !b) return json(await this.listMemberships(url, who));
+      if (request.method === 'GET' && a === 'library' && b === 'damage' && !c) return json(await this.listDamageCharges(url, who));
       if (request.method === 'GET' && a === 'tab' && b === 'lookup' && !c) return json(await this.tabLookup(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
@@ -1313,6 +1360,12 @@ export class Lair {
       if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
       // Round 9: "Pay online now" for everything on a monthly account
       if (a === 'me' && b === 'account' && c === 'pay') return json(await this.payAccountNow(who));
+      // Round 10: a member's library membership (change plan, cancel, keep it, update the card) and disputing a damage charge
+      if (a === 'me' && b === 'membership' && c === 'change' && !d) return json(await this.changeMembership(body, who));
+      if (a === 'me' && b === 'membership' && c === 'cancel' && !d) return json(await this.cancelMembership(body, who));
+      if (a === 'me' && b === 'membership' && c === 'resume' && !d) return json(await this.resumeMembership(body, who));
+      if (a === 'me' && b === 'membership' && c === 'card' && !d) return json(await this.membershipCardEmail(body, who));
+      if (a === 'me' && b === 'damage' && c && d === 'dispute') return json(await this.disputeDamageCharge(decodeURIComponent(c), body, who));
       if (a === 'passes' && !b) return json(await this.createPass(body, who));
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
@@ -1353,6 +1406,11 @@ export class Lair {
       if (a === 'library' && b === 'loans' && !c) return json(await this.checkOutLoan(body, who));
       if (a === 'library' && b === 'loans' && c && d === 'return') return json(await this.returnLoan(decodeURIComponent(c), who));
       if (a === 'library' && b === 'return' && !c) return json(await this.checkInLoan(body, who));
+      // Round 10: damage charges and memberships for staff
+      if (a === 'library' && b === 'damage' && !c) return json(await this.createDamageCharge(body, who));
+      if (a === 'library' && b === 'damage' && c && d === 'update') return json(await this.updateDamageCharge(decodeURIComponent(c), body, who));
+      if (a === 'memberships' && b && c === 'cancel' && !d) return json(await this.staffCancelMembership(decodeURIComponent(b), body, who));
+      if (a === 'memberships' && b && c === 'retry' && !d) return json(await this.staffRetryMembership(decodeURIComponent(b), who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
@@ -6756,8 +6814,10 @@ export class Lair {
     // Round 9: reserving for someone else is the library's staff side
     if (who.staff && String(input?.customerId ?? '').trim()) this.requireStaff(who, 'library');
     const forSomeone = Boolean(who.staff && String(input?.customerId ?? '').trim());
-    const plan = forSomeone ? null : libraryPlan(who.tags);
+    // Round 10: the plan comes from their library membership (Simplee's tags until everyone has moved across)
+    const plan = forSomeone ? null : this.planOf(who.customerId, who.tags);
     if (!forSomeone && !plan) throw new RuleError('Join the library to reserve games.', 403);
+    if (!forSomeone) this.checkPlanOpen(plan);
     const sent = Number(input?.copies);
     const fromPage = Number.isInteger(sent) && sent >= 1 && sent <= 10 ? sent : null;
     const fromShopify = (await this.shopifyCopies([variantId])).get(variantId);
@@ -7042,10 +7102,12 @@ export class Lair {
    * home), holds (active, soonest until first), atHome (out, longest at home first) }. No awaits.
    */
   libraryFor(customerId, tags, now = Date.now()) {
-    const plan = libraryPlan(tags);
+    // Round 10: the plan comes from their library membership (Simplee's tags until everyone has moved across); blocked
+    // while a payment is outstanding
+    const plan = this.planOf(customerId, tags, now);
     const holds = this.activeHolds(customerId, now);
     const atHome = this.loansOut(customerId);
-    return { plan: plan ? { name: plan.name, games: plan.games } : null, used: holds.length + atHome.length, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
+    return { plan: this.planWords(plan), used: holds.length + atHome.length, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
   }
 
   /** A scanned or typed code, cleaned: trimmed, 1 to 40 letters, numbers and . _ - +. Anything else is a 422 with `message`. */
@@ -7156,8 +7218,9 @@ export class Lair {
       const loan = this.endLoan(mine[0], now, 'member');
       return { result: 'returned', loan: this.loanView(loan), library: this.libraryFor(me, who.tags, now), message: `${game.title} is checked back in. Thanks, friend!` };
     }
-    const plan = libraryPlan(who.tags);
+    const plan = this.planOf(me, who.tags, now);
     if (!plan) throw new RuleError('Join the library to borrow games.', 403);
+    this.checkPlanOpen(plan);
     const holds = this.activeHolds(me, now);
     const hold = holds.find((h) => h.variantId === game.variantId) || null;
     let loan;
@@ -7234,11 +7297,12 @@ export class Lair {
     const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
     const before = this.copiesFree(game.variantId, copies, now, { exceptHold: hold?.id });
     const loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by });
-    const plan = libraryPlan(person?.tags);
+    const plan = this.planOf(member.customer_id, person?.tags, now);
     const used = this.activeHolds(member.customer_id, now).length + this.loansOut(member.customer_id).length;
     const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
     const notices = [];
     if (!plan) notices.push(`${name === 'They' ? 'They aren\'t' : `${name} isn't`} on a library plan.`);
+    else if (plan.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment didn't go through.`);
     else if (used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
     if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
     return { loan: this.staffLoanView(loan, now), notice: notices.length ? notices.join(' ') : null };
@@ -7590,17 +7654,19 @@ export class Lair {
     const now = Date.now();
     const row = this.memberRow(id);
     const gifts = this.sql.exec('SELECT g.*, p.code AS pass_code FROM gifts g LEFT JOIN passes p ON p.id = g.pass_id WHERE g.customer_id = ? ORDER BY g.created_at DESC, g.rowid DESC', id).toArray();
-    const plan = libraryPlan(person?.tags);
+    const plan = this.planOf(id, person?.tags, now);
     const memo = new Map();
     return {
       member: {
         ...this.memberListItem(id, rules, now), profile: this.profileView(row), gifts: gifts.map((g) => this.giftView(g, now)),
         library: {
-          plan: plan ? { name: plan.name, games: plan.games } : null, holds: this.activeHolds(id, now).map((h) => this.staffHoldView(h, now, memo)),
+          plan: this.planWords(plan), holds: this.activeHolds(id, now).map((h) => this.staffHoldView(h, now, memo)),
           atHome: this.loansOut(id).map((l) => this.staffLoanView(l, now, memo)),
           // Round 9: the last 5 games they brought back, newest first
           returns: this.sql.exec("SELECT * FROM library_loans WHERE customer_id = ? AND status = 'returned' ORDER BY returned_at DESC, rowid DESC LIMIT 5", id).toArray().map((r) => this.staffLoanView(this.rowToLoan(r), now, memo)),
         },
+        // Round 10: their library membership (the current one, else the latest), or null
+        membership: this.staffMembershipFor(id, now),
         // Round 9: their tab and account (GET /me's, plus the note, who set it, their bills and a limit warning)
         account: this.memberAccount(id, rules, now, { staff: true }),
       },
@@ -8420,6 +8486,8 @@ export class Lair {
       holds: this.memberHolds(who.customerId, now),
       // Round 7: My Library: their plan, how many they have (holds and games at home), their holds and games at home
       library: this.libraryFor(who.customerId, who.tags, now),
+      // Round 10: their library membership (plan, next bill, card, charges, damage charges, the plans to pick from), or null
+      membership: this.membershipForMember(who.customerId, now),
       // Round 7: the player profile (the GM profile stays its own block, gmProfile)
       profile: this.profileView(this.memberRow(who.customerId)),
       // Session passes: active ones, and ones used up in the last 30 days
@@ -8576,7 +8644,7 @@ export class Lair {
   }
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
-  async checkConnection(webhookUrl, { force = false, testEmail = false } = {}) {
+  async checkConnection(webhookUrl, { force = false, testEmail = false, membershipsUrl = null, membershipsSetup = false } = {}) {
     if (force) this.rulesCache = null;
     const rules = await this.rules();
     const result = {
@@ -8690,6 +8758,16 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not make monthly bills', error);
     }
+    // Round 10: library memberships: /setup?key=…&memberships=plans sets up the plans, then the upkeep bills what's due,
+    // retries failed payments and ends what should end (it never throws)
+    if (membershipsSetup) {
+      try {
+        result.membershipsSetup = await this.membershipSetup(membershipsUrl);
+      } catch (error) {
+        result.membershipsSetup = { ok: false, error: String(error.message || error).slice(0, 300) };
+      }
+    }
+    result.memberships = await membershipUpkeep(this, rules, { webhookUrl: membershipsUrl, force });
     this.note({ connection: result });
     return result;
   }
@@ -8701,3 +8779,5 @@ Object.assign(Lair.prototype, runningTabMethods);
 Object.assign(Lair.prototype, interestMethods);
 // Round 9: turnouts, lists and early access offers (src/community.js)
 Object.assign(Lair.prototype, communityMethods);
+// Round 10: library memberships (src/memberships.js)
+Object.assign(Lair.prototype, membershipMethods);

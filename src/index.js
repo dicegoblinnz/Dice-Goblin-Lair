@@ -4,7 +4,9 @@
 //   /pos/*                   the POS extension on the counter iPad (today, scan, checkin, checkin-member, share,
 //                            tab/:id/added, member): a Shopify POS session token, CORS for its origin
 //   /webhooks/orders-paid    Shopify webhook, HMAC checked
-//   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook
+//   /webhooks/memberships    Lair Memberships' webhooks (contracts, billing attempts, cards), HMAC checked with its own secret
+//   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook; &memberships=plans also sets up
+//                            the library membership plans, the damage charge product and their webhooks
 //   /img/<id>                a GM's game picture (public, cached)
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
@@ -172,12 +174,30 @@ export default {
       return internalCall(env, url.origin, 'orders-paid', raw);
     }
 
+    // Round 10: Lair Memberships (a second Shopify app) signs its webhooks with its own secret
+    if (url.pathname === '/webhooks/memberships' && request.method === 'POST') {
+      const raw = await request.text();
+      const valid = await verifyWebhook(raw, request.headers.get('X-Shopify-Hmac-Sha256'), env.MEMBERSHIPS_CLIENT_SECRET);
+      if (!valid || request.headers.get('X-Shopify-Shop-Domain') !== env.SHOP) return json({ error: 'Bad webhook signature' }, 401);
+      let payload;
+      try {
+        payload = JSON.parse(raw || '{}');
+      } catch {
+        return json({ error: 'Bad webhook body' }, 400);
+      }
+      const event = { topic: request.headers.get('X-Shopify-Topic') || '', webhookId: request.headers.get('X-Shopify-Webhook-Id') || '', payload };
+      return internalCall(env, url.origin, 'memberships-webhook', JSON.stringify(event));
+    }
+
     if (url.pathname === '/setup' && ['GET', 'POST'].includes(request.method)) {
       // Open https://<worker>/setup?key=<SETUP_KEY> in a browser, or POST with "Authorization: Bearer <SETUP_KEY>".
       const key = url.searchParams.get('key') || (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
       if (!env.SETUP_KEY || !safeEqual(key, env.SETUP_KEY)) return json({ error: 'Not allowed' }, 403);
       const testEmail = url.searchParams.get('email') === 'test';
-      return internalCall(env, url.origin, 'setup', JSON.stringify({ webhookUrl: `${url.origin}/webhooks/orders-paid`, testEmail }));
+      const memberships = url.searchParams.get('memberships') || null;
+      return internalCall(env, url.origin, 'setup', JSON.stringify({
+        webhookUrl: `${url.origin}/webhooks/orders-paid`, testEmail, memberships, membershipsUrl: `${url.origin}/webhooks/memberships`,
+      }));
     }
 
     return json({ error: 'Not found' }, 404);
@@ -188,6 +208,7 @@ export default {
     const env = await withConfig(rawEnv);
     const origin = (env.PUBLIC_URL || 'https://lair.internal').replace(/\/$/, '');
     const webhookUrl = env.PUBLIC_URL ? `${origin}/webhooks/orders-paid` : undefined;
+    // (Lair Memberships' webhook address is worked out from this one: the same Worker, /webhooks/memberships)
     ctx.waitUntil(internalCall(env, origin, 'maintenance', JSON.stringify({ webhookUrl })));
   },
 };

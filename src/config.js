@@ -11,6 +11,10 @@
 export const CONFIG_KEYS = [
   'SHOPIFY_CLIENT_ID', 'SHOPIFY_CLIENT_SECRET', 'SETUP_KEY', 'THEME_ID',
   'RESEND_API_KEY', 'FROM_EMAIL', 'REPLY_TO', 'STAFF_EMAIL', 'JSON_ONLY',
+  // Library memberships (src/memberships.js): the Lair Memberships app's credentials (keep the secret a Worker secret),
+  // the membership product its plans go on, the damage charge product's variant, and the switch that lets it charge
+  // cards ('on'; anything else and it only keeps its records up to date).
+  'MEMBERSHIPS_CLIENT_ID', 'MEMBERSHIPS_CLIENT_SECRET', 'MEMBERSHIPS_PRODUCT_ID', 'MEMBERSHIPS_FEE_VARIANT_ID', 'MEMBERSHIPS_BILLING',
 ];
 const TTL = 60_000;
 let cache = null;

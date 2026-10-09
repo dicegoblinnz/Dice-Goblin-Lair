@@ -79,11 +79,16 @@ export async function verifySessionToken(token, { secret, clientId, shop, now = 
 }
 
 export class ShopifyAdmin {
-  constructor(env, storage) {
+  /**
+   * The Lair's own Shopify app by default. Library memberships log in as a second app (Lair Memberships) with their own
+   * credentials and their own saved token: options { clientId, clientSecret, tokenKey }.
+   */
+  constructor(env, storage, { clientId = env.SHOPIFY_CLIENT_ID, clientSecret = env.SHOPIFY_CLIENT_SECRET, tokenKey = 'admin-token' } = {}) {
     this.shop = env.SHOP;
     this.version = env.API_VERSION || '2026-07';
-    this.clientId = env.SHOPIFY_CLIENT_ID;
-    this.clientSecret = env.SHOPIFY_CLIENT_SECRET;
+    this.clientId = clientId;
+    this.clientSecret = clientSecret;
+    this.tokenKey = tokenKey;
     this.storage = storage;
     this.token = null;
     this.tokenExpires = 0;
@@ -96,7 +101,7 @@ export class ShopifyAdmin {
   /** Client credentials grant: the app and the store are in the same organization. Tokens last 24h. */
   async accessToken() {
     if (this.token && Date.now() < this.tokenExpires - 5 * 60_000) return this.token;
-    const saved = await this.storage?.get?.('admin-token');
+    const saved = await this.storage?.get?.(this.tokenKey);
     if (saved && saved.clientId === this.clientId && Date.now() < saved.expires - 5 * 60_000) {
       this.token = saved.token;
       this.tokenExpires = saved.expires;
@@ -116,7 +121,7 @@ export class ShopifyAdmin {
     const { access_token: token, expires_in: expiresIn } = await response.json();
     this.token = token;
     this.tokenExpires = Date.now() + (expiresIn || 86399) * 1000;
-    await this.storage?.put?.('admin-token', { token, expires: this.tokenExpires, clientId: this.clientId });
+    await this.storage?.put?.(this.tokenKey, { token, expires: this.tokenExpires, clientId: this.clientId });
     return token;
   }
 
@@ -130,7 +135,7 @@ export class ShopifyAdmin {
       // The saved token was revoked or is missing a newly added scope: get a fresh one and try once more.
       this.token = null;
       this.tokenExpires = 0;
-      await this.storage?.delete?.('admin-token');
+      await this.storage?.delete?.(this.tokenKey);
       return this.graphql(query, variables, true);
     }
     if (!response.ok) throw new Error(`Shopify API error ${response.status}`);
@@ -140,7 +145,7 @@ export class ShopifyAdmin {
       if (!retried && errors.some((e) => e.extensions?.code === 'ACCESS_DENIED')) {
         this.token = null;
         this.tokenExpires = 0;
-        await this.storage?.delete?.('admin-token');
+        await this.storage?.delete?.(this.tokenKey);
         return this.graphql(query, variables, true);
       }
       throw new Error(`Shopify API: ${errors.map((e) => e.message).join('; ')}`);
