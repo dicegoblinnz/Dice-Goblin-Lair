@@ -48,7 +48,7 @@ const EVENTS = [
   // sign-ups (events.reset): a Wednesday quiz with places
   { id: 'quiz-night', title: 'Quiz night', start: at('2026-10-14', 18), end: at('2026-10-14', 21), repeat: 'weekly', capacity: 20 },
 ];
-const PICTURE = 'https://cdn.shopify.com/s/files/1/0638/6253/8343/files/game-01-fanova.jpg?v=1';
+const PICTURE = 'https://cdn.shopify.com/s/files/1/0001/0002/0003/files/game-01-skyreach.jpg?v=1';
 
 let lair;
 async function call(method, path, body, customer = '', headers = {}) {
@@ -60,7 +60,7 @@ async function call(method, path, body, customer = '', headers = {}) {
 const job = (kind, payload = {}) => call('POST', 'internal/admin-job', { id: 'job1', kind, payload }, '', { 'X-Lair-Internal': '1' });
 const floor = async () => (await call('GET', `floor?from=${NOW - DAY}&to=${NOW + 70 * DAY}`)).data;
 const spec = (over = {}) => ({
-  title: 'Fanova', system: 'Pathfinder 2E', gm: 'Caleb', blurb: "Caleb's weekly Pathfinder 2E campaign.", seats: 6, offlinePlayers: 5,
+  title: 'Skyreach', system: 'Pathfinder 2E', gm: 'Ari', blurb: "Ari's weekly Pathfinder 2E campaign.", seats: 6, offlinePlayers: 5,
   gmFee: 500, schedule: 'weekly', start: at('2026-10-10', 10), end: at('2026-10-10', 14), tables: ['G1', 'G2'], imageUrl: PICTURE, level: 'some', age: '13+',
   ...over,
 });
@@ -139,14 +139,14 @@ test("round 11: games.add lists a weekly game for a GM with no account, with its
   assert.equal(res.status, 200, JSON.stringify(res.data));
   assert.deepEqual(res.data.failed, []);
   const [added] = res.data.added;
-  assert.equal(added.title, 'Fanova');
+  assert.equal(added.title, 'Skyreach');
   assert.ok(added.seriesId);
   assert.ok(added.sessions >= 8, `weekly sessions to the horizon: ${added.sessions}`);
-  const games = (await floor()).games.filter((g) => g.title === 'Fanova');
+  const games = (await floor()).games.filter((g) => g.title === 'Skyreach');
   // the public board shows the series' next session only
   assert.equal(games.length, 1);
   const g = games[0];
-  assert.equal(g.gm, 'Caleb');
+  assert.equal(g.gm, 'Ari');
   assert.equal(g.status, 'open');
   assert.equal(g.seats, 6);
   assert.equal(g.taken, 5, 'the five players already in the group are seats taken');
@@ -154,7 +154,7 @@ test("round 11: games.add lists a weekly game for a GM with no account, with its
   assert.equal(g.seatPrice, 1500);
   assert.equal(g.level, 'some');
   assert.equal(g.age, '13+');
-  const row = lair.sql.exec("SELECT gm_customer_id, gm_email FROM games WHERE title = 'Fanova' LIMIT 1").one();
+  const row = lair.sql.exec("SELECT gm_customer_id, gm_email FROM games WHERE title = 'Skyreach' LIMIT 1").one();
   assert.equal(row.gm_customer_id, null);
   assert.equal(row.gm_email, null);
   // only the one open seat can be booked
@@ -169,7 +169,7 @@ test("round 11: games.add lists a weekly game for a GM with no account, with its
 
 test('round 11: games.add takes a start between the hours, and plans its later sessions the same way', async () => {
   const res = await job('games.add', {
-    games: [spec({ title: 'Rise of Dragon', system: 'D&D 5e', gm: 'Hayden', seats: 7, offlinePlayers: 7, start: at('2026-10-11', 13, 30), end: at('2026-10-11', 17, 30), tables: ['T4', 'T5'], imageUrl: null })],
+    games: [spec({ title: 'Ember Throne', system: 'D&D 5e', gm: 'Bex', seats: 7, offlinePlayers: 7, start: at('2026-10-11', 13, 30), end: at('2026-10-11', 17, 30), tables: ['T4', 'T5'], imageUrl: null })],
   });
   assert.equal(res.status, 200, JSON.stringify(res.data));
   assert.deepEqual(res.data.failed, []);
@@ -186,23 +186,23 @@ test('round 11: games.add reports a game that can\'t go on and carries on with t
   const res = await job('games.add', {
     games: [
       // T8 is locked by Warhammer on Thursdays from 6pm
-      spec({ title: 'Grimskald', system: 'D&D 5e', gm: 'Kane', schedule: 'weekly', start: at('2026-10-15', 18), end: at('2026-10-15', 22), tables: ['T8', 'T9'], imageUrl: null }),
+      spec({ title: 'Frostfang', system: 'D&D 5e', gm: 'Cam', schedule: 'weekly', start: at('2026-10-15', 18), end: at('2026-10-15', 22), tables: ['T8', 'T9'], imageUrl: null }),
       spec({ title: 'Bad picture', imageUrl: 'https://example.com/x.jpg' }),
-      spec({ title: 'The Legacy of Power', system: 'Mutants & Masterminds', gm: 'Hayden', seats: 7, offlinePlayers: 7, start: at('2026-10-15', 18), end: at('2026-10-15', 22), tables: ['T4', 'T5'], imageUrl: null }),
+      spec({ title: 'Capes and Cowls', system: 'Mutants & Masterminds', gm: 'Bex', seats: 7, offlinePlayers: 7, start: at('2026-10-15', 18), end: at('2026-10-15', 22), tables: ['T4', 'T5'], imageUrl: null }),
     ],
   });
   assert.equal(res.status, 200, JSON.stringify(res.data));
-  assert.deepEqual(res.data.failed.map((f) => f.title), ['Grimskald', 'Bad picture']);
+  assert.deepEqual(res.data.failed.map((f) => f.title), ['Frostfang', 'Bad picture']);
   assert.match(res.data.failed[0].error, /T8 is already taken/);
   assert.match(res.data.failed[1].error, /Shopify Files/);
-  assert.deepEqual(res.data.added.map((a) => a.title), ['The Legacy of Power']);
-  const legacy = (await floor()).games.find((g) => g.title === 'The Legacy of Power');
+  assert.deepEqual(res.data.added.map((a) => a.title), ['Capes and Cowls']);
+  const legacy = (await floor()).games.find((g) => g.title === 'Capes and Cowls');
   assert.equal(legacy.status, 'full', 'seven of seven already in the group');
 });
 
 test('round 11: games.reset takes every game, series and seat off the board, silently', async () => {
-  await job('games.add', { games: [spec(), spec({ title: 'One Shots', gm: 'Keaton', system: 'Various', schedule: 'fortnightly', start: at('2026-10-11', 10), end: at('2026-10-11', 14), tables: ['G3', 'G4'], offlinePlayers: 5 })] });
-  const g = (await floor()).games.find((x) => x.title === 'Fanova');
+  await job('games.add', { games: [spec(), spec({ title: 'Quick Quests', gm: 'Dee', system: 'Various', schedule: 'fortnightly', start: at('2026-10-11', 10), end: at('2026-10-11', 14), tables: ['G3', 'G4'], offlinePlayers: 5 })] });
+  const g = (await floor()).games.find((x) => x.title === 'Skyreach');
   const seat = await call('POST', 'bookings', { kind: 'gm-seat', gameId: g.id, people: 1, name: 'Jo Example', email: 'jo@example.com', phone: '021 555 0100' });
   assert.equal(seat.status, 200, JSON.stringify(seat.data));
   const res = await job('games.reset');
