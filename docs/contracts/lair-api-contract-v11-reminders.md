@@ -167,6 +167,7 @@ back (round 9's remove), as the floor's staff.
   theme hides the toggle on a date that's today.
 - `waiting` is left out of counts when nobody is waiting, so round 9's answers keep their shape.
 - The waitlist takes people when the date can't fit them (full, or not enough places), not only when it's full; the
-  theme offers it on full dates only.
+  theme offers it on full dates, and in the sign-up form when the Lair answers 409 (it filled up meanwhile, or can't
+  fit them all).
 - Add to calendar in the email is a calendar file served by the Worker (`/ics/`), because email apps can't open the
   events page's `data:` files, plus a Google Calendar link.
