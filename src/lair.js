@@ -5657,7 +5657,7 @@ export class Lair {
     if (loot) {
       const me = String(who.customerId);
       if (this.sql.exec('SELECT 1 AS n FROM roll_code_uses WHERE code_id = ? AND customer_id = ?', loot.id, me).toArray().length) {
-        throw new RuleError("You've used that code already, friend. It's one go each.", 409);
+        throw new RuleError("You've used that code already. It's one go each.", 409);
       }
       if (this.rollCodeView(loot, now).status !== 'active') throw new RuleError("That code isn't working any more. Ask us at the counter.", 410);
       this.touchMember(me, {}, now);
@@ -5673,7 +5673,7 @@ export class Lair {
       return { kind: 'roll', rolls: loot.rolls, message, loyalty: this.loyaltyOf(me, rules, { details: true }) };
     }
     if (this.isGiftProductCode(text)) throw new RuleError("That's a shop discount code. Use it at checkout online, or show it at the counter.");
-    throw new RuleError("Gobgob doesn't know that code. Check it and try again, friend.", 404);
+    throw new RuleError("Gobgob doesn't know that code. Check it and try again.", 404);
   }
 
   /** Extra dice rolls a member has been given as birthday gifts */
@@ -6176,7 +6176,7 @@ export class Lair {
     if (this.claimHits.size > 2000) this.claimHits.clear();
     this.claimHits.set(who.customerId, [...tries, now]);
     const p = this.passByCode(input.code);
-    if (!p || p.status === 'void') throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
+    if (!p || p.status === 'void') throw new RuleError('No pass with that code. Check it and try again.', 404);
     // Round 7: a group's pass stays the group's (its members use it as it is)
     if (p.groupId) throw new RuleError('That pass belongs to a group. Ask us at the counter.', 409);
     const me = String(who.customerId);
@@ -6202,13 +6202,13 @@ export class Lair {
     const p = this.passByCode(code);
     // Round 9: staff who make bookings, check people in or run passes may use any pass
     const anyPass = this.can(who, ['checkin', 'tables', 'money']);
-    if (!p && anyPass) throw new RuleError('No pass with that code. Check it and try again, friend.', 404);
+    if (!p && anyPass) throw new RuleError('No pass with that code. Check it and try again.', 404);
     const mine = Boolean(p && who.customerId && (p.customerId === String(who.customerId) || (p.groupId && this.inActiveGroup(p.groupId, who.customerId))));
     if (!p || (!anyPass && !mine)) throw new RuleError("That pass isn't yours. Ask us at the counter.", 403);
     const status = this.passStatus(p, now);
     if (status === 'void') throw new RuleError('That pass has been cancelled. Ask us at the counter.', 409);
     if (status === 'expired') throw new RuleError('That pass has expired. Ask us at the counter about a new one.', 409);
-    if (status === 'used') throw new RuleError('That pass has no sessions left. Book without it, friend, or ask us about a new one.', 409);
+    if (status === 'used') throw new RuleError('That pass has no sessions left. Book without it, or ask us about a new one.', 409);
     return p;
   }
 
@@ -6757,7 +6757,7 @@ export class Lair {
     if (who.staff && String(input?.customerId ?? '').trim()) this.requireStaff(who, 'library');
     const forSomeone = Boolean(who.staff && String(input?.customerId ?? '').trim());
     const plan = forSomeone ? null : libraryPlan(who.tags);
-    if (!forSomeone && !plan) throw new RuleError('Join the library to reserve games, friend.', 403);
+    if (!forSomeone && !plan) throw new RuleError('Join the library to reserve games.', 403);
     const sent = Number(input?.copies);
     const fromPage = Number.isInteger(sent) && sent >= 1 && sent <= 10 ? sent : null;
     const fromShopify = (await this.shopifyCopies([variantId])).get(variantId);
@@ -7094,7 +7094,7 @@ export class Lair {
     if (known) return { game: this.libraryGameView(known), save: null };
     const variant = await this.variantForCode(code, "Gobgob can't look that game up just now. Ask at the counter and we'll sort it.");
     if (!variant) throw new RuleError("Gobgob can't find a library game with that code. Try the code on its label, or ask at the counter.", 404);
-    if (!variant.libraryCode) throw new RuleError("That's from the shop, not the library. Borrow games from the library shelves, friend.", 422);
+    if (!variant.libraryCode) throw new RuleError("That's from the shop, not the library. Borrow games from the library shelves.", 422);
     const game = {
       variantId: variant.variantId, productId: variant.productId, title: String(variant.productTitle || '').replace(/\s*\(library\)\s*$/i, '').trim(),
       handle: variant.handle || '', shelfCode: String(variant.libraryCode).trim().toUpperCase().slice(0, 20), image: variant.productImage || variant.image || null,
@@ -7157,7 +7157,7 @@ export class Lair {
       return { result: 'returned', loan: this.loanView(loan), library: this.libraryFor(me, who.tags, now), message: `${game.title} is checked back in. Thanks, friend!` };
     }
     const plan = libraryPlan(who.tags);
-    if (!plan) throw new RuleError('Join the library to borrow games, friend.', 403);
+    if (!plan) throw new RuleError('Join the library to borrow games.', 403);
     const holds = this.activeHolds(me, now);
     const hold = holds.find((h) => h.variantId === game.variantId) || null;
     let loan;
@@ -7293,14 +7293,14 @@ export class Lair {
     if (hits.length >= TAB_LOOKUPS) throw new RuleError('Easy, friend. Give the scanner a minute.', 429);
     if (this.tabHits.size > 2000) this.tabHits.clear();
     this.tabHits.set(key, [...hits, now]);
-    const library = "That's one of our library games. Borrow it in My Library, friend. It doesn't go on a tab.";
+    const library = "That's one of our library games, so it doesn't go on a tab. Borrow it in My Library.";
     if (this.sql.exec('SELECT 1 AS n FROM library_codes WHERE key = ?', codeKey(code)).toArray().length) throw new RuleError(library, 422);
     const v = await this.variantForCode(code, "Gobgob can't look up barcodes just now. Pick it from the menu instead.");
     // --- no awaits from here on ---
     if (!v) throw new RuleError("Gobgob doesn't know that one. Pick it from the menu instead.", 404);
     if (v.libraryCode) throw new RuleError(library, 422);
-    if (v.status !== 'ACTIVE') throw new RuleError("That one isn't on sale right now. Ask us at the counter, friend.", 422);
-    if (v.giftCard || v.sellingPlan) throw new RuleError("That one can't go on a tab. Ask us at the counter, friend.", 422);
+    if (v.status !== 'ACTIVE') throw new RuleError("That one isn't on sale right now. Ask us at the counter.", 422);
+    if (v.giftCard || v.sellingPlan) throw new RuleError("That one can't go on a tab. Ask us at the counter.", 422);
     return {
       item: {
         variantId: v.variantId, productId: v.productId, handle: v.handle, title: v.productTitle, variantTitle: v.title === 'Default Title' ? '' : v.title || '',

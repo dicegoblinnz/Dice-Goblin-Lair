@@ -3103,7 +3103,7 @@ test('claiming a pass: an unclaimed one joins the member\'s passes; someone else
   const gift = await makePass({ label: 'Gift pack: 10 sessions', holderName: 'Gift Voucher', sessions: 1 });
   assert.equal((await call('POST', 'me/passes/claim', { code: gift.code })).status, 401);
   const unknown = await call('POST', 'me/passes/claim', { code: 'ZZ-NOPE-3' }, '1001');
-  assert.deepEqual([unknown.status, unknown.data.error], [404, 'No pass with that code. Check it and try again, friend.']);
+  assert.deepEqual([unknown.status, unknown.data.error], [404, 'No pass with that code. Check it and try again.']);
   const ticket = (await call('POST', 'bookings', tableBooking())).data.booking;
   assert.equal((await call('POST', 'me/passes/claim', { code: ticket.ref }, '1001')).status, 404, "a booking's code isn't a pass");
   const claimed = await call('POST', 'me/passes/claim', { code: gift.code.toLowerCase().replace(/-/g, ' ') }, '1001');
@@ -4951,7 +4951,7 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
   const mail = captureEmails();
   try {
     assert.deepEqual([(await reserve({}, '')).status, (await reserve({}, '')).data.error], [401, 'Log in to reserve a game.']);
-    assert.deepEqual([(await reserve({}, '1004')).status, (await reserve({}, '1004')).data.error], [403, 'Join the library to reserve games, friend.']);
+    assert.deepEqual([(await reserve({}, '1004')).status, (await reserve({}, '1004')).data.error], [403, 'Join the library to reserve games.']);
     assert.equal((await reserve({ variantId: 'wingspan' })).status, 422);
     // Sam (Stash: 3 games) reserves it; Shopify isn't connected, so the page's copies (2) count
     const first = await reserve({ copies: 2 });

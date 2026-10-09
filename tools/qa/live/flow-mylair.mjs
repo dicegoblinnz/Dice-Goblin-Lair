@@ -175,7 +175,7 @@ let cb = apiLog.length;
 await pl.click('[data-claim] [type="submit"]');
 await pl.waitForTimeout(800);
 let cc = apiLog.slice(cb).find((c) => c.method === 'POST' && c.route === 'me/codes/redeem');
-check(`${L}: an unknown code: 404 and the contract's words`, cc?.status === 404 && /Gobgob doesn't know that code\. Check it and try again, friend\./.test(await text(pl, '[data-claim-message]')), cc ? cc.text : 'no call');
+check(`${L}: an unknown code: 404 and the contract's words`, cc?.status === 404 && /Gobgob doesn't know that code\. Check it and try again\./.test(await text(pl, '[data-claim-message]')), cc ? cc.text : 'no call');
 await pl.fill('#ml-claim-code', seed.giftPass.code.toLowerCase().replace(/-/g, ' '));
 cb = apiLog.length;
 await pl.click('[data-claim] [type="submit"]');

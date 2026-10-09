@@ -35,8 +35,8 @@ const STASH = { ...RUBY, id: 7700114455, first_name: 'Tane', last_name: 'Rua', n
 const STAFF = { ...RUBY, id: 7700119999, first_name: 'Sam', last_name: 'Staff', name: 'Sam Staff', email: 'sam.staff@example.com', tags: ['staff'] };
 const VIEWS = ['home', 'bookings', 'wallet', 'library', 'tab', 'profile'];
 const LOOT = "Loot! That's 1 roll for your loyalty card. Roll it on Home, friend.";
-const ONCE = "You've used that code already, friend. It's one go each.";
-const UNKNOWN = "Gobgob doesn't know that code. Check it and try again, friend.";
+const ONCE = "You've used that code already. It's one go each.";
+const UNKNOWN = "Gobgob doesn't know that code. Check it and try again.";
 const SHOP_CODE = "That's a shop discount code. Use it at checkout online, or show it at the counter.";
 const MOBILE_WRONG = "That mobile number doesn't look right. Try one like 021 123 4567.";
 const flat = (s) => String(s || '').replace(/\s+/g, ' ').trim();

@@ -158,7 +158,7 @@ total spend. Turnouts count people checked in at events, so "I'm coming" and "Ma
   expiresAt, paidAt }`. Only their own claims and links.
 - **`POST /offers/:id/claim { variantId, quantity }`** (logged in) → `{ claim, offer }` (`offer` as in GET /me). `variantId`
   can be left out when there's one option; `quantity` defaults to 1.
-- Errors: 401 "Log in to claim early access, friend."; 404 "That offer could not be found." (also a draft, or an offer
+- Errors: 401 "Log in to claim early access."; 404 "That offer could not be found." (also a draft, or an offer
   they're not on: it never says one exists); 409 "Early access to <product> has closed."; 409 "Early access to <product>
   opens Sat 10 Oct, 9am."; 409 "<product> can't be bought right now. Have a chat with us at the counter." (no longer Active,
   or the variant's gone); 422 "Pick one of the options on offer."; 422 "Pick how many: 1 to <limit>."; 409 "Hang on:

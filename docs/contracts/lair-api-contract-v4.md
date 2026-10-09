@@ -167,7 +167,7 @@ The owner (Mo) made these decisions this morning. Don't reopen them.
 **Members:**
 - `GET /me` adds `passes`: their passes that are active or used up in the last 30 days, each as `{ code, label, sessionsTotal, sessionsLeft, cover, expiresAt, status }`.
 - `POST /me/passes/claim { code }` (logged in) links an unlinked active pass to them and returns `{ pass }`. The errors are:
-  - 404 "No pass with that code. Check it and try again, friend."
+  - 404 "No pass with that code. Check it and try again."
   - 409 "That pass already belongs to someone. Ask us at the counter."
 - `usePass` on `POST /bookings` (`kind` table or gm-seat) and on `POST /events/:id/reserve`: the code of a pass linked to the logged-in member. Staff may use any active pass.
   - For anyone else, 403 "That pass isn't yours. Ask us at the counter."

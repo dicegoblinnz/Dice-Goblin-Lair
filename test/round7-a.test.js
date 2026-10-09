@@ -380,7 +380,7 @@ test('loot codes (3): "Got a code?" gives a loot code\'s rolls once per customer
   assert.deepEqual([got.data.kind, got.data.rolls, got.data.message], ['roll', 1, "Loot! That's 1 roll for your loyalty card. Roll it on Home, friend."]);
   assert.deepEqual([got.data.loyalty.rolls.available, got.data.loyalty.rolls.earned.codes, got.data.loyalty.card], [1, 1, 1], 'loyalty as GET /me has it');
   const again = await redeem('ROLLFORLOOT');
-  assert.deepEqual([again.status, again.data.error], [409, "You've used that code already, friend. It's one go each."]);
+  assert.deepEqual([again.status, again.data.error], [409, "You've used that code already. It's one go each."]);
   const three = await redeem('triple-loot');
   assert.deepEqual([three.data.rolls, three.data.message], [3, "Loot! That's 3 rolls for your loyalty card. Roll them on Home, friend."]);
   assert.deepEqual((await me()).loyalty.rolls, { available: 4, earned: { cards: 0, welcome: 0, birthday: 0, staff: 0, codes: 4 }, used: 0 });
@@ -412,7 +412,7 @@ test('loot codes (3): "Got a code?" gives a loot code\'s rolls once per customer
   assert.deepEqual([(await redeem('hbd sjowlbear17')).status, (await redeem('HBD-SJOWLBEAR17')).data.error], [422, "That's a shop discount code. Use it at checkout online, or show it at the counter."]);
   const booking = (await call('POST', 'bookings', table({ start: at('2026-10-07', 15), end: at('2026-10-07', 17) }), '1001')).data.booking;
   for (const code of ['NOPE-NOPE-1', lair.memberRow('1001').code, booking.ref]) {
-    assert.deepEqual([(await redeem(code, '1005')).status, (await redeem(code, '1005')).data.error], [404, "Gobgob doesn't know that code. Check it and try again, friend."], code);
+    assert.deepEqual([(await redeem(code, '1005')).status, (await redeem(code, '1005')).data.error], [404, "Gobgob doesn't know that code. Check it and try again."], code);
   }
   // A loot code is never a ticket: check-in, the POS and the member search don't know it
   assert.deepEqual([(await call('POST', 'checkin', { code: 'TRIPLE-LOOT' }, 'staff')).status, (await call('POST', 'checkin', { code: 'TRIPLE-LOOT' }, 'staff')).data.error], [404, 'No booking, member or pass with that code.']);
@@ -723,7 +723,7 @@ test('library (6): members borrow and return in the Lair by scanning (a hold of 
   const azul = await scan('9780000000002', '1002');
   assert.deepEqual([azul.data.result, azul.data.loan.title, azul.data.loan.image], ['borrowed', 'Azul', 'https://cdn.shopify.com/s/files/1/azul-variant.jpg']);
   // Rules: a plan, room on it, and a free copy
-  assert.deepEqual([(await scan('DGL34-001', '1004')).status, (await scan('DGL34-001', '1004')).data.error], [403, 'Join the library to borrow games, friend.']);
+  assert.deepEqual([(await scan('DGL34-001', '1004')).status, (await scan('DGL34-001', '1004')).data.error], [403, 'Join the library to borrow games.']);
   assert.deepEqual((await scan('DGL34-001', '1002')).data.error, "Your plan has 1 game at a time, and you've got 1: 1 at home. Return one or cancel a hold first.");
   assert.equal((await scan('DGL34-001', '1003')).status, 200, 'Leo takes the only copy');
   assert.deepEqual([(await scan('DGL34-001', '1005')).status, (await scan('DGL34-001', '1005')).data.error], [409, 'Every copy of Wingspan is reserved or out on loan. Ask us at the counter.']);
@@ -733,7 +733,7 @@ test('library (6): members borrow and return in the Lair by scanning (a hold of 
   const collected = await scan('DGL34-001', '1005');
   assert.deepEqual([collected.data.result, collected.data.hold.id, collected.data.hold.status, collected.data.loan.holdId], ['borrowed', held.id, 'collected', held.id]);
   // The shop's barcode, a code nobody has (remembered for 10 minutes), and Shopify refusing (read_products not approved)
-  assert.deepEqual([(await scan('9300000000017')).status, (await scan('9300000000017')).data.error], [422, "That's from the shop, not the library. Borrow games from the library shelves, friend."]);
+  assert.deepEqual([(await scan('9300000000017')).status, (await scan('9300000000017')).data.error], [422, "That's from the shop, not the library. Borrow games from the library shelves."]);
   const before = calls.variant.length;
   assert.deepEqual([(await scan('DGL99-404')).status, (await scan('DGL99-404')).data.error], [404, "Gobgob can't find a library game with that code. Try the code on its label, or ask at the counter."]);
   assert.equal(calls.variant.length, before + 1, 'the miss is remembered');
@@ -869,13 +869,13 @@ test('tab lookup (7): a scanned barcode or SKU becomes a tab item (an Active pro
   await lookup('9300000000017');
   assert.equal(calls.variant.length, asked, 'kept 10 minutes');
   const refused = async (code, error) => assert.deepEqual([(await lookup(code)).status, (await lookup(code)).data.error], [422, error], code);
-  await refused('111', "That one isn't on sale right now. Ask us at the counter, friend.");
-  await refused('222', "That one can't go on a tab. Ask us at the counter, friend.");
-  await refused('333', "That one can't go on a tab. Ask us at the counter, friend.");
-  await refused('DGL12-009', "That's one of our library games. Borrow it in My Library, friend. It doesn't go on a tab.");
+  await refused('111', "That one isn't on sale right now. Ask us at the counter.");
+  await refused('222', "That one can't go on a tab. Ask us at the counter.");
+  await refused('333', "That one can't go on a tab. Ask us at the counter.");
+  await refused('DGL12-009', "That's one of our library games, so it doesn't go on a tab. Borrow it in My Library.");
   lair.write("INSERT INTO library_codes (key, variant_id) VALUES ('DGL34001', '4401')");
   const before = calls.variant.length;
-  await refused('DGL34-001', "That's one of our library games. Borrow it in My Library, friend. It doesn't go on a tab.");
+  await refused('DGL34-001', "That's one of our library games, so it doesn't go on a tab. Borrow it in My Library.");
   assert.equal(calls.variant.length, before, 'a library game the Lair knows needs no Shopify');
   assert.deepEqual([(await lookup('4242424242')).status, (await lookup('4242424242')).data.error], [404, "Gobgob doesn't know that one. Pick it from the menu instead."]);
   // 60 lookups a member in 10 minutes

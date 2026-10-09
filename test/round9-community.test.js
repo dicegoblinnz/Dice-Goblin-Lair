@@ -498,7 +498,7 @@ test('offers: opened for a list and picked people, emailed; only they see it in 
   // Leo isn't on it: nothing in his My Lair, and his claim is a 404
   assert.deepEqual((await me(LEO)).offers, []);
   assert.equal(said(await claim(o.id, { variantId: '8001', quantity: 1 }, LEO)), '404 That offer could not be found.');
-  assert.equal(said(await claim(o.id, { variantId: '8001', quantity: 1 }, '')), '401 Log in to claim early access, friend.');
+  assert.equal(said(await claim(o.id, { variantId: '8001', quantity: 1 }, '')), '401 Log in to claim early access.');
   const mine = (await me(SAM)).offers;
   assert.equal(mine.length, 1);
   assert.deepEqual({ ...mine[0], variants: undefined }, {

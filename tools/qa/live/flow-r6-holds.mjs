@@ -31,7 +31,7 @@ const calls = async () => (await fake('GET', 'calls')).filter((c) => c.op === 'V
 /* 1. Who can reserve */
 check('logged out: 401', (await reserve('', game(1, 'Wingspan (Library)'))).status === 401);
 const noPlan = await reserve(MERE, game(1, 'Wingspan (Library)'));
-check('no library plan: 403 with the words', noPlan.status === 403 && noPlan.data.error === 'Join the library to reserve games, friend.', noPlan.data);
+check('no library plan: 403 with the words', noPlan.status === 403 && noPlan.data.error === 'Join the library to reserve games.', noPlan.data);
 
 /* 2. Hana reserves Wingspan's only copy */
 const emails0 = (await fake('GET', 'emails')).length;

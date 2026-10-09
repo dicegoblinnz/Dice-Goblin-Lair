@@ -77,12 +77,12 @@ check('3: no welcome roll by itself any more', before3?.rolls?.earned?.welcome =
 const loot = await proxy('POST', 'me/codes/redeem', { customer: MERE, body: { code: 'roll for loot' } });
 check('3: "Got a code?": the loot code\'s roll, in Gobgob\'s words', loot.status === 200 && loot.data.kind === 'roll' && loot.data.rolls === 1 && loot.data.message === "Loot! That's 1 roll for your loyalty card. Roll it on Home, friend.", loot.data);
 check('3: its loyalty: one more roll, from codes', loot.data.loyalty?.rolls?.earned?.codes === 1 && loot.data.loyalty.rolls.available === (before3?.rolls?.available || 0) + 1, loot.data.loyalty?.rolls);
-check('3: once each (409)', said(await proxy('POST', 'me/codes/redeem', { customer: MERE, body: { code: 'ROLL-FOR-LOOT' } })) === "409 You've used that code already, friend. It's one go each.");
+check('3: once each (409)', said(await proxy('POST', 'me/codes/redeem', { customer: MERE, body: { code: 'ROLL-FOR-LOOT' } })) === "409 You've used that code already. It's one go each.");
 const two = await proxy('POST', 'me/codes/redeem', { customer: MERE, body: { code: once?.code } });
 check('3: two rolls: "Roll them on Home"', two.data.message === "Loot! That's 2 rolls for your loyalty card. Roll them on Home, friend.", two.data);
 check('3: a code used up: 410', said(await proxy('POST', 'me/codes/redeem', { customer: HONE, body: { code: once?.code } })) === "410 That code isn't working any more. Ask us at the counter.");
 const unknown = await proxy('POST', 'me/codes/redeem', { customer: HONE, body: { code: 'NOT-A-CODE-9' } });
-check('3: a code nobody knows: 404 in Gobgob\'s words', said(unknown) === "404 Gobgob doesn't know that code. Check it and try again, friend.");
+check('3: a code nobody knows: 404 in Gobgob\'s words', said(unknown) === "404 Gobgob doesn't know that code. Check it and try again.");
 check('3: a loot code is never a ticket (check-in 404)', (await proxy('POST', 'checkin', { customer: STAFF, body: { code: 'ROLL-FOR-LOOT' } })).status === 404);
 const staffCodes = (await proxy('GET', 'roll-codes', { customer: STAFF })).data.codes || [];
 check('3: staff see the uses (newest first, with the member code)', staffCodes.find((c) => c.id === welcome?.id)?.recent?.some((r) => r.customerId === MERE && r.name === 'Mereana Walker' && r.code), staffCodes.find((c) => c.id === welcome?.id)?.recent);
@@ -148,7 +148,7 @@ const lookups = async () => (await fake('GET', 'calls')).filter((c) => c.op === 
 const asked = await lookups();
 const back = await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2) } });
 check('6: scanning it again returns it, without asking Shopify again', back.data.result === 'returned' && back.data.message === 'Azul is checked back in. Thanks, friend!' && (await lookups()) === asked, back.data);
-check('6: the shop\'s products aren\'t library games (422)', said(await proxy('POST', 'library/scan', { customer: HONE, body: { code: `93${run}017` } })) === "422 That's from the shop, not the library. Borrow games from the library shelves, friend.");
+check('6: the shop\'s products aren\'t library games (422)', said(await proxy('POST', 'library/scan', { customer: HONE, body: { code: `93${run}017` } })) === "422 That's from the shop, not the library. Borrow games from the library shelves.");
 check('6: no plan, no borrowing (403)', (await proxy('POST', 'library/scan', { customer: TAI, body: { code: shelf(2) } })).status === 403);
 // Staff: check Azul out to Tai at the counter (no plan: a notice, not a no), then in by scanning
 const out = await proxy('POST', 'library/loans', { customer: STAFF, body: { customerId: TAI, code: shelf(2) } });
@@ -163,7 +163,7 @@ check('6: "Back on the shelf" for any loan', shelfIt.data.loan?.status === 'retu
 /* 7. The tab's scanner */
 const pocky = await proxy('GET', `tab/lookup?code=93${run}017`, { customer: MERE });
 check('7: a barcode becomes a tab item', pocky.status === 200 && pocky.data.item?.variantId === V(9) && pocky.data.item.price === 450 && pocky.data.item.variantTitle === '' && pocky.data.item.title === 'Pocky (Strawberry)' && pocky.data.item.image === 'https://cdn.shopify.com/s/files/1/pocky.jpg', pocky.data);
-check('7: a library game isn\'t a tab item (422)', said(await proxy('GET', `tab/lookup?code=${shelf(2)}`, { customer: MERE })) === "422 That's one of our library games. Borrow it in My Library, friend. It doesn't go on a tab.");
+check('7: a library game isn\'t a tab item (422)', said(await proxy('GET', `tab/lookup?code=${shelf(2)}`, { customer: MERE })) === "422 That's one of our library games, so it doesn't go on a tab. Borrow it in My Library.");
 const nobody = await proxy('GET', `tab/lookup?code=00${run}404`, { customer: MERE });
 check('7: a code nobody knows (404)', said(nobody) === "404 Gobgob doesn't know that one. Pick it from the menu instead.", said(nobody));
 check('7: logged out (401)', (await proxy('GET', `tab/lookup?code=93${run}017`)).status === 401);

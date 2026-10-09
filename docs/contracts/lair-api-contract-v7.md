@@ -172,9 +172,9 @@ Staff messages:
 - **Errors:**
   - 401 "Log in to use a code."
   - 422 "Type your code first."
-  - 404 "Gobgob doesn't know that code. Check it and try again, friend." (anything else, member and ticket codes included)
+  - 404 "Gobgob doesn't know that code. Check it and try again." (anything else, member and ticket codes included)
   - 422 "That's a shop discount code. Use it at checkout online, or show it at the counter." (a birthday gift's HBD- product code)
-  - 409 "You've used that code already, friend. It's one go each."
+  - 409 "You've used that code already. It's one go each."
   - 410 "That code isn't working any more. Ask us at the counter." (inactive, expired or used up)
   - the claim route's 404 and 409 for passes ("No pass with that code…", "That pass already belongs to someone. Ask us at the counter."), and section 9's 409 for a group's pass
   - 429 "Too many tries in a row. Give it ten minutes, or ask us at the counter." Ten tries in ten minutes per member, shared with the claim route; a pass code counts once (call `claimPass` for it rather than counting twice).
@@ -285,7 +285,7 @@ Library copies' barcodes and SKUs are their shelf codes (DGL56-002, DGL7+-001), 
 1. **Clean it:** trimmed, 1 to 40 characters of letters, numbers and `. _ - +`. Anything else: 422 "Scan the barcode on the box, or type the code on its label."
 2. **Codes the Lair knows:** `library_codes` (key = `codeKey(code)`, the same letters-and-numbers key as other codes) → a variant in `library_games`.
 3. **Otherwise Shopify:** `LairVariantByCode` with `barcode:"<code>" OR sku:"<code>"`. Keep a variant whose barcode, then SKU, equals the code (ignoring case). It's a library copy when its product has `custom.library_code`. Save it in `library_games` (title without " (Library)", handle, product id, shelf code, the product's featured image) and its shelf code, SKU and barcode in `library_codes`.
-   - A variant that isn't a library copy: 422 "That's from the shop, not the library. Borrow games from the library shelves, friend."
+   - A variant that isn't a library copy: 422 "That's from the shop, not the library. Borrow games from the library shelves."
    - No variant: 404 "Gobgob can't find a library game with that code. Try the code on its label, or ask at the counter." Remember the miss for 10 minutes.
    - Shopify refuses (read_products not approved yet) or is down: 503 "Gobgob can't look that game up just now. Ask at the counter and we'll sort it." Don't ask again for 10 minutes. Games the Lair already knows keep working.
 4. **Holds made from a game's page also fill `library_games` and `library_codes`** (they send the variant, product, title, shelf code, handle and now the picture), so most of the library is known before read_products is approved.
@@ -299,7 +299,7 @@ Library copies' barcodes and SKUs are their shelf codes (DGL56-002, DGL7+-001), 
 - **`POST /library/scan { code, action? }`** (logged in): borrow or return a game in the Lair with the camera. `action` is `'borrow'` or `'return'`; left out, it's a return when the game is at home with them, otherwise a borrow.
   - **Return** → `{ result: 'returned', loan, library, message: "<title> is checked back in. Thanks, friend!" }`. 404 "That game isn't on loan to you." when asked to return one they don't have.
   - **Borrow:**
-    - no plan: 403 "Join the library to borrow games, friend.";
+    - no plan: 403 "Join the library to borrow games.";
     - held for them: the hold is collected and the loan made;
     - otherwise the plan needs room (the plan message above) and a copy must be free: 409 "Every copy of <title> is reserved or out on loan. Ask us at the counter.";
     - → `{ result: 'borrowed', loan, hold (the hold it collected, or null), library, message: "<title> is yours to take home. Scan it again when you bring it back." }`.
@@ -369,9 +369,9 @@ Loans, scan, check-out, check-in and GET /me's `library` on the demo's library c
   - 401 "Log in to start a tab."
   - 422 "Scan a barcode, or type the code under it." (empty, or not letters, numbers and `. _ - +`)
   - 404 "Gobgob doesn't know that one. Pick it from the menu instead." (the theme's words today)
-  - 422 "That's one of our library games. Borrow it in My Library, friend. It doesn't go on a tab."
-  - 422 "That one isn't on sale right now. Ask us at the counter, friend." (draft or archived)
-  - 422 "That one can't go on a tab. Ask us at the counter, friend." (gift card, selling plan)
+  - 422 "That's one of our library games, so it doesn't go on a tab. Borrow it in My Library."
+  - 422 "That one isn't on sale right now. Ask us at the counter." (draft or archived)
+  - 422 "That one can't go on a tab. Ask us at the counter." (gift card, selling plan)
   - 429 "Easy, friend. Give the scanner a minute." (60 lookups a member in 10 minutes)
   - 503 "Gobgob can't look up barcodes just now. Pick it from the menu instead." (read_products not approved yet, or Shopify down; back off 10 minutes)
 - **The tab itself doesn't change:** the theme adds the item to "this round" and `POST /tab` saves it.

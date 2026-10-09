@@ -953,7 +953,7 @@ export const communityMethods = {
    * closes, whichever is first. → { claim (with their checkoutUrl), offer (memberOffers' view) }
    */
   async claimOffer(id, input, who) {
-    if (!who.customerId) throw new RuleError('Log in to claim early access, friend.', 401);
+    if (!who.customerId) throw new RuleError('Log in to claim early access.', 401);
     const customerId = String(who.customerId);
     const first = this.offerRow(id);
     const onIt = (o) => o && o.status !== 'draft' && this.sql.exec('SELECT 1 AS n FROM early_offer_members WHERE offer_id = ? AND customer_id = ?', o.id, customerId).toArray().length > 0;

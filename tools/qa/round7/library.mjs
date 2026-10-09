@@ -262,7 +262,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   said = await typeCode(page, GAME.codenames.code);
   check(tag, said === "Your plan has 3 games at a time, and you've got 3: 3 at home. Return one or cancel a hold first.", 'plan full: the 409 in the app\'s words', said);
   said = await typeCode(page, '9421906580017');
-  check(tag, said === "That's from the shop, not the library. Borrow games from the library shelves, friend.", 'a shop product\'s barcode: the 422', said);
+  check(tag, said === "That's from the shop, not the library. Borrow games from the library shelves.", 'a shop product\'s barcode: the 422', said);
   said = await typeCode(page, 'DGL99-999');
   check(tag, said === "Gobgob can't find a library game with that code. Try the code on its label, or ask at the counter.", 'an unknown code: the 404', said);
   check(tag, (await page.locator('dialog.lair-scan[open]').count()) === 1, 'after a refusal the sheet stays open for another try');
@@ -335,7 +335,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   said = await scanTab('9421906580017');
   check(tag, said.startsWith('Added Pokémon TCG: booster pack') && (await lookups()) === 1 && !page.searches.length, '3. GET /tab/lookup finds a barcode the menu doesn\'t have', said);
   said = await scanTab('DGL34-052');
-  check(tag, said === "That's one of our library games. Borrow it in My Library, friend. It doesn't go on a tab.", 'the lookup\'s 422 for a library copy, in its words', said);
+  check(tag, said === "That's one of our library games, so it doesn't go on a tab. Borrow it in My Library.", 'the lookup\'s 422 for a library copy, in its words', said);
   said = await scanTab('0000000000000');
   check(tag, said === "Gobgob doesn't know that one. Pick it from the menu instead." && !page.searches.length, '5. an unknown code (the lookup\'s 404): Gobgob doesn\'t know that one', said);
   await visit(page, STASH, '/pages/my-lair?tablookup=down#tab');

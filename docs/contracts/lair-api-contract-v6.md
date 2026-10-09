@@ -114,7 +114,7 @@ Mo's words are quoted where they set a rule.
 > "a button to reserve a boardgame … let us know that this happened and we will hold it for 3 days by 12pm on the third day. If they don't pick it up it automatically goes back on the shelf. And if anyone tries to book it out other than the user it registers as reserved and you need to wait …"
 
 ### Rules
-- **Who:** logged-in library members. Their plan comes from their Shopify customer tags (Simplee), matched without case: a tag containing "hoard" → 5 games, "stash" or "treasure" → 3, "grab" or "loot" → 1; a plain `library-member` tag with none of those → 1. No plan → 403 "Join the library to reserve games, friend."
+- **Who:** logged-in library members. Their plan comes from their Shopify customer tags (Simplee), matched without case: a tag containing "hoard" → 5 games, "stash" or "treasure" → 3, "grab" or "loot" → 1; a plain `library-member` tag with none of those → 1. No plan → 403 "Join the library to reserve games."
 - **Limit:** their active holds can't pass their plan's games (part 2 adds games already at home to the count).
 - **Copies:** the variant's inventory quantity in Shopify, read with the new `read_products` and `read_inventory` scopes (added to `pos-app/shopify.app.toml`; Mo approves them once in Shopify admin). Until they're granted, or if the lookup fails, the `copies` the page sends (1–10) is used, and failing that 1. Cache a variant's copies for 10 minutes.
 - **Available** = copies − active holds (part 2 also takes away copies out on loan).
