@@ -6,6 +6,7 @@
 //   /webhooks/orders-paid    Shopify webhook, HMAC checked
 //   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook
 //   /img/<id>                a GM's game picture (public, cached)
+//   /ics/<date id>.ics       an event date as a calendar file, for the reminder email's Add to calendar (public)
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
 import { Lair } from './lair.js';
@@ -131,6 +132,10 @@ export default {
       if (res.ok && cache) ctx?.waitUntil?.(cache.put(request, res.clone()));
       return res;
     }
+
+    // Round 11: an event date as a calendar file (the reminder email's Add to calendar): public, like the calendar page
+    const ics = request.method === 'GET' ? url.pathname.match(/^\/ics\/([A-Za-z0-9._%@-]{3,200})\.ics$/) : null;
+    if (ics) return lair(env).fetch(new Request(`${url.origin}/internal/eventics/${ics[1]}`, { headers: { 'X-Lair-Internal': '1' } }));
 
     if (url.pathname.startsWith('/pos/')) return posRoute(request, env, url);
 

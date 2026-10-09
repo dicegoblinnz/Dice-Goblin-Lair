@@ -29,6 +29,8 @@ import { HELPER_DEFAULT, PERM_WORDS, STAFF_PERMS, canDo, cleanPerms } from './co
 import { runningTabMethods } from './tab.js';
 // Round 9, play: "I'm interested" for TTRPG sessions and "Maybe" for event dates (src/interest.js)
 import { interestMethods } from './interest.js';
+// Round 11: "Remind me the day before" and the waitlist for a full date (src/reminders.js)
+import { reminderMethods } from './reminders.js';
 // Round 9: turnouts, lists of members and early access offers for regulars (their own file, mixed in at the end)
 import { communityMethods } from './community.js';
 
@@ -546,6 +548,18 @@ export const MIGRATIONS = [
       paid_at INTEGER, ended_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS early_offer_claims_offer ON early_offer_claims (offer_id, status)',
     'CREATE INDEX IF NOT EXISTS early_offer_claims_customer ON early_offer_claims (customer_id, offer_id)',
+  ],
+  // Round 11, reminders (9 Oct 2026): "Remind me the day before" on an event date's "I'm coming" or "Maybe", and the
+  // waitlist for a full date (src/reminders.js). New columns and an index only, so the live rows stay as they are:
+  //  - interests.remind: 1 when they want a reminder the day before (0 or null otherwise); remind_at: when they last
+  //    turned it on; reminded_at: when the reminder went (it never goes twice).
+  //  - interests.people: how many a waitlist row is for (level 'waitlist', 1 to 6); null on every other row.
+  [
+    'ALTER TABLE interests ADD COLUMN remind INTEGER',
+    'ALTER TABLE interests ADD COLUMN remind_at INTEGER',
+    'ALTER TABLE interests ADD COLUMN reminded_at INTEGER',
+    'ALTER TABLE interests ADD COLUMN people INTEGER',
+    'CREATE INDEX IF NOT EXISTS interests_remind ON interests (remind, reminded_at, starts_at)',
   ],
 ];
 
@@ -1248,11 +1262,15 @@ export class Lair {
       if (a === 'internal') {
         if (request.headers.get('X-Lair-Internal') !== '1') return json({ error: 'Not found' }, 404);
         if (request.method === 'GET' && b === 'img') return this.image(c);
+        // Round 11: an event date as a calendar file, for the reminder email's Add to calendar (public: GET /ics/<id>.ics)
+        if (request.method === 'GET' && b === 'eventics') return this.eventIcs(decodeURIComponent(c || ''));
         if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
         if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true }));
         if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false }));
+        // Round 11: the day-before reminders on their own, at a fixed time when `at` is given (the live checks' clock)
+        if (b === 'reminders') return json(await this.remindersAt(Number(body.at) || Date.now()));
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
         if (b === 'pos' && c === 'today') return json(await this.posToday());
@@ -1378,8 +1396,12 @@ export class Lair {
       if (a === 'events' && b && c === 'attend') return json(await this.attendEvent(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
       // Round 9, play: "I'm interested" in a TTRPG session, "Maybe" for an event date, and taking it back
+      // Round 11: "Join the waitlist" on a full date (POST /interest with waitlist: true)
+      if (a === 'interest' && !b && body?.waitlist === true) return json(await this.joinWaitlist(body, who, client));
       if (a === 'interest' && !b) return json(await this.addInterest(body, who, client));
       if (a === 'interest' && b && c === 'remove') return json(await this.removeInterest(decodeURIComponent(b), body, who));
+      // Round 11: "Remind me the day before", on or off, on an "I'm coming" or "Maybe" already made
+      if (a === 'interest' && b && c === 'remind') return json(await this.remindInterest(decodeURIComponent(b), body, who));
       if (a === 'events' && !b) return json(await this.createEvent(body, who));
       if (a === 'events' && b === 'pictures' && !c) return json(await this.eventPicture(body, who));
       if (a === 'events' && b && c === 'update') return json(await this.updateEvent(decodeURIComponent(b), body, who));
@@ -8690,6 +8712,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not make monthly bills', error);
     }
+    // Round 11: "Remind me the day before": from 9am to 9pm at the Lair, each one once (src/reminders.js)
+    try {
+      const reminders = this.sendReminders(rules, Date.now());
+      if (reminders?.sent) result.reminders = reminders;
+    } catch (error) {
+      console.error('Lair: could not send event reminders', error);
+    }
     this.note({ connection: result });
     return result;
   }
@@ -8699,5 +8728,7 @@ export class Lair {
 Object.assign(Lair.prototype, runningTabMethods);
 // Round 9, play: "I'm interested" and "Maybe" (src/interest.js)
 Object.assign(Lair.prototype, interestMethods);
+// Round 11: reminders the day before and the waitlist for a full date (src/reminders.js)
+Object.assign(Lair.prototype, reminderMethods);
 // Round 9: turnouts, lists and early access offers (src/community.js)
 Object.assign(Lair.prototype, communityMethods);
