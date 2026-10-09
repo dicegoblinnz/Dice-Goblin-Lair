@@ -17,6 +17,14 @@
 //   8. a table booked for 3 hours from the month view and the start times, ending on its ticket
 //   9. desktop: the booking's left column starts at Who's coming, level with the map (no empty When row)
 //  10. axe (WCAG 2.1 A and AA) on the day with the start times, and with the note; no sideways scroll; no console errors
+//  Tidy-ups after Mo's "tidy up any other things you may have noticed":
+//  11. "Book a table" from what's on (other tabs): no time picked, the start times with the focus on them; 7pm picked
+//      on a day ahead, 7pm as the start time and the map
+//  12. tapping a booked table on the day's map says till when
+//  13. the day's map shows a table's second line only where it fits: the small Party and Gaming room tables show just
+//      their names, the back-wall tables "till 12am" whole on desktop and just their names on phones
+//  14. phones: the three tabs on one line (and nothing sideways at 320px)
+//  15. room under "Good to know"
 // Screenshots go to OUT, or a folder in the system's temp directory. Without AXE (axe-core's axe.min.js) the axe part is
 // skipped, and says so.
 // Usage: DG_THEME=/path/to/theme PORT=4993 [AXE=/path/to/axe.min.js] [OUT=/dir] node tools/qa/round10/tables.mjs [phone|desktop]
@@ -322,6 +330,88 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   const startMins = ticket.start ? Number(new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).format(new Date(ticket.start)).split(':').reduce((h, mm) => Number(h) * 60 + Number(mm))) : null;
   check(`${tag}: a table booked from the month view and the start times, for 3 hours, ends on its ticket with a QR code`, /^[A-Z]{1,3}-[A-Z]+-\d{1,2}$/.test(ticket.ref || '') && ticket.qr && /See you/.test(ticket.title || '') && ticket.hours === 3 && startMins === start8 && lairKey(ticket.start) === day8, { ticket, day8, start8, startMins });
   await shot(page, `${tag}-4-booked`);
+
+  /* ---------- 11. "Book a table" from what's on, on the other tabs ---------- */
+  const timesInView = () => page.waitForFunction(() => {
+    const r = document.querySelector('[data-play-times-wrap]').getBoundingClientRect();
+    return r.top >= 0 && r.top < window.innerHeight;
+  }, null, { timeout: 3000 }).then(() => true).catch(() => false);
+  await open(page, '/pages/book-a-table?tab=events');
+  await page.click('[data-play-book]');
+  const inView11 = await timesInView();
+  await page.waitForTimeout(300);
+  s = await look(page);
+  check(`${tag}: "Book a table" with no time picked opens the Tables tab at the start times, with the focus there`, s.tab === 'tables' && s.booking.start === null && s.active === 'times' && inView11 && s.label === 'Start time', { s, inView11 });
+  await open(page, '/pages/book-a-table?tab=events');
+  const ahead = await page.evaluate(() => {
+    const play = document.querySelector('lair-play');
+    return [...document.querySelectorAll('[data-play-date]:not([disabled])')].map((d) => d.dataset.playDate).find((k) => k > play.day);
+  });
+  await page.click(`[data-play-date="${ahead}"]`);
+  await page.waitForTimeout(250);
+  await page.click('[data-play-time="1140"]');
+  await page.waitForTimeout(200);
+  await page.click('[data-play-book]');
+  const mapInView = await page.waitForFunction(() => {
+    const r = document.querySelector('lair-booking .booking__map').getBoundingClientRect();
+    return r.top >= -2 && r.top < window.innerHeight;
+  }, null, { timeout: 3000 }).then(() => true).catch(() => false);
+  s = await look(page);
+  check(`${tag}: "Book a table" with 7pm picked on a day ahead opens the Tables tab with 7pm as the start time, at the map`, s.tab === 'tables' && s.booking.day === ahead && s.booking.start === 1140 && s.starts.find((x) => x.v === 1140)?.on && s.booking.tables.length > 0 && mapInView, { s: s.booking, ahead, mapInView });
+
+  /* ---------- 12–13. the day's map: till when, and each table's second line only where it fits ---------- */
+  await open(page, '/pages/book-a-table?tab=events');
+  const busiest = await page.evaluate(() => {
+    const play = document.querySelector('lair-play');
+    const keys = [...document.querySelectorAll('[data-play-date]:not([disabled])')].map((d) => d.dataset.playDate);
+    return keys.sort((a, b) => (play.dayInfo(b).ratio || 0) - (play.dayInfo(a).ratio || 0))[0];
+  });
+  if (busiest !== (await look(page)).day) await page.click(`[data-play-date="${busiest}"]`);
+  await page.waitForTimeout(250);
+  await page.click('[data-play-time="1140"]');
+  await page.waitForTimeout(500);
+  const fit = await page.evaluate(() => [...document.querySelectorAll('lair-play-floor [data-table]')].map((b) => {
+    const sub = b.querySelector('[data-sub]');
+    const label = b.querySelector('.floor__label');
+    const shown = Boolean(sub.textContent) && sub.getClientRects().length > 0;
+    return {
+      id: b.dataset.table, status: b.dataset.status, sub: sub.textContent, shown, tight: b.classList.contains('is-tight'), upright: b.classList.contains('floor__table--vertical'),
+      fits: !shown || (sub.scrollWidth <= sub.clientWidth + 1 && label.offsetHeight + sub.scrollHeight + 1 <= b.clientHeight),
+    };
+  }));
+  const withLine = fit.filter((x) => x.sub && !x.upright);
+  const small = withLine.filter((x) => /^[PG]/.test(x.id));
+  const back = withLine.filter((x) => /^T(1[4-9]|2[01])$/.test(x.id));
+  check(`${tag}: every second line shown on the day's map fits its table (none cut short or spilling over)`, fit.every((x) => x.fits), fit.filter((x) => !x.fits));
+  check(`${tag}: the small Party and Gaming room tables show just their names when booked`, small.length > 0 && small.every((x) => x.tight && !x.shown), small);
+  if (phone) check(`${tag}: the tables along the back wall show just their names (no "till 12a…" cut short)`, back.length > 0 && back.every((x) => x.tight && !x.shown), back);
+  else check(`${tag}: the tables along the back wall show "till 12am" whole`, back.length > 0 && back.every((x) => x.shown && !x.tight && /^till /.test(x.sub)), back);
+  const busyId = fit.find((x) => x.status === 'busy' && /^T/.test(x.id) && !x.upright)?.id || fit.find((x) => x.status === 'busy')?.id;
+  const busyTarget = await page.$(`lair-play-floor [data-table="${busyId}"]:not([data-game]):not([data-event])`);
+  if (busyTarget) {
+    await busyTarget.click();
+    await page.waitForTimeout(200);
+    const said = await page.evaluate(() => document.querySelector('[data-play-info]:not([hidden])')?.textContent.trim() || '');
+    check(`${tag}: tapping a booked table says till when`, new RegExp(`^${busyId} is booked till (\\d{1,2}(:\\d\\d)?(am|pm)|midnight)\\. Pick a green table, or another time\\.$`).test(said), { busyId, said });
+  } else check(`${tag}: a booked table to tap`, false, fit);
+  await page.evaluate(() => document.querySelector('.play__map').scrollIntoView({ block: 'start' }));
+  await shot(page, `${tag}-6-map-lines`);
+
+  /* ---------- 14–15. the tabs on one line on phones; room under "Good to know" ---------- */
+  const tabs = await page.evaluate(() => [...document.querySelectorAll('[data-play-tab]')].map((t) => ({ tab: t.dataset.playTab, h: Math.round(t.getBoundingClientRect().height), lines: Math.round(t.scrollHeight / parseFloat(getComputedStyle(t).lineHeight)) })));
+  check(`${tag}: the three tabs are the same height, "TTRPG sessions" on one line`, new Set(tabs.map((x) => x.h)).size === 1, tabs);
+  const rules = await page.evaluate(() => {
+    const h = document.querySelector('.lair-rules .h1');
+    const list = document.querySelector('.lair-rules .rules');
+    return h && list ? Math.round(list.getBoundingClientRect().top - h.getBoundingClientRect().bottom) : null;
+  });
+  check(`${tag}: "Good to know" has room under it before the questions`, rules != null && rules >= 16, rules);
+  if (phone) {
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.waitForTimeout(300);
+    check(`${tag}: at 320px wide, still no sideways scroll`, (await overflowX(page)) === 0, await overflowX(page));
+    await page.setViewportSize(SIZES[size]);
+  }
   check(`${tag}: no console errors`, !errors.length, errors);
   await ctx.close();
 
