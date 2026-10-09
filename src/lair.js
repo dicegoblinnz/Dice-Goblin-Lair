@@ -557,7 +557,8 @@ export const MIGRATIONS = [
   //    charges (a change takes effect when that bill is paid). next_cycle and next_bill_at: the Shopify billing cycle to
   //    bill next and when (dates_missing_at: since when Shopify hasn't said). hold_until: no billing before then (Shopify
   //    refused a bill, or a payment failed on the store's side). edited_cycle: a cycle the Lair may have left damage
-  //    charges on. card: the card's brand, last digits and expiry.
+  //    charges on. changing_until: a plan change is with Shopify (nothing is billed meanwhile). card: the card's brand,
+  //    last digits and expiry.
   //  - membership_charges: each try at billing a cycle ('renewal', or 'fees': damage charges billed on their own),
   //    claimed before Shopify is asked, with its idempotency key (unique), whether its cycle has exactly its damage
   //    charges yet (edit_state), when it was first sent, Shopify's billing attempt, and how it went ('void': Shopify
@@ -571,7 +572,7 @@ export const MIGRATIONS = [
       id TEXT PRIMARY KEY, contract_gid TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, status TEXT NOT NULL, shopify_status TEXT, tier TEXT NOT NULL,
       billing_tier TEXT NOT NULL, line_id TEXT, variant_id TEXT, selling_plan_id TEXT, price INTEGER, currency TEXT, payment_method_id TEXT, card TEXT,
       next_cycle INTEGER, next_bill_at INTEGER, paid_through INTEGER, retry_at INTEGER, failed_at INTEGER, fail_count INTEGER NOT NULL DEFAULT 0,
-      hold_until INTEGER, edited_cycle INTEGER, paused_from TEXT, dates_checked_at INTEGER, dates_missing_at INTEGER,
+      hold_until INTEGER, edited_cycle INTEGER, paused_from TEXT, dates_checked_at INTEGER, dates_missing_at INTEGER, changing_until INTEGER,
       cancel_at INTEGER, cancel_requested_at INTEGER, cancel_by TEXT, plan_changed_at INTEGER, card_email_at INTEGER, ended_at INTEGER, end_reason TEXT,
       origin_order_id TEXT, revision_id TEXT, source TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS memberships_customer ON memberships (customer_id, status)',

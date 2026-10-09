@@ -96,8 +96,16 @@ const FIRST_BILL_MAX_DAYS = 35;
 /** A charge Shopify hasn't answered is asked about after this; a bank check every 2 hours */
 const RECONCILE_AFTER = 30 * MIN;
 const CHALLENGE_CHECK_EVERY = 2 * HOUR;
-/** A claim no run finished (the Worker stopped, or Shopify didn't answer) is picked up again after this */
+/** A claim no run finished (the Worker stopped, or Shopify didn't answer) is picked up again after this; staff hear
+ * about one still stuck after 2 hours, and one that never reached Shopify within LATE_GRACE is dropped */
 const CLAIM_STALE = 15 * MIN;
+const STUCK_ALERT_AFTER = 2 * HOUR;
+/** Failures on the store's side and Shopify refusals for one cycle: after this many, billing it stops for a month
+ * (staff hear), so a card is never tried day after day (Shopify revokes one after 30 tries in 35 days) */
+const STORE_SIDE_MAX = 3;
+const STOPPED_HOLD = 30 * DAY;
+/** While a member's plan change is with Shopify, nothing is billed for them */
+const PLAN_CHANGE_LOCK = 2 * MIN;
 /** A membership whose next bill date Shopify couldn't give is asked again after this */
 const DATES_RETRY_EVERY = 30 * MIN;
 /** One maintenance run at a time: a second one this soon after the first started does nothing */
@@ -127,13 +135,14 @@ export const MEMBERSHIP_TOPICS = [
 ];
 /**
  * Failed payments that aren't the member's card: the store, the payment provider, Shopify or stock. They never count as
- * a try and the member isn't emailed; staff hear, and it's tried again the next day.
+ * a try and the member isn't emailed; staff hear, and it's tried again the next day (at most 3 times a cycle). A card
+ * the gateway can't take, or a wrong address, is the member's to fix, so those count as tries.
  */
 export const NOT_THE_CARD = new Set([
-  'MERCHANT_ACCOUNT_ERROR', 'MERCHANT_RULE', 'PAYMENT_PROVIDER_IS_NOT_ENABLED', 'PAYMENT_METHOD_INCOMPATIBLE_WITH_GATEWAY_CONFIG',
-  'NON_TEST_ORDER_LIMIT_REACHED', 'TEST_MODE', 'CUSTOMER_INVALID', 'CUSTOMER_NOT_FOUND', 'FREE_GIFT_CARD_NOT_ALLOWED', 'INSUFFICIENT_INVENTORY',
-  'INVENTORY_ALLOCATIONS_NOT_FOUND', 'INVALID_AMOUNT', 'AMOUNT_TOO_LARGE', 'AMOUNT_TOO_SMALL', 'INVALID_CURRENCY', 'INVALID_PURCHASE_TYPE',
-  'PURCHASE_TYPE_NOT_SUPPORTED', 'INVALID_SHIPPING_ADDRESS', 'INVOICE_ALREADY_PAID', 'UNEXPECTED_ERROR',
+  'MERCHANT_ACCOUNT_ERROR', 'MERCHANT_RULE', 'PAYMENT_PROVIDER_IS_NOT_ENABLED', 'NON_TEST_ORDER_LIMIT_REACHED', 'TEST_MODE', 'CUSTOMER_INVALID',
+  'CUSTOMER_NOT_FOUND', 'FREE_GIFT_CARD_NOT_ALLOWED', 'INSUFFICIENT_INVENTORY', 'INVENTORY_ALLOCATIONS_NOT_FOUND', 'INVALID_AMOUNT',
+  'AMOUNT_TOO_LARGE', 'AMOUNT_TOO_SMALL', 'INVALID_CURRENCY', 'INVALID_PURCHASE_TYPE', 'PURCHASE_TYPE_NOT_SUPPORTED', 'INVOICE_ALREADY_PAID',
+  'UNEXPECTED_ERROR',
 ]);
 /** Shopify refusing a bill for one of these means the Lair's cycle is wrong: the next cycle is read again */
 const CYCLE_REFUSALS = ['BILLING_CYCLE_SKIPPED', 'BILLING_CYCLE_CHARGE_BEFORE_EXPECTED_DATE', 'CYCLE_INDEX_OUT_OF_RANGE', 'CYCLE_START_DATE_OUT_OF_RANGE', 'UPCOMING_CYCLE_LIMIT_EXCEEDED'];
@@ -150,6 +159,7 @@ export const MEMBERSHIP_MESSAGES = {
   pastDue: 'Sort out your last payment first, then you can change plans.',
   ending: "Your membership is ending, so the plan can't change. Keep your membership first, then pick a new plan.",
   editsWaiting: 'You can change plans once your payment has gone through.',
+  changing: 'Your plan is changing right now. Try again in a minute.',
   plansNotReady: "Plan changes aren't open yet. Ask us at the counter and we'll sort it.",
   shopifyDown: "Shopify didn't answer just now. Try again in a minute.",
   notActive: "That membership isn't active, so there's nothing to cancel.",
@@ -378,25 +388,29 @@ export class MembershipsAdmin extends ShopifyAdmin {
   }
 
   /**
-   * Edit one billing cycle only (the source contract and other cycles stay as they are): remove the membership line
-   * (dropPlan: damage charges billed on their own) and add a line for each charge, on the damage charge product's
-   * variant at the charge's price, with what it's for as line properties. Any edit already on the cycle is removed
-   * first, so the cycle ends up with exactly these charges. Returns { ok, errors }.
+   * Edit one billing cycle only (the source contract and other cycles stay as they are): with dropPlan (damage charges
+   * billed on their own) every line that isn't a damage charge comes off, whatever it's called; then a line goes on for
+   * each charge, on the damage charge product's variant at the charge's price, with what it's for as line properties.
+   * Any edit already on the cycle is removed first, and the committed lines are checked, so the cycle ends up with
+   * exactly these charges (and, without dropPlan, the month's plan) or this says it didn't. Returns { ok, errors }.
    */
   async editCycle({ contractId, cycle, feeVariantId, fees = [], dropPlan = false }) {
     const cleared = await this.clearCycleEdit({ contractId, cycle });
     if (!cleared.ok) return cleared;
+    const isFee = (line) => numericId(line?.variantId) === numericId(feeVariantId);
     const input = { contractId: gid('SubscriptionContract', contractId), selector: { index: cycle } };
     const started = await this.graphql(
       `mutation MembershipCycleEdit($input: SubscriptionBillingCycleInput!) { subscriptionBillingCycleContractEdit(billingCycleInput: $input) {
-        draft { id lines(first: 20) { nodes { id sellingPlanId } } } userErrors { field message code } } }`,
+        draft { id lines(first: 20) { nodes { id variantId } } } userErrors { field message code } } }`,
       { input },
     );
     const draft = started.subscriptionBillingCycleContractEdit?.draft;
     const startErrors = errorsOf(started.subscriptionBillingCycleContractEdit?.userErrors);
     if (!draft?.id || startErrors.length) return { ok: false, errors: startErrors.length ? startErrors : [{ code: null, message: 'no draft' }] };
+    const before = draft.lines?.nodes || [];
+    if (!dropPlan && before.some(isFee)) return { ok: false, errors: [{ code: 'LINES', message: 'the bill already has a damage charge line on it' }] };
     if (dropPlan) {
-      for (const line of (draft.lines?.nodes || []).filter((l) => l.sellingPlanId)) {
+      for (const line of before.filter((l) => !isFee(l))) {
         const removed = await this.graphql(
           'mutation MembershipLineRemove($draftId: ID!, $lineId: ID!) { subscriptionDraftLineRemove(draftId: $draftId, lineId: $lineId) { lineRemoved { id } userErrors { field message code } } }',
           { draftId: draft.id, lineId: line.id },
@@ -422,11 +436,20 @@ export class MembershipsAdmin extends ShopifyAdmin {
     }
     const committed = await this.graphql(
       `mutation MembershipCycleCommit($draftId: ID!) { subscriptionBillingCycleContractDraftCommit(draftId: $draftId) {
-        contract { lines(first: 20) { nodes { id } } } userErrors { field message code } } }`,
+        contract { lines(first: 20) { nodes { id variantId quantity currentPrice { amount } } } } userErrors { field message code } } }`,
       { draftId: draft.id },
     );
     const errors = errorsOf(committed.subscriptionBillingCycleContractDraftCommit?.userErrors);
-    return { ok: !errors.length, errors };
+    if (errors.length) return { ok: false, errors };
+    // What the bill now has: exactly these charges, and with dropPlan nothing else
+    const lines = committed.subscriptionBillingCycleContractDraftCommit?.contract?.lines?.nodes || [];
+    const feeLines = lines.filter(isFee);
+    const feeTotal = feeLines.reduce((sum, l) => sum + cents(l.currentPrice?.amount) * (l.quantity || 1), 0);
+    const wanted = fees.reduce((sum, f) => sum + f.amount, 0);
+    if (feeLines.length !== fees.length || feeTotal !== wanted || (dropPlan && lines.length !== feeLines.length) || (!dropPlan && lines.length === feeLines.length)) {
+      return { ok: false, errors: [{ code: 'LINES', message: `the edited bill has ${lines.length} lines (${feeLines.length} damage charges, ${money(feeTotal)}), not what was asked` }] };
+    }
+    return { ok: true, errors: [] };
   }
 
   /** Take any edit off one billing cycle (fine when there's none): { ok, errors } */
@@ -625,6 +648,11 @@ export const membershipMethods = {
   /** A membership that can still be billed (a damage charge on it waits for a bill rather than going to staff) */
   billable(m) {
     return Boolean(m && ['active', 'past_due', 'cancelling', 'paused'].includes(m.status));
+  },
+
+  /** Cancelled and running out its month: 'cancelling', or paused in Shopify while it was */
+  isCancelling(m) {
+    return Boolean(m && (m.status === 'cancelling' || (m.status === 'paused' && m.paused_from === 'cancelling')));
   },
 
   /** The meta table's saved plans: { groupId, plans: { grab: { id, name, price }, ... } } or null. */
@@ -905,6 +933,16 @@ export const membershipMethods = {
       }
       return { updated: row.id, status: 'ended', topic };
     }
+    if (row.status === 'ended' && ['ACTIVE', 'PAUSED'].includes(contract.status)) {
+      // Brought back in Shopify after the Lair ended it: the Lair doesn't bill it or count it (staff decide)
+      const name = this.memberName(row.customer_id);
+      this.staffAlert(`reactivated:${row.id}`, `A library membership is active again in Shopify: ${name}`, {
+        title: 'Active in Shopify, ended in the Lair',
+        intro: `Shopify says ${name}'s library membership contract is ${contract.status.toLowerCase()} again, but the Lair had ended it, so it won't bill it or count it for borrowing. If they want to carry on, they can join again on the library page; cancel this contract in Shopify.`,
+        details: [['Membership', row.id]],
+      }, now);
+      return { updated: row.id, status: 'ended', topic };
+    }
     let status = row.status;
     let pausedFrom = row.paused_from;
     if (contract.status === 'PAUSED' && !['ended', 'paused'].includes(row.status)) {
@@ -960,16 +998,26 @@ export const membershipMethods = {
     return { ok: true, ...result };
   },
 
-  /** subscription_billing_attempts/success, /failure or /challenged: the charge it belongs to (by its key) moves on. */
+  /**
+   * subscription_billing_attempts/success, /failure or /challenged: the charge it belongs to (by its key) moves on. The
+   * payload's attempt id can be null (Shopify's own example has it so); a failure with no error code is read from
+   * Shopify instead, so it's never mistaken for a failure on the store's side (if Shopify can't say, this throws and
+   * Shopify sends the webhook again).
+   */
   async billingWebhook(payload, topic) {
     const key = trimmed(payload.idempotency_key, 200);
     let charge = key ? this.sql.exec('SELECT * FROM membership_charges WHERE idempotency_key = ?', key).toArray()[0] : null;
     if (!charge && payload.admin_graphql_api_id) charge = this.sql.exec('SELECT * FROM membership_charges WHERE attempt_gid = ?', String(payload.admin_graphql_api_id)).toArray()[0];
     if (!charge) return { unknown: key || payload.admin_graphql_api_id || null };
-    const outcome = topic.endsWith('/success') ? { state: 'paid', orderId: payload.admin_graphql_api_order_id || null }
-      : topic.endsWith('/failure') ? { state: 'failed', code: payload.error_code ? String(payload.error_code).toUpperCase() : 'UNEXPECTED_ERROR', message: payload.error_message || null }
+    let outcome = topic.endsWith('/success') ? { state: 'paid', orderId: payload.admin_graphql_api_order_id || null }
+      : topic.endsWith('/failure') ? { state: 'failed', code: payload.error_code ? String(payload.error_code).toUpperCase() : null, message: payload.error_message || null }
         : { state: 'action', nextActionUrl: null };
-    if (payload.admin_graphql_api_id && !charge.attempt_gid) this.write('UPDATE membership_charges SET attempt_gid = ? WHERE id = ?', String(payload.admin_graphql_api_id), charge.id);
+    if (outcome.state === 'failed' && !outcome.code) {
+      const found = await this.membershipsAdmin().findAttempt(charge.membership_id, charge.idempotency_key);
+      outcome = { ...outcome, code: found?.state === 'failed' ? found.code : 'UNEXPECTED_ERROR' };
+    }
+    // --- no awaits from here on (until chargeOutcome's own) ---
+    if (payload.admin_graphql_api_id) this.write('UPDATE membership_charges SET attempt_gid = COALESCE(attempt_gid, ?) WHERE id = ?', String(payload.admin_graphql_api_id), charge.id);
     return this.chargeOutcome(charge.id, outcome);
   },
 
@@ -1093,8 +1141,9 @@ export const membershipMethods = {
       status = 'active';
       endReason = null;
     } else if (row.status === 'paused' && ['past_due', 'ending'].includes(row.paused_from)) pausedFrom = 'active';
-    // Cancelled while this renewal was being paid: they keep the month it paid for
-    const cancelAt = row.status === 'cancelling' && (row.cancel_at == null || row.cancel_at <= now) ? paidUntil : row.cancel_at;
+    // Cancelled while this renewal was being paid (and maybe paused since): they keep the month it paid for
+    const cancelling = this.isCancelling(row);
+    const cancelAt = cancelling && (row.cancel_at == null || row.cancel_at <= now) ? paidUntil : row.cancel_at;
     this.write(
       `UPDATE memberships SET status = ?, paused_from = ?, tier = ?, next_cycle = ?, next_bill_at = ?, paid_through = ?, retry_at = NULL, failed_at = NULL,
          fail_count = 0, hold_until = NULL, cancel_at = ?, end_reason = ?, dates_missing_at = ?, updated_at = ? WHERE id = ?`,
@@ -1103,16 +1152,16 @@ export const membershipMethods = {
     );
     const fresh = this.membershipRow(row.id);
     if (wasLate) this.tellPaymentSorted(fresh, charge, rules);
-    if (row.status === 'cancelling' && row.cancel_at !== cancelAt) this.tellCancelled(fresh, rules);
+    if (cancelling && row.cancel_at !== cancelAt) this.tellCancelled(fresh, rules);
     return { charge: charge.id, status: 'paid' };
   },
 
   /**
    * A charge failed. Its damage charges wait for the next try (or, when there isn't one, go to staff). A failure that
-   * isn't the card holds billing for a day (staff hear; the member doesn't, and no try is counted). Otherwise it's a
-   * try: another is set (3 days, then a week, after the first failure; none when the bank flagged fraud, until the
-   * card is updated), or after the last one the membership ends. A late failure, or one for a membership that has
-   * moved on, is only recorded. No awaits.
+   * isn't the card holds billing (see storeSideProblem: staff hear; the member doesn't, and no try is counted).
+   * Otherwise it's a try: another is set (3 days, then a week, after the first failure, and never in the past; none
+   * when the bank flagged fraud, until the card is updated), or after the last one the membership ends. A late failure,
+   * or one for a membership that has moved on, is only recorded. No awaits.
    */
   chargeFailed(charge, row, outcome, { cardEmailSent }, rules, now) {
     const code = outcome.code;
@@ -1122,39 +1171,36 @@ export const membershipMethods = {
     );
     this.feesBack(charge, now);
     const feeIds = parse(charge.fees, []);
-    if (!row || !['active', 'past_due', 'cancelling'].includes(row.status) || !this.isLatestTry(charge) || (row.next_cycle != null && charge.cycle < row.next_cycle)) {
-      return { charge: charge.id, status: 'failed', recorded: true };
-    }
-    if (charge.kind === 'renewal' && row.status === 'cancelling') {
-      // Cancelled while this renewal was being paid, and it didn't go through: it ends now, with no more tries (a
-      // damage charge on it is billed on its own)
+    if (!row || !this.isLatestTry(charge) || (row.next_cycle != null && charge.cycle < row.next_cycle)) return { charge: charge.id, status: 'failed', recorded: true };
+    if (charge.kind === 'renewal' && this.isCancelling(row)) {
+      // Cancelled while this renewal was being paid (and maybe paused since), and it didn't go through: it ends now,
+      // with no more tries (a damage charge on it is billed on its own)
       this.write('UPDATE memberships SET cancel_at = ?, retry_at = NULL, fail_count = 0, failed_at = NULL, updated_at = ? WHERE id = ?', now, now, row.id);
       return { charge: charge.id, status: 'failed', ending: true };
     }
+    if (!['active', 'past_due', 'cancelling'].includes(row.status)) return { charge: charge.id, status: 'failed', recorded: true };
     if (!outcome.final && NOT_THE_CARD.has(code)) {
-      const until = now + REFUSAL_HOLD;
       const name = this.memberName(row.customer_id);
-      this.write('UPDATE memberships SET hold_until = ?, updated_at = ? WHERE id = ?', until, now, row.id);
-      this.staffAlert(`not-card:${row.id}`, `A library payment failed, not because of the card: ${name}`, {
-        title: 'A payment that failed on our side',
-        intro: `${name}'s ${money(charge.amount)} library payment failed with ${code}, which isn't a problem with their card (it's the store, the payment provider or Shopify). They haven't been told and it doesn't count against them. The Lair tries again tomorrow.`,
+      const held = this.storeSideProblem(charge, row, {
+        subject: `A library payment failed, not because of the card: ${name}`, title: 'A payment that failed on our side',
+        problem: `${name}'s ${money(charge.amount)} library payment failed with ${code}, which isn't a problem with their card (it's the store, the payment provider or Shopify). They haven't been told and it doesn't count against them.`,
         details: [['Membership', row.id], ['Error', [code, outcome.message].filter(Boolean).join(': ')]],
       }, now);
-      return { charge: charge.id, status: 'failed', counted: false, holdUntil: until };
+      return { charge: charge.id, status: 'failed', counted: false, ...held };
     }
     const failures = (row.fail_count || 0) + 1;
     const firstFailed = row.failed_at || now;
     const fraud = /FRAUD/.test(code);
     const last = outcome.final || failures >= MAX_ATTEMPTS || (fraud && charge.kind === 'fees');
     if (!last && charge.kind === 'renewal') {
-      const again = fraud ? null : retryAt(firstFailed, failures);
+      const again = fraud ? null : Math.max(retryAt(firstFailed, failures), now + DAY);
       this.write("UPDATE memberships SET status = 'past_due', fail_count = ?, failed_at = ?, retry_at = ?, updated_at = ? WHERE id = ?", failures, firstFailed, again, now, row.id);
       this.tellPaymentFailed(this.membershipRow(row.id), charge, { again, cardEmailSent, fraud, giveUpAt: firstFailed + GIVE_UP_DAYS * DAY }, rules);
       return { charge: charge.id, status: 'failed', retryAt: again };
     }
     if (!last && charge.kind === 'fees') {
       // Damage charges billed on their own (after cancelling) get the same tries; the membership stays as it is
-      const again = retryAt(firstFailed, failures);
+      const again = Math.max(retryAt(firstFailed, failures), now + DAY);
       this.write('UPDATE memberships SET fail_count = ?, failed_at = ?, retry_at = ?, updated_at = ? WHERE id = ?', failures, firstFailed, again, now, row.id);
       this.tellFeesFailed(this.membershipRow(row.id), charge, { again, cardEmailSent }, rules);
       return { charge: charge.id, status: 'failed', retryAt: again };
@@ -1173,6 +1219,49 @@ export const membershipMethods = {
     this.write('UPDATE memberships SET fail_count = 0, failed_at = NULL, retry_at = NULL, updated_at = ? WHERE id = ?', now, row.id);
     this.tellFeesGaveUp(this.membershipRow(row.id), charge, { code }, rules);
     return { charge: charge.id, status: 'failed', final: true };
+  },
+
+  /**
+   * Failures on the store's side and Shopify refusals for a charge's cycle so far (none of them count against the
+   * member). No awaits.
+   */
+  storeSideCount(membershipId, cycle) {
+    const codes = [...NOT_THE_CARD];
+    return this.sql.exec(
+      `SELECT COUNT(*) AS n FROM membership_charges WHERE membership_id = ? AND cycle = ? AND (
+         (status = 'failed' AND error_code IN (${codes.map(() => '?').join(', ')})) OR (status = 'void' AND void_reason LIKE 'refused:%'))`,
+      membershipId, cycle, ...codes,
+    ).toArray()[0]?.n || 0;
+  },
+
+  /**
+   * A failure on the store's side, or Shopify refusing a bill: nothing counts against the member, who isn't told, and
+   * staff hear. Billing waits a day; after 3 for the same cycle it stops for 30 days (staff press Retry once it's sorted),
+   * so the card is never tried day after day. Damage charges billed on their own go to staff to collect at the counter
+   * instead. Returns { holdUntil, stopped }. No awaits.
+   */
+  storeSideProblem(charge, m, { subject, title, problem, details }, now) {
+    const stop = this.storeSideCount(charge.membership_id, charge.cycle) >= STORE_SIDE_MAX;
+    if (stop && charge.kind === 'fees') {
+      for (const id of parse(charge.fees, [])) this.write("UPDATE damage_charges SET status = 'unpaid', updated_at = ? WHERE id = ? AND status = 'due'", now, id);
+      this.write('UPDATE memberships SET fail_count = 0, failed_at = NULL, retry_at = NULL, hold_until = NULL, updated_at = ? WHERE id = ?', now, m.id);
+      this.staffAlert(`store-side:${m.id}`, subject, {
+        title, details,
+        intro: `${problem} This has happened ${STORE_SIDE_MAX} times for these damage charges, so they're on the staff page under Damage to collect at the counter.`,
+      }, now);
+      return { holdUntil: null, stopped: true };
+    }
+    const until = now + (stop ? STOPPED_HOLD : REFUSAL_HOLD);
+    this.write('UPDATE memberships SET hold_until = ?, updated_at = ? WHERE id = ?', until, now, m.id);
+    // A failed payment's next try moves with the hold, so it isn't taken for one that's overdue (until billing stops)
+    if (!stop && m.status === 'past_due' && m.retry_at != null) this.write('UPDATE memberships SET retry_at = MAX(retry_at, ?) WHERE id = ?', until, m.id);
+    this.staffAlert(`store-side:${m.id}${stop ? ':stopped' : ''}`, subject, {
+      title, details,
+      intro: stop
+        ? `${problem} This has happened ${STORE_SIDE_MAX} times for this bill, so the Lair has stopped billing them for 30 days. Once it's sorted, press Retry on their membership on the staff page.`
+        : `${problem} The Lair tries again tomorrow.`,
+    }, now);
+    return { holdUntil: until, stopped: stop };
   },
 
   /**
@@ -1199,7 +1288,10 @@ export const membershipMethods = {
     if (hold) this.write('UPDATE memberships SET hold_until = ?, updated_at = ? WHERE id = ?', now + hold, now, charge.membership_id);
     // A renewal that was on its way when they cancelled never happened, so the membership ends now
     if (charge.kind === 'renewal') {
-      this.write("UPDATE memberships SET cancel_at = ?, updated_at = ? WHERE id = ? AND status = 'cancelling' AND cancel_at IS NULL", now, now, charge.membership_id);
+      this.write(
+        "UPDATE memberships SET cancel_at = ?, updated_at = ? WHERE id = ? AND cancel_at IS NULL AND (status = 'cancelling' OR (status = 'paused' AND paused_from = 'cancelling'))",
+        now, now, charge.membership_id,
+      );
     }
     return { charge: chargeId, void: reason };
   },
@@ -1223,10 +1315,12 @@ export const membershipMethods = {
     if (!topic.endsWith('/revoke')) {
       for (const row of rows) {
         const fresh = this.membershipRow(row.id);
-        if (fresh?.status !== 'past_due' || this.openCharge(fresh.id) || (fresh.fail_count || 0) >= MAX_ATTEMPTS) continue;
+        // waiting on a failed payment: a renewal (past_due), or a cancelled member's damage charges
+        const waiting = fresh?.status === 'past_due' || (fresh?.status === 'cancelling' && fresh.fail_count > 0 && fresh.retry_at != null);
+        if (!waiting || this.openCharge(fresh.id) || (fresh.fail_count || 0) >= MAX_ATTEMPTS) continue;
         const changed = topic.endsWith('/update') ? fresh.payment_method_id === pm : before.get(row.id) !== `${fresh.payment_method_id}|${fresh.card}`;
         if (!changed || (fresh.retry_at != null && fresh.retry_at <= now)) continue;
-        this.write('UPDATE memberships SET retry_at = ?, hold_until = NULL, updated_at = ? WHERE id = ?', now, now, fresh.id);
+        this.write('UPDATE memberships SET retry_at = ?, updated_at = ? WHERE id = ?', now, now, fresh.id);
         retried += 1;
       }
     }
@@ -1290,9 +1384,11 @@ export const membershipMethods = {
 
   /**
    * Charges Shopify hasn't answered. A claim no run finished goes through sendCharge again (which first looks it up
-   * by its key if it may have reached Shopify, and drops it if it's no longer wanted). A pending one is asked about
-   * after 30 minutes; one Shopify has no record of is looked up by its key. A bank check is asked about every 2 hours:
-   * after 3 days borrowing pauses, and after 7 it's given up as the last try. Returns the charge ids looked at.
+   * by its key if it may have reached Shopify, and drops it if it's no longer wanted); staff hear about one stuck for 2
+   * hours. A pending one is asked about after 30 minutes, a bank check every 2 hours (after 3 days borrowing pauses,
+   * and after 7 it's given up as the last try). One whose attempt id the Lair never got (a webhook can come without it)
+   * is found by its key; one Shopify has no record of is looked up by its key and dropped or sent again. Returns the
+   * charge ids looked at.
    */
   async reconcileCharges(rules, now) {
     const admin = this.membershipsAdmin();
@@ -1301,17 +1397,31 @@ export const membershipMethods = {
     for (const { id } of stale) {
       looked.push(id);
       await this.sendCharge(id, admin);
+      // --- no awaits from here on (for this one) ---
+      const at = Date.now();
+      const fresh = this.chargeRow(id);
+      if (fresh?.status === 'claimed' && at - fresh.created_at > STUCK_ALERT_AFTER) {
+        const name = this.memberName(this.membershipRow(fresh.membership_id)?.customer_id);
+        this.staffAlert(`stuck:${fresh.membership_id}`, `A library bill is stuck: ${name}`, {
+          title: "A bill that hasn't gone",
+          intro: `The Lair has been trying to send ${name}'s ${money(fresh.amount)} library bill to Shopify for over 2 hours: Shopify isn't answering, or won't take the bill's damage charges on or off. It keeps trying. A bill that hasn't gone 2 days after it was due is dropped, and the next one is billed when it comes.`,
+          details: [['Membership', fresh.membership_id], ['Cycle', String(fresh.cycle)], ['Claimed', new Date(fresh.created_at).toISOString().slice(0, 16).replace('T', ' ')]],
+        }, at);
+      }
     }
     const waiting = this.sql.exec(
-      `SELECT * FROM membership_charges WHERE attempt_gid IS NOT NULL AND ((status = 'pending' AND updated_at < ?) OR (status = 'challenged' AND updated_at < ?))
-       ORDER BY updated_at LIMIT ?`,
+      "SELECT * FROM membership_charges WHERE (status = 'pending' AND updated_at < ?) OR (status = 'challenged' AND updated_at < ?) ORDER BY updated_at LIMIT ?",
       now - RECONCILE_AFTER, now - CHALLENGE_CHECK_EVERY, CHECKS_A_RUN,
     ).toArray();
     for (const charge of waiting) {
       looked.push(charge.id);
       let state;
       try {
-        state = await admin.attempt(charge.attempt_gid);
+        if (charge.attempt_gid) state = await admin.attempt(charge.attempt_gid);
+        else {
+          state = await admin.findAttempt(charge.membership_id, charge.idempotency_key);
+          if (state) this.write('UPDATE membership_charges SET attempt_gid = COALESCE(attempt_gid, ?) WHERE id = ?', state.id, charge.id);
+        }
       } catch (error) {
         console.error('Lair: could not check a membership charge', error);
         continue;
@@ -1446,13 +1556,17 @@ export const membershipMethods = {
   /**
    * Renewals more than 2 days late (billing was off, the Lair was down, or the contract was paused) aren't billed late,
    * and never several at once: the membership moves on to the first billing cycle that isn't (it's billed when that
-   * comes), and staff hear which months weren't billed. Only with billing on. Returns the membership ids moved on.
+   * comes), and staff hear which months weren't billed. The same goes for a failed payment whose next try is more than
+   * 2 days overdue: that month is dropped, not retried late, and borrowing is back on. Only with billing on. Returns the
+   * membership ids moved on.
    */
   async catchUpRenewals(rules, now) {
     const admin = this.membershipsAdmin();
     const rows = this.sql.exec(
-      "SELECT * FROM memberships WHERE status = 'active' AND next_bill_at IS NOT NULL AND next_bill_at <= ? AND next_cycle IS NOT NULL ORDER BY next_bill_at LIMIT ?",
-      now - LATE_GRACE, CHECKS_A_RUN,
+      `SELECT * FROM memberships WHERE next_cycle IS NOT NULL AND (
+         (status = 'active' AND next_bill_at IS NOT NULL AND next_bill_at <= ?) OR (status = 'past_due' AND retry_at IS NOT NULL AND retry_at <= ?))
+       ORDER BY COALESCE(retry_at, next_bill_at) LIMIT ?`,
+      now - LATE_GRACE, now - LATE_GRACE, CHECKS_A_RUN,
     ).toArray();
     const moved = [];
     for (const row of rows) {
@@ -1472,24 +1586,30 @@ export const membershipMethods = {
       // --- no awaits from here on (for this one) ---
       const at = Date.now();
       const fresh = this.membershipRow(row.id);
-      if (!fresh || fresh.status !== 'active' || fresh.next_cycle !== row.next_cycle || fresh.next_bill_at !== row.next_bill_at || this.openCharge(fresh.id)) continue;
+      if (!fresh || fresh.status !== row.status || fresh.next_cycle !== row.next_cycle || fresh.next_bill_at !== row.next_bill_at || fresh.retry_at !== row.retry_at || this.openCharge(fresh.id)) continue;
       if (!next) {
         const name = this.memberName(row.customer_id);
         this.staffAlert(`dates:${row.id}`, `A library membership with no next bill date: ${name}`, {
           title: 'No next bill date',
-          intro: `${name}'s library membership was due a bill more than 2 days ago, and Shopify has no later billing cycle to move on to, so it can't be billed. They can still borrow. Check the contract in Shopify.`,
+          intro: `${name}'s library membership was due a bill more than 2 days ago, and Shopify has no later billing cycle to move on to, so it can't be billed. Check the contract in Shopify.`,
           details: [['Membership', row.id], ['Cycle', String(row.next_cycle)]],
         }, at);
         continue;
       }
-      this.write('UPDATE memberships SET next_cycle = ?, next_bill_at = ?, updated_at = ? WHERE id = ?', next.index, next.expectedAt, at, row.id);
-      moved.push({ id: row.id, name: this.memberName(row.customer_id), from: row.next_bill_at, to: next.expectedAt, skipped: next.index - row.next_cycle });
+      this.write(
+        "UPDATE memberships SET status = 'active', next_cycle = ?, next_bill_at = ?, fail_count = 0, failed_at = NULL, retry_at = NULL, updated_at = ? WHERE id = ?",
+        next.index, next.expectedAt, at, row.id,
+      );
+      moved.push({
+        id: row.id, name: this.memberName(row.customer_id), from: row.next_bill_at, to: next.expectedAt, failed: row.status === 'past_due',
+        skipped: Math.max(1, next.index - row.next_cycle),
+      });
     }
     if (moved.length) {
       this.notifyStaff(`Library bills that were too late to take: ${moved.length}`, {
         title: 'Months not billed',
-        intro: "These library memberships were due a bill more than 2 days ago (billing was off, the Lair was down, or the contract was paused). The Lair doesn't bill late or several months at once, so it skipped to the next bill. Bill them in Shopify if you want those months.",
-        details: moved.map((m) => [m.name, `${plural(m.skipped, 'month', 'months')} not billed (due ${billDay(m.from, rules.tz)}); next bill ${billDay(m.to, rules.tz)}`]),
+        intro: "These library memberships were due a bill (or a retry of a failed payment) more than 2 days ago: billing was off, the Lair was down, or the contract was paused. The Lair doesn't bill late or several months at once, so it skipped to the next bill, and anyone whose payment had failed can borrow again. Bill them in Shopify if you want those months.",
+        details: moved.map((m) => [m.name, `${plural(m.skipped, 'month', 'months')} not billed (due ${billDay(m.from, rules.tz)}${m.failed ? ', its payment had failed' : ''}); next bill ${billDay(m.to, rules.tz)}`]),
       });
     }
     return moved.map((m) => m.id);
@@ -1508,7 +1628,7 @@ export const membershipMethods = {
    * billing is on hold, or while a charge is in flight. No awaits.
    */
   dueKind(m, now) {
-    if (!m || m.next_cycle == null || (m.hold_until && m.hold_until > now) || this.openCharge(m.id)) return null;
+    if (!m || m.next_cycle == null || (m.hold_until && m.hold_until > now) || (m.changing_until && m.changing_until > now) || this.openCharge(m.id)) return null;
     if (m.status === 'active') return m.next_bill_at != null && m.next_bill_at <= now && m.next_bill_at > now - LATE_GRACE ? 'renewal' : null;
     if (m.status === 'past_due') return m.retry_at != null && m.retry_at <= now ? 'renewal' : null;
     if (m.status === 'cancelling') {
@@ -1607,14 +1727,16 @@ export const membershipMethods = {
   },
 
   /**
-   * Whether a claimed charge should still go to Shopify: a reason it shouldn't ('billing-off', 'held', the membership's
-   * status, 'cycle-done'), or null. No awaits.
+   * Whether a claimed charge should still go to Shopify: a reason it shouldn't ('billing-off', 'held', 'too-late', the
+   * membership's status, 'cycle-done'), or null. No awaits.
    */
   chargeUnwanted(charge, now) {
     if (!this.membershipBillingOn()) return 'billing-off';
     const m = this.membershipRow(charge.membership_id);
     if (!m) return 'no-membership';
     if (m.hold_until && m.hold_until > now) return 'held';
+    // never sent within 2 days of being claimed (Shopify down, or the bill's edit kept failing): too late to send now
+    if (now - charge.created_at > LATE_GRACE) return 'too-late';
     if (charge.kind === 'renewal' && !['active', 'past_due'].includes(m.status)) return `membership-${m.status}`;
     if (charge.kind === 'fees' && m.status !== 'cancelling') return `membership-${m.status}`;
     if (m.next_cycle != null && charge.cycle < m.next_cycle) return 'cycle-done';
@@ -1645,6 +1767,8 @@ export const membershipMethods = {
       }
       // --- no awaits until chargeOutcome ---
       charge = this.chargeRow(chargeId);
+      // (a webhook may have moved it on meanwhile without saying which attempt it was: keep the id either way)
+      if (found && charge && !charge.attempt_gid) this.write('UPDATE membership_charges SET attempt_gid = ? WHERE id = ?', found.id, chargeId);
       if (!charge || charge.status !== 'claimed') return { charge: chargeId, already: charge?.status || null };
       if (found) {
         this.write("UPDATE membership_charges SET status = 'pending', attempt_gid = ?, updated_at = ? WHERE id = ?", found.id, Date.now(), chargeId);
@@ -1684,6 +1808,8 @@ export const membershipMethods = {
     }
     // --- no awaits from here on (except a contract read after a refusal) ---
     const fresh = this.chargeRow(chargeId);
+    // A webhook can get here first (and may not say which attempt it was): the attempt id is kept whatever it did
+    if (result.attemptId && fresh && !fresh.attempt_gid) this.write('UPDATE membership_charges SET attempt_gid = ? WHERE id = ?', result.attemptId, chargeId);
     if (!fresh || fresh.status !== 'claimed') return { charge: chargeId, already: fresh?.status || null };
     if (result.attemptId) {
       this.write("UPDATE membership_charges SET status = 'pending', attempt_gid = ?, updated_at = ? WHERE id = ?", result.attemptId, Date.now(), chargeId);
@@ -1822,9 +1948,9 @@ export const membershipMethods = {
 
   /**
    * Shopify refused to bill (a userError, not a payment failure: nothing was charged). Busy: sent again by the next run.
-   * The contract ended or missing: the membership ends. Anything else: the charge is dropped and billing waits a day,
-   * staff hear, and the member isn't told. Damage charges billed on their own go to staff to collect. Returns what
-   * happened, with resync when the contract should be read again. No awaits.
+   * The contract ended or missing: the membership ends. Anything else: the charge is dropped and it's a problem on the
+   * store's side (storeSideProblem: billing waits, staff hear, the member isn't told). Returns what happened, with
+   * resync when the contract should be read again. No awaits.
    */
   chargeRefused(charge, errors) {
     const now = Date.now();
@@ -1837,30 +1963,29 @@ export const membershipMethods = {
     if (codes.some((c) => ['CONTRACT_TERMINATED', 'CONTRACT_NOT_FOUND'].includes(c))) {
       this.voidCharge(charge.id, codes.includes('CONTRACT_TERMINATED') ? 'contract-terminated' : 'contract-missing');
       if (m && m.status !== 'ended') {
-        this.markEnded(m.id, { reason: m.status === 'ending' ? 'payment' : m.status === 'cancelling' ? 'cancelled' : 'shopify:ended', rules: this.rulesCache || {}, now });
+        // a cancelled member is told their membership has ended (it was going to); anyone else isn't, in case it was a mistake
+        const reason = m.status === 'ending' ? 'payment' : this.isCancelling(m) ? 'cancelled' : 'shopify:ended';
+        this.markEnded(m.id, { reason, rules: this.rulesCache || {}, now });
         this.staffAlert(`shopify-ended:${m.id}`, `A library membership has ended in Shopify: ${name}`, {
           title: 'A membership ended outside the Lair',
-          intro: `Shopify wouldn't bill ${name}'s library membership because the contract has ended there. The Lair has ended it too. They haven't been emailed.`,
+          intro: `Shopify wouldn't bill ${name}'s library membership because the contract has ended there, so the Lair has ended it too. ${reason === 'cancelled' ? "They'd cancelled, so they've had the usual email to say it has ended." : "They haven't been emailed."}`,
           details: [['Membership', m.id], ['Shopify said', words]],
         }, now);
       }
       return { charge: charge.id, ended: true, resync: codes.includes('CONTRACT_TERMINATED') };
     }
-    this.voidCharge(charge.id, `refused:${codes[0] || 'unknown'}`.toLowerCase(), { hold: REFUSAL_HOLD });
-    if (charge.kind === 'fees') {
-      for (const id of parse(charge.fees, [])) this.write("UPDATE damage_charges SET status = 'unpaid', updated_at = ? WHERE id = ? AND status = 'due'", now, id);
-    }
+    this.voidCharge(charge.id, `refused:${codes[0] || 'unknown'}`.toLowerCase());
     if (codes.some((c) => CYCLE_REFUSALS.includes(c))) {
       this.write('UPDATE memberships SET next_bill_at = NULL, dates_missing_at = COALESCE(dates_missing_at, ?), updated_at = ? WHERE id = ? AND next_cycle = ?', now, now, charge.membership_id, charge.cycle);
     }
-    this.staffAlert(`refused:${charge.membership_id}`, `Shopify wouldn't take a library bill: ${name}`, {
-      title: "A bill Shopify wouldn't take",
-      intro: codes.includes('CONTRACT_UNDER_REVIEW')
-        ? `Shopify won't bill ${name}'s library membership while its first order is under review for fraud risk. Check the order in Shopify. Nothing was charged and they haven't been told. The Lair tries again tomorrow.`
-        : `Shopify wouldn't bill ${name}'s library membership. Nothing was charged and they haven't been told. ${charge.kind === 'fees' ? 'The damage charges are on the staff page under Damage to collect at the counter.' : 'The Lair tries again tomorrow.'}`,
+    const held = m ? this.storeSideProblem(charge, m, {
+      subject: `Shopify wouldn't take a library bill: ${name}`, title: "A bill Shopify wouldn't take",
+      problem: codes.includes('CONTRACT_UNDER_REVIEW')
+        ? `Shopify won't bill ${name}'s library membership while its first order is under review for fraud risk. Check the order in Shopify. Nothing was charged and they haven't been told.`
+        : `Shopify wouldn't bill ${name}'s library membership. Nothing was charged and they haven't been told.`,
       details: [['Membership', charge.membership_id], ['Amount', money(charge.amount)], ['Shopify said', words]],
-    }, now);
-    return { charge: charge.id, void: 'refused', codes, resync: codes.includes('CONTRACT_PAUSED') };
+    }, now) : {};
+    return { charge: charge.id, void: 'refused', codes, ...held, resync: codes.includes('CONTRACT_PAUSED') };
   },
 
   /**
@@ -1890,6 +2015,11 @@ export const membershipMethods = {
   async endMemberships(rules, now) {
     const admin = this.membershipsAdmin();
     const ended = [];
+    // Cancelled while a payment was in flight, and that payment has gone (whichever way) without setting an end: it
+    // ends now, so it can never sit cancelled forever
+    for (const r of this.sql.exec("SELECT id FROM memberships WHERE status = 'cancelling' AND cancel_at IS NULL").toArray()) {
+      if (!this.openCharge(r.id)) this.write('UPDATE memberships SET cancel_at = ?, updated_at = ? WHERE id = ? AND cancel_at IS NULL', now, now, r.id);
+    }
     const rows = this.sql.exec(
       "SELECT * FROM memberships WHERE status = 'ending' OR (status = 'cancelling' AND cancel_at IS NOT NULL AND cancel_at <= ?) ORDER BY updated_at LIMIT ?", now, CHARGES_A_RUN,
     ).toArray();
@@ -1954,17 +2084,21 @@ export const membershipMethods = {
    * a payment is in flight. Returns { membership }.
    */
   async changeMembership(input, who) {
+    const rules = await this.rules();
+    // --- no awaits until Shopify: check, then mark it changing, so nothing is billed for them until it's done ---
     const m = this.ownMembership(who);
     const tier = String(input?.tier ?? '').trim().toLowerCase();
     if (!TIERS[tier]) throw new RuleError(MEMBERSHIP_MESSAGES.tier);
     if (m.status === 'past_due') throw new RuleError(MEMBERSHIP_MESSAGES.pastDue, 409);
     if (m.status !== 'active') throw new RuleError(MEMBERSHIP_MESSAGES.ending, 409);
     if (this.openCharge(m.id)) throw new RuleError(MEMBERSHIP_MESSAGES.editsWaiting, 409);
+    if (m.changing_until && m.changing_until > Date.now()) throw new RuleError(MEMBERSHIP_MESSAGES.changing, 409);
     const billing = TIERS[m.billing_tier] ? m.billing_tier : m.tier;
     if (tier === billing) throw new RuleError(MEMBERSHIP_MESSAGES.same(TIERS[tier].name), 409);
     const plan = this.membershipPlans()?.plans?.[tier];
     if (!plan?.id || !m.line_id) throw new RuleError(MEMBERSHIP_MESSAGES.plansNotReady, 503);
     const price = Number.isInteger(plan.price) ? plan.price : TIERS[tier].price;
+    this.write('UPDATE memberships SET changing_until = ? WHERE id = ?', Date.now() + PLAN_CHANGE_LOCK, m.id);
     const admin = this.membershipsAdmin();
     let cleared = null;
     let result;
@@ -1975,11 +2109,12 @@ export const membershipMethods = {
       result = await admin.changePlan({ contractId: m.id, lineId: m.line_id, sellingPlanId: plan.id, sellingPlanName: TIERS[tier].name, price });
     } catch (error) {
       console.error('Lair: plan change failed', error);
+      this.write('UPDATE memberships SET changing_until = NULL WHERE id = ?', m.id);
       throw new RuleError(MEMBERSHIP_MESSAGES.shopifyDown, 503);
     }
-    const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
+    this.write('UPDATE memberships SET changing_until = NULL WHERE id = ?', m.id);
     if (cleared?.ok) this.write('UPDATE memberships SET edited_cycle = NULL WHERE id = ? AND edited_cycle = ?', m.id, m.edited_cycle);
     if (!result.ok) {
       if (result.errors.some((e) => e.code === 'HAS_FUTURE_EDITS')) throw new RuleError(MEMBERSHIP_MESSAGES.editsWaiting, 409);
@@ -2456,7 +2591,10 @@ export const membershipMethods = {
     const to = this.membershipContact(m.customer_id);
     const t = TIERS[m.tier];
     const home = this.gamesAtHome(m.customer_id);
-    const owed = this.owedAtCounter(m.customer_id);
+    // what they'll pay at the counter: unpaid already, and this membership's charges that never got billed (they go
+    // to the counter when it ends)
+    const owed = this.owedAtCounter(m.customer_id)
+      + (this.sql.exec("SELECT COALESCE(SUM(amount), 0) AS n FROM damage_charges WHERE membership_id = ? AND status IN ('notice', 'due')", m.id).toArray()[0]?.n || 0);
     const fraud = /FRAUD/.test(code || '');
     const why = bank ? "Your bank wanted you to confirm your library payment, and it wasn't confirmed in time"
       : fraud && waited ? "Your bank stopped your library payment and your card wasn't updated"
@@ -2563,6 +2701,8 @@ export const membershipMethods = {
     const when = billDay(fee.due_at, rules.tz);
     const billable = Boolean(m && this.billable(m) && this.feeVariantId());
     const bill = billable && m.next_bill_at && m.next_bill_at > fee.due_at && ['active', 'past_due'].includes(m.status) ? billDay(m.next_bill_at, rules.tz) : null;
+    // A cancelled membership has no next bill: the charge is billed on its own once its notice and the paid month are over
+    const onItsOwn = billable && this.isCancelling(m) ? billDay(Math.max(fee.due_at, m.cancel_at || 0), rules.tz) : null;
     const subject = was != null ? `The charge for ${fee.title} has changed`
       : lost ? `${fee.title} hasn't come back` : `About ${fee.title}: a charge for ${FEE_REASONS[fee.reason].toLowerCase()}`;
     return this.membershipMail(fee.customer_id, subject, {
@@ -2577,9 +2717,9 @@ export const membershipMethods = {
       ],
       details: [
         ['Game', fee.title], ["What's wrong", `${FEE_REASONS[fee.reason]}${fee.details ? `: ${fee.details}` : ''}`], ['Charge', money(fee.amount)],
-        billable
-          ? ['Goes on your bill', bill ? `${bill} (not before ${when})` : `Your next bill after ${when}`]
-          : ['To pay', `At the counter, after ${when}`],
+        onItsOwn ? ['To pay', `Billed to your card on its own, on ${onItsOwn}`]
+          : billable ? ['Goes on your bill', bill ? `${bill} (not before ${when})` : `Your next bill after ${when}`]
+            : ['To pay', `At the counter, after ${when}`],
       ],
       outro: [
         lost ? `Found it? Bring it back before ${when} and we'll cancel the charge.` : `Found the missing bits? Bring them in before ${when} and we'll cancel the charge.`,

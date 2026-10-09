@@ -11,8 +11,8 @@ import { Lair, MIGRATIONS } from '../src/lair.js';
 import worker from '../src/index.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
 import {
-  FEE_NOTICE_DAYS, MAX_ATTEMPTS, MEMBERSHIP_MESSAGES, MEMBERSHIP_SCOPES, MEMBERSHIP_TOPICS, RETRY_DAYS, TIERS, attemptState, billDay, cardWords, chargeKey,
-  numericId, retryAt, tierOf,
+  FEE_NOTICE_DAYS, MAX_ATTEMPTS, MEMBERSHIP_MESSAGES, MEMBERSHIP_SCOPES, MEMBERSHIP_TOPICS, MembershipsAdmin, RETRY_DAYS, TIERS, attemptState, billDay, cardWords,
+  chargeKey, numericId, retryAt, tierOf,
 } from '../src/memberships.js';
 
 const TZ = 'Pacific/Auckland';
@@ -116,7 +116,7 @@ function fakeMemberships() {
   const state = {
     contracts: new Map(), cycles: new Map(), attempts: new Map(), keys: new Map(), edits: new Map(), ended: [], planChanges: [], cardEmails: [],
     billCalls: [], editCalls: [], clearCalls: [], findCalls: [], hooks: [], n: 0,
-    billThrows: 0, billLost: 0, billGate: null, billErrors: null, editErrors: null, editThrows: 0, clearErrors: null, planErrors: null,
+    billThrows: 0, billLost: 0, billGate: null, onBill: null, billErrors: null, editErrors: null, editThrows: 0, clearErrors: null, planErrors: null,
     groups: [], madeProducts: 0,
   };
   const editKey = (contractId, cycle) => `${numericId(contractId)}:${cycle}`;
@@ -148,6 +148,8 @@ function fakeMemberships() {
       const attemptId = `gid://shopify/SubscriptionBillingAttempt/${state.n}`;
       state.keys.set(key, attemptId);
       state.attempts.set(attemptId, { contractId: cid, cycle, key, amount, state: { state: 'pending' } });
+      // a webhook that gets in before the answer does
+      if (state.onBill) await state.onBill(key);
       if (state.billLost > 0) {
         state.billLost -= 1;
         throw new Error('Shopify API error 504');
@@ -260,7 +262,10 @@ async function shopifySays(status, topic, id = CONTRACT) {
   return hook(`subscription_contracts/${topic}`, { admin_graphql_api_id: c.gid });
 }
 
-/** Shopify answers a billing attempt (by its key): the cycle is billed on success; the webhook is sent */
+/**
+ * Shopify answers a billing attempt (by its key): the cycle is billed on success; the webhook is sent, with no attempt
+ * id (as in Shopify's own example payload), so the Lair has to go by the key
+ */
 async function answer(key, outcome) {
   const attemptId = shop.state.keys.get(key);
   assert.ok(attemptId, `no attempt for ${key}`);
@@ -269,7 +274,7 @@ async function answer(key, outcome) {
   if (outcome === 'paid') shop.state.cycles.get(attempt.contractId).find((c) => c.index === attempt.cycle).billed = true;
   const topic = outcome === 'paid' ? 'subscription_billing_attempts/success' : outcome === 'action' ? 'subscription_billing_attempts/challenged' : 'subscription_billing_attempts/failure';
   return hook(topic, {
-    id: null, admin_graphql_api_id: attemptId, idempotency_key: key, subscription_contract_id: Number(attempt.contractId),
+    id: null, admin_graphql_api_id: null, idempotency_key: key, subscription_contract_id: Number(attempt.contractId),
     admin_graphql_api_subscription_contract_id: `gid://shopify/SubscriptionContract/${attempt.contractId}`,
     order_id: outcome === 'paid' ? 1600 : null, admin_graphql_api_order_id: outcome === 'paid' ? 'gid://shopify/Order/1600' : null,
     ready: outcome !== 'action', error_code: ['paid', 'action'].includes(outcome) ? null : outcome.toLowerCase(), error_message: ['paid', 'action'].includes(outcome) ? null : 'Declined.',
@@ -1032,6 +1037,13 @@ test('Shopify ends or pauses a contract (the app uninstalled, or an admin): the 
     await settle();
     assert.ok(toStaff(mail, /ended in Shopify: Sam Jones/), 'staff hear');
     assert.ok(!toSam(mail).some((e) => /has ended/.test(e.subject)), "Sam isn't emailed (it may have been a mistake)");
+    // brought back in Shopify after it ended: the Lair doesn't start billing it again, staff hear
+    c.status = 'ACTIVE';
+    c.revisionId = '8';
+    await hook('subscription_contracts/activate', { admin_graphql_api_id: c.gid });
+    assert.equal(membership().status, 'ended');
+    await settle();
+    assert.ok(toStaff(mail, /active again in Shopify: Sam Jones/));
   } finally {
     mail.restore();
   }
@@ -1409,12 +1421,16 @@ test('the bank flags fraud and the card is never updated: a week later the membe
     setNow(due + MIN);
     await maintenance();
     await answer('lair-membership-501-c1-a1', 'FRAUD_SUSPECTED');
+    const { data } = await logDamage({ customerId: SAM, title: 'Catan', reason: 'missing', amount: 1500 });
     setNow(due + MIN + 7 * DAY + MIN);
     const run = await maintenance();
     assert.deepEqual([run.gaveUp, run.ended], [[CONTRACT], [CONTRACT]]);
     assert.deepEqual([membership().status, shop.state.ended, shop.state.billCalls.length], ['ended', [[CONTRACT, 'fail']], 1]);
+    assert.equal(fee(data.charge.id).status, 'unpaid');
     await settle();
-    assert.ok(toSam(mail).some((e) => e.subject === 'Your library membership has ended' && /Your bank stopped your library payment and your card wasn't updated/.test(e.text)));
+    const ended = toSam(mail).find((e) => e.subject === 'Your library membership has ended');
+    assert.match(ended.text, /Your bank stopped your library payment and your card wasn't updated/);
+    assert.match(ended.text, /Damage charges to pay:\s+\$15/, 'the charge it never billed is in it too');
   } finally {
     mail.restore();
   }
@@ -1555,6 +1571,262 @@ test("a next bill date Shopify can't give: asked again every half hour, staff he
     const cancel = await call('POST', 'me/membership/cancel', {}, SAM);
     assert.equal(cancel.data.membership.cancelAt, months(JOINED, 1), 'the month they paid for at checkout, not now');
     shop.admin.cycles = cyclesOf;
+  } finally {
+    mail.restore();
+  }
+});
+
+/* ================= the second review: webhooks without an attempt id, the store's own failures, stuck bills ================= */
+
+test("a bank check whose webhook gets in before the bill's answer (with no attempt id) is still followed: borrowing pauses after 3 days", async () => {
+  await join();
+  const due = months(JOINED, 1);
+  setNow(due + MIN);
+  shop.state.onBill = async (key) => {
+    shop.state.onBill = null;
+    await answer(key, 'action');
+  };
+  await maintenance();
+  const [c] = charges();
+  assert.deepEqual([c.status, c.attempt_gid], ['challenged', 'gid://shopify/SubscriptionBillingAttempt/1'], "the bill's own answer gives the attempt id");
+  setNow(due + 3 * DAY + HOUR);
+  await maintenance();
+  assert.equal(membership().status, 'past_due');
+});
+
+test('a bank check on a bill whose answer was lost is found by its key, followed, and given up after 7 days, never billed twice', async () => {
+  await join();
+  const due = months(JOINED, 1);
+  setNow(due + MIN);
+  shop.state.billLost = 1;
+  await maintenance();
+  await answer('lair-membership-501-c1-a1', 'action');
+  assert.deepEqual([charges()[0].status, charges()[0].attempt_gid], ['challenged', null], 'the webhook said nothing about which attempt');
+  setNow(due + 3 * DAY + HOUR);
+  await maintenance();
+  assert.deepEqual([charges()[0].attempt_gid, membership().status], ['gid://shopify/SubscriptionBillingAttempt/1', 'past_due']);
+  setNow(due + 7 * DAY + HOUR);
+  await maintenance();
+  assert.deepEqual([membership().status, shop.state.billCalls.length], ['ended', 1]);
+});
+
+test('a failure webhook with no error code is read from Shopify, so a declined card is never mistaken for a problem on the store\'s side', async () => {
+  await join();
+  setNow(months(JOINED, 1) + MIN);
+  await maintenance();
+  const key = 'lair-membership-501-c1-a1';
+  shop.state.attempts.get(shop.state.keys.get(key)).state = { state: 'failed', code: 'CARD_DECLINED' };
+  await hook('subscription_billing_attempts/failure', { admin_graphql_api_id: null, idempotency_key: key, error_code: null, error_message: null });
+  assert.deepEqual([charges()[0].error_code, membership().status, membership().fail_count], ['CARD_DECLINED', 'past_due', 1]);
+});
+
+test("a card the payment gateway can't take is Sam's to fix: it counts as a try and Sam is told", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    setNow(months(JOINED, 1) + MIN);
+    await maintenance();
+    await answer('lair-membership-501-c1-a1', 'PAYMENT_METHOD_INCOMPATIBLE_WITH_GATEWAY_CONFIG');
+    assert.deepEqual([membership().status, membership().fail_count, shop.state.cardEmails.length], ['past_due', 1, 1]);
+    await settle();
+    assert.ok(toSam(mail).some((e) => /didn't go through/.test(e.subject)));
+  } finally {
+    mail.restore();
+  }
+});
+
+test("failures on the store's side are tried at most 3 times a bill, then billing stops for 30 days (staff hear) and the card is left alone", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const due = months(JOINED, 1);
+    setNow(due + MIN);
+    await maintenance();
+    await answer('lair-membership-501-c1-a1', 'INSUFFICIENT_FUNDS');
+    let day = 3;
+    for (const attempt of [2, 3, 4]) {
+      setNow(due + day * DAY + attempt * MIN);
+      await maintenance();
+      await answer(`lair-membership-501-c1-a${attempt}`, 'MERCHANT_ACCOUNT_ERROR');
+      day += 1;
+    }
+    assert.deepEqual([membership().status, membership().fail_count], ['past_due', 1], 'only the card decline counted');
+    assert.equal(membership().hold_until, clock + 30 * DAY);
+    for (const later of [6, 10, 20]) {
+      setNow(due + later * DAY);
+      await maintenance();
+    }
+    assert.equal(shop.state.billCalls.length, 4, 'never tried day after day');
+    await settle();
+    const alerts = mail.sent.filter((e) => e.to === 'staff@dicegoblin.test' && /not because of the card: Sam Jones/.test(e.subject));
+    assert.deepEqual(alerts.map((e) => /stopped billing them for 30 days/.test(e.text)), [false, false, true], 'one a day while it tries again, then one to say billing has stopped');
+    assert.equal(toSam(mail).filter((e) => /didn't go through/.test(e.subject)).length, 1, 'Sam heard only about the decline');
+  } finally {
+    mail.restore();
+  }
+});
+
+test("a cancelled member's damage charge that keeps failing on the store's side goes to the counter after 3 tries, and the membership ends", async () => {
+  await join();
+  const { data } = await logDamage({ customerId: SAM, title: 'Catan', reason: 'missing', amount: 1500 });
+  setNow(JOINED + 10 * DAY);
+  await call('POST', 'me/membership/cancel', {}, SAM);
+  const end = months(JOINED, 1);
+  for (const attempt of [1, 2, 3]) {
+    setNow(end + (attempt - 1) * DAY + attempt * MIN);
+    await maintenance();
+    await answer(`lair-membership-501-c1-a${attempt}`, 'PAYMENT_PROVIDER_IS_NOT_ENABLED');
+  }
+  assert.equal(fee(data.charge.id).status, 'unpaid');
+  await maintenance();
+  assert.deepEqual([membership().status, shop.state.billCalls.length], ['ended', 3]);
+});
+
+test("a bill that can't reach Shopify: staff hear after 2 hours, and after 2 days it's dropped and the next bill waits for its date", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const due = months(JOINED, 1);
+    const cyclesOf = shop.admin.cycles;
+    shop.admin.cycles = async () => {
+      throw new Error('Shopify API error 503');
+    };
+    setNow(due + MIN);
+    await maintenance();
+    assert.equal(charges()[0].status, 'claimed');
+    setNow(due + 3 * HOUR);
+    await maintenance();
+    await settle();
+    assert.ok(toStaff(mail, /library bill is stuck: Sam Jones/));
+    shop.admin.cycles = cyclesOf;
+    setNow(due + 2 * DAY + HOUR);
+    const run = await maintenance();
+    assert.deepEqual([charges()[0].status, charges()[0].void_reason], ['void', 'too-late']);
+    assert.deepEqual([run.caughtUp, membership().next_cycle, shop.state.billCalls.length], [[CONTRACT], 2, 0]);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('a failed payment whose retry would be more than 2 days late (billing was off) is dropped, not retried late, and the next month waits for its date', async () => {
+  await join();
+  const due = months(JOINED, 1);
+  setNow(due + MIN);
+  await maintenance();
+  await answer('lair-membership-501-c1-a1', 'CARD_DECLINED');
+  setEnv({ MEMBERSHIPS_BILLING: 'off' });
+  setNow(due + 21 * DAY);
+  await maintenance();
+  setEnv({ MEMBERSHIPS_BILLING: 'on' });
+  const run = await maintenance();
+  assert.deepEqual(run.caughtUp, [CONTRACT]);
+  assert.equal(shop.state.billCalls.length, 1, 'November is not tried again three weeks late');
+  assert.deepEqual([membership().status, membership().next_cycle, membership().fail_count], ['active', 2, 0]);
+  setNow(months(JOINED, 2) + MIN);
+  await maintenance();
+  assert.deepEqual(shop.state.billCalls.map((b) => b.cycle), [1, 2], 'December on its own date');
+});
+
+test("a damage charge billed on its own: every line that isn't a damage charge comes off the bill, and the committed bill is checked", async () => {
+  const admin = new MembershipsAdmin({ SHOP: 'dice-goblin.myshopify.com', MEMBERSHIPS_CLIENT_ID: 'id', MEMBERSHIPS_CLIENT_SECRET: 'secret', API_VERSION: '2026-07' }, ctx.storage);
+  const calls = [];
+  const plan = { id: 'line-plan', variantId: 'gid://shopify/ProductVariant/42179272933479', quantity: 1, currentPrice: { amount: '60.00' } };
+  const feeLine = { id: 'line-fee', variantId: FEE_VARIANT, quantity: 1, currentPrice: { amount: '15.00' } };
+  let committed = [];
+  admin.graphql = async (query, vars) => {
+    const name = query.match(/(?:mutation|query) (\w+)/)[1];
+    calls.push([name, vars]);
+    if (name === 'MembershipCycleEditDelete') return { subscriptionBillingCycleEditDelete: { billingCycles: [], userErrors: [{ code: 'NO_CYCLE_EDITS', message: 'No edits.' }] } };
+    // the membership line has no selling plan id (as a contract moved from another app might)
+    if (name === 'MembershipCycleEdit') return { subscriptionBillingCycleContractEdit: { draft: { id: 'gid://shopify/SubscriptionDraft/1', lines: { nodes: [{ id: plan.id, variantId: plan.variantId }] } }, userErrors: [] } };
+    if (name === 'MembershipLineRemove') return { subscriptionDraftLineRemove: { lineRemoved: { id: vars.lineId }, userErrors: [] } };
+    if (name === 'MembershipLineAdd') return { subscriptionDraftLineAdd: { lineAdded: { id: feeLine.id }, userErrors: [] } };
+    if (name === 'MembershipCycleCommit') return { subscriptionBillingCycleContractDraftCommit: { contract: { lines: { nodes: committed } }, userErrors: [] } };
+    throw new Error(`unexpected ${name}`);
+  };
+  const ask = (dropPlan) => admin.editCycle({ contractId: CONTRACT, cycle: 1, feeVariantId: FEE_VARIANT, dropPlan, fees: [{ id: 'dc1', amount: 1500, label: 'Missing parts: Catan' }] });
+  committed = [feeLine];
+  assert.deepEqual(await ask(true), { ok: true, errors: [] });
+  assert.deepEqual(calls.filter(([n]) => n === 'MembershipLineRemove').map(([, v]) => v.lineId), ['line-plan'], 'the month comes off though it has no selling plan id');
+  committed = [plan, feeLine];
+  const wrong = await ask(true);
+  assert.deepEqual([wrong.ok, wrong.errors[0].code], [false, 'LINES'], 'a bill that still has the month on it is never billed as damage only');
+  assert.deepEqual(await ask(false), { ok: true, errors: [] }, "a renewal's bill keeps the month and adds the charge");
+  committed = [plan];
+  assert.equal((await ask(false)).ok, false, 'a renewal bill missing its damage charge says so');
+});
+
+test('while a plan change is with Shopify, nothing is billed for that member; the bill after it is on the new plan', async () => {
+  await join();
+  const due = months(JOINED, 1);
+  setNow(due - MIN);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const changePlan = shop.admin.changePlan;
+  shop.admin.changePlan = async (args) => {
+    await gate;
+    return changePlan(args);
+  };
+  const change = call('POST', 'me/membership/change', { tier: 'grab' }, SAM);
+  await settle();
+  setNow(due + MIN / 2);
+  const run = await maintenance();
+  assert.deepEqual([run.charged, shop.state.billCalls.length], [[], 0], 'not while the plan is changing');
+  assert.equal(said(await call('POST', 'me/membership/change', { tier: 'hoard' }, SAM)), `409 ${MEMBERSHIP_MESSAGES.changing}`);
+  release();
+  assert.equal((await change).status, 200);
+  assert.equal(membership().changing_until, null);
+  await maintenance();
+  assert.deepEqual([charges()[0].tier, shop.charged('lair-membership-501-c1-a1')], ['grab', 3000]);
+});
+
+test('cancelled, then paused in Shopify, while the renewal is being paid: paid, it runs to the end of that month; declined, it ends', async () => {
+  await join();
+  setNow(months(JOINED, 1) + MIN);
+  await maintenance();
+  await call('POST', 'me/membership/cancel', {}, SAM);
+  await shopifySays('PAUSED', 'pause');
+  assert.deepEqual([membership().status, membership().paused_from, membership().cancel_at], ['paused', 'cancelling', null]);
+  await answer('lair-membership-501-c1-a1', 'paid');
+  assert.equal(membership().cancel_at, months(JOINED, 2), 'they keep the month it paid for');
+  await shopifySays('ACTIVE', 'activate');
+  assert.equal(membership().status, 'cancelling');
+  setNow(months(JOINED, 2) + MIN);
+  await maintenance();
+  assert.equal(membership().status, 'ended');
+  // and declined
+  open();
+  await join({ id: '601' });
+  setNow(months(JOINED, 1) + MIN);
+  await maintenance();
+  await call('POST', 'me/membership/cancel', {}, SAM);
+  await shopifySays('PAUSED', 'pause', '601');
+  await answer('lair-membership-601-c1-a1', 'CARD_DECLINED');
+  assert.equal(membership('601').cancel_at, clock);
+  await shopifySays('ACTIVE', 'activate', '601');
+  await maintenance();
+  assert.deepEqual([membership('601').status, shop.state.billCalls.length], ['ended', 1]);
+});
+
+test("a cancelled member's failed damage charge is tried again within the hour once their card is updated, and their notice says it's billed on its own", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    setNow(JOINED + 10 * DAY);
+    await call('POST', 'me/membership/cancel', {}, SAM);
+    await logDamage({ customerId: SAM, title: 'Catan', reason: 'missing', amount: 1500 });
+    await settle();
+    assert.match(toSam(mail).find((e) => /About Catan/.test(e.subject)).text, /Billed to your card on its own, on Tue 3 Nov/);
+    setNow(months(JOINED, 1) + MIN);
+    await maintenance();
+    await answer(charges()[0].idempotency_key, 'CARD_DECLINED');
+    assert.ok(membership().retry_at > clock);
+    const res = await hook('customer_payment_methods/update', { admin_graphql_api_id: PM, customer_id: 1001 });
+    assert.equal(res.data.retried, 1);
+    await maintenance();
+    assert.deepEqual(shop.state.billCalls.map((b) => b.key), ['lair-membership-501-c1-a1', 'lair-membership-501-c1-a2']);
   } finally {
     mail.restore();
   }
