@@ -9,6 +9,8 @@
 //                            the library membership plans, the damage charge product and their webhooks
 //   /img/<id>                a GM's game picture (public, cached)
 //   /ics/<date id>.ics       an event date as a calendar file, for the reminder email's Add to calendar (public)
+//   /feeds/<key>.ics         round 13: a followed game's calendar, every date of its events (public; also through the
+//                            app proxy at www.dicegoblin.nz/apps/liar/feeds/<key>.ics, which the Our games page uses)
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
 import { Lair } from './lair.js';
@@ -184,6 +186,10 @@ export default {
     // Round 11: an event date as a calendar file (the reminder email's Add to calendar): public, like the calendar page
     const ics = request.method === 'GET' ? url.pathname.match(/^\/ics\/([A-Za-z0-9._%@-]{3,200})\.ics$/) : null;
     if (ics) return lair(env).fetch(new Request(`${url.origin}/internal/eventics/${ics[1]}`, { headers: { 'X-Lair-Internal': '1' } }));
+
+    // Round 13: a followed game's calendar (the Our games page's Follow), public; the store's app proxy serves the same
+    const feed = ['GET', 'HEAD'].includes(request.method) ? url.pathname.match(/^\/feeds\/([a-z0-9-]{1,90})\.ics$/) : null;
+    if (feed) return lair(env).fetch(new Request(`${url.origin}/internal/feed/${feed[1]}`, { headers: { 'X-Lair-Internal': '1' } }));
 
     if (url.pathname.startsWith('/pos/')) return posRoute(request, env, url);
 

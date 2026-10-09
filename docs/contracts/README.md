@@ -4,6 +4,7 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v13-feeds.md` | Round 13, follow a game (the Our games page) | 10 Oct 2026 |
 | `lair-api-contract-v12-sim.md` | Round 12, the website simulation's fixes | 10 Oct 2026 |
 | `lair-api-contract-v10-memberships.md` | Round 10, library memberships | 9 Oct 2026 |
 | `lair-api-contract-v7.md` | Round 7 | 6 Oct 2026 |

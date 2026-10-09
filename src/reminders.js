@@ -8,11 +8,15 @@
  * - The waitlist for a full date: an interest with level 'waitlist' and its people (1 to 6). Never a sign-up and never
  *   counted in places taken. The staff are emailed each time someone joins, and so is the person.
  * - An event date as a calendar file (GET /ics/<id>.ics), for the reminder's Add to calendar.
+ * - Round 13, follow a game (contract v13-feeds). Mo (10 Oct 2026), on the Our games page: "I did like option 5 but I
+ *   didn't want to get rid of what we have." Its Follow button subscribes people to GET /feeds/<key>.ics: every date of
+ *   one game's events (or one kind's, or all of them), which their calendar app fetches again by itself, so a date that's
+ *   added, moved or skipped in Shopify changes in their calendar too.
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair; each
  * keeps its rule: every await first, then one synchronous read-check-write.
  */
-import { LairTime, RuleError, addDays, checkMobile, findOccurrence, makeId } from './core.js';
+import { HOUR, LairTime, RuleError, addDays, checkMobile, eventOccurrences, findOccurrence, makeId } from './core.js';
 import { emailReady, safeEqual } from './shopify.js';
 import { clockLabel } from './email.js';
 import { INTEREST_MESSAGES, INTEREST_NOTE_MAX } from './interest.js';
@@ -39,6 +43,39 @@ export const REMINDER_MESSAGES = {
   people: `Join the waitlist for 1 to ${WAITLIST_MAX} people.`,
   room: (left) => `There’s still room for ${left === 1 ? '1 person' : `${left} people`}, so sign up instead.`,
 };
+
+/* ---------- round 13: follow a game (contract v13-feeds) ---------- */
+/** A followed game's calendar keeps the last fortnight's dates, then runs to the booking horizon (the calendar's last day) */
+export const FEED_BACK_DAYS = 14;
+/** Calendar apps are asked to fetch it again after this long (most choose their own, from a few hours to a day) */
+export const FEED_REFRESH = 'PT6H';
+/** A kind's calendar, by the lair_event definition's choices: "Card nights at Dice Goblin" */
+export const FEED_KIND_NAMES = {
+  tcg: 'Card nights', wargame: 'Wargames', rpg: 'TTRPG events', market: 'Markets', social: 'Social games', tournament: 'Tournaments',
+  learn: 'Learn to play', launch: 'Launches', other: 'Other events',
+};
+/** What a person (or their calendar app) reads when a feed can't be given, word for word in the contract */
+export const FEED_MESSAGES = {
+  unknown: "There's no game by that name on the Dice Goblin calendar.",
+  later: "The Dice Goblin calendar can't be read just now. Your calendar app will try again soon.",
+};
+/**
+ * A game's name as a feed key, the same rule as the theme's Our games page (assets/our-games.js): accents dropped, & as
+ * "and", lower case, anything else between words a single dash. "Magic: The Gathering" → "magic-the-gathering",
+ * "Pokémon" → "pokemon".
+ */
+export const feedSlug = (text) =>
+  String(text || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+    .replace(/-+$/, '');
+/** The feeds an event is in: its game's (its Game field, else its title), its kind's ("kind-tcg") and "all" */
+export const feedKeys = (e) => [feedSlug(String(e.game || '').trim() || e.title), `kind-${feedSlug(e.type) || 'other'}`, 'all'].filter(Boolean);
 
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
@@ -300,6 +337,54 @@ export const reminderMethods = {
     const name = `${String(o.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'event'}-${o.id.slice(-10)}`;
     return new Response(`${ics}\r\n`, {
       headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': `attachment; filename="${name}.ics"`, 'Cache-Control': 'public, max-age=300' },
+    });
+  },
+
+  /**
+   * Round 13: GET /feeds/<key>.ics (public, on the Lair app's own address and through the store's app proxy): a calendar
+   * people subscribe to (the Our games page's Follow), with every date of one game's events from a fortnight ago to the
+   * booking horizon. Calendar apps fetch it again by themselves, so a date that's added, moved or skipped in Shopify
+   * changes in their calendar too. key: a game's feedSlug (its Game field, else its title), "kind-<kind>" for every
+   * event of one kind ("kind-tcg": every card night), or "all". Each date's UID is the one its own calendar file has
+   * (GET /ics/<id>.ics). 404 for a key with no events. 503 while the Lair only has its built-in defaults (Shopify didn't
+   * answer), never an empty calendar, which would wipe the dates from everyone's calendar until the next fetch.
+   */
+  async eventFeed(key, now = Date.now()) {
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const words = (status, text, extra = {}) =>
+      new Response(text, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...extra } });
+    if (!this.eventsKnown()) return words(503, FEED_MESSAGES.later, { 'Retry-After': '900' });
+    const want = String(key || '').trim().toLowerCase().replace(/\.ics$/, '').slice(0, 90);
+    const events = want ? (rules.events || []).filter((e) => feedKeys(e).includes(want)) : [];
+    if (!events.length) return words(404, FEED_MESSAGES.unknown);
+    const kind = want.startsWith('kind-') ? want.slice(5) : null;
+    const game = want === 'all' || kind ? null : events.find((e) => feedSlug(String(e.game || '').trim() || e.title) === want);
+    const label = want === 'all' ? 'Events' : kind ? FEED_KIND_NAMES[kind] || `${kind[0].toUpperCase()}${kind.slice(1)} events` : String(game.game || '').trim() || game.title;
+    const calendarName = `${label} at Dice Goblin`;
+    const dates = eventOccurrences({ ...rules, events }, now - FEED_BACK_DAYS * 24 * HOUR, now + rules.horizonDays * 24 * HOUR)
+      .sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+    const place = this.lairPlace(rules);
+    const lines = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Dice Goblin//Lair events//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+      `X-WR-CALNAME:${icsText(calendarName)}`,
+      `X-WR-CALDESC:${icsText(`Every date on the Dice Goblin calendar, kept up to date. Sign up, reserve or book at ${this.page('events')}`)}`,
+      `X-WR-TIMEZONE:${rules.tz}`, `REFRESH-INTERVAL;VALUE=DURATION:${FEED_REFRESH}`, `X-PUBLISHED-TTL:${FEED_REFRESH}`,
+    ];
+    for (const o of dates) {
+      const ev = events.find((e) => e.id === o.eventId) || {};
+      const url = this.eventLink(o);
+      const text = [this.eventPriceLine(o, ev), url].filter(Boolean).join('\n\n');
+      lines.push(
+        'BEGIN:VEVENT', `UID:${o.id.replace(/[^A-Za-z0-9._-]+/g, '-')}@dicegoblin.nz`, `DTSTAMP:${stamp(now)}`, `DTSTART:${stamp(o.start)}`,
+        `DTEND:${stamp(o.end)}`, `SUMMARY:${icsText(o.title)}`, `DESCRIPTION:${icsText(text)}`, `LOCATION:${icsText(place)}`, `URL:${url}`, 'END:VEVENT',
+      );
+    }
+    lines.push('END:VCALENDAR');
+    return new Response(`${lines.map(icsFold).join('\r\n')}\r\n`, {
+      headers: {
+        'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': `inline; filename="dice-goblin-${want}.ics"`, 'Cache-Control': 'public, max-age=900',
+      },
     });
   },
 

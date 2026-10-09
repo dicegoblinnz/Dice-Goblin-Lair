@@ -1393,6 +1393,8 @@ export class Lair {
         if (request.method === 'GET' && b === 'img') return this.image(c);
         // Round 11: an event date as a calendar file, for the reminder email's Add to calendar (public: GET /ics/<id>.ics)
         if (request.method === 'GET' && b === 'eventics') return this.eventIcs(decodeURIComponent(c || ''));
+        // Round 13: a followed game's calendar on the Lair app's own address (public: GET /feeds/<key>.ics)
+        if (request.method === 'GET' && b === 'feed') return this.eventFeed(c || '');
         if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
@@ -1425,10 +1427,14 @@ export class Lair {
         // For the status page: did the website reach a booking route, and through which store address?
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
-        const known = (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships'].includes(a))
+        const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
+          || (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships'].includes(a))
           || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
+      // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
+      // Public, like the calendar page: calendar apps fetch it with nobody signed in, so nobody is looked up.
+      if (['GET', 'HEAD'].includes(request.method) && a === 'feeds' && b && !c) return this.eventFeed(b);
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
