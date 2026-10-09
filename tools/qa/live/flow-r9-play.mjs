@@ -83,7 +83,7 @@ check('4: someone else can\'t take it back', said(await takeBack(hine.data.inter
 check('4: she can', (await takeBack(hine.data.interest.id, {}, HINE)).data.interest?.status === 'removed');
 
 /* 5. adoption */
-const guest = await interest({ kind: 'session', id: game.id, name: 'Wiremu Example', email: 'Wiremu.R9@example.com', phone: '021 555 0194', note: 'Keen!' });
+const guest = await interest({ kind: 'session', id: game.id, name: 'Wiremu Example', email: 'Wiremu.R9play@example.com', phone: '021 555 0194', note: 'Keen!' });
 check('5: a guest says he\'s interested', guest.status === 200, guest.data);
 await fake('POST', 'customer', { id: WIREMU, tags: [], name: 'Wiremu Example', email: 'wiremu.r9play@example.com', verified: true });
 const his = (await proxy('GET', `me?name=${encodeURIComponent('Wiremu Example')}`, { customer: WIREMU })).data.interests || [];

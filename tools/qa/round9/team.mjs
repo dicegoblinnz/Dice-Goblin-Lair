@@ -109,7 +109,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await open('/pages/lair-staff', STAFF);
   await page.waitForSelector('.staff-tabs [data-tab]');
   const all = await tabs();
-  check(`${tag}: the main account sees every tab, Team last`, JSON.stringify(all) === JSON.stringify(['floor', 'today', 'passes', 'groups', 'members', 'codes', 'holds', 'games', 'events', 'library', 'team']), all);
+  check(`${tag}: the main account sees every tab (round 9: Accounts and Community too), Team last`, JSON.stringify(all) === JSON.stringify(['floor', 'today', 'passes', 'groups', 'members', 'codes', 'holds', 'games', 'events', 'library', 'accounts', 'community', 'team']), all);
   check(`${tag}: the main account starts on the floor, with the check-in box`, (await selected()) === 'floor' && (await page.isVisible('.checkin')), await selected());
   const people = await page.evaluate(() => {
     const list = window.Lair.store.backend.staffMembers();
