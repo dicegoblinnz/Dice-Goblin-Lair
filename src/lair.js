@@ -140,6 +140,17 @@ const FLOOR_STAFF = ['checkin', 'tables', 'sessions', 'events'];
 /** Round 9: who changes a booking at the desk or on the floor (status, paid, people, moves); refunds and waiving are money */
 const BOOKING_STAFF = ['checkin', 'tables'];
 
+/** Round 10 (library memberships) is MIGRATIONS[ROUND10 - 1] */
+const ROUND10 = 25;
+/** Columns round 10 gained after it was first written (before it went live): added to a store that ran an earlier copy */
+const ROUND10_LATE_COLUMNS = [
+  ['memberships', 'hold_until', 'INTEGER'], ['memberships', 'edited_cycle', 'INTEGER'], ['memberships', 'paused_from', 'TEXT'],
+  ['memberships', 'dates_checked_at', 'INTEGER'], ['memberships', 'dates_missing_at', 'INTEGER'], ['memberships', 'changing_until', 'INTEGER'],
+  ['memberships', 'flagged_pm', 'TEXT'],
+  ['membership_charges', 'edit_state', "TEXT NOT NULL DEFAULT 'needed'"], ['membership_charges', 'sent_at', 'INTEGER'], ['membership_charges', 'void_reason', 'TEXT'],
+  ['damage_charges', 'payment_id', 'TEXT'], ['damage_charges', 'paid_via', 'TEXT'], ['damage_charges', 'key', 'TEXT'],
+];
+
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
   [
@@ -558,7 +569,7 @@ export const MIGRATIONS = [
   //    bill next and when (dates_missing_at: since when Shopify hasn't said). hold_until: no billing before then (Shopify
   //    refused a bill, or a payment failed on the store's side). edited_cycle: a cycle the Lair may have left damage
   //    charges on. changing_until: a plan change is with Shopify (nothing is billed meanwhile). card: the card's brand,
-  //    last digits and expiry.
+  //    last digits and expiry. flagged_pm: a payment method the bank flagged as fraud (not charged until it changes).
   //  - membership_charges: each try at billing a cycle ('renewal', or 'fees': damage charges billed on their own),
   //    claimed before Shopify is asked, with its idempotency key (unique), whether its cycle has exactly its damage
   //    charges yet (edit_state), when it was first sent, Shopify's billing attempt, and how it went ('void': Shopify
@@ -567,6 +578,7 @@ export const MIGRATIONS = [
   //    a bill being paid), 'charging' (staff are charging it now: damage_payments), 'paid' (paid_via 'bill', 'card',
   //    'credit' or 'counter'), 'waived', 'disputed' (waits while it's sorted out) or 'unpaid' (staff sort it at the
   //    counter). emailed_at: when the member was last sent its notice (a new amount clears it until the new notice goes).
+  //    key: the staff page's own key for logging it (a repeat gives back the first).
   //  - damage_payments: a damage charge taken straight away, from store credit or the member's saved card (a one-off
   //    Shopify contract, billed once): 'claimed' (not with Shopify yet, or its answer was lost), 'checking' (store credit
   //    whose answer was lost: looked for in the account), 'pending', 'challenged' (a bank check), 'paid', 'failed' or
@@ -580,7 +592,7 @@ export const MIGRATIONS = [
       next_cycle INTEGER, next_bill_at INTEGER, paid_through INTEGER, retry_at INTEGER, failed_at INTEGER, fail_count INTEGER NOT NULL DEFAULT 0,
       hold_until INTEGER, edited_cycle INTEGER, paused_from TEXT, dates_checked_at INTEGER, dates_missing_at INTEGER, changing_until INTEGER,
       cancel_at INTEGER, cancel_requested_at INTEGER, cancel_by TEXT, plan_changed_at INTEGER, card_email_at INTEGER, ended_at INTEGER, end_reason TEXT,
-      origin_order_id TEXT, revision_id TEXT, source TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+      origin_order_id TEXT, revision_id TEXT, source TEXT, created_at INTEGER NOT NULL, updated_at INTEGER, flagged_pm TEXT)`,
     'CREATE INDEX IF NOT EXISTS memberships_customer ON memberships (customer_id, status)',
     'CREATE INDEX IF NOT EXISTS memberships_due ON memberships (status, next_bill_at)',
     'CREATE INDEX IF NOT EXISTS memberships_payment_method ON memberships (payment_method_id)',
@@ -595,10 +607,13 @@ export const MIGRATIONS = [
     `CREATE TABLE IF NOT EXISTS damage_charges (
       id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, membership_id TEXT, loan_id TEXT, variant_id TEXT, title TEXT NOT NULL, reason TEXT NOT NULL,
       details TEXT, amount INTEGER NOT NULL, status TEXT NOT NULL, due_at INTEGER NOT NULL, charge_id TEXT, dispute_note TEXT, created_by TEXT,
-      created_at INTEGER NOT NULL, updated_at INTEGER, resolved_at INTEGER, resolved_by TEXT, note TEXT, emailed_at INTEGER, payment_id TEXT, paid_via TEXT)`,
+      created_at INTEGER NOT NULL, updated_at INTEGER, resolved_at INTEGER, resolved_by TEXT, note TEXT, emailed_at INTEGER, payment_id TEXT, paid_via TEXT,
+      key TEXT)`,
     'CREATE INDEX IF NOT EXISTS damage_charges_customer ON damage_charges (customer_id, status)',
     'CREATE INDEX IF NOT EXISTS damage_charges_membership ON damage_charges (membership_id, status)',
     'CREATE INDEX IF NOT EXISTS damage_charges_status ON damage_charges (status, due_at)',
+    // the staff page's own key for logging one, so a repeated request (a double tap) never logs or takes it twice
+    'CREATE UNIQUE INDEX IF NOT EXISTS damage_charges_key ON damage_charges (key)',
     `CREATE TABLE IF NOT EXISTS damage_payments (
       id TEXT PRIMARY KEY, fee_id TEXT NOT NULL, customer_id TEXT NOT NULL, method TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT, status TEXT NOT NULL,
       fee_was TEXT, told INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL UNIQUE, membership_id TEXT, payment_method_id TEXT, card TEXT,
@@ -723,6 +738,18 @@ export class Lair {
     for (let version = row ? Number(row.value) : 0; version < MIGRATIONS.length; version += 1) {
       for (const statement of MIGRATIONS[version]) this.sql.exec(statement);
       this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)", String(version + 1));
+    }
+    // Round 10 grew in place before it went live (new tables and columns only). A store that ran an earlier copy of it
+    // gets whatever it's missing, so it can never run short of what the code expects.
+    if (Number(this.sql.exec("SELECT value FROM meta WHERE key = 'schema'").toArray()[0]?.value) >= ROUND10) {
+      for (const [table, column, type] of ROUND10_LATE_COLUMNS) {
+        try {
+          this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+        } catch {
+          this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+        }
+      }
+      for (const statement of MIGRATIONS[ROUND10 - 1]) this.sql.exec(statement);
     }
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.

@@ -164,6 +164,8 @@ const PAYING = "('claimed', 'checking', 'pending', 'challenged')";
 const CREDIT_CHECK_AFTER = 2 * MIN;
 const CREDIT_GONE_AFTER = 10 * MIN;
 const CREDIT_ASK_AFTER = HOUR;
+/** A debit can't come before its own request: this much leeway for the two clocks */
+const CREDIT_SKEW = 30_000;
 /** A one-off charge contract whose making may have reached Shopify is looked for this long before it's made again */
 const CONTRACT_LOOK_AFTER = 2 * MIN;
 
@@ -219,6 +221,7 @@ export const MEMBERSHIP_MESSAGES = {
   settleNone: "That charge isn't waiting on a store credit check.",
   settleSay: 'Say whether the store credit came off: taken true or false.',
   settleWait: 'The Lair is still checking with Shopify. Try again in a few minutes.',
+  feeChangedMeanwhile: "The charge changed while its notice was going out, so it wasn't taken now.",
   cardFlagged: (name) => `${name}'s bank flagged their card, so it can't be charged until they update it. Use store credit, or collect it at the counter.`,
 };
 
@@ -1279,6 +1282,8 @@ export const membershipMethods = {
       code, trimmed(outcome.message, 300) || null, now, now, charge.id,
     );
     this.feesBack(charge, now);
+    // the bank flagged the card: it's not charged again (now, or for a damage charge taken now) until it changes
+    if (row && /FRAUD/.test(code) && row.payment_method_id) this.write('UPDATE memberships SET flagged_pm = payment_method_id WHERE id = ?', row.id);
     const feeIds = parse(charge.fees, []);
     if (!row || !this.isLatestTry(charge) || (row.next_cycle != null && charge.cycle < row.next_cycle)) return { charge: charge.id, status: 'failed', recorded: true };
     if (charge.kind === 'renewal' && this.isCancelling(row)) {
@@ -1422,6 +1427,15 @@ export const membershipMethods = {
     const now = Date.now();
     let retried = 0;
     if (!topic.endsWith('/revoke')) {
+      // a card the bank flagged that's been updated or replaced can be charged again (an update counts for an ended
+      // membership too, whose card a damage charge can still go on)
+      if (topic.endsWith('/update') && pm) this.write('UPDATE memberships SET flagged_pm = NULL WHERE flagged_pm = ?', pm);
+      for (const row of rows) {
+        const fresh = this.membershipRow(row.id);
+        if (!fresh?.flagged_pm) continue;
+        const updated = topic.endsWith('/update') ? fresh.payment_method_id === pm : before.get(row.id) !== `${fresh.payment_method_id}|${fresh.card}`;
+        if (updated || fresh.payment_method_id !== fresh.flagged_pm) this.write('UPDATE memberships SET flagged_pm = NULL WHERE id = ?', row.id);
+      }
       for (const row of rows) {
         const fresh = this.membershipRow(row.id);
         // waiting on a failed payment: a renewal (past_due), or a cancelled member's damage charges
@@ -2344,12 +2358,13 @@ export const membershipMethods = {
 
   /* ---------------- damage charges ---------------- */
   /**
-   * POST /library/damage (staff): { customerId, loanId?, title?, reason, details?, amount (cents), chargeNow?, use? }.
+   * POST /library/damage (staff): { customerId, loanId?, title?, reason, details?, amount (cents), chargeNow?, use?, key? }.
    * The member gets an itemised notice now; after 7 days (unless it's waived, disputed, or the bits come back) it goes
    * on their next bill, or, with no membership to bill, to staff to collect at the counter. chargeNow (staff with
    * money): the notice says it's being taken now, then it is (chargeDamageNow's `use`); when it can't be (no email,
    * no card, not enough store credit), the notice is the usual one, or it goes back to it, and chargeNow says why.
-   * Returns { charge, chargeNow? }.
+   * key: the page's own key for this one, so sending it again (a double tap) gives back the first, never a second
+   * charge. Returns { charge, chargeNow?, repeated? }.
    */
   async createDamageCharge(input, who) {
     this.requireStaff(who, ['library', 'money']);
@@ -2361,9 +2376,23 @@ export const membershipMethods = {
     }
     const rules = await this.rules();
     const customerId = trimmed(input?.customerId, 40);
+    const key = trimmed(input?.key, 64) || null;
+    const repeat = () => {
+      const first = key ? this.sql.exec('SELECT * FROM damage_charges WHERE key = ?', key).toArray()[0] : null;
+      if (!first) return null;
+      const paying = this.latestDamagePayment(first.id);
+      return {
+        charge: { ...this.feeView(first), emailed: Boolean(first.emailed_at), billable: Boolean(first.membership_id && this.feeVariantId()) },
+        ...(chargeNow ? { chargeNow: { ok: Boolean(paying && !['failed', 'void'].includes(paying.status)), payment: this.damagePaymentView(paying) } } : {}),
+        repeated: true,
+      };
+    };
+    if (repeat()) return repeat();
     // Charging now: the store credit balance first (when Shopify will say), to pick store credit or the card
     const balance = chargeNow && use !== 'card' && this.memberRow(customerId) ? await this.creditBalanceOrNull(customerId) : null;
     // --- no awaits from here on (until it's charged now) ---
+    const again = repeat();
+    if (again) return again;
     const now = Date.now();
     const member = this.memberRow(customerId);
     if (!member) throw new RuleError(MEMBERSHIP_MESSAGES.feeMember, 404);
@@ -2383,10 +2412,10 @@ export const membershipMethods = {
     const id = makeId('dc');
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
     this.write(
-      `INSERT INTO damage_charges (id, customer_id, membership_id, loan_id, variant_id, title, reason, details, amount, status, due_at, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'notice', ?, ?, ?, ?)`,
+      `INSERT INTO damage_charges (id, customer_id, membership_id, loan_id, variant_id, title, reason, details, amount, status, due_at, created_by, created_at, updated_at, key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'notice', ?, ?, ?, ?, ?)`,
       id, member.customer_id, m?.id || null, loan?.id || null, loan?.variant_id || null, title, reason, trimmed(input?.details, 300) || null, amount,
-      now + FEE_NOTICE_DAYS * DAY, by, now, now,
+      now + FEE_NOTICE_DAYS * DAY, by, now, now, key,
     );
     const fee = this.feeRow(id);
     // Charging now: how, decided before the notice so it can say so (no way to: the usual notice)
@@ -2404,8 +2433,13 @@ export const membershipMethods = {
     // The notice, waited for: it only counts as emailed once the email service has it, and only then is it taken now
     const emailed = await this.sendDamageNotice(id, m, rules, { now: nowWords });
     // --- no awaits from here on (until it's charged now) ---
+    // (staff can change it while its notice is going out: then it's not taken on that notice)
+    const after = this.feeRow(id);
+    const unchanged = Boolean(after && after.status === 'notice' && after.amount === fee.amount && after.emailed_at);
     let paidNow = null;
-    if (chargeNow && method && emailed) {
+    if (chargeNow && method && emailed && !unchanged) {
+      paidNow = { ok: false, error: MEMBERSHIP_MESSAGES.feeChangedMeanwhile, payment: null };
+    } else if (chargeNow && method && emailed) {
       try {
         const done = await this.payDamageNow(id, method, { by, told: true, rules, orCard: use === 'auto' });
         paidNow = { ok: true, message: done.message, payment: this.damagePaymentView(done.payment) };
@@ -2613,12 +2647,7 @@ export const membershipMethods = {
     const card = this.savedCardFor(customerId);
     if (!card) return MEMBERSHIP_MESSAGES.noCardSaved(this.memberName(customerId));
     const m = this.membershipRow(card.membershipId);
-    const lastBill = this.sql.exec("SELECT error_code FROM membership_charges WHERE membership_id = ? AND status = 'failed' ORDER BY created_at DESC LIMIT 1", m.id).toArray()[0];
-    const lastNow = this.sql.exec(
-      "SELECT error_code, payment_method_id FROM damage_payments WHERE customer_id = ? AND method = 'card' AND status IN ('failed', 'paid') ORDER BY created_at DESC LIMIT 1", String(customerId),
-    ).toArray()[0];
-    const flagged = (m.status === 'past_due' && m.retry_at == null && /FRAUD/.test(lastBill?.error_code || ''))
-      || (lastNow && /FRAUD/.test(lastNow.error_code || '') && lastNow.payment_method_id === card.paymentMethodId);
+    const flagged = Boolean(m?.flagged_pm && m.flagged_pm === m.payment_method_id);
     if (flagged) return MEMBERSHIP_MESSAGES.cardFlagged(this.memberName(customerId));
     if (!this.membershipsAdmin().configured) return MEMBERSHIP_MESSAGES.membershipsOff;
     if (!this.feeVariantId()) return MEMBERSHIP_MESSAGES.noFeeProduct;
@@ -2985,6 +3014,9 @@ export const membershipMethods = {
       code, trimmed(outcome.message, 300) || null, now, now, p.id,
     );
     const to = this.feeBackFromPayment(p, now);
+    if (p.method === 'card' && /FRAUD/.test(code) && p.membership_id) {
+      this.write('UPDATE memberships SET flagged_pm = ? WHERE id = ? AND payment_method_id = ?', p.payment_method_id, p.membership_id, p.payment_method_id);
+    }
     if (!to || quiet) return { payment: p.id, status: 'failed', fee: to };
     const f = this.feeRow(p.fee_id);
     // the card's own doing (declined, expired, the bank check never done) rather than the store's or Shopify's
@@ -3066,14 +3098,6 @@ export const membershipMethods = {
       const fresh = this.damagePaymentRow(p.id);
       if (!fresh || !['checking', 'claimed'].includes(fresh.status)) continue;
       this.write("UPDATE damage_payments SET status = 'checking', updated_at = ? WHERE id = ?", at, p.id);
-      // Someone else's take-off of the same amount from the same account could be the debit found: one still waiting
-      // on its answer (it records its own debit, so this waits), or one staff settled by hand (its debit has no id
-      // here, so a match can't be told apart: staff are asked)
-      const twins = this.sql.exec(
-        `SELECT status FROM damage_payments WHERE method = 'credit' AND customer_id = ? AND amount = ? AND id != ?
-           AND (status = 'claimed' OR (status = 'paid' AND transaction_id IS NULL AND created_at BETWEEN ? AND ?))`,
-        fresh.customer_id, fresh.amount, fresh.id, fresh.created_at - CLAIM_STALE, fresh.created_at + CLAIM_STALE,
-      ).toArray();
       let unsureWhose = false;
       if (debits) {
         // a debit of this amount, taken by an app (not spent on an order) while this was with Shopify, that isn't
@@ -3083,10 +3107,11 @@ export const membershipMethods = {
           ...this.sql.exec('SELECT transaction_id AS id FROM member_credit WHERE transaction_id IS NOT NULL').toArray(),
         ].map((r) => r.id));
         const match = debits.filter((d) => d.id && !d.fromOrder && d.amount === fresh.amount && !known.has(d.id)
-          && d.createdAt >= fresh.created_at - 2 * MIN && d.createdAt <= fresh.created_at + CLAIM_STALE)
+          && d.createdAt >= fresh.created_at - CREDIT_SKEW && d.createdAt <= fresh.created_at + CLAIM_STALE)
           .sort((a, b) => a.createdAt - b.createdAt)[0];
-        if (match && twins.some((t) => t.status === 'claimed')) continue;
-        if (match && twins.length) unsureWhose = true;
+        const twin = match ? this.creditTwin(fresh, match, at) : null;
+        if (twin === 'wait') continue;
+        if (twin === 'ask') unsureWhose = true;
         else if (match) {
           this.damagePaymentPaid(this.damagePaymentRow(p.id), { transactionId: match.id, balanceAfter: match.balanceAfter }, rules);
           continue;
@@ -3180,6 +3205,30 @@ export const membershipMethods = {
       }
     }
     return looked;
+  },
+
+  /**
+   * Whether a debit found for store credit whose answer was lost could just as well be another take-off of the same
+   * amount from the same account (one made close enough before it that the debit is inside its window too). 'wait'
+   * while that one is still waiting on its answer (it records its own debit); 'ask' when the two can't be told apart
+   * (its answer was lost too, staff settled it by hand, or a member page change of the same amount has no answer
+   * recorded): staff decide; null when it's this payment's. No awaits.
+   */
+  creditTwin(p, debit, now) {
+    const from = debit.createdAt - CLAIM_STALE;
+    const to = debit.createdAt + CREDIT_SKEW;
+    const others = this.sql.exec(
+      `SELECT status FROM damage_payments WHERE method = 'credit' AND customer_id = ? AND amount = ? AND id != ? AND created_at BETWEEN ? AND ?
+         AND (status IN ('claimed', 'checking') OR (status = 'paid' AND transaction_id IS NULL))`,
+      p.customer_id, p.amount, p.id, from, to,
+    ).toArray();
+    // the staff member page's own take-offs (round 9): one still waiting, or one whose answer never came back
+    const page = this.sql.exec(
+      "SELECT status, at FROM member_credit WHERE customer_id = ? AND amount = ? AND transaction_id IS NULL AND status IN ('pending', 'failed') AND at BETWEEN ? AND ?",
+      p.customer_id, -p.amount, from, to,
+    ).toArray();
+    if (others.some((o) => o.status === 'claimed') || page.some((r) => r.status === 'pending' && now - r.at < CLAIM_STALE)) return 'wait';
+    return others.length || page.length ? 'ask' : null;
   },
 
   /**

@@ -122,16 +122,19 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   the card, else store credit when Shopify won't say the balance). Never split between the two.
 - Store credit comes off there and then. If Shopify says it's short, nothing came off (with `auto`, the card is used
   instead). Card charges need `MEMBERSHIPS_BILLING` on; store credit doesn't. A card the member's bank flagged as fraud
-  isn't charged until it's updated (as with renewals).
+  (on a renewal or a charge taken now) isn't charged again until it's updated or replaced, even once the membership has
+  ended.
 - A card payment is with Shopify when the request answers (`pending`); the billing attempt webhooks finish it.
 - **Logged with `chargeNow: true`:** the notice says it's being taken now ("Taken from your store credit today",
-  "Charged to Visa ending 4242 today"), then it is. With no way to (no email, no card, not enough store credit), the
-  usual notice goes and `chargeNow` says why.
+  "Charged to Visa ending 4242 today"), then it is, once the email service has taken the notice. With no way to (no
+  email, no card, not enough store credit), the usual notice goes and `chargeNow` says why; if staff change the charge
+  while its notice is going out, it isn't taken on that notice.
 - **Never twice.** The payment is claimed (its row, the charge `charging`) before Shopify is asked; one in flight per
   charge. Store credit whose answer was lost is looked for in the account's debits (Shopify can't take a key for it):
-  found, it's paid; not there 10 minutes on, it didn't come off. A debit that could belong to another take-off of the
-  same amount from the same account is never taken for it: while that one waits on its answer this one waits, and if it
-  could be one staff settled by hand, staff decide. If the Lair can't read the account (`read_store_credit_accounts`)
+  found, it's paid; not there 10 minutes on, it didn't come off. Only a debit made while this one was with Shopify
+  counts, and one that could belong to another take-off of the same amount from the same account (a damage charge or
+  the member page's store credit tool) is never taken for it: while that one waits on its answer this one waits, and if
+  the two can't be told apart, staff decide. If the Lair can't read the account (`read_store_credit_accounts`)
   or can't tell for an hour, staff are asked to look in Shopify admin and settle it (not before the Lair's own look,
   10 minutes on). This follow-up runs even without Lair Memberships. A one-off contract whose answer was lost is found
   by its marker (`_lair_payment`) before another is made, and a bill by its key.
@@ -164,7 +167,7 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
 | `POST /proxy/memberships/:id/cancel` | staff (`money`) | `{ when: 'end' \| 'now' }` → `{ membership }` (the member gets the cancelled email) |
 | `POST /proxy/memberships/:id/retry` | staff (`money`) | try a failed payment again on the next run (within 10 minutes), or lift a hold after Shopify refused a bill → `{ membership }` |
 | `GET /proxy/library/damage?status=open\|all&customerId=` | staff (`library` or `money`) | `{ charges: [damage view + customerId, name, code, membershipId, by, note] }`, newest first, up to 200; `open`: notice, due, billing, charging, disputed, unpaid |
-| `POST /proxy/library/damage` | staff (`library` or `money`; `chargeNow` needs `money`) | `{ customerId, loanId?, title?, reason: 'missing' \| 'damaged' \| 'lost', details? (300), amount (cents), chargeNow?: true, use?: 'auto' \| 'credit' \| 'card' }` → `{ charge: damage view + emailed, billable }` (`billable`: it can go on a bill), and with `chargeNow`, `chargeNow: { ok, message?, error?, payment: payment view \| null }` |
+| `POST /proxy/library/damage` | staff (`library` or `money`; `chargeNow` needs `money`) | `{ customerId, loanId?, title?, reason: 'missing' \| 'damaged' \| 'lost', details? (300), amount (cents), chargeNow?: true, use?: 'auto' \| 'credit' \| 'card', key? }` → `{ charge: damage view + emailed, billable }` (`billable`: it can go on a bill), and with `chargeNow`, `chargeNow: { ok, message?, error?, payment: payment view \| null }`. `key` (up to 64): the page's own key for this one; sending it again (a double tap) answers the first again with `repeated: true`, never logging or taking it twice. The staff page should always send one |
 | `POST /proxy/library/damage/:id/update` | staff (`money`) | `{ action: 'waive' \| 'hold' \| 'reinstate' \| 'counter' \| 'amount', amount?, note? }` → `{ charge }` |
 | `POST /proxy/library/damage/:id/charge` | staff (`money`) | take it now: `{ use?: 'auto' \| 'credit' \| 'card' }` → `{ charge, payment: payment view, message }` (`message`: what happened, for staff). Store credit: `paid` there and then; card: `pending` until Shopify says (a 409 when Shopify refused there and then, with nothing charged) |
 | `POST /proxy/library/damage/:id/settle` | staff (`money`) | store credit Shopify couldn't confirm (payment `checking`; staff were emailed): `{ taken: true \| false }` → `{ charge, payment }` |
@@ -267,6 +270,7 @@ or `void` (never reached Shopify).
 | `settleNone` | 409 | That charge isn't waiting on a store credit check. |
 | `settleSay` | 422 | Say whether the store credit came off: taken true or false. |
 | `settleWait` | 409 | The Lair is still checking with Shopify. Try again in a few minutes. |
+| `feeChangedMeanwhile` | (in `chargeNow.error`) | The charge changed while its notice was going out, so it wasn't taken now. |
 | `cardFlagged` | 409 | Sam Jones's bank flagged their card, so it can't be charged until they update it. Use store credit, or collect it at the counter. |
 
 A card Shopify refuses there and then is a 409 "Shopify wouldn't charge Visa ending 4242 (…). Nothing was charged."
@@ -302,7 +306,8 @@ credit to check, a late payment, a charge paid twice, and a one-off contract tha
   /members/:id/credit`, the card from `member.membership.card`); show the answer's `message`, and the 409's error as
   it is. While `charging`, show the payment's status ("Charging Visa ending 4242", "Waiting on their bank"); a payment
   `checking` gets "It came off" and "It didn't" (`POST …/settle`). The log form gets a "Charge it now" tick
-  (`chargeNow`), and shows `chargeNow.message` or `chargeNow.error`. Paid ones say how (`paidVia`).
+  (`chargeNow`), sends its own `key` (one per form, so a double tap is one charge), and shows `chargeNow.message` or
+  `chargeNow.error`. Paid ones say how (`paidVia`).
 - **My Lair damage list:** `charging` says "Being paid now"; paid ones say how (`paidVia`: on your bill, from your store
   credit, on your card, at the counter).
 - Load the `shopify-liquid-theme` and `gobgob-voice` skills for this work; errors that stop someone don't say "friend".
@@ -355,7 +360,8 @@ Not confirmed by Shopify's documentation, so check these with test payments:
   billing, retries, cancelling, damage charges, staff, setup, emails).
 - `src/lair.js`: the round 10 migration (tables `memberships`, `membership_charges`, `damage_charges`,
   `damage_payments` (damage charges taken now), `membership_events`), the routes, the library plan from memberships
-  (holds, scans, GET /me, the staff page), and maintenance.
+  (holds, scans, GET /me, the staff page), and maintenance. Round 10 grew in place before it went live, so a store that
+  ran an earlier copy of it gets the tables and columns added since (`ROUND10_LATE_COLUMNS`) when it starts.
 - `src/index.js`: `/webhooks/memberships`. `src/config.js`: the `MEMBERSHIPS_*` keys. `src/shopify.js`: a second app's
   login (its own token key); store credit refusals marked (`error.refused`), and an account's latest debits
   (`storeCreditDebits`).
