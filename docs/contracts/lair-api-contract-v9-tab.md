@@ -132,7 +132,7 @@ sent. Add one to their profile, or give them the link." (the staff page shows an
   $64.00" (a bill made on request: "Your Lair bill: $64.00"); each item "Thu 3 Sep — Table for 4 (SJ-OWLBEAR-17):
   $40.00", the total, a **Pay online** button (the invoice URL), then "Or pay at the counter next time you're in: show
   your member code and we'll ring it up." and "Store credit on your account is used when you pay."
-- **The reminder** (once, 14 days after it was sent): "A friendly reminder: your Lair bill for September ($64.00)", with
+- **The reminder** (once, 14 days after it was sent): "Reminder: your Lair bill for September ($64.00)", with
   the same button and "Paid it already? Thanks, friend. You can ignore this one."
 - **Staff:** "Paid twice: a tab (TAB-XXXXXX)" when a bill pays for a tab another order already paid.
 

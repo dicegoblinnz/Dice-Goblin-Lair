@@ -523,15 +523,15 @@ test('tab (round 9): void, resend and the friendly reminder after 14 days (once)
     // 13 days on: no reminder; 14 days: one; and never a second
     setNow(at('2026-10-14', 8));
     await maintenance();
-    assert.equal(mail.sent.filter((m) => /reminder/.test(m.subject)).length, 0);
+    assert.equal(mail.sent.filter((m) => /reminder/i.test(m.subject)).length, 0);
     setNow(at('2026-10-15', 10));
     await maintenance();
     await settle();
-    const reminders = mail.sent.filter((m) => /reminder/.test(m.subject));
+    const reminders = mail.sent.filter((m) => /reminder/i.test(m.subject));
     assert.equal(reminders.length, 1);
-    assert.equal(reminders[0].subject, 'A friendly reminder: your Lair bill for September ($29.00)');
+    assert.equal(reminders[0].subject, 'Reminder: your Lair bill for September ($29.00)');
     await maintenance();
-    assert.equal(mail.sent.filter((m) => /reminder/.test(m.subject)).length, 1);
+    assert.equal(mail.sent.filter((m) => /reminder/i.test(m.subject)).length, 1);
     // void: the draft order goes, the items stay owed and say they're not on a bill
     const voided = await call('POST', `bills/${bill.id}/void`, {}, 'staff');
     assert.equal(voided.status, 200, voided.data.error);

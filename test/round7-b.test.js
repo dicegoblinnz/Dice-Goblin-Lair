@@ -780,7 +780,7 @@ test('a GM who isn\'t a customer (round 7): invited by email; the game waits on 
     for (const words of [
       'YOUR GAME IS ON THE BOARD!', 'Kia ora Rua, the Dice Goblin team has put Mothership on the games board for you.', 'First session:', 'Tables:', 'B3', 'Player seats:', '4',
       'Your credit:', '$5.00 store credit for each paying player, after the session',
-      "Make your Dice Goblin account with this email (Rua.T@example.com): log in at dicegoblin.nz with it, and the game joins your account. Then you can see who's coming, message your players and add dates in My Lair, and your store credit goes straight onto your account after each session.",
+      "Make your Dice Goblin account with this email (Rua.T@example.com), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account after each session.",
       'Players can book already. Gobgob will email you each time someone joins.', 'Open My Lair: https://www.dicegoblin.nz/pages/my-lair', 'Happy GMing!\nGobgob',
     ]) assert.ok(text.includes(words), words);
     // Staff see who it's waiting for

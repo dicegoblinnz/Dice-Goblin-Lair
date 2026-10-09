@@ -769,7 +769,7 @@ Every email uses the existing template (`letter`, `renderEmail`) in Gobgob's voi
 - Title "Your game is on the board!".
 - Intro: "Kia ora <gm>, the Dice Goblin team has put <title> on the games board for you."
 - Details as round 5's "Your game is live": Game; When, or First session; Tables; Player seats; Your credit.
-- Then: "Make your Dice Goblin account with this email (<email>): log in at dicegoblin.nz with it, and the game joins your account. Then you can see who's coming, message your players and add dates in My Lair, and your store credit goes straight onto your account after each session." and "Players can book already. Gobgob will email you each time someone joins."
+- Then: "Make your Dice Goblin account with this email (<email>), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account after each session." (round 9 wording) and "Players can book already. Gobgob will email you each time someone joins."
 - Button "Open My Lair". Signed "Happy GMing!" / "Gobgob".
 
 No email for roll codes, groups, loans, profile changes or the events editor.

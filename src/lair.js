@@ -1836,7 +1836,7 @@ export class Lair {
       content = {
         title: lockedIn ? "You're locked in!" : event ? 'Your game spot is booked!' : "You're booked in!",
         intro: event
-          ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Gobgob's guarding your tables.`
+          ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Your tables are saved: bring your army.`
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
           ['When', when], ['Where', tables], ['People', String(booking.people)],
@@ -2410,7 +2410,7 @@ export class Lair {
         ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
       ],
       outro: [
-        `Make your Dice Goblin account with this email (${game.gmEmail}): log in at dicegoblin.nz with it, and the game joins your account. Then you can see who's coming, message your players and add dates in My Lair, and your store credit goes straight onto your account after each session.`,
+        `Make your Dice Goblin account with this email (${game.gmEmail}), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account after each session.`,
         'Players can book already. Gobgob will email you each time someone joins.',
       ],
       button: { label: 'Open My Lair', url: this.page('myLair') },
@@ -3562,8 +3562,8 @@ export class Lair {
       const sent = await this.mail(this.letter(giver.email, 'Your session gift is ready', {
         title: many ? 'Your session gifts are ready' : 'Your session gift is ready',
         intro: [
-          `Kia ora ${giver.firstName || 'friend'}, thanks for giving the gift of games!`,
-          `Here ${many ? `are your ${gifts.length} gift codes` : 'is your gift code'}. Hand ${many ? 'each one' : 'it'} to someone special: they add it to their account and play at the Lair.`,
+          `Kia ora ${giver.firstName || 'friend'}, thanks for buying ${many ? 'session gifts' : 'a session gift'}. Gobgob wrapped ${many ? 'them' : 'it'} themselves.`,
+          `Here ${many ? `are your ${gifts.length} gift codes` : 'is your gift code'}. Hand ${many ? 'each one' : 'it'} to whoever it's for: they add it to their account and play at the Lair.`,
         ],
         codes,
         outro: cover,

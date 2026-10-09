@@ -517,13 +517,13 @@ export const runningTabMethods = {
     const month = bill.kind === 'month' ? ` for ${label.split(' ')[0]}` : '';
     const total = dollars(bill.total);
     const items = parse(bill.items, []);
-    const subject = reminder ? `A friendly reminder: your Lair bill${month} (${total})` : `Your Lair bill${month}: ${total}`;
+    const subject = reminder ? `Reminder: your Lair bill${month} (${total})` : `Your Lair bill${month}: ${total}`;
     const now = Date.now();
     this.write(`UPDATE tab_bills SET ${reminder ? 'reminded_at' : 'emailed_at'} = ?, updated_at = ? WHERE id = ?`, now, now, bill.id);
     this.later(this.mail(this.letter(to, subject, {
       title: reminder ? `Your Lair bill${month} is still open` : `Your Lair bill${month}`,
       intro: reminder
-        ? `Kia ora ${first}, Gobgob's just checking in: your Lair bill${month} (${total}) is still waiting to be paid.`
+        ? `Kia ora ${first}, your Lair bill${month} (${total}) hasn't been paid yet.`
         : `Kia ora ${first}, here's what's on your Lair account${bill.kind === 'month' ? ` for ${label}` : ' so far'}. It comes to ${total}.`,
       details: [...items.map((i) => [this.shortDay(i.when, rules), `${i.kind === 'table' ? `Table for ${i.people || 1}` : i.title} (${i.ref}): ${dollars(i.amount)}`]), ['Total', total]],
       button: bill.invoice_url ? { label: 'Pay online', url: bill.invoice_url } : null,
