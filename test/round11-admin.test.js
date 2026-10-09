@@ -238,3 +238,60 @@ test('round 11: events.reset takes the sign-ups and interest for dates to come o
   const again = await job('events.reset');
   assert.deepEqual([again.data.joins, again.data.interests], [0, 0]);
 });
+
+test('round 11: games.update changes a loaded series for every session to come (seats, players already in, system, picture), silently', async () => {
+  const added = (await job('games.add', { games: [spec({ title: 'Neon Nights', system: 'Cyberpunk RED', gm: 'Jo', seats: 7, offlinePlayers: 6, start: at('2026-10-14', 18), end: at('2026-10-14', 22), tables: ['T4', 'T5'] })] })).data.added[0];
+  const NEW = 'https://cdn.shopify.com/s/files/1/0001/0002/0003/files/lair-game-14-neon.jpg?v=2';
+  const res = await job('games.update', { updates: [{ seriesId: added.seriesId, set: { seats: 6, offlinePlayers: 5, system: 'Zi by Mo Al-Gailani', blurb: 'A cyberpunk campaign played with Zi.', bring: 'A set of polyhedral dice and a pencil', imageUrl: NEW } }] });
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.deepEqual(res.data.failed, []);
+  assert.deepEqual(
+    [res.data.updated[0].id, res.data.updated[0].sessions, res.data.updated[0].seats, res.data.updated[0].offlinePlayers, res.data.updated[0].system],
+    [added.seriesId, added.sessions, 6, 5, 'Zi by Mo Al-Gailani'],
+  );
+  const rows = lair.sql.exec('SELECT seats, offline_players, system, blurb, bring, image_id FROM games WHERE series_id = ?', added.seriesId).toArray();
+  assert.ok(rows.length >= 8);
+  assert.ok(rows.every((r) => r.seats === 6 && r.offline_players === 5 && r.system === 'Zi by Mo Al-Gailani' && r.image_id === NEW && r.bring === 'A set of polyhedral dice and a pencil'), JSON.stringify(rows[0]));
+  const gm = lair.sql.exec("SELECT DISTINCT people FROM bookings WHERE kind = 'gm' AND game_id IN (SELECT id FROM games WHERE series_id = ?)", added.seriesId).toArray().map((r) => r.people);
+  assert.deepEqual(gm, [7], 'the GM hold seats six players and the GM');
+  const series = lair.sql.exec('SELECT details, image_id FROM series WHERE id = ?', added.seriesId).one();
+  const details = JSON.parse(series.details);
+  assert.deepEqual([details.seats, details.offlinePlayers, details.system, series.image_id], [6, 5, 'Zi by Mo Al-Gailani', NEW], 'later top-ups carry the change');
+  const board = (await floor()).games.find((g) => g.seriesId === added.seriesId);
+  assert.deepEqual([board.seats, board.taken, board.status, board.system, board.image], [6, 5, 'open', 'Zi by Mo Al-Gailani', NEW]);
+});
+
+test('round 11: games.update refuses seats below the players booked plus the group, and an unknown series, and carries on', async () => {
+  const added = (await job('games.add', { games: [spec()] })).data.added[0];
+  const g = (await floor()).games.find((x) => x.seriesId === added.seriesId);
+  const seat = await call('POST', 'bookings', { kind: 'gm-seat', gameId: g.id, people: 1, name: 'Jo Example', email: 'jo@example.com', phone: '021 555 0100' });
+  assert.equal(seat.status, 200, JSON.stringify(seat.data));
+  const res = await job('games.update', { updates: [
+    { seriesId: added.seriesId, set: { seats: 5 } },
+    { seriesId: 'sr_nope', set: { seats: 4 } },
+    { seriesId: added.seriesId, set: { offlinePlayers: 9 } },
+    { seriesId: added.seriesId, set: { imageUrl: 'https://example.com/x.jpg' } },
+    { seriesId: added.seriesId, set: { blurb: 'Still on.' } },
+  ] });
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.deepEqual(res.data.failed.map((f) => f.id), [added.seriesId, 'sr_nope', added.seriesId, added.seriesId]);
+  assert.match(res.data.failed[0].error, /already has 1 player booked, so it needs at least 6 seats/);
+  assert.match(res.data.failed[1].error, /not found/);
+  assert.match(res.data.failed[2].error, /won't fit in 6 seats/);
+  assert.match(res.data.failed[3].error, /Shopify Files/);
+  assert.equal(res.data.updated.length, 1);
+  assert.equal(lair.sql.exec('SELECT blurb FROM games WHERE id = ?', g.id).one().blurb, 'Still on.');
+});
+
+test('round 11: players already in the group count when staff add players or edit seats', async () => {
+  const added = (await job('games.add', { games: [spec()] })).data.added[0];
+  const g = (await floor()).games.find((x) => x.seriesId === added.seriesId);
+  const two = await call('POST', `games/${g.id}/players`, { name: 'Two Example', email: 'two@example.com', people: 2 }, 'staff');
+  assert.equal(two.status, 409, JSON.stringify(two.data));
+  assert.match(two.data.error, /Only 1 seat left/);
+  const one = await call('POST', `games/${g.id}/players`, { name: 'One Example', email: 'one@example.com', people: 1 }, 'staff');
+  assert.equal(one.status, 200, JSON.stringify(one.data));
+  const shrink = await call('POST', `games/${g.id}/edit`, { seats: 5 }, 'staff');
+  assert.equal(shrink.status, 409, JSON.stringify(shrink.data));
+  assert.match(shrink.data.error, /already has 6 players/);
+});

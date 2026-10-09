@@ -39,6 +39,7 @@ queue one; the public proxy never reaches `/internal`.
 |---|---|---|---|
 | `games.reset` | `{}` | every GM game and series off the board: games and series cancelled, GM table holds and seats cancelled, regulars and seat invites ended, interest in sessions closed | `{ games, series, bookings }` (counts before) |
 | `events.reset` | `{}` | every sign-up, game spot, "I'm coming", "Maybe" and waitlist place for event dates still to come cancelled; ones paid online are left for staff | `{ joins, spots, interests, paidLeft: [{ ref, kind, title, start }] }` |
+| `games.update` | `{ updates: [{ seriesId \| gameId, set }] }` (1 to 60) | a game's details for every session still to come of its series (or the one game), like a staff edit: `set` takes any of `title`, `system`, `gm`, `blurb`, `seats`, `offlinePlayers`, `level`, `age`, `tags`, `characters`, `bring`, `gmFee`, `imageUrl` (a `https://cdn.shopify.com/…` picture, or `null`); the GM's table hold follows the seats; later top-ups carry the change. Refused per change: seats below the players booked plus `offlinePlayers` ("<when> already has N players booked, so it needs at least M seats."), more players in the group than seats, a picture that isn't in Shopify Files, an unknown series | `{ updated: [{ id, title, sessions, seats, offlinePlayers, system, imageUrl }], failed: [{ id, error }] }` |
 | `games.add` | `{ games: [spec] }` (1 to 60) | GM games for named GMs without accounts, straight onto the board (approved, fee approved, staff-made), each checked like a game staff list | `{ added: [{ title, id, seriesId, sessions, first, skipped: [{ start, when, reason }] }], failed: [{ title, error }] }` |
 
 A `games.add` spec: `title`, `system`, `gm` (the name shown), `blurb`, `seats` (2 to 8), `offlinePlayers` (players
@@ -60,6 +61,8 @@ already in the group, 0 to seats), `gmFee` (cents: 0, 500 or 1000; default 500),
   the Lair (Mo's GM list: "5/6" is five players in a six-seat game). They count as seats taken everywhere: `taken`,
   Full, what can be booked. They are never named.
 - A series keeps the number in its details, so every session it plans has them.
+- They count wherever free seats are worked out: booking a seat, staff adding players ("Only 1 seat left."), staff
+  editing seats ("<when> already has 6 players…"), and the seats kept for a series' regulars.
 
 ## 4. Pictures by Shopify Files address
 

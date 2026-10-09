@@ -2772,7 +2772,11 @@ export class Lair {
 
   /** Seats taken at one session */
   takenSeats(gameId) {
-    return this.sql.exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated')", gameId).one().n;
+    const booked = this.sql.exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated')", gameId).one().n;
+    // Round 11: players already in the group who don't book through the Lair take seats too (staff adding players,
+    // regulars' seats, edits)
+    const offline = this.sql.exec('SELECT offline_players AS n FROM games WHERE id = ?', gameId).toArray()[0]?.n;
+    return (Number(booked) || 0) + Math.max(0, Number(offline) || 0);
   }
 
   /**
