@@ -146,7 +146,7 @@ export const communityMethods = {
    * Every turnout there is, one row each: { customer_id, kind ('event' | 'session'), place (the event date's occurrence id,
    * or the session's game id), event_id, system, at }. A sign-up checked in ('attended') is one for whoever signed up and
    * one for each member guest on it (round 8); an event game spot (a table booking for an event date) and a TTRPG seat are
-   * one once they're seated or done. No awaits.
+   * one once they're seated or done, and (round 11) so is a game spot for each member named as a player on it. No awaits.
    */
   turnoutRows() {
     return this.sql
@@ -163,7 +163,11 @@ export const communityMethods = {
           WHERE b.kind = 'gm-seat' AND b.status IN ('seated', 'done') AND b.customer_id IS NOT NULL
          UNION ALL
          SELECT b.customer_id, 'event', b.occurrence_id, NULL, NULL, b.starts_at
-           FROM bookings b WHERE b.kind = 'table' AND b.occurrence_id IS NOT NULL AND b.status IN ('seated', 'done') AND b.customer_id IS NOT NULL`,
+           FROM bookings b WHERE b.kind = 'table' AND b.occurrence_id IS NOT NULL AND b.status IN ('seated', 'done') AND b.customer_id IS NOT NULL
+         UNION ALL
+         SELECT p.customer_id, 'event', b.occurrence_id, NULL, NULL, b.starts_at
+           FROM booking_players p JOIN bookings b ON b.id = p.booking_id
+          WHERE b.occurrence_id IS NOT NULL AND b.status IN ('seated', 'done') AND p.customer_id IS NOT NULL AND (b.customer_id IS NULL OR b.customer_id != p.customer_id)`,
       )
       .toArray();
   },
