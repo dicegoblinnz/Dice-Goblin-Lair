@@ -1836,7 +1836,7 @@ export class Lair {
       content = {
         title: lockedIn ? "You're locked in!" : event ? 'Your game spot is booked!' : "You're booked in!",
         intro: event
-          ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Your tables are saved: bring your army.`
+          ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Gobgob has saved your tables.`
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
           ['When', when], ['Where', tables], ['People', String(booking.people)],
