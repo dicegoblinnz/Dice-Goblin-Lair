@@ -109,7 +109,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await open('/pages/lair-staff', STAFF);
   await page.waitForSelector('.staff-tabs [data-tab]');
   const all = await tabs();
-  check(`${tag}: the main account sees every tab (round 9: Accounts and Community too), Team last`, JSON.stringify(all) === JSON.stringify(['floor', 'today', 'passes', 'groups', 'members', 'codes', 'holds', 'games', 'events', 'library', 'accounts', 'community', 'team']), all);
+  check(`${tag}: the main account sees every tab (round 9: Accounts and Community too; round 10: Memberships and Damage), Team last`, JSON.stringify(all) === JSON.stringify(['floor', 'today', 'passes', 'groups', 'members', 'codes', 'holds', 'games', 'events', 'library', 'memberships', 'damage', 'accounts', 'community', 'team']), all);
   check(`${tag}: the main account starts on the floor, with the check-in box`, (await selected()) === 'floor' && (await page.isVisible('.checkin')), await selected());
   const people = await page.evaluate(() => {
     const list = window.Lair.store.backend.staffMembers();
@@ -320,7 +320,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await Promise.all([page.waitForNavigation({ waitUntil: 'networkidle' }), page.click('[data-team-preview] [type="submit"]')]);
   await page.waitForSelector('.staff-tabs [data-tab]');
   const helperTabs = await tabs();
-  check(`${tag}: as Mia (Check-in, Tables, Members): the floor, Today, Members and Holds; no Team, no money tabs`, JSON.stringify(helperTabs) === JSON.stringify(['floor', 'today', 'members', 'holds']), helperTabs);
+  check(`${tag}: as Mia (Check-in, Tables, Members): the floor, Today, Members, Holds and Memberships (round 10); no Team, no money tabs`, JSON.stringify(helperTabs) === JSON.stringify(['floor', 'today', 'members', 'holds', 'memberships']), helperTabs);
   check(`${tag}: a helper with Check-in lands on Today`, (await selected()) === 'today', await selected());
   check(`${tag}: the banner says whose view it is`, /You’re seeing this page as Mia sees it\./.test(flat(await page.textContent('lair-staff'))));
   const money2 = await page.evaluate(() => ({
@@ -340,7 +340,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   const MIA = { id: Number(people.mia.id), first_name: 'Mia', last_name: 'Chen', name: 'Mia Chen', email: people.mia.email, phone: null, tags: [] };
   await open('/pages/lair-staff', MIA);
   await page.waitForSelector('.staff-tabs [data-tab]');
-  check(`${tag}: Mia logged in: her tabs, on Today`, JSON.stringify(await tabs()) === JSON.stringify(['floor', 'today', 'members', 'holds']) && (await selected()) === 'today', await tabs());
+  check(`${tag}: Mia logged in: her tabs, on Today`, JSON.stringify(await tabs()) === JSON.stringify(['floor', 'today', 'members', 'holds', 'memberships']) && (await selected()) === 'today', await tabs());
   check(`${tag}: the view switch shows for her`, await page.isVisible('[data-view-switch]'));
   await open('/pages/my-lair#profile', MIA);
   await page.waitForTimeout(800);

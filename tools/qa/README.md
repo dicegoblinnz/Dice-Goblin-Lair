@@ -57,6 +57,16 @@ Set `DG_THEME` to the branch checkout. The defaults point at the old worktrees.
 
 Late at night, bookings seeded "today" can land on tomorrow and trip date checks. The bk4 scripts take `LAIR_AT=…` to pin the page clock.
 
+## round10/memberships.mjs: the library memberships, theme side
+
+`DG_THEME=/path/to/theme QA_PORT=4951 [AXE=…/axe.min.js] node tools/qa/round10/memberships.mjs [phone|desktop]`. Demo
+mode through `theme-mock`, phone then desktop. It gives the mock's membership product the Lair's plans (one group,
+Grab, Stash and Hoard, listed Stash first so matching by name is what's checked), then covers the join form and its
+terms, My Lair's membership and damage charges in every state (the demo's `?membership=` puts the logged-in customer in
+one), a library game's Reserve for a Lair member with no tags, and the staff page's Memberships and Damage tabs, the
+member page and the Library tab's "Damage charge". A card payment taken now waits about 13 seconds for the demo's
+pretend webhook. Contract: `docs/contracts/lair-api-contract-v10-memberships.md`, section 6.
+
 ## theme-check
 
 `npm install`, then `node run.mjs /path/to/theme`. A clean theme prints `counts {}`.

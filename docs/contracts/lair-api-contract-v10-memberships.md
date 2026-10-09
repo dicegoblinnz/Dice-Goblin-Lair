@@ -2,7 +2,8 @@
 
 **Changes only**, on top of v9 and everything before it; where they disagree, this file wins. Money in cents, times in
 ms (UTC), days in Lair time (Pacific/Auckland). Errors stay `{ error: "A plain sentence." }` with a 4xx or 5xx.
-Backend branch `memberships`; the theme work (section 6) is still to do.
+Backend branch `memberships` (live since 9 Oct); the theme work (section 6) is on the theme's `dice-goblin-2-theme`
+branch (10 Oct), so it shows on the unpublished Dice Goblin 2.0 theme.
 
 Mo (9 Oct): "I want to build a new Shopify app to help replace the subscription app that I have called simplee", for
 the board game library (Grab, Stash and Hoard, unlimited swaps), and to charge members' saved cards for damaged, missing
@@ -284,7 +285,10 @@ instead) and "Your bank wants you to confirm a $40 payment". Staff get the new m
 disputes, games at home, and every billing problem above, including damage charges that couldn't be taken now, store
 credit to check, a late payment, a charge paid twice, and a one-off contract that won't close (at most once a day each).
 
-## 6. Theme work (separate repo, still to do)
+## 6. Theme work (separate repo, done 10 Oct)
+
+Built as asked below (the plan of record), with what was learned on the way after it. Mo (10 Oct): "Can you make it
+please thanks".
 
 - **Membership product page:** the selling plan selector (Grab, Stash, Hoard: games at a time and the monthly price)
   and the terms by the button: monthly, cancel any time in My Lair, runs to the end of the month paid for, and damage
@@ -312,6 +316,38 @@ credit to check, a late payment, a charge paid twice, and a one-off contract tha
   credit, on your card, at the counter).
 - Load the `shopify-liquid-theme` and `gobgob-voice` skills for this work; errors that stop someone don't say "friend".
 
+**What was built** (theme repo, `dice-goblin-2-theme`):
+- `sections/library-plans.liquid`: each plan card's `selling_plan` setting is the plan's name (Grab, Stash, Hoard), so
+  the Lair's plans are found by name whatever order Shopify lists them in (Simplee's, named differently, still fall back
+  to their position). New settings `terms_heading` and `terms_summary` ("Good to know before you join": monthly, cancel
+  in My Lair to the end of the paid month, plan changes from the next bill, damage charges after an emailed notice) sit
+  just above the join button; the small print is "Renews monthly until you cancel. Cancel any time in My Lair." Both
+  library templates (`product.membership`, `page.board-game-rental`) carry them, and their FAQs now say cancel and
+  change plans in My Lair, how damage charges work, and what happens when a payment doesn't go through.
+- `assets/lair-my-library.js` (+ css): "Your membership" (plan, status, next bill and what it comes to, the next plan,
+  the card with Update my card, Change plan, Cancel asking first, Keep my membership, recent payments) and "Damage
+  charges" (open ones first in the list, each with how it stands, "Tell us we've got it wrong" while it's a notice or
+  due, and how a paid one was paid). A payment outstanding is said first on the plan card. A paused or ended membership
+  replaces the join pitch with why. Home's Library card trusts GET /me's plan.
+- `assets/lair-library.js`: a library game's page asks GET /me for the plan (members of the Lair's billing have no
+  Simplee tags), shows Reserve for them, hides the borrow card's Join parts (`data-borrow-join`), and pauses reserving
+  while a payment is outstanding. Without GET /me's `library` (an older Lair app) the tags still decide.
+- `assets/lair-staff-memberships.js` (+ css), wired into `lair-staff.js`: the Memberships tab (Library, Members or
+  Money), the Damage tab (Library or Money), a member page's "Library membership" (their membership with Retry and
+  End, their damage charges, "Log a damage charge"), and "Damage charge" on each game at home in the Library tab.
+  Charge now is offered only with `canChargeNow`; End isn't offered while a payment in flight decides the end date.
+- `assets/lair-core.js`: the routes in section 3 as backend methods. `assets/lair-demo.js`: all of it in demo mode
+  (`?membership=none|active|past_due|bank|cancelling|ending|ended|paused`, `?billing=off`, `?cardfail=1` for previews).
+- Checks: `tools/qa/round10/memberships.mjs` in this repo (188 on the theme mock, phone and desktop, axe clean);
+  Theme Check clean.
+
+**Switch-over (Mo decides when):** the theme points every library template at the product handle
+`board-game-rental-monthly` (Simplee's original). Rather than change six templates, the copy takes that handle: rename
+the original's handle (say `board-game-rental-monthly-simplee`, without a redirect) and archive it, give the copy
+`board-game-rental-monthly`, publish the copy (Online Store, and POS if wanted), then publish the theme. The library
+terms page (`dice-goblin-board-game-rental-membership`, store content, shared with the live theme) still says to get in
+touch to cancel or change plans, so it needs the new wording at the same time (section 10).
+
 ## 7. Setting it up (Mo)
 
 1. **Lair Memberships** (done): made in the Dev Dashboard and installed, with `read_own_subscription_contracts`,
@@ -331,6 +367,8 @@ credit to check, a late payment, a charge paid twice, and a one-off contract tha
    `MEMBERSHIPS_BILLING` = `on`.
 5. **Switch over:** uninstall Simplee in Shopify admin (Shopify cancels its subscriptions and removes its plans 48 hours
    later), publish the copy (the theme's product page shows the Lair's plans), and archive Simplee's original product.
+   The copy takes the original's handle first, and the terms page gets its new wording (sections 6 and 10). On 10 Oct
+   the original product already had no plans on it, so nobody could join through the live site until then.
 
 Switching `MEMBERSHIPS_BILLING` off at any time stops all charging at once (payments already with Shopify finish). When
 it's switched back on, months missed meanwhile are skipped, not billed late (staff get the list).
@@ -369,3 +407,40 @@ Not confirmed by Shopify's documentation, so check these with test payments:
   (`storeCreditDebits`).
 - `test/round10-memberships.test.js`: a fake Shopify that charges what each cycle's edit says, can lose an answer or
   get a webhook in first, and every rule above.
+
+## 10. The library terms page, new wording (for the switch-over)
+
+The page "Library membership terms" (`/pages/dice-goblin-board-game-rental-membership`) is Shopify content, not the
+theme, and the live theme links to it too, so it changes when Mo switches over. Replace these sections and keep the
+rest as it is. The date at the top becomes the switch-over date.
+
+**Billing**
+- Your membership is a monthly subscription. You pay for your first month when you join, and it renews automatically
+  each month until you cancel. There's no minimum term.
+- Your card is saved securely with Shopify for your monthly payments and any charges for missing pieces or damage
+  (below). We never see your full card number.
+- If a payment doesn't go through, we'll email you and borrowing pauses until it's sorted. Update your card in My Lair
+  and we'll try again. We also try again after 3 days and after 7 days. If it still doesn't go through, your membership
+  ends.
+- We don't refund part-months. Nothing in these terms affects your rights under the Consumer Guarantees Act.
+
+**Missing pieces and damage**
+- Check the contents when you borrow a game. Tell us at the counter if a piece is missing, so it isn't charged to you.
+  Borrowing by post? Tell us as soon as you open the parcel.
+- If pieces go missing or a game gets damaged while it's with you, we may charge you to fix or replace it, up to the
+  game's RRP. If a game is lost or can't be played any more, we may charge up to its RRP.
+- We email you an itemised notice first. Usually the charge goes on your next monthly payment 7 days later, so there's
+  time to bring the missing pieces back, or to tell us in My Lair if you think we've got it wrong (it waits while we
+  sort it out). We can also take it straight away from your store credit or the card on your membership.
+- If your membership has ended, we can still charge it to the card you used for your membership, or you can pay at the
+  counter.
+- Our staff can waive any of these charges.
+
+**Cancelling and changing plans**
+- Cancel any time in My Lair, under Library. Your membership runs to the end of the month you've paid for, and there
+  are no more payments. You can change your mind until then.
+- To move to a bigger or smaller plan, pick it in My Lair. The new plan and price start from your next payment.
+
+**Late returns and ending your membership** (unchanged, apart from the first words)
+- While your membership is active, nothing is ever late. When your membership ends, please return every game within 7
+  days. Games still out after that may be charged up to their RRP.
