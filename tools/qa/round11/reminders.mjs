@@ -246,6 +246,37 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await page.waitForSelector('lair-calendar [data-dialog] [data-waitlist]', { timeout: 8000 });
   s = await sheet();
   check(`${tag}: Take me off the waitlist: it's gone, the count is back, and Join the waitlist is offered again`, Number((s.facts.match(/Full · (\d+) waiting/) || [])[1] || 0) === waitingBefore && s.waitlist, s);
+  // the date fills up while someone's signing up: the form's error offers the waitlist
+  const third = await page.evaluate((skip) => {
+    const t = window.Lair.store.time;
+    const tomorrow = t.addDays(t.today(), 1);
+    const joins = window.Lair.store.data.eventJoins || {};
+    const e = window.Lair.store.data.events.filter((x) => x.startMs > Date.now() && !skip.includes(x.id)).sort((a, b) => a.startMs - b.startMs)
+      .find((x) => Number(x.capacity) > 0 && !x.gameTables && !(x.product && x.product.url) && t.key(x.startMs) >= tomorrow && (Number(joins[x.id]) || 0) < Number(x.capacity));
+    return e ? { id: e.id, capacity: Number(e.capacity) } : null;
+  }, [dates.signUp.id, dates.open.id]);
+  if (check(`${tag}: another date with sign-ups and places left`, third, third)) {
+    await openEvent(third.id);
+    await page.click('lair-calendar [data-dialog] [data-join]');
+    await page.waitForSelector('lair-calendar [data-join-form]', { timeout: 8000 });
+    await page.fill('lair-calendar [data-join-form] [name="name"]', 'Mere Example');
+    await page.fill('lair-calendar [data-join-form] [name="email"]', 'mere@example.com');
+    await page.fill('lair-calendar [data-join-form] [name="phone"]', '021 555 0108');
+    // someone else takes the last places meanwhile
+    await page.evaluate(({ id, capacity }) => {
+      const b = window.Lair.store.backend;
+      b.state.eventJoins = { ...(b.state.eventJoins || {}), [id]: capacity };
+    }, third);
+    await page.click('lair-calendar [data-dialog-foot] button[type="submit"]');
+    await page.waitForSelector('lair-calendar .cal-error', { timeout: 8000 });
+    const raced = await page.evaluate(() => ({ text: document.querySelector('lair-calendar .cal-error p')?.textContent.trim(), button: document.querySelector('lair-calendar .cal-error [data-waitlist]')?.textContent.trim() || null }));
+    check(`${tag}: it filled up while signing up: "This one is full." with Join the waitlist right there`, raced.text === 'This one is full.' && raced.button === 'Join the waitlist', raced);
+    if (raced.button) {
+      await page.click('lair-calendar .cal-error [data-waitlist]');
+      await page.waitForSelector('lair-calendar [data-waitlist-form]', { timeout: 8000 });
+      check(`${tag}: the button opens the waitlist form for that date`, await page.evaluate((id) => document.querySelector('lair-calendar [data-waitlist-form]')?.dataset.id === id, third.id));
+    }
+  }
   // a member: the name comes from their account, the mobile field is theirs to fill
   await openEvent(dates.signUp.id, RUBY);
   await page.click('lair-calendar [data-dialog] [data-waitlist]');
