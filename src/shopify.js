@@ -654,13 +654,36 @@ export class ShopifyAdmin {
       );
     const result = take ? data.storeCreditAccountDebit : data.storeCreditAccountCredit;
     if (result.userErrors.length) {
+      // Shopify answered and said no, so nothing moved (error.refused). Any other error may or may not have moved it.
       const error = new Error(result.userErrors.map((e) => e.message).join('; '));
       error.code = result.userErrors[0].code || null;
+      error.refused = true;
       throw error;
     }
     const tx = result.storeCreditAccountTransaction || {};
     const after = tx.balanceAfterTransaction?.amount;
     return { id: tx.id || null, balanceAfter: after != null ? Math.round(Number(after) * 100) : null };
+  }
+
+  /**
+   * Round 10: a customer's latest store credit debits in this currency (newest first), to find out whether a take-off
+   * whose answer was lost happened: [{ id, amount (cents, positive), balanceAfter (cents), createdAt (ms), fromOrder }].
+   * fromOrder: spent on an order, not taken off by an app. Needs read_store_credit_accounts.
+   */
+  async storeCreditDebits(customerId, currency) {
+    const data = await this.graphql(
+      `query LairCreditDebits($id: ID!) { customer(id: $id) { id storeCreditAccounts(first: 5) { nodes { balance { currencyCode }
+        transactions(first: 25, query: "type:debit", sortKey: CREATED_AT, reverse: true) { nodes { amount { amount } balanceAfterTransaction { amount }
+          createdAt origin { __typename } ... on StoreCreditAccountDebitTransaction { id } } } } } } }`,
+      { id: `gid://shopify/Customer/${customerId}` },
+    );
+    if (!data.customer) throw new Error('No such customer in Shopify');
+    const account = (data.customer.storeCreditAccounts?.nodes || []).find((a) => a.balance?.currencyCode === currency);
+    const cents = (v) => (v != null ? Math.round(Number(v) * 100) : null);
+    return (account?.transactions?.nodes || []).map((t) => ({
+      id: t.id || null, amount: Math.abs(cents(t.amount?.amount) || 0), balanceAfter: cents(t.balanceAfterTransaction?.amount), createdAt: Date.parse(t.createdAt),
+      fromOrder: Boolean(t.origin),
+    }));
   }
 
   /**

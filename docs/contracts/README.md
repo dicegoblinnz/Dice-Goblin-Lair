@@ -15,7 +15,7 @@ These are the specs each build round was written against. Read them newest first
 Round 10, library memberships, covers: the Lair billing Grab, Stash and Hoard itself through a second Shopify app (Lair
 Memberships) in place of Simplee; failed payments, bank checks and retries; plan changes and cancelling; damage
 charges on the member's next bill after a 7-day notice; the staff Memberships and Damage routes; setting it up and
-switching over; and what to check on a development store before billing goes on.
+switching over; what to check before billing goes on; and taking a damage charge straight away from store credit or the saved card.
 
 Round 7 covers: mobile numbers on bookings, the player profile, roll codes and "Got a code?", the loyalty card's number, birthday gifts in words and claimed gifts, library holds until midnight with games at home and scanning, the tab scanner, the customer picker, groups and their passes, the events editor, staff TTRPG sessions with GM invites, and seats staff add or reserve. Its last sections split the theme work into modules for parallel agents.
 

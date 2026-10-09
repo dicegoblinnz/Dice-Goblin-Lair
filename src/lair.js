@@ -564,8 +564,14 @@ export const MIGRATIONS = [
   //    charges yet (edit_state), when it was first sent, Shopify's billing attempt, and how it went ('void': Shopify
   //    never got it, and why).
   //  - damage_charges: missing parts, damage or a lost game: 'notice' (emailed, 7 days to sort it), 'due', 'billing' (on
-  //    a bill being paid), 'paid', 'waived', 'disputed' (waits while it's sorted out) or 'unpaid' (staff sort it at the
-  //    counter).
+  //    a bill being paid), 'charging' (staff are charging it now: damage_payments), 'paid' (paid_via 'bill', 'card',
+  //    'credit' or 'counter'), 'waived', 'disputed' (waits while it's sorted out) or 'unpaid' (staff sort it at the
+  //    counter). emailed_at: when the member was last sent its notice (a new amount clears it until the new notice goes).
+  //  - damage_payments: a damage charge taken straight away, from store credit or the member's saved card (a one-off
+  //    Shopify contract, billed once): 'claimed' (not with Shopify yet, or its answer was lost), 'checking' (store credit
+  //    whose answer was lost: looked for in the account), 'pending', 'challenged' (a bank check), 'paid', 'failed' or
+  //    'void' (Shopify never got it). fee_was: the charge's status before, to go back to. told: the notice said it would
+  //    be taken now. closed_at: the one-off contract cancelled in Shopify once it's done.
   //  - membership_events: Lair Memberships webhooks already handled (Shopify can send one twice), kept a week.
   [
     `CREATE TABLE IF NOT EXISTS memberships (
@@ -589,10 +595,21 @@ export const MIGRATIONS = [
     `CREATE TABLE IF NOT EXISTS damage_charges (
       id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, membership_id TEXT, loan_id TEXT, variant_id TEXT, title TEXT NOT NULL, reason TEXT NOT NULL,
       details TEXT, amount INTEGER NOT NULL, status TEXT NOT NULL, due_at INTEGER NOT NULL, charge_id TEXT, dispute_note TEXT, created_by TEXT,
-      created_at INTEGER NOT NULL, updated_at INTEGER, resolved_at INTEGER, resolved_by TEXT, note TEXT, emailed_at INTEGER)`,
+      created_at INTEGER NOT NULL, updated_at INTEGER, resolved_at INTEGER, resolved_by TEXT, note TEXT, emailed_at INTEGER, payment_id TEXT, paid_via TEXT)`,
     'CREATE INDEX IF NOT EXISTS damage_charges_customer ON damage_charges (customer_id, status)',
     'CREATE INDEX IF NOT EXISTS damage_charges_membership ON damage_charges (membership_id, status)',
     'CREATE INDEX IF NOT EXISTS damage_charges_status ON damage_charges (status, due_at)',
+    `CREATE TABLE IF NOT EXISTS damage_payments (
+      id TEXT PRIMARY KEY, fee_id TEXT NOT NULL, customer_id TEXT NOT NULL, method TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT, status TEXT NOT NULL,
+      fee_was TEXT, told INTEGER NOT NULL DEFAULT 0, idempotency_key TEXT NOT NULL UNIQUE, membership_id TEXT, payment_method_id TEXT, card TEXT,
+      contract_gid TEXT, contract_sent_at INTEGER, sent_at INTEGER, attempt_gid TEXT, transaction_id TEXT, balance_after INTEGER, order_id TEXT,
+      error_code TEXT, error_message TEXT, void_reason TEXT, next_action_url TEXT, closed_at INTEGER, by TEXT, created_at INTEGER NOT NULL,
+      updated_at INTEGER, completed_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS damage_payments_fee ON damage_payments (fee_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS damage_payments_status ON damage_payments (status, updated_at)',
+    'CREATE INDEX IF NOT EXISTS damage_payments_attempt ON damage_payments (attempt_gid)',
+    // one payment in flight per damage charge, whatever happens
+    "CREATE UNIQUE INDEX IF NOT EXISTS damage_payments_open ON damage_payments (fee_id) WHERE status IN ('claimed', 'checking', 'pending', 'challenged')",
     'CREATE TABLE IF NOT EXISTS membership_events (webhook_id TEXT PRIMARY KEY, topic TEXT, at INTEGER NOT NULL)',
   ],
 ];
@@ -1418,6 +1435,9 @@ export class Lair {
       // Round 10: damage charges and memberships for staff
       if (a === 'library' && b === 'damage' && !c) return json(await this.createDamageCharge(body, who));
       if (a === 'library' && b === 'damage' && c && d === 'update') return json(await this.updateDamageCharge(decodeURIComponent(c), body, who));
+      // taking a damage charge now (store credit or the saved card), and settling store credit Shopify couldn't confirm
+      if (a === 'library' && b === 'damage' && c && d === 'charge') return json(await this.chargeDamageNow(decodeURIComponent(c), body, who));
+      if (a === 'library' && b === 'damage' && c && d === 'settle') return json(await this.settleDamagePayment(decodeURIComponent(c), body, who));
       if (a === 'memberships' && b && c === 'cancel' && !d) return json(await this.staffCancelMembership(decodeURIComponent(b), body, who));
       if (a === 'memberships' && b && c === 'retry' && !d) return json(await this.staffRetryMembership(decodeURIComponent(b), who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));

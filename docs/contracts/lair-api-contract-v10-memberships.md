@@ -11,6 +11,13 @@ next bill; cancelling runs to the end of the month paid for, and a damage charge
 without another month's fee; a plan change takes effect from the next bill; a failed renewal is tried again 3 days and
 7 days after the first failure, then the membership ends; borrowing is paused while a payment is outstanding.
 
+Mo (9 Oct, later): "make sure there is a way for us to charge a client not on the next billing cycle but immediately
+for any of the damages ... after emails have been sent out ... either by taking their credit or charging their card
+immediately", with emails for failures and damage notices. So once a damage charge's notice has been emailed, staff
+can take it straight away from the member's store credit or saved card (section 2, "Taking a damage charge now"). The
+welcome email (and the product page's terms, section 6) now say a charge usually goes on the next bill after 7 days but
+can be taken straight away.
+
 ## 1. How it fits together
 
 - **Lair Memberships** is a second Shopify app (Dev Dashboard, client credentials), separate from the Lair's own, so
@@ -26,6 +33,11 @@ without another month's fee; a plan change takes effect from the next bill; a fa
   and the status table counts who's `waiting`.
 - **Damage charges ride on the member's next bill:** that cycle only gets a line for each charge on the damage charge
   product (setup makes it: "Library damage charge", on no sales channel), so it's one payment and one order.
+- **Or staff take one now:** from store credit (the Lair's own app, `storeCreditAccountDebit`), or on the saved card.
+  A subscription app can only charge a card by billing a contract, so the charge gets a one-off contract of its own
+  (`subscriptionContractAtomicCreate`: the member's payment method, one line on the damage charge product at the
+  charge's price, its one bill due within the hour), billed once (`lair-damage-<payment>`), then cancelled. It has no
+  library plan on it, so it never becomes a membership.
 - Code: `src/memberships.js` (all of it), wired into `src/lair.js` (migration, routes, the library plan), `src/index.js`
   (`/webhooks/memberships`) and `src/config.js`. Tests: `test/round10-memberships.test.js`.
 
@@ -96,9 +108,38 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   waits while it's sorted). Then it's due: on the next bill (that cycle only), billed on its own after cancelling, or,
   with no membership to bill, collected at the counter (staff hear).
 - A new amount is a new notice, with 7 days again. Staff can waive it (the member hears), hold it (it waits, like a
-  dispute), put it back, or mark it paid at the counter. A charge on a bill being paid can't change (refund it in
-  Shopify once it's gone through).
+  dispute), put it back, or mark it paid at the counter. A charge on a bill being paid, or being taken now, can't
+  change (refund it in Shopify once it's gone through).
 - On a bill that fails, a charge waits for the next try; when there's no next try it goes to staff (`unpaid`).
+
+**Taking a damage charge now** (staff with `money`; Mo, 9 Oct):
+- Only once its notice has been **emailed** (`emailedAt`; a new amount needs its new notice first), and only one in its
+  notice, due, or to collect at the counter: not one on a bill being paid, on hold or disputed, paid or waived.
+- `use`: `credit` (their store credit), `card` (their saved card: their current membership's, else their latest
+  membership's, even a cancelled or ended one) or `auto` (the default: store credit when the balance covers it, else
+  the card, else store credit when Shopify won't say the balance). Never split between the two.
+- Store credit comes off there and then. If Shopify says it's short, nothing came off (with `auto`, the card is used
+  instead). Card charges need `MEMBERSHIPS_BILLING` on; store credit doesn't.
+- A card payment is with Shopify when the request answers (`pending`); the billing attempt webhooks finish it.
+- **Logged with `chargeNow: true`:** the notice says it's being taken now ("Taken from your store credit today",
+  "Charged to Visa ending 4242 today"), then it is. With no way to (no email, no card, not enough store credit), the
+  usual notice goes and `chargeNow` says why.
+- **Never twice.** The payment is claimed (its row, the charge `charging`) before Shopify is asked; one in flight per
+  charge. Store credit whose answer was lost is looked for in the account's debits (Shopify can't take a key for it):
+  found, it's paid; not there 10 minutes on, it didn't come off; if the Lair can't read the account
+  (`read_store_credit_accounts`) for an hour, staff are asked to look in Shopify admin and settle it. A one-off contract
+  whose answer was lost is found by its marker (`_lair_payment`) before another is made, and a bill by its key.
+- **Paid:** the charge is `paid` (`paidVia` `credit` or `card`), the member gets a receipt ("Paid: the $40 charge for
+  Catan", with the store credit left), and the one-off contract is cancelled on the next run.
+- **Not taken:** the charge goes back to where it was (its notice, the next bill, or the counter) and staff hear. The
+  member hears ("We couldn't take the charge for Catan", and where it goes instead) when it was their card (declined,
+  expired, the bank check never done) or when their notice said it would be taken now; a problem on the store's side
+  or Shopify refusing is staff's to sort.
+- **A bank check:** the member hears ("Your bank wants you to confirm a $40 payment"); it's never tried again while it
+  waits; not done in 7 days, it goes back (and they hear). A late success is still taken; if the charge was paid
+  another way meanwhile, staff hear to refund one.
+- A card payment that can't reach Shopify for 2 days is dropped (nothing charged); billing switched off drops one
+  Shopify never got. A cancelled membership waits for a charge being taken before it ends.
 
 ## 3. Routes
 
@@ -114,15 +155,18 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
 | `GET /proxy/memberships?status=current\|past_due\|ended\|all&customerId=` | staff (`library`, `members` or `money`) | `{ memberships: [staff view], billing: 'on' \| 'off', counts: { active, past_due, cancelling } }`, newest first, up to 300. `current`: active, past_due, cancelling, ending and paused |
 | `POST /proxy/memberships/:id/cancel` | staff (`money`) | `{ when: 'end' \| 'now' }` → `{ membership }` (the member gets the cancelled email) |
 | `POST /proxy/memberships/:id/retry` | staff (`money`) | try a failed payment again on the next run (within 10 minutes), or lift a hold after Shopify refused a bill → `{ membership }` |
-| `GET /proxy/library/damage?status=open\|all&customerId=` | staff (`library` or `money`) | `{ charges: [damage view + customerId, name, code, membershipId, by, note] }`, newest first, up to 200; `open`: notice, due, billing, disputed, unpaid |
-| `POST /proxy/library/damage` | staff (`library` or `money`) | `{ customerId, loanId?, title?, reason: 'missing' \| 'damaged' \| 'lost', details? (300), amount (cents) }` → `{ charge: damage view + emailed, billable }` (`billable`: it can go on a bill) |
+| `GET /proxy/library/damage?status=open\|all&customerId=` | staff (`library` or `money`) | `{ charges: [damage view + customerId, name, code, membershipId, by, note] }`, newest first, up to 200; `open`: notice, due, billing, charging, disputed, unpaid |
+| `POST /proxy/library/damage` | staff (`library` or `money`; `chargeNow` needs `money`) | `{ customerId, loanId?, title?, reason: 'missing' \| 'damaged' \| 'lost', details? (300), amount (cents), chargeNow?: true, use?: 'auto' \| 'credit' \| 'card' }` → `{ charge: damage view + emailed, billable }` (`billable`: it can go on a bill), and with `chargeNow`, `chargeNow: { ok, message?, error?, payment: payment view \| null }` |
 | `POST /proxy/library/damage/:id/update` | staff (`money`) | `{ action: 'waive' \| 'hold' \| 'reinstate' \| 'counter' \| 'amount', amount?, note? }` → `{ charge }` |
+| `POST /proxy/library/damage/:id/charge` | staff (`money`) | take it now: `{ use?: 'auto' \| 'credit' \| 'card' }` → `{ charge, payment: payment view, message }` (`message`: what happened, for staff). Store credit: `paid` there and then; card: `pending` until Shopify says (a 409 when Shopify refused there and then, with nothing charged) |
+| `POST /proxy/library/damage/:id/settle` | staff (`money`) | store credit Shopify couldn't confirm (payment `checking`; staff were emailed): `{ taken: true \| false }` → `{ charge, payment }` |
 | `GET /proxy/members/:customerId` | staff | `member.membership`: their current membership's staff view, else their latest, or `null`; `member.library.plan` as on GET /me |
 | `POST /webhooks/memberships` | Lair Memberships (HMAC with its own client secret, shop checked) | contracts, billing attempts and payment methods; a repeat (same webhook id) does nothing |
 | `GET /setup?key=…&memberships=plans` | you | also sets up memberships (section 7) and answers `membershipsSetup` |
 
 Maintenance (every 10 minutes) adds `memberships` to its answer and the `connection` row: `{ configured, billing,
-webhooks, checked, fees, renewals, caughtUp, unbillable, charged, waiting, gaveUp, ended }`.
+webhooks, checked, paidNow (damage charge payments followed up), fees, renewals, caughtUp, unbillable, charged, waiting,
+gaveUp, ended }`.
 
 ## 4. Shapes
 
@@ -150,9 +194,17 @@ webhooks, checked, fees, renewals, caughtUp, unbillable, charged, waiting, gaveU
 contract's gid) and `holdUntil` (billing on hold after a refusal or a failure on the store's side, else `null`).
 
 **Damage view:** `{ id, title, reason, reasonWords ('Missing parts' | 'Damaged' | 'Lost or not returned'), details, amount,
-status, dueAt, createdAt, resolvedAt, disputeNote }`. `status`: `notice` (its 7 days), `due`, `billing` (on a bill being
-paid), `paid`, `waived`, `disputed` (waits: the member disputed it, or staff hold it) or `unpaid` (to collect at the
-counter).
+status, dueAt, createdAt, resolvedAt, disputeNote, emailedAt, paidVia, canChargeNow, payment }`. `status`: `notice` (its
+7 days), `due`, `billing` (on a bill being paid), `charging` (being taken now), `paid`, `waived`, `disputed` (waits:
+the member disputed it, or staff hold it) or `unpaid` (to collect at the counter). `emailedAt`: when its notice was
+emailed (`null`: it wasn't, so it can't be taken now). `paidVia` (when paid): `bill`, `card`, `credit` or `counter`.
+`canChargeNow`: staff can take it now. `payment`: the latest try at taking it now, or `null`.
+
+**Payment view** (a damage charge taken now): `{ id, method: 'credit' | 'card', status, amount, at, completedAt,
+card ('Visa ending 4242', for card) | null, balanceAfter (store credit left, for credit) | null, error (when failed) | null }`.
+`status`: `claimed` (not with Shopify yet, or its answer was lost: the Lair keeps trying), `checking` (store credit
+whose answer was lost: being looked for; staff can settle it), `pending`, `challenged` (a bank check), `paid`, `failed`
+or `void` (never reached Shopify).
 
 ## 5. Messages
 
@@ -192,18 +244,38 @@ counter).
 | `staffWhen` | 422 | Pick when it ends: 'end' (at the end of the month they've paid for) or 'now'. |
 | `retryNotDue` | 409 | That membership's payments are fine, so there's nothing to retry. |
 | `retryBank` | 409 | That payment is waiting on the member's bank check, so it can't be tried again yet. |
+| `feeUse` | 422 | Pick 'credit' (their store credit), 'card' (their saved card) or 'auto' (store credit if it covers it, else the card). |
+| `feeNotEmailed` | 409 | The notice hasn't been emailed yet, so it can't be charged now. Check the member has an email address. |
+| `feeOnHold` | 409 | That charge is on hold. Put it back on first. |
+| `feePaid` | 409 | That charge is paid already. |
+| `feeWaived` | 409 | That charge was waived. Put it back on first. |
+| `cardsOff` | 409 | Card charges are off until library billing is switched on. Use store credit, or collect it at the counter. |
+| `noCardSaved` | 409 | There's no card saved for Kiri Smith. Use store credit, or collect it at the counter. |
+| `noFeeProduct` | 409 | There's no damage charge product to bill the card with yet. Run setup with memberships=plans. |
+| `membershipsOff` | 409 | Lair Memberships isn't connected, so cards can't be charged right now. |
+| `creditOff` | 503 | Shopify isn't connected, so store credit can't be used right now. |
+| `creditShort` | 409 | Kiri Smith has $12.50 of store credit, so it can't cover $40. Nothing came off. (Or, balance unknown: Kiri Smith doesn't have $40 of store credit, so nothing came off.) |
+| `noWayNow` | 409 | There's no way to take it from Kiri Smith now: not enough store credit and no card to charge. Collect it at the counter. |
+| `settleNone` | 409 | That charge isn't waiting on a store credit check. |
+| `settleSay` | 422 | Say whether the store credit came off: taken true or false. |
+
+A card Shopify refuses there and then is a 409 "Shopify wouldn't charge Visa ending 4242 (…). Nothing was charged."
 
 Emails to members: welcome; payment didn't go through (and the fraud and damage charge versions); confirm your payment
 (bank check); payment went through; plan changes; cancelled (paid up, ended now, or a payment in flight); membership
-ended (games at home, damage charges to pay); damage charge notice (on the bill, on its own, or at the counter) and a
-changed charge; charge cancelled (waived); a damage charge we couldn't take. Staff get the new member, failures for
-good, fraud, disputes, games at home, and every billing problem above (at most once a day each).
+ended (games at home, damage charges to pay); damage charge notice (on the bill, on its own, at the counter, or taken
+now) and a changed charge; charge cancelled (waived); a damage charge we couldn't take; and for damage charges taken
+now: the receipt ("Paid: the $40 charge for Catan"), "We couldn't take the charge for Catan" (and where it goes
+instead) and "Your bank wants you to confirm a $40 payment". Staff get the new member, failures for good, fraud,
+disputes, games at home, and every billing problem above, including damage charges that couldn't be taken now, store
+credit to check, a late payment, a charge paid twice, and a one-off contract that won't close (at most once a day each).
 
 ## 6. Theme work (separate repo, still to do)
 
 - **Membership product page:** the selling plan selector (Grab, Stash, Hoard: games at a time and the monthly price)
   and the terms by the button: monthly, cancel any time in My Lair, runs to the end of the month paid for, and damage
-  or missing parts charged up to the game's RRP after an emailed notice with 7 days to sort it. Shopify requires the
+  or missing parts charged up to the game's RRP after an emailed notice: usually on the next bill after 7 days to sort
+  it, but it can be taken straight away from store credit or the card saved for the membership. Shopify requires the
   terms to be clear before checkout.
 - **My Lair → Library:** a membership card from `membership`: the plan and games at a time; the next bill and amount
   (and `nextTier`); the card, with "Update my card" (`POST /me/membership/card`); change plan (the three `plans`);
@@ -215,6 +287,14 @@ good, fraud, disputes, games at home, and every billing problem above (at most o
   status, next bill, card, hold, games at home; Retry and End: at the end of the month or now) and a Damage tab
   (log one from a game at home or by title, the open list, waive, hold, put back, paid at the counter, new amount).
   The member page shows `member.membership`.
+- **Damage tab, taking a charge now** (staff with Money): on a charge with `canChargeNow`, "Charge now" (`POST
+  …/charge`, `use` auto), with "From store credit" and "On their card" as choices (the balance from `GET
+  /members/:id/credit`, the card from `member.membership.card`); show the answer's `message`, and the 409's error as
+  it is. While `charging`, show the payment's status ("Charging Visa ending 4242", "Waiting on their bank"); a payment
+  `checking` gets "It came off" and "It didn't" (`POST …/settle`). The log form gets a "Charge it now" tick
+  (`chargeNow`), and shows `chargeNow.message` or `chargeNow.error`. Paid ones say how (`paidVia`).
+- **My Lair damage list:** `charging` says "Being paid now"; paid ones say how (`paidVia`: on your bill, from your store
+  credit, on your card, at the counter).
 - Load the `shopify-liquid-theme` and `gobgob-voice` skills for this work; errors that stop someone don't say "friend".
 
 ## 7. Setting it up (Mo)
@@ -223,20 +303,22 @@ good, fraud, disputes, games at home, and every billing problem above (at most o
    `write_own_subscription_contracts`, `read_customer_payment_methods`, `read_orders`, `write_products`,
    `read_customers` and `write_customers`. Its client secret is the Worker secret `MEMBERSHIPS_CLIENT_SECRET` (never in
    the config table or GitHub).
-2. **Config table:** `MEMBERSHIPS_CLIENT_ID` (the app's client ID); `MEMBERSHIPS_PRODUCT_ID`, the membership product
-   the plans go on (a new product, or a copy of the Simplee one, so Simplee's plans don't sit beside the Lair's);
-   `MEMBERSHIPS_FEE_VARIANT_ID` only if you make the damage charge product yourself.
+2. **Config table** (done 9 Oct): `MEMBERSHIPS_CLIENT_ID` (the app's client ID); `MEMBERSHIPS_PRODUCT_ID`, the
+   membership product the plans go on: a copy of Simplee's "Board Game Rental Membership" (draft, subscription only,
+   so Simplee's plans don't sit beside the Lair's); `MEMBERSHIPS_SIMPLEE_TAGS` = `off` (Simplee is going: its only
+   subscription was Mo's own test); `MEMBERSHIPS_BILLING` = `off` until the tests pass. `MEMBERSHIPS_FEE_VARIANT_ID`
+   only if you make the damage charge product yourself.
 3. Open `/setup?key=YOUR_SETUP_KEY&memberships=plans`: it checks the permissions, makes the plans (once) and puts them
    on the product, makes the damage charge product (once) and the webhooks. `membershipsSetup` says what it did.
-4. **Test on a development store first** (section 8), then set `MEMBERSHIPS_BILLING` = `on`.
-5. **Switch over:** the product page shows the Lair's plans; current Simplee members re-join through checkout (their
-   first month is paid there); once nobody is left on Simplee, cancel their Simplee subscriptions, uninstall Simplee and
-   set `MEMBERSHIPS_SIMPLEE_TAGS` = `off`.
+4. **Test** (section 8; on the real store, since the new site and the Lair aren't live yet: Mo, 9 Oct), then set
+   `MEMBERSHIPS_BILLING` = `on`.
+5. **Switch over:** uninstall Simplee in Shopify admin (Shopify cancels its subscriptions and removes its plans 48 hours
+   later), publish the copy (the theme's product page shows the Lair's plans), and archive Simplee's original product.
 
 Switching `MEMBERSHIPS_BILLING` off at any time stops all charging at once (payments already with Shopify finish). When
 it's switched back on, months missed meanwhile are skipped, not billed late (staff get the list).
 
-## 8. Check on the development store before billing goes on
+## 8. Check before billing goes on
 
 Not confirmed by Shopify's documentation, so check these with test payments:
 - **The first renewal:** a contract made at checkout has its first renewal about a month on (cycle 1's date). If
@@ -250,15 +332,22 @@ Not confirmed by Shopify's documentation, so check these with test payments:
   or a new one is made (`/create`); both are handled.
 - The draft mutations used for plan changes and damage charge lines are deprecated in 2026-07 (no removal date yet);
   2026-10 has replacements.
+- **A damage charge taken now on a card:** that Shopify takes the one-off contract (no shipping on it, its one bill due
+  within the hour) and bills its cycle 1 straight away; whether the member gets Shopify's order confirmation for it;
+  and that the contract's cancel webhook changes nothing. If Shopify refuses the bill (a cycle error), staff hear and
+  nothing is charged.
+- **Store credit taken now** with an answer lost: finding it again reads the account's debits, which needs the Lair's
+  own app to have `read_store_credit_accounts` (approved in Shopify admin); without it staff are asked to settle it.
 
 ## 9. What was built
 
 - `src/memberships.js`: Lair Memberships' Shopify calls (`MembershipsAdmin`) and the Lair's side (contracts, webhooks,
   billing, retries, cancelling, damage charges, staff, setup, emails).
 - `src/lair.js`: the round 10 migration (tables `memberships`, `membership_charges`, `damage_charges`,
-  `membership_events`), the routes, the library plan from memberships (holds, scans, GET /me, the staff page), and
-  maintenance.
+  `damage_payments` (damage charges taken now), `membership_events`), the routes, the library plan from memberships
+  (holds, scans, GET /me, the staff page), and maintenance.
 - `src/index.js`: `/webhooks/memberships`. `src/config.js`: the `MEMBERSHIPS_*` keys. `src/shopify.js`: a second app's
-  login (its own token key).
+  login (its own token key); store credit refusals marked (`error.refused`), and an account's latest debits
+  (`storeCreditDebits`).
 - `test/round10-memberships.test.js`: a fake Shopify that charges what each cycle's edit says, can lose an answer or
   get a webhook in first, and every rule above.
