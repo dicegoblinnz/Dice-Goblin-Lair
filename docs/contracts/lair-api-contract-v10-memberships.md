@@ -348,6 +348,29 @@ the original's handle (say `board-game-rental-monthly-simplee`, without a redire
 terms page (`dice-goblin-board-game-rental-membership`, store content, shared with the live theme) still says to get in
 touch to cancel or change plans, so it needs the new wording at the same time (section 10).
 
+**Done 10 Oct** (Mo: "make joining online work and connected"), all but publishing the theme:
+- Simplee's original (`7532313641063`) is `board-game-rental-monthly-simplee`, archived. The copy (`10244302012519`)
+  is `board-game-rental-monthly`, active, on the Online Store only (Shopify allows a subscription-only product on
+  online stores only), with the Lair's plans: Grab $30, Stash $60, Hoard $75. Its description now says cancel in My
+  Lair, holds until midnight on the third day, the Wednesday 10pm postal cutoff, and damage charges emailed first.
+- **Gotcha:** renaming a product's handle makes Shopify rewrite every theme setting that names it, in every theme. So
+  the original's rename moved the templates' product settings and `shopify://products/…` links to
+  `board-game-rental-monthly-simplee` (the archived product): four templates in Dice Goblin 2.0 and the live theme's
+  `page.board-game-rental.json` ("Join Today!" twice). The branch still says `board-game-rental-monthly`, so Dice Goblin
+  2.0 is right again once it's back in step with the branch. The live theme can't be written through the API, so a URL
+  redirect sends `/products/board-game-rental-monthly-simplee` to `/products/board-game-rental-monthly`. Next time, give
+  the product the new handle in the templates first, or expect the rewrite.
+- The terms page has section 10's wording, dated 10 October 2026. The live theme's terms template
+  (`page.rent-terms-and-conditions`) shows its own old text (dated 5 March) rather than the page, so the new wording
+  shows on Dice Goblin 2.0; its short version now matches too.
+- Joining needs the theme's plan picker: the live theme (Booster) only posts `id` and `quantity`, so its product page
+  can't join (true since Simplee's plans went). Joining works on Dice Goblin 2.0, in preview now and for everyone once
+  it's published.
+- Leave Simplee installed until Dice Goblin 2.0 is live: the live theme's layout includes Simplee's
+  `simplee-memberships` snippet.
+- Shopify's GitHub sync stopped taking pushes to `dice-goblin-2-theme` after round 12 (last synced 9 Oct 15:56 UTC);
+  Online Store › Themes › Dice Goblin 2.0 › Reset to last commit (and View logs) brings it back in step.
+
 ## 7. Setting it up (Mo)
 
 1. **Lair Memberships** (done): made in the Dev Dashboard and installed, with `read_own_subscription_contracts`,
@@ -365,10 +388,12 @@ touch to cancel or change plans, so it needs the new wording at the same time (s
    `memberships.setup`, payload `{}`): the cron runs it within 10 minutes and writes the same answer into the row.
 4. **Test** (section 8; on the real store, since the new site and the Lair aren't live yet: Mo, 9 Oct), then set
    `MEMBERSHIPS_BILLING` = `on`.
-5. **Switch over:** uninstall Simplee in Shopify admin (Shopify cancels its subscriptions and removes its plans 48 hours
-   later), publish the copy (the theme's product page shows the Lair's plans), and archive Simplee's original product.
-   The copy takes the original's handle first, and the terms page gets its new wording (sections 6 and 10). On 10 Oct
-   the original product already had no plans on it, so nobody could join through the live site until then.
+5. **Switch over** (done 10 Oct, section 6, apart from publishing Dice Goblin 2.0 and uninstalling Simplee): publish
+   the copy (the theme's product page shows the Lair's plans), and archive Simplee's original product. The copy takes
+   the original's handle first, and the terms page gets its new wording (sections 6 and 10). On 10 Oct the original
+   product already had no plans on it, so nobody could join through the live site until then. Once Dice Goblin 2.0 is
+   published, uninstall Simplee in Shopify admin (Shopify cancels its subscriptions and removes its plans 48 hours
+   later).
 
 Switching `MEMBERSHIPS_BILLING` off at any time stops all charging at once (payments already with Shopify finish). When
 it's switched back on, months missed meanwhile are skipped, not billed late (staff get the list).
