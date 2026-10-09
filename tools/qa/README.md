@@ -74,3 +74,13 @@ The store's data stays out of this public repo: `DG_SIM_EVENTS` is a JSON list o
 `DG_SIM_GAMES` is the owner's `games.add` payload. Start the live stack with `DG_SIM_EVENTS` set, then run it under the
 live lock with `DG_THEME`, `OUT` and `QA_PORT`. The dev entry's `POST /__dev/admin-job` and `POST /__dev/maintenance`
 run an owner's job and the cron's maintenance at once.
+
+## round13: the Our games page (round 13)
+
+`round13/our-games.mjs` opens the theme's Our games page on the live stack with the store's events and GM games
+(`DG_SIM_EVENTS`, `DG_SIM_GAMES`, as the simulation), as a visitor on a phone and a desktop: each game's tile (its night,
+next dates, what's left, Follow), the TTRPG tile and Today at the Lair, every tile's first date opening its sheet in the
+calendar, a session link opening its session, the Follow dialog's links, the calendar's "See all our games", and each
+game's feed (`GET /feeds/<key>.ics`, public and through the signed proxy) holding the dates the page links to. Run it
+under the live lock with `DG_THEME`, `OUT` and `QA_PORT`. The harness' stand-in proxy now passes the app's own content
+type on, as Shopify's does.

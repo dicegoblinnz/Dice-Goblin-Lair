@@ -30,9 +30,10 @@ dash, no dash at either end, 80 characters at most. "Magic: The Gathering" is `m
   at Dice Goblin") or "Events at Dice Goblin". `X-WR-CALDESC` says where to sign up or book. `X-WR-TIMEZONE` is the
   Lair's time zone. `REFRESH-INTERVAL;VALUE=DURATION:PT6H` and `X-PUBLISHED-TTL:PT6H` ask calendar apps to fetch it again
   every 6 hours (each app picks its own, from a few hours to a day).
-- One `VEVENT` per date (`eventOccurrences`, the same dates as the calendar and the floor) from 14 days ago to the booking
-  horizon (`lair_horizon_days`, the calendar's last day), in date order. An event that runs several days (Oddity Alley's
-  weekend) is one `VEVENT` a day. Skip dates and dates after Repeat until are left out.
+- One `VEVENT` per date (`eventOccurrences`, the same dates as the calendar and the floor) from 14 days ago: a series'
+  dates to the booking horizon (`lair_horizon_days`, the calendar's last day), a one-off's however far ahead (up to a
+  year), as the calendar shows one-offs whatever their date. In date order. An event that runs several days (Oddity
+  Alley's weekend) is one `VEVENT` a day. Skip dates and dates after Repeat until are left out.
 - Each `VEVENT`: `UID` `<handle>-<YYYY-MM-DD>@dicegoblin.nz` (the date id with anything but letters, digits, dots, dashes
   and underscores as a dash: the same UID as that date's own calendar file, `GET /ics/<id>.ics`), `DTSTAMP` now,
   `DTSTART` and `DTEND` in UTC, `SUMMARY` the event's title, `DESCRIPTION` the price line the reminder email uses

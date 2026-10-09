@@ -705,6 +705,14 @@ routes.account_addresses_url = '/account/addresses';
 PAGES['/pages/my-lair'] = () => (hasTemplate('page.my-lair')
   ? renderPage('page.my-lair', { page: pages['my-lair'], template: { name: 'page', suffix: 'my-lair' }, request: { page_type: 'page', locale: { iso_code: 'en' }, origin: '' } })
   : renderPage('page', { page: pages['my-lair'], template: { name: 'page', suffix: null } }));
+/* ---- round 13: the Our games page (a tile per game, Follow), on a theme that has it, and in the new theme's menus as
+   on the store (dg-main-menu after Book and play, dg-footer-lair after Events calendar) ---- */
+if (hasTemplate('page.our-games')) {
+  pages['our-games'] = { handle: 'our-games', title: 'Our games', url: '/pages/our-games', content: '' };
+  PAGES['/pages/our-games'] = () => renderPage('page.our-games', { page: pages['our-games'], template: { name: 'page', suffix: 'our-games' }, request: { page_type: 'page', locale: { iso_code: 'en' }, origin: '' } });
+  linklists['dg-main-menu'].links.splice(4, 0, link('Our games', '/pages/our-games'));
+  linklists['dg-footer-lair'].links.splice(3, 0, link('Our games', '/pages/our-games'));
+}
 export const PRIZE_VARIANT = 50363551023207;
 /* ---- my-lair round 4 (ml3 worktree): the self-serve tab. The "Tab menu" products are real store data (prices in NZD,
    variant ids and barcodes as in Shopify). They're Unlisted there: reachable by handle, hidden from search, so search

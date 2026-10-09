@@ -49,6 +49,8 @@ const EVENTS = [
   { id: 'blood-on-the-clocktower-october', title: 'Blood on the Clocktower', game: 'Blood on the Clocktower', type: 'social', start: at('2026-10-18', 12), end: at('2026-10-18', 18), capacity: 40, entryFee: 1000 },
   { id: 'blood-on-the-clocktower', title: 'Blood on the Clocktower', game: 'Blood on the Clocktower', type: 'social', start: at('2026-11-22', 12), end: at('2026-11-22', 18), repeat: 'monthly', capacity: 40, entryFee: 1000 },
   { id: 'oddity-alley-november', title: 'Oddity Alley', game: null, type: 'market', start: at('2026-11-21', 10), end: at('2026-11-21', 16), days: 2, freeEntry: true },
+  // past the 60-day horizon (9 December), but a one-off: in, as the calendar shows one-offs whatever their date
+  { id: 'oddity-alley-december', title: 'Oddity Alley', game: null, type: 'market', start: at('2026-12-12', 10), end: at('2026-12-12', 16), days: 2, freeEntry: true },
 ];
 const useEvents = (events, settings = {}) => {
   lair.rulesCache = rulesFromSettings({ lair_horizon_days: 60, ...settings }, ROOMS, events);
@@ -142,7 +144,9 @@ test('round 13: the last fortnight stays in; a one-off with a series is one game
   assert.deepEqual(alley.map((d) => [d.UID, d.DTSTART, d.DTEND]), [
     ['oddity-alley-november-2026-11-21@dicegoblin.nz', stamp(at('2026-11-21', 10)), stamp(at('2026-11-21', 16))],
     ['oddity-alley-november-2026-11-22@dicegoblin.nz', stamp(at('2026-11-22', 10)), stamp(at('2026-11-22', 16))],
-  ]);
+    ['oddity-alley-december-2026-12-12@dicegoblin.nz', stamp(at('2026-12-12', 10)), stamp(at('2026-12-12', 16))],
+    ['oddity-alley-december-2026-12-13@dicegoblin.nz', stamp(at('2026-12-13', 10)), stamp(at('2026-12-13', 16))],
+  ], 'a one-off past the horizon is in; a series stops at it');
   assert.match(alley[0].DESCRIPTION, /^Free entry\\n\\n/);
 
   const warhammer = vevents((await feed('warhammer')).text);

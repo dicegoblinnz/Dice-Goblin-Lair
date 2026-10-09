@@ -47,6 +47,8 @@ export const REMINDER_MESSAGES = {
 /* ---------- round 13: follow a game (contract v13-feeds) ---------- */
 /** A followed game's calendar keeps the last fortnight's dates, then runs to the booking horizon (the calendar's last day) */
 export const FEED_BACK_DAYS = 14;
+/** A one-off date is in it however far ahead it is (up to a year), as the calendar shows one-offs whatever their date */
+export const FEED_ONE_OFF_DAYS = 365;
 /** Calendar apps are asked to fetch it again after this long (most choose their own, from a few hours to a day) */
 export const FEED_REFRESH = 'PT6H';
 /** A kind's calendar, by the lair_event definition's choices: "Card nights at Dice Goblin" */
@@ -362,8 +364,14 @@ export const reminderMethods = {
     const game = want === 'all' || kind ? null : events.find((e) => feedSlug(String(e.game || '').trim() || e.title) === want);
     const label = want === 'all' ? 'Events' : kind ? FEED_KIND_NAMES[kind] || `${kind[0].toUpperCase()}${kind.slice(1)} events` : String(game.game || '').trim() || game.title;
     const calendarName = `${label} at Dice Goblin`;
-    const dates = eventOccurrences({ ...rules, events }, now - FEED_BACK_DAYS * 24 * HOUR, now + rules.horizonDays * 24 * HOUR)
-      .sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+    // a series' dates to the horizon (the calendar's last day); a one-off's whatever its date, as the calendar shows them
+    const repeating = events.filter((e) => ['weekly', 'fortnightly', 'monthly'].includes(String(e.repeat || '').trim().toLowerCase()));
+    const oneOffs = events.filter((e) => !repeating.includes(e));
+    const back = now - FEED_BACK_DAYS * 24 * HOUR;
+    const dates = [
+      ...eventOccurrences({ ...rules, events: repeating }, back, now + rules.horizonDays * 24 * HOUR),
+      ...eventOccurrences({ ...rules, events: oneOffs }, back, now + FEED_ONE_OFF_DAYS * 24 * HOUR),
+    ].sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
     const place = this.lairPlace(rules);
     const lines = [
       'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Dice Goblin//Lair events//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
