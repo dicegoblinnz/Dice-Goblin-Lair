@@ -154,6 +154,8 @@ const ROUND10_LATE_COLUMNS = [
   ['memberships', 'flagged_pm', 'TEXT'],
   ['membership_charges', 'edit_state', "TEXT NOT NULL DEFAULT 'needed'"], ['membership_charges', 'sent_at', 'INTEGER'], ['membership_charges', 'void_reason', 'TEXT'],
   ['damage_charges', 'payment_id', 'TEXT'], ['damage_charges', 'paid_via', 'TEXT'], ['damage_charges', 'key', 'TEXT'],
+  // (and a test store that ran round 10 as step 25, before round 11 went in, never ran round 11's step 25)
+  ['games', 'offline_players', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */

@@ -2773,3 +2773,14 @@ test('migration: a store that ran an earlier copy of round 10 gets the tables an
   // and a store that's up to date is left as it is
   assert.doesNotThrow(() => new Lair(old, { CURRENCY: 'NZD' }));
 });
+
+test("migration: a test store that ran round 10 as step 25 (before round 11 went in) still gets round 11's games column", () => {
+  const old = fakeCtx();
+  old.storage.sql.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
+  const round10 = MIGRATIONS.at(-1);
+  for (const step of [...MIGRATIONS.slice(0, 24), round10]) for (const statement of step) old.storage.sql.exec(statement);
+  old.storage.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', '25')");
+  const moved = new Lair(old, { CURRENCY: 'NZD' });
+  assert.doesNotThrow(() => moved.sql.exec('SELECT offline_players FROM games LIMIT 0'));
+  assert.equal(moved.sql.exec("SELECT value FROM meta WHERE key = 'schema'").one().value, String(MIGRATIONS.length));
+});
