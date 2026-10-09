@@ -2057,7 +2057,7 @@ export class Lair {
       const from = Math.max(now, next.start);
       for (const t of tables) {
         // Staff moves skip locked event tables (blocked for everyone except staff).
-        if (end > from && !isFree(st, rules, t, from, end, ignore, { staff: true })) throw new RuleError(`Table ${t} is taken then.`, 409);
+        if (end > from && !isFree(st, rules, t, from, end, ignore, { staff: true })) throw new RuleError(`Table ${t} is taken at that time.`, 409);
       }
       next.tables = tables;
       next.end = end;

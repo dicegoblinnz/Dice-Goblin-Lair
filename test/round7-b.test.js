@@ -721,12 +721,12 @@ test('staff-made sessions follow the GM rules (round 7): hours, whole hours, lea
     assert.deepEqual([res.status, res.data.error], [status, error], JSON.stringify(over));
   };
   await refused({ start: at('2026-10-01', 20), end: at('2026-10-01', 23) }, 422, 'That time is outside opening hours.');
-  await refused({ start: at('2026-10-05', 18), end: at('2026-10-05', 21) }, 422, "We're closed then.");
+  await refused({ start: at('2026-10-05', 18), end: at('2026-10-05', 21) }, 422, "We're closed at that time.");
   await refused({ start: at('2026-10-01', 18, 30), end: at('2026-10-01', 21, 30) }, 422, 'Bookings start on the hour.');
   await refused({ start: at('2026-10-01', 18), end: at('2026-10-01', 20, 30) }, 422, 'Bookings are in one-hour blocks.');
   await refused({ start: at('2026-10-01', 13), end: at('2026-10-01', 16) }, 422, 'That time is too soon to book online. Walk in instead.');
   await refused({ start: at('2026-12-03', 18), end: at('2026-12-03', 21) }, 422, 'That date is too far ahead to book yet.');
-  await refused({ tables: ['A1'] }, 409, 'Table A1 is already taken then. Pick another.');
+  await refused({ tables: ['A1'] }, 409, 'Table A1 is already taken at that time. Pick another.');
   await refused({ tables: ['O1'] }, 422, "Office can't be booked online.");
   await refused({ seats: 6 }, 422, '6 people need more tables (these seat 4).');
   // The shop tables: staff yes, GMs no
@@ -757,7 +757,7 @@ test('staff edits (round 7): a move skips only the lead time and the horizon; ho
   const edit = (body) => call('POST', `games/${id}/edit`, body, 'staff');
   const moved = await edit({ tables: ['B3'] });
   assert.equal(moved.status, 200, `tonight's session can still move: ${moved.data.error}`);
-  assert.deepEqual(await edit({ tables: ['A3'] }).then((r) => [r.status, r.data.error]), [409, 'Table A3 is already taken then. Pick another.'], 'a locked event table blocks staff too');
+  assert.deepEqual(await edit({ tables: ['A3'] }).then((r) => [r.status, r.data.error]), [409, 'Table A3 is already taken at that time. Pick another.'], 'a locked event table blocks staff too');
   await call('POST', 'bookings', { kind: 'table', tables: ['B4'], start: at('2026-10-01', 16), end: at('2026-10-01', 17), people: 2, name: 'Mia', email: 'mia@example.com', staffOverride: true }, 'staff');
   assert.equal((await edit({ tables: ['B4'] })).status, 409, 'and so does a booking');
   assert.deepEqual(await edit({ start: at('2026-10-01', 14, 30), end: at('2026-10-01', 17, 30) }).then((r) => [r.status, r.data.error]), [422, 'Bookings start on the hour.']);

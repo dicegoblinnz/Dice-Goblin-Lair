@@ -80,7 +80,7 @@ const pub = (await proxy('GET', `floor?from=${at(TUE, 0)}&to=${at(addDays(last, 
 const pubDates = pub.filter((b) => dates1.some((x) => x.id === b.id));
 check('1: the public see the same holds, labelled Tournament, with nothing about the series',
   pubDates.length === days.length && pubDates.every((b) => b.label === 'Tournament' && !['seriesId', 'repeat', 'repeatTag', 'until'].some((k) => k in b)), pubDates[0]);
-check('1: a customer can\'t book P4 on a held Tuesday (409)', said(await proxy('POST', 'bookings', { customer: SAM, body: { kind: 'table', tables: ['P4'], start: at(days[3], 19), end: at(days[3], 21), people: 2, name: 'Sam Jones', email: 'sam@example.com', pay: 'day' } })) === '409 Table P4 is already taken then. Pick another.');
+check('1: a customer can\'t book P4 on a held Tuesday (409)', said(await proxy('POST', 'bookings', { customer: SAM, body: { kind: 'table', tables: ['P4'], start: at(days[3], 19), end: at(days[3], 21), people: 2, name: 'Sam Jones', email: 'sam@example.com', pay: 'day' } })) === '409 Table P4 is already taken at that time. Pick another.');
 
 /* 2. The messages, staff only, and a one-off as before */
 check('2: repeat must be weekly or fortnightly (422)', said(await proxy('POST', 'blocks', { customer: STAFF, body: { ...ask, repeat: 'monthly' } })) === '422 Pick how often it repeats: weekly or fortnightly. Or leave it as a one-off.');

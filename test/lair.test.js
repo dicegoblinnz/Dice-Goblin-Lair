@@ -163,7 +163,7 @@ test('an event\'s tables are soft reserves anyone can book; only an event that l
     { id: 'fnm', title: 'Friday Night Magic', start: at('2026-10-02', 18, 30), end: at('2026-10-02', 22), tables: 'T11-T20', lockTables: true },
   ]);
   const locked = await call('POST', 'bookings', tableBooking({ tables: ['T13'], start: at('2026-10-02', 18), end: at('2026-10-02', 20), email: 'b@example.com' }));
-  assert.deepEqual([locked.status, locked.data.error], [409, 'Table T13 is already taken then. Pick another.']);
+  assert.deepEqual([locked.status, locked.data.error], [409, 'Table T13 is already taken at that time. Pick another.']);
   assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['T13'], start: at('2026-10-02', 18), end: at('2026-10-02', 20), email: 'c@example.com' }), 'staff')).status, 409, 'the public page holds staff to the rules');
   const override = await call('POST', 'bookings', tableBooking({ tables: ['T13'], start: at('2026-10-02', 18), end: at('2026-10-02', 20), staffOverride: true }), 'staff');
   assert.equal(override.status, 200, 'locked tables are blocked for everyone except staff');

@@ -591,7 +591,7 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
     if (!editing && start < now + rules.leadMinutes * MIN) throw new RuleError('That time is too soon to book online. Walk in instead.');
     if (!editing && start > now + rules.horizonDays * 24 * HOUR) throw new RuleError('That date is too far ahead to book yet.');
     const win = windowAt(rules, time, start);
-    if (!win) throw new RuleError("We're closed then.");
+    if (!win) throw new RuleError("We're closed at that time.");
     if (start < win.open || end > win.close) throw new RuleError('That time is outside opening hours.');
     if (((start - win.open) / MIN) % 60 !== 0) throw new RuleError('Bookings start on the hour.');
   }
@@ -621,7 +621,7 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   }
 
   for (const id of tables) {
-    if (!isFree(state, rules, id, start, end, input.ignoreBookingId, { staff })) throw new RuleError(`Table ${id} is already taken then. Pick another.`, 409);
+    if (!isFree(state, rules, id, start, end, input.ignoreBookingId, { staff })) throw new RuleError(`Table ${id} is already taken at that time. Pick another.`, 409);
   }
 
   const name = clean(input.name, 80);
