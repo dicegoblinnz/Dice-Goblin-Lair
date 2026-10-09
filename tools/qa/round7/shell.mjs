@@ -564,7 +564,9 @@ try {
       const ids = await p.evaluate(() => {
         const cal = document.querySelector('lair-calendar');
         const now = Date.now();
-        const items = cal.all().filter((i) => i.kind === 'event' && i.start > now + 3600000);
+        // not one the demo already has them signed up for (after 4pm, today's 5pm event is too close, and the next is
+        // Saturday's D&D, where the demo has Hemi in with a friend)
+        const items = cal.all().filter((i) => i.kind === 'event' && i.start > now + 3600000 && !(cal.mineFor && cal.mineFor(i)));
         return { join: (items.find((i) => i.capacity && !i.gameTables && i.repeat) || {}).id, reserve: (items.find((i) => i.gameTables) || {}).id };
       });
       await p.goto('about:blank');
