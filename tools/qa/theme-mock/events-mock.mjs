@@ -161,6 +161,8 @@ export function lairEvents() {
     payment: field(e.payment || null),
     lock_tables: field(typeof e.lock_tables === 'boolean' ? e.lock_tables : null),
     price_note: field(e.price_note || null),
+    // days (number_integer, round 11): how many days in a row each date runs (Oddity Alley: Saturday and Sunday)
+    days: field(e.days || null),
     product: field(null),
     link: field(null),
     description: field(e.description),
