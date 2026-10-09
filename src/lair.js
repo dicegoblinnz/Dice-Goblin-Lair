@@ -31,6 +31,8 @@ import { runningTabMethods } from './tab.js';
 import { interestMethods } from './interest.js';
 // Round 9: turnouts, lists of members and early access offers for regulars (their own file, mixed in at the end)
 import { communityMethods } from './community.js';
+// Round 11, Warhammer: game tables for 1 v 1 and 2 v 2, a pair picked, the other players by member code or email
+import { GAME_PEOPLE, PLAYER_WORDS, gamePlayerMethods, spotKey, spotLabel } from './warhammer.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -546,6 +548,18 @@ export const MIGRATIONS = [
       paid_at INTEGER, ended_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS early_offer_claims_offer ON early_offer_claims (offer_id, status)',
     'CREATE INDEX IF NOT EXISTS early_offer_claims_customer ON early_offer_claims (customer_id, offer_id)',
+  ],
+  // Round 11, Warhammer (9 Oct 2026): the other players on a game table (1 v 1 or 2 v 2). A new table only: one row per
+  // named player of a booking, in order (position), role 'teammate' or 'opponent': a member (customer_id, the name and
+  // member code the Lair had for them) or an email to invite (customer_id NULL until they make their account with it).
+  // invited_at: when their email went out (once).
+  [
+    `CREATE TABLE IF NOT EXISTS booking_players (
+      id TEXT PRIMARY KEY, booking_id TEXT NOT NULL, role TEXT NOT NULL, position INTEGER NOT NULL, name TEXT, customer_id TEXT, email TEXT, code TEXT,
+      invited_at INTEGER, created_at INTEGER NOT NULL)`,
+    'CREATE INDEX IF NOT EXISTS booking_players_booking ON booking_players (booking_id)',
+    'CREATE INDEX IF NOT EXISTS booking_players_customer ON booking_players (customer_id)',
+    'CREATE INDEX IF NOT EXISTS booking_players_email ON booking_players (lower(email))',
   ],
 ];
 
@@ -1593,9 +1607,12 @@ export class Lair {
     for (const j of joinRows) if (j.status !== 'cancelled') eventJoins[j.occurrenceId] = (eventJoins[j.occurrenceId] || 0) + j.people;
     // Event dates with game spots: how many there are and how many are taken (by anyone, through any booking).
     const eventSpots = {};
+    // Round 11: each date's pairs, and whether each is free, for "Pick your tables"
+    const gameSpots = {};
     for (const o of eventOccurrences(rules, from, to)) {
       const total = parseSpots(o.gameTables, rules.rooms).length;
       if (total) eventSpots[o.id] = { total, taken: total - this.freeSpots(o, rules, st).length };
+      if (total) gameSpots[o.id] = this.spotChoices(o, rules, st, parseSpots(o.gameTables, rules.rooms));
     }
     // Round 7: waiting series invites, by series, for the games below (staff and GMs only)
     const waiting = staffView || who.customerId ? this.waitingInvites() : new Map();
@@ -1626,6 +1643,8 @@ export class Lair {
       events: [],
       eventJoins,
       eventSpots,
+      // Round 11: { [occurrenceId]: [{ id: 'T8+T9', label: 'T8 + T9', tables, free }] }
+      gameSpots,
       // Round 9, play: "Maybe" and "I'm coming" (events with no sign-ups) per event date, as counts; staff get the names
       eventInterest: interest.events,
       ...(staffView ? { interests: interest.rows.filter((r) => r.kind === 'event').map((r) => this.staffInterest(r)) } : {}),
@@ -1832,6 +1851,8 @@ export class Lair {
       };
     } else {
       const extras = { wargame: 'Wargame (double tables)', bigbox: 'Big box game (double tables)', celebrating: 'Celebrating something' };
+      // Round 11: a game with named players says who's playing and that each pays their own share
+      const played = event ? this.gameEmailParts(booking) : null;
       subject = `${event ? `Game spot booked: ${event.title}` : "You're booked"}: ${when} (${booking.ref})`;
       content = {
         title: lockedIn ? "You're locked in!" : event ? 'Your game spot is booked!' : "You're booked in!",
@@ -1839,11 +1860,13 @@ export class Lair {
           ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Gobgob has saved your tables.`
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
-          ['When', when], ['Where', tables], ['People', String(booking.people)],
-          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', fee], ['Your code', booking.ref],
+          ['When', when], ['Where', tables], ['People', String(booking.people)], ...(played ? played.details : []),
+          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee], ['Your code', booking.ref],
         ],
-        outro: [pay, ...(booking.split ? [SPLIT] : []), changes || 'Plans changed? Cancel in My Lair or give us a call, so someone else can have the table.'],
+        outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), changes || 'Plans changed? Cancel in My Lair or give us a call, so someone else can have the table.'],
       };
+      // Round 11: and every other player with an email hears about it, once
+      if (played) this.tellGamePlayers(booking, rules);
     }
     this.later(this.mail(this.letter(booking.email, subject, { ...content, button: { label: 'See it in My Lair', url: this.page('myLair') } })));
     return true;
@@ -3863,6 +3886,9 @@ export class Lair {
       const join = booking ? null : this.joinById(id);
       if (booking) return this.checkInBooking(booking, rules, now, options);
       if (join) return this.checkInJoin(join, rules, now, options);
+      // Round 11: a named player's row in a game (the POS's rows for them): the game checks in, their share is due
+      const played = !join && id.startsWith('bp_') ? this.checkInPlayer(id, rules, now, options) : null;
+      if (played) return played;
       throw new RuleError('That booking could not be found. Refresh the list and try again.', 404);
     }
     const found = this.findCode(input.code);
@@ -3979,6 +4005,8 @@ export class Lair {
     return {
       ...b, pass: this.savedPass(b, memo), covered: b.covered || 0, due: dueOf(b), refund: b.refund || null, paidAmount: b.paidAmount || 0,
       split: Boolean(b.split), payments: payments || this.paymentsOf('booking', b.id), owed: this.isOwed(b), waived: Boolean(b.waived),
+      // Round 11: a game's players (names, emails and member codes)
+      ...this.staffGamePlayers(b),
     };
   }
 
@@ -4023,6 +4051,8 @@ export class Lair {
       customerId: b.customerId || null, pass: this.savedPass(b, memo), refund: b.refund || null, note: b.notes || '',
       title: this.rowTitle(b, rules, g), players: b.party || [], gameId: b.gameId || null, occurrenceId: b.occurrenceId || null,
       seriesId: b.seriesId || null, owed: this.isOwed(b, now), waived: Boolean(b.waived),
+      // Round 11: a game's players, for staff and the POS
+      ...this.staffGamePlayers(b),
     };
   }
 
@@ -4081,7 +4111,8 @@ export class Lair {
   memberDay(customerId, rules, now) {
     const { member, bookings, joins } = this.memberToday(customerId, rules, now);
     const memo = new Map();
-    const today = [...bookings.filter((b) => !this.isOwed(b, now)).map((b) => this.bookingRow(b, rules, { memo, now })), ...joins.map((j) => this.joinRow(j))]
+    // Round 11: and today's games they're a named player in, each with their own share to pay (playerRow)
+    const today = [...bookings.filter((b) => !this.isOwed(b, now)).map((b) => this.bookingRow(b, rules, { memo, now })), ...joins.map((j) => this.joinRow(j)), ...this.playerRowsToday(customerId, rules, now)]
       .sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
     return { member, bookings, joins, today, owed: this.owedRows(customerId, rules, now, memo) };
   }
@@ -4097,22 +4128,28 @@ export class Lair {
     // Round 8 (the staff page): today's sign-ups someone else put them on, as rows with guestOf (who signed them up).
     // What's due on one is the signer's, so it isn't in their total; checking it in checks in everyone on it.
     const guestOf = withGuests ? this.guestSignUps(customerId, rules, now).filter((j) => !joins.some((x) => x.id === j.id)) : [];
-    if (!member && !bookings.length && !joins.length && !guestOf.length) throw new RuleError('No booking, member or pass with that code.', 404);
+    // Round 11 (the staff page): today's games they're a named player in, as rows that act on the game (the booking's
+    // id), with playerOf and their own share as what's due
+    const playing = withGuests ? this.playerRowsToday(customerId, rules, now, { bookingIds: true }) : [];
+    if (!member && !bookings.length && !joins.length && !guestOf.length && !playing.length) throw new RuleError('No booking, member or pass with that code.', 404);
     const memo = new Map();
     const rows = [...bookings.map((b) => this.bookingRow(b, rules, { memo })), ...joins.map((j) => this.joinRow(j))].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
-    const along = guestOf.map((j) => ({ ...this.joinRow(j), guestOf: { name: this.firstNameOf(j.name) } }));
+    const along = [...guestOf.map((j) => ({ ...this.joinRow(j), guestOf: { name: this.firstNameOf(j.name) } })), ...playing];
     const today = new Set(rows.map((x) => x.id));
     // The staff page's rows, without the POS's cart line
     const owed = withOwed ? this.owedRows(customerId, rules, now, memo).filter((x) => !today.has(x.id)).map(({ line, ...x }) => x) : [];
     const name = member?.name || member?.first_name || bookings[0]?.name || joins[0]?.name || member?.code || 'This member';
-    const due = [...rows, ...owed].reduce((sum, x) => sum + x.due, 0);
+    // Round 11: a game they're a named player in is theirs to pay their share of, so it's in their total
+    const due = [...rows, ...owed, ...playing].reduce((sum, x) => sum + x.due, 0);
     const owedDue = owed.reduce((sum, x) => sum + x.due, 0);
     const here = (x) => Boolean(x.arrivedAt) || ['seated', 'done', 'attended'].includes(x.status);
     const list = rows.map((x) => `${x.ref}: ${x.title} at ${this.clock(x.start, rules)}${here(x) ? ', checked in' : ''}${x.due ? `, charge ${dollars(x.due)}` : ''}`).join('; ');
     let said = rows.length ? `${name} has ${plural(rows.length, 'booking', 'bookings')} today. ${list}.` : `${name} has nothing booked today.`;
     if (along.length) {
       if (!rows.length) said = `${name} has no booking of their own today.`;
-      said += ` ${along.map((x) => `${x.guestOf.name} signed them up for ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''})`).join('; ')}.`;
+      said += ` ${along.map((x) => (x.playerOf
+        ? `${x.playerOf.name} booked them into a game at ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''}${x.due ? `, their share ${dollars(x.due)}` : ''})`
+        : `${x.guestOf.name} signed them up for ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''})`)).join('; ')}.`;
     }
     return {
       found: true, kind: 'member', type: 'member', checkedIn: false, customer: { id: String(customerId) },
@@ -4308,6 +4345,8 @@ export class Lair {
       }
     }
     for (const j of joins) take(this.checkInJoin(j, rules, now, { sameDay: true }));
+    // Round 11: the games they're a named player in today: checked in, with their own share to pay
+    for (const { player } of this.playerGamesToday(customerId, rules, now)) take(this.checkInPlayer(player.id, rules, now, { by, sameDay: true }));
     rows.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
     const lines = [...rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r, rules)), ...owed.map((r) => r.line)];
     return { rows: [...rows, ...owed], lines, customer: { id: customerId }, notices };
@@ -4324,10 +4363,12 @@ export class Lair {
     if (row.owed) title = `Owed: ${row.title} (${this.shortDay(row.start, rules)})`;
     else if (row.type === 'join') title = `Event entry: ${row.title} (${row.ref})`;
     else if (row.kind === 'gm-seat') title = `GM seat: ${row.title} (${row.ref})`;
+    // Round 11: a named player pays their own share of a game
+    else if (row.playerOf) title = `Game spot share: ${row.title} (${row.ref}, ${row.name})`;
     else if (row.occurrenceId) title = `Game spot: ${row.title} (${row.ref})`;
     else title = `Table fee: ${row.ref} (${row.tables.join(', ')}, ${plural(row.people, 'person', 'people')})`;
     if (row.covered > 0 && !row.owed) title += ` (pass covered ${money(row.covered)})`;
-    return { title: title.slice(0, 120), price: (row.due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: row.ref } };
+    return { title: title.slice(0, 120), price: (row.due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: row.ref, ...(row.playerOf ? { _share: '1' } : {}) } };
   }
 
   /** "Thu 1 Oct", in Lair time */
@@ -4608,6 +4649,9 @@ export class Lair {
    * (its game_tables, like T14+T15) as a normal table booking for the event's time: a wargame setup, linked to the
    * date. It costs the event's entry fee a person when it has one, otherwise the table fee, paid the way the event
    * says (paymentPlan). The same tables stay bookable through the booking page. Returns { booking, spotsLeft, checkoutUrl? }.
+   * Round 11 (src/warhammer.js): spot (the pair picked, like "T8+T9"; left out, the first free one), people 2 (1 v 1) or
+   * 4 (2 v 2) (an older page's 1 still works), and players: the others, each a member code or an email. With players,
+   * each one pays their own share at the counter (split), and every other player with an email hears about the game.
    */
   async reserveSpot(occurrenceId, input, who, client = '') {
     const rules = await this.rules();
@@ -4619,7 +4663,8 @@ export class Lair {
     const spots = parseSpots(occurrence.gameTables, rules.rooms);
     if (!spots.length) throw new RuleError("This event doesn't have game tables to book.", 422);
     const people = Math.floor(Number(input.people));
-    if (!(people >= 1 && people <= 2)) throw new RuleError('A game table is for 1 or 2 people.');
+    // Round 11: 1 v 1 (2 players) or 2 v 2 (4 players); a pair of tables seats 8, so 4 always fits
+    if (!GAME_PEOPLE.includes(people)) throw new RuleError(PLAYER_WORDS.size);
     const name = trimmed(input.name, 80);
     const email = trimmed(input.email, 120);
     if (!name) throw new RuleError('Add a name for the booking.');
@@ -4628,8 +4673,14 @@ export class Lair {
     const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
     if (!who.staff) this.checkEmailLimit(email, now);
-    const free = this.freeSpots(occurrence, rules, this.state(occurrence.start - 1, occurrence.end + 1));
-    if (!free.length) throw new RuleError('All the game tables are taken for this one. Try another date.', 409);
+    // Round 11: the pair they picked, and the other players (after the rate limit, so trying member codes counts towards it)
+    const wanted = this.pickedSpot(spots, input.spot);
+    const players = this.gamePlayersFrom(input.players, people, { who, email });
+    const open = this.freeSpots(occurrence, rules, this.state(occurrence.start - 1, occurrence.end + 1));
+    if (!open.length) throw new RuleError('All the game tables are taken for this one. Try another date.', 409);
+    if (wanted && !open.some((s) => spotKey(s) === spotKey(wanted))) throw new RuleError(PLAYER_WORDS.taken(spotLabel(wanted)), 409);
+    // The pair picked goes first, so the rest reads as before
+    const free = wanted ? [wanted, ...open.filter((s) => spotKey(s) !== spotKey(wanted))] : open;
     const { room } = oneRoom(free[0], rules);
     const unit = occurrence.entryFee || room.price;
     const plan = this.paymentPlan(unit > 0 ? occurrence.payment : 'store', input.pay);
@@ -4644,12 +4695,18 @@ export class Lair {
       name, email, phone, notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: unit * people,
       occurrenceId: occurrence.id, pay: payNow ? 'now' : 'day', paid: false, status: payNow ? 'held' : 'confirmed',
       holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null, passId: pass?.id || null,
+      // Round 11: with named players, each pays their own share at the counter
+      split: players.length > 0,
     };
     this.saveBooking(booking, now);
+    // Round 11: the other players (their emails go with the confirmation: confirm)
+    this.saveGamePlayers(booking, players, now);
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // --- saved: the spot is ours ---
     const result = await this.payOrConfirm(booking, rules, { ...plan, title: `Game spot at ${occurrence.title} (${free[0].join(', ')})` });
-    return { ...result, spotsLeft: free.length - 1 };
+    // Round 11: the booker's answer lists the players (with the emails they typed)
+    const saved = this.booking(booking.id);
+    return { ...result, ...(result.booking && saved ? { booking: this.withGamePlayers(result.booking, saved) } : {}), spotsLeft: free.length - 1 };
   }
 
   /** An event date's game spots that are free for its whole time (the event's own table hold doesn't count against them) */
@@ -8380,10 +8437,13 @@ export class Lair {
       .map((r) => withLink(this.rowToJoin(r), r));
     // Round 8: and the sign-ups they're a guest on (someone else signed them up), in among their own, soonest first
     const joinList = [...joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })), ...this.guestJoins(who.customerId, since, memberRow)].sort((a, b) => a.start - b.start);
+    // Round 11: the games they're a named player in (someone else booked them), in among their own bookings, soonest first
+    const playing = this.playerBookings(who.customerId, since, memberRow, rules);
     return {
       customer: { id: who.customerId, staff: who.staff, gm: who.gm },
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
-      bookings: own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map(view),
+      // Round 11: their own game tables list their players (gamePlayers, gameSize)
+      bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start),
       seats: own.filter((b) => b.kind === 'gm-seat').map((b) => {
         const g = seatGames.get(b.gameId);
         return {
@@ -8507,7 +8567,9 @@ export class Lair {
     if (joins) this.write('UPDATE event_joins SET customer_id = ?, updated_at = ? WHERE customer_id IS NULL AND lower(email) = lower(?) AND ends_at > ?', id, now, email, since);
     // Round 9, play: and their "I'm interested" and "Maybe"
     this.adoptInterests(id, email, now);
-    return bookings + joins + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now);
+    // Round 11: and the games they were named in by email
+    const played = this.adoptGamePlayers(id, email, now);
+    return bookings + joins + played + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now);
   }
 
   /**
@@ -8701,3 +8763,5 @@ Object.assign(Lair.prototype, runningTabMethods);
 Object.assign(Lair.prototype, interestMethods);
 // Round 9: turnouts, lists and early access offers (src/community.js)
 Object.assign(Lair.prototype, communityMethods);
+// Round 11, Warhammer: game tables' players (src/warhammer.js)
+Object.assign(Lair.prototype, gamePlayerMethods);
