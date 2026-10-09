@@ -367,3 +367,27 @@ test('warhammer (round 11): at the POS, an opponent\'s code finds the game with 
   const sam = await internal('pos/scan', { code: codes[SAM] });
   assert.deepEqual(sam.data.rows.map((r) => [r.ref, r.due, r.split, Boolean(r.playerOf)]), [[ref, 3000, true, false]]);
 });
+
+/* ---------------- loyalty stamps ---------------- */
+
+test('warhammer (round 11): once the game is checked in, each named member gets their own stamp; the booker gets theirs and the invite\'s', async () => {
+  const codes = await members();
+  const stamps = async (who) => {
+    const L = (await me(who)).loyalty;
+    return L.cards * 10 + L.stamps;
+  };
+  const res = await reserve({ people: 4, players: [{ code: codes[TAMA] }, { code: codes[KIRI] }, { email: 'jo@example.com' }] });
+  const before = { sam: await stamps(SAM), kiri: await stamps(KIRI), tama: await stamps(TAMA) };
+  await staffCheckin({ id: res.data.booking.id, type: 'booking' });
+  assert.deepEqual({ sam: await stamps(SAM), kiri: await stamps(KIRI), tama: await stamps(TAMA) }, { sam: before.sam + 2, kiri: before.kiri + 1, tama: before.tama + 1 });
+  assert.deepEqual((await me(KIRI)).loyalty.recent.map((s) => [s.title, s.people]), [['Warhammer night', 1]]);
+  assert.deepEqual((await me(SAM)).loyalty.recent.map((s) => [s.title, s.people]), [['Warhammer night', 2]]);
+  // an older game with no named players: the booker's card counts everyone, as before
+  const old = await reserve({ name: 'Ruby Hart', email: 'ruby@example.com', people: 2 }, RUBY);
+  const ruby = await stamps(RUBY);
+  await staffCheckin({ id: old.data.booking.id, type: 'booking' });
+  assert.equal(await stamps(RUBY), ruby + 2);
+  // undoing the check-in takes them back
+  await call('POST', `bookings/${res.data.booking.id}/update`, { status: 'confirmed' }, 'staff');
+  assert.deepEqual({ sam: await stamps(SAM), kiri: await stamps(KIRI), tama: await stamps(TAMA) }, before);
+});

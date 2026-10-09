@@ -5439,15 +5439,22 @@ export class Lair {
    * because nothing is stored: it's counted here every time. A GM's own table isn't one. Round 8: a guest with an
    * account on someone's sign-up gets their own stamp (one person, on their card), so the sign-up's own card counts its
    * people less its guests with an account. One who signed up is never their own guest too (a guest row with the sign-up's
-   * own account, from before it joined their account, counts once). No awaits.
+   * own account, from before it joined their account, counts once). Round 11: the same for a game table's named players:
+   * each with an account gets their own stamp once the game is checked in, and the booker's card counts its people less
+   * them. No awaits.
    */
   stampedSessions(customerId, limit = -1) {
     return this.sql
       .exec(
-        `SELECT b.id AS id, b.kind AS kind, b.starts_at AS at, b.people AS people, b.tables AS tables, b.occurrence_id AS occurrence_id,
-             g.title AS game_title, NULL AS join_title
+        `SELECT b.id AS id, b.kind AS kind, b.starts_at AS at,
+             MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL AND p.customer_id != b.customer_id), 0) AS people,
+             b.tables AS tables, b.occurrence_id AS occurrence_id, g.title AS game_title, NULL AS join_title
            FROM bookings b LEFT JOIN games g ON g.id = b.game_id
           WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.status IN ('seated', 'done') AND b.starts_at >= ?
+         UNION ALL
+         SELECT b.id, b.kind, b.starts_at, 1, b.tables, b.occurrence_id, NULL, NULL
+           FROM booking_players p JOIN bookings b ON b.id = p.booking_id
+          WHERE p.customer_id = ? AND b.status IN ('seated', 'done') AND b.starts_at >= ? AND (b.customer_id IS NULL OR b.customer_id != p.customer_id)
          UNION ALL
          SELECT j.id, 'join', j.starts_at, MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0),
              '[]', j.occurrence_id, NULL, j.title
@@ -5457,7 +5464,7 @@ export class Lair {
            FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
           WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
          ORDER BY at DESC, id DESC LIMIT ?`,
-        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, limit,
+        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, limit,
       )
       .toArray();
   }
@@ -5467,14 +5474,18 @@ export class Lair {
     return this.sql
       .exec(
         `SELECT COALESCE(SUM(people), 0) AS n FROM (
-           SELECT people FROM bookings WHERE customer_id = ? AND kind IN ('table', 'walkin', 'gm-seat') AND status IN ('seated', 'done') AND starts_at >= ?
+           SELECT MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL AND p.customer_id != b.customer_id), 0) AS people
+             FROM bookings b WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.status IN ('seated', 'done') AND b.starts_at >= ?
+           UNION ALL
+           SELECT 1 FROM booking_players p JOIN bookings b ON b.id = p.booking_id
+            WHERE p.customer_id = ? AND b.status IN ('seated', 'done') AND b.starts_at >= ? AND (b.customer_id IS NULL OR b.customer_id != p.customer_id)
            UNION ALL
            SELECT MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0)
              FROM event_joins j WHERE j.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ?
            UNION ALL
            SELECT 1 FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
             WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id))`,
-        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
+        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
       )
       .one().n;
   }
