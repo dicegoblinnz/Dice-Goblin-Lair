@@ -9,7 +9,7 @@ import {
   checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings,
   SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
-  CARD_SIZE, financialYear, financialYearFrom, holdUntil, lairTime, libraryPlan, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
+  CARD_SIZE, financialYear, financialYearFrom, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -551,20 +551,27 @@ export const MIGRATIONS = [
   ],
   // Round 10, library memberships (9 Oct 2026). Only new tables, so the live rows stay as they are:
   //  - memberships: one row per Shopify subscription contract (id: the contract's number). status 'active', 'past_due'
-  //    (a renewal failed and another try is set), 'cancelling' (runs to cancel_at, the end of the paid month), 'ending'
-  //    (to be ended in Shopify), 'paused' (paused in Shopify) or 'ended'. tier: the plan they can borrow on now;
-  //    billing_tier: the plan the next bill charges (a change takes effect when that bill is paid). next_cycle and
-  //    next_bill_at: the Shopify billing cycle to bill next and when. card: the card's brand, last digits and expiry.
+  //    (a renewal failed, or waits on a bank check; borrowing is paused), 'cancelling' (runs to cancel_at, the end of the
+  //    paid month), 'ending' (couldn't be paid: to be ended in Shopify), 'paused' (paused in Shopify; paused_from is
+  //    what it goes back to) or 'ended'. tier: the plan they can borrow on now; billing_tier: the plan the next bill
+  //    charges (a change takes effect when that bill is paid). next_cycle and next_bill_at: the Shopify billing cycle to
+  //    bill next and when (dates_missing_at: since when Shopify hasn't said). hold_until: no billing before then (Shopify
+  //    refused a bill, or a payment failed on the store's side). edited_cycle: a cycle the Lair may have left damage
+  //    charges on. card: the card's brand, last digits and expiry.
   //  - membership_charges: each try at billing a cycle ('renewal', or 'fees': damage charges billed on their own),
-  //    claimed before Shopify is asked, with its idempotency key (unique), Shopify's billing attempt, and how it went.
+  //    claimed before Shopify is asked, with its idempotency key (unique), whether its cycle has exactly its damage
+  //    charges yet (edit_state), when it was first sent, Shopify's billing attempt, and how it went ('void': Shopify
+  //    never got it, and why).
   //  - damage_charges: missing parts, damage or a lost game: 'notice' (emailed, 7 days to sort it), 'due', 'billing' (on
-  //    a bill being paid), 'paid', 'waived', 'disputed' or 'unpaid' (staff sort it at the counter).
+  //    a bill being paid), 'paid', 'waived', 'disputed' (waits while it's sorted out) or 'unpaid' (staff sort it at the
+  //    counter).
   //  - membership_events: Lair Memberships webhooks already handled (Shopify can send one twice), kept a week.
   [
     `CREATE TABLE IF NOT EXISTS memberships (
       id TEXT PRIMARY KEY, contract_gid TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, status TEXT NOT NULL, shopify_status TEXT, tier TEXT NOT NULL,
       billing_tier TEXT NOT NULL, line_id TEXT, variant_id TEXT, selling_plan_id TEXT, price INTEGER, currency TEXT, payment_method_id TEXT, card TEXT,
       next_cycle INTEGER, next_bill_at INTEGER, paid_through INTEGER, retry_at INTEGER, failed_at INTEGER, fail_count INTEGER NOT NULL DEFAULT 0,
+      hold_until INTEGER, edited_cycle INTEGER, paused_from TEXT, dates_checked_at INTEGER, dates_missing_at INTEGER,
       cancel_at INTEGER, cancel_requested_at INTEGER, cancel_by TEXT, plan_changed_at INTEGER, card_email_at INTEGER, ended_at INTEGER, end_reason TEXT,
       origin_order_id TEXT, revision_id TEXT, source TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS memberships_customer ON memberships (customer_id, status)',
@@ -572,7 +579,8 @@ export const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS memberships_payment_method ON memberships (payment_method_id)',
     `CREATE TABLE IF NOT EXISTS membership_charges (
       id TEXT PRIMARY KEY, membership_id TEXT NOT NULL, cycle INTEGER NOT NULL, attempt INTEGER NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
-      attempt_gid TEXT, kind TEXT NOT NULL, status TEXT NOT NULL, amount INTEGER NOT NULL, fees TEXT NOT NULL DEFAULT '[]', tier TEXT, error_code TEXT,
+      attempt_gid TEXT, kind TEXT NOT NULL, status TEXT NOT NULL, amount INTEGER NOT NULL, fees TEXT NOT NULL DEFAULT '[]', tier TEXT,
+      edit_state TEXT NOT NULL DEFAULT 'needed', sent_at INTEGER, void_reason TEXT, error_code TEXT,
       error_message TEXT, order_id TEXT, next_action_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER, completed_at INTEGER)`,
     'CREATE UNIQUE INDEX IF NOT EXISTS membership_charges_try ON membership_charges (membership_id, cycle, attempt)',
     'CREATE INDEX IF NOT EXISTS membership_charges_status ON membership_charges (status, updated_at)',
@@ -7302,7 +7310,7 @@ export class Lair {
     const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
     const notices = [];
     if (!plan) notices.push(`${name === 'They' ? 'They aren\'t' : `${name} isn't`} on a library plan.`);
-    else if (plan.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment didn't go through.`);
+    else if (plan.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
     else if (used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
     if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
     return { loan: this.staffLoanView(loan, now), notice: notices.length ? notices.join(' ') : null };
