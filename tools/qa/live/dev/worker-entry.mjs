@@ -20,4 +20,14 @@ globalThis.fetch = async (input, init) => {
 };
 
 export { Lair };
-export default worker;
+// Round 11: POST /__dev/reminders { at } runs the day-before reminders at a fixed time through the Lair's internal route
+// (the cron's maintenance runs them at the real time), so a live check can be "the day before" without moving the clock
+async function devFetch(request, env, ctx) {
+  const url = new URL(request.url);
+  if (url.pathname === '/__dev/reminders' && request.method === 'POST') {
+    const lair = env.LAIR.get(env.LAIR.idFromName('dice-goblin'));
+    return lair.fetch(new Request(`${url.origin}/internal/reminders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: await request.text() }));
+  }
+  return worker.fetch(request, env, ctx);
+}
+export default { ...worker, fetch: devFetch };
