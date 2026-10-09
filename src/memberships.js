@@ -218,6 +218,8 @@ export const MEMBERSHIP_MESSAGES = {
   noWayNow: (name) => `There's no way to take it from ${name} now: not enough store credit and no card to charge. Collect it at the counter.`,
   settleNone: "That charge isn't waiting on a store credit check.",
   settleSay: 'Say whether the store credit came off: taken true or false.',
+  settleWait: 'The Lair is still checking with Shopify. Try again in a few minutes.',
+  cardFlagged: (name) => `${name}'s bank flagged their card, so it can't be charged until they update it. Use store credit, or collect it at the counter.`,
 };
 
 /* ---------- pure helpers (exported for the tests) ---------- */
@@ -1176,7 +1178,19 @@ export const membershipMethods = {
     const name = row ? this.memberName(row.customer_id) : 'a member';
     for (const id of parse(charge.fees, [])) {
       const f = this.feeRow(id);
-      if (!f || f.status === 'paid') continue;
+      if (!f) continue;
+      if (f.status === 'paid') {
+        // paid another way after this bill had stopped being waited on (taken now, or at the counter): paid twice
+        if (f.charge_id !== charge.id) {
+          const how = { credit: 'from their store credit', card: 'on their card', counter: 'at the counter' }[f.paid_via] || 'another way';
+          this.staffAlert(`fee-twice:${f.id}`, `A damage charge was paid twice: ${name}`, {
+            title: 'Paid twice',
+            intro: `${name}'s ${money(f.amount)} charge for ${f.title} was paid already (${how}), and it was also on a library bill that has now been paid late. Refund ${money(f.amount)} of that order in Shopify, or give it back as store credit.`,
+            details: [['Game', f.title], ['Charge', money(f.amount)], ['Order', outcome.orderId || '']],
+          }, now);
+        }
+        continue;
+      }
       if (f.status === 'waived') {
         this.staffAlert(`waived-paid:${f.id}`, `A waived damage charge was paid: ${name}`, {
           title: 'A waived charge was paid',
@@ -1434,10 +1448,18 @@ export const membershipMethods = {
   async membershipMaintenance(rules, now = Date.now(), { webhookUrl = null, force = false } = {}) {
     const admin = this.membershipsAdmin();
     const out = { configured: admin.configured, billing: this.membershipBillingOn() ? 'on' : 'off' };
-    if (!admin.configured) return out;
     if (this.membershipRunUntil && this.membershipRunUntil > Date.now()) return { ...out, busy: true };
     this.membershipRunUntil = Date.now() + RUN_LOCK;
     try {
+      // Damage charges taken now are followed up on their own, so nothing there can stop the rest (and store credit
+      // only needs the Lair's own app, so it's followed up even without Lair Memberships)
+      try {
+        out.paidNow = await this.reconcileDamagePayments(rules, Date.now(), { cards: admin.configured });
+      } catch (error) {
+        console.error('Lair: following up damage charges taken now failed', error);
+        out.paidNowError = String(error.message || error).slice(0, 300);
+      }
+      if (!admin.configured) return out;
       try {
         out.webhooks = await this.ensureMembershipWebhooks(webhookUrl, { force });
       } catch (error) {
@@ -1445,7 +1467,6 @@ export const membershipMethods = {
       }
       try {
         out.checked = await this.reconcileCharges(rules, Date.now());
-        out.paidNow = await this.reconcileDamagePayments(rules, Date.now());
         out.fees = this.feesFallDue(Date.now());
         out.renewals = await this.fillRenewalDates(Date.now());
         if (this.membershipBillingOn()) {
@@ -2380,8 +2401,9 @@ export const membershipMethods = {
       }
     }
     const nowWords = method ? { method, card: method === 'card' ? this.savedCardFor(fee.customer_id)?.card || null : null } : null;
-    const emailed = this.tellDamage(fee, member, m, rules, { now: nowWords });
-    if (emailed) this.write('UPDATE damage_charges SET emailed_at = ? WHERE id = ?', now, id);
+    // The notice, waited for: it only counts as emailed once the email service has it, and only then is it taken now
+    const emailed = await this.sendDamageNotice(id, m, rules, { now: nowWords });
+    // --- no awaits from here on (until it's charged now) ---
     let paidNow = null;
     if (chargeNow && method && emailed) {
       try {
@@ -2426,7 +2448,8 @@ export const membershipMethods = {
    * POST /library/damage/:id/update (staff, money): { action, amount?, note? }.
    * - waive: nothing to pay (the member hears).
    * - hold: it waits, off any bill, while staff sort it out (as a dispute does).
-   * - reinstate: back on (due again if its notice has run out, or to collect at the counter with no membership to bill).
+   * - reinstate: back on (due again if its notice has run out, or to collect at the counter with no membership to bill);
+   *   a waived one was told it was cancelled, so it gets a new notice and 7 days again.
    * - counter: paid at the counter.
    * - amount: a new amount; the member gets a new notice and 7 days again (it can't be charged now until that notice
    *   has gone).
@@ -2444,9 +2467,15 @@ export const membershipMethods = {
     const note = trimmed(input?.note, 300) || null;
     if (!['waive', 'hold', 'reinstate', 'counter', 'amount'].includes(action)) throw new RuleError(MEMBERSHIP_MESSAGES.feeAction);
     if (['billing', 'charging'].includes(f.status)) throw new RuleError(MEMBERSHIP_MESSAGES.feeLocked, 409);
+    // a notice to send after this (a new amount, or back on after it was waived): { was } or { again }
+    let notice = null;
     if (action === 'waive') {
       if (!['notice', 'due', 'disputed', 'unpaid'].includes(f.status)) throw new RuleError(MEMBERSHIP_MESSAGES.feeChange, 409);
-      this.write("UPDATE damage_charges SET status = 'waived', charge_id = NULL, resolved_at = ?, resolved_by = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?", now, by, note, now, f.id);
+      // (they're told there's nothing to pay, so its notice no longer counts: put back on, it gets a new one)
+      this.write(
+        "UPDATE damage_charges SET status = 'waived', charge_id = NULL, emailed_at = NULL, resolved_at = ?, resolved_by = ?, note = COALESCE(?, note), updated_at = ? WHERE id = ?",
+        now, by, note, now, f.id,
+      );
       this.tellWaived(this.feeRow(f.id), rules);
     } else if (action === 'hold') {
       if (!['notice', 'due'].includes(f.status)) throw new RuleError(MEMBERSHIP_MESSAGES.feeChange, 409);
@@ -2456,8 +2485,17 @@ export const membershipMethods = {
       this.write("UPDATE damage_charges SET status = 'paid', paid_via = 'counter', resolved_at = ?, resolved_by = ?, note = ?, updated_at = ? WHERE id = ?", now, by, note || 'Paid at the counter', now, f.id);
     } else if (action === 'reinstate') {
       if (!['waived', 'disputed', 'unpaid'].includes(f.status)) throw new RuleError(MEMBERSHIP_MESSAGES.feeChange, 409);
-      const next = f.due_at > now ? 'notice' : this.billable(this.membershipRow(f.membership_id)) ? 'due' : 'unpaid';
-      this.write('UPDATE damage_charges SET status = ?, resolved_at = NULL, resolved_by = NULL, note = COALESCE(?, note), updated_at = ? WHERE id = ?', next, note, now, f.id);
+      if (f.status === 'waived') {
+        // They were told it was cancelled, so it's a new notice, with 7 days again
+        this.write(
+          "UPDATE damage_charges SET status = 'notice', due_at = ?, emailed_at = NULL, resolved_at = NULL, resolved_by = NULL, note = COALESCE(?, note), updated_at = ? WHERE id = ?",
+          now + FEE_NOTICE_DAYS * DAY, note, now, f.id,
+        );
+        notice = { again: true };
+      } else {
+        const next = f.due_at > now ? 'notice' : this.billable(this.membershipRow(f.membership_id)) ? 'due' : 'unpaid';
+        this.write('UPDATE damage_charges SET status = ?, resolved_at = NULL, resolved_by = NULL, note = COALESCE(?, note), updated_at = ? WHERE id = ?', next, note, now, f.id);
+      }
     } else {
       const amount = Number(input?.amount);
       if (!Number.isInteger(amount) || amount < FEE_MIN || amount > FEE_MAX) throw new RuleError(MEMBERSHIP_MESSAGES.feeAmount);
@@ -2469,12 +2507,11 @@ export const membershipMethods = {
           "UPDATE damage_charges SET amount = ?, status = 'notice', due_at = ?, dispute_note = NULL, emailed_at = NULL, note = COALESCE(?, note), updated_at = ? WHERE id = ?",
           amount, now + FEE_NOTICE_DAYS * DAY, note, now, f.id,
         );
-        const changed = this.feeRow(f.id);
-        if (this.tellDamage(changed, this.memberRow(f.customer_id), this.membershipRow(f.membership_id), rules, { was: f.amount })) {
-          this.write('UPDATE damage_charges SET emailed_at = ? WHERE id = ?', now, f.id);
-        }
+        notice = { was: f.amount };
       }
     }
+    // the new notice, waited for (it only counts as emailed once the email service has it)
+    if (notice) await this.sendDamageNotice(f.id, this.membershipRow(f.membership_id), rules, notice);
     return { charge: this.feeView(this.feeRow(f.id)) };
   },
 
@@ -2567,10 +2604,22 @@ export const membershipMethods = {
     if (!f.emailed_at) throw new RuleError(MEMBERSHIP_MESSAGES.feeNotEmailed, 409);
   },
 
-  /** Why the member's card can't be charged now, or null when it can. No awaits. */
+  /**
+   * Why the member's card can't be charged now, or null when it can. A card their bank flagged as fraud isn't tried
+   * again until it's updated (as with renewals). No awaits.
+   */
   savedCardProblem(customerId) {
     if (!this.membershipBillingOn()) return MEMBERSHIP_MESSAGES.cardsOff;
-    if (!this.savedCardFor(customerId)) return MEMBERSHIP_MESSAGES.noCardSaved(this.memberName(customerId));
+    const card = this.savedCardFor(customerId);
+    if (!card) return MEMBERSHIP_MESSAGES.noCardSaved(this.memberName(customerId));
+    const m = this.membershipRow(card.membershipId);
+    const lastBill = this.sql.exec("SELECT error_code FROM membership_charges WHERE membership_id = ? AND status = 'failed' ORDER BY created_at DESC LIMIT 1", m.id).toArray()[0];
+    const lastNow = this.sql.exec(
+      "SELECT error_code, payment_method_id FROM damage_payments WHERE customer_id = ? AND method = 'card' AND status IN ('failed', 'paid') ORDER BY created_at DESC LIMIT 1", String(customerId),
+    ).toArray()[0];
+    const flagged = (m.status === 'past_due' && m.retry_at == null && /FRAUD/.test(lastBill?.error_code || ''))
+      || (lastNow && /FRAUD/.test(lastNow.error_code || '') && lastNow.payment_method_id === card.paymentMethodId);
+    if (flagged) return MEMBERSHIP_MESSAGES.cardFlagged(this.memberName(customerId));
     if (!this.membershipsAdmin().configured) return MEMBERSHIP_MESSAGES.membershipsOff;
     if (!this.feeVariantId()) return MEMBERSHIP_MESSAGES.noFeeProduct;
     return null;
@@ -2674,7 +2723,11 @@ export const membershipMethods = {
         : `Shopify wouldn't take the store credit (${String(error.message || error.code).slice(0, 160)}). Nothing came off.`, 409);
     }
     // --- no awaits from here on ---
-    this.damagePaymentPaid(this.damagePaymentRow(p.id), { transactionId: done.id, balanceAfter: done.balanceAfter }, rules);
+    const fresh = this.damagePaymentRow(p.id);
+    if (fresh.status === 'paid') {
+      // (an answer slow enough for the next run to have found it in the account already: just its transaction)
+      this.write('UPDATE damage_payments SET transaction_id = COALESCE(transaction_id, ?), balance_after = COALESCE(balance_after, ?) WHERE id = ?', done.id || null, done.balanceAfter ?? null, p.id);
+    } else this.damagePaymentPaid(fresh, { transactionId: done.id, balanceAfter: done.balanceAfter }, rules);
     return { payment: this.damagePaymentRow(p.id), message: `Paid: ${money(f.amount)} came off ${name}'s store credit.` };
   },
 
@@ -2708,7 +2761,7 @@ export const membershipMethods = {
     const f = this.feeRow(p.fee_id);
     if (!f || f.status !== 'charging' || f.payment_id !== p.id) return null;
     const to = this.feeRouteBack(f, p.fee_was, now);
-    this.write("UPDATE damage_charges SET status = ?, updated_at = ? WHERE id = ? AND status = 'charging' AND payment_id = ?", to, now, f.id, p.id);
+    this.write("UPDATE damage_charges SET status = ?, payment_id = NULL, updated_at = ? WHERE id = ? AND status = 'charging' AND payment_id = ?", to, now, f.id, p.id);
     if (to === 'unpaid' && p.fee_was !== 'unpaid') this.feeToCounter(f, now);
     return to;
   },
@@ -2722,21 +2775,28 @@ export const membershipMethods = {
     return null;
   },
 
-  /** Drop a payment Shopify never got: void, and its damage charge goes back. No awaits. */
+  /**
+   * Drop a payment Shopify never got: void, and its damage charge goes back. Staff hear why, and so does the member
+   * when their notice said it would be taken now. No awaits.
+   */
   voidDamagePayment(pid, reason) {
     const now = Date.now();
     const p = this.damagePaymentRow(pid);
     if (!p || p.status !== 'claimed') return { payment: pid, already: p?.status || null };
     this.write("UPDATE damage_payments SET status = 'void', void_reason = ?, completed_at = ?, updated_at = ? WHERE id = ?", reason, now, now, pid);
     const to = this.feeBackFromPayment(p, now);
-    if (reason === 'too-late') {
+    if (to) {
       const f = this.feeRow(p.fee_id);
       const name = this.memberName(p.customer_id);
+      const why = reason === 'too-late' ? `The Lair couldn't get it to Shopify for 2 days, so it has stopped trying.`
+        : reason === 'billing-off' ? 'Library billing was switched off before it reached Shopify.'
+          : `It didn't reach Shopify (${reason}).`;
       this.staffAlert(`pay-dropped:${p.id}`, `A damage charge couldn't be taken: ${name}`, {
         title: "A card charge that didn't go",
-        intro: `The Lair couldn't get ${name}'s ${money(p.amount)} charge for ${f?.title || 'a game'} to Shopify for 2 days, so it has stopped trying. Nothing was charged. ${this.feeRouteWords(f, to, null, { staff: true })}`,
+        intro: `${name}'s ${money(p.amount)} charge for ${f.title} wasn't taken from ${cardWords(parse(p.card, null))}. ${why} Nothing was charged. ${this.feeRouteWords(f, to, null, { staff: true })}${p.told ? ' They have been told.' : ''}`,
         details: [['Charge', money(p.amount)], ['Card', cardWords(parse(p.card, null))]],
       }, now);
+      if (p.told) this.tellDamageNotTaken(f, p, { code: 'NOT_SENT', theirs: false, to }, this.rulesCache || null);
     }
     return { payment: pid, void: reason, fee: to };
   },
@@ -2885,7 +2945,7 @@ export const membershipMethods = {
     const name = this.memberName(p.customer_id);
     const paidWith = p.method === 'card' ? `on their card (order ${numericId(outcome.orderId || '') || 'in Shopify'})` : 'from their store credit';
     const refund = p.method === 'card' ? 'Refund one of them in Shopify.' : 'Refund one: add the store credit back on their member page.';
-    if (!f) return { payment: p.id, status: 'paid' };
+    if (!f || (f.status === 'paid' && f.payment_id === p.id && f.paid_via === p.method)) return { payment: p.id, status: 'paid' };
     if (['paid', 'waived'].includes(f.status)) {
       this.staffAlert(`pay-twice:${p.id}`, `A damage charge was paid twice: ${name}`, {
         title: f.status === 'waived' ? 'A waived charge was paid' : 'Paid twice',
@@ -2967,12 +3027,12 @@ export const membershipMethods = {
    * up after 7 days); and the one-off contracts of payments that are done cancelled in Shopify. Returns the payment ids
    * looked at.
    */
-  async reconcileDamagePayments(rules, now) {
+  async reconcileDamagePayments(rules, now, { cards = true } = {}) {
     const admin = this.membershipsAdmin();
     const looked = [];
-    const stale = this.sql.exec(
+    const stale = cards ? this.sql.exec(
       "SELECT id FROM damage_payments WHERE method = 'card' AND status = 'claimed' AND updated_at < ? ORDER BY updated_at LIMIT ?", now - CLAIM_STALE, CHECKS_A_RUN,
-    ).toArray();
+    ).toArray() : [];
     for (const { id } of stale) {
       looked.push(id);
       await this.sendDamagePayment(id, admin);
@@ -3006,29 +3066,46 @@ export const membershipMethods = {
       const fresh = this.damagePaymentRow(p.id);
       if (!fresh || !['checking', 'claimed'].includes(fresh.status)) continue;
       this.write("UPDATE damage_payments SET status = 'checking', updated_at = ? WHERE id = ?", at, p.id);
+      // Someone else's take-off of the same amount from the same account could be the debit found: one still waiting
+      // on its answer (it records its own debit, so this waits), or one staff settled by hand (its debit has no id
+      // here, so a match can't be told apart: staff are asked)
+      const twins = this.sql.exec(
+        `SELECT status FROM damage_payments WHERE method = 'credit' AND customer_id = ? AND amount = ? AND id != ?
+           AND (status = 'claimed' OR (status = 'paid' AND transaction_id IS NULL AND created_at BETWEEN ? AND ?))`,
+        fresh.customer_id, fresh.amount, fresh.id, fresh.created_at - CLAIM_STALE, fresh.created_at + CLAIM_STALE,
+      ).toArray();
+      let unsureWhose = false;
       if (debits) {
-        // a debit of this amount, taken by an app (not spent on an order) since this was claimed, that isn't anything
-        // else the Lair took
+        // a debit of this amount, taken by an app (not spent on an order) while this was with Shopify, that isn't
+        // anything else the Lair took
         const known = new Set([
           ...this.sql.exec('SELECT transaction_id AS id FROM damage_payments WHERE transaction_id IS NOT NULL').toArray(),
           ...this.sql.exec('SELECT transaction_id AS id FROM member_credit WHERE transaction_id IS NOT NULL').toArray(),
         ].map((r) => r.id));
-        const match = debits.filter((d) => d.id && !d.fromOrder && d.amount === fresh.amount && d.createdAt >= fresh.created_at - 2 * MIN && !known.has(d.id))
+        const match = debits.filter((d) => d.id && !d.fromOrder && d.amount === fresh.amount && !known.has(d.id)
+          && d.createdAt >= fresh.created_at - 2 * MIN && d.createdAt <= fresh.created_at + CLAIM_STALE)
           .sort((a, b) => a.createdAt - b.createdAt)[0];
-        if (match) this.damagePaymentPaid(this.damagePaymentRow(p.id), { transactionId: match.id, balanceAfter: match.balanceAfter }, rules);
-        else if (at - fresh.created_at >= CREDIT_GONE_AFTER) this.damagePaymentFailed(this.damagePaymentRow(p.id), { code: 'NOT_TAKEN', message: 'Shopify has no record of it coming off.' }, rules);
-        continue;
+        if (match && twins.some((t) => t.status === 'claimed')) continue;
+        if (match && twins.length) unsureWhose = true;
+        else if (match) {
+          this.damagePaymentPaid(this.damagePaymentRow(p.id), { transactionId: match.id, balanceAfter: match.balanceAfter }, rules);
+          continue;
+        } else {
+          if (at - fresh.created_at >= CREDIT_GONE_AFTER) this.damagePaymentFailed(this.damagePaymentRow(p.id), { code: 'NOT_TAKEN', message: 'Shopify has no record of it coming off.' }, rules);
+          continue;
+        }
       }
       if (at - fresh.created_at >= CREDIT_ASK_AFTER) {
         const f = this.feeRow(fresh.fee_id);
         const name = this.memberName(fresh.customer_id);
         this.staffAlert(`credit-check:${fresh.id}`, `Check a store credit payment: ${name}`, {
           title: 'Did the store credit come off?',
-          intro: `The Lair asked Shopify to take ${money(fresh.amount)} of ${name}'s store credit for ${f?.title || 'a damage charge'}, but Shopify didn't answer, and it can't read their store credit to check. Look at their store credit in Shopify admin (Customers, then ${name}). On the staff page's Damage tab, say whether it came off.`,
+          intro: `The Lair asked Shopify to take ${money(fresh.amount)} of ${name}'s store credit for ${f?.title || 'a damage charge'}, but Shopify didn't answer, and ${unsureWhose ? `it can't tell whether the ${money(fresh.amount)} that came off around then was for this or for another charge of the same amount` : "it can't read their store credit to check"}. Look at their store credit in Shopify admin (Customers, then ${name}). On the staff page's Damage tab, say whether it came off for this charge.`,
           details: [['Charge', money(fresh.amount)], ['Asked', new Date(fresh.created_at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC']],
         }, at);
       }
     }
+    if (!cards) return looked;
     const waiting = this.sql.exec(
       `SELECT * FROM damage_payments WHERE method = 'card' AND ((status = 'pending' AND updated_at < ?) OR (status = 'challenged' AND updated_at < ?))
        ORDER BY updated_at LIMIT ?`,
@@ -3083,13 +3160,18 @@ export const membershipMethods = {
         result = await admin.endContract(p.contract_gid, 'cancel');
       } catch (error) {
         console.error('Lair: could not close a charge contract', error);
+        // (to the back of the queue, so one Shopify won't close never holds up the rest)
+        this.write('UPDATE damage_payments SET updated_at = ? WHERE id = ?', Date.now(), p.id);
         continue;
       }
       // --- no awaits from here on (for this one) ---
       const at = Date.now();
       if (!result.errors.length || result.errors.some((e) => ['CONTRACT_TERMINATED', 'CONTRACT_NOT_FOUND'].includes(e.code))) {
         this.write('UPDATE damage_payments SET closed_at = ?, updated_at = ? WHERE id = ?', at, at, p.id);
-      } else if (at - (p.completed_at || p.created_at) > DAY) {
+        continue;
+      }
+      this.write('UPDATE damage_payments SET updated_at = ? WHERE id = ?', at, p.id);
+      if (at - (p.completed_at || p.created_at) > DAY) {
         this.staffAlert(`pay-close:${p.id}`, "A one-off charge contract won't close", {
           title: "A contract Shopify won't cancel",
           intro: `The Lair made a one-off subscription contract to take a ${money(p.amount)} damage charge, and Shopify won't cancel it now it's done. Nothing more will be billed on it, but cancel it in Shopify (the customer's subscriptions) to tidy up.`,
@@ -3113,6 +3195,8 @@ export const membershipMethods = {
     const p = this.openDamagePayment(f.id);
     if (!p || p.method !== 'credit' || p.status !== 'checking') throw new RuleError(MEMBERSHIP_MESSAGES.settleNone, 409);
     if (typeof input?.taken !== 'boolean') throw new RuleError(MEMBERSHIP_MESSAGES.settleSay);
+    // the Lair's own look in the account comes first
+    if (Date.now() - p.created_at < CREDIT_GONE_AFTER) throw new RuleError(MEMBERSHIP_MESSAGES.settleWait, 409);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
     if (input.taken) {
       this.damagePaymentPaid(p, {}, rules);
@@ -3454,12 +3538,38 @@ export const membershipMethods = {
   },
 
   /**
-   * The itemised notice for a damage charge (or for a new amount: `was`, the old one). With a membership to bill, it
-   * goes on their next bill after the 7 days; without one, it's paid at the counter. now ({ method: 'credit' | 'card',
-   * card }): it's being taken straight away instead, and the notice says so. Returns whether it went. No awaits.
+   * Send a damage charge's notice (damageNoticeLetter) and wait for the email service to take it. Only then does it
+   * count as emailed (emailed_at, and only while the charge still has the amount the notice gives), since a charge
+   * can be taken straight away once its notice has gone. Returns whether it went.
    */
-  tellDamage(fee, member, m, rules, { was = null, now = null } = {}) {
+  async sendDamageNotice(feeId, m, rules, opts = {}) {
+    const fee = this.feeRow(feeId);
+    const letter = fee ? this.damageNoticeLetter(fee, m, rules, opts) : null;
+    if (!letter) return false;
+    let result;
+    try {
+      result = await this.mail(letter);
+    } catch (error) {
+      console.error('Lair: a damage charge notice failed', error);
+      result = { ok: false };
+    }
+    // --- no awaits from here on ---
+    if (!result?.ok) return false;
+    const at = Date.now();
+    this.write('UPDATE damage_charges SET emailed_at = ?, updated_at = ? WHERE id = ? AND amount = ?', at, at, fee.id, fee.amount);
+    return true;
+  },
+
+  /**
+   * The itemised notice for a damage charge (or for a new amount: `was`, the old one; or back on after it was waived:
+   * `again`). With a membership to bill, it goes on their next bill after the 7 days; without one, it's paid at the
+   * counter. now ({ method: 'credit' | 'card', card }): it's being taken straight away instead, and the notice says so.
+   * Returns the letter, or null when there's nobody to send it to. No awaits.
+   */
+  damageNoticeLetter(fee, m, rules, { was = null, now = null, again = false } = {}) {
+    if (!emailReady(this.env)) return null;
     const to = this.membershipContact(fee.customer_id);
+    if (!to.email) return null;
     const lost = fee.reason === 'lost';
     const when = billDay(fee.due_at, rules.tz);
     const billable = Boolean(m && this.billable(m) && this.feeVariantId());
@@ -3467,16 +3577,20 @@ export const membershipMethods = {
     // A cancelled membership has no next bill: the charge is billed on its own once its notice and the paid month are over
     const onItsOwn = billable && this.isCancelling(m) ? billDay(Math.max(fee.due_at, m.cancel_at || 0), rules.tz) : null;
     const subject = was != null ? `The charge for ${fee.title} has changed`
-      : lost ? `${fee.title} hasn't come back` : `About ${fee.title}: a charge for ${FEE_REASONS[fee.reason].toLowerCase()}`;
-    return this.membershipMail(fee.customer_id, subject, {
-      title: was != null ? 'A changed charge' : lost ? "A library game hasn't come back" : 'A library game came back with a problem',
+      : again ? `The charge for ${fee.title} is back on`
+        : lost ? `${fee.title} hasn't come back` : `About ${fee.title}: a charge for ${FEE_REASONS[fee.reason].toLowerCase()}`;
+    return this.letter(to.email, subject, {
+      button: { label: 'Open My Library', url: `${this.page('myLair')}?view=library` },
+      title: was != null ? 'A changed charge' : again ? 'A charge back on' : lost ? "A library game hasn't come back" : 'A library game came back with a problem',
       intro: [
         `Kia ora ${to.first},`,
         was != null
           ? `We've changed the charge for ${fee.title} from ${money(was)} to ${money(fee.amount)}. You have ${FEE_NOTICE_DAYS} days from today to sort it, as before.`
-          : lost
-            ? `${fee.title} hasn't come back to the library, so there's a charge to replace it.`
-            : `${fee.title} came back with a problem${fee.details ? `: ${fee.details}` : ''}. There's a charge to put it right.`,
+          : again
+            ? `We cancelled the charge for ${fee.title} earlier, but it's back on now. You have ${FEE_NOTICE_DAYS} days from today to sort it.`
+            : lost
+              ? `${fee.title} hasn't come back to the library, so there's a charge to replace it.`
+              : `${fee.title} came back with a problem${fee.details ? `: ${fee.details}` : ''}. There's a charge to put it right.`,
       ],
       details: [
         ['Game', fee.title], ["What's wrong", `${FEE_REASONS[fee.reason]}${fee.details ? `: ${fee.details}` : ''}`], ['Charge', money(fee.amount)],
@@ -3551,7 +3665,9 @@ export const membershipMethods = {
         : `We tried to take the ${money(p.amount)} charge for ${fee.title} from your store credit, but it didn't go through, so nothing came off.`
       : code === 'AUTHENTICATION_REQUIRED'
         ? `Your bank wanted you to confirm the ${money(p.amount)} charge for ${fee.title}, and it wasn't confirmed in time, so nothing was charged.`
-        : `We tried to charge the ${money(p.amount)} for ${fee.title} to ${card}, but it didn't go through.`;
+        : code === 'NOT_SENT' || !theirs
+          ? `We couldn't charge the ${money(p.amount)} for ${fee.title} to ${card} after all, so nothing was charged.`
+          : `We tried to charge the ${money(p.amount)} for ${fee.title} to ${card}, but it didn't go through.`;
     this.membershipMail(fee.customer_id, `We couldn't take the charge for ${fee.title}`, {
       title: "We couldn't take the payment",
       intro: [`Kia ora ${who.first},`, what, this.feeRouteWords(fee, to, rules)],

@@ -108,27 +108,33 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   waits while it's sorted). Then it's due: on the next bill (that cycle only), billed on its own after cancelling, or,
   with no membership to bill, collected at the counter (staff hear).
 - A new amount is a new notice, with 7 days again. Staff can waive it (the member hears), hold it (it waits, like a
-  dispute), put it back, or mark it paid at the counter. A charge on a bill being paid, or being taken now, can't
+  dispute), put it back (a waived one was told it was cancelled, so it gets a new notice and 7 days again), or mark it
+  paid at the counter. A charge on a bill being paid, or being taken now, can't
   change (refund it in Shopify once it's gone through).
 - On a bill that fails, a charge waits for the next try; when there's no next try it goes to staff (`unpaid`).
 
 **Taking a damage charge now** (staff with `money`; Mo, 9 Oct):
-- Only once its notice has been **emailed** (`emailedAt`; a new amount needs its new notice first), and only one in its
-  notice, due, or to collect at the counter: not one on a bill being paid, on hold or disputed, paid or waived.
+- Only once its notice has been **emailed** (`emailedAt`: set when the email service has taken it, not before; a new
+  amount, or putting a waived one back, needs its new notice first), and only one in its notice, due, or to collect at
+  the counter: not one on a bill being paid, on hold or disputed, paid or waived.
 - `use`: `credit` (their store credit), `card` (their saved card: their current membership's, else their latest
   membership's, even a cancelled or ended one) or `auto` (the default: store credit when the balance covers it, else
   the card, else store credit when Shopify won't say the balance). Never split between the two.
 - Store credit comes off there and then. If Shopify says it's short, nothing came off (with `auto`, the card is used
-  instead). Card charges need `MEMBERSHIPS_BILLING` on; store credit doesn't.
+  instead). Card charges need `MEMBERSHIPS_BILLING` on; store credit doesn't. A card the member's bank flagged as fraud
+  isn't charged until it's updated (as with renewals).
 - A card payment is with Shopify when the request answers (`pending`); the billing attempt webhooks finish it.
 - **Logged with `chargeNow: true`:** the notice says it's being taken now ("Taken from your store credit today",
   "Charged to Visa ending 4242 today"), then it is. With no way to (no email, no card, not enough store credit), the
   usual notice goes and `chargeNow` says why.
 - **Never twice.** The payment is claimed (its row, the charge `charging`) before Shopify is asked; one in flight per
   charge. Store credit whose answer was lost is looked for in the account's debits (Shopify can't take a key for it):
-  found, it's paid; not there 10 minutes on, it didn't come off; if the Lair can't read the account
-  (`read_store_credit_accounts`) for an hour, staff are asked to look in Shopify admin and settle it. A one-off contract
-  whose answer was lost is found by its marker (`_lair_payment`) before another is made, and a bill by its key.
+  found, it's paid; not there 10 minutes on, it didn't come off. A debit that could belong to another take-off of the
+  same amount from the same account is never taken for it: while that one waits on its answer this one waits, and if it
+  could be one staff settled by hand, staff decide. If the Lair can't read the account (`read_store_credit_accounts`)
+  or can't tell for an hour, staff are asked to look in Shopify admin and settle it (not before the Lair's own look,
+  10 minutes on). This follow-up runs even without Lair Memberships. A one-off contract whose answer was lost is found
+  by its marker (`_lair_payment`) before another is made, and a bill by its key.
 - **Paid:** the charge is `paid` (`paidVia` `credit` or `card`), the member gets a receipt ("Paid: the $40 charge for
   Catan", with the store credit left), and the one-off contract is cancelled on the next run.
 - **Not taken:** the charge goes back to where it was (its notice, the next bill, or the counter) and staff hear. The
@@ -137,9 +143,11 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   or Shopify refusing is staff's to sort.
 - **A bank check:** the member hears ("Your bank wants you to confirm a $40 payment"); it's never tried again while it
   waits; not done in 7 days, it goes back (and they hear). A late success is still taken; if the charge was paid
-  another way meanwhile, staff hear to refund one.
+  another way meanwhile, staff hear to refund one. The same the other way round: a library bill paid late with a
+  damage charge on it that was since taken now (or paid at the counter) tells staff it was paid twice.
 - A card payment that can't reach Shopify for 2 days is dropped (nothing charged); billing switched off drops one
-  Shopify never got. A cancelled membership waits for a charge being taken before it ends.
+  Shopify never got. Staff hear either way, and so does the member when their notice said it was being taken now. A
+  cancelled membership waits for a charge being taken before it ends.
 
 ## 3. Routes
 
@@ -258,6 +266,8 @@ or `void` (never reached Shopify).
 | `noWayNow` | 409 | There's no way to take it from Kiri Smith now: not enough store credit and no card to charge. Collect it at the counter. |
 | `settleNone` | 409 | That charge isn't waiting on a store credit check. |
 | `settleSay` | 422 | Say whether the store credit came off: taken true or false. |
+| `settleWait` | 409 | The Lair is still checking with Shopify. Try again in a few minutes. |
+| `cardFlagged` | 409 | Sam Jones's bank flagged their card, so it can't be charged until they update it. Use store credit, or collect it at the counter. |
 
 A card Shopify refuses there and then is a 409 "Shopify wouldn't charge Visa ending 4242 (…). Nothing was charged."
 

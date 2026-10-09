@@ -2191,6 +2191,8 @@ test("store credit Shopify can't confirm (the Lair can't read the account): staf
     const b = (await logDamage({ customerId: SAM, title: 'Azul', reason: 'damaged', amount: 2000 })).data.charge.id;
     credit.state.throws = 1;
     await chargeNow(b, { use: 'credit' });
+    assert.equal(said(await settleCredit(b, false)), `409 ${MEMBERSHIP_MESSAGES.settleWait}`, "the Lair's own look comes first");
+    setNow(clock + 11 * MIN);
     const back = await settleCredit(b, false);
     assert.deepEqual([back.data.charge.status, back.data.payment.status, back.data.payment.error], ['notice', 'failed', 'NOT_TAKEN']);
   } finally {
@@ -2348,7 +2350,7 @@ test("someone with no membership: no card to charge, so store credit or the coun
     const b = (await logDamage({ customerId: KIRI, title: 'Azul', reason: 'damaged', amount: 2000 })).data.charge.id;
     credit.state.readThrows = true;
     assert.equal(said(await chargeNow(b, { use: 'credit' })), `409 ${MEMBERSHIP_MESSAGES.creditShort('Kiri Smith', 2000, null)}`);
-    assert.deepEqual([fee(b).status, payment(fee(b).payment_id).status, credit.balances.get(KIRI)], ['notice', 'failed', 1000]);
+    assert.deepEqual([fee(b).status, fee(b).payment_id, lair.latestDamagePayment(b).status, credit.balances.get(KIRI)], ['notice', null, 'failed', 1000]);
   } finally {
     mail.restore();
   }
@@ -2403,6 +2405,221 @@ test('a failure webhook for a damage charge with no error code is read from Shop
     assert.deepEqual([payment(p.id).status, payment(p.id).error_code, fee(a).status], ['failed', 'EXPIRED_PAYMENT_METHOD', 'notice']);
     await settle();
     assert.ok(toSam(mail).find((e) => e.subject === "We couldn't take the charge for Catan"), "it's Sam's card, so Sam hears");
+  } finally {
+    mail.restore();
+  }
+});
+
+/* ---------------- the second review: damage charges taken now ---------------- */
+/** Hold the next store credit take-off after Shopify has made it, until release() (its answer is slow) */
+function slowCredit() {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const real = lair.shopify.changeStoreCredit;
+  lair.shopify.changeStoreCredit = async (cid, cents, cur) => {
+    lair.shopify.changeStoreCredit = real;
+    const out = await real(cid, cents, cur);
+    await gate;
+    return out;
+  };
+  return () => release();
+}
+
+test("store credit whose answer was lost is never matched to another take-off of the same amount that's still waiting on its answer", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const credit = fakeCredit({ [SAM]: 10000 });
+    const a = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 2000 })).data.charge.id;
+    const b = (await logDamage({ customerId: SAM, title: 'Azul', reason: 'damaged', amount: 2000 })).data.charge.id;
+    credit.state.throws = 1;
+    const pa = (await chargeNow(a, { use: 'credit' })).data.payment;
+    setNow(JOINED + 3 * MIN);
+    const release = slowCredit();
+    const reqB = chargeNow(b, { use: 'credit' });
+    await settle();
+    await maintenance();
+    assert.equal(payment(pa.id).status, 'checking', "B's debit isn't A's");
+    release();
+    const pb = payment((await reqB).data.payment.id);
+    assert.deepEqual([pb.status, pb.transaction_id], ['paid', credit.debits[0].id]);
+    setNow(JOINED + 11 * MIN);
+    await maintenance();
+    assert.deepEqual([payment(pa.id).status, payment(pa.id).error_code, fee(a).status, fee(b).status, credit.debits.length], ['failed', 'NOT_TAKEN', 'notice', 'paid', 1]);
+    await settle();
+    assert.equal(toSam(mail).filter((e) => /^Paid:/.test(e.subject)).length, 1, 'one receipt for one debit');
+  } finally {
+    mail.restore();
+  }
+});
+
+test('a debit that could be one staff settled by hand is never taken for another: staff are asked instead', async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const credit = fakeCredit({ [SAM]: 10000 });
+    const a = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 2000 })).data.charge.id;
+    const c = (await logDamage({ customerId: SAM, title: 'Azul', reason: 'damaged', amount: 2000 })).data.charge.id;
+    credit.state.readThrows = true;
+    credit.state.lost = 1;
+    const pa = (await chargeNow(a, { use: 'credit' })).data.payment;
+    setNow(JOINED + MIN);
+    credit.state.throws = 1;
+    const pc = (await chargeNow(c, { use: 'credit' })).data.payment;
+    setNow(JOINED + 11 * MIN);
+    assert.equal((await settleCredit(a, true)).data.payment.status, 'paid');
+    // the account can be read again: the one debit there could be A's (it is) or C's
+    credit.state.readThrows = false;
+    await maintenance();
+    assert.equal(payment(pc.id).status, 'checking', 'not taken for C');
+    setNow(JOINED + 70 * MIN);
+    await maintenance();
+    await settle();
+    assert.match(toStaff(mail, /Check a store credit payment/).text, /can't tell whether the \$20 that came off around then was for this/);
+    assert.equal(payment(pc.id).status, 'checking');
+    assert.equal((await settleCredit(c, false)).data.charge.status, 'notice');
+    assert.equal(credit.debits.length, 1);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('a bill paid late, after its damage charge was taken another way: staff hear it was paid twice', async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const credit = fakeCredit({ [SAM]: 10000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 4000 })).data.charge.id;
+    setNow(months(JOINED, 1) + MIN);
+    await maintenance();
+    const [bill] = charges();
+    assert.equal(shop.charged(bill.idempotency_key), 10000);
+    await answer(bill.idempotency_key, 'action');
+    setNow(months(JOINED, 1) + 7 * DAY + HOUR);
+    await maintenance();
+    assert.equal(fee(id).status, 'unpaid', 'the bank check was never done: the charge is for the counter');
+    const res = await chargeNow(id, { use: 'credit' });
+    assert.equal(res.data.charge.paidVia, 'credit');
+    await answer(bill.idempotency_key, 'paid');
+    await settle();
+    assert.match(toStaff(mail, /A damage charge was paid twice: Sam Jones/).text, /paid already \(from their store credit\), and it was also on a library bill/);
+    assert.deepEqual([fee(id).status, fee(id).paid_via, credit.state.calls.length], ['paid', 'credit', 1]);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('store credit taken now is followed up even without Lair Memberships connected', async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const credit = fakeCredit({ [SAM]: 10000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 4000 })).data.charge.id;
+    shop.admin.configured = false;
+    credit.state.lost = 1;
+    const p = (await chargeNow(id, { use: 'credit' })).data.payment;
+    assert.equal(p.status, 'checking');
+    setNow(JOINED + 3 * MIN);
+    const run = await maintenance();
+    assert.equal(run.configured, false);
+    assert.deepEqual([payment(p.id).status, fee(id).status], ['paid', 'paid']);
+  } finally {
+    mail.restore();
+  }
+});
+
+test("a card charge dropped before it reached Shopify: when the notice said it was being taken now, the member hears it wasn't, and so do staff", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    shop.state.contractThrows = 1;
+    const res = await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 4000, chargeNow: true, use: 'card' });
+    assert.equal(res.data.chargeNow.payment.status, 'claimed');
+    setEnv({ MEMBERSHIPS_BILLING: 'off' });
+    setNow(JOINED + 16 * MIN);
+    await maintenance();
+    const p = lair.latestDamagePayment(res.data.charge.id);
+    assert.deepEqual([p.status, p.void_reason, fee(res.data.charge.id).status], ['void', 'billing-off', 'notice']);
+    await settle();
+    assert.match(toSam(mail).find((e) => e.subject === "We couldn't take the charge for Catan").text, /couldn't charge the \$40 for Catan to Visa ending 4242 after all, so nothing was charged/);
+    assert.match(toStaff(mail, /A damage charge couldn't be taken: Sam Jones/).text, /billing was switched off/);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('a waived charge put back on gets a new notice and 7 days again, and only then can it be taken now', async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    fakeCredit({ [SAM]: 10000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 4000 })).data.charge.id;
+    await updateDamage(id, { action: 'waive' });
+    assert.equal(fee(id).emailed_at, null);
+    setNow(JOINED + 9 * DAY);
+    const back = await updateDamage(id, { action: 'reinstate' });
+    assert.deepEqual([back.data.charge.status, back.data.charge.dueAt, back.data.charge.emailedAt, back.data.charge.canChargeNow], ['notice', clock + FEE_NOTICE_DAYS * DAY, clock, true]);
+    await settle();
+    assert.match(toSam(mail).find((e) => e.subject === 'The charge for Catan is back on').text, /We cancelled the charge for Catan earlier, but it's back on now/);
+  } finally {
+    mail.restore();
+  }
+});
+
+test("a notice the email service turns away doesn't count: nothing is taken now", async () => {
+  const mail = captureEmails();
+  const taking = globalThis.fetch;
+  globalThis.fetch = async (url, init) => (/About Catan/.test(JSON.parse(init.body).subject || '')
+    ? new Response(JSON.stringify({ message: 'The to address is invalid.' }), { status: 422 })
+    : taking(url, init));
+  try {
+    await join();
+    const credit = fakeCredit({ [SAM]: 10000 });
+    const res = await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 4000, chargeNow: true });
+    assert.deepEqual([res.data.charge.emailed, res.data.charge.emailedAt, res.data.chargeNow.ok, res.data.chargeNow.error], [false, null, false, MEMBERSHIP_MESSAGES.feeNotEmailed]);
+    assert.equal(said(await chargeNow(res.data.charge.id)), `409 ${MEMBERSHIP_MESSAGES.feeNotEmailed}`);
+    assert.deepEqual(credit.state.calls, []);
+  } finally {
+    globalThis.fetch = taking;
+    mail.restore();
+  }
+});
+
+test('a store credit answer slow enough for the next run to find it first: paid once, one receipt, no false alarm', async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const credit = fakeCredit({ [SAM]: 10000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 4000 })).data.charge.id;
+    const release = slowCredit();
+    const req = chargeNow(id, { use: 'credit' });
+    await settle();
+    setNow(JOINED + 16 * MIN);
+    await maintenance();
+    assert.equal(fee(id).status, 'paid', 'found in the account');
+    release();
+    assert.equal((await req).status, 200);
+    await settle();
+    assert.equal(toSam(mail).filter((e) => /^Paid:/.test(e.subject)).length, 1);
+    assert.equal(toStaff(mail, /paid twice/), undefined);
+    assert.equal(credit.state.calls.length, 1);
+  } finally {
+    mail.restore();
+  }
+});
+
+test("a card the member's bank flagged as fraud isn't charged now until it's updated", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    fakeCredit({ [SAM]: 0 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 4000 })).data.charge.id;
+    setNow(months(JOINED, 1) + MIN);
+    await maintenance();
+    await answer(charges()[0].idempotency_key, 'FRAUD_SUSPECTED');
+    assert.deepEqual([membership().status, membership().retry_at], ['past_due', null]);
+    assert.equal(said(await chargeNow(id, { use: 'card' })), `409 ${MEMBERSHIP_MESSAGES.cardFlagged('Sam Jones')}`);
+    assert.equal(said(await chargeNow(id)), `409 ${MEMBERSHIP_MESSAGES.noWayNow('Sam Jones')}`);
   } finally {
     mail.restore();
   }
