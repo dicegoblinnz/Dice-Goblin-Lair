@@ -475,7 +475,7 @@ test('GET /events (round 7): every entry with its fields, dates, repeat tag, sig
       id: quiz.id, handle: 'weekly-quiz', title: 'Quiz night', type: 'social', game: '', start: Date.parse('2026-09-03T18:00:00+12:00'), end: Date.parse('2026-09-03T21:00:00+12:00'),
       repeat: 'weekly', repeatUntil: null, skipDates: [], description: 'Bring your brain.',
       image: { id: 'gid://shopify/MediaImage/9001', url: 'https://cdn.shopify.com/s/files/1/0001/files/quiz.png?v=1', alt: 'Quiz cards' }, capacity: 20, priceNote: '', entryFee: 500,
-      payment: 'either', tables: '', gameTables: '', lockTables: false, link: 'https://example.com/quiz',
+      payment: 'either', tables: '', gameTables: '', lockTables: false, link: 'https://example.com/quiz', days: 1,
       product: { id: 'gid://shopify/Product/8001', handle: 'quiz-ticket', title: 'Quiz night ticket' }, repeatTag: 'Weekly · Thursdays 6pm', next: at('2026-10-01', 18), last: null,
       config: undefined, booked: undefined, updatedAt: undefined,
     },
@@ -486,7 +486,7 @@ test('GET /events (round 7): every entry with its fields, dates, repeat tag, sig
   assert.deepEqual(quiz.config, {
     id: 'weekly-quiz', title: 'Quiz night', type: 'social', game: '', start: '2026-09-03T18:00:00+12:00', end: '2026-09-03T21:00:00+12:00', repeat: 'weekly', repeatUntil: null,
     skipDates: [], capacity: 20, tables: null, entryFee: 500, gameTables: null, payment: 'either', lockTables: false, price: null, url: '/products/quiz-ticket',
-    link: 'https://example.com/quiz', product: { url: '/products/quiz-ticket', title: 'Quiz night ticket', price: null, available: null, stock: null }, blurb: 'Bring your brain.',
+    link: 'https://example.com/quiz', days: 1, product: { url: '/products/quiz-ticket', title: 'Quiz night ticket', price: null, available: null, stock: null }, blurb: 'Bring your brain.',
     image: 'https://cdn.shopify.com/s/files/1/0001/files/quiz.png?v=1&width=800', imageAlt: 'Quiz cards',
   });
   assert.deepEqual([launch.repeatTag, launch.next, launch.last, launch.end, launch.config.end, launch.config.type, launch.config.tables, launch.booked], [null, at('2026-10-10', 11), at('2026-10-10', 11), null, null, 'launch', 'T4-T6', []]);

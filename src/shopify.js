@@ -1,5 +1,5 @@
 // Dice Goblin Lair — talking to Shopify: request signatures, Admin API token and GraphQL calls.
-import { eventPayment } from './core.js';
+import { eventDays, eventPayment } from './core.js';
 import { barcodeForms } from './core.js';
 
 const enc = new TextEncoder();
@@ -204,11 +204,15 @@ export class ShopifyAdmin {
           repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: list(f.skip_dates), capacity: f.capacity ? Number(f.capacity) : null,
           // entry_fee: NZD a person (cents here). game_tables: bookable game spots like "T14+T15, T16+T17".
           entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
+          // Round 11: the price as the event says it (price_note, like "Free entry"), and a $0 entry fee, for reminder emails
+          priceNote: String(f.price_note || '').trim(), freeEntry: String(f.entry_fee ?? '').trim() !== '' && Number(f.entry_fee) === 0,
           // payment: "In store" (or empty), "Online" or "Online or in store". tables ("Tables reserved") are only marked
           // for the event unless lock_tables ("Lock these tables") is on.
           payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
           // Round 9: what it's for (game) and its kind (event_type), for turnouts by game
           game: String(f.game || '').trim() || null, type: String(f.event_type || '').trim() || null,
+          // Round 11: how many days in a row each date runs (Oddity Alley: Saturday and Sunday), same hours each day
+          days: eventDays(f.days),
         };
       })
       .filter((e) => Number.isFinite(e.start));

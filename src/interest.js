@@ -114,6 +114,8 @@ export const interestMethods = {
         'UPDATE interests SET level = ?, note = ?, name = ?, phone = COALESCE(?, phone), customer_id = COALESCE(customer_id, ?), updated_at = ? WHERE id = ?',
         level, note || existing.note || '', name, phone || null, me, now, existing.id,
       );
+      // Round 11: "Remind me the day before" (remind: true | false), and a waitlist row that's now a maybe (src/reminders.js)
+      this.interestSaved(existing.id, input, now);
       const row = this.interestRow(existing.id);
       return { interest: this.interestView(row, { key: !me }), counts: this.interestCounts(kind, targetId), already: true, emailed: false };
     }
@@ -124,6 +126,8 @@ export const interestMethods = {
        VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, kind, targetId, level, name, email, phone || null, note, me, key, target.title, target.start, target.end, now, now,
     );
+    // Round 11: "Remind me the day before" (src/reminders.js)
+    this.interestSaved(id, input, now);
     this.touchMember(me, { name, email, mobile: phone }, now);
     // --- saved ---
     const row = this.interestRow(id);
@@ -162,6 +166,8 @@ export const interestMethods = {
     return {
       id: r.id, kind: r.kind, targetId: r.target_id, level: r.level, status: r.status, name: r.name, note: r.note || '', title: r.title || '',
       start: r.starts_at, end: r.ends_at, at: r.created_at, ...(key && r.remove_key ? { key: r.remove_key } : {}),
+      // Round 11: the reminder the day before (remind: they want one; reminded: it went) and a waitlist row's people
+      remind: Boolean(r.remind), reminded: Boolean(r.reminded_at), people: r.level === 'waitlist' ? Number(r.people) || 1 : null,
     };
   },
 
@@ -169,7 +175,10 @@ export const interestMethods = {
   interestCounts(kind, targetId) {
     const rows = this.sql.exec("SELECT level, COUNT(*) AS n FROM interests WHERE kind = ? AND target_id = ? AND status = 'active' GROUP BY level", kind, targetId).toArray();
     const n = (level) => Number(rows.find((r) => r.level === level)?.n || 0);
-    return kind === 'session' ? { interested: n('interested') } : { maybe: n('maybe'), coming: n('coming') };
+    if (kind === 'session') return { interested: n('interested') };
+    // Round 11: waiting, the people on a full date's waitlist (never counted as places taken), when there are any
+    const waiting = this.waitingOn(targetId).people;
+    return { maybe: n('maybe'), coming: n('coming'), ...(waiting ? { waiting } : {}) };
   },
 
   /**
@@ -184,6 +193,8 @@ export const interestMethods = {
       if (r.kind === 'event') {
         const c = events[r.target_id] || (events[r.target_id] = { maybe: 0, coming: 0 });
         if (r.level === 'coming') c.coming += 1;
+        // Round 11: a waitlist row counts its people as waiting (there when anyone is), never as a maybe
+        else if (r.level === 'waitlist') c.waiting = (c.waiting || 0) + (Number(r.people) || 1);
         else c.maybe += 1;
       } else sessions[r.target_id] = (sessions[r.target_id] || 0) + 1;
     }
@@ -200,7 +211,9 @@ export const interestMethods = {
 
   /** Staff: an event date's interest with names, for the Events tab and Today's sign-ups */
   staffInterest(r) {
-    return { ...this.interestPerson(r), kind: r.kind, level: r.level, occurrenceId: r.kind === 'event' ? r.target_id : null, gameId: r.kind === 'session' ? r.target_id : null, title: r.title || '', start: r.starts_at, end: r.ends_at, customerId: r.customer_id || null };
+    return { ...this.interestPerson(r), kind: r.kind, level: r.level, occurrenceId: r.kind === 'event' ? r.target_id : null, gameId: r.kind === 'session' ? r.target_id : null, title: r.title || '', start: r.starts_at, end: r.ends_at, customerId: r.customer_id || null,
+      // Round 11: a waitlist row's people, and whether they asked for a reminder the day before
+      people: r.level === 'waitlist' ? Number(r.people) || 1 : null, remind: Boolean(r.remind) };
   },
 
   /** GET /me's interests: their active ones for sessions and dates still to come, soonest first. No awaits. */

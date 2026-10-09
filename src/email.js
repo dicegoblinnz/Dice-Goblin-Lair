@@ -48,12 +48,15 @@ export function hoursSummary(hours) {
  *   codes      [{ code, lines }]: codes to hand on (a session gift's), each in big letters in its own box with its lines
  *   details    [[label, value], …] for the details table; rows without a value are left out
  *   button     { label, url }
+ *   links      [{ label, url }]: small links in a line under the button (round 11: "Google Calendar", the event's page)
  *   outro      paragraph(s) after the details
  *   signoff    the closing line(s); Gobgob signs by default
  *   footer     { name, address, phone, hours }
  * Returns { html, text }.
  */
-export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, outro, signoff, footer = {} }) {
+export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {} }) {
+  // Round 11: small links under the button, http(s) only
+  const extras = (Array.isArray(links) ? links : []).filter((l) => l && safeUrl(l.url) && String(l.label ?? '').trim()).map((l) => ({ label: String(l.label).trim(), url: safeUrl(l.url) }));
   const before = list(intro);
   const after = list(outro);
   const boxes = (codes || []).filter((c) => c && String(c.code ?? '').trim()).map((c) => ({ code: String(c.code).trim(), lines: list(c.lines) }));
@@ -84,6 +87,7 @@ ${rows.length ? `<table role="presentation" width="100%" cellpadding="0" cellspa
 ${rows.map(([label, value]) => `<tr><td style="padding:10px 12px 10px 0;border-top:1px solid ${C.line};font:700 15px/1.45 ${FONT};color:${C.ink};vertical-align:top;width:36%;">${escapeHtml(label)}</td><td style="padding:10px 0;border-top:1px solid ${C.line};font:15px/1.45 ${FONT};color:${C.ink};vertical-align:top;">${lines(value)}</td></tr>`).join('\n')}
 </table>` : ''}
 ${link ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px;"><tr><td style="border-radius:999px;background:${C.button};"><a href="${escapeHtml(link.url)}" style="display:inline-block;padding:14px 26px;font:700 16px/1 ${FONT};color:#ffffff;text-decoration:none;border-radius:999px;">${escapeHtml(link.label)}</a></td></tr></table>` : ''}
+${extras.length ? `<p style="margin:-8px 0 20px;font:15px/1.6 ${FONT};color:${C.ink};">${extras.map((l) => `<a href="${escapeHtml(l.url)}" style="color:${C.button};font-weight:700;">${escapeHtml(l.label)}</a>`).join(' &nbsp;·&nbsp; ')}</p>` : ''}
 ${after.map((t) => p(t)).join('\n')}
 ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
 </td></tr>
@@ -100,6 +104,7 @@ ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
     ...boxes.map((b) => [`    ${b.code}`, ...b.lines.map((t) => `    ${t}`)].join('\n')),
     rows.length ? rows.map(([label, value]) => `${`${label}:`.padEnd(width + 2)}${value.replace(/\r?\n/g, `\n${' '.repeat(width + 2)}`)}`).join('\n') : null,
     link ? `${link.label}: ${link.url}` : null,
+    ...extras.map((l) => `${l.label}: ${l.url}`),
     ...after,
     signed.join('\n'),
     `--\n${foot.join('\n')}`,

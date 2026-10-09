@@ -158,6 +158,9 @@ if (passOpt) await p.check(`[data-reserve-form] input[name="pay"][value="pass:${
 // round 7: a mobile, when the form has a field for one (round 6's calendar doesn't)
 const spotMobile = p.locator('[data-reserve-form] input[type="tel"], [data-reserve-form] input[name="phone"]');
 if (await spotMobile.count() && !(await spotMobile.first().inputValue())) await spotMobile.first().fill('021 555 0101');
+// round 11: the form names the other player (1 v 1 is picked to start with): a member code or an email
+const opponent = p.locator('[data-reserve-form] [data-player] input');
+if (await opponent.count()) await opponent.first().fill(`opponent.${L}@example.com`);
 const bw = apiLog.length;
 await p.click('button[form="cal-reserve-form"]');
 await p.waitForTimeout(1500);
@@ -165,6 +168,8 @@ const cw = await lastCall(bw, /^events\/.+\/reserve/);
 const rw = cw ? JSON.parse(cw.text) : {};
 const sw = cw ? JSON.parse(cw.body) : {};
 check(`${L}: reserve sends usePass and pay day`, sw.usePass === seed.samPass.code && sw.pay === 'day', sw);
+// round 11: and the pair picked (the first free one) and the opponent; the booking lists them
+check(`${L}: reserve sends the pair and the opponent (round 11)`, !(await opponent.count()) || (/^T\d+\+T\d+$/.test(sw.spot || '') && sw.people === 2 && sw.players?.[0]?.email === `opponent.${L}@example.com` && rw.booking?.gamePlayers?.[0]?.email === `opponent.${L}@example.com`), { sent: sw, players: rw.booking?.gamePlayers });
 check(`${L}: the app booked a game spot with the pass, $10 a player`, cw?.status === 200 && rw.booking?.tables?.length === 2 && rw.booking.amount === 2000 && rw.booking.pass?.code === seed.samPass.code && rw.booking.payment === 'store' && rw.booking.occurrenceId === ids.warhammer, cw ? cw.text.slice(0, 300) : 'no call');
 const tw = await text(p, '.cal-done');
 check(`${L}: the ticket shows the tables and the pass`, rw.booking && tw.includes(rw.booking.ref) && tw.includes(rw.booking.tables.join(' + ')) && /pass/i.test(tw), tw.slice(0, 300));

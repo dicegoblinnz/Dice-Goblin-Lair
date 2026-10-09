@@ -370,9 +370,9 @@ test('tiers from selling plan names, idempotency keys, retry times, dates and at
   assert.ok(!/friend/.test(MEMBERSHIP_MESSAGES.none + MEMBERSHIP_MESSAGES.tooLate), "errors that stop someone don't call them friend");
 });
 
-test('migration: round 10 adds only new tables, and a round 9 database moves across with its rows', () => {
+test('migration: round 10 adds only new tables, and a database from the rounds before moves across with its rows', () => {
   const old = fakeCtx();
-  // a round 9 database: every migration but the last
+  // a database from the rounds before (round 11 went live first): every migration but the last
   old.storage.sql.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
   for (const step of MIGRATIONS.slice(0, -1)) for (const statement of step) old.storage.sql.exec(statement);
   old.storage.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)", String(MIGRATIONS.length - 1));

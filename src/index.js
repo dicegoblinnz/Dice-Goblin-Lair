@@ -8,6 +8,7 @@
 //   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook; &memberships=plans also sets up
 //                            the library membership plans, the damage charge product and their webhooks
 //   /img/<id>                a GM's game picture (public, cached)
+//   /ics/<date id>.ics       an event date as a calendar file, for the reminder email's Add to calendar (public)
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
 import { Lair } from './lair.js';
@@ -52,6 +53,52 @@ async function posRoute(request, env, url) {
   if (!claims) return withCors(json({ error: 'Sign in to Shopify POS to use this.' }, 401));
   const body = request.method === 'GET' ? '{}' : await request.text();
   return withCors(await internalCall(env, url.origin, `pos/${route}`, body || '{}', { 'X-Lair-Pos-User': String(claims.sub || '') }));
+}
+
+/**
+ * Round 11: the owner's jobs (src/admin.js). A job is a row the owner adds to the config database's admin_jobs table
+ * (kind, payload JSON, status 'pending'); each cron run claims up to five pending rows (oldest first), runs each once in
+ * the Lair, and writes back 'done' or 'failed' with the result. Only the Cloudflare account can write to that database.
+ */
+async function runAdminJobs(env, origin) {
+  if (!env.CONFIG) return [];
+  let rows = [];
+  try {
+    await env.CONFIG.prepare(
+      "CREATE TABLE IF NOT EXISTS admin_jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending', result TEXT, created_at INTEGER, done_at INTEGER)",
+    ).run();
+    rows = (await env.CONFIG.prepare("SELECT id, kind, payload FROM admin_jobs WHERE status = 'pending' ORDER BY created_at, id LIMIT 5").all()).results || [];
+  } catch (error) {
+    console.error('Lair: admin jobs could not be read', error);
+    return [];
+  }
+  const done = [];
+  for (const row of rows) {
+    // claim it first, so an overlapping run never does it twice
+    const claim = await env.CONFIG.prepare("UPDATE admin_jobs SET status = 'running' WHERE id = ? AND status = 'pending'").bind(row.id).run();
+    if (!claim?.meta?.changes) continue;
+    let status = 'done';
+    let result;
+    try {
+      let payload = {};
+      try {
+        payload = JSON.parse(row.payload || '{}');
+      } catch {
+        throw new Error('The payload is not JSON.');
+      }
+      const res = await internalCall(env, origin, 'admin-job', JSON.stringify({ id: row.id, kind: row.kind, payload }));
+      result = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok) status = 'failed';
+    } catch (error) {
+      status = 'failed';
+      result = { error: String(error?.message || error) };
+    }
+    await env.CONFIG.prepare('UPDATE admin_jobs SET status = ?, result = ?, done_at = ? WHERE id = ?')
+      .bind(status, JSON.stringify(result ?? null).slice(0, 200000), Date.now(), row.id)
+      .run();
+    done.push({ id: row.id, status });
+  }
+  return done;
 }
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -134,6 +181,10 @@ export default {
       return res;
     }
 
+    // Round 11: an event date as a calendar file (the reminder email's Add to calendar): public, like the calendar page
+    const ics = request.method === 'GET' ? url.pathname.match(/^\/ics\/([A-Za-z0-9._%@-]{3,200})\.ics$/) : null;
+    if (ics) return lair(env).fetch(new Request(`${url.origin}/internal/eventics/${ics[1]}`, { headers: { 'X-Lair-Internal': '1' } }));
+
     if (url.pathname.startsWith('/pos/')) return posRoute(request, env, url);
 
     // Shopify signs every app proxy request. The proxy URL should end in /proxy, but a signed request on any other
@@ -210,5 +261,7 @@ export default {
     const webhookUrl = env.PUBLIC_URL ? `${origin}/webhooks/orders-paid` : undefined;
     // (Lair Memberships' webhook address is worked out from this one: the same Worker, /webhooks/memberships)
     ctx.waitUntil(internalCall(env, origin, 'maintenance', JSON.stringify({ webhookUrl })));
+    // Round 11: and any job the owner queued in the config database
+    ctx.waitUntil(runAdminJobs(env, origin));
   },
 };

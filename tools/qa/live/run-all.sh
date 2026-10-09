@@ -65,7 +65,9 @@ step flow-r8-guests.mjs
 step flow-r9-team.mjs
 step flow-r9-tab.mjs
 step flow-r9-play.mjs
+step flow-r11-reminders.mjs
 step flow-r9-community.mjs
+step flow-r11-warhammer.mjs
 step live-smoke.mjs
 say ""
 say "===== totals"

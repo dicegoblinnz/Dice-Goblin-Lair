@@ -351,7 +351,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await page.click(`.play-item [data-play-act="maybe"][data-play-target="${turnup.id}"]`);
   await page.waitForSelector('lair-calendar [data-dialog][open] [data-interest-form]', { timeout: 8000 });
   const guestForm = await page.evaluate(() => ({ title: document.querySelector('lair-calendar [data-dialog-title]').textContent, fields: [...document.querySelector('lair-calendar [data-interest-form]').elements].map((x) => x.name).filter(Boolean) }));
-  check(`${tag}: a guest's Maybe asks for a name, email and mobile in the calendar's sheet`, /^Maybe: /.test(guestForm.title) && guestForm.fields.join() === 'name,email,phone,note', guestForm);
+  check(`${tag}: a guest's Maybe asks for a name, email and mobile in the calendar's sheet (and round 11's "Remind me the day before")`, /^Maybe: /.test(guestForm.title) && guestForm.fields.join() === 'name,email,phone,note,remind', guestForm);
   await page.fill('lair-calendar [data-interest-form] [name="name"]', 'Sam Example');
   await page.fill('lair-calendar [data-interest-form] [name="email"]', 'sam@example.com');
   await page.fill('lair-calendar [data-interest-form] [name="phone"]', '021 555 0105');
