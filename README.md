@@ -133,7 +133,8 @@ The Lair bills Grab, Stash and Hoard itself, through a second Shopify app, **Lai
    side); `MEMBERSHIPS_SIMPLEE_TAGS` = `off`; `MEMBERSHIPS_BILLING` = `off` until the tests pass.
 3. Open `/setup?key=YOUR_SETUP_KEY&memberships=plans`. It checks the app's permissions, makes the plans (once) and puts
    them on the product, makes the "Library damage charge" product (once, on no sales channel) and the webhooks.
-   `membershipsSetup` in the answer says what it did.
+   `membershipsSetup` in the answer says what it did. (Or queue the owner's job `memberships.setup` in `admin_jobs`:
+   the cron runs it and writes the same answer into the row.)
 4. **Test** (the contract's section 8 lists what to check), then set `MEMBERSHIPS_BILLING` = `on`. Until then nobody's
    card is charged; the status table's `connection` row counts who's `waiting`.
 5. **Switch over:** uninstall Simplee in Shopify admin (Shopify cancels its subscriptions and removes its plans 48 hours

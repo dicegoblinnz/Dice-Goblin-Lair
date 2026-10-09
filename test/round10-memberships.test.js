@@ -2784,3 +2784,15 @@ test("migration: a test store that ran round 10 as step 25 (before round 11 went
   assert.doesNotThrow(() => moved.sql.exec('SELECT offline_players FROM games LIMIT 0'));
   assert.equal(moved.sql.exec("SELECT value FROM meta WHERE key = 'schema'").one().value, String(MIGRATIONS.length));
 });
+
+test("the owner's job memberships.setup does what /setup?…&memberships=plans does, without the setup key", async () => {
+  shop.state.groups = [];
+  lair.sql.exec("DELETE FROM meta WHERE key IN ('membership-plans', 'membership-fee-variant')");
+  setEnv({ MEMBERSHIPS_PRODUCT_ID: '10244302012519' });
+  const res = await internal('admin-job', { id: 'job-1', kind: 'memberships.setup', payload: {} });
+  assert.equal(res.status, 200, res.data.error);
+  assert.deepEqual([res.data.ok, res.data.madePlans, res.data.madeFeeProduct, res.data.feeVariantId], [true, true, true, FEE_VARIANT]);
+  assert.deepEqual(shop.state.groups[0].productIds, ['gid://shopify/Product/10244302012519']);
+  assert.deepEqual(shop.state.hooks, ['https://lair.test/webhooks/memberships']);
+  assert.equal(lair.membershipPlans().plans.hoard.price, 7500);
+});

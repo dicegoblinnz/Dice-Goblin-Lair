@@ -324,7 +324,9 @@ credit to check, a late payment, a charge paid twice, and a one-off contract tha
    subscription was Mo's own test); `MEMBERSHIPS_BILLING` = `off` until the tests pass. `MEMBERSHIPS_FEE_VARIANT_ID`
    only if you make the damage charge product yourself.
 3. Open `/setup?key=YOUR_SETUP_KEY&memberships=plans`: it checks the permissions, makes the plans (once) and puts them
-   on the product, makes the damage charge product (once) and the webhooks. `membershipsSetup` says what it did.
+   on the product, makes the damage charge product (once) and the webhooks. `membershipsSetup` says what it did. Or,
+   without the key, queue the owner's job `memberships.setup` (a row in the config database's `admin_jobs`, kind
+   `memberships.setup`, payload `{}`): the cron runs it within 10 minutes and writes the same answer into the row.
 4. **Test** (section 8; on the real store, since the new site and the Lair aren't live yet: Mo, 9 Oct), then set
    `MEMBERSHIPS_BILLING` = `on`.
 5. **Switch over:** uninstall Simplee in Shopify admin (Shopify cancels its subscriptions and removes its plans 48 hours

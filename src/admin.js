@@ -26,6 +26,9 @@
  *    seats, offlinePlayers, level, age, tags, characters, bring, gmFee, imageUrl (a https://cdn.shopify.com/ picture,
  *    or null for none). Seats can't go below the players already booked through the Lair plus offlinePlayers.
  *    → { updated: [{ id, title, sessions, seats, offlinePlayers, system, imageUrl }], failed: [{ id, error }] }
+ *  - memberships.setup {}: round 10's Lair Memberships setup, as /setup?key=…&memberships=plans does it (the plans made
+ *    once and put on MEMBERSHIPS_PRODUCT_ID, the damage charge product, the webhooks), without the setup key.
+ *    → membershipSetup's answer
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair:
  * every await first, then synchronous reads, checks and writes.
@@ -52,6 +55,10 @@ export const adminMethods = {
       const rules = await this.rules();
       // --- no awaits from here on ---
       return this.adminUpdateGames(payload, rules, Date.now());
+    }
+    if (kind === 'memberships.setup') {
+      const base = String(this.env?.PUBLIC_URL || '').replace(/\/$/, '');
+      return this.membershipSetup(base ? `${base}/webhooks/memberships` : null);
     }
     throw new RuleError(`Unknown job: ${kind || '(none)'}`, 422);
   },
