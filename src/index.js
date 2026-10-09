@@ -52,6 +52,52 @@ async function posRoute(request, env, url) {
   return withCors(await internalCall(env, url.origin, `pos/${route}`, body || '{}', { 'X-Lair-Pos-User': String(claims.sub || '') }));
 }
 
+/**
+ * Round 11: the owner's jobs (src/admin.js). A job is a row the owner adds to the config database's admin_jobs table
+ * (kind, payload JSON, status 'pending'); each cron run claims up to five pending rows (oldest first), runs each once in
+ * the Lair, and writes back 'done' or 'failed' with the result. Only the Cloudflare account can write to that database.
+ */
+async function runAdminJobs(env, origin) {
+  if (!env.CONFIG) return [];
+  let rows = [];
+  try {
+    await env.CONFIG.prepare(
+      "CREATE TABLE IF NOT EXISTS admin_jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending', result TEXT, created_at INTEGER, done_at INTEGER)",
+    ).run();
+    rows = (await env.CONFIG.prepare("SELECT id, kind, payload FROM admin_jobs WHERE status = 'pending' ORDER BY created_at, id LIMIT 5").all()).results || [];
+  } catch (error) {
+    console.error('Lair: admin jobs could not be read', error);
+    return [];
+  }
+  const done = [];
+  for (const row of rows) {
+    // claim it first, so an overlapping run never does it twice
+    const claim = await env.CONFIG.prepare("UPDATE admin_jobs SET status = 'running' WHERE id = ? AND status = 'pending'").bind(row.id).run();
+    if (!claim?.meta?.changes) continue;
+    let status = 'done';
+    let result;
+    try {
+      let payload = {};
+      try {
+        payload = JSON.parse(row.payload || '{}');
+      } catch {
+        throw new Error('The payload is not JSON.');
+      }
+      const res = await internalCall(env, origin, 'admin-job', JSON.stringify({ id: row.id, kind: row.kind, payload }));
+      result = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok) status = 'failed';
+    } catch (error) {
+      status = 'failed';
+      result = { error: String(error?.message || error) };
+    }
+    await env.CONFIG.prepare('UPDATE admin_jobs SET status = ?, result = ?, done_at = ? WHERE id = ?')
+      .bind(status, JSON.stringify(result ?? null).slice(0, 200000), Date.now(), row.id)
+      .run();
+    done.push({ id: row.id, status });
+  }
+  return done;
+}
+
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 /** A plain page for anyone who opens the app's own address: what it is, where to book, and whether it's connected. */
@@ -189,5 +235,7 @@ export default {
     const origin = (env.PUBLIC_URL || 'https://lair.internal').replace(/\/$/, '');
     const webhookUrl = env.PUBLIC_URL ? `${origin}/webhooks/orders-paid` : undefined;
     ctx.waitUntil(internalCall(env, origin, 'maintenance', JSON.stringify({ webhookUrl })));
+    // Round 11: and any job the owner queued in the config database
+    ctx.waitUntil(runAdminJobs(env, origin));
   },
 };

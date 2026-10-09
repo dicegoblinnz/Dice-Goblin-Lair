@@ -1,5 +1,5 @@
 // Dice Goblin Lair — talking to Shopify: request signatures, Admin API token and GraphQL calls.
-import { eventPayment } from './core.js';
+import { eventDays, eventPayment } from './core.js';
 import { barcodeForms } from './core.js';
 
 const enc = new TextEncoder();
@@ -204,6 +204,8 @@ export class ShopifyAdmin {
           payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
           // Round 9: what it's for (game) and its kind (event_type), for turnouts by game
           game: String(f.game || '').trim() || null, type: String(f.event_type || '').trim() || null,
+          // Round 11: how many days in a row each date runs (Oddity Alley: Saturday and Sunday), same hours each day
+          days: eventDays(f.days),
         };
       })
       .filter((e) => Number.isFinite(e.start));

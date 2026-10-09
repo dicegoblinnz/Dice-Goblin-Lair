@@ -456,7 +456,19 @@ export function eventPayment(value) {
   return 'store';
 }
 
-/** Every date of the Lair's events that overlaps [from, to) */
+/**
+ * Round 11: how many days in a row each of an event's dates runs, from the lair_event "days" field (1 to 7; anything
+ * else is 1). Oddity Alley is 2: its Saturday and the Sunday after, the same hours each day.
+ */
+export function eventDays(value) {
+  const n = Math.floor(Number(value));
+  return n >= 1 && n <= 7 ? n : 1;
+}
+
+/**
+ * Every date of the Lair's events that overlaps [from, to). Round 11: an event that runs for several days (days) gives
+ * each day its own date, with its own id (`${handle}@${that day}`), the same hours, tables and places.
+ */
 export function eventOccurrences(rules, from, to) {
   const time = lairTime(rules.tz);
   const out = [];
@@ -464,17 +476,21 @@ export function eventOccurrences(rules, from, to) {
     if (!Number.isFinite(e.start)) continue;
     const length = Number.isFinite(e.end) && e.end > e.start ? e.end - e.start : 3 * HOUR;
     const clock = time.minutesOf(e.start);
-    const fromKey = time.key(from - length - 24 * HOUR);
+    const days = eventDays(e.days);
+    const fromKey = time.key(from - length - days * 24 * HOUR);
     const toKey = time.key(to);
-    for (const key of eventDates(e, time, fromKey, toKey)) {
-      const start = time.at(key, clock);
-      if (!overlaps(start, start + length, from, to)) continue;
-      out.push({
-        id: `${e.id}@${key}`, eventId: e.id, title: e.title, start, end: start + length, tables: e.tables || '',
-        capacity: Number(e.capacity) > 0 ? Math.floor(Number(e.capacity)) : null,
-        entryFee: Number(e.entryFee) > 0 ? Math.round(Number(e.entryFee)) : 0, gameTables: e.gameTables || '',
-        payment: eventPayment(e.payment), lockTables: e.lockTables === true,
-      });
+    for (const first of eventDates(e, time, fromKey, toKey)) {
+      for (let d = 0; d < days; d += 1) {
+        const key = d ? addDays(first, d) : first;
+        const start = time.at(key, clock);
+        if (!overlaps(start, start + length, from, to)) continue;
+        out.push({
+          id: `${e.id}@${key}`, eventId: e.id, title: e.title, start, end: start + length, tables: e.tables || '',
+          capacity: Number(e.capacity) > 0 ? Math.floor(Number(e.capacity)) : null,
+          entryFee: Number(e.entryFee) > 0 ? Math.round(Number(e.entryFee)) : 0, gameTables: e.gameTables || '',
+          payment: eventPayment(e.payment), lockTables: e.lockTables === true,
+        });
+      }
     }
   }
   return out;
@@ -576,7 +592,7 @@ const clean = (v, max = 200) => String(v ?? '').trim().slice(0, max);
  * team's own, like an opening), and editing = true skips only the lead time and the booking horizon (moving a session
  * that's already listed, tonight's included). Everything else is the house rule.
  */
-export function checkTableBooking(input, { state, rules, time, now, staff = false, shopTables = false, editing = false }) {
+export function checkTableBooking(input, { state, rules, time, now, staff = false, shopTables = false, editing = false, anyMinute = false }) {
   const tables = Array.isArray(input.tables) ? [...new Set(input.tables.map(String))] : [];
   const { room, known } = oneRoom(tables, rules);
   if (!room.bookable && !staff) throw new RuleError(`${room.name} can't be booked online.`);
@@ -586,14 +602,15 @@ export function checkTableBooking(input, { state, rules, time, now, staff = fals
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw new RuleError('That time is not valid.');
   const minutes = (end - start) / MIN;
   if (!staff) {
-    if (minutes % 60 !== 0) throw new RuleError('Bookings are in one-hour blocks.');
+    // Round 11: anyMinute (GM games the owner loaded, like a 1:30pm start) lets a time fall between the hours
+    if (!anyMinute && minutes % 60 !== 0) throw new RuleError('Bookings are in one-hour blocks.');
     if (minutes / 60 > rules.maxHours) throw new RuleError(`Bookings can be up to ${rules.maxHours} hours.`);
     if (!editing && start < now + rules.leadMinutes * MIN) throw new RuleError('That time is too soon to book online. Walk in instead.');
     if (!editing && start > now + rules.horizonDays * 24 * HOUR) throw new RuleError('That date is too far ahead to book yet.');
     const win = windowAt(rules, time, start);
     if (!win) throw new RuleError("We're closed at that time.");
     if (start < win.open || end > win.close) throw new RuleError('That time is outside opening hours.');
-    if (((start - win.open) / MIN) % 60 !== 0) throw new RuleError('Bookings start on the hour.');
+    if (!anyMinute && ((start - win.open) / MIN) % 60 !== 0) throw new RuleError('Bookings start on the hour.');
   }
 
   const people = Math.floor(Number(input.people));
@@ -678,9 +695,12 @@ export function seatPlayers(given, people, name) {
 }
 
 export function seatsTaken(state, gameId) {
-  return state.bookings
+  const booked = state.bookings
     .filter((b) => b.gameId === gameId && b.kind === 'gm-seat' && ACTIVE.has(b.status))
     .reduce((sum, b) => sum + b.people, 0);
+  // Round 11: players already in the group who don't book through the Lair take seats too
+  const game = (state.games || []).find((g) => g.id === gameId);
+  return booked + Math.max(0, Number(game?.offlinePlayers) || 0);
 }
 
 export const GM_FEES = [0, 500, 1000];
@@ -717,10 +737,10 @@ export function checkGameDetails(input) {
  * rules too, with shopTables (the shop tables are open to staff) and editing (a move skips only the lead time and the
  * horizon); see checkTableBooking.
  */
-export function checkGameSession(input, details, { state, rules, time, now, staff = false, ignore = null, shopTables = false, editing = false }) {
+export function checkGameSession(input, details, { state, rules, time, now, staff = false, ignore = null, shopTables = false, editing = false, anyMinute = false }) {
   const booking = checkTableBooking(
     { tables: input.tables, start: input.start, end: input.end, people: details.seats, name: `GM ${details.gm}`, email: 'gm@lair.local', game: true, ignoreBookingId: ignore },
-    { state, rules, time, now, staff, shopTables, editing },
+    { state, rules, time, now, staff, shopTables, editing, anyMinute },
   );
   const room = tableIndex(rules.rooms).get(booking.tables[0]).roomObj;
   return { tables: booking.tables, start: booking.start, end: booking.end, room: room.id, seatPrice: room.price + details.gmFee };

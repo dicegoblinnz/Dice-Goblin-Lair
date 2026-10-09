@@ -10,6 +10,7 @@ import {
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings,
   SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
   CARD_SIZE, financialYear, financialYearFrom, holdUntil, lairTime, libraryPlan, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
+  eventDays,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -31,6 +32,8 @@ import { runningTabMethods } from './tab.js';
 import { interestMethods } from './interest.js';
 // Round 9: turnouts, lists of members and early access offers for regulars (their own file, mixed in at the end)
 import { communityMethods } from './community.js';
+// Round 11: the owner's jobs from the config database (loading and clearing GM games), run by the Worker's cron
+import { adminMethods } from './admin.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -547,6 +550,11 @@ export const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS early_offer_claims_offer ON early_offer_claims (offer_id, status)',
     'CREATE INDEX IF NOT EXISTS early_offer_claims_customer ON early_offer_claims (customer_id, offer_id)',
   ],
+  // Round 11: players a GM game already has who don't book through the Lair (Mo's GM list: "5/6" is five players in a
+  // six-seat game), counted as seats taken
+  [
+    'ALTER TABLE games ADD COLUMN offline_players INTEGER NOT NULL DEFAULT 0',
+  ],
 ];
 
 const BOOKING_COLUMNS = [
@@ -557,7 +565,7 @@ const BOOKING_COLUMNS = [
 const GAME_COLUMNS = [
   'id', 'title', 'system', 'gm', 'gm_customer_id', 'gm_email', 'level', 'age', 'tags', 'safety', 'pregens', 'blurb', 'tables',
   'starts_at', 'ends_at', 'seats', 'status', 'credited', 'schedule', 'series_id', 'gm_fee', 'seat_price', 'room', 'characters', 'bring',
-  'content_notes', 'session_zero', 'gm_bio', 'image_id', 'fee_approved', 'created_at', 'updated_at',
+  'content_notes', 'session_zero', 'gm_bio', 'image_id', 'fee_approved', 'created_at', 'updated_at', 'offline_players',
 ];
 /** Insert, or update everything except id and created_at. A clash on ref fails loudly instead of replacing a row. */
 const upsert = (table, columns) =>
@@ -731,6 +739,8 @@ export class Lair {
       schedule: r.schedule || 'one-shot', seriesId: r.series_id || null, gmFee: r.gm_fee ?? null, seatPrice: r.seat_price ?? null, room: r.room || null,
       characters: r.characters || '', bring: r.bring || '', contentNotes: r.content_notes || '', sessionZero: r.session_zero || '',
       gmBio: r.gm_bio || '', imageId: r.image_id || null, feeApproved: Boolean(r.fee_approved),
+      // Round 11: players already in the group who don't book through the Lair (counted as seats taken)
+      offlinePlayers: Math.max(0, Number(r.offline_players) || 0),
     };
   }
 
@@ -828,6 +838,8 @@ export class Lair {
 
   /** A game picture's public address (pictures are served by the Worker at /img/<id>) */
   imageUrl(id) {
+    // Round 11: a picture loaded with the GM games (the owner's import) is a Shopify Files address, used as it is
+    if (id && /^https:\/\/cdn\.shopify\.com\//.test(id)) return id;
     return id ? `${String(this.env.PUBLIC_URL || '').replace(/\/$/, '')}/img/${id}` : null;
   }
 
@@ -1005,7 +1017,7 @@ export class Lair {
       JSON.stringify(g.safety || []), g.pregens ? 1 : 0, g.blurb, JSON.stringify(g.tables), g.start, g.end, g.seats, g.status,
       g.credited ?? null, g.schedule || 'one-shot', g.seriesId || null, g.gmFee ?? null, g.seatPrice ?? null, g.room || null,
       g.characters || null, g.bring || null, g.contentNotes || null, g.sessionZero || null, g.gmBio || null, g.imageId || null,
-      g.feeApproved ? 1 : 0, now, now,
+      g.feeApproved ? 1 : 0, now, now, Math.max(0, Math.floor(Number(g.offlinePlayers) || 0)),
     );
   }
 
@@ -1253,6 +1265,8 @@ export class Lair {
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
         if (b === 'setup') return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true }));
         if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false }));
+        // Round 11: a job the owner queued in the config database (admin_jobs), run by the Worker's cron (src/admin.js)
+        if (b === 'admin-job') return json(await this.adminJob(body));
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
         if (b === 'pos' && c === 'today') return json(await this.posToday());
@@ -2209,6 +2223,7 @@ export class Lair {
       title: g.title, gm: g.gm, blurb: g.blurb, seats: g.seats, gmFee: g.gmFee ?? 500, schedule: g.schedule || 'one-shot',
       characters: g.characters || '', system: g.system, level: g.level, age: g.age, tags: g.tags || [], safety: g.safety || [],
       pregens: g.pregens, bring: g.bring || '', contentNotes: g.contentNotes || '', sessionZero: g.sessionZero || '', gmBio: g.gmBio || '',
+      offlinePlayers: g.offlinePlayers || 0,
     };
   }
 
@@ -2247,7 +2262,7 @@ export class Lair {
       const end = start + row.length;
       try {
         // A staff-made series' dates follow the GM rules plus the shop tables, like its first session (round 7)
-        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, shopTables: Boolean(details.staffCreated) });
+        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, shopTables: Boolean(details.staffCreated), anyMinute: Boolean(details.anyMinute) });
         const base = {
           ...details, gmCustomerId: row.gm_customer_id, gmEmail: details.gmEmail || null, seriesId: row.id, credited: null,
           status: row.approved ? 'open' : 'pending', feeApproved: true,
@@ -4806,6 +4821,8 @@ export class Lair {
       repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: this.eventSkipDates(f.skip_dates),
       capacity: f.capacity ? Number(f.capacity) : null, entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
       payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
+      // Round 11: days in a row each date runs (Oddity Alley: Saturday and Sunday)
+      days: eventDays(f.days),
     };
   }
 
@@ -4824,11 +4841,15 @@ export class Lair {
     if (!EVENT_REPEATS.includes(repeat) || !Number.isFinite(ev.start)) return null;
     const weekday = new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long' }).format(new Date(ev.start));
     const clock = this.clockWord(ev.start, rules.tz);
+    // Round 11: an event that runs two days says both ("Third Saturday and Sunday"); longer runs say how many days
+    const days = eventDays(ev.days);
+    const nextDay = new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long' }).format(new Date(ev.start + 24 * HOUR));
+    const span = days === 2 ? ` and ${nextDay}` : days > 2 ? ` (${days} days)` : '';
     if (repeat === 'monthly') {
       const nth = ['First', 'Second', 'Third', 'Fourth', 'Fifth'][Math.ceil(Number(lairTime(rules.tz).key(ev.start).slice(8, 10)) / 7) - 1];
-      return `Monthly · ${nth} ${weekday} ${clock}`;
+      return `Monthly · ${nth} ${weekday}${span} ${clock}`;
     }
-    return `${repeat === 'weekly' ? 'Weekly' : 'Fortnightly'} · ${weekday}s ${clock}`;
+    return `${repeat === 'weekly' ? 'Weekly' : 'Fortnightly'} · ${weekday}s${days === 2 ? ` and ${nextDay}s` : span} ${clock}`;
   }
 
   /**
@@ -4899,14 +4920,14 @@ export class Lair {
       end: f.ends_at ? Date.parse(f.ends_at) : null, repeat: ev.repeat, repeatUntil: ev.repeatUntil, skipDates: ev.skipDates, description: f.description || '',
       image: f.image ? { id: f.image, url: picture?.url || null, alt: picture ? picture.alt ?? '' : null } : null,
       capacity: ev.capacity, priceNote: f.price_note || '', entryFee: Number.isFinite(fee) ? fee : null, payment: ev.payment, tables: f.tables || '',
-      gameTables: f.game_tables || '', lockTables: ev.lockTables, link: f.link || '',
+      gameTables: f.game_tables || '', lockTables: ev.lockTables, link: f.link || '', days: ev.days,
       product: f.product ? { id: f.product, handle: ticket?.handle || null, title: ticket?.title || null } : null,
       repeatTag: this.repeatTag(ev, rules), next: dates.next, last: dates.last, booked: booked || this.eventBookings(node.handle, now),
       updatedAt: Date.parse(node.updatedAt || '') || null,
       config: {
         id: node.handle, title: f.title || '', type: f.event_type || 'other', game: f.game || '', start: f.starts_at, end: f.ends_at, repeat: ev.repeat,
         repeatUntil: ev.repeatUntil, skipDates: ev.skipDates, capacity: ev.capacity, tables: f.tables, entryFee: Number.isFinite(fee) ? fee : null,
-        gameTables: f.game_tables, payment: ev.payment, lockTables: ev.lockTables, price: f.price_note, url: productUrl || f.link, link: f.link,
+        gameTables: f.game_tables, payment: ev.payment, lockTables: ev.lockTables, price: f.price_note, url: productUrl || f.link, link: f.link, days: ev.days,
         product: productUrl ? { url: productUrl, title: ticket.title || '', price: null, available: null, stock: null } : null,
         blurb: f.description, image: this.withWidth(picture?.url || null, 800), imageAlt: picture?.alt || '',
       },
@@ -5082,6 +5103,12 @@ export class Lair {
       set.game_tables = spots;
     }
     if (has('lockTables')) set.lock_tables = input.lockTables === true || input.lockTables === 'true' ? 'true' : 'false';
+    // Round 11: how many days in a row each date runs (1 to 7); 1 is stored as empty
+    if (has('days')) {
+      const days = Number(input.days);
+      if (!empty('days') && !(Number.isInteger(days) && days >= 1 && days <= 7)) throw new RuleError('An event runs for 1 to 7 days in a row.');
+      set.days = empty('days') || days === 1 ? '' : String(days);
+    }
     if (has('link')) {
       const link = String(input.link ?? '').trim();
       let ok = !link;
@@ -8701,3 +8728,5 @@ Object.assign(Lair.prototype, runningTabMethods);
 Object.assign(Lair.prototype, interestMethods);
 // Round 9: turnouts, lists and early access offers (src/community.js)
 Object.assign(Lair.prototype, communityMethods);
+// Round 11: the owner's jobs (src/admin.js)
+Object.assign(Lair.prototype, adminMethods);
