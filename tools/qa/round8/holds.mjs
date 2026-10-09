@@ -138,7 +138,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await page.waitForTimeout(400);
   const skipped = await toast();
   const firstDay = await page.evaluate((d) => window.Lair.store.time.fmtDate(d).replace(',', ''), info.day);
-  check(`${size}: Skip this date: the toast`, skipped === `Skipped ${firstDay}: T14–T17 are free then.`, skipped);
+  check(`${size}: Skip this date: the toast`, skipped === `Skipped ${firstDay}: T14–T17 are free at that time.`, skipped);
   check(`${size}: …its Skip button's name says the date`, skipName === `Skip this date, ${firstDay}`, skipName);
   const afterSkip = await page.evaluate((id) => {
     const { store } = window.Lair;
