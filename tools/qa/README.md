@@ -70,3 +70,17 @@ pretend webhook. Contract: `docs/contracts/lair-api-contract-v10-memberships.md`
 ## theme-check
 
 `npm install`, then `node run.mjs /path/to/theme`. A clean theme prints `counts {}`.
+
+## sim: a real-data simulation (round 12)
+
+`sim/sim.mjs` walks the website on the live stack with the store's own events and GM games, as a visitor, a member and
+staff on a phone (390) and a desktop (1280), then changes things behind their backs (a game's picture taken away, a
+session cancelled, an event deleted in Shopify) and looks again. It checks that the app and the theme agree (event
+dates, repeat tags, seats), that maintenance tells staff things once, and that nothing breaks; it prints `ISSUE` and `ok`
+lines, saves a screenshot of every page and sheet, and writes `findings.json`.
+
+The store's data stays out of this public repo: `DG_SIM_EVENTS` is a JSON list of `lair_event` entries in
+`theme-mock/events-mock.mjs`' QA_EVENTS shape (the mock and the fake read it, and it's the only events), and
+`DG_SIM_GAMES` is the owner's `games.add` payload. Start the live stack with `DG_SIM_EVENTS` set, then run it under the
+live lock with `DG_THEME`, `OUT` and `QA_PORT`. The dev entry's `POST /__dev/admin-job` and `POST /__dev/maintenance`
+run an owner's job and the cron's maintenance at once.
