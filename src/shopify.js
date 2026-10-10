@@ -78,6 +78,29 @@ export async function verifySessionToken(token, { secret, clientId, shop, now = 
   return claims;
 }
 
+/**
+ * Whether Shopify ran none of a GraphQL document's fields: nothing came back for any of them, and every error is on a
+ * top-level field (its path is just that field, so it was turned away before it ran). An error with no path can't
+ * say, so it counts as something that may have run.
+ */
+export function nothingRan(data, errors) {
+  if (data && typeof data === 'object' && Object.values(data).some((v) => v != null)) return false;
+  return (errors || []).every((e) => Array.isArray(e.path) && e.path.length === 1);
+}
+
+/**
+ * A mutation's data, or when Shopify made the change but answered with errors (a denied field: graphql's
+ * error.partial), the part of the answer it did give, so the change is never taken for one that didn't happen.
+ */
+async function madeAnyway(call) {
+  try {
+    return await call;
+  } catch (error) {
+    if (error?.partial) return error.partial;
+    throw error;
+  }
+}
+
 export class ShopifyAdmin {
   /**
    * The Lair's own Shopify app by default. Library memberships log in as a second app (Lair Memberships) with their own
@@ -125,6 +148,10 @@ export class ShopifyAdmin {
     return token;
   }
 
+  /**
+   * One Admin API call: its data, or an error. A mutation Shopify made but answered with errors (a denied field) is
+   * never sent again; its error carries the answer it did give (error.partial).
+   */
   async graphql(query, variables = {}, retried = false) {
     const response = await fetch(`https://${this.shop}/admin/api/${this.version}/graphql.json`, {
       method: 'POST',
@@ -141,17 +168,22 @@ export class ShopifyAdmin {
     if (!response.ok) throw new Error(`Shopify API error ${response.status}`);
     const { data, errors } = await response.json();
     if (errors?.length) {
-      // A scope added after the token was issued shows up as ACCESS_DENIED: a fresh token picks it up. A query is just
-      // asked again. A mutation never is: Shopify can do the change and still deny a field of its answer, so asking
-      // again could take store credit twice (11 Oct 2026). It fails here (its caller treats that as no answer, and
-      // looks for what happened before anything is done again), and the next call has the fresh token.
-      if (!retried && errors.some((e) => e.extensions?.code === 'ACCESS_DENIED')) {
+      const denied = errors.some((e) => e.extensions?.code === 'ACCESS_DENIED');
+      // A mutation Shopify still made: it denied a field of the answer, not the change (11 Oct 2026: asking again
+      // could take store credit twice)
+      const made = /^\s*mutation\b/.test(query) && !nothingRan(data, errors);
+      // A scope added after the token was issued shows up as ACCESS_DENIED: a fresh token picks it up, and it's asked
+      // again, unless it's a mutation Shopify made: that one is never sent twice. Its error carries what Shopify did
+      // answer (error.partial), so its caller can see what happened.
+      if (!retried && denied) {
         this.token = null;
         this.tokenExpires = 0;
         await this.storage?.delete?.(this.tokenKey);
-        if (!/^\s*mutation\b/.test(query)) return this.graphql(query, variables, true);
+        if (!made) return this.graphql(query, variables, true);
       }
-      throw new Error(`Shopify API: ${errors.map((e) => e.message).join('; ')}`);
+      const error = new Error(`Shopify API: ${errors.map((e) => e.message).join('; ')}`);
+      if (made) error.partial = data;
+      throw error;
     }
     return data;
   }
@@ -616,14 +648,15 @@ export class ShopifyAdmin {
   }
 
   async creditCustomer(customerId, cents, currency) {
-    const data = await this.graphql(
+    const data = await madeAnyway(this.graphql(
       `mutation Credit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
         storeCreditAccountCredit(id: $id, creditInput: $creditInput) { storeCreditAccountTransaction { amount { amount } } userErrors { field message code } }
       }`,
       { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: { amount: (cents / 100).toFixed(2), currencyCode: currency }, notify: true } },
-    );
-    const result = data.storeCreditAccountCredit;
-    if (result.userErrors.length) throw new Error(result.userErrors.map((e) => e.message).join('; '));
+    ));
+    const result = data?.storeCreditAccountCredit;
+    if (!result) throw new Error('Shopify gave no answer for the store credit.');
+    if (result.userErrors?.length) throw new Error(result.userErrors.map((e) => e.message).join('; '));
     return result.storeCreditAccountTransaction;
   }
 
@@ -650,17 +683,20 @@ export class ShopifyAdmin {
     const take = cents < 0;
     const money = { amount: (Math.abs(cents) / 100).toFixed(2), currencyCode: currency };
     const fields = 'storeCreditAccountTransaction { id amount { amount currencyCode } balanceAfterTransaction { amount currencyCode } } userErrors { field message code }';
-    const data = take
-      ? await this.graphql(
+    // (a change Shopify made but answered with a denied field still counts as made: madeAnyway)
+    const data = await madeAnyway(take
+      ? this.graphql(
         `mutation LairCreditTake($id: ID!, $debitInput: StoreCreditAccountDebitInput!) { storeCreditAccountDebit(id: $id, debitInput: $debitInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, debitInput: { debitAmount: money } },
       )
-      : await this.graphql(
+      : this.graphql(
         `mutation LairCreditAdd($id: ID!, $creditInput: StoreCreditAccountCreditInput!) { storeCreditAccountCredit(id: $id, creditInput: $creditInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: money, notify: false } },
-      );
-    const result = take ? data.storeCreditAccountDebit : data.storeCreditAccountCredit;
-    if (result.userErrors.length) {
+      ));
+    const result = take ? data?.storeCreditAccountDebit : data?.storeCreditAccountCredit;
+    // no answer for it at all: it may or may not have moved (the caller looks before doing anything again)
+    if (!result) throw new Error('Shopify gave no answer for the store credit change.');
+    if (result.userErrors?.length) {
       // Shopify answered and said no, so nothing moved (error.refused). Any other error may or may not have moved it.
       const error = new Error(result.userErrors.map((e) => e.message).join('; '));
       error.code = result.userErrors[0].code || null;
@@ -751,8 +787,10 @@ const resendEmail = (env, { to, subject, text, html = null, replyTo = null }) =>
   from: env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(replyTo || env.REPLY_TO ? { reply_to: replyTo || env.REPLY_TO } : {}),
 });
 
-/** How long to wait before sending once more when Resend says it's busy (it allows a couple of requests a second) */
+/** How long to wait before sending once more when Resend says it's busy (too many requests a second) */
 const RESEND_AGAIN_AFTER = 1000;
+/** An email request with no answer by then is given up (a hung request mustn't hold up the 10-minute run's billing) */
+const RESEND_TIMEOUT = 15_000;
 const pause = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
@@ -761,14 +799,14 @@ const pause = (ms) => new Promise((resolve) => {
  * One request to Resend. Never throws; returns { ok, attempted, status, code (Resend's error name), message }.
  * Turned away for sending too fast (429), it waits a moment and sends once more: Resend never took it, so it can't go
  * twice. With an idempotency key (key) Resend can also tell a second send of the same email, so a server error or no
- * answer at all gets one more try too.
+ * answer at all (nothing within RESEND_TIMEOUT) gets one more try too.
  */
 async function postToResend(env, path, body, { key = null } = {}) {
   const headers = { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) };
   for (let attempt = 1; ; attempt += 1) {
     let response;
     try {
-      response = await fetch(`https://api.resend.com/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+      response = await fetch(`https://api.resend.com/${path}`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(RESEND_TIMEOUT) });
     } catch (error) {
       if (key && attempt < 2) {
         await pause(RESEND_AGAIN_AFTER);

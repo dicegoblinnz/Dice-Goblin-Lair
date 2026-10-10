@@ -141,12 +141,16 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   10 minutes on). This follow-up runs even without Lair Memberships. A one-off contract whose answer was lost is found
   by its marker (`_lair_payment`) before another is made, and a bill by its key.
 - **Paid:** the charge is `paid` (`paidVia` `credit` or `card`), the member gets a receipt ("Paid: the $40 charge for
-  Catan", with the store credit left), and the one-off contract is cancelled on the next run. The receipt goes with its
-  own Resend idempotency key (`lair-receipt-<payment id>`), and how it went is kept on the payment (11 Oct 2026, Mo:
-  "the email didn't show up"): one Resend turns away is sent again by the 10-minute run after 10 minutes, 30 minutes,
-  then 1, 2, 4 and 8 hours, and one whose answer never came back after 15 minutes, always with the same key, so it can
-  never go twice; after the last try staff hear ("A receipt couldn't be emailed"). Store credit taken for a damage
-  charge also shows in the member page's store credit list ("Damage charge: Catan").
+  Catan", with the store credit left), and the one-off contract is cancelled on the next run. Receipts are kept on the
+  payment (11 Oct 2026, Mo: "the email didn't show up"): the letter is made once and sent exactly as it is, with its own
+  Resend idempotency key (`lair-receipt-<payment id>`), every time, so Resend can never send it twice. One Resend turns
+  away is sent again by the 10-minute run (its last step, after billing) after 10 minutes, 30 minutes, then 1, 2, 4 and
+  8 hours; one whose answer never came back (no answer in 15 seconds) after 15 minutes. A letter Resend refuses for
+  itself (400, 422: an address it won't take) is made again, with a new key, for the next try, so a corrected address
+  is used. Nothing is tried more than 20 hours after it was paid (Resend keeps keys a day). After the last try staff
+  hear ("A receipt couldn't be emailed"). No email address: no receipt (`none`), and staff see why. Email switched off:
+  tried again once it's back. Store credit taken for a damage charge also shows in the member page's store credit list
+  ("Damage charge: Catan").
 - **Not taken:** the charge goes back to where it was (its notice, the next bill, or the counter) and staff hear. The
   member hears ("We couldn't take the charge for Catan", and where it goes instead) when it was their card (declined,
   expired, the bank check never done) or when their notice said it would be taken now; a problem on the store's side
@@ -377,7 +381,14 @@ Not confirmed by Shopify's documentation, so check these with test payments:
   (holds, scans, GET /me, the staff page), and maintenance. Round 10 grew in place before it went live, so a store that
   ran an earlier copy of it gets the tables and columns added since (`ROUND10_LATE_COLUMNS`) when it starts. Columns
   added after it went live (`ROUND10_ADDED_COLUMNS`: the receipt's on `damage_payments`) are made sure of on every
-  start, once round 10's tables are there.
+  start, once round 10's tables are there. (So a later migration step can't use those columns on a brand-new store:
+  they're added after the steps run.)
+- `src/shopify.js` (11 Oct 2026): a mutation Shopify made but answered with an `ACCESS_DENIED` field is never sent again
+  (it used to be, with a fresh token, which could have taken store credit twice); its error carries what Shopify did
+  answer (`error.partial`), and the store credit calls use it. One Shopify turned away before it ran (the error is on
+  its top-level field, and nothing came back) is still asked again with a fresh token, as queries are. Resend requests
+  time out after 15 seconds, wait and go once more when Resend is busy (429), and with a key also after a server error
+  or no answer.
 - `src/index.js`: `/webhooks/memberships`. `src/config.js`: the `MEMBERSHIPS_*` keys. `src/shopify.js`: a second app's
   login (its own token key); store credit refusals marked (`error.refused`), and an account's latest debits
   (`storeCreditDebits`).

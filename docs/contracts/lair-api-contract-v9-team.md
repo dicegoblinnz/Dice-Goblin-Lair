@@ -116,6 +116,8 @@ sign-up, and run their own GM games.
   - "Shopify didn't answer just now, so the balance isn't showing. Try again in a minute."
   - "Shopify isn't connected, so the balance can't show."
   `history`: the last 20 changes made here, newest first: `{ id, amount, note, status: 'pending' | 'done' | 'failed', balanceAfter, message, at, by: { customerId, name } }`.
+  Since 11 Oct 2026 it also lists damage charges taken from their store credit (round 10's Damage tab): `amount`
+  negative, `note` "Damage charge: Catan", `status` 'done', and `kind: 'damage'` (only those rows have `kind`).
   404 "No member with that customer ID."
 - **`POST /members/:customerId/credit`** (`money`) `{ amount (cents: + adds, − takes off), note, key }` → `{ change, balance }`
   (`balance` after, from Shopify). Shopify `storeCreditAccountCredit` (with `notify: false`) or `storeCreditAccountDebit`.

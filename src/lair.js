@@ -165,11 +165,12 @@ const ROUND10_LATE_COLUMNS = [
  *  - damage_payments.receipt_*: a paid damage charge's receipt (11 Oct 2026, Mo: "the email didn't show up"):
  *    receipt_status 'sending', 'sent', 'failed' (sent again by the 10-minute run at receipt_next_at) or 'none' (nobody
  *    to send it to), null for payments from before; receipt_at: when the email service took it; receipt_tries;
- *    receipt_error: why the last try didn't go.
+ *    receipt_error: why the last try didn't go; receipt_letter: the letter and its key at the email service, made once
+ *    and sent as it is every time (so the service can tell a second send).
  */
 const ROUND10_ADDED_COLUMNS = [
   ['damage_payments', 'receipt_status', 'TEXT'], ['damage_payments', 'receipt_at', 'INTEGER'], ['damage_payments', 'receipt_tries', 'INTEGER NOT NULL DEFAULT 0'],
-  ['damage_payments', 'receipt_error', 'TEXT'], ['damage_payments', 'receipt_next_at', 'INTEGER'],
+  ['damage_payments', 'receipt_error', 'TEXT'], ['damage_payments', 'receipt_next_at', 'INTEGER'], ['damage_payments', 'receipt_letter', 'TEXT'],
 ];
 const ROUND10_ADDED_INDEXES = ['CREATE INDEX IF NOT EXISTS damage_payments_receipt ON damage_payments (receipt_status, receipt_next_at)'];
 

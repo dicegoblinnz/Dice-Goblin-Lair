@@ -170,12 +170,14 @@ const CREDIT_SKEW = 30_000;
 const CONTRACT_LOOK_AFTER = 2 * MIN;
 /**
  * A paid damage charge's receipt (11 Oct 2026, Mo: "the email didn't show up"): its own key at the email service, so
- * sending it again never sends it twice (the service keeps keys for a day). One the service turned away is tried again
- * after each of these; one whose answer never came back is tried again after RECEIPT_STUCK. After the last, staff hear.
+ * sending it again never sends it twice (the service keeps keys for a day: nothing is tried after RECEIPT_WINDOW). One
+ * the service turned away is tried again after each of these; one whose answer never came back is tried again after
+ * RECEIPT_STUCK. After the last, staff hear.
  */
 export const receiptKey = (paymentId) => `lair-receipt-${paymentId}`;
 const RECEIPT_RETRY = [10 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR];
 const RECEIPT_STUCK = 15 * MIN;
+const RECEIPT_WINDOW = 20 * HOUR;
 /** The views' option for staff's own routes (a payment's receipt details) */
 const STAFF = { staff: true };
 
@@ -862,7 +864,7 @@ export const membershipMethods = {
   },
 
   /** A membership for its member: plan, what's next, the card, recent charges and damage charges. No awaits. */
-  membershipView(m, now = Date.now()) {
+  membershipView(m, now = Date.now(), { staff = false } = {}) {
     const fees = this.sql.exec(
       `SELECT * FROM damage_charges WHERE membership_id = ? AND (status IN ('notice', 'due', 'billing', 'charging', 'disputed', 'unpaid') OR COALESCE(resolved_at, 0) > ?)
        ORDER BY created_at DESC`,
@@ -882,7 +884,7 @@ export const membershipMethods = {
       canChange: m.status === 'active', canCancel: m.status === 'active' || m.status === 'past_due',
       canResume: m.status === 'cancelling' && (m.cancel_at ? m.cancel_at > now : Boolean(open)),
       canUpdateCard: live && Boolean(m.payment_method_id), since: m.created_at,
-      charges: charges.map((c) => this.chargeView(c)), damage: fees.map((f) => this.feeView(f)),
+      charges: charges.map((c) => this.chargeView(c)), damage: fees.map((f) => this.feeView(f, { staff })),
     };
   },
 
@@ -904,7 +906,7 @@ export const membershipMethods = {
     const member = this.memberRow(m.customer_id);
     const home = this.sql.exec("SELECT COUNT(*) AS n FROM library_loans WHERE customer_id = ? AND status = 'out'", m.customer_id).toArray()[0]?.n || 0;
     return {
-      ...this.membershipView(m, now), customerId: m.customer_id, name: member?.name || member?.first_name || '', email: member?.email || member?.account_email || '',
+      ...this.membershipView(m, now, STAFF), customerId: m.customer_id, name: member?.name || member?.first_name || '', email: member?.email || member?.account_email || '',
       code: member?.code || '', atHome: home, source: m.source || null, contract: m.contract_gid,
       holdUntil: m.hold_until && m.hold_until > now ? m.hold_until : null,
     };
@@ -1486,14 +1488,7 @@ export const membershipMethods = {
         console.error('Lair: following up damage charges taken now failed', error);
         out.paidNowError = String(error.message || error).slice(0, 300);
       }
-      // and their receipts that didn't go (they only need email)
-      try {
-        out.receipts = await this.retryDamageReceipts(Date.now());
-      } catch (error) {
-        console.error('Lair: sending damage charge receipts again failed', error);
-        out.receiptsError = String(error.message || error).slice(0, 300);
-      }
-      if (!admin.configured) return out;
+      if (!admin.configured) return await this.receiptsInRun(out);
       try {
         out.webhooks = await this.ensureMembershipWebhooks(webhookUrl, { force });
       } catch (error) {
@@ -1518,8 +1513,20 @@ export const membershipMethods = {
         out.error = String(error.message || error).slice(0, 300);
       }
       this.sql.exec('DELETE FROM membership_events WHERE at < ?', now - EVENT_KEEP_DAYS * DAY);
+      await this.receiptsInRun(out);
     } finally {
       this.membershipRunUntil = 0;
+    }
+    return out;
+  },
+
+  /** The run's last step, so a slow email service never holds up billing: receipts that didn't go (they only need email). */
+  async receiptsInRun(out) {
+    try {
+      out.receipts = await this.retryDamageReceipts(Date.now());
+    } catch (error) {
+      console.error('Lair: sending damage charge receipts again failed', error);
+      out.receiptsError = String(error.message || error).slice(0, 300);
     }
     return out;
   },
@@ -3745,52 +3752,81 @@ export const membershipMethods = {
 
   /**
    * Send a paid damage charge's receipt, or send it again when an earlier try didn't go (Mo, 11 Oct 2026: "the email
-   * didn't show up"). It goes with its own key (receiptKey), so the email service never sends it twice, and how it went
-   * is kept on the payment for staff: 'sending', then 'sent' or 'failed' (damageReceiptAnswer); 'none' when there's
-   * nobody to send it to. After RECEIPT_RETRY's last wait it's given up and staff hear. Returns the send (to wait for
-   * or leave running), or null when there's nothing to send. No awaits before the send.
+   * didn't show up"). The letter is made once and kept with a key of its own (receipt_letter), and every try sends
+   * exactly that, so the email service can tell a second send and never sends it twice (it keeps keys for a day, so
+   * none is tried after RECEIPT_WINDOW). How it went is kept on the payment for staff: 'sending', then 'sent' or
+   * 'failed' (damageReceiptAnswer), or 'none' when there's no email address to send it to. After RECEIPT_RETRY's last
+   * wait it's given up and staff hear. due (the 10-minute run, with its time): only one whose time has come, so a run
+   * that overlaps another never sends one that's already on its way. Returns the send (to wait for or leave running),
+   * or null when there's nothing to send. No awaits before the send.
    */
-  damageReceipt(pid) {
+  damageReceipt(pid, { due = null } = {}) {
     const p = this.damagePaymentRow(pid);
     const f = p ? this.feeRow(p.fee_id) : null;
     if (!p || !f || p.status !== 'paid' || ['sent', 'none'].includes(p.receipt_status)) return null;
+    if (due != null && !(['failed', 'sending'].includes(p.receipt_status) && p.receipt_next_at != null && p.receipt_next_at <= due)) return null;
     const now = Date.now();
-    if ((p.receipt_tries || 0) > RECEIPT_RETRY.length) {
-      // (sends whose answers never came back, as many times as it's tried)
+    const tries = (p.receipt_tries || 0) + 1;
+    if (tries > RECEIPT_RETRY.length + 1 || (p.receipt_tries && now - (p.completed_at || p.created_at) > RECEIPT_WINDOW)) {
+      // (tried as often as it's worth, or so long ago the email service may have let its key go)
       this.damageReceiptGivenUp(p, f, p.receipt_error || 'The email service never answered.', now);
       return null;
     }
-    const letter = this.damageReceiptLetter(f, p);
+    let letter = parse(p.receipt_letter, null);
     if (!letter) {
-      this.write("UPDATE damage_payments SET receipt_status = 'none', receipt_error = ?, receipt_next_at = NULL WHERE id = ?",
-        emailReady(this.env) ? 'No email address on file.' : "Email isn't set up.", pid);
-      return null;
+      if (!emailReady(this.env)) {
+        // (sent once email is set up again)
+        this.damageReceiptFailed(p, f, tries, "Email isn't set up.", now);
+        return null;
+      }
+      const made = this.damageReceiptLetter(f, p);
+      if (!made) {
+        this.write("UPDATE damage_payments SET receipt_status = 'none', receipt_error = ?, receipt_next_at = NULL WHERE id = ?", 'No email address on file.', pid);
+        return null;
+      }
+      // the first letter has the plain key; one made again after the email service turned the letter itself away, a new one
+      letter = { ...made, key: p.receipt_tries ? `${receiptKey(pid)}-${tries}` : receiptKey(pid) };
+      this.write('UPDATE damage_payments SET receipt_letter = ? WHERE id = ?', JSON.stringify(letter), pid);
     }
-    const tries = (p.receipt_tries || 0) + 1;
     // until its answer comes back; one that never does is sent again after RECEIPT_STUCK
     this.write("UPDATE damage_payments SET receipt_status = 'sending', receipt_tries = ?, receipt_next_at = ? WHERE id = ?", tries, now + RECEIPT_STUCK, pid);
-    return this.mail({ ...letter, idempotencyKey: receiptKey(pid) }).then((result) => this.damageReceiptAnswer(pid, tries, result));
+    const { key, ...message } = letter;
+    return this.mail({ ...message, idempotencyKey: key }).then((result) => this.damageReceiptAnswer(pid, tries, result));
   },
 
-  /** How a receipt's send went: sent, or turned away (tried again after RECEIPT_RETRY's next wait, or given up). No awaits. */
+  /**
+   * How a receipt's send went. Sent, from any try (an older try's answer that comes back after a newer one started
+   * counts too). Turned away, from the latest try: tried again after RECEIPT_RETRY's next wait, or given up; when it
+   * was the letter itself (an address the email service won't take), it's made again, with a new key, next time.
+   * No awaits.
+   */
   damageReceiptAnswer(pid, tries, result) {
     const p = this.damagePaymentRow(pid);
-    // (a later try has started since, or this one is already settled)
-    if (!p || p.receipt_tries !== tries || p.receipt_status !== 'sending') return result;
+    if (!p || p.receipt_status === 'sent') return result;
     const now = Date.now();
-    // the email service already had this receipt's key, from an earlier try that went: it went then
-    if (result?.ok || (result?.status === 409 && result?.code === 'invalid_idempotent_request')) {
+    if (result?.ok) {
       this.write("UPDATE damage_payments SET receipt_status = 'sent', receipt_at = ?, receipt_error = NULL, receipt_next_at = NULL WHERE id = ?", now, pid);
       return result;
     }
+    if (p.receipt_tries !== tries || p.receipt_status !== 'sending') return result;
     const error = [result?.status || null, result?.message || 'No answer'].filter(Boolean).join(': ').slice(0, 300);
+    const letterProblem = [400, 422].includes(result?.status) || (result?.status === 409 && result?.code === 'invalid_idempotent_request');
+    this.damageReceiptFailed(p, this.feeRow(p.fee_id), tries, error, now, { remake: letterProblem });
+    return result;
+  },
+
+  /** A try at a receipt didn't go: tried again after RECEIPT_RETRY's next wait, or given up after the last. No awaits. */
+  damageReceiptFailed(p, f, tries, error, now, { remake = false } = {}) {
     const wait = RECEIPT_RETRY[tries - 1];
     if (!wait) {
-      this.damageReceiptGivenUp(p, this.feeRow(p.fee_id), error, now);
-      return result;
+      this.write('UPDATE damage_payments SET receipt_tries = ? WHERE id = ?', tries, p.id);
+      this.damageReceiptGivenUp(p, f, error, now);
+      return;
     }
-    this.write("UPDATE damage_payments SET receipt_status = 'failed', receipt_error = ?, receipt_next_at = ? WHERE id = ?", error, now + wait, pid);
-    return result;
+    this.write(
+      `UPDATE damage_payments SET receipt_status = 'failed', receipt_tries = ?, receipt_error = ?, receipt_next_at = ?${remake ? ', receipt_letter = NULL' : ''} WHERE id = ?`,
+      tries, String(error).slice(0, 300), now + wait, p.id,
+    );
   },
 
   /** A receipt the email service wouldn't take, tries after tries: it stops, and staff hear so they can tell the member. No awaits. */
@@ -3806,7 +3842,7 @@ export const membershipMethods = {
 
   /**
    * The 10-minute run: receipts the email service turned away whose wait is up, and ones whose answer never came back
-   * (the send was cut short), sent again with their own key. Returns the payment ids it tried.
+   * (the send was cut short), sent again (damageReceipt). Returns the payment ids it looked at.
    */
   async retryDamageReceipts(now) {
     const due = this.sql.exec(
@@ -3815,7 +3851,8 @@ export const membershipMethods = {
       now, CHECKS_A_RUN,
     ).toArray().map((r) => r.id);
     for (const id of due) {
-      const sending = this.damageReceipt(id);
+      // (looked at again as it's sent: another run may have sent it meanwhile)
+      const sending = this.damageReceipt(id, { due: Date.now() });
       if (sending) await sending;
     }
     return due;

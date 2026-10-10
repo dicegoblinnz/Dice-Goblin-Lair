@@ -1990,12 +1990,16 @@ function scriptedEmails() {
     for (const m of Array.isArray(body) ? body : [body]) requests.push({ ...m, to: m.to[0], key: init.headers?.['Idempotency-Key'] || null, answer: next.status ?? next });
     if (next === 'hang') return new Promise(() => {});
     const ok = next.status < 300;
-    return new Response(
+    const answer = () => new Response(
       JSON.stringify(ok ? { id: `e${requests.length}` } : next.body || { statusCode: next.status, name: 'application_error', message: 'Something went wrong.' }),
       { status: next.status, headers: next.headers || {} },
     );
+    // held: it answers when the test says (mail.release())
+    if (next.hold) return new Promise((resolve) => { mail.release = () => resolve(answer()); });
+    return answer();
   };
-  return { requests, answers, restore: () => { globalThis.fetch = realFetch; } };
+  const mail = { requests, answers, release: null, restore: () => { globalThis.fetch = realFetch; } };
+  return mail;
 }
 const sentWith = (mail, subject) => mail.requests.filter((r) => r.subject === subject);
 const settleLonger = () => new Promise((r) => setTimeout(r, 80));
@@ -2079,7 +2083,7 @@ test('a receipt the email service turns away is sent again by the 10-minute run 
   }
 });
 
-test("a receipt whose answer never came back is sent again after 15 minutes with the same key; the email service saying it already had that key means it went", async () => {
+test('a receipt whose answer never came back is sent again after 15 minutes: the same letter with the same key, so the email service can never send it twice', async () => {
   const mail = scriptedEmails();
   try {
     await join();
@@ -2093,11 +2097,82 @@ test("a receipt whose answer never came back is sent again after 15 minutes with
     setNow(JOINED + 14 * MIN);
     await maintenance();
     assert.equal(sentWith(mail, subject).length, 1);
+    // the footer changes meanwhile, but the letter kept is what goes again
+    lair.rulesCache = { ...lair.rulesCache, contact: { ...(lair.rulesCache.contact || {}), phone: '09 000 0000' } };
     setNow(JOINED + 15 * MIN);
-    mail.answers.push({ status: 409, body: { statusCode: 409, name: 'invalid_idempotent_request', message: 'Same idempotency key used with a different request payload.' } });
     await maintenance();
-    assert.deepEqual(sentWith(mail, subject).map((r) => r.key), [receiptKey(pid), receiptKey(pid)]);
+    const [first, again] = sentWith(mail, subject);
+    assert.deepEqual([again.key, again.html, again.text], [receiptKey(pid), first.html, first.text]);
     assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_tries], ['sent', 2]);
+  } finally {
+    mail.restore();
+  }
+});
+
+test("a receipt the email service turns away for its letter (an address it won't take) is made again with a new key; an older try's success that comes back late still counts", async () => {
+  const mail = scriptedEmails();
+  try {
+    await join();
+    fakeCredit({ [SAM]: 5000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 1000 })).data.charge.id;
+    mail.answers.push({ status: 422, body: { statusCode: 422, name: 'validation_error', message: 'Invalid `to` field.' } });
+    const pid = (await chargeNow(id, { use: 'credit' })).data.payment.id;
+    await settle();
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_letter], ['failed', null], 'the letter is made again next time');
+    // Sam's address is put right, and the next try goes to it with a new key
+    lair.sql.exec("UPDATE members SET email = 'sam.jones@example.com' WHERE customer_id = ?", SAM);
+    setNow(JOINED + 10 * MIN);
+    mail.answers.push({ status: 200, hold: true });
+    const run = maintenance();
+    await settle();
+    const subject = 'Paid: the $10 charge for Catan';
+    assert.deepEqual(sentWith(mail, subject).map((r) => [r.to, r.key]), [['sam@example.com', receiptKey(pid)], ['sam.jones@example.com', `${receiptKey(pid)}-2`]]);
+    // that try's answer is slow; the 15-minute look sends the same letter again, and Resend is busy with it
+    setNow(JOINED + 25 * MIN);
+    mail.answers.push({ status: 409, headers: { 'retry-after': '0.01' }, body: { statusCode: 409, name: 'concurrent_idempotent_requests', message: 'Another request with the same key is in progress.' } }, { status: 500, headers: { 'retry-after': '0.01' } });
+    lair.membershipRunUntil = 0;
+    await maintenance();
+    await settleLonger();
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_tries], ['failed', 3]);
+    // then the slow answer comes back: it went
+    mail.release();
+    await run;
+    await settle();
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_at], ['sent', clock]);
+    assert.equal(new Set(sentWith(mail, subject).slice(1).map((r) => r.key)).size, 1, 'one key for the one letter');
+  } finally {
+    mail.restore();
+  }
+});
+
+test("no email address for a receipt: none goes, and staff see why; email that isn't set up is tried again once it is; a server error without a key is never sent twice", async () => {
+  const mail = scriptedEmails();
+  try {
+    await join();
+    fakeCredit({ [SAM]: 5000 });
+    const a = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 1000 })).data.charge.id;
+    const b = (await logDamage({ customerId: SAM, title: 'Azul', reason: 'damaged', amount: 1000 })).data.charge.id;
+    // email switched off for a moment: the receipt waits for it
+    setEnv({ RESEND_API_KEY: '' });
+    const pb = (await chargeNow(b, { use: 'credit' })).data.payment.id;
+    assert.deepEqual([payment(pb).receipt_status, payment(pb).receipt_error, payment(pb).receipt_next_at], ['failed', "Email isn't set up.", clock + 10 * MIN]);
+    setEnv({ RESEND_API_KEY: 're_test' });
+    setNow(JOINED + 10 * MIN);
+    await maintenance();
+    assert.equal(payment(pb).receipt_status, 'sent');
+    // Sam's address is gone by the time it's paid
+    lair.sql.exec('UPDATE members SET email = NULL WHERE customer_id = ?', SAM);
+    const pa = (await chargeNow(a, { use: 'credit' })).data.payment.id;
+    await settle();
+    assert.deepEqual([payment(pa).receipt_status, payment(pa).receipt_error], ['none', 'No email address on file.']);
+    const listed = (await call('GET', 'library/damage?status=all', null, 'staff')).data.charges.find((c) => c.id === a);
+    assert.deepEqual(listed.payment.receipt, { status: 'none', at: null, error: 'No email address on file.', tries: 0, nextAt: null });
+    // an email without a key that meets a server error is never sent again (it may have gone)
+    lair.sql.exec("UPDATE members SET email = 'sam@example.com' WHERE customer_id = ?", SAM);
+    mail.answers.push({ status: 500, headers: { 'retry-after': '0.01' } });
+    const c = (await logDamage({ customerId: SAM, title: 'Root', reason: 'damaged', amount: 1000 })).data.charge;
+    await settleLonger();
+    assert.deepEqual([c.emailed, sentWith(mail, 'About Root: a charge for damaged').length], [false, 1]);
   } finally {
     mail.restore();
   }
@@ -2119,12 +2194,14 @@ test('Resend busy (sending too fast): the email waits a moment and goes once mor
   }
 });
 
-test('a store credit take-off Shopify answers with a denied field is never sent twice (it may have come off); a query is asked again with a fresh token', async () => {
+test('a store credit take-off Shopify made but answered with a denied field is never sent again and counts as made; one Shopify turned away before it ran, and a query, are asked again with a fresh token', async () => {
   const admin = new ShopifyAdmin({ SHOP: 'dice-goblin.myshopify.com', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret', API_VERSION: '2026-07' }, ctx.storage);
   const posts = [];
   let tokens = 0;
+  let mode = 'made';
   const realFetch = globalThis.fetch;
-  const denied = [{ message: 'Access denied for balanceAfterTransaction field.', extensions: { code: 'ACCESS_DENIED' } }];
+  const denied = (path) => [{ message: `Access denied for ${path.at(-1)} field.`, path, extensions: { code: 'ACCESS_DENIED' } }];
+  const tx = { id: 'gid://shopify/StoreCreditAccountDebitTransaction/1', amount: { amount: '-5.0', currencyCode: 'NZD' }, balanceAfterTransaction: null };
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith('/admin/oauth/access_token')) {
       tokens += 1;
@@ -2132,19 +2209,25 @@ test('a store credit take-off Shopify answers with a denied field is never sent 
     }
     const { query } = JSON.parse(init.body);
     posts.push([query.trim().split(/\s+/).slice(0, 2).join(' '), init.headers['X-Shopify-Access-Token']]);
+    const n = posts.length;
     if (/^mutation/.test(query.trim())) {
-      // the debit is made, and a field of the answer is denied
-      return new Response(JSON.stringify({ data: { storeCreditAccountDebit: { storeCreditAccountTransaction: { id: 'gid://shopify/StoreCreditAccountDebitTransaction/1', amount: { amount: '-5.0', currencyCode: 'NZD' }, balanceAfterTransaction: null }, userErrors: [] } }, errors: denied }));
+      // made: the debit happened and a field of its answer was denied. turned away: denied before it ran (the old
+      // token), then made with the fresh one
+      if (mode === 'made') return new Response(JSON.stringify({ data: { storeCreditAccountDebit: { storeCreditAccountTransaction: tx, userErrors: [] } }, errors: denied(['storeCreditAccountDebit', 'storeCreditAccountTransaction', 'balanceAfterTransaction']) }));
+      if (posts.filter(([p]) => p.startsWith('mutation')).length === 2) return new Response(JSON.stringify({ data: { storeCreditAccountDebit: null }, errors: denied(['storeCreditAccountDebit']) }));
+      return new Response(JSON.stringify({ data: { storeCreditAccountDebit: { storeCreditAccountTransaction: { ...tx, id: `gid://shopify/StoreCreditAccountDebitTransaction/${n}`, balanceAfterTransaction: { amount: '55.0', currencyCode: 'NZD' } }, userErrors: [] } } }));
     }
-    if (posts.filter(([p]) => p.startsWith('query')).length === 1) return new Response(JSON.stringify({ data: null, errors: denied }));
+    if (posts.filter(([p]) => p.startsWith('query')).length === 1) return new Response(JSON.stringify({ data: { customer: null }, errors: denied(['customer']) }));
     return new Response(JSON.stringify({ data: { customer: { id: `gid://shopify/Customer/${SAM}`, storeCreditAccounts: { nodes: [{ id: 'a1', balance: { amount: '60.0', currencyCode: 'NZD' } }] } } } }));
   };
   try {
-    await assert.rejects(admin.changeStoreCredit(SAM, -500, 'NZD'), (error) => /Access denied/.test(error.message) && !error.refused);
+    assert.deepEqual(await admin.changeStoreCredit(SAM, -500, 'NZD'), { id: tx.id, balanceAfter: null }, 'it came off, and says so');
     assert.deepEqual(posts, [['mutation LairCreditTake($id:', 'tok-1']], 'sent once');
     assert.equal(await admin.storeCreditBalance(SAM, 'NZD'), 6000);
-    assert.deepEqual(posts.slice(1).map(([p]) => p), ['query LairCreditBalance($id:', 'query LairCreditBalance($id:'], 'a query is asked again');
-    assert.equal(posts[1][1], 'tok-2', 'the call after the mutation has a fresh token');
+    assert.deepEqual(posts.slice(1), [['query LairCreditBalance($id:', 'tok-2'], ['query LairCreditBalance($id:', 'tok-3']], 'a query is asked again, with a fresh token');
+    mode = 'turned away';
+    assert.deepEqual(await admin.changeStoreCredit(SAM, -500, 'NZD'), { id: 'gid://shopify/StoreCreditAccountDebitTransaction/5', balanceAfter: 5500 });
+    assert.deepEqual(posts.slice(3), [['mutation LairCreditTake($id:', 'tok-3'], ['mutation LairCreditTake($id:', 'tok-4']], 'nothing ran, so it was safe to ask again');
   } finally {
     globalThis.fetch = realFetch;
   }
