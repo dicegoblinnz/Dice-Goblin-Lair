@@ -98,6 +98,16 @@ seat, /mylair, a full session's freed seat pinging the role by itself, a double 
 Discord holding that channel for its `retry_after` before the post goes up by itself. Run `node round14/keys.mjs`, start
 `node round14/fake-discord.mjs`, then `DG_THEME=<theme> live/up.sh`, and `node round14/discord.mjs`.
 
+The theme's side:
+- `round14/theme.mjs` (demo mode, through `theme-mock`, phone and desktop): My Lair › Profile's Discord card (Link
+  Discord coming back with a made-up code, the code taken out of the address, "Linked!", Unlink asked first, Discord
+  saying no, an old state, `?link=discord`), and "Chat on Discord" on a session's and an event date's sheet. No page
+  errors, no sideways scroll, tap targets 44px or more; screenshots in `round14/shots` (git ignores them).
+  `DG_THEME=<theme> node round14/theme.mjs`.
+- `round14/theme-live.mjs` (live mode against the stack, after `discord.mjs`): Link Discord off to Discord's sign-in
+  (answered the way Discord does) and finished by the Lair app, a state working once, Unlink, and a session's "Chat on
+  Discord" going to its thread. `DG_THEME=<theme> node round14/theme-live.mjs`.
+
 ## boot.sh: the real Worker starts
 
 `boot.sh` boots `src/index.js` as it's deployed (the repo's `wrangler.toml`, local state in a throwaway folder) under

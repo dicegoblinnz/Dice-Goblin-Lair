@@ -314,13 +314,19 @@ public floor, so anyone could book a table that was already taken by sending tha
 `game: true` let one person take a GM's two tables. Both are now the Lair's own (only `checkGameSession` sets them), and a
 test covers it.
 
-## 11. The theme (built with this round)
+## 11. The theme (branch `discord-theme`, a pull request into `dice-goblin-2-theme`)
 
-- **My Lair › Profile**: a Discord card. With Link Discord switched on (`discord.ready`): "Link Discord" (`POST
-  /me/discord/start`, then off to Discord), or the account linked with "Unlink". Coming back from Discord (`?code=…&state=…`
-  with a state starting `dg`), My Lair finishes it (`POST /me/discord/finish`), takes the code out of the address and says
-  how it went; `?error=access_denied` says it wasn't linked. `?link=discord` (the bot's Link my account button) opens
-  Profile and starts linking.
-- **TTRPG sessions**: "Chat on Discord" on a session's sheet when its game has a `discordUrl`.
-- **Events calendar**: "Chat on Discord" on a date's sheet when `eventDiscord` has it.
-- **Demo** (`assets/lair-demo.js`): the same routes, faked.
+- **My Lair › Profile**: a Discord card, between the player profile and the GM profile, shown once GET /me says Link
+  Discord is switched on (`discord.ready`) or they're linked: "Link Discord" (`POST /me/discord/start`, then off to
+  Discord), or the account linked with "Unlink" (asked first: "Unlink your Discord? Gobgob won't know it's you in the
+  server any more. What you've booked stays booked."). Coming back from Discord (`?code=…&state=…`, a state starting
+  `dg`), My Lair takes the code out of the address at once, finishes it (`POST /me/discord/finish`) and says how it went
+  ("Linked! Gobgob knows you as Ruby in the Dice Goblin server now.", or the Lair app's words);
+  `?error=access_denied` says "No worries, your Discord isn't linked. Tap Link Discord whenever you're ready."
+  `?link=discord` (the bot's Link my account button) opens Profile and starts linking by itself.
+- **TTRPG sessions** and the **events calendar**: "Chat on Discord" (opens in a new tab) on a session's sheet when its game
+  has a `discordUrl`, and on a date's sheet when `eventDiscord` has it, while it's still to come. Only discord.com and
+  discord.gg addresses are ever shown.
+- **Demo** (`assets/lair-demo.js`): the same routes, faked. Link Discord comes straight back with a made-up code and links
+  a made-up account; "Chat on Discord" goes to the shop's Discord (Theme settings › Social), which `lair-config` now
+  passes on as `shop.discord`.
