@@ -151,7 +151,24 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   is used. Nothing is tried more than 20 hours after it was paid (Resend keeps keys a day). After the last try staff
   hear ("A receipt couldn't be emailed"). No email address: no receipt (`none`), and staff see why. Email switched off:
   tried again once it's back. Store credit taken for a damage charge also shows in the member page's store credit list
-  ("Damage charge: Catan").
+  ("Damage charge: Catan (order #1674)").
+- **Store credit's Shopify order** (11 Oct 2026, Mo: the charge "wasn't on the account, my orders list or any
+  information regarding it"): a card charge's order is the one Shopify makes when it bills the card; store credit gets
+  one from the Lair, made in the background once it's paid, so it shows in Orders, on the customer and in the reports.
+  It's a draft order for the member (the Lair's own app, `write_draft_orders`: no new permission) with one line, the
+  damage charge product at the amount taken (properties `For`: "Damaged: Catan (box corner)" and `_lair_charge`), tags
+  `lair-damage` and `store-credit`, the note "Library damage charge, paid from store credit through the Dice Goblin
+  Lair (<payment id>)" (nothing typed goes in the note: the orders/paid webhook reads booking codes from a draft's
+  note) and the marker `_lair_payment` (the payment's id), completed as paid. Shopify works out the GST as at checkout,
+  emails the member its usual order confirmation, and sends orders/paid, so it counts in the member's spend as a card
+  charge's order does. Never two: the draft is kept on the payment before it's completed, and a draft becomes one order
+  at most; a try that may have made a draft (its answer lost) looks for it by its marker first; a completion whose
+  answer was lost is read back from the draft. Shopify turning it away (or not answering) is tried again by the
+  10-minute run (its last steps, before receipts) after 10 minutes, 30 minutes, then 1, 3, 6, 12 and 24 hours; a try
+  that never finished, after 15 minutes. After the last staff hear ("A store credit payment has no Shopify order") and
+  make it by hand. When the order columns first went in, store credit damage payments from the last 7 days got theirs
+  too. A store credit payment that paid a charge paid another way tells staff to refund its order in Shopify back to
+  store credit (so the sales stay right), not to add the credit back on the member page.
 - **Not taken:** the charge goes back to where it was (its notice, the next bill, or the counter) and staff hear. The
   member hears ("We couldn't take the charge for Catan", and where it goes instead) when it was their card (declined,
   expired, the bank check never done) or when their notice said it would be taken now; a problem on the store's side
@@ -189,7 +206,7 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
 
 Maintenance (every 10 minutes) adds `memberships` to its answer and the `connection` row: `{ configured, billing,
 webhooks, checked, paidNow (damage charge payments followed up), fees, renewals, caughtUp, unbillable, charged, waiting,
-gaveUp, ended }`.
+gaveUp, ended, orders (store credit payments whose Shopify order it made or tried), receipts }`.
 
 ## 4. Shapes
 
@@ -229,6 +246,11 @@ receipt }`. `receipt` (once it's paid, 11 Oct 2026): `{ status: 'sending' | 'sen
 when Resend took it; `none`: no email address, or email isn't set up), or `null` for payments from before receipts were
 kept. Staff's routes add `error` (why the last try didn't go), `tries` and `nextAt` (when it's tried again, `null` once
 it's given up).
+`order` (once it's paid, 11 Oct 2026): its Shopify order. Members: `{ status: 'made', name ('#1674') }` once it's made,
+else `null`. Staff: `{ status, name, id (the order's number in Shopify admin), url (the order in Shopify admin), error,
+nextAt }`, where `status` is `made` (a card charge's has `id` and `url` but no `name`), or for store credit `due` /
+`making` (on its way), `failed` (Shopify turned it away or didn't answer: `error`, tried again at `nextAt`) or `stopped`
+(staff were told to make it by hand); `null` for store credit from before orders were made.
 `status`: `claimed` (not with Shopify yet, or its answer was lost: the Lair keeps trying), `checking` (store credit
 whose answer was lost: being looked for; staff can settle it), `pending`, `challenged` (a bank check), `paid`, `failed`
 or `void` (never reached Shopify).
@@ -381,9 +403,14 @@ Not confirmed by Shopify's documentation, so check these with test payments:
   `damage_payments` (damage charges taken now), `membership_events`), the routes, the library plan from memberships
   (holds, scans, GET /me, the staff page), and maintenance. Round 10 grew in place before it went live, so a store that
   ran an earlier copy of it gets the tables and columns added since (`ROUND10_LATE_COLUMNS`) when it starts. Columns
-  added after it went live (`ROUND10_ADDED_COLUMNS`: the receipt's on `damage_payments`) are made sure of on every
-  start, once round 10's tables are there. (So a later migration step can't use those columns on a brand-new store:
-  they're added after the steps run.)
+  added after it went live (`ROUND10_ADDED_COLUMNS`: the receipt's and the store credit order's on `damage_payments`)
+  are made sure of on every start, once round 10's tables are there. (So a later migration step can't use those columns
+  on a brand-new store: they're added after the steps run.) The start that adds `order_status` marks the last 7 days'
+  paid store credit damage payments `due`, once.
+- `src/shopify.js` (11 Oct 2026, store credit's orders): `createPaidDraft` (a draft for the customer with one line at
+  the price paid, tags, a note and a marker; `error.refused` when Shopify said no), `completePaidDraft` (marked as paid;
+  Shopify saying no comes back as `errors`), `draftOrderState` and `findMarkedDraft` (the customer's latest drafts with a
+  tag, matched by the marker).
 - `src/shopify.js` (11 Oct 2026): a mutation Shopify made but answered with an `ACCESS_DENIED` field is never sent again
   (it used to be, with a fresh token, which could have taken store credit twice); its error carries what Shopify did
   answer (`error.partial`), and the store credit calls use it. One Shopify turned away before it ran (the error is on

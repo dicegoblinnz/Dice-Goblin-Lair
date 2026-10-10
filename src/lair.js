@@ -167,12 +167,30 @@ const ROUND10_LATE_COLUMNS = [
  *    to send it to), null for payments from before; receipt_at: when the email service took it; receipt_tries;
  *    receipt_error: why the last try didn't go; receipt_letter: the letter and its key at the email service, made once
  *    and sent as it is every time (so the service can tell a second send).
+ *  - damage_payments.order_*: store credit taken for a damage charge gets a Shopify order, as a card charge does (11 Oct
+ *    2026, Mo: it wasn't in the orders list): order_status 'due', 'making', 'made' (order_id and order_name, like
+ *    #1674), 'failed' (tried again at order_next_at) or 'stopped' (staff make it by hand), null for card payments and
+ *    ones from before (but see ORDERS_BACKFILL_DAYS); order_draft: the draft order that becomes it, kept before it's
+ *    completed; order_sent_at: when a draft was first asked for (a later try looks for it before making another);
+ *    order_tries; order_error: why the last try didn't go.
  */
 const ROUND10_ADDED_COLUMNS = [
   ['damage_payments', 'receipt_status', 'TEXT'], ['damage_payments', 'receipt_at', 'INTEGER'], ['damage_payments', 'receipt_tries', 'INTEGER NOT NULL DEFAULT 0'],
   ['damage_payments', 'receipt_error', 'TEXT'], ['damage_payments', 'receipt_next_at', 'INTEGER'], ['damage_payments', 'receipt_letter', 'TEXT'],
+  ['damage_payments', 'order_status', 'TEXT'], ['damage_payments', 'order_draft', 'TEXT'], ['damage_payments', 'order_name', 'TEXT'],
+  ['damage_payments', 'order_sent_at', 'INTEGER'], ['damage_payments', 'order_tries', 'INTEGER NOT NULL DEFAULT 0'], ['damage_payments', 'order_next_at', 'INTEGER'],
+  ['damage_payments', 'order_error', 'TEXT'],
 ];
-const ROUND10_ADDED_INDEXES = ['CREATE INDEX IF NOT EXISTS damage_payments_receipt ON damage_payments (receipt_status, receipt_next_at)'];
+const ROUND10_ADDED_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS damage_payments_receipt ON damage_payments (receipt_status, receipt_next_at)',
+  'CREATE INDEX IF NOT EXISTS damage_payments_order ON damage_payments (order_status, order_next_at)',
+];
+/**
+ * When the order columns first go in, store credit already taken for damage charges in the last this many days gets
+ * its order too (11 Oct 2026: Mo's own $10 test that morning, the one that wasn't in his orders list). Older ones are
+ * left as they were.
+ */
+const ORDERS_BACKFILL_DAYS = 7;
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -814,14 +832,23 @@ export class Lair {
       }
       for (const statement of MIGRATIONS[ROUND10 - 1]) this.sql.exec(statement);
       // and what round 10's tables have gained since it went live
+      const added = new Set();
       for (const [table, column, type] of ROUND10_ADDED_COLUMNS) {
         try {
           this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
         } catch {
           this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+          added.add(`${table}.${column}`);
         }
       }
       for (const statement of ROUND10_ADDED_INDEXES) this.sql.exec(statement);
+      // (once, as store credit's orders start: the last few days' store credit damage payments get theirs too)
+      if (added.has('damage_payments.order_status')) {
+        this.sql.exec(
+          "UPDATE damage_payments SET order_status = 'due' WHERE method = 'credit' AND status = 'paid' AND order_id IS NULL AND COALESCE(completed_at, created_at) >= ?",
+          Date.now() - ORDERS_BACKFILL_DAYS * 24 * 3_600_000,
+        );
+      }
     }
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
@@ -8090,12 +8117,14 @@ export class Lair {
     // --- no awaits from here on ---
     const changes = this.sql.exec('SELECT * FROM member_credit WHERE customer_id = ? ORDER BY at DESC, rowid DESC LIMIT 20', id).toArray().map((r) => this.creditView(r));
     // Damage charges paid from store credit (round 10) are listed too, so everything the Lair took off is in one place
-    // (11 Oct 2026: Mo couldn't find a damage charge's store credit anywhere)
+    // (11 Oct 2026: Mo couldn't find a damage charge's store credit anywhere), with its Shopify order once it's made
     const damage = this.sql.exec(
-      `SELECT p.id, p.amount, p.balance_after, p.by, COALESCE(p.completed_at, p.created_at) AS at, f.title FROM damage_payments p JOIN damage_charges f ON f.id = p.fee_id
+      `SELECT p.id, p.amount, p.balance_after, p.by, COALESCE(p.completed_at, p.created_at) AS at, p.order_name, f.title FROM damage_payments p JOIN damage_charges f ON f.id = p.fee_id
        WHERE p.customer_id = ? AND p.method = 'credit' AND p.status = 'paid' ORDER BY at DESC LIMIT 20`,
       id,
-    ).toArray().map((p) => ({ ...this.creditView({ ...p, amount: -p.amount, note: `Damage charge: ${p.title}`, status: 'done' }), kind: 'damage' }));
+    ).toArray().map(({ order_name: order, ...p }) => ({
+      ...this.creditView({ ...p, amount: -p.amount, note: `Damage charge: ${p.title}${order ? ` (order ${order})` : ''}`, status: 'done' }), kind: 'damage',
+    }));
     const history = [...changes, ...damage].sort((a, b) => b.at - a.at).slice(0, 20);
     return { balance, currency, problem, history };
   }

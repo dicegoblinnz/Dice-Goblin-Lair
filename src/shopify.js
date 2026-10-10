@@ -651,6 +651,71 @@ export class ShopifyAdmin {
     await this.graphql('mutation D($input: DraftOrderDeleteInput!) { draftOrderDelete(input: $input) { deletedId userErrors { message } } }', { input: { id } });
   }
 
+  /**
+   * 11 Oct 2026 (Mo: store credit taken for a damage charge "wasn't on the account, my orders list or any information
+   * regarding it"): something the Lair has been paid for another way gets a Shopify order of its own, so it shows in
+   * Orders, on the customer and in the reports. This is its draft: for the customer, one line (the variant at the price
+   * paid, with lineAttributes as its properties, nothing shipped), tagged, with the Lair's marker on it (attributes, so a
+   * draft whose answer was lost is found again by findMarkedDraft rather than made twice). completePaidDraft then makes
+   * it a paid order: Shopify works out the tax as it does at checkout, and emails the customer its order confirmation.
+   * Returns { id } (the draft's), or throws: error.refused when Shopify said no, so nothing was made.
+   */
+  async createPaidDraft({ customerId, variantId, cents, currency, note, tags, marker, lineAttributes = {} }) {
+    const attrs = (list) => Object.entries(list || {}).filter(([, v]) => v != null && v !== '').map(([key, value]) => ({ key, value: String(value).slice(0, 250) }));
+    const data = await madeAnyway(this.graphql(
+      'mutation LairPaidDraft($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } userErrors { field message } } }',
+      {
+        input: {
+          purchasingEntity: { customerId: `gid://shopify/Customer/${customerId}` },
+          tags, note, customAttributes: attrs(marker),
+          lineItems: [{
+            variantId: String(variantId).startsWith('gid://') ? String(variantId) : `gid://shopify/ProductVariant/${variantId}`, quantity: 1,
+            priceOverride: { amount: (cents / 100).toFixed(2), currencyCode: currency }, requiresShipping: false, customAttributes: attrs(lineAttributes),
+          }],
+        },
+      },
+    ));
+    const result = data?.draftOrderCreate;
+    // no answer for it: it may or may not have been made (the caller looks for it before making another)
+    if (!result) throw new Error('Shopify gave no answer for the draft order.');
+    if (result.userErrors?.length) throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true });
+    if (!result.draftOrder?.id) throw new Error('Shopify gave no draft order back.');
+    return { id: result.draftOrder.id };
+  }
+
+  /**
+   * Make a draft order a paid order (draftOrderComplete with no payment terms: marked as paid). A draft only ever
+   * becomes one order, so asking again can't make a second. Returns { order: { id, name } or null, status, errors }:
+   * no order and errors when Shopify said no (one completed already says no too: draftOrderState tells).
+   */
+  async completePaidDraft(id) {
+    const data = await madeAnyway(this.graphql(
+      'mutation LairPaidDraftComplete($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id status order { id name } } userErrors { field message } } }',
+      { id },
+    ));
+    const result = data?.draftOrderComplete;
+    if (!result) throw new Error('Shopify gave no answer for completing the draft order.');
+    const order = result.draftOrder?.order?.id ? { id: result.draftOrder.order.id, name: result.draftOrder.order.name || null } : null;
+    return { order, status: result.draftOrder?.status || null, errors: (result.userErrors || []).map((e) => String(e.message || '').trim()).filter(Boolean) };
+  }
+
+  /** A draft order's status and the order it became: { id, status, order: { id, name } or null }, or null when there's no such draft */
+  async draftOrderState(id) {
+    const data = await this.graphql('query LairDraftState($id: ID!) { draftOrder(id: $id) { id status order { id name } } }', { id });
+    const d = data.draftOrder;
+    return d ? { id: d.id, status: d.status || null, order: d.order?.id ? { id: d.order.id, name: d.order.name || null } : null } : null;
+  }
+
+  /** The customer's latest draft order with this tag and the marker key = value (its 10 latest are looked at), as draftOrderState, or null */
+  async findMarkedDraft(customerId, tag, key, value) {
+    const data = await this.graphql(
+      'query LairMarkedDrafts($query: String!) { draftOrders(first: 10, reverse: true, sortKey: ID, query: $query) { nodes { id status customAttributes { key value } order { id name } } } }',
+      { query: `customer_id:${String(customerId).replace(/\D/g, '')} tag:"${String(tag).replace(/"/g, '')}"` },
+    );
+    const d = (data.draftOrders?.nodes || []).find((n) => (n.customAttributes || []).some((a) => a.key === key && a.value === value));
+    return d ? { id: d.id, status: d.status || null, order: d.order?.id ? { id: d.order.id, name: d.order.name || null } : null } : null;
+  }
+
   async creditCustomer(customerId, cents, currency) {
     const data = await madeAnyway(this.graphql(
       `mutation Credit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {

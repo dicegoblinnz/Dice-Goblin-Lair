@@ -178,6 +178,19 @@ export const receiptKey = (paymentId) => `lair-receipt-${paymentId}`;
 const RECEIPT_RETRY = [10 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR];
 const RECEIPT_STUCK = 15 * MIN;
 const RECEIPT_WINDOW = 20 * HOUR;
+/**
+ * Store credit taken for a damage charge gets a Shopify order, as a card charge does (11 Oct 2026, Mo: "the charge
+ * wasn't on the account, my orders list or any information regarding it"): a draft order for the member with the damage
+ * charge product at the amount taken, tagged ORDER_TAG and marked with the payment's id (_lair_payment), completed as
+ * paid. It's made in the background, so it never holds the payment up. One Shopify turned away (or didn't answer) is
+ * tried again after each of these waits, and staff hear after the last; a try that never finished is taken up again
+ * after ORDER_STUCK. A try that may have made the draft looks for it before making another, and only the draft kept on
+ * the payment is ever completed (a draft becomes one order at most), so there's never a second order.
+ */
+const ORDER_RETRY = [10 * MIN, 30 * MIN, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY];
+const ORDER_STUCK = 15 * MIN;
+export const ORDER_TAG = 'lair-damage';
+const ORDER_TAGS = [ORDER_TAG, 'store-credit'];
 /** The views' option for staff's own routes (a payment's receipt details) */
 const STAFF = { staff: true };
 
@@ -1488,7 +1501,7 @@ export const membershipMethods = {
         console.error('Lair: following up damage charges taken now failed', error);
         out.paidNowError = String(error.message || error).slice(0, 300);
       }
-      if (!admin.configured) return await this.receiptsInRun(out);
+      if (!admin.configured) return await this.lastSteps(out);
       try {
         out.webhooks = await this.ensureMembershipWebhooks(webhookUrl, { force });
       } catch (error) {
@@ -1513,15 +1526,24 @@ export const membershipMethods = {
         out.error = String(error.message || error).slice(0, 300);
       }
       this.sql.exec('DELETE FROM membership_events WHERE at < ?', now - EVENT_KEEP_DAYS * DAY);
-      await this.receiptsInRun(out);
+      await this.lastSteps(out);
     } finally {
       this.membershipRunUntil = 0;
     }
     return out;
   },
 
-  /** The run's last step, so a slow email service never holds up billing: receipts that didn't go (they only need email). */
-  async receiptsInRun(out) {
+  /**
+   * The run's last steps, so neither Shopify's orders nor a slow email service ever hold up billing: store credit's
+   * orders still to make (they only need the Lair's own app), then receipts that didn't go (they only need email).
+   */
+  async lastSteps(out) {
+    try {
+      out.orders = await this.retryDamageOrders(Date.now());
+    } catch (error) {
+      console.error("Lair: making store credit's orders failed", error);
+      out.ordersError = String(error.message || error).slice(0, 300);
+    }
     try {
       out.receipts = await this.retryDamageReceipts(Date.now());
     } catch (error) {
@@ -2638,7 +2660,26 @@ export const membershipMethods = {
     return {
       id: p.id, method: p.method, status: p.status, amount: p.amount, at: p.created_at, completedAt: p.completed_at || null,
       card: p.method === 'card' ? cardWords(parse(p.card, null)) : null, balanceAfter: p.method === 'credit' ? p.balance_after ?? null : null,
-      error: p.status === 'failed' ? p.error_code || null : null, receipt,
+      error: p.status === 'failed' ? p.error_code || null : null, receipt, order: this.damageOrderView(p, { staff }),
+    };
+  },
+
+  /**
+   * A paid payment's Shopify order: 'made' (its name, like #1674; a card charge's has its id only), or for store credit,
+   * 'due' or 'making' (on its way), 'failed' (tried again at nextAt) or 'stopped' (staff were told to make it by hand);
+   * null from before store credit made orders. Members only see one that's made; staff also see why the last try didn't
+   * go, when it's tried next, and a link to it in Shopify admin. No awaits.
+   */
+  damageOrderView(p, { staff = false } = {}) {
+    const status = p.status !== 'paid' ? null : p.order_id ? 'made' : p.method === 'credit' ? p.order_status || null : null;
+    if (!status || (!staff && status !== 'made')) return null;
+    const id = p.order_id ? numericId(p.order_id) : null;
+    return {
+      status, name: p.order_name || null,
+      ...(staff ? {
+        id, url: id && this.env?.SHOP ? `https://${this.env.SHOP}/admin/orders/${id}` : null,
+        error: status === 'made' ? null : p.order_error || null, nextAt: ['failed', 'making'].includes(status) ? p.order_next_at || null : null,
+      } : {}),
     };
   },
 
@@ -3001,15 +3042,18 @@ export const membershipMethods = {
    */
   damagePaymentPaid(p, outcome, rules) {
     const now = Date.now();
+    // (store credit's order is made next, in the background: startDamageOrder)
     this.write(
       `UPDATE damage_payments SET status = 'paid', order_id = COALESCE(?, order_id), transaction_id = COALESCE(?, transaction_id), balance_after = COALESCE(?, balance_after),
-         error_code = NULL, completed_at = ?, updated_at = ? WHERE id = ?`,
+         error_code = NULL, completed_at = ?, updated_at = ?, order_status = CASE WHEN method = 'credit' THEN COALESCE(order_status, 'due') ELSE order_status END WHERE id = ?`,
       outcome.orderId || null, outcome.transactionId || null, outcome.balanceAfter ?? null, now, now, p.id,
     );
+    if (p.method === 'credit') this.startDamageOrder(p.id);
     const f = this.feeRow(p.fee_id);
     const name = this.memberName(p.customer_id);
     const paidWith = p.method === 'card' ? `on their card (order ${numericId(outcome.orderId || '') || 'in Shopify'})` : 'from their store credit';
-    const refund = p.method === 'card' ? 'Refund one of them in Shopify.' : 'Refund one: add the store credit back on their member page.';
+    // (store credit's own order is refunded back to store credit, so Shopify's sales stay right)
+    const refund = p.method === 'card' ? 'Refund one of them in Shopify.' : "Refund one: in Shopify, refund the store credit payment's order (under their name in Orders) back to their store credit.";
     if (!f || (f.status === 'paid' && f.payment_id === p.id && f.paid_via === p.method)) return { payment: p.id, status: 'paid' };
     if (['paid', 'waived'].includes(f.status)) {
       this.staffAlert(`pay-twice:${p.id}`, `A damage charge was paid twice: ${name}`, {
@@ -3857,6 +3901,151 @@ export const membershipMethods = {
       // (looked at again as it's sent: another run may have sent it meanwhile)
       const sending = this.damageReceipt(id, { due: Date.now() });
       if (sending) await sending;
+    }
+    return due;
+  },
+
+  /* ---------------- store credit's Shopify order (11 Oct 2026) ---------------- */
+
+  /** Store credit taken for a damage charge: its Shopify order, made in the background (damageOrder). No awaits. */
+  startDamageOrder(pid) {
+    const making = this.damageOrder(pid);
+    if (making) this.later(making);
+    return Boolean(making);
+  },
+
+  /**
+   * Make the Shopify order for store credit taken for a damage charge, or try again when an earlier try didn't finish.
+   * One whose time hasn't come (a try on its way, or a wait after one that didn't go) is left alone, so overlapping runs
+   * never make it twice. It's claimed ('making', looked at again after ORDER_STUCK if this try never finishes), then
+   * sendDamageOrder does the asking. Returns that (to wait for or leave running), or null when there's nothing to do.
+   * No awaits before the claim.
+   */
+  damageOrder(pid) {
+    const p = this.damagePaymentRow(pid);
+    if (!p || p.method !== 'credit' || p.status !== 'paid' || !['due', 'making', 'failed'].includes(p.order_status)) return null;
+    const now = Date.now();
+    if (p.order_next_at != null && p.order_next_at > now) return null;
+    // (Shopify not connected: it waits for the next run that can)
+    if (!this.shopify?.configured) return null;
+    const f = this.feeRow(p.fee_id);
+    const tries = (p.order_tries || 0) + 1;
+    if (tries > ORDER_RETRY.length + 1) {
+      // (the last try never finished)
+      this.damageOrderStopped(p, f, p.order_error || "Shopify didn't answer.", now);
+      return null;
+    }
+    this.write("UPDATE damage_payments SET order_status = 'making', order_tries = ?, order_next_at = ? WHERE id = ?", tries, now + ORDER_STUCK, pid);
+    return this.sendDamageOrder(pid, tries);
+  },
+
+  /**
+   * Ask Shopify for the order, never twice: a draft kept from an earlier try is looked at first (completed already, its
+   * answer lost: that's the order); with none kept, a try that may have made one looks for it by its marker; only then
+   * is a draft made (and kept before it's completed). Shopify saying no, or not answering, leaves it for the next try.
+   */
+  async sendDamageOrder(pid, tries) {
+    const shopify = this.shopify;
+    const p = this.damagePaymentRow(pid);
+    const f = this.feeRow(p.fee_id);
+    let draft = p.order_draft || null;
+    let order = null;
+    try {
+      if (draft) {
+        const state = await shopify.draftOrderState(draft);
+        if (state?.order) order = state.order;
+        else if (!state) {
+          // (deleted in Shopify before it was completed: looked for again, then made again)
+          draft = null;
+          this.write('UPDATE damage_payments SET order_draft = NULL WHERE id = ?', pid);
+        }
+      }
+      if (!draft && p.order_sent_at) {
+        const found = await shopify.findMarkedDraft(p.customer_id, ORDER_TAG, '_lair_payment', pid);
+        if (found) {
+          draft = found.id;
+          order = found.order;
+        }
+      }
+      if (!draft) {
+        const variantId = this.feeVariantId();
+        if (!variantId) throw new Error("There's no damage charge product to make it with (run setup with memberships=plans).");
+        // (noted first: a try after this one's answer is lost looks for the draft before making another)
+        this.write('UPDATE damage_payments SET order_sent_at = COALESCE(order_sent_at, ?) WHERE id = ?', Date.now(), pid);
+        const made = await shopify.createPaidDraft({
+          customerId: p.customer_id, variantId, cents: p.amount, currency: p.currency || this.env?.CURRENCY || 'NZD', tags: ORDER_TAGS,
+          // (nothing anyone typed goes in the note: the orders/paid webhook reads booking codes from a draft's note)
+          note: `Library damage charge, paid from store credit through the Dice Goblin Lair (${pid}).`,
+          marker: { _lair_payment: pid }, lineAttributes: { For: f ? feeLabel(f) : 'Library damage charge', _lair_charge: p.fee_id },
+        });
+        draft = made.id;
+      }
+      // kept before it's completed, so every later try completes this one (a draft becomes one order at most)
+      this.write('UPDATE damage_payments SET order_draft = ? WHERE id = ?', draft, pid);
+      if (!order) {
+        const done = await shopify.completePaidDraft(draft);
+        order = done.order;
+        if (!order) {
+          // Shopify said no: a draft completed already (an earlier try's answer was lost) says no too
+          const state = await shopify.draftOrderState(draft);
+          order = state?.order || null;
+          if (!order) throw new Error(done.errors.join('; ') || 'Shopify made no order.');
+        }
+      }
+    } catch (error) {
+      // --- no awaits from here on ---
+      console.error('Lair: could not make the order for store credit taken for a damage charge', error);
+      this.damageOrderFailed(this.damagePaymentRow(pid), f, tries, String(error?.message || error).slice(0, 300), Date.now());
+      return { payment: pid, order: null };
+    }
+    // --- no awaits from here on ---
+    this.write(
+      "UPDATE damage_payments SET order_status = 'made', order_id = ?, order_name = ?, order_error = NULL, order_next_at = NULL WHERE id = ?",
+      order.id, order.name || null, pid,
+    );
+    return { payment: pid, order: order.id };
+  },
+
+  /** A try at store credit's order didn't go: tried again after ORDER_RETRY's next wait, or given up after the last. No awaits. */
+  damageOrderFailed(p, f, tries, error, now) {
+    const wait = ORDER_RETRY[tries - 1];
+    if (!wait) {
+      this.damageOrderStopped(p, f, error, now);
+      return;
+    }
+    this.write("UPDATE damage_payments SET order_status = 'failed', order_error = ?, order_next_at = ? WHERE id = ?", String(error).slice(0, 300), now + wait, p.id);
+  },
+
+  /**
+   * Shopify wouldn't make store credit's order, however many times the Lair tried: it stops, and staff hear so they can
+   * make it by hand. The store credit came off and the charge is paid either way: only Shopify's record of it is missing.
+   * No awaits.
+   */
+  damageOrderStopped(p, f, error, now) {
+    this.write("UPDATE damage_payments SET order_status = 'stopped', order_error = ?, order_next_at = NULL WHERE id = ?", String(error).slice(0, 300), p.id);
+    const name = this.memberName(p.customer_id);
+    this.staffAlert(`order:${p.id}`, `A store credit payment has no Shopify order: ${name}`, {
+      title: "An order Shopify wouldn't make",
+      intro: `${money(p.amount)} came off ${name}'s store credit for ${f?.title || 'a damage charge'} and the charge is paid, but Shopify wouldn't make its order, however many times the Lair tried. Only Shopify's record of it is missing. Make the order by hand in Shopify admin: Orders, Create order, the Library damage charge product at ${money(p.amount)} for ${name}, then mark it as paid.`,
+      details: [['Charge', money(p.amount)], ['Paid', new Date(p.completed_at || p.created_at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'], ['Shopify said', String(error).slice(0, 200)]],
+    }, now);
+  },
+
+  /**
+   * The 10-minute run: store credit orders still to make (the first try never started), and ones whose wait is up or
+   * whose try never finished, made (damageOrder). Returns the payment ids it looked at.
+   */
+  async retryDamageOrders(now) {
+    if (!this.shopify?.configured) return [];
+    const due = this.sql.exec(
+      `SELECT id FROM damage_payments WHERE method = 'credit' AND status = 'paid' AND order_status IN ('due', 'making', 'failed')
+         AND (order_next_at IS NULL OR order_next_at <= ?) ORDER BY COALESCE(order_next_at, 0), created_at LIMIT ?`,
+      now, CHECKS_A_RUN,
+    ).toArray().map((r) => r.id);
+    for (const id of due) {
+      // (looked at again as it's claimed: another run may have taken it meanwhile)
+      const making = this.damageOrder(id);
+      if (making) await making;
     }
     return due;
   },
