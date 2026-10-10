@@ -141,12 +141,15 @@ export class ShopifyAdmin {
     if (!response.ok) throw new Error(`Shopify API error ${response.status}`);
     const { data, errors } = await response.json();
     if (errors?.length) {
-      // A scope added after the token was issued shows up as ACCESS_DENIED: a fresh token picks it up.
+      // A scope added after the token was issued shows up as ACCESS_DENIED: a fresh token picks it up. A query is just
+      // asked again. A mutation never is: Shopify can do the change and still deny a field of its answer, so asking
+      // again could take store credit twice (11 Oct 2026). It fails here (its caller treats that as no answer, and
+      // looks for what happened before anything is done again), and the next call has the fresh token.
       if (!retried && errors.some((e) => e.extensions?.code === 'ACCESS_DENIED')) {
         this.token = null;
         this.tokenExpires = 0;
         await this.storage?.delete?.(this.tokenKey);
-        return this.graphql(query, variables, true);
+        if (!/^\s*mutation\b/.test(query)) return this.graphql(query, variables, true);
       }
       throw new Error(`Shopify API: ${errors.map((e) => e.message).join('; ')}`);
     }
@@ -748,33 +751,61 @@ const resendEmail = (env, { to, subject, text, html = null, replyTo = null }) =>
   from: env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(replyTo || env.REPLY_TO ? { reply_to: replyTo || env.REPLY_TO } : {}),
 });
 
-async function postToResend(env, path, body) {
-  try {
-    const response = await fetch(`https://api.resend.com/${path}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (response.ok) return { ok: true, attempted: true, status: response.status, message: 'Sent.' };
+/** How long to wait before sending once more when Resend says it's busy (it allows a couple of requests a second) */
+const RESEND_AGAIN_AFTER = 1000;
+const pause = (ms) => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
+
+/**
+ * One request to Resend. Never throws; returns { ok, attempted, status, code (Resend's error name), message }.
+ * Turned away for sending too fast (429), it waits a moment and sends once more: Resend never took it, so it can't go
+ * twice. With an idempotency key (key) Resend can also tell a second send of the same email, so a server error or no
+ * answer at all gets one more try too.
+ */
+async function postToResend(env, path, body, { key = null } = {}) {
+  const headers = { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) };
+  for (let attempt = 1; ; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(`https://api.resend.com/${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    } catch (error) {
+      if (key && attempt < 2) {
+        await pause(RESEND_AGAIN_AFTER);
+        continue;
+      }
+      console.error('Lair: email failed', error);
+      return { ok: false, attempted: true, status: 0, code: null, message: String(error.message || error).slice(0, 300) };
+    }
+    if (response.ok) return { ok: true, attempted: true, status: response.status, code: null, message: 'Sent.' };
     const text = await response.text().catch(() => '');
     let message = text.slice(0, 300);
+    let code = null;
     try {
-      message = JSON.parse(text).message || message;
+      const parsed = JSON.parse(text);
+      message = parsed.message || message;
+      code = parsed.name || null;
     } catch {
       // not JSON: keep the raw text
     }
+    const again = response.status === 429 || (key && (response.status >= 500 || code === 'concurrent_idempotent_requests'));
+    if (again && attempt < 2) {
+      const after = Number(response.headers.get('retry-after'));
+      await pause(Math.min(after > 0 ? after * 1000 : RESEND_AGAIN_AFTER, 2 * RESEND_AGAIN_AFTER));
+      continue;
+    }
     console.error('Lair: email failed', response.status, message);
-    return { ok: false, attempted: true, status: response.status, message };
-  } catch (error) {
-    console.error('Lair: email failed', error);
-    return { ok: false, attempted: true, status: 0, message: String(error.message || error).slice(0, 300) };
+    return { ok: false, attempted: true, status: response.status, code, message };
   }
 }
 
-/** Send one email through Resend. Never throws; returns { ok, attempted, status, message }. */
+/**
+ * Send one email through Resend. Never throws; returns { ok, attempted, status, code, message }. message.idempotencyKey
+ * (optional): Resend's key for it, so sending the same email again within a day never sends it twice.
+ */
 export async function sendEmail(env, message) {
-  if (!emailReady(env) || !message?.to) return { ok: false, attempted: false, status: 0, message: 'Email is not set up.' };
-  return postToResend(env, 'emails', resendEmail(env, message));
+  if (!emailReady(env) || !message?.to) return { ok: false, attempted: false, status: 0, code: null, message: 'Email is not set up.' };
+  return postToResend(env, 'emails', resendEmail(env, message), { key: message.idempotencyKey || null });
 }
 
 /**

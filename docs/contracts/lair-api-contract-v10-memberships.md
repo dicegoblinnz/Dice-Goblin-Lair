@@ -36,8 +36,10 @@ can be taken straight away.
 - **Or staff take one now:** from store credit (the Lair's own app, `storeCreditAccountDebit`), or on the saved card.
   A subscription app can only charge a card by billing a contract, so the charge gets a one-off contract of its own
   (`subscriptionContractAtomicCreate`: the member's payment method, one line on the damage charge product at the
-  charge's price, its one bill due within the hour), billed once (`lair-damage-<payment>`), then cancelled. It has no
-  library plan on it, so it never becomes a membership.
+  charge's price, a $0 delivery price and no delivery method since nothing is shipped, its one bill due within the
+  hour), billed once (`lair-damage-<payment>`), then cancelled. It has no library plan on it, so it never becomes a
+  membership. (Without the delivery price Shopify refuses it: "Delivery price can't be blank", Mo's first card charge,
+  11 Oct 2026.)
 - Code: `src/memberships.js` (all of it), wired into `src/lair.js` (migration, routes, the library plan), `src/index.js`
   (`/webhooks/memberships`) and `src/config.js`. Tests: `test/round10-memberships.test.js`.
 
@@ -139,7 +141,12 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   10 minutes on). This follow-up runs even without Lair Memberships. A one-off contract whose answer was lost is found
   by its marker (`_lair_payment`) before another is made, and a bill by its key.
 - **Paid:** the charge is `paid` (`paidVia` `credit` or `card`), the member gets a receipt ("Paid: the $40 charge for
-  Catan", with the store credit left), and the one-off contract is cancelled on the next run.
+  Catan", with the store credit left), and the one-off contract is cancelled on the next run. The receipt goes with its
+  own Resend idempotency key (`lair-receipt-<payment id>`), and how it went is kept on the payment (11 Oct 2026, Mo:
+  "the email didn't show up"): one Resend turns away is sent again by the 10-minute run after 10 minutes, 30 minutes,
+  then 1, 2, 4 and 8 hours, and one whose answer never came back after 15 minutes, always with the same key, so it can
+  never go twice; after the last try staff hear ("A receipt couldn't be emailed"). Store credit taken for a damage
+  charge also shows in the member page's store credit list ("Damage charge: Catan").
 - **Not taken:** the charge goes back to where it was (its notice, the next bill, or the counter) and staff hear. The
   member hears ("We couldn't take the charge for Catan", and where it goes instead) when it was their card (declined,
   expired, the bank check never done) or when their notice said it would be taken now; a problem on the store's side
@@ -212,7 +219,11 @@ emailed (`null`: it wasn't, so it can't be taken now). `paidVia` (when paid): `b
 `canChargeNow`: staff can take it now. `payment`: the latest try at taking it now, or `null`.
 
 **Payment view** (a damage charge taken now): `{ id, method: 'credit' | 'card', status, amount, at, completedAt,
-card ('Visa ending 4242', for card) | null, balanceAfter (store credit left, for credit) | null, error (when failed) | null }`.
+card ('Visa ending 4242', for card) | null, balanceAfter (store credit left, for credit) | null, error (when failed) | null,
+receipt }`. `receipt` (once it's paid, 11 Oct 2026): `{ status: 'sending' | 'sent' | 'failed' | 'none', at }` (`at`:
+when Resend took it; `none`: no email address, or email isn't set up), or `null` for payments from before receipts were
+kept. Staff's routes add `error` (why the last try didn't go), `tries` and `nextAt` (when it's tried again, `null` once
+it's given up).
 `status`: `claimed` (not with Shopify yet, or its answer was lost: the Lair keeps trying), `checking` (store credit
 whose answer was lost: being looked for; staff can settle it), `pending`, `challenged` (a bank check), `paid`, `failed`
 or `void` (never reached Shopify).
@@ -350,7 +361,8 @@ Not confirmed by Shopify's documentation, so check these with test payments:
 - The draft mutations used for plan changes and damage charge lines are deprecated in 2026-07 (no removal date yet);
   2026-10 has replacements.
 - **A damage charge taken now on a card:** that Shopify takes the one-off contract (no shipping on it, its one bill due
-  within the hour) and bills its cycle 1 straight away; whether the member gets Shopify's order confirmation for it;
+  within the hour; 11 Oct 2026: it needs a delivery price, now $0) and bills its cycle 1 straight away (Shopify allows a
+  cycle to be billed up to 24 hours early); whether the member gets Shopify's order confirmation for it;
   and that the contract's cancel webhook changes nothing. If Shopify refuses the bill (a cycle error), staff hear and
   nothing is charged.
 - **Store credit taken now** with an answer lost: finding it again reads the account's debits, which needs the Lair's
@@ -363,7 +375,9 @@ Not confirmed by Shopify's documentation, so check these with test payments:
 - `src/lair.js`: the round 10 migration (tables `memberships`, `membership_charges`, `damage_charges`,
   `damage_payments` (damage charges taken now), `membership_events`), the routes, the library plan from memberships
   (holds, scans, GET /me, the staff page), and maintenance. Round 10 grew in place before it went live, so a store that
-  ran an earlier copy of it gets the tables and columns added since (`ROUND10_LATE_COLUMNS`) when it starts.
+  ran an earlier copy of it gets the tables and columns added since (`ROUND10_LATE_COLUMNS`) when it starts. Columns
+  added after it went live (`ROUND10_ADDED_COLUMNS`: the receipt's on `damage_payments`) are made sure of on every
+  start, once round 10's tables are there.
 - `src/index.js`: `/webhooks/memberships`. `src/config.js`: the `MEMBERSHIPS_*` keys. `src/shopify.js`: a second app's
   login (its own token key); store credit refusals marked (`error.refused`), and an account's latest debits
   (`storeCreditDebits`).

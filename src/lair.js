@@ -158,6 +158,21 @@ const ROUND10_LATE_COLUMNS = [
   ['games', 'offline_players', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
+/**
+ * Columns round 10's tables gained after it went live, made sure of on every start once round 10's tables are there
+ * (however they came about: its own step, or the repair above for a store that ran an earlier copy), so they never
+ * depend on which tables a store had when a step ran.
+ *  - damage_payments.receipt_*: a paid damage charge's receipt (11 Oct 2026, Mo: "the email didn't show up"):
+ *    receipt_status 'sending', 'sent', 'failed' (sent again by the 10-minute run at receipt_next_at) or 'none' (nobody
+ *    to send it to), null for payments from before; receipt_at: when the email service took it; receipt_tries;
+ *    receipt_error: why the last try didn't go.
+ */
+const ROUND10_ADDED_COLUMNS = [
+  ['damage_payments', 'receipt_status', 'TEXT'], ['damage_payments', 'receipt_at', 'INTEGER'], ['damage_payments', 'receipt_tries', 'INTEGER NOT NULL DEFAULT 0'],
+  ['damage_payments', 'receipt_error', 'TEXT'], ['damage_payments', 'receipt_next_at', 'INTEGER'],
+];
+const ROUND10_ADDED_INDEXES = ['CREATE INDEX IF NOT EXISTS damage_payments_receipt ON damage_payments (receipt_status, receipt_next_at)'];
+
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
   [
@@ -797,6 +812,15 @@ export class Lair {
         }
       }
       for (const statement of MIGRATIONS[ROUND10 - 1]) this.sql.exec(statement);
+      // and what round 10's tables have gained since it went live
+      for (const [table, column, type] of ROUND10_ADDED_COLUMNS) {
+        try {
+          this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+        } catch {
+          this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+        }
+      }
+      for (const statement of ROUND10_ADDED_INDEXES) this.sql.exec(statement);
     }
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
@@ -8063,7 +8087,15 @@ export class Lair {
       }
     }
     // --- no awaits from here on ---
-    const history = this.sql.exec('SELECT * FROM member_credit WHERE customer_id = ? ORDER BY at DESC, rowid DESC LIMIT 20', id).toArray().map((r) => this.creditView(r));
+    const changes = this.sql.exec('SELECT * FROM member_credit WHERE customer_id = ? ORDER BY at DESC, rowid DESC LIMIT 20', id).toArray().map((r) => this.creditView(r));
+    // Damage charges paid from store credit (round 10) are listed too, so everything the Lair took off is in one place
+    // (11 Oct 2026: Mo couldn't find a damage charge's store credit anywhere)
+    const damage = this.sql.exec(
+      `SELECT p.id, p.amount, p.balance_after, p.by, COALESCE(p.completed_at, p.created_at) AS at, f.title FROM damage_payments p JOIN damage_charges f ON f.id = p.fee_id
+       WHERE p.customer_id = ? AND p.method = 'credit' AND p.status = 'paid' ORDER BY at DESC LIMIT 20`,
+      id,
+    ).toArray().map((p) => ({ ...this.creditView({ ...p, amount: -p.amount, note: `Damage charge: ${p.title}`, status: 'done' }), kind: 'damage' }));
+    const history = [...changes, ...damage].sort((a, b) => b.at - a.at).slice(0, 20);
     return { balance, currency, problem, history };
   }
 

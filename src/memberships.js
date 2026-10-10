@@ -168,6 +168,16 @@ const CREDIT_ASK_AFTER = HOUR;
 const CREDIT_SKEW = 30_000;
 /** A one-off charge contract whose making may have reached Shopify is looked for this long before it's made again */
 const CONTRACT_LOOK_AFTER = 2 * MIN;
+/**
+ * A paid damage charge's receipt (11 Oct 2026, Mo: "the email didn't show up"): its own key at the email service, so
+ * sending it again never sends it twice (the service keeps keys for a day). One the service turned away is tried again
+ * after each of these; one whose answer never came back is tried again after RECEIPT_STUCK. After the last, staff hear.
+ */
+export const receiptKey = (paymentId) => `lair-receipt-${paymentId}`;
+const RECEIPT_RETRY = [10 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR];
+const RECEIPT_STUCK = 15 * MIN;
+/** The views' option for staff's own routes (a payment's receipt details) */
+const STAFF = { staff: true };
 
 /** The words members and staff see, kept together so the theme's demo can say the same */
 export const MEMBERSHIP_MESSAGES = {
@@ -404,7 +414,9 @@ export class MembershipsAdmin extends ShopifyAdmin {
    * (the damage charge product's variant at the charge's price, nothing shipped), its one bill due within the hour so it
    * can be billed straight away. It carries the payment's id (_lair_payment), so a create whose answer was lost is found
    * again (findChargeContract) rather than made twice. It has no library plan on it, so the Lair never takes it for a
-   * membership. Returns { contractId, errors }.
+   * membership. Nothing is shipped, so it has no delivery method, but Shopify still needs its delivery price: $0
+   * (without one Shopify refuses it: "Delivery price can't be blank", Mo's first card charge, 11 Oct 2026).
+   * Returns { contractId, errors }.
    */
   async createChargeContract({ customerId, paymentMethodId, currency, feeVariantId, paymentId, fee, billAt }) {
     const data = await this.graphql(
@@ -415,7 +427,7 @@ export class MembershipsAdmin extends ShopifyAdmin {
           customerId: gid('Customer', customerId), currencyCode: currency, nextBillingDate: new Date(billAt).toISOString(),
           contract: {
             status: 'ACTIVE', paymentMethodId, note: `Dice Goblin library damage charge (${fee.id}): ${fee.label}`.slice(0, 250),
-            billingPolicy: { interval: 'DAY', intervalCount: 1 }, deliveryPolicy: { interval: 'DAY', intervalCount: 1 },
+            billingPolicy: { interval: 'DAY', intervalCount: 1 }, deliveryPolicy: { interval: 'DAY', intervalCount: 1 }, deliveryPrice: decimal(0),
             customAttributes: [{ key: '_lair_payment', value: paymentId }],
           },
           lines: [{
@@ -833,14 +845,15 @@ export const membershipMethods = {
 
   /**
    * A damage charge as members and staff see it. paidVia: 'bill', 'card', 'credit' or 'counter' once it's paid;
-   * canChargeNow: its notice has been emailed and it can be taken now; payment: the latest try at taking it now.
+   * canChargeNow: its notice has been emailed and it can be taken now; payment: the latest try at taking it now (with
+   * staff's details of its receipt for staff).
    */
-  feeView(f) {
+  feeView(f, { staff = false } = {}) {
     return {
       id: f.id, title: f.title, reason: f.reason, reasonWords: FEE_REASONS[f.reason] || f.reason, details: f.details || '', amount: f.amount,
       status: f.status, dueAt: f.due_at, createdAt: f.created_at, resolvedAt: f.resolved_at || null, disputeNote: f.dispute_note || null,
       emailedAt: f.emailed_at || null, paidVia: f.status === 'paid' ? f.paid_via || null : null,
-      canChargeNow: Boolean(f.emailed_at) && CHARGEABLE_NOW.includes(f.status), payment: this.damagePaymentView(this.latestDamagePayment(f.id)),
+      canChargeNow: Boolean(f.emailed_at) && CHARGEABLE_NOW.includes(f.status), payment: this.damagePaymentView(this.latestDamagePayment(f.id), { staff }),
     };
   },
 
@@ -1472,6 +1485,13 @@ export const membershipMethods = {
       } catch (error) {
         console.error('Lair: following up damage charges taken now failed', error);
         out.paidNowError = String(error.message || error).slice(0, 300);
+      }
+      // and their receipts that didn't go (they only need email)
+      try {
+        out.receipts = await this.retryDamageReceipts(Date.now());
+      } catch (error) {
+        console.error('Lair: sending damage charge receipts again failed', error);
+        out.receiptsError = String(error.message || error).slice(0, 300);
       }
       if (!admin.configured) return out;
       try {
@@ -2382,8 +2402,8 @@ export const membershipMethods = {
       if (!first) return null;
       const paying = this.latestDamagePayment(first.id);
       return {
-        charge: { ...this.feeView(first), emailed: Boolean(first.emailed_at), billable: Boolean(first.membership_id && this.feeVariantId()) },
-        ...(chargeNow ? { chargeNow: { ok: Boolean(paying && !['failed', 'void'].includes(paying.status)), payment: this.damagePaymentView(paying) } } : {}),
+        charge: { ...this.feeView(first, STAFF), emailed: Boolean(first.emailed_at), billable: Boolean(first.membership_id && this.feeVariantId()) },
+        ...(chargeNow ? { chargeNow: { ok: Boolean(paying && !['failed', 'void'].includes(paying.status)), payment: this.damagePaymentView(paying, STAFF) } } : {}),
         repeated: true,
       };
     };
@@ -2442,21 +2462,21 @@ export const membershipMethods = {
     } else if (chargeNow && method && emailed) {
       try {
         const done = await this.payDamageNow(id, method, { by, told: true, rules, orCard: use === 'auto' });
-        paidNow = { ok: true, message: done.message, payment: this.damagePaymentView(done.payment) };
+        paidNow = { ok: true, message: done.message, payment: this.damagePaymentView(done.payment, STAFF) };
       } catch (error) {
         // the charge is logged and its notice has gone whatever happened here, so this never fails the request (a
         // payment left part-way is followed up by the next run)
         if (!(error instanceof RuleError)) console.error('Lair: taking a damage charge now failed', error);
         paidNow = {
           ok: false, error: error instanceof RuleError ? error.message : 'Something went wrong taking it now. Check the charge on the Damage tab.',
-          payment: this.damagePaymentView(this.latestDamagePayment(id)),
+          payment: this.damagePaymentView(this.latestDamagePayment(id), STAFF),
         };
       }
     } else if (chargeNow) {
       paidNow = { ok: false, error: why || MEMBERSHIP_MESSAGES.feeNotEmailed, payment: null };
     }
     return {
-      charge: { ...this.feeView(this.feeRow(id)), emailed, billable: Boolean(m && this.feeVariantId()) },
+      charge: { ...this.feeView(this.feeRow(id), STAFF), emailed, billable: Boolean(m && this.feeVariantId()) },
       ...(chargeNow ? { chargeNow: paidNow } : {}),
     };
   },
@@ -2473,7 +2493,7 @@ export const membershipMethods = {
     return {
       charges: rows.map((f) => {
         const member = this.memberRow(f.customer_id);
-        return { ...this.feeView(f), customerId: f.customer_id, name: member?.name || member?.first_name || '', code: member?.code || '', membershipId: f.membership_id || null, by: f.created_by || null, note: f.note || null };
+        return { ...this.feeView(f, STAFF), customerId: f.customer_id, name: member?.name || member?.first_name || '', code: member?.code || '', membershipId: f.membership_id || null, by: f.created_by || null, note: f.note || null };
       }),
     };
   },
@@ -2546,7 +2566,7 @@ export const membershipMethods = {
     }
     // the new notice, waited for (it only counts as emailed once the email service has it)
     if (notice) await this.sendDamageNotice(f.id, this.membershipRow(f.membership_id), rules, notice);
-    return { charge: this.feeView(this.feeRow(f.id)) };
+    return { charge: this.feeView(this.feeRow(f.id), STAFF) };
   },
 
   /**
@@ -2597,12 +2617,21 @@ export const membershipMethods = {
     return this.sql.exec('SELECT * FROM damage_payments WHERE fee_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', String(feeId)).toArray()[0] || null;
   },
 
-  damagePaymentView(p) {
+  /**
+   * A payment as the staff page and the member's page show it. receipt (once it's paid): whether its receipt went
+   * ('sent' and when, 'sending', 'failed' and tried again, 'none': nobody to send it to; null from before receipts were
+   * kept); staff also see why the last try didn't go and when it's tried next.
+   */
+  damagePaymentView(p, { staff = false } = {}) {
     if (!p) return null;
+    const receipt = p.status === 'paid' && p.receipt_status ? {
+      status: p.receipt_status, at: p.receipt_at || null,
+      ...(staff ? { error: p.receipt_error || null, tries: p.receipt_tries || 0, nextAt: ['failed', 'sending'].includes(p.receipt_status) ? p.receipt_next_at || null : null } : {}),
+    } : null;
     return {
       id: p.id, method: p.method, status: p.status, amount: p.amount, at: p.created_at, completedAt: p.completed_at || null,
       card: p.method === 'card' ? cardWords(parse(p.card, null)) : null, balanceAfter: p.method === 'credit' ? p.balance_after ?? null : null,
-      error: p.status === 'failed' ? p.error_code || null : null,
+      error: p.status === 'failed' ? p.error_code || null : null, receipt,
     };
   },
 
@@ -2697,7 +2726,7 @@ export const membershipMethods = {
     const method = this.payNowMethod(this.feeRow(before.id) || before, use, balance);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
     const done = await this.payDamageNow(before.id, method, { by, rules, orCard: use === 'auto' });
-    return { charge: this.feeView(this.feeRow(before.id)), payment: this.damagePaymentView(done.payment), message: done.message };
+    return { charge: this.feeView(this.feeRow(before.id), STAFF), payment: this.damagePaymentView(done.payment, STAFF), message: done.message };
   },
 
   /**
@@ -2985,7 +3014,7 @@ export const membershipMethods = {
     }
     const mine = f.status === 'charging' && f.payment_id === p.id;
     this.write("UPDATE damage_charges SET status = 'paid', payment_id = ?, paid_via = ?, resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ?", p.id, p.method, now, p.by || null, now, f.id);
-    this.tellDamagePaid(this.feeRow(f.id), this.damagePaymentRow(p.id), rules);
+    this.sendDamageReceipt(p.id);
     if (!mine) {
       // a late success: the charge had gone back (or was being paid another way)
       const twice = ['billing', 'charging'].includes(f.status);
@@ -3251,7 +3280,7 @@ export const membershipMethods = {
       this.damagePaymentPaid(p, {}, rules);
       this.write('UPDATE damage_payments SET error_message = ? WHERE id = ?', `${by} checked: it came off.`, p.id);
     } else this.damagePaymentFailed(p, { code: 'NOT_TAKEN', message: `${by} checked: it didn't come off.` }, rules, { inRequest: true });
-    return { charge: this.feeView(this.feeRow(f.id)), payment: this.damagePaymentView(this.damagePaymentRow(p.id)) };
+    return { charge: this.feeView(this.feeRow(f.id), STAFF), payment: this.damagePaymentView(this.damagePaymentRow(p.id), STAFF) };
   },
 
   /* ---------------- staff: memberships ---------------- */
@@ -3685,12 +3714,15 @@ export const membershipMethods = {
     return staff ? `It's back waiting for their next bill${next ? ` (${next})` : ''}.` : `It'll go on your next library bill instead${next ? `, on ${next}` : ''}.`;
   },
 
-  /** A damage charge taken now has gone through: the member's receipt. No awaits. */
-  tellDamagePaid(fee, p) {
+  /** A damage charge taken now has gone through: the member's receipt, or null when there's nobody to send it to. No awaits. */
+  damageReceiptLetter(fee, p) {
+    if (!emailReady(this.env)) return null;
     const to = this.membershipContact(fee.customer_id);
+    if (!to.email) return null;
     const credit = p.method === 'credit';
     const card = cardWords(parse(p.card, null));
-    this.membershipMail(fee.customer_id, `Paid: the ${money(p.amount)} charge for ${fee.title}`, {
+    return this.letter(to.email, `Paid: the ${money(p.amount)} charge for ${fee.title}`, {
+      button: { label: 'Open My Library', url: `${this.page('myLair')}?view=library` },
       title: 'Charge paid',
       intro: [
         `Kia ora ${to.first},`,
@@ -3702,6 +3734,91 @@ export const membershipMethods = {
       ],
       outro: ["Think we've got it wrong? Have a chat with us in the Lair and we'll sort it out."],
     });
+  },
+
+  /** A paid damage charge's receipt, sent in the background (damageReceipt). No awaits. */
+  sendDamageReceipt(pid) {
+    const sending = this.damageReceipt(pid);
+    if (sending) this.later(sending);
+    return Boolean(sending);
+  },
+
+  /**
+   * Send a paid damage charge's receipt, or send it again when an earlier try didn't go (Mo, 11 Oct 2026: "the email
+   * didn't show up"). It goes with its own key (receiptKey), so the email service never sends it twice, and how it went
+   * is kept on the payment for staff: 'sending', then 'sent' or 'failed' (damageReceiptAnswer); 'none' when there's
+   * nobody to send it to. After RECEIPT_RETRY's last wait it's given up and staff hear. Returns the send (to wait for
+   * or leave running), or null when there's nothing to send. No awaits before the send.
+   */
+  damageReceipt(pid) {
+    const p = this.damagePaymentRow(pid);
+    const f = p ? this.feeRow(p.fee_id) : null;
+    if (!p || !f || p.status !== 'paid' || ['sent', 'none'].includes(p.receipt_status)) return null;
+    const now = Date.now();
+    if ((p.receipt_tries || 0) > RECEIPT_RETRY.length) {
+      // (sends whose answers never came back, as many times as it's tried)
+      this.damageReceiptGivenUp(p, f, p.receipt_error || 'The email service never answered.', now);
+      return null;
+    }
+    const letter = this.damageReceiptLetter(f, p);
+    if (!letter) {
+      this.write("UPDATE damage_payments SET receipt_status = 'none', receipt_error = ?, receipt_next_at = NULL WHERE id = ?",
+        emailReady(this.env) ? 'No email address on file.' : "Email isn't set up.", pid);
+      return null;
+    }
+    const tries = (p.receipt_tries || 0) + 1;
+    // until its answer comes back; one that never does is sent again after RECEIPT_STUCK
+    this.write("UPDATE damage_payments SET receipt_status = 'sending', receipt_tries = ?, receipt_next_at = ? WHERE id = ?", tries, now + RECEIPT_STUCK, pid);
+    return this.mail({ ...letter, idempotencyKey: receiptKey(pid) }).then((result) => this.damageReceiptAnswer(pid, tries, result));
+  },
+
+  /** How a receipt's send went: sent, or turned away (tried again after RECEIPT_RETRY's next wait, or given up). No awaits. */
+  damageReceiptAnswer(pid, tries, result) {
+    const p = this.damagePaymentRow(pid);
+    // (a later try has started since, or this one is already settled)
+    if (!p || p.receipt_tries !== tries || p.receipt_status !== 'sending') return result;
+    const now = Date.now();
+    // the email service already had this receipt's key, from an earlier try that went: it went then
+    if (result?.ok || (result?.status === 409 && result?.code === 'invalid_idempotent_request')) {
+      this.write("UPDATE damage_payments SET receipt_status = 'sent', receipt_at = ?, receipt_error = NULL, receipt_next_at = NULL WHERE id = ?", now, pid);
+      return result;
+    }
+    const error = [result?.status || null, result?.message || 'No answer'].filter(Boolean).join(': ').slice(0, 300);
+    const wait = RECEIPT_RETRY[tries - 1];
+    if (!wait) {
+      this.damageReceiptGivenUp(p, this.feeRow(p.fee_id), error, now);
+      return result;
+    }
+    this.write("UPDATE damage_payments SET receipt_status = 'failed', receipt_error = ?, receipt_next_at = ? WHERE id = ?", error, now + wait, pid);
+    return result;
+  },
+
+  /** A receipt the email service wouldn't take, tries after tries: it stops, and staff hear so they can tell the member. No awaits. */
+  damageReceiptGivenUp(p, f, error, now) {
+    this.write("UPDATE damage_payments SET receipt_status = 'failed', receipt_error = ?, receipt_next_at = NULL WHERE id = ?", String(error).slice(0, 300), p.id);
+    const name = this.memberName(p.customer_id);
+    this.staffAlert(`receipt:${p.id}`, `A receipt couldn't be emailed: ${name}`, {
+      title: "A receipt that didn't go",
+      intro: `${name} paid the ${money(p.amount)} charge for ${f?.title || 'a library game'} ${p.method === 'credit' ? 'from their store credit' : `on ${cardWords(parse(p.card, null))}`}, but the email service wouldn't take their receipt, however many times the Lair tried. The charge is paid. Let them know it's gone through.`,
+      details: [['Charge', money(p.amount)], ['Email service said', String(error).slice(0, 200)]],
+    }, now);
+  },
+
+  /**
+   * The 10-minute run: receipts the email service turned away whose wait is up, and ones whose answer never came back
+   * (the send was cut short), sent again with their own key. Returns the payment ids it tried.
+   */
+  async retryDamageReceipts(now) {
+    const due = this.sql.exec(
+      `SELECT id FROM damage_payments WHERE status = 'paid' AND receipt_status IN ('failed', 'sending') AND receipt_next_at IS NOT NULL AND receipt_next_at <= ?
+       ORDER BY receipt_next_at LIMIT ?`,
+      now, CHECKS_A_RUN,
+    ).toArray().map((r) => r.id);
+    for (const id of due) {
+      const sending = this.damageReceipt(id);
+      if (sending) await sending;
+    }
+    return due;
   },
 
   /** Taking a damage charge now didn't work: the member hears where it goes instead. No awaits. */

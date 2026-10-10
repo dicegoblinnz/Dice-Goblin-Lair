@@ -12,8 +12,9 @@ import worker from '../src/index.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
 import {
   FEE_NOTICE_DAYS, MAX_ATTEMPTS, MEMBERSHIP_MESSAGES, MEMBERSHIP_SCOPES, MEMBERSHIP_TOPICS, MembershipsAdmin, RETRY_DAYS, TIERS, attemptState, billDay, cardWords,
-  chargeKey, numericId, payNowKey, retryAt, tierOf,
+  chargeKey, numericId, payNowKey, receiptKey, retryAt, tierOf,
 } from '../src/memberships.js';
+import { ShopifyAdmin } from '../src/shopify.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -1789,6 +1790,30 @@ test("a damage charge billed on its own: every line that isn't a damage charge c
   assert.equal((await ask(false)).ok, false, 'a renewal bill missing its damage charge says so');
 });
 
+test("a card charge's one-off contract is one Shopify takes: a $0 delivery price (nothing is shipped), the charge as its only line, marked with its payment", async () => {
+  const admin = new MembershipsAdmin({ SHOP: 'dice-goblin.myshopify.com', MEMBERSHIPS_CLIENT_ID: 'id', MEMBERSHIPS_CLIENT_SECRET: 'secret', API_VERSION: '2026-07' }, ctx.storage);
+  const sent = [];
+  // Shopify's own check on a new contract, as it answered Mo's first card charge (11 Oct 2026)
+  const refused = { contract: null, userErrors: [{ field: ['input', 'contract'], code: 'INVALID', message: "Validation failed: Delivery price can't be blank, Delivery price isn't a number." }] };
+  admin.graphql = async (query, vars) => {
+    sent.push([query.match(/(?:mutation|query) (\w+)/)[1], JSON.parse(JSON.stringify(vars))]);
+    const price = vars.input.contract.deliveryPrice;
+    if (price == null || !/^\d+(\.\d+)?$/.test(String(price))) return { subscriptionContractAtomicCreate: refused };
+    return { subscriptionContractAtomicCreate: { contract: { id: 'gid://shopify/SubscriptionContract/9001', status: 'ACTIVE' }, userErrors: [] } };
+  };
+  const made = await admin.createChargeContract({
+    customerId: SAM, paymentMethodId: PM, currency: 'NZD', feeVariantId: FEE_VARIANT, paymentId: 'dp_1',
+    fee: { id: 'dc_1', amount: 500, label: 'Missing parts: Catan (meeples)' }, billAt: clock + HOUR,
+  });
+  assert.deepEqual(made, { contractId: 'gid://shopify/SubscriptionContract/9001', errors: [] });
+  const [[name, { input }]] = sent;
+  assert.equal(name, 'MembershipChargeContract');
+  assert.deepEqual([input.customerId, input.currencyCode, input.contract.paymentMethodId], [`gid://shopify/Customer/${SAM}`, 'NZD', PM]);
+  assert.deepEqual([input.contract.deliveryPrice, input.contract.deliveryMethod], ['0.00', undefined], 'a $0 delivery price, and no delivery method: nothing is shipped');
+  assert.deepEqual(input.lines.map(({ line }) => [line.productVariantId, line.quantity, line.currentPrice]), [[FEE_VARIANT, 1, '5.00']]);
+  assert.deepEqual(input.contract.customAttributes, [{ key: '_lair_payment', value: 'dp_1' }]);
+});
+
 test('while a plan change is with Shopify, nothing is billed for that member; the bill after it is on the new plan', async () => {
   await join();
   const due = months(JOINED, 1);
@@ -1946,6 +1971,182 @@ test('a damage charge taken now from store credit: the notice first, then it com
     assert.deepEqual([shop.state.editCalls.length, shop.charged(chargeKey(CONTRACT, 1, 1))], [0, 6000]);
   } finally {
     mail.restore();
+  }
+});
+
+/* ---------------- receipts (11 Oct 2026, Mo: "the email didn't show up") ---------------- */
+/**
+ * Emails through a Resend that answers as the test says: a queue of answers ({ status, body, headers }, or 'hang' for
+ * one that never comes back), then 200s. Every request is kept with its Idempotency-Key and the answer it got.
+ */
+function scriptedEmails() {
+  setEnv({ RESEND_API_KEY: 're_test', FROM_EMAIL: 'Dice Goblin <bookings@dicegoblin.test>', STAFF_EMAIL: 'staff@dicegoblin.test' });
+  const requests = [];
+  const answers = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const next = answers.shift() || { status: 200 };
+    for (const m of Array.isArray(body) ? body : [body]) requests.push({ ...m, to: m.to[0], key: init.headers?.['Idempotency-Key'] || null, answer: next.status ?? next });
+    if (next === 'hang') return new Promise(() => {});
+    const ok = next.status < 300;
+    return new Response(
+      JSON.stringify(ok ? { id: `e${requests.length}` } : next.body || { statusCode: next.status, name: 'application_error', message: 'Something went wrong.' }),
+      { status: next.status, headers: next.headers || {} },
+    );
+  };
+  return { requests, answers, restore: () => { globalThis.fetch = realFetch; } };
+}
+const sentWith = (mail, subject) => mail.requests.filter((r) => r.subject === subject);
+const settleLonger = () => new Promise((r) => setTimeout(r, 80));
+
+test("a paid damage charge's receipt goes with a key of its own, and staff see it went; the store credit it took is in the member page's store credit list", async () => {
+  const mail = scriptedEmails();
+  try {
+    await join();
+    fakeCredit({ [SAM]: 5000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'missing', details: 'meeples', amount: 1000 })).data.charge.id;
+    const res = await chargeNow(id, { use: 'credit' });
+    assert.equal(res.status, 200, res.data.error);
+    const pid = res.data.payment.id;
+    assert.equal(res.data.payment.receipt.status, 'sending', 'on its way as staff see the answer');
+    await settle();
+    const [receipt] = sentWith(mail, 'Paid: the $10 charge for Catan');
+    assert.deepEqual([receipt.to, receipt.key], ['sam@example.com', receiptKey(pid)]);
+    assert.equal(mail.requests.find((r) => /^About Catan/.test(r.subject)).key, null, 'other emails go as before');
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_at, payment(pid).receipt_tries], ['sent', clock, 1]);
+    // staff see it went (the Damage tab); Sam's page says no more than that
+    const listed = (await call('GET', `library/damage?status=all&customerId=${SAM}`, null, 'staff')).data.charges.find((c) => c.id === id);
+    assert.deepEqual(listed.payment.receipt, { status: 'sent', at: clock, error: null, tries: 1, nextAt: null });
+    assert.deepEqual((await me()).membership.damage.find((f) => f.id === id).payment.receipt, { status: 'sent', at: clock });
+    // the member page's store credit list has it, with what it was for
+    const credit = (await call('GET', `members/${SAM}/credit`, null, 'staff')).data;
+    assert.deepEqual(credit.history.map((h) => [h.amount, h.note, h.status, h.balanceAfter, h.kind]), [[-1000, 'Damage charge: Catan', 'done', 4000, 'damage']]);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('a receipt the email service turns away is sent again by the 10-minute run with the same key until it goes; one it never takes stops after the last try, and staff hear', async () => {
+  const mail = scriptedEmails();
+  try {
+    await join();
+    fakeCredit({ [SAM]: 10000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 1500 })).data.charge.id;
+    // Resend's servers are down for the receipt: with its key, a server error gets one more try there and then
+    const down = { status: 500, headers: { 'retry-after': '0.01' } };
+    mail.answers.push(down, down);
+    const pid = (await chargeNow(id, { use: 'credit' })).data.payment.id;
+    await settleLonger();
+    const subject = 'Paid: the $15 charge for Catan';
+    assert.equal(sentWith(mail, subject).length, 2);
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_error, payment(pid).receipt_next_at], ['failed', '500: Something went wrong.', clock + 10 * MIN]);
+    const listed = (await call('GET', 'library/damage?status=all', null, 'staff')).data.charges.find((c) => c.id === id);
+    assert.deepEqual(listed.payment.receipt, { status: 'failed', at: null, error: '500: Something went wrong.', tries: 1, nextAt: clock + 10 * MIN });
+    // not before its wait is up
+    setNow(JOINED + 5 * MIN);
+    await maintenance();
+    assert.equal(sentWith(mail, subject).length, 2);
+    setNow(JOINED + 10 * MIN);
+    const run = await maintenance();
+    assert.deepEqual(run.receipts, [pid]);
+    assert.deepEqual(sentWith(mail, subject).map((r) => r.key), Array(3).fill(receiptKey(pid)), 'the same key every time, so it can never go twice');
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_at, payment(pid).receipt_tries], ['sent', clock, 2]);
+    // one the email service never takes: tried after each wait, then it stops and staff hear
+    const other = (await logDamage({ customerId: SAM, title: 'Azul', reason: 'damaged', amount: 1000 })).data.charge.id;
+    const refused = { status: 422, body: { statusCode: 422, name: 'validation_error', message: 'Invalid `to` field.' } };
+    mail.answers.push(...Array(7).fill(refused));
+    const qid = (await chargeNow(other, { use: 'credit' })).data.payment.id;
+    await settle();
+    for (const wait of [10, 30, 60, 120, 240, 480]) {
+      setNow(clock + wait * MIN);
+      await maintenance();
+    }
+    await settle();
+    const azul = 'Paid: the $10 charge for Azul';
+    assert.equal(sentWith(mail, azul).length, 7);
+    assert.deepEqual(
+      [payment(qid).receipt_status, payment(qid).receipt_tries, payment(qid).receipt_next_at, payment(qid).receipt_error],
+      ['failed', 7, null, '422: Invalid `to` field.'],
+    );
+    const alert = mail.requests.find((r) => r.to === 'staff@dicegoblin.test' && /^A receipt couldn't be emailed: Sam Jones/.test(r.subject));
+    assert.match(alert.text, /The charge is paid\. Let them know it's gone through/);
+    setNow(clock + DAY);
+    await maintenance();
+    assert.equal(sentWith(mail, azul).length, 7, 'and it stops');
+  } finally {
+    mail.restore();
+  }
+});
+
+test("a receipt whose answer never came back is sent again after 15 minutes with the same key; the email service saying it already had that key means it went", async () => {
+  const mail = scriptedEmails();
+  try {
+    await join();
+    fakeCredit({ [SAM]: 5000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 1000 })).data.charge.id;
+    mail.answers.push('hang');
+    const pid = (await chargeNow(id, { use: 'credit' })).data.payment.id;
+    await settle();
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_next_at], ['sending', clock + 15 * MIN]);
+    const subject = 'Paid: the $10 charge for Catan';
+    setNow(JOINED + 14 * MIN);
+    await maintenance();
+    assert.equal(sentWith(mail, subject).length, 1);
+    setNow(JOINED + 15 * MIN);
+    mail.answers.push({ status: 409, body: { statusCode: 409, name: 'invalid_idempotent_request', message: 'Same idempotency key used with a different request payload.' } });
+    await maintenance();
+    assert.deepEqual(sentWith(mail, subject).map((r) => r.key), [receiptKey(pid), receiptKey(pid)]);
+    assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_tries], ['sent', 2]);
+  } finally {
+    mail.restore();
+  }
+});
+
+test('Resend busy (sending too fast): the email waits a moment and goes once more, so a notice still counts; busy twice, it was turned away', async () => {
+  const mail = scriptedEmails();
+  try {
+    await join();
+    const busy = { status: 429, headers: { 'retry-after': '0.01' }, body: { statusCode: 429, name: 'rate_limit_exceeded', message: 'Too many requests.' } };
+    mail.answers.push(busy);
+    const first = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 1000 })).data.charge;
+    assert.deepEqual([first.emailed, sentWith(mail, 'About Catan: a charge for damaged').map((r) => r.answer)], [true, [429, 200]]);
+    mail.answers.push(busy, busy);
+    const second = (await logDamage({ customerId: SAM, title: 'Azul', reason: 'damaged', amount: 1000 })).data.charge;
+    assert.equal(second.emailed, false, 'turned away twice: it never went, so it does not count');
+  } finally {
+    mail.restore();
+  }
+});
+
+test('a store credit take-off Shopify answers with a denied field is never sent twice (it may have come off); a query is asked again with a fresh token', async () => {
+  const admin = new ShopifyAdmin({ SHOP: 'dice-goblin.myshopify.com', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret', API_VERSION: '2026-07' }, ctx.storage);
+  const posts = [];
+  let tokens = 0;
+  const realFetch = globalThis.fetch;
+  const denied = [{ message: 'Access denied for balanceAfterTransaction field.', extensions: { code: 'ACCESS_DENIED' } }];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/admin/oauth/access_token')) {
+      tokens += 1;
+      return new Response(JSON.stringify({ access_token: `tok-${tokens}`, expires_in: 86399 }), { status: 200 });
+    }
+    const { query } = JSON.parse(init.body);
+    posts.push([query.trim().split(/\s+/).slice(0, 2).join(' '), init.headers['X-Shopify-Access-Token']]);
+    if (/^mutation/.test(query.trim())) {
+      // the debit is made, and a field of the answer is denied
+      return new Response(JSON.stringify({ data: { storeCreditAccountDebit: { storeCreditAccountTransaction: { id: 'gid://shopify/StoreCreditAccountDebitTransaction/1', amount: { amount: '-5.0', currencyCode: 'NZD' }, balanceAfterTransaction: null }, userErrors: [] } }, errors: denied }));
+    }
+    if (posts.filter(([p]) => p.startsWith('query')).length === 1) return new Response(JSON.stringify({ data: null, errors: denied }));
+    return new Response(JSON.stringify({ data: { customer: { id: `gid://shopify/Customer/${SAM}`, storeCreditAccounts: { nodes: [{ id: 'a1', balance: { amount: '60.0', currencyCode: 'NZD' } }] } } } }));
+  };
+  try {
+    await assert.rejects(admin.changeStoreCredit(SAM, -500, 'NZD'), (error) => /Access denied/.test(error.message) && !error.refused);
+    assert.deepEqual(posts, [['mutation LairCreditTake($id:', 'tok-1']], 'sent once');
+    assert.equal(await admin.storeCreditBalance(SAM, 'NZD'), 6000);
+    assert.deepEqual(posts.slice(1).map(([p]) => p), ['query LairCreditBalance($id:', 'query LairCreditBalance($id:'], 'a query is asked again');
+    assert.equal(posts[1][1], 'tok-2', 'the call after the mutation has a fresh token');
+  } finally {
+    globalThis.fetch = realFetch;
   }
 });
 
@@ -2767,11 +2968,27 @@ test('migration: a store that ran an earlier copy of round 10 gets the tables an
   old.storage.sql.exec('DROP TABLE damage_payments');
   old.storage.sql.exec("INSERT INTO damage_charges (id, customer_id, title, reason, amount, status, due_at, created_at) VALUES ('dc_1', '1001', 'Catan', 'lost', 4000, 'due', 1, 1)");
   const moved = new Lair(old, { CURRENCY: 'NZD' });
-  for (const [table, column] of [...late, ['damage_charges', 'key']]) assert.doesNotThrow(() => moved.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`), `${table}.${column}`);
+  for (const [table, column] of [...late, ['damage_charges', 'key'], ['damage_payments', 'receipt_status'], ['damage_payments', 'receipt_next_at']]) {
+    assert.doesNotThrow(() => moved.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`), `${table}.${column}`);
+  }
   assert.equal(moved.sql.exec('SELECT COUNT(*) AS n FROM damage_payments').one().n, 0);
   assert.equal(moved.feeRow('dc_1').title, 'Catan', 'rows stay');
   // and a store that's up to date is left as it is
   assert.doesNotThrow(() => new Lair(old, { CURRENCY: 'NZD' }));
+});
+
+test('migration: a store already running round 10 gets the receipt columns on its damage payments; the payments already there stay, with no receipt kept', () => {
+  const live = fakeCtx();
+  live.storage.sql.exec('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)');
+  for (const step of MIGRATIONS) for (const statement of step) live.storage.sql.exec(statement);
+  live.storage.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)", String(MIGRATIONS.length));
+  live.storage.sql.exec(`INSERT INTO damage_payments (id, fee_id, customer_id, method, amount, status, idempotency_key, created_at)
+    VALUES ('dp_1', 'dc_1', '1001', 'credit', 1000, 'paid', 'lair-damage-dp_1', 1)`);
+  const moved = new Lair(live, { CURRENCY: 'NZD' });
+  const p = moved.damagePaymentRow('dp_1');
+  assert.deepEqual([p.receipt_status, p.receipt_tries, p.receipt_at, p.receipt_next_at], [null, 0, null, null]);
+  assert.equal(moved.damagePaymentView(p, { staff: true }).receipt, null, 'nothing is claimed about a receipt from before');
+  assert.doesNotThrow(() => new Lair(live, { CURRENCY: 'NZD' }), 'and the next start leaves it as it is');
 });
 
 test("migration: a test store that ran round 10 as step 25 (before round 11 went in) still gets round 11's games column", () => {
