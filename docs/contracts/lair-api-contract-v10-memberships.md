@@ -384,8 +384,13 @@ touch to cancel or change plans, so it needs the new wording at the same time (s
   first; the My Lair page's text (shown only by the current theme) tells library members to ask us to cancel.
 - **Dice Goblin 2.0:** pushes still don't arrive (a resend that touched all 20 files didn't either, and Shopify
   commits nothing back), so `library-plans` and the four library templates went up through the API and the preview
-  shows the plans. The rest of round 10 (My Lair's membership card, the staff Memberships and Damage tabs, the assets
-  and locales) waits for Reset to last commit.
+  shows the plans.
+- Mo (10 Oct): "can we please add it to dice goblin 2.0". The other 15 files went up the same way, each fetched by
+  Shopify from GitHub itself (`themeFilesUpsert` with a `URL` body: the contents API's `download_url` for the file at
+  the branch's commit, a link that only works for a few minutes), so nothing was retyped; every checksum matches the
+  branch (a841a34). Dice Goblin 2.0 now has all of round 10. Until the GitHub link is fixed, later rounds need the
+  same: list the files changed since the theme last matched the branch, send them this way, then compare checksums
+  (JSON templates come back reformatted by Shopify, so compare those by content).
 
 ## 7. Setting it up (Mo)
 
