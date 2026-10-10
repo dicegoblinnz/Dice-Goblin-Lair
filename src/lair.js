@@ -1859,7 +1859,9 @@ export class Lair {
         phone: seat.phone, notes: seat.notes,
       };
     } else {
-      const checked = checkTableBooking(input, { state: st, rules, time, now, staff: override });
+      // Round 14: ignoreBookingId and game are for the Lair's own checks (a session's tables), never a request's: booking ids
+      // are on the public floor, so taking them from the request let anyone skip the clash check with someone's booking
+      const checked = checkTableBooking({ ...input, ignoreBookingId: null, game: null }, { state: st, rules, time, now, staff: override });
       booking = { kind, ...checked };
     }
     // Round 7: a mobile number on every customer booking (tables, game seats); not on what staff make for someone
