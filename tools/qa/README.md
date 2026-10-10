@@ -101,7 +101,8 @@ Discord holding that channel for its `retry_after` before the post goes up by it
 The theme's side:
 - `round14/theme.mjs` (demo mode, through `theme-mock`, phone and desktop): My Lair › Profile's Discord card (Link
   Discord coming back with a made-up code, the code taken out of the address, "Linked!", Unlink asked first, Discord
-  saying no, an old state, `?link=discord`), and "Chat on Discord" on a session's and an event date's sheet. No page
+  saying no, an old state, `?link=discord`, logged out too), and "Chat on Discord" on a session's and an event date's
+  sheet. No page
   errors, no sideways scroll, tap targets 44px or more; screenshots in `round14/shots` (git ignores them).
   `DG_THEME=<theme> node round14/theme.mjs`.
 - `round14/theme-live.mjs` (live mode against the stack, after `discord.mjs`): Link Discord off to Discord's sign-in

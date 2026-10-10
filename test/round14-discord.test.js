@@ -609,12 +609,39 @@ test("a guest can't take over someone else's Maybe, interest or waitlist place b
   assert.equal(linked.status, 200, linked.data.error);
   assert.equal(linked.data.adopted, 0);
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM interests WHERE customer_id = '7777'").one().n, 0);
-  // their own email is fine, and saying it again changes their own row
+  // their own email is fine, and saying it again changes their own row (which stays theirs)
   const own = await discord(submit(`dg:mev:m:${occRef(QUIZ)}`, { name: 'Sam Jones', email: 'sam@example.com', mobile: MOBILE }));
   assert.match(own.data.content, /Marked as maybe for \*\*Trivia night\*\*/);
   const again = await discord(submit(`dg:mev:m:${occRef(QUIZ)}`, { name: 'Sam Jones', email: 'sam@example.com', mobile: MOBILE }));
   assert.match(again.data.content, /Marked as maybe/);
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM interests WHERE lower(email) = 'sam@example.com'").one().n, 1);
+  assert.ok(lair.discordOwns({ discordUserId: USER }, 'interest', lair.sql.exec("SELECT id FROM interests WHERE lower(email) = 'sam@example.com'").one().id));
+});
+
+test("a row made in Discord that someone else's details go into (the website matched it by their email) stops being that Discord user's", async () => {
+  const d = fakeDiscord();
+  setEnv();
+  // a Discord guest says Maybe with an email nobody has used yet, then its owner says Maybe on the website as a guest
+  await discord(submit(`dg:mev:m:${occRef(QUIZ)}`, { name: 'Att Acker', email: 'vic@example.com', mobile: MOBILE }, { user: OTHER }));
+  const maybe = lair.sql.exec('SELECT id FROM interests WHERE target_id = ?', QUIZ).one().id;
+  assert.ok(lair.discordOwns({ discordUserId: OTHER }, 'interest', maybe));
+  const web = await call('POST', 'interest', { kind: 'event', id: QUIZ, name: 'Vic Tim', email: 'vic@example.com', phone: MOBILE, note: 'Bringing my sister' });
+  assert.equal(web.status, 200, web.data.error);
+  assert.equal(lair.sql.exec('SELECT name FROM interests WHERE id = ?', maybe).one().name, 'Vic Tim', "the website's rule changed that row");
+  assert.equal(lair.discordOwns({ discordUserId: OTHER }, 'interest', maybe), false);
+  assert.doesNotMatch(textOf(await discord(command('mylair', [], { user: OTHER }))), /Trivia night/);
+  assert.match((await discord(click(`dg:drop:i:${maybe}`, { user: OTHER, ephemeral: true }))).data.content, /already gone/);
+  // the same on a waitlist: Kiri's three places in the queue stay hers
+  await fill(TINY, 2);
+  await discord(submit(`dg:mwait:${occRef(TINY)}`, { name: 'Att Acker', email: 'kiri@example.com', mobile: MOBILE, people: '1' }, { user: OTHER }));
+  const wait = lair.sql.exec("SELECT id FROM interests WHERE level = 'waitlist'").one().id;
+  assert.equal((await call('POST', 'interest', { waitlist: true, id: TINY, people: 3, name: 'Kiri Smith', email: 'kiri@example.com', phone: MOBILE })).status, 200);
+  assert.equal(lair.discordOwns({ discordUserId: OTHER }, 'interest', wait), false);
+  assert.match((await discord(click(`dg:drop:i:${wait}`, { user: OTHER, ephemeral: true }))).data.content, /already gone/);
+  assert.deepEqual({ ...lair.sql.exec('SELECT status, people, name FROM interests WHERE id = ?', wait).one() }, { status: 'active', people: 3, name: 'Kiri Smith' });
+  // and linking takes neither along
+  assert.equal((await linkThroughMyLair(d, '7777', OTHER)).data.adopted, 0);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM interests WHERE customer_id = '7777'").one().n, 0);
 });
 
 test('save my seat every week: needs a linked account (the member code is the ticket); then they are a regular, and hear what a kept seat costs', async () => {
@@ -1530,12 +1557,16 @@ test("posts: a post that may have gone up but isn't wanted any more is looked fo
     if (!lost && c.method === 'POST' && c.path === `/channels/${EVENTS_CH}/messages`) {
       lost = true;
       fallback();
+      // (and Discord writes the link back its own way: #event=tiny@… rather than tiny%40…)
+      const made = d.messages(EVENTS_CH).at(-1);
+      made.embeds = [{ ...made.embeds[0], url: made.embeds[0].url.replace('%40', '@') }];
       return reply({ message: '503: Service Unavailable' }, 503);
     }
     return null;
   });
   await lair.discordSync();
   const tiny = lair.sql.exec('SELECT * FROM discord_posts WHERE target_id = ?', TINY).one();
+  assert.match(tiny.url, /%40/);
   assert.deepEqual([tiny.status, tiny.unsure, tiny.message_id], ['creating', 1, null]);
   const made = d.messages(EVENTS_CH).find((m) => m.embeds[0].title === 'Tiny painting class');
   assert.ok(made, 'Discord made it after all');
@@ -1594,6 +1625,55 @@ test('posts: a post deleted in Discord goes up again', async () => {
   assert.equal(live.length, 1);
   assert.notEqual(live[0].message_id, old);
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM discord_posts WHERE status = 'gone'").one().n, 1);
+});
+
+test("posts: while the store's rules haven't loaded (the built-in defaults stand in, with no events), nothing is taken down, posted or rounded up", async () => {
+  const d = fakeDiscord();
+  setEnv();
+  setChannels({ sessions: null });
+  await lair.discordSync();
+  assert.equal(d.messages(EVENTS_CH).length, 3);
+  // the Lair restarts, and Shopify doesn't answer its first read
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  lair.shopify.loadLairData = async () => {
+    throw new Error('Shopify said 503');
+  };
+  lair.rulesCache = null;
+  lair.rulesLoadedAt = 0;
+  await lair.rules();
+  assert.deepEqual([lair.rulesStandIn, lair.rulesCache.events.length], [true, 0]);
+  const out = await lair.discordSync();
+  assert.equal(out.waiting, 'rules');
+  assert.equal(d.calls.filter((c) => c.method === 'DELETE' || c.method === 'PATCH').length, 0, 'every event post stays as it is');
+  assert.equal(lair.discordDigestDue(lair.rulesCache, at('2026-10-09', 13)), false, 'no round-up without the events');
+  const status = await lair.discordUpkeep(lair.rulesCache);
+  assert.deepEqual([status.pending, status.waitingForRules], [0, true]);
+  // Shopify answers again: the same posts carry on, none taken down or doubled
+  lair.shopify.loadLairData = async () => ({ rooms: ROOMS, events: EVENTS, settingsText: '', theme: null, shop: {} });
+  lair.rulesLoadedAt = 0;
+  await lair.rules();
+  assert.equal(lair.rulesStandIn, false);
+  const back = await lair.discordSync();
+  assert.deepEqual([back.created, back.ended], [0, 0]);
+  assert.equal(d.calls.filter((c) => c.method === 'DELETE').length, 0);
+  assert.equal(d.messages(EVENTS_CH).length, 3);
+});
+
+test('posts: a retry time that has passed on one post never stops the alarm being set for another that Discord asked to wait', async () => {
+  const d = fakeDiscord();
+  setEnv();
+  setChannels({ events: null });
+  await strahd({ title: 'Game A', start: at('2026-10-16', 12), end: at('2026-10-16', 13), tables: ['T10'] });
+  const b = await strahd({ title: 'Game B', start: at('2026-10-16', 14), end: at('2026-10-16', 15), tables: ['T11'] });
+  await lair.discordSync();
+  // Game A's edit failed once and it's back to what it shows: its old retry time stays on it
+  lair.sql.exec("UPDATE discord_posts SET retry_at = ? WHERE title = 'Game A'", NOW - HOUR);
+  await guestSeat(b.game.id);
+  d.routes.push((c, reply) => (c.method === 'PATCH' ? reply({ message: 'You are being rate limited.', retry_after: 2, global: false }, 429) : null));
+  lair.discordAuto = true;
+  await lair.discordSync();
+  await Promise.all(pending);
+  assert.equal(lair.ctx.alarmAt(), NOW + 2000, "Game B's edit is tried again when Discord said");
 });
 
 test('posts: picking another channel leaves the old posts alone and puts new ones up there at once, even one Discord refused before', async () => {

@@ -466,6 +466,8 @@ export const reminderMethods = {
         `UPDATE interests SET level = 'waitlist', people = ?, note = ?, name = ?, phone = ?, customer_id = COALESCE(customer_id, ?), remind = 0, updated_at = ? WHERE id = ?`,
         people, note || existing.note || '', name, phone, me, now, id,
       );
+      // Round 14: someone else's details in a row made through the Discord bot: it isn't that Discord user's any more
+      this.discordTouched('interest', id, who);
     } else {
       id = makeId('in');
       const key = crypto.randomUUID();

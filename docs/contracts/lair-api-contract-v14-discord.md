@@ -165,6 +165,10 @@ account (once it's on an account, that account owns it):
   `adoptGuestBookings`), and a second interest in the same session or date is taken back. Linking the same Discord account
   to another member later takes nothing along.
 
+When the website's interest or waitlist rule later puts someone else's details into a row the bot made (they used the
+same email), that row stops being the Discord user's (`discordTouched`): it leaves their /mylair and never joins their
+account. The same Discord user changing their own row keeps it.
+
 A guest interest is taken back with its stored key (`removeInterest`'s guest path).
 
 ## 5. Link Discord (the website)
@@ -236,8 +240,11 @@ When the bot has its token, a channel is picked and Auto-posts is on:
   has its own allowance of outside calls (the free plan allows 50 an invocation). After a booking, seat, sign-up,
   interest or session changes (any write to those tables), the alarm is set for 2 seconds later, once for a burst. The
   10-minute maintenance sets it only when the posts have something to do or the round-up is due. A post is edited only
-  when what it shows changed (its content's fingerprint, `discord_posts.hash`). A round makes 12 Discord calls at most and
-  never runs twice at once; when there's more, the next round is a second later.
+  when what it shows changed (its content's fingerprint, `discord_posts.hash`). A round starts no new job once it has made
+  12 Discord calls (a job can take up to 4, so about a dozen in all) and never runs twice at once; when there's more, the
+  next round is a second later. While the store's rules haven't loaded (Shopify didn't answer after a restart, so the
+  built-in defaults stand in, with no events), nothing is posted, edited, taken down or rounded up: the posts wait for the
+  real rules rather than take every event date down.
 - **Discord's limits**: waits are per channel (Discord's buckets), from a 429's `retry_after` (or a bucket with
   `X-RateLimit-Remaining: 0`, until its `X-RateLimit-Reset-After`), so Gobgob never sends a call Discord said to wait for,
   and other channels carry on. A global 429 holds every call, and a refused token (401) holds every call for an hour.
@@ -262,11 +269,12 @@ When the bot has its token, a channel is picked and Auto-posts is on:
   - A post or edit Discord refused (no permission in the channel, say) is tried again after 30 minutes, then 1, 2 and 4
     hours, then every 8 hours, and never given up, with the reason in `discord_posts.error` and on the panel. Post now
     (or `/setup?…&discord=sync`) tries again at once. Closing off a post is given up after 10 refusals.
-  - A call that may or may not have happened (a 5xx, or no answer) doesn't count against the post. A create like that is
-    marked `unsure`, and 30 seconds later Gobgob looks for it before making another: a message by the bot in the
-    channel's last 50 with the post's link, or, in a forum, an active thread in that forum with the post's name, made
-    since the post was first claimed. Found, it's used; not found, it's made. A create claimed more than a minute ago
-    with no answer (the Lair restarted mid-call) is looked for the same way. Text-channel creates also carry a nonce.
+  - A call that may or may not have happened (a 5xx, or no answer within 10 seconds) doesn't count against the post. A
+    create like that is marked `unsure`, and 30 seconds later Gobgob looks for it before making another: a message by
+    the bot in the channel's last 50 with the post's link (compared as an address, however Discord writes it back), or,
+    in a forum, an active thread in that forum with the post's name, made since the post was first claimed. Found, it's
+    used; not found, it's made. A create claimed more than a minute ago with no answer (the Lair restarted mid-call) is
+    looked for the same way. Text-channel creates also carry a nonce.
   - Discord's limit on edits to messages over an hour old (30046) is tried again after 15 minutes, not counted.
   - A session's chat thread Discord didn't make is made later (when Discord says, after 30 seconds, or 6 hours after a
     refusal); one that's there already (160004) is used, its id being the message's.
@@ -283,8 +291,8 @@ When the bot has its token, a channel is picked and Auto-posts is on:
 The 10-minute maintenance (and `/setup`) adds a `discord` block to its answer and the status table's `connection` row:
 `interactions`, `linking`, `posting`, `botToken` (true or false, never the value), `guild`, the channels and role, the
 switches, `posts` (counts by status), `problems` (up to 5 posts with Discord's reason, their tries and when they're next
-tried), `pending` (how many posting jobs are waiting), `interactionsUrl`, `redirectUri`, `installUrl`, `linkedMembers` and
-`commands`. It registers the slash commands with Discord (`PUT /applications/<id>/commands`, global, in servers only) when
+tried), `pending` (how many posting jobs are waiting), `waitingForRules` (when the store's rules haven't loaded),
+`interactionsUrl`, `redirectUri`, `installUrl`, `linkedMembers` and `commands`. It registers the slash commands with Discord (`PUT /applications/<id>/commands`, global, in servers only) when
 they or the app change, trying again an hour after a refusal, and sets the alarm when the posts have something to do or
 the round-up is due (section 7). A round with failures notes them in the status table's `discordPosts` row.
 `/setup?key=…&discord=commands` registers the commands again now; `&discord=sync` tries again now whatever Discord
@@ -323,7 +331,8 @@ test covers it.
   `dg`), My Lair takes the code out of the address at once, finishes it (`POST /me/discord/finish`) and says how it went
   ("Linked! Gobgob knows you as Ruby in the Dice Goblin server now.", or the Lair app's words);
   `?error=access_denied` says "No worries, your Discord isn't linked. Tap Link Discord whenever you're ready."
-  `?link=discord` (the bot's Link my account button) opens Profile and starts linking by itself.
+  `?link=discord` (the bot's Link my account button) opens Profile and starts linking by itself; logged out, My Lair's
+  Log in button comes back to it (`return_to` for new customer accounts, `return_url` for classic ones).
 - **TTRPG sessions** and the **events calendar**: "Chat on Discord" (opens in a new tab) on a session's sheet when its game
   has a `discordUrl`, and on a date's sheet when `eventDiscord` has it, while it's still to come. Only discord.com and
   discord.gg addresses are ever shown.

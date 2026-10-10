@@ -90,6 +90,9 @@ const THREAD_ARCHIVE = 10080;
 const OWNERS_TTL = HOUR;
 /** A Discord user's second tap waits this long at most for their first to finish */
 const TURN_WAIT = 10_000;
+/** A call to Discord that hasn't answered in this long is given up on (unsure: it may have happened) */
+const DISCORD_TIMEOUT = 10_000;
+const timeoutSignal = () => (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(DISCORD_TIMEOUT) : undefined);
 
 const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
 const clip = (v, max) => {
@@ -396,6 +399,16 @@ export const discordMethods = {
    */
   discordMade(kind, itemId, who, now = Date.now(), key = null) {
     if (who?.discordUserId) this.discordOwn(kind, itemId, who.discordUserId, key, now);
+  },
+
+  /**
+   * The interest and waitlist handlers call this when they change a row they matched by email: unless it's the same
+   * Discord user changing their own, someone else's details are in it now, so it stops being whoever made it in Discord
+   * (it won't show in their /mylair, be theirs to take back, or join their account when they link). No awaits.
+   */
+  discordTouched(kind, itemId, who) {
+    if (who?.discordUserId && this.discordOwns(who, kind, itemId)) return;
+    this.sql.exec('DELETE FROM discord_items WHERE kind = ? AND item_id = ?', kind, String(itemId));
   },
 
   /**
@@ -1756,14 +1769,16 @@ export const discordMethods = {
     });
     let token = null;
     try {
-      const res = await fetch(`${DISCORD_API}/oauth2/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': DISCORD_UA }, body: form.toString() });
+      const res = await fetch(`${DISCORD_API}/oauth2/token`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': DISCORD_UA }, body: form.toString(), signal: timeoutSignal(),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.access_token) {
         this.note({ discordError: { message: `Link Discord: ${res.status} ${trimmed(data?.error_description || data?.error || '', 200)}`, at: new Date().toISOString() } });
         throw new RuleError(DISCORD_WORDS.linkRefused);
       }
       token = data.access_token;
-      const me = await fetch(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bearer ${token}`, 'User-Agent': DISCORD_UA } });
+      const me = await fetch(`${DISCORD_API}/users/@me`, { headers: { Authorization: `Bearer ${token}`, 'User-Agent': DISCORD_UA }, signal: timeoutSignal() });
       const user = await me.json().catch(() => ({}));
       if (!me.ok || !SNOWFLAKE.test(String(user?.id || ''))) throw new RuleError(DISCORD_WORDS.linkRefused);
       return { id: String(user.id), username: trimmed(user.username, 40), globalName: trimmed(user.global_name, 40) };
@@ -1774,7 +1789,9 @@ export const discordMethods = {
     } finally {
       if (token) {
         const revoke = new URLSearchParams({ token, token_type_hint: 'access_token', client_id: this.env.DISCORD_APPLICATION_ID, client_secret: this.env.DISCORD_CLIENT_SECRET });
-        this.later(fetch(`${DISCORD_API}/oauth2/token/revoke`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': DISCORD_UA }, body: revoke.toString() }));
+        this.later(fetch(`${DISCORD_API}/oauth2/token/revoke`, {
+          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': DISCORD_UA }, body: revoke.toString(), signal: timeoutSignal(),
+        }));
       }
     }
   },
@@ -1965,6 +1982,8 @@ export const discordMethods = {
       res = await fetch(`${DISCORD_API}${path}`, {
         method, headers: { Authorization: `Bot ${token}`, 'User-Agent': DISCORD_UA, ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
+        // never left waiting: a round of posting holds the Lair's one-round-at-a-time flag until it ends
+        signal: timeoutSignal(),
       });
     } catch (error) {
       return { ok: false, status: 0, kind: 'unsure', data: { message: String(error?.message || error) } };
@@ -2196,7 +2215,10 @@ export const discordMethods = {
     let next = Infinity;
     try {
       const rules = await this.rules();
-      const jobs = this.discordPlan(rules, Date.now());
+      // The store's rules didn't load (the built-in defaults are standing in, with no events): nothing is posted, edited
+      // or taken down until they do. The maintenance and the next booking try again.
+      if (this.rulesStandIn) out.waiting = 'rules';
+      const jobs = this.rulesStandIn ? [] : this.discordPlan(rules, Date.now());
       let calls = 0;
       for (const job of jobs) {
         if (job.job === 'move') {
@@ -2230,10 +2252,13 @@ export const discordMethods = {
     } finally {
       this.discordSyncing = false;
     }
-    // when there's more to do: straight away (budget), when Discord said to, or when a refused post is next due
+    // when there's more to do: straight away (budget), when Discord said to, or when a refused post is next due (the
+    // soonest time still to come: a time that's passed is due now, or belongs to a post that's up to date)
     const now = Date.now();
     const soonest = this.sql.exec(
-      "SELECT MIN(retry_at) AS r, MIN(thread_retry_at) AS t FROM discord_posts WHERE status IN ('creating', 'live', 'failed')",
+      `SELECT MIN(CASE WHEN retry_at > ? THEN retry_at END) AS r, MIN(CASE WHEN thread_retry_at > ? THEN thread_retry_at END) AS t
+       FROM discord_posts WHERE status IN ('creating', 'live', 'failed')`,
+      now, now,
     ).toArray()[0] || {};
     for (const at of [soonest.r, soonest.t]) if (at && at > now) next = Math.min(next, at);
     if (out.more || this.discordAgain) next = Math.min(next, now + 1000);
@@ -2258,8 +2283,19 @@ export const discordMethods = {
       return { found: t ? { messageId: String(t.id), threadId: String(t.id), where: String(t.id) } : null, res };
     }
     const res = await this.discordRest('GET', `/channels/${post.channel_id}/messages?limit=50`);
+    // (the link compared as an address, however Discord writes it back: %40 or @, the host's case)
+    const same = (a, b) => {
+      const norm = (u) => {
+        try {
+          return decodeURIComponent(new URL(String(u)).href);
+        } catch {
+          return String(u ?? '');
+        }
+      };
+      return Boolean(a && b) && norm(a) === norm(b);
+    };
     const m = res.ok && Array.isArray(res.data)
-      ? res.data.find((x) => x.author?.bot && x.embeds?.[0]?.url === post.url && snowflakeTime(x.id) >= since)
+      ? res.data.find((x) => x.author?.bot && same(x.embeds?.[0]?.url, post.url) && snowflakeTime(x.id) >= since)
       : null;
     return { found: m ? { messageId: String(m.id), threadId: m.thread?.id ? String(m.thread.id) : null, where: post.channel_id } : null, res };
   },
@@ -2488,7 +2524,8 @@ export const discordMethods = {
   /** The midday round-up is due: switched on, the bot can post, from midday, and not today yet. No awaits. */
   discordDigestDue(rules, now) {
     const s = this.discordSettings();
-    if (!s.digest || !this.discordCanPost()) return false;
+    // (not while the built-in defaults stand in for the store's rules: today's events would be missing)
+    if (!s.digest || !this.discordCanPost() || this.rulesStandIn) return false;
     const time = lairTime(rules.tz);
     if (time.parts(now).h < DIGEST_HOUR) return false;
     return this.sql.exec("SELECT value FROM meta WHERE key = 'discord-digest'").toArray()[0]?.value !== time.key(now);
@@ -2603,7 +2640,9 @@ export const discordMethods = {
       // --- no awaits from here on ---
       const now = Date.now();
       if (action === 'sync') this.discordRetryNow();
-      status.pending = this.discordPlan(rules, now).length;
+      // (while the store's rules haven't loaded, the posts wait for them: discordSync)
+      if (this.rulesStandIn) status.waitingForRules = true;
+      status.pending = this.rulesStandIn ? 0 : this.discordPlan(rules, now).length;
       if (status.pending || this.discordDigestDue(rules, now)) this.discordWake(now);
     }
     return status;

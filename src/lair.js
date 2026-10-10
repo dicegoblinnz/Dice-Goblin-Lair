@@ -1332,6 +1332,9 @@ export class Lair {
     if (rules || !this.rulesCache) {
       this.rulesCache = rules || rulesFromSettings({}, FALLBACK_ROOMS, []);
       this.rulesSource = source;
+      // Round 14: the built-in defaults are standing in for the store's rules, which didn't load (so no events): the
+      // Discord posts wait for the real ones rather than take every event date down
+      this.rulesStandIn = !rules && this.shopify.configured;
     }
     // After a failed load, keep what we had and try again in a minute rather than on every request.
     this.rulesLoadedAt = rules || !this.shopify.configured ? Date.now() : Date.now() - RULES_TTL + MIN;

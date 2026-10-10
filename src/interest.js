@@ -116,6 +116,8 @@ export const interestMethods = {
       );
       // Round 11: "Remind me the day before" (remind: true | false), and a waitlist row that's now a maybe (src/reminders.js)
       this.interestSaved(existing.id, input, now);
+      // Round 14: someone else's details in a row made through the Discord bot: it isn't that Discord user's any more
+      this.discordTouched('interest', existing.id, who);
       const row = this.interestRow(existing.id);
       return { interest: this.interestView(row, { key: !me }), counts: this.interestCounts(kind, targetId), already: true, emailed: false };
     }

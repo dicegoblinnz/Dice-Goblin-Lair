@@ -189,6 +189,20 @@ for (const size of ['phone', 'desktop']) {
   await cal.ctx.close();
 }
 
+// 10. logged out, the bot's "Link my account" (?link=discord) comes back to My Lair after logging in
+m.mockState.customer = null;
+{
+  const out = await open('phone', '/pages/my-lair?link=discord');
+  const href = await out.page.evaluate(() => document.querySelector('[data-login]')?.getAttribute('href') || '');
+  check(/(return_url|return_to)=%2Fpages%2Fmy-lair%3Flink%3Ddiscord$/.test(href), "logged out: Log in comes back to My Lair to link", href);
+  await out.ctx.close();
+  const plain = await open('phone', '/pages/my-lair');
+  const plainHref = await plain.page.evaluate(() => document.querySelector('[data-login]')?.getAttribute('href') || '');
+  check(!/link%3Ddiscord/.test(plainHref), 'logged out without it: the Log in link is as it was', plainHref);
+  await plain.ctx.close();
+}
+m.mockState.customer = customer;
+
 await browser.close();
 server.close();
 console.log(errors.length ? `ERRORS (${errors.length} of ${checks} checks):\n${errors.join('\n')}` : `round14 theme: ${checks} checks, no errors`);
