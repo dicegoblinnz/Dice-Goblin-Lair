@@ -466,13 +466,18 @@ export const reminderMethods = {
         `UPDATE interests SET level = 'waitlist', people = ?, note = ?, name = ?, phone = ?, customer_id = COALESCE(customer_id, ?), remind = 0, updated_at = ? WHERE id = ?`,
         people, note || existing.note || '', name, phone, me, now, id,
       );
+      // Round 14: someone else's details in a row made through the Discord bot: it isn't that Discord user's any more
+      this.discordTouched('interest', id, who);
     } else {
       id = makeId('in');
+      const key = crypto.randomUUID();
       this.write(
         `INSERT INTO interests (id, kind, target_id, level, status, name, email, phone, note, customer_id, remove_key, title, starts_at, ends_at, created_at, updated_at, people)
          VALUES (?, 'event', ?, 'waitlist', 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        id, targetId, name, email, phone, note, me, crypto.randomUUID(), occurrence.title, occurrence.start, occurrence.end, now, now, people,
+        id, targetId, name, email, phone, note, me, key, occurrence.title, occurrence.start, occurrence.end, now, now, people,
       );
+      // Round 14: made through the Discord bot: theirs to take back there (a new row only)
+      this.discordMade('interest', id, who, now, key);
     }
     this.touchMember(me, { name, email, mobile: phone }, now);
     // --- saved ---

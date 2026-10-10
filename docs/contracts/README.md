@@ -4,6 +4,7 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v14-discord.md` | Round 14, the Discord bot | 10 Oct 2026 |
 | `lair-api-contract-v13-feeds.md` | Round 13, follow a game (the Our games page) | 10 Oct 2026 |
 | `lair-api-contract-v12-sim.md` | Round 12, the website simulation's fixes | 10 Oct 2026 |
 | `lair-api-contract-v10-memberships.md` | Round 10, library memberships | 9 Oct 2026 |
@@ -13,6 +14,12 @@ These are the specs each build round was written against. Read them newest first
 | `lair-api-contract-v4.md` | Round 4 | 3 Oct 2026 |
 | `lair-api-contract-v3.md` | Round 3 | |
 | `lair-api-contract-v1.md` | Base contract | |
+
+Round 14, the Discord bot, covers: slash commands, buttons and pop-ups for TTRPG sessions, events and tables (as a
+linked member in one tap, or as a guest, one tap at a time); /mylair and cancelling; Link Discord in My Lair (Discord's
+own sign-in); the posts in the server with live seat counts, chat threads, seat pings and the midday round-up, posted
+from the Durable Object's alarm, with Discord's waits per channel and posts that recover when Discord refuses or doesn't
+answer; /lair-setup (tied to the server by the app's owner); setting it up; and the clash check fixed on the way.
 
 Round 10, library memberships, covers: the Lair billing Grab, Stash and Hoard itself through a second Shopify app (Lair
 Memberships) in place of Simplee; failed payments, bank checks and retries; plan changes and cancelling; damage

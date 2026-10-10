@@ -105,7 +105,8 @@ test('round 12: one migration entry, new tables only: the series dates staff wer
   const mine = MIGRATIONS.filter((m) => m.some((s) => /CREATE TABLE IF NOT EXISTS (series_skips|gone_dates)\b/.test(s)));
   assert.equal(mine.length, 1);
   assert.ok(mine[0].every((s) => /^\s*CREATE TABLE IF NOT EXISTS/.test(s)), 'new tables only');
-  assert.equal(MIGRATIONS[MIGRATIONS.length - 1], mine[0], 'at the end of the list');
+  // entry 29, where it went live (round 14's Discord tables came after it)
+  assert.equal(MIGRATIONS.indexOf(mine[0]), 28, 'after every earlier round, where it went live');
   for (const table of ['series_skips', 'gone_dates']) assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?", table).one().n, 1, table);
 });
 

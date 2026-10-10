@@ -5,7 +5,8 @@ the GM games board, My Lair and the staff page; this app stores every booking, g
 session pass and self-serve tab, stops double bookings, takes payment through Shopify (at the POS, or online for
 events that ask for it), keeps weekly regulars' seats, makes the session passes and gifts people buy, pays GMs their store
 credit, keeps the loyalty card and its d20 rolls, holds library games for members, bills library memberships and damage
-charges (round 10, in place of Simplee) and gives the birthday gifts staff pick.
+charges (round 10, in place of Simplee), gives the birthday gifts staff pick, and runs the Discord bot (round 14: sessions,
+events and tables booked from Discord, and posts with live seat counts in the server).
 
 ## How it fits together
 
@@ -28,6 +29,7 @@ One Durable Object with a small SQLite database  (src/lair.js: bookings, games, 
         └── Resend → every email, as HTML with a plain-text copy
 
 Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/checkin, … (POS session token)
+Discord (round 14) → /discord/interactions (Discord's Ed25519 signature) → the Lair; the Lair posts in the server as the bot
 ```
 
 - Rooms come from **Content → Metaobjects → Lair rooms**, events that hold tables from **Lair events**.
@@ -54,6 +56,9 @@ Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/che
 | `MEMBERSHIPS_FEE_VARIANT_ID` | only if you make the damage charge product yourself (setup makes one otherwise) |
 | `MEMBERSHIPS_BILLING` | `on` lets the Lair charge members' cards; anything else and it only keeps its records (switch it off to stop all charging at once) |
 | `MEMBERSHIPS_SIMPLEE_TAGS` | `off` (set 9 Oct: Simplee is going): when it isn't, someone with no Lair membership borrows on their Simplee tags |
+| `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY` | the Discord app's ID and public key (round 14; neither is secret). Its bot token and client secret, `DISCORD_BOT_TOKEN` and `DISCORD_CLIENT_SECRET`, are Worker secrets only: this table can't hold them |
+| `DISCORD_GUILD_ID` | optional: the Discord server the bot works in (otherwise the first `/lair-setup`, run by the Discord app's owner, ties it to its server) |
+| `DISCORD_REDIRECT_URI` | optional: where Link Discord comes back to (My Lair when empty; it must match the app's OAuth2 redirect exactly) |
 
 ## Set up
 
@@ -140,6 +145,24 @@ The Lair bills Grab, Stash and Hoard itself, through a second Shopify app, **Lai
 5. **Switch over:** uninstall Simplee in Shopify admin (Shopify cancels its subscriptions and removes its plans 48 hours
    later), publish the copy (the theme's product page shows the Lair's plans), and archive Simplee's original product.
 
+### 9. The Discord bot (round 14)
+
+Everything is in `docs/contracts/lair-api-contract-v14-discord.md`; in short:
+
+1. discord.com/developers/applications → New Application ("Dice Goblin"). Copy the **Application ID** and **Public Key**
+   (General Information), the bot's **token** (Bot → Reset Token; turn **Public Bot** off) and the **Client Secret**
+   (OAuth2), and add the OAuth2 redirect `https://www.dicegoblin.nz/pages/my-lair`.
+2. Cloudflare: `DISCORD_BOT_TOKEN` and `DISCORD_CLIENT_SECRET` as Worker **secrets**; `DISCORD_APPLICATION_ID` and
+   `DISCORD_PUBLIC_KEY` in the config table.
+3. A minute later, Discord → General Information → **Interactions Endpoint URL**:
+   `https://dice-goblin-lair.dicegoblinnz.workers.dev/discord/interactions` → Save.
+4. Open `/setup?key=YOUR_SETUP_KEY&discord=commands`: it registers the slash commands, and its `discord.installUrl` adds the
+   bot to the server with the permissions it needs.
+5. In Discord, signed in as the app's owner (your own Discord account), `/lair-setup` in the Dice Goblin server: the first
+   one ties Gobgob to that server (until then nothing else answers). Pick the channel for TTRPG sessions, the one for
+   events, and the role to ping when a seat opens. Posts go up within seconds; the panel's Posts and Heads up lines say how
+   it's going.
+
 ## Day to day
 
 - **Rooms and tables:** Content → Metaobjects → Lair rooms (number of tables, seats per table, price per person, bookable online or not).
@@ -181,6 +204,15 @@ The Lair bills Grab, Stash and Hoard itself, through a second Shopify app, **Lai
 - **Birthdays:** every day after 9am, `STAFF_EMAIL` gets the list of members with a birthday in the next week, each with a suggested gift (2% to 5% of what they spent in the last 12 months, at least $2) and whether they've had one this year. Nothing goes to members by itself any more. Give a gift on the staff page under Members: any mix of store credit, a session pass, extra loyalty rolls (none are suggested since round 7) and something from the shop (a code just for them that makes it free, once, for 30 days). Tick the email box and Gobgob sends a "Happy birthday" email listing the lot. Anything Shopify couldn't do (store credit or the code) is listed straight away so you can sort it at the counter; the rest still goes through. Each gift is written out in full, like "$20 store credit, 5 rolls, Riftbound – Vendetta Booster Pack (code HBD-SJOWLBEAR17, used 6 Oct)": once an order uses the code (online or at the POS), or its 30 days run out, the member sees it as claimed.
 - **Game pictures:** GMs add their own; staff can add or change the picture on any game.
 - **Dice prizes Shopify couldn't add** (store credit) come to `STAFF_EMAIL`; the member shows their screen at the counter, and the staff page lists them under the member until you mark them done.
+- **Discord** (round 14): people use `/games`, `/events`, `/table` and `/mylair` in the server, or the buttons on the bot's
+  posts. A linked Discord account (My Lair › Profile › Link Discord) books in one tap; anyone else fills in a pop-up, as a
+  guest on the website does. Bookings land in the Lair like any other (the staff page, the POS, the GM's email). The bot
+  posts each TTRPG session (one post per series, moved on to its next date, with a chat thread) and each event date in the
+  next week, keeps their seats up to date, pings the role picked when a full one gets a seat back, and posts a round-up of
+  today's spare seats at midday. `/lair-setup` (server managers) picks the channels and the role and switches each part
+  on or off. If something isn't posting, `/lair-setup`'s **Heads up** line says why (the bot can't post in a channel, a
+  forum needs tags), and **Post now** tries again at once once it's fixed; `/setup?key=…` shows the `discord` block too
+  (`problems` has what Discord said). Gobgob keeps trying by itself, every 8 hours at most.
 
 ## The rules the app enforces
 
@@ -334,6 +366,9 @@ Routes (all JSON; `/proxy/…` is `www.dicegoblin.nz/apps/liar/…` on the websi
 | `GET /setup?key=` | you | connection check (`&memberships=plans`: also sets up library memberships) |
 | `GET /health` | anyone | uptime check |
 | `GET /feeds/<key>.ics` (also through the app proxy) | anyone's calendar app | round 13: a followed game's calendar, every date of one game's events (or `kind-<kind>`, or `all`) from a fortnight back to the horizon; 503 while Shopify's events can't be read |
+| `POST /discord/interactions` | Discord (Ed25519 signature checked) | round 14: the bot's slash commands, buttons, selects and pop-ups, answered by the Lair (a deferred answer, edited in later, when it's slow); 401 for a bad signature, 503 until `DISCORD_PUBLIC_KEY` is set. See `docs/contracts/lair-api-contract-v14-discord.md` |
+| `POST /proxy/me/discord/start`, `/finish`, `/unlink` | logged in | round 14, Link Discord: start → `{ url }` (Discord's sign-in, with a state that's theirs, once, for 10 minutes); finish `{ code, state }` → `{ discord, adopted }`; unlink → `{ ok, discord }`. GET /me has `discord: { ready, linked }` |
+| `GET /setup?key=…&discord=commands\|sync` | you | round 14: register the slash commands again now, or try again now whatever Discord refused before |
 
 Notes:
 
@@ -352,6 +387,7 @@ Notes:
 - Round 11 (the coordinator's part, `docs/contracts/lair-api-contract-v11-admin.md`): events can run several days in a row (`lair_event.days`: each day its own date, the same hours; "Monthly · Third Saturday and Sunday 10am"); `games.offline_players` (players already in a game's group, counted as seats taken); and the owner's jobs: a row in the config database's `admin_jobs` table (`games.reset`, `events.reset`, `games.add`), run by the cron and answered in the same row. No job emails anyone.
 - Round 12 (the website simulation's fixes, `docs/contracts/lair-api-contract-v12-sim.md`) added the tables `series_skips` (a date a weekly or fortnightly game can't have that staff were told about: they hear once for each date, not on every run) and `gone_dates` (an event date people are on that went from the calendar in Shopify: staff hear once, "Not on the calendar any more: …"; GET /me marks those places `gone: true`). The series top-up runs on every maintenance run and leaves a session that starts after the horizon for a later run instead of reporting it skipped. Staff floor games add `offlinePlayers`.
 - Round 13 (follow a game, `docs/contracts/lair-api-contract-v13-feeds.md`): `GET /feeds/<key>.ics`, a calendar people subscribe to from the theme's Our games page, with every date of one game's events (its Game, else its title, as `feedSlug`), one kind's (`kind-tcg`) or all of them. No new tables: it's built from the events each time, and each date keeps the UID of its own calendar file, so moved dates move in people's calendars.
+- Round 14 (the Discord bot, `src/discord.js`, `docs/contracts/lair-api-contract-v14-discord.md`) added the tables `discord_links` (a Discord account linked to a member, one to one), `discord_states` (Link Discord's one-use states), `discord_items` (what a Discord user made through the bot, so it's theirs to change there and joins their account when they link), `discord_posts` (the bot's posts, with what they last showed) and `discord_settings` (`/lair-setup`'s choices). The bot acts as a customer, never staff: it calls the same handlers as the website, which note what a Discord user made (`discordMade`) in the same step as the row, and `updateBooking`'s owner path and `cancelJoin` also accept the Discord user who made a booking or sign-up through the bot while it's on nobody's account. Writes to bookings, games, sign-ups, interests and series set the Durable Object's alarm 2 seconds later, and the posting happens in the alarm (`Lair.alarm()`), in its own invocation; the maintenance only sets the alarm. `GET /floor` adds each game's `discordUrl` and `eventDiscord`. It also stopped `POST /bookings` taking `ignoreBookingId` and `game` from the request (anyone could skip the clash check with a booking id from the floor).
 - Proxy requests are rejected unless Shopify's signature, timestamp and shop domain check out, and non-GET requests must be JSON (blocks cross-site form posts). The `internal/*` routes only answer the Worker itself.
 - The orders/paid webhook records a payment only for orders whose `source_name` is `shopify_draft_order` and whose code belongs to a booking that was sent to checkout (it then asks Shopify which order that booking's draft became), or for POS orders (`source_name` `pos`) with a `_booking` line property. Each order line is recorded once in `payments` (order id and line id), so retries never count it twice, and the order's customer is the payer. A draft that was already paid is never deleted when its hold runs out. Every paid order is also looked up for members' spend, keyed by order id.
 - POS routes check the POS session token with WebCrypto (HS256 with the client secret, `aud` = client ID, `dest` = the shop, `exp`/`nbf` with 60 seconds' leeway) and answer CORS for any origin, since the extension runs on Shopify's own origin.

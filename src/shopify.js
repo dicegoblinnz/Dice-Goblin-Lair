@@ -213,6 +213,8 @@ export class ShopifyAdmin {
           game: String(f.game || '').trim() || null, type: String(f.event_type || '').trim() || null,
           // Round 11: how many days in a row each date runs (Oddity Alley: Saturday and Sunday), same hours each day
           days: eventDays(f.days),
+          // Round 14: what it's about, for its post on Discord
+          description: String(f.description || '').trim().slice(0, 1000),
         };
       })
       .filter((e) => Number.isFinite(e.start));
