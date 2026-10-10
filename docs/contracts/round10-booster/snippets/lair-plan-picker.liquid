@@ -1,0 +1,159 @@
+{%- comment -%}
+  Dice Goblin: the library plan picker for the current (Booster) theme, until Dice Goblin 2.0 goes live.
+  The Lair bills library memberships through Shopify selling plans (Grab, Stash, Hoard), and Booster's own
+  add to cart can't send a plan, so a product sold only on a plan gets this instead of the add to cart block:
+  pick a plan, agree to the terms, and go straight to checkout. Rendered by block__product-page--atc.
+  Params: product.
+{%- endcomment -%}
+{%- liquid
+  assign variant = product.selected_or_first_available_variant
+  assign picker_id = 'lair-plans-' | append: product.id
+  assign terms_url = pages['dice-goblin-board-game-rental-membership'].url | default: '/pages/dice-goblin-board-game-rental-membership'
+-%}
+<div class="product__atc lair-plans" id="{{ picker_id }}">
+  <input type="hidden" name="id" data-bstr-variant-input="{{ product.id }}" value="{{ variant.id }}">
+  <input type="hidden" name="quantity" value="1">
+
+  <fieldset class="lair-plans__options">
+    <legend class="lair-plans__legend">Pick your plan</legend>
+    {%- for alloc in variant.selling_plan_allocations -%}
+      {%- liquid
+        assign plan = alloc.selling_plan
+        assign blurb = plan.description | split: '. $' | first | strip
+        assign blurb_end = blurb | slice: -1
+      -%}
+      <label class="lair-plans__option">
+        <input type="radio" name="selling_plan" value="{{ plan.id }}"{% if forloop.first %} checked{% endif %}>
+        <span class="lair-plans__text">
+          <span class="lair-plans__name">{{ plan.name | escape }} <span class="lair-plans__price">{{ alloc.price | money_without_trailing_zeros }} a month</span></span>
+          {%- if blurb != blank -%}
+            <span class="lair-plans__blurb">{{ blurb | escape }}{% if blurb_end != '.' %}.{% endif %}</span>
+          {%- endif -%}
+        </span>
+      </label>
+    {%- endfor -%}
+  </fieldset>
+
+  <div class="lair-plans__summary">
+    <p class="lair-plans__summary-title">Good to know before you join</p>
+    <ul>
+      <li><strong>Monthly.</strong> You pay for your first month today, then it renews each month until you cancel.</li>
+      <li><strong>Cancel any time.</strong> Just ask us. Your membership runs to the end of the month you've paid for, with no more bills.</li>
+      <li><strong>Missing bits or damage</strong> can be charged up to the game's RRP. We email you first. Usually it goes on your next bill after 7 days, so there's time to bring the bits back or tell us we've got it wrong, but we can also take it straight away from your store credit or the card on your membership.</li>
+    </ul>
+  </div>
+
+  <label class="lair-plans__agree">
+    <input type="checkbox" name="properties[_Did you read and accept the Terms and Conditions?]" value="Yes" required data-lair-agree>
+    <span>I've read and agree to the <a href="{{ terms_url }}" target="_blank" rel="noopener">library membership terms</a>.</span>
+  </label>
+
+  <p class="lair-plans__error" role="alert" data-lair-error hidden></p>
+
+  <button type="submit" class="button button--primary button--{{ settings.primaryButtonStyle }} button--primary__{{ settings.primaryButtonStyle }} lair-plans__join" data-lair-join>
+    <span>Join the library</span>
+  </button>
+  <p class="lair-plans__note">Renews monthly until you cancel. You pay for your first month at checkout.</p>
+</div>
+
+<style>
+  .lair-plans { display: grid; gap: 1rem; }
+  .lair-plans__options { display: grid; gap: 0.5rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+  .lair-plans__legend { margin-bottom: 0.5rem; padding: 0; font-weight: 700; }
+  .lair-plans__option {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    min-height: 44px;
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(127, 127, 127, 0.45);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .lair-plans__option:has(input:checked) { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
+  .lair-plans__option:has(input:focus-visible) { outline: 2px solid currentColor; outline-offset: 2px; }
+  .lair-plans input[type='radio'],
+  .lair-plans input[type='checkbox'] {
+    position: static;
+    display: inline-block;
+    flex: none;
+    width: 1.15rem;
+    height: 1.15rem;
+    margin: 0.2rem 0 0;
+    opacity: 1;
+    appearance: auto;
+    -webkit-appearance: auto;
+  }
+  .lair-plans__text { display: grid; gap: 0.15rem; min-width: 0; }
+  .lair-plans__name { font-weight: 700; }
+  .lair-plans__price { font-weight: 400; white-space: nowrap; }
+  .lair-plans__blurb { font-size: 0.9em; opacity: 0.85; }
+  .lair-plans__summary { font-size: 0.9em; line-height: 1.5; }
+  .lair-plans__summary-title { margin: 0; font-weight: 700; }
+  .lair-plans__summary ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+  .lair-plans__agree { display: flex; gap: 0.6rem; align-items: flex-start; min-height: 44px; cursor: pointer; }
+  .lair-plans__agree a { text-decoration: underline; }
+  .lair-plans__error { margin: 0; padding: 0.5rem 0.75rem; border-left: 4px solid #e5484d; background: rgba(229, 72, 77, 0.12); font-weight: 600; }
+  .lair-plans__join { width: 100%; }
+  .lair-plans__join[aria-busy='true'] { opacity: 0.7; }
+  .lair-plans__note { margin: 0; font-size: 0.85em; opacity: 0.8; }
+  /* Booster's sticky add to cart bar can't send a plan either, so it stays hidden on this page */
+  html body .sticky--desktop,
+  html body .sticky--mobile { display: none !important; }
+</style>
+
+<script>
+  (() => {
+    const box = document.getElementById({{ picker_id | json }});
+    if (!box || box.dataset.lairReady) return;
+    box.dataset.lairReady = '1';
+    const button = box.querySelector('[data-lair-join]');
+    const agree = box.querySelector('[data-lair-agree]');
+    const error = box.querySelector('[data-lair-error]');
+    const root = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
+    const say = (text) => {
+      error.textContent = text;
+      error.hidden = !text;
+    };
+    button.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      say('');
+      const plan = box.querySelector('input[name="selling_plan"]:checked');
+      if (!plan) {
+        say('Pick a plan first.');
+        return;
+      }
+      if (!agree.checked) {
+        say("Tick the box to say you've read the library membership terms.");
+        agree.focus();
+        return;
+      }
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      try {
+        const res = await fetch(root + 'cart/add.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            items: [
+              {
+                id: Number(box.querySelector('input[name="id"]').value),
+                quantity: 1,
+                selling_plan: Number(plan.value),
+                properties: { '_Did you read and accept the Terms and Conditions?': 'Yes' },
+              },
+            ],
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.description || data.message || '');
+        window.location.href = root + 'checkout';
+      } catch (err) {
+        say(err && err.message ? "That didn't work: " + err.message : "That didn't work. Try again, or ask us in store.");
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+      }
+    });
+  })();
+</script>

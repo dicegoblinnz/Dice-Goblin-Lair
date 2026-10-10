@@ -371,6 +371,22 @@ touch to cancel or change plans, so it needs the new wording at the same time (s
 - Shopify's GitHub sync stopped taking pushes to `dice-goblin-2-theme` after round 12 (last synced 9 Oct 15:56 UTC);
   Online Store › Themes › Dice Goblin 2.0 › Reset to last commit (and View logs) brings it back in step.
 
+**10 Oct, later** (Mo: "Can we make the subscription live? It is not showing on the website even the preview one"):
+- **The current site:** an unpublished copy of the live theme, "Current site + library plans", has a plan picker in place
+  of Booster's add to cart for a product sold only on a plan: Grab, Stash and Hoard from the selling plans (name, price,
+  description), the before-you-join points (cancel by asking us, since there's no My Lair on that theme), the terms tick
+  box (`properties[_Did you read and accept the Terms and Conditions?]`, as on Dice Goblin 2.0) and "Join the library",
+  which adds the plan with `/cart/add.js` and goes straight to checkout. Booster's sticky add to cart bar is hidden on
+  that page. Its terms page now shows the page's own text (the new terms) instead of the old text baked into the
+  template, and the library page's Join buttons point at the product. The files are in `round10-booster/` here.
+  Joining goes live there when Mo publishes it (themes can't be published through the API).
+- The library page's text says cancel any time (to the end of the month paid for) and that damage charges are emailed
+  first; the My Lair page's text (shown only by the current theme) tells library members to ask us to cancel.
+- **Dice Goblin 2.0:** pushes still don't arrive (a resend that touched all 20 files didn't either, and Shopify
+  commits nothing back), so `library-plans` and the four library templates went up through the API and the preview
+  shows the plans. The rest of round 10 (My Lair's membership card, the staff Memberships and Damage tabs, the assets
+  and locales) waits for Reset to last commit.
+
 ## 7. Setting it up (Mo)
 
 1. **Lair Memberships** (done): made in the Dev Dashboard and installed, with `read_own_subscription_contracts`,

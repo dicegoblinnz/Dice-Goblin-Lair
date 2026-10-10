@@ -1,0 +1,73 @@
+{% assign no_selected_variant = false %}
+{% unless product.variants.size == 1 or product.has_only_default_variant %}
+    {% unless product.selected_variant and settings.preselectSwatch != 'false' %}
+        {% assign no_selected_variant = true %}
+    {% endunless %}
+{% endunless %}
+
+{%- comment -%} Dice Goblin: a product sold only on a plan (the library membership) gets the plan picker instead, since Booster's add to cart can't send a plan {%- endcomment -%}
+{%- if product.available and product.requires_selling_plan and product.selling_plan_groups.size > 0 -%}
+<div class="{% if block.settings.noMargin or noMargin %}margin__bottom--reduced{% endif %}" {{block.shopify_attributes}}>
+    {% render 'lair-plan-picker', product: product %}
+</div>
+{%- else -%}
+<div class="product__atc {% if block.settings.noMargin or noMargin %}margin__bottom--reduced{%endif-%}" {{block.shopify_attributes}}>
+    {% if product.available %}
+            <input style="display: none;" name="id" data-bstr-variant-input="{{product.id}}" value="{{product.selected_or_first_available_variant.id}}">
+        {% if settings.quantity_selector %}
+            <div class="quantity--input">
+                <button class="quantity--input__button quantity--input__incr" onclick="BoosterTheme.cart.quantityHandler(event, false, false)">-</button>
+                <input {% if product.selected_or_first_available_variant.inventory_management and product.selected_or_first_available_variant.inventory_policy != "continue" %}max="{{ product.selected_or_first_available_variant.inventory_quantity }}"{% endif %} class="quantity--input__input" value="1" data-qty-input type="number" name="quantity" min="1" aria-label="Quantity input"><!--
+                --><button class="quantity--input__button quantity--input__decr" onclick="BoosterTheme.cart.quantityHandler(event, true, false)">+</button>
+            </div>
+        {% endif %}
+        {% render 'add-to-cart-button', type: 'secondary', product: product %}
+        {% if settings.dynamicCheckout %}
+            <div data-dynamic-button="{{product.id}}"  class="col-12 no-gap checkout--dynamic{% if no_selected_variant %} disabled{% endif %}">
+            {{ form | payment_button }}
+            {% comment %} {% if additional_checkout_buttons %}
+                {{ content_for_additional_checkout_buttons }}
+            {% endif %} {% endcomment %}
+            </div>
+        {% endif %}
+    {% else %}
+        {% render 'sold-out-button', disabled: 'disabled' %}
+    {%endif%}
+</div>
+{%- endif -%}
+
+
+{% if block.settings.stickyATC == "scroll" %}
+<script>
+document.addEventListener('booster:initialized', (e)=>{
+    const deviceWitdth = window.innerWidth;
+    let sticky = deviceWitdth < 768 ? document.querySelector('.sticky--mobile:not([data-bstr-initd])') : document.querySelector('.sticky--desktop:not([data-bstr-initd])')
+    if(!sticky) return
+    sticky.dataset.bstrInitd = "true"
+    document.addEventListener('scroll', debounce(()=>{
+        let patc = document.querySelector('.product__atc')
+        if(!patc) return
+        if(patc.offsetTop + patc.clientHeight < window.scrollY){
+            sticky.classList.remove('hide')
+        } else {
+            sticky.classList.add('hide')
+            if(deviceWitdth < 768) sticky.classList.add('sticky--closed')
+        }
+    }, 150))
+})
+</script>
+{% elsif block.settings.stickyATC == "always" %}
+<style>
+@media screen and (min-width: 768px){
+    .sticky--desktop {
+        display: block !important;
+    }
+}
+
+@media screen and (max-width: 767px){
+    .sticky--mobile {
+        display: block !important;
+    }
+}
+</style>
+{% endif %}
