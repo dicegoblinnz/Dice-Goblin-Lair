@@ -24,8 +24,8 @@
  * signature check, and the deferred answer when the Lair is slow).
  */
 import {
-  HOUR, MIN, LairTime, RuleError, addDays, checkMobile, checkTableBooking, eventOccurrences, findOccurrence, isFree, lairTime,
-  maxOnlineTables, openWindow, shopTableOpen,
+  ACTIVE, HOUR, MIN, LairTime, RuleError, addDays, blockingItems, checkMobile, checkTableBooking, eventOccurrences, findOccurrence, lairTime,
+  maxOnlineTables, openWindow, overlaps, shopTableOpen,
 } from './core.js';
 import { clockLabel } from './email.js';
 
@@ -44,6 +44,8 @@ const COMPONENT = { ROW: 1, BUTTON: 2, SELECT: 3, TEXT: 4, ROLE_SELECT: 6, CHANN
 const STYLE = { PRIMARY: 1, SECONDARY: 2, SUCCESS: 3, DANGER: 4, LINK: 5 };
 export const CHANNEL = { TEXT: 0, ANNOUNCEMENT: 5, FORUM: 15 };
 const POSTABLE = [CHANNEL.TEXT, CHANNEL.ANNOUNCEMENT, CHANNEL.FORUM];
+/** A forum that needs a tag on every post (its channel flags) */
+const REQUIRE_TAG = 1 << 4;
 const ADMINISTRATOR = 1n << 3n;
 const MANAGE_GUILD = 1n << 5n;
 /** The theme's colours: potion purple for TTRPG sessions and events, goblin green for anything booked */
@@ -62,13 +64,20 @@ const PING_GAP = 30 * MIN;
 const STATE_TTL = 10 * MIN;
 /** After a booking changes, the posts catch up this long after (so a burst of changes is one round of edits) */
 const SYNC_DELAY = 2000;
-/** Discord calls one round of posting makes at most (Discord's limits are per channel); the rest wait for the next */
+/** Discord calls one round of posting makes at most; the next round is straight after (an alarm) */
 const SYNC_BUDGET = 12;
-/** A post Discord refused is tried again after this long, up to MAX_TRIES times */
+/** A post Discord refused (no permission, say) is tried again after 30 minutes, then 1, 2, 4 and every 8 hours */
 const RETRY_FAILED = 30 * MIN;
-const MAX_TRIES = 5;
-/** A post whose create never came back is tried again after this long (with the same nonce, so it's never doubled) */
-const CREATING_STALE = 10 * MIN;
+const RETRY_MAX = 8 * HOUR;
+/** Closing off a post that's done is given up after this many refusals (it's not wanted any more) */
+const END_TRIES = 10;
+/** A call that may or may not have happened (a 5xx, no answer) is tried again this soon, checking first */
+const UNSURE_RETRY = 30_000;
+/** A create claimed this long ago with no answer (the object restarted mid-call) is tried again, checking first */
+const CLAIM_STALE = MIN;
+/** Discord's limit on edits to messages older than an hour (error 30046): try again after this */
+const EDIT_LIMIT = 30046;
+const EDIT_LIMIT_WAIT = 15 * MIN;
 /** The daily round-up of today's spare seats goes up from midday, Lair time */
 const DIGEST_HOUR = 12;
 /** Slash commands Discord refused are registered again after an hour */
@@ -77,6 +86,10 @@ const COMMANDS_RETRY = HOUR;
 const ADOPT_DAYS = 30;
 /** Threads stay in the channel list for a week of quiet (Discord's longest) */
 const THREAD_ARCHIVE = 10080;
+/** Who owns the Discord app (they tie it to a server the first time) is asked at most hourly */
+const OWNERS_TTL = HOUR;
+/** A Discord user's second tap waits this long at most for their first to finish */
+const TURN_WAIT = 10_000;
 
 const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
 const clip = (v, max) => {
@@ -89,18 +102,28 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 /** The ids the Lair makes (bk_…, gm_…, ej_…, in_…) and Discord's snowflakes */
 const ID = /^[A-Za-z0-9_-]{3,64}$/;
 const SNOWFLAKE = /^\d{5,25}$/;
-/** A member code typed among friends' names (SJ-OWLBEAR-17, sj owlbear 17) */
+/** A line that could be a member code among friends' names (SJ-OWLBEAR-17, sj owlbear 17): only if a member has it */
 const MEMBER_CODE = /^[A-Za-z]{2}[\s-]?[A-Za-z]{3,14}[\s-]?\d{1,2}$/;
 /** A session's experience level in the games board's words (lair-session-form.js) */
 const LEVEL_WORDS = { new: 'New players welcome', some: 'Some experience', veteran: 'Veterans' };
 /** What /table's setup choices mean on a booking (the booking page's extras) */
 const SETUPS = { board: [], wargame: ['wargame'], bigbox: ['bigbox'] };
 const SETUP_CODES = { board: 'b', wargame: 'w', bigbox: 'x' };
-const SETUP_FROM_CODE = { b: [], w: ['wargame'], x: ['bigbox'] };
+/** When a Discord id (a message, a thread) was made, in ms */
+const snowflakeTime = (id) => {
+  try {
+    return Number((BigInt(String(id)) >> 22n) + 1420070400000n);
+  } catch {
+    return 0;
+  }
+};
 
 /** Every message a customer can see, word for word in the contract */
 export const DISCORD_WORDS = {
   guildOnly: 'Gobgob only works in the Dice Goblin server.',
+  notSetUp: "Gobgob isn't set up yet. The Discord app's owner runs /lair-setup in the Dice Goblin server first.",
+  ownerFirst: "Only the Discord app's owner can tie Gobgob to a server the first time.",
+  ownerUnknown: "Gobgob couldn't check who owns the app just now. Try again in a minute, or put this server's ID in the config table as DISCORD_GUILD_ID.",
   who: 'Gobgob could not tell who you are. Try again.',
   oldButton: "That button's from an older message. Run the command again.",
   unknown: "Gobgob doesn't know that one. Try /games, /events, /table or /mylair.",
@@ -112,8 +135,10 @@ export const DISCORD_WORDS = {
   time: 'Pick a start time from the list.',
   people: 'Tell Gobgob how many of you are coming (1 to 24).',
   hours: 'Bookings are 1 to 8 hours.',
-  noTables: "The Lair's packed then. Try another day, or call us and we'll see what we can do.",
+  noTables: "The Lair's packed at that time. Try another day, or call us and we'll see what we can do.",
   taken: 'Someone just grabbed that table. Here\'s what\'s left:',
+  emailTaken: 'That email is already on this one. If it\'s yours, link your account with /link to change it.',
+  emailOnList: 'That email is already on the list for this one.',
   linkOff: "Discord linking isn't switched on yet.",
   linkLogin: 'Log in to link your Discord.',
   linkExpired: 'That Discord link has expired. Tap Link Discord again.',
@@ -170,7 +195,9 @@ export async function finishDeferred(env, interaction, answer) {
   if (interaction?.type === INTERACTION.AUTOCOMPLETE) return { ok: true, skipped: true };
   const appId = env.DISCORD_APPLICATION_ID || interaction.application_id;
   const shown = answer && [RESPONSE.MESSAGE, RESPONSE.UPDATE].includes(answer.type);
-  const data = shown ? { ...(answer.data || {}) } : { content: DISCORD_WORDS.slow, embeds: [], components: [] };
+  // A pop-up can only be the first answer, so one that came late asks them to tap again. Only the words change: a card
+  // that was deferred in place keeps its embeds and buttons, so there's still something to tap.
+  const data = shown ? { ...(answer.data || {}) } : { content: DISCORD_WORDS.slow };
   // Ephemeral or not was settled by the deferred answer
   delete data.flags;
   try {
@@ -362,7 +389,19 @@ export const discordMethods = {
     this.sql.exec('INSERT OR IGNORE INTO discord_items (kind, item_id, user_id, item_key, created_at) VALUES (?, ?, ?, ?, ?)', kind, String(itemId), String(userId), key, now);
   },
 
-  /** Whether this Discord user made that booking ('booking'), sign-up ('join') or interest ('interest') through the bot. No awaits. */
+  /**
+   * The handlers call this as they save a new booking, sign-up or interest (in the same step as the row, before anything
+   * they wait on): when it came through the bot (who.discordUserId, which only the bot sets), it's that Discord user's.
+   * Never a row matched by email, only one made now. No awaits.
+   */
+  discordMade(kind, itemId, who, now = Date.now(), key = null) {
+    if (who?.discordUserId) this.discordOwn(kind, itemId, who.discordUserId, key, now);
+  },
+
+  /**
+   * Whether this Discord user made that booking ('booking'), sign-up ('join') or interest ('interest') through the bot.
+   * Callers only ask about a row with no account on it: once it's on an account, the account owns it. No awaits.
+   */
   discordOwns(who, kind, itemId) {
     if (!who?.discordUserId) return false;
     return this.sql.exec('SELECT 1 AS n FROM discord_items WHERE kind = ? AND item_id = ? AND user_id = ?', kind, String(itemId), String(who.discordUserId)).toArray().length > 0;
@@ -370,6 +409,64 @@ export const discordMethods = {
 
   discordItemKey(kind, itemId, userId) {
     return this.sql.exec('SELECT item_key FROM discord_items WHERE kind = ? AND item_id = ? AND user_id = ?', kind, String(itemId), String(userId)).toArray()[0]?.item_key || null;
+  },
+
+  /** SQL for "theirs": on their account, or made through the bot and on nobody's account. Binds: customer ID, Discord user ID. */
+  discordMineSql(kind) {
+    return `(customer_id = ? OR (customer_id IS NULL AND id IN (SELECT item_id FROM discord_items WHERE kind = '${kind}' AND user_id = ?)))`;
+  },
+
+  /** Their active interest in a session ('session') or an event date ('event'), or null. No awaits. */
+  discordInterestOf(kind, targetId, who) {
+    return this.sql.exec(
+      `SELECT * FROM interests WHERE kind = ? AND target_id = ? AND status = 'active' AND ${this.discordMineSql('interest')} ORDER BY rowid LIMIT 1`,
+      kind, String(targetId), who.customerId || '', who.discordUserId || '',
+    ).toArray()[0] || null;
+  },
+
+  /**
+   * A guest typed an email that's already on an interest for this session or date that isn't theirs: the website's rule
+   * would change that row, so the bot refuses instead (they can link their account to change their own). No awaits.
+   */
+  discordEmailTaken(kind, targetId, email, who) {
+    if (who.customerId || !isEmail(email)) return false;
+    const r = this.sql.exec(
+      "SELECT id, customer_id FROM interests WHERE kind = ? AND target_id = ? AND status = 'active' AND lower(email) = lower(?) ORDER BY rowid LIMIT 1",
+      kind, String(targetId), String(email).trim(),
+    ).toArray()[0];
+    return Boolean(r) && !(r.customer_id == null && this.discordOwns(who, 'interest', r.id));
+  },
+
+  /** A guest signing up with an email that's already on that date's list (a second submit, or someone else's). No awaits. */
+  discordEmailOnList(occurrenceId, email, who) {
+    if (who.customerId || !isEmail(email)) return false;
+    return this.sql.exec(
+      "SELECT 1 AS n FROM event_joins WHERE occurrence_id = ? AND status NOT IN ('cancelled', 'noshow') AND lower(email) = lower(?)",
+      occurrenceId, String(email).trim(),
+    ).toArray().length > 0;
+  },
+
+  /** Their active regular membership of a series, or null. No awaits. */
+  discordRegularOf(seriesId, who) {
+    if (!seriesId || !who.customerId) return null;
+    return this.sql.exec("SELECT * FROM series_members WHERE series_id = ? AND customer_id = ? AND status = 'active'", seriesId, String(who.customerId)).toArray()[0] || null;
+  },
+
+  /**
+   * Who owns the Discord app (its owner, or its team's owner and members): the only people who can tie the bot to a
+   * server the first time. Asked of Discord at most hourly. null when Discord can't be asked.
+   */
+  async discordOwners() {
+    if (this.discordOwnerCache && Date.now() - this.discordOwnerCache.at < OWNERS_TTL) return this.discordOwnerCache.ids;
+    const res = await this.discordRest('GET', '/applications/@me');
+    if (!res.ok || !res.data) return null;
+    const ids = new Set();
+    if (res.data.owner?.id) ids.add(String(res.data.owner.id));
+    const team = res.data.team;
+    if (team?.owner_user_id) ids.add(String(team.owner_user_id));
+    for (const m of team?.members || []) if (m?.membership_state === 2 && m.user?.id) ids.add(String(m.user.id));
+    this.discordOwnerCache = { at: Date.now(), ids };
+    return ids;
   },
 
   /* ---------------- words and times ---------------- */
@@ -441,18 +538,47 @@ export const discordMethods = {
    * POST /internal/discord/interaction (the Worker checked Discord's signature): a slash command, a button or select, a
    * modal sent, or the day and time boxes of /table filling in. Returns Discord's answer. Problems the Lair's rules find
    * (a full table, a mobile number that doesn't look right) come back as the website says them.
+   *
+   * Each Discord user's taps run one at a time: a second tap waits for the first (up to TURN_WAIT), then finds what the
+   * first one made, so a double tap can't book twice, even while the first is waiting on Shopify. The autocomplete
+   * boxes don't wait.
    */
   async discordInteraction(interaction) {
+    const userId = String((interaction?.member?.user || interaction?.user || {}).id || '');
+    if (interaction?.type === INTERACTION.AUTOCOMPLETE || !SNOWFLAKE.test(userId)) return this.discordHandle(interaction);
+    if (!this.discordTurns) this.discordTurns = new Map();
+    const before = this.discordTurns.get(userId);
+    let done;
+    const turn = new Promise((resolve) => {
+      done = resolve;
+    });
+    this.discordTurns.set(userId, turn);
+    try {
+      if (before) {
+        let timer;
+        await Promise.race([before, new Promise((resolve) => {
+          timer = setTimeout(resolve, TURN_WAIT);
+        })]);
+        clearTimeout(timer);
+      }
+      return await this.discordHandle(interaction);
+    } finally {
+      done();
+      if (this.discordTurns.get(userId) === turn) this.discordTurns.delete(userId);
+    }
+  },
+
+  async discordHandle(interaction) {
     const user = interaction?.member?.user || interaction?.user || {};
     const ctx = { interaction, userId: String(user.id || ''), user, inPlace: inPlace(interaction) };
     try {
       if (!SNOWFLAKE.test(ctx.userId)) throw new RuleError(DISCORD_WORDS.who);
       const settings = this.discordSettings();
       const guild = interaction.guild_id ? String(interaction.guild_id) : '';
-      if (!guild || (settings.guild && guild !== settings.guild)) {
-        if (interaction.type === INTERACTION.AUTOCOMPLETE) return { type: RESPONSE.CHOICES, data: { choices: [] } };
-        return this.discordSay(ctx, DISCORD_WORDS.guildOnly, { error: true });
-      }
+      const quiet = (text) => (interaction.type === INTERACTION.AUTOCOMPLETE ? { type: RESPONSE.CHOICES, data: { choices: [] } } : this.discordSay(ctx, text, { error: true }));
+      if (!guild || (settings.guild && guild !== settings.guild)) return quiet(DISCORD_WORDS.guildOnly);
+      // Not tied to a server yet: only /lair-setup works, so the app's owner can tie it (discordSetup)
+      if (!settings.guild && !(interaction.type === INTERACTION.COMMAND && interaction.data?.name === 'lair-setup')) return quiet(DISCORD_WORDS.notSetUp);
       ctx.guild = guild;
       if (interaction.type === INTERACTION.COMMAND) return await this.discordCommand(ctx);
       if (interaction.type === INTERACTION.AUTOCOMPLETE) return await this.discordAutocomplete(ctx);
@@ -546,11 +672,11 @@ export const discordMethods = {
     return this.gameView(game, this.state(game.start - 1, game.end + 1), rules);
   },
 
-  /** Their seat at a session: on their account, or made through the bot. No awaits. */
+  /** Their seat at a session: on their account, or made through the bot (and on nobody's account). No awaits. */
   discordSeatOf(gameId, who) {
     const r = this.sql.exec(
-      `SELECT * FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated')
-         AND (customer_id = ? OR id IN (SELECT item_id FROM discord_items WHERE kind = 'booking' AND user_id = ?)) ORDER BY created_at, id LIMIT 1`,
+      `SELECT * FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated') AND ${this.discordMineSql('booking')}
+       ORDER BY created_at, id LIMIT 1`,
       String(gameId), who.customerId || '', who.discordUserId || '',
     ).toArray()[0];
     return r ? this.rowToBooking(r) : null;
@@ -597,21 +723,25 @@ export const discordMethods = {
     return {
       title: clip(view.title, 256), url: this.discordGameUrl(view.id), color: POTION,
       ...(trimmed(view.blurb, 1) ? { description: clip(view.blurb, 600) } : {}),
-      fields,
+      fields: fields.filter((f) => trimmed(f.value, 1)),
       ...(image ? { thumbnail: { url: image } } : {}),
       footer: { text: 'Seats are paid at the counter. Grab one here or on dicegoblin.nz.' },
     };
   },
 
-  /** A session's buttons. seat: theirs already (a private card). post: the public post (the same for everyone). */
-  discordSessionButtons(view, now, { seat = null, back = false } = {}) {
+  /**
+   * A session's buttons. On a public post they're the same for everyone. On someone's private card they follow what's
+   * theirs: their seat (seat), their "I'm interested" (said) and whether they're a regular (regular).
+   */
+  discordSessionButtons(view, now, { seat = null, said = null, regular = null, back = false } = {}) {
     const left = Math.max(0, view.seats - view.taken);
     const open = left > 0 && view.end > now;
     const first = seat
       ? [button('Bring friends', cid('friends', view.id), STYLE.PRIMARY, { disabled: !open }), button('Drop my seat', cid('ask', 'b', seat.id), STYLE.DANGER)]
       : [button(open ? 'Grab a seat' : 'Full', cid('seat', view.id), STYLE.SUCCESS, { disabled: !open, emoji: '🎲' }), button('Bring friends', cid('friends', view.id), STYLE.SECONDARY, { disabled: left < 2 || view.end <= now })];
-    first.push(button("I'm interested", cid('int', view.id)));
-    if (view.seriesId) first.push(button('Save my seat every week', cid('every', view.id)));
+    if (said) first.push(button('Not interested now', cid('ask', 'i', said.id)));
+    else if (!seat) first.push(button("I'm interested", cid('int', view.id)));
+    if (view.seriesId) first.push(regular ? button('Stop coming every week', cid('ask', 's', view.seriesId)) : button('Save my seat every week', cid('every', view.id)));
     first.push(linkButton('On the website', this.discordGameUrl(view.id)));
     const rows = [row(...first)];
     if (back) rows.push(row(button('All sessions', cid('list', 'g'))));
@@ -624,14 +754,20 @@ export const discordMethods = {
     const now = Date.now();
     const view = this.discordSessionView(gameId, rules, now);
     if (!view) return this.discordSay(ctx, DISCORD_WORDS.sessionGone, { error: true });
-    const seat = this.discordSeatOf(view.id, this.discordWho(ctx));
-    const content = notice || (seat ? `You've got a seat at this one (code **${seat.ref}**).` : '');
-    return this.discordAnswer(ctx, { content, embeds: [this.discordSessionEmbed(view, rules, now)], components: this.discordSessionButtons(view, now, { seat, back: ctx.inPlace }) });
+    const who = this.discordWho(ctx);
+    const seat = this.discordSeatOf(view.id, who);
+    const said = this.discordInterestOf('session', view.id, who);
+    const regular = this.discordRegularOf(view.seriesId, who);
+    const content = notice || [
+      seat ? `You've got a seat at this one (code **${this.ticketCode(seat)}**).` : said ? "You said you're interested, so the GM knows." : '',
+      regular ? 'Gobgob saves your seat every session.' : '',
+    ].filter(Boolean).join(' ');
+    return this.discordAnswer(ctx, { content, embeds: [this.discordSessionEmbed(view, rules, now)], components: this.discordSessionButtons(view, now, { seat, said, regular, back: ctx.inPlace }) });
   },
 
   discordAlreadySeated(ctx, view, seat) {
     return this.discordAnswer(ctx, {
-      content: `You've already got a seat at **${clip(view.title, 80)}** (code **${seat.ref}**). Bringing friends?`,
+      content: `You've already got a seat at **${clip(view.title, 80)}** (code **${this.ticketCode(seat)}**). Bringing friends?`,
       components: [row(button('Bring friends', cid('friends', view.id), STYLE.PRIMARY), button('Drop my seat', cid('ask', 'b', seat.id), STYLE.DANGER))],
     });
   },
@@ -694,6 +830,7 @@ export const discordMethods = {
   },
 
   async discordBookSeat(ctx, view, who, { name, email, phone, players, notes = '' }) {
+    // (createBooking notes it as theirs as it saves it: discordMade)
     const res = await this.createBooking(
       { kind: 'gm-seat', gameId: view.id, people: players.length, name, email, phone, players, notes: trimmed(notes, 500) },
       who, this.discordClient(ctx),
@@ -701,7 +838,6 @@ export const discordMethods = {
     // --- no awaits from here on ---
     const b = res.booking;
     const now = Date.now();
-    this.discordOwn('booking', b.id, ctx.userId, null, now);
     const rules = this.rulesCache;
     const where = res.emailed ? 'Your confirmation is in your email' : 'Your code is your ticket';
     return this.discordAnswer(ctx, {
@@ -731,6 +867,8 @@ export const discordMethods = {
     const view = this.discordSessionView(gameId, rules, Date.now());
     if (!view) return this.discordSay(ctx, DISCORD_WORDS.sessionGone, { error: true });
     const who = this.discordWho(ctx);
+    const said = this.discordInterestOf('session', view.id, who);
+    if (said) return this.discordInterestDone(ctx, { interest: this.interestView(said), already: true }, view.title, 'session');
     const d = this.discordDetails(who);
     if (!who.customerId || !d.name || !isEmail(d.email)) {
       const boxes = [];
@@ -749,28 +887,31 @@ export const discordMethods = {
     const view = this.discordSessionView(gameId, rules, Date.now());
     if (!view) return this.discordSay(ctx, DISCORD_WORDS.sessionGone, { error: true });
     const who = this.discordWho(ctx);
+    if (this.discordEmailTaken('session', view.id, f.email, who)) throw new RuleError(DISCORD_WORDS.emailTaken, 409);
     const res = await this.addInterest({ kind: 'session', id: view.id, name: f.name, email: f.email, phone: f.mobile, note: f.note }, who, this.discordClient(ctx));
     return this.discordInterestDone(ctx, res, view.title, 'session');
   },
 
+  /** What they said, said back (addInterest and joinWaitlist note a new row as theirs as they save it: discordMade) */
   discordInterestDone(ctx, res, title, kind) {
     const it = res.interest;
-    this.discordOwn('interest', it.id, ctx.userId, it.key || null);
     const name = `**${clip(title, 100)}**`;
     let text;
+    let undo = 'Take it back';
     if (kind === 'session') {
-      text = res.already ? `You'd already said you're keen on ${name}. Gobgob has updated it.`
+      text = res.already ? `You've already said you're keen on ${name}, so the GM knows.`
         : res.emailed ? `Gobgob told the GM you're keen on ${name}. Nothing's booked yet, so they'll get back to you.`
           : `Gobgob has noted you're keen on ${name}. Nothing's booked yet.`;
     } else if (it.level === 'waitlist') {
       const people = Number(it.people) || 1;
-      text = `You're on the waitlist for ${name}${people > 1 ? ` (${people} people)` : ''}. Nothing's booked or paid. If a place opens up, the team will be in touch.`;
+      text = `${res.already ? "You're already" : "You're"} on the waitlist for ${name}${people > 1 ? ` (${people} people)` : ''}. Nothing's booked or paid. If a place opens up, the team will be in touch.`;
+      undo = 'Leave the waitlist';
     } else if (it.level === 'coming') {
       text = `Gobgob's expecting you at ${name}. No need to sign up, just turn up.`;
     } else {
       text = `Marked as maybe for ${name}. No pressure, friend.`;
     }
-    return this.discordAnswer(ctx, { content: text, components: [row(button('Take it back', cid('ask', 'i', it.id)))] });
+    return this.discordAnswer(ctx, { content: text, components: [row(button(undo, cid('ask', 'i', it.id)))] });
   },
 
   /** Save my seat every week (a weekly regular, round 5): their member code is the ticket, so it needs a linked account */
@@ -779,11 +920,27 @@ export const discordMethods = {
     // --- no awaits until joining ---
     const view = this.discordSessionView(gameId, rules, Date.now());
     if (!view) return this.discordSay(ctx, DISCORD_WORDS.sessionGone, { error: true });
+    if (!view.seriesId) return this.discordSay(ctx, "This one's a one-off, so there's only the one session. Grab a seat instead.", { error: true });
     const who = this.discordWho(ctx);
     if (!who.customerId) {
       return this.discordAnswer(ctx, {
         content: 'Saving your seat every week needs a Dice Goblin account, since your member code is your ticket. Link yours, then tap this again.',
         components: [row(linkButton('Link my account', this.discordLinkUrl()))],
+      });
+    }
+    // A regular already: say so, and leave their seats as they are (joining again would change who's coming)
+    const regular = this.discordRegularOf(view.seriesId, who);
+    if (regular) {
+      let players = [];
+      try {
+        players = JSON.parse(regular.players || '[]').map((p) => p?.name).filter(Boolean);
+      } catch {
+        players = [];
+      }
+      const seats = Number(regular.people) || 1;
+      return this.discordAnswer(ctx, {
+        content: `You're already a regular at **${clip(view.title, 100)}**, with ${plural(seats, 'seat', 'seats')} saved every session${players.length ? ` (${clip(players.join(', '), 200)})` : ''}. To change who's coming, use My Lair.`,
+        components: [row(button('Stop coming every week', cid('ask', 's', view.seriesId)), linkButton('Open My Lair', this.page('myLair')))],
       });
     }
     const d = this.discordDetails(who);
@@ -803,6 +960,7 @@ export const discordMethods = {
     if (!view) return this.discordSay(ctx, DISCORD_WORDS.sessionGone, { error: true });
     const who = this.discordWho(ctx);
     if (!who.customerId) return this.discordSay(ctx, 'Link your Dice Goblin account first with /link.', { error: true });
+    if (this.discordRegularOf(view.seriesId, who)) return this.discordEvery(ctx, gameId);
     const d = this.discordDetails(who);
     return this.discordJoinEvery(ctx, view, who, { name: trimmed(f.name ?? d.name, 80), email: trimmed(f.email ?? d.email, 120), phone: trimmed(f.mobile ?? d.mobile, 40) });
   },
@@ -866,33 +1024,40 @@ export const discordMethods = {
     return {
       title: clip(o.title, 256), url: this.eventLink(o), color: POTION,
       ...(trimmed(ev.description, 1) ? { description: clip(ev.description, 600) } : {}),
-      fields,
+      fields: fields.filter((f) => trimmed(f.value, 1)),
       footer: { text: o.capacity ? 'Sign up here or on dicegoblin.nz.' : "Tap I'm coming so Gobgob can count the chairs." },
     };
   },
 
-  discordEventButtons(o, { mine = null, back = false } = {}) {
+  /**
+   * An event date's buttons. On a public post they're the same for everyone; on someone's private card they follow what's
+   * theirs: their sign-up (mine) and what they said (said: maybe, coming or the waitlist).
+   */
+  discordEventButtons(o, { mine = null, said = null, back = false } = {}) {
     const ref = occRef(o.id);
     const left = o.capacity ? Math.max(0, o.capacity - this.placesTaken(o.id)) : null;
+    const level = said?.level || null;
     const buttons = [];
     if (mine) buttons.push(button('Drop my spot', cid('ask', 'j', mine.id), STYLE.DANGER));
     else if (o.capacity && left > 0) {
       buttons.push(button('Sign up', cid('join', ref), STYLE.SUCCESS, { emoji: '🎟️' }));
       if (left > 1) buttons.push(button('Bring friends', cid('jfr', ref)));
-    } else if (o.capacity) buttons.push(button('Join the waitlist', cid('wait', ref), STYLE.PRIMARY));
-    else if (!o.gameTables) buttons.push(button("I'm coming", cid('coming', ref), STYLE.SUCCESS));
-    if (!mine) buttons.push(button('Maybe', cid('maybe', ref)));
+    }
+    if (!mine && level === 'waitlist') buttons.push(button('Leave the waitlist', cid('ask', 'i', said.id)));
+    else if (!mine && o.capacity && !(left > 0)) buttons.push(button('Join the waitlist', cid('wait', ref), STYLE.PRIMARY));
+    if (!mine && !o.capacity && !o.gameTables) buttons.push(level === 'coming' ? button('Not coming now', cid('ask', 'i', said.id)) : button("I'm coming", cid('coming', ref), STYLE.SUCCESS));
+    if (!mine && level !== 'waitlist') buttons.push(level === 'maybe' ? button('Not a maybe now', cid('ask', 'i', said.id)) : button('Maybe', cid('maybe', ref)));
     buttons.push(linkButton(o.gameTables ? 'Book a game table' : 'On the website', this.eventLink(o)));
     const rows = [row(...buttons)];
     if (back) rows.push(row(button('All events', cid('list', 'e'))));
     return rows;
   },
 
-  /** Their sign-up for an event date: on their account, or made through the bot. No awaits. */
+  /** Their sign-up for an event date: on their account, or made through the bot (and on nobody's account). No awaits. */
   discordJoinOf(occurrenceId, who) {
     const r = this.sql.exec(
-      `SELECT * FROM event_joins WHERE occurrence_id = ? AND status NOT IN ('cancelled', 'noshow')
-         AND (customer_id = ? OR id IN (SELECT item_id FROM discord_items WHERE kind = 'join' AND user_id = ?)) ORDER BY created_at, id LIMIT 1`,
+      `SELECT * FROM event_joins WHERE occurrence_id = ? AND status NOT IN ('cancelled', 'noshow') AND ${this.discordMineSql('join')}
+       ORDER BY created_at, id LIMIT 1`,
       occurrenceId, who.customerId || '', who.discordUserId || '',
     ).toArray()[0];
     return r ? this.rowToJoin(r) : null;
@@ -904,9 +1069,12 @@ export const discordMethods = {
     const now = Date.now();
     const o = this.discordOcc(ref, rules);
     if (!o || o.end <= now) return this.discordSay(ctx, DISCORD_WORDS.eventGone, { error: true });
-    const mine = this.discordJoinOf(o.id, this.discordWho(ctx));
-    const content = notice || (mine ? `You're on the list for this one (code **${mine.ref}**).` : '');
-    return this.discordAnswer(ctx, { content, embeds: [this.discordEventEmbed(o, rules, now)], components: this.discordEventButtons(o, { mine, back: ctx.inPlace }) });
+    const who = this.discordWho(ctx);
+    const mine = this.discordJoinOf(o.id, who);
+    const said = mine ? null : this.discordInterestOf('event', o.id, who);
+    const saying = { waitlist: `You're on the waitlist for this one${Number(said?.people) > 1 ? ` (${said.people} people)` : ''}.`, maybe: 'You said maybe.', coming: "You said you're coming." };
+    const content = notice || (mine ? `You're on the list for this one (code **${mine.ref}**).` : saying[said?.level] || '');
+    return this.discordAnswer(ctx, { content, embeds: [this.discordEventEmbed(o, rules, now)], components: this.discordEventButtons(o, { mine, said, back: ctx.inPlace }) });
   },
 
   async discordJoin(ctx, ref, withFriends) {
@@ -917,12 +1085,7 @@ export const discordMethods = {
     if (!o || o.end <= now) return this.discordSay(ctx, DISCORD_WORDS.eventGone, { error: true });
     const who = this.discordWho(ctx);
     const mine = this.discordJoinOf(o.id, who);
-    if (mine) {
-      return this.discordAnswer(ctx, {
-        content: `You're already on the list for **${clip(o.title, 80)}** (code **${mine.ref}**).${withFriends ? ' To bring friends, drop your spot and sign up again with them.' : ''}`,
-        components: [row(button('Drop my spot', cid('ask', 'j', mine.id), STYLE.DANGER))],
-      });
-    }
+    if (mine) return this.discordAlreadyJoined(ctx, o, mine, withFriends);
     const d = this.discordDetails(who);
     if (withFriends || !who.customerId || !d.complete) {
       const boxes = [];
@@ -938,25 +1101,39 @@ export const discordMethods = {
     return this.discordSignUp(ctx, o, who, { name: d.name, email: d.email, phone: d.mobile, people: 1 });
   },
 
+  discordAlreadyJoined(ctx, o, mine, withFriends = false) {
+    return this.discordAnswer(ctx, {
+      content: `You're already on the list for **${clip(o.title, 80)}** (code **${mine.ref}**).${withFriends ? ' To bring friends, drop your spot and sign up again with them.' : ''}`,
+      components: [row(button('Drop my spot', cid('ask', 'j', mine.id), STYLE.DANGER))],
+    });
+  },
+
   async discordJoinSent(ctx, ref, f) {
     const rules = await this.rules();
+    // --- no awaits until signing up ---
     const o = this.discordOcc(ref, rules);
     if (!o || o.end <= Date.now()) return this.discordSay(ctx, DISCORD_WORDS.eventGone, { error: true });
     const who = this.discordWho(ctx);
+    // a second submit of the pop-up (the first is theirs as soon as it's saved), or an email already on the list
+    const mine = this.discordJoinOf(o.id, who);
+    if (mine) return this.discordAlreadyJoined(ctx, o, mine);
     const d = this.discordDetails(who);
-    const guests = names(f.friends, 6).map((line) => (MEMBER_CODE.test(line) ? { code: line } : { name: line }));
+    const email = trimmed(f.email ?? d.email, 120);
+    if (this.discordEmailOnList(o.id, email, who)) throw new RuleError(DISCORD_WORDS.emailOnList, 409);
+    // a line is a member code only when a member has it ("Friend 1" is a name)
+    const guests = names(f.friends, 6).map((line) => (MEMBER_CODE.test(line) && this.memberByCode(line) ? { code: line } : { name: line }));
     return this.discordSignUp(ctx, o, who, {
-      name: trimmed(f.name ?? d.name, 80), email: trimmed(f.email ?? d.email, 120), phone: trimmed(f.mobile ?? d.mobile, 40), note: trimmed(f.note, 300),
+      name: trimmed(f.name ?? d.name, 80), email, phone: trimmed(f.mobile ?? d.mobile, 40), note: trimmed(f.note, 300),
       ...(guests.length ? { guests } : { people: 1 }),
     });
   },
 
   async discordSignUp(ctx, o, who, input) {
+    // (joinEvent notes it as theirs as it saves it, before any checkout is made: discordMade)
     const res = await this.joinEvent(o.id, input, who, this.discordClient(ctx));
     // --- no awaits from here on ---
     const j = res.join;
     const now = Date.now();
-    this.discordOwn('join', j.id, ctx.userId, null, now);
     const title = `**${clip(o.title, 100)}**`;
     const spots = j.people > 1 ? `${j.people} spots` : 'your spot';
     if (res.checkoutUrl) {
@@ -992,6 +1169,9 @@ export const discordMethods = {
     const o = this.discordOcc(ref, rules);
     if (!o || o.end <= Date.now()) return this.discordSay(ctx, DISCORD_WORDS.eventGone, { error: true });
     const who = this.discordWho(ctx);
+    // on it already: say so, and leave how many as it is (joining again would change it)
+    const said = this.discordInterestOf('event', o.id, who);
+    if (said?.level === 'waitlist') return this.discordInterestDone(ctx, { interest: this.interestView(said), already: true }, o.title, 'event');
     const d = this.discordDetails(who);
     if (!who.customerId || !d.complete) {
       const boxes = [];
@@ -1010,6 +1190,7 @@ export const discordMethods = {
     const o = this.discordOcc(ref, rules);
     if (!o || o.end <= Date.now()) return this.discordSay(ctx, DISCORD_WORDS.eventGone, { error: true });
     const who = this.discordWho(ctx);
+    if (this.discordEmailTaken('event', o.id, f.email, who)) throw new RuleError(DISCORD_WORDS.emailTaken, 409);
     const res = await this.joinWaitlist({ waitlist: true, id: o.id, people: f.people, name: f.name, email: f.email, phone: f.mobile }, who, this.discordClient(ctx));
     return this.discordInterestDone(ctx, res, o.title, 'event');
   },
@@ -1021,6 +1202,14 @@ export const discordMethods = {
     const o = this.discordOcc(ref, rules);
     if (!o || o.end <= Date.now()) return this.discordSay(ctx, DISCORD_WORDS.eventGone, { error: true });
     const who = this.discordWho(ctx);
+    // on the waitlist: Maybe would take them off it, so it's left as it is
+    const said = this.discordInterestOf('event', o.id, who);
+    if (said?.level === 'waitlist') {
+      return this.discordAnswer(ctx, {
+        content: `You're on the waitlist for **${clip(o.title, 100)}**, so Gobgob's kept your place in the queue as it is.`,
+        components: [row(button('Leave the waitlist', cid('ask', 'i', said.id)))],
+      });
+    }
     const d = this.discordDetails(who);
     if (!who.customerId || !d.name || !isEmail(d.email)) {
       const boxes = [];
@@ -1038,6 +1227,7 @@ export const discordMethods = {
     const o = this.discordOcc(ref, rules);
     if (!o || o.end <= Date.now()) return this.discordSay(ctx, DISCORD_WORDS.eventGone, { error: true });
     const who = this.discordWho(ctx);
+    if (this.discordEmailTaken('event', o.id, f.email, who)) throw new RuleError(DISCORD_WORDS.emailTaken, 409);
     const res = await this.addInterest({ kind: 'event', id: o.id, coming, name: f.name, email: f.email, phone: f.mobile }, who, this.discordClient(ctx));
     return this.discordInterestDone(ctx, res, o.title, 'event');
   },
@@ -1067,6 +1257,14 @@ export const discordMethods = {
     return addDays(key, 0) === key && key >= today ? key : null;
   },
 
+  /** Tables that are taken over [start, end): bookings, staff holds and locked event tables, worked out once. No awaits. */
+  discordBusyTables(st, rules, start, end) {
+    const busy = new Set();
+    for (const item of blockingItems(st, rules, start, end)) if (overlaps(item.start, item.end, start, end)) for (const t of item.tables) busy.add(t);
+    for (const b of st.bookings) if (ACTIVE.has(b.status) && overlaps(b.start, b.end, start, end)) for (const t of b.tables) busy.add(t);
+    return busy;
+  },
+
   /**
    * The tables a group could have at a time, one choice per room: the fewest tables that seat them (doubled for a wargame
    * or big box game), side by side where they can be, free for the whole time, under the house rules the booking page
@@ -1077,6 +1275,7 @@ export const discordMethods = {
     const time = new LairTime(rules.tz);
     const st = this.state(start - 1, end + 1);
     const shopClosed = (id) => (rules.shopTables || []).includes(id) && !shopTableOpen(st, id, start, end);
+    const busy = this.discordBusyTables(st, rules, start, end);
     const check = (ids, state) => {
       try {
         checkTableBooking({ tables: ids, start, end, people, extras, name: 'Discord', email: 'discord@dicegoblin.nz' }, { state, rules, time, now });
@@ -1095,16 +1294,17 @@ export const discordMethods = {
       const count = maxOnlineTables(people, perTable, extras);
       const usable = room.tables.filter((t) => !shopClosed(t.id));
       if (count > usable.length || usable.reduce((n, t) => n + seatsOf(t), 0) < people) continue;
-      // the time itself, checked once against an empty floor (the same answer for every room)
+      // the time itself, checked once against an empty floor (the same answer for every room; the shop tables staff
+      // opened stay open)
       if (problem === null) {
-        const timeProblem = check(usable.slice(0, count).map((t) => t.id), { bookings: [], blocks: [], openings: [], games: [] });
+        const timeProblem = check(usable.slice(0, count).map((t) => t.id), { bookings: [], blocks: [], openings: st.openings || [], games: [] });
         if (timeProblem && timeProblem.status !== 409) {
           problem = timeProblem.message;
           break;
         }
         problem = '';
       }
-      const free = new Set(usable.filter((t) => isFree(st, rules, t.id, start, end)).map((t) => t.id));
+      const free = new Set(usable.filter((t) => !busy.has(t.id)).map((t) => t.id));
       let pick = null;
       for (let i = 0; i + count <= room.tables.length && !pick; i += 1) {
         const run = room.tables.slice(i, i + count);
@@ -1136,17 +1336,30 @@ export const discordMethods = {
     return this.discordTableChoices(ctx, { start: lairTime(rules.tz).at(day, minutes), hours, people, setup }, rules, now);
   },
 
-  /** A table request in a button's id: start (minutes, base 36), hours, people and setup, then the tables picked */
-  discordTableArgs(args, withTables) {
-    const [startText, hoursText, peopleText, setupCode, tablesText] = args;
+  /**
+   * Tables in a button's id: the room's place in the list and each table's place in the room (a table's own id can be
+   * anything a layout gives it), and a fingerprint of the ids, so a button from before the rooms changed is refused
+   * rather than booking another table.
+   */
+  discordTablesRef(roomIndex, room, ids) {
+    const places = ids.map((id) => room.tables.findIndex((t) => t.id === id));
+    return [roomIndex, places.join('.'), shortHash(ids.join('+')).slice(0, 5)];
+  },
+
+  /** A table request in a button's id: start (minutes, base 36), hours, people and setup, then the tables picked (discordTablesRef) */
+  discordTableArgs(args, withTables, rules) {
+    const [startText, hoursText, peopleText, setupCode, roomText, placesText, check] = args;
     const start = fromMinutes36(startText);
     const hours = Number(hoursText);
     const people = Number(peopleText);
     const setup = Object.keys(SETUP_CODES).find((k) => SETUP_CODES[k] === setupCode);
     if (!Number.isFinite(start) || !(hours >= 1 && hours <= 8) || !(people >= 1 && people <= 24) || !setup) return null;
     if (!withTables) return { start, hours, people, setup };
-    if (!/^[A-Z0-9]{1,8}(\+[A-Z0-9]{1,8}){0,9}$/.test(String(tablesText || ''))) return null;
-    return { start, hours, people, setup, tables: tablesText.split('+') };
+    const room = /^\d{1,2}$/.test(String(roomText || '')) ? rules.rooms[Number(roomText)] : null;
+    if (!room || !/^\d{1,3}(\.\d{1,3}){0,9}$/.test(String(placesText || ''))) return null;
+    const tables = placesText.split('.').map((i) => room.tables[Number(i)]?.id);
+    if (tables.some((id) => !id) || shortHash(tables.join('+')).slice(0, 5) !== check) return null;
+    return { start, hours, people, setup, tables };
   },
 
   discordTableChoices(ctx, req, rules, now, { notice = '' } = {}) {
@@ -1163,7 +1376,10 @@ export const discordMethods = {
           title, color: GOBLIN,
           description: `Pick a room and Gobgob will book it. You pay at the counter when you arrive.${extras.length ? ' Double tables, for the big setup.' : ''}`,
         }],
-        components: [row(...found.options.slice(0, 5).map((o) => button(`${o.room.name}: ${o.tables.join(' + ')} · ${money(o.amount)}`, cid('table', ...base, o.tables.join('+')), STYLE.SUCCESS)))],
+        components: [row(...found.options.slice(0, 5).map((o) => button(
+          `${o.room.name}: ${o.tables.join(' + ')} · ${money(o.amount)}`,
+          cid('table', ...base, ...this.discordTablesRef(rules.rooms.indexOf(o.room), o.room, o.tables)), STYLE.SUCCESS,
+        )))],
       });
     }
     const alternatives = [];
@@ -1184,17 +1400,29 @@ export const discordMethods = {
 
   async discordTableMore(ctx, args) {
     const rules = await this.rules();
-    const req = this.discordTableArgs(args, false);
+    const req = this.discordTableArgs(args, false, rules);
     if (!req) return this.discordSay(ctx, DISCORD_WORDS.oldButton, { error: true });
     return this.discordTableChoices(ctx, req, rules, Date.now());
+  },
+
+  /** Their table booking at exactly that time (a second tap on a choice they've booked already), or null. No awaits. */
+  discordTableOf(req, who) {
+    const r = this.sql.exec(
+      `SELECT * FROM bookings WHERE kind = 'table' AND starts_at = ? AND ends_at = ? AND status IN ('held', 'confirmed', 'seated') AND occurrence_id IS NULL
+         AND ${this.discordMineSql('booking')} ORDER BY created_at, id LIMIT 1`,
+      req.start, req.start + req.hours * HOUR, who.customerId || '', who.discordUserId || '',
+    ).toArray()[0];
+    return r ? this.rowToBooking(r) : null;
   },
 
   async discordTablePick(ctx, args) {
     const rules = await this.rules();
     // --- no awaits until the booking ---
-    const req = this.discordTableArgs(args, true);
+    const req = this.discordTableArgs(args, true, rules);
     if (!req) return this.discordSay(ctx, DISCORD_WORDS.oldButton, { error: true });
     const who = this.discordWho(ctx);
+    const booked = this.discordTableOf(req, who);
+    if (booked) return this.discordTableBooked(ctx, booked, who, rules, { already: true });
     const d = this.discordDetails(who);
     if (!who.customerId || !d.complete) {
       const boxes = [];
@@ -1209,9 +1437,11 @@ export const discordMethods = {
 
   async discordTableSent(ctx, args, f) {
     const rules = await this.rules();
-    const req = this.discordTableArgs(args, true);
+    const req = this.discordTableArgs(args, true, rules);
     if (!req) return this.discordSay(ctx, DISCORD_WORDS.oldButton, { error: true });
     const who = this.discordWho(ctx);
+    const booked = this.discordTableOf(req, who);
+    if (booked) return this.discordTableBooked(ctx, booked, who, rules, { already: true });
     const d = this.discordDetails(who);
     return this.discordBookTable(ctx, req, who, { name: trimmed(f.name ?? d.name, 80), email: trimmed(f.email ?? d.email, 120), phone: trimmed(f.mobile ?? d.mobile, 40), notes: f.notes }, rules);
   },
@@ -1219,28 +1449,38 @@ export const discordMethods = {
   async discordBookTable(ctx, req, who, { name, email, phone, notes = '' }, rules) {
     let res;
     try {
+      // (createBooking notes it as theirs as it saves it: discordMade)
       res = await this.createBooking(
         { kind: 'table', tables: req.tables, start: req.start, end: req.start + req.hours * HOUR, people: req.people, extras: SETUPS[req.setup], name, email, phone, notes: trimmed(notes, 500) },
         who, this.discordClient(ctx),
       );
     } catch (error) {
-      // someone took it in the meantime: what's left at that time
-      if (error instanceof RuleError && error.status === 409) return this.discordTableChoices(ctx, req, rules, Date.now(), { notice: `⚠️ ${DISCORD_WORDS.taken}` });
+      if (error instanceof RuleError && error.status === 409) {
+        // their own earlier tap may have taken it; otherwise someone else did, and here's what's left at that time
+        const booked = this.discordTableOf(req, who);
+        if (booked) return this.discordTableBooked(ctx, booked, who, rules, { already: true });
+        return this.discordTableChoices(ctx, req, rules, Date.now(), { notice: `⚠️ ${DISCORD_WORDS.taken}` });
+      }
       throw error;
     }
     // --- no awaits from here on ---
-    const b = res.booking;
+    return this.discordTableBooked(ctx, res.booking, who, rules, { notice: res.notice || '' });
+  },
+
+  /** "You're booked in!" for a table booking (b: as ownView or rowToBooking gives it) */
+  discordTableBooked(ctx, b, who, rules, { already = false, notice = '' } = {}) {
     const now = Date.now();
-    this.discordOwn('booking', b.id, ctx.userId, null, now);
     const label = `${b.tables.length > 1 ? 'Tables' : 'Table'} ${b.tables.join(', ')}`;
+    const due = 'due' in b ? b.due : this.ownView(b).due;
     return this.discordAnswer(ctx, {
-      content: res.notice || '',
+      content: notice,
       embeds: [{
-        title: "You're booked in!", color: GOBLIN, description: `Gobgob's already guarding **${label}**.`,
+        title: "You're booked in!", color: GOBLIN,
+        description: already ? `You've already got **${label}** at that time. Gobgob's guarding it.` : `Gobgob's already guarding **${label}**.`,
         fields: [
           { name: 'When', value: this.discordSpan(b.start, b.end, rules, now), inline: true },
           { name: 'People', value: String(b.people), inline: true },
-          { name: 'Pay', value: b.due > 0 ? `${money(b.due)} at the counter when you arrive` : 'Nothing to pay', inline: true },
+          { name: 'Pay', value: due > 0 ? `${money(due)} at the counter when you arrive` : 'Nothing to pay', inline: true },
           { name: 'Your code', value: `**${b.ref}**`, inline: true },
         ],
         footer: { text: 'Plans changed? Cancel in /mylair so someone else can have the table.' },
@@ -1278,7 +1518,8 @@ export const discordMethods = {
       const opt = optionMap(data.options);
       const key = this.discordDayKey(opt.day, rules, now);
       const win = key ? openWindow(rules, time, key) : null;
-      const hours = Math.max(1, Math.floor(Number(opt.hours)) || 1);
+      // /table books 2 hours when hours is left out, so the last start offered leaves room for that
+      const hours = Math.min(8, Math.max(1, Math.floor(Number(opt.hours)) || 2));
       const list = [];
       const from = win ? win.openMin : 10 * 60;
       const to = win ? win.closeMin - hours * 60 : 23 * 60;
@@ -1301,7 +1542,7 @@ export const discordMethods = {
   discordItems(who, rules, now) {
     const me = who.customerId || '';
     const uid = who.discordUserId || '';
-    const mine = (kind) => `(customer_id = ? OR id IN (SELECT item_id FROM discord_items WHERE kind = '${kind}' AND user_id = ?))`;
+    const mine = (kind) => this.discordMineSql(kind);
     const out = [];
     const bookings = this.sql.exec(
       `SELECT * FROM bookings WHERE ends_at > ? AND status IN ('held', 'confirmed', 'seated') AND kind IN ('table', 'gm-seat') AND ${mine('booking')} ORDER BY starts_at, id LIMIT 30`,
@@ -1398,7 +1639,10 @@ export const discordMethods = {
 
   async discordDrop(ctx, type, id) {
     if (!['b', 'j', 'i', 's'].includes(type) || !ID.test(String(id || ''))) return this.discordSay(ctx, DISCORD_WORDS.oldButton, { error: true });
+    const rules = await this.rules();
     const who = this.discordWho(ctx);
+    // only something that's theirs and still on (the same list /mylair and the question come from), whatever the button said
+    if (!this.discordItems(who, rules, Date.now()).some((it) => it.drop === `${type}:${id}`)) return this.discordSay(ctx, DISCORD_WORDS.gone, { error: true });
     let res;
     let done;
     if (type === 'b') {
@@ -1572,24 +1816,58 @@ export const discordMethods = {
     }
   },
 
+  /**
+   * /lair-setup. The first time (with no DISCORD_GUILD_ID), it ties Gobgob to this server, and only the Discord app's
+   * owner (or its team) can do that: anyone else, even a manager somewhere, hears so. After that, any manager here can
+   * change the settings.
+   */
   async discordSetup(ctx) {
     if (!this.discordIsManager(ctx)) return this.discordSay(ctx, DISCORD_WORDS.managers, { error: true });
-    // The first /lair-setup ties Gobgob to this server (DISCORD_GUILD_ID in the config does the same)
-    if (!this.discordSettings().guild) this.saveDiscordSetting('guild', ctx.guild, ctx.userId);
-    return this.discordAnswer(ctx, this.discordSetupPanel());
+    if (!this.discordSettings().guild) {
+      const owners = await this.discordOwners();
+      if (!owners) return this.discordSay(ctx, DISCORD_WORDS.ownerUnknown, { error: true });
+      if (!owners.has(ctx.userId)) return this.discordSay(ctx, DISCORD_WORDS.ownerFirst, { error: true });
+      // --- no awaits from here on ---
+      if (!this.discordSettings().guild) this.saveDiscordSetting('guild', ctx.guild, ctx.userId);
+    }
+    return this.discordAnswer(ctx, this.discordSetupPanel('Gobgob is tied to this server.'));
+  },
+
+  /** What's wrong with posting, in words for the panel: each channel Discord refused, once. No awaits. */
+  discordProblems() {
+    const out = [];
+    const seen = new Set();
+    const rows = this.sql.exec(
+      "SELECT channel_id, error FROM discord_posts WHERE status IN ('creating', 'live', 'failed') AND tries > 0 AND error IS NOT NULL ORDER BY updated_at DESC LIMIT 20",
+    ).toArray();
+    for (const r of rows) {
+      const key = `${r.channel_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (/\(40067\)/.test(r.error)) out.push(`<#${r.channel_id}> is a forum that needs a tag on every post. Turn off Require Tags in its settings, or pick a text channel.`);
+      else if (/\((50001|50013)\)|^403/.test(r.error)) out.push(`Gobgob can't post in <#${r.channel_id}>. Check the bot can see it, send messages, embed links and make threads there.`);
+      else if (/\(10003\)/.test(r.error)) out.push("One of the channels picked doesn't exist any more. Pick another.");
+      else out.push(`Discord refused a post in <#${r.channel_id}>: ${clip(r.error, 120)}`);
+    }
+    return out.slice(0, 3);
   },
 
   discordSetupPanel(notice = '') {
     const s = this.discordSettings();
     const where = (id, type) => (id ? `<#${id}>${type === CHANNEL.FORUM ? ' (a forum: each one gets its own post)' : ''}` : 'Not picked yet');
     const onOff = (on) => (on ? 'On' : 'Off');
+    const counts = Object.fromEntries(this.sql.exec("SELECT status, COUNT(*) AS n FROM discord_posts WHERE status IN ('creating', 'live', 'failed') GROUP BY status").toArray().map((r) => [r.status, r.n]));
     const fields = [
       { name: 'TTRPG sessions go to', value: where(s.sessionsChannel, s.sessionsType), inline: true },
       { name: 'Events go to', value: where(s.eventsChannel, s.eventsType), inline: true },
       { name: 'Seat pings mention', value: s.pingRole ? `<@&${s.pingRole}>` : 'Nobody (the ping still goes up)', inline: true },
       { name: 'Switches', value: `Auto-posts: ${onOff(s.posts)} · Seat pings: ${onOff(s.pings)} · Midday round-up: ${onOff(s.digest)}` },
+      { name: 'Posts', value: `${plural(counts.live || 0, 'post', 'posts')} up${counts.creating || counts.failed ? `, ${(counts.creating || 0) + (counts.failed || 0)} still to go up` : ''}` },
     ];
-    if (!this.env.DISCORD_BOT_TOKEN) fields.push({ name: 'Heads up', value: "The bot's token isn't in Cloudflare yet (DISCORD_BOT_TOKEN), so nothing can be posted." });
+    const heads = [];
+    if (!this.env.DISCORD_BOT_TOKEN) heads.push("The bot's token isn't in Cloudflare yet (DISCORD_BOT_TOKEN), so nothing can be posted.");
+    heads.push(...this.discordProblems());
+    if (heads.length) fields.push({ name: 'Heads up', value: clip(heads.join('\n'), 1000) });
     const channelPick = (id, placeholder, current) => row({
       type: COMPONENT.CHANNEL_SELECT, custom_id: cid('set', id), placeholder, channel_types: POSTABLE, min_values: 0, max_values: 1,
       ...(current ? { default_values: [{ id: current, type: 'channel' }] } : {}),
@@ -1598,7 +1876,7 @@ export const discordMethods = {
       content: notice,
       embeds: [{
         title: "Gobgob's Discord setup", color: POTION, fields,
-        description: 'Pick where new sessions and events go up. Gobgob keeps each post\'s seats up to date, opens a chat thread for each session, and pings the role you pick when a seat opens up.',
+        description: "Pick where new sessions and events go up. Gobgob keeps each post's seats up to date, opens a chat thread for each session, and pings the role you pick when a seat opens up.",
       }],
       components: [
         channelPick('sessions', 'Channel for TTRPG sessions', s.sessionsChannel),
@@ -1616,18 +1894,23 @@ export const discordMethods = {
 
   async discordSetupChange(ctx, what) {
     if (!this.discordIsManager(ctx)) return this.discordSay(ctx, DISCORD_WORDS.managers, { error: true });
+    // --- no awaits from here on ---
     const now = Date.now();
     const data = ctx.interaction.data || {};
     const s = this.discordSettings();
-    if (!s.guild) this.saveDiscordSetting('guild', ctx.guild, ctx.userId, now);
     let notice = '';
     if (what === 'sessions' || what === 'events') {
       const id = data.values?.[0] || null;
-      const type = id ? Number(data.resolved?.channels?.[id]?.type ?? CHANNEL.TEXT) : CHANNEL.TEXT;
+      const channel = id ? data.resolved?.channels?.[id] : null;
+      const type = id ? Number(channel?.type ?? CHANNEL.TEXT) : CHANNEL.TEXT;
       if (id && (!SNOWFLAKE.test(String(id)) || !POSTABLE.includes(type))) return this.discordSay(ctx, 'Pick a text, announcement or forum channel.', { error: true });
       this.saveDiscordSetting(`${what}_channel`, id, ctx.userId, now);
       this.saveDiscordSetting(`${what}_type`, type, ctx.userId, now);
-      notice = id ? `Got it. ${what === 'sessions' ? 'TTRPG sessions' : 'Events'} go to <#${id}>.` : `${what === 'sessions' ? 'TTRPG sessions' : 'Events'} won't be posted.`;
+      const kind = what === 'sessions' ? 'TTRPG sessions' : 'Events';
+      notice = id ? `Got it. ${kind} go to <#${id}>.` : `${kind} won't be posted.`;
+      if (id && type === CHANNEL.FORUM && (Number(channel?.flags) & REQUIRE_TAG)) {
+        notice += ' Heads up: that forum needs a tag on every post, and Gobgob can\'t add one. Turn off Require Tags in its settings, or pick a text channel.';
+      }
     } else if (what === 'role') {
       const id = data.values?.[0] || null;
       if (id && !SNOWFLAKE.test(String(id))) return this.discordSay(ctx, DISCORD_WORDS.oldButton, { error: true });
@@ -1636,21 +1919,47 @@ export const discordMethods = {
     } else if (['posts', 'pings', 'digest'].includes(what)) {
       this.saveDiscordSetting(what, s[what] ? 'off' : 'on', ctx.userId, now);
     } else if (what === 'sync') {
-      if (!this.discordCanPost()) notice = 'Pick a channel first (and check the bot token is in Cloudflare).';
-      else {
-        const out = await this.discordSync({ force: true });
-        notice = out?.busy ? 'Gobgob is already posting. Give it a moment.' : `Done: ${plural(out?.created || 0, 'new post', 'new posts')}, ${plural(out?.edited || 0, 'update', 'updates')}${out?.failed ? `, ${out.failed} Discord refused (check the bot can post in that channel)` : ''}.`;
-      }
+      notice = this.discordCanPost()
+        ? "Gobgob's posting now. Give it a minute, then check the channel. (Tap Post now again to see how it went.)"
+        : 'Pick a channel first (and check the bot token is in Cloudflare).';
     } else return this.discordSay(ctx, DISCORD_WORDS.oldButton, { error: true });
-    if (what !== 'sync') this.discordSoon();
+    // A change here (or Post now) tries what Discord refused before straight away, and catches the posts up
+    this.discordRetryNow();
+    this.discordWake(now);
     return this.discordAnswer(ctx, this.discordSetupPanel(notice));
   },
 
   /* ---------------- posts in the server ---------------- */
-  /** Discord's REST API as the bot. Never throws. A 429 or a refused token holds posting off for a while. */
+  /** Discord's limits are per channel (or webhook, or app): the key a path's calls share */
+  discordBucket(path) {
+    const m = String(path).match(/^\/(channels|guilds|webhooks|applications)\/(\d+)/);
+    return m ? `${m[1]}:${m[2]}` : 'other';
+  },
+
+  /** Until when Discord said to wait for this path's calls (or every call), or 0 */
+  discordWaitFor(path) {
+    const waits = this.discordWaits;
+    if (!waits) return 0;
+    const until = Math.max(waits.get('*') || 0, waits.get(this.discordBucket(path)) || 0);
+    return until > Date.now() ? until : 0;
+  },
+
+  discordHold(key, until) {
+    if (!this.discordWaits) this.discordWaits = new Map();
+    if (this.discordWaits.size > 200) this.discordWaits.clear();
+    if ((this.discordWaits.get(key) || 0) < until) this.discordWaits.set(key, until);
+  },
+
+  /**
+   * Discord's REST API as the bot. Never throws. Never sends a call Discord said to wait for (a 429, or a bucket with
+   * none left): it answers kind 'wait' with until. kind says what happened: 'ok'; 'wait'; 'unsure' (a 5xx or no answer:
+   * it may or may not have happened); 'refused' (any other 4xx, and a refused token, which holds every call off an hour).
+   */
   async discordRest(method, path, body) {
     const token = this.env.DISCORD_BOT_TOKEN;
-    if (!token) return { ok: false, status: 0, data: { message: 'No bot token.' } };
+    if (!token) return { ok: false, status: 0, kind: 'refused', data: { message: 'No bot token.' } };
+    const wait = this.discordWaitFor(path);
+    if (wait) return { ok: false, status: 429, kind: 'wait', until: wait, data: { message: 'Waiting for Discord.' } };
     let res;
     try {
       res = await fetch(`${DISCORD_API}${path}`, {
@@ -1658,40 +1967,89 @@ export const discordMethods = {
         body: body ? JSON.stringify(body) : undefined,
       });
     } catch (error) {
-      return { ok: false, status: 0, data: { message: String(error?.message || error) } };
+      return { ok: false, status: 0, kind: 'unsure', data: { message: String(error?.message || error) } };
     }
     const data = res.status === 204 ? null : await res.json().catch(() => null);
+    const now = Date.now();
+    const bucket = this.discordBucket(path);
+    // none left in this bucket: hold its next call until it resets (so the next one isn't a 429)
+    if (res.headers.get('X-RateLimit-Remaining') === '0') {
+      const after = Number(res.headers.get('X-RateLimit-Reset-After'));
+      if (after > 0) this.discordHold(bucket, now + Math.ceil(after * 1000));
+    }
     if (res.status === 429) {
-      const wait = Math.min(600, Math.max(1, Number(data?.retry_after) || Number(res.headers.get('Retry-After')) || 5));
-      this.discordBackoffUntil = Date.now() + Math.ceil(wait * 1000);
-    } else if (res.status === 401) {
-      this.discordBackoffUntil = Date.now() + HOUR;
+      const after = Math.min(600, Math.max(0.5, Number(data?.retry_after) || Number(res.headers.get('Retry-After')) || 5));
+      const until = now + Math.ceil(after * 1000);
+      // (a limit on one old message's edits, 30046, isn't the channel's: only that post waits, discordEditPost)
+      if (data?.code !== EDIT_LIMIT) this.discordHold(data?.global || res.headers.get('X-RateLimit-Global') ? '*' : bucket, until);
+      return { ok: false, status: 429, kind: 'wait', until, data };
+    }
+    if (res.status === 401) {
+      this.discordHold('*', now + HOUR);
       this.note({ discordError: { message: "Discord didn't accept the bot token (DISCORD_BOT_TOKEN).", at: new Date().toISOString() } });
     }
-    return { ok: res.ok, status: res.status, data };
+    return { ok: res.ok, status: res.status, kind: res.ok ? 'ok' : res.status >= 500 ? 'unsure' : 'refused', data };
   },
 
   discordWhy(res) {
     return trimmed(`${res.status || 'no answer'}${res.data?.code ? ` (${res.data.code})` : ''} ${res.data?.message || ''}`, 300);
   },
 
+  /** When to try again after Discord refused something for the nth time in a row: 30 minutes, then 1, 2, 4 and 8 hours */
+  discordBackoff(tries, now = Date.now()) {
+    return now + Math.min(RETRY_MAX, RETRY_FAILED * 2 ** Math.max(0, Math.min(8, tries - 1)));
+  },
+
   /**
-   * After a booking, seat, sign-up or session changes (write() calls this): bring the posts up to date a moment later,
-   * once for a burst of changes. Nothing happens until the bot can post.
+   * The Durable Object's alarm, set for when the posts should next catch up (a moment after a booking changes, when
+   * Discord said to wait until, when a refused post is next due). One sooner than asked is left as it is. In memory too,
+   * so a burst of writes asks storage once.
+   */
+  discordWake(at) {
+    if (this.discordAuto === false) return;
+    const storage = this.ctx?.storage;
+    if (typeof storage?.setAlarm !== 'function') return;
+    const now = Date.now();
+    const target = Math.max(now, Math.round(at));
+    const set = this.discordAlarmAt;
+    if (set && set <= target && set >= now - MIN) return;
+    this.discordAlarmAt = target;
+    this.later((async () => {
+      const current = await storage.getAlarm?.();
+      if (current != null && current <= target && current >= Date.now() - MIN) {
+        this.discordAlarmAt = current;
+        return;
+      }
+      await storage.setAlarm(target);
+    })());
+  },
+
+  /**
+   * After a booking, seat, sign-up, interest or session changes (write() calls this): the posts catch up a moment later,
+   * once for a burst of changes, in their own invocation (the alarm). Nothing happens until the bot can post.
    */
   discordSoon() {
-    if (this.discordPending || this.discordAuto === false) return;
     try {
       if (!this.discordCanPost()) return;
     } catch {
       return;
     }
-    const delay = this.discordDelay ?? SYNC_DELAY;
-    this.discordPending = new Promise((resolve) => setTimeout(resolve, delay)).then(() => {
-      this.discordPending = null;
-      return this.discordSync();
-    });
-    this.later(this.discordPending);
+    this.discordWake(Date.now() + SYNC_DELAY);
+  },
+
+  /** The alarm (lair.js alarm()): a round of posting, then the midday round-up when it's due */
+  async discordAlarm() {
+    this.discordAlarmAt = null;
+    if (!this.discordCanPost()) return { off: true };
+    const out = await this.discordSync();
+    const rules = await this.rules();
+    if (this.discordDigestDue(rules, Date.now())) out.digest = await this.discordDigest(rules, Date.now());
+    return out;
+  },
+
+  /** Post now, a change in /lair-setup and /setup?…&discord=sync: what Discord refused before is tried again straight away. No awaits. */
+  discordRetryNow() {
+    this.sql.exec("UPDATE discord_posts SET retry_at = NULL, tries = 0, thread_retry_at = NULL WHERE status IN ('creating', 'live', 'failed')");
   },
 
   /** A session's post: the card everyone sees, with the buttons everyone gets */
@@ -1738,11 +2096,8 @@ export const discordMethods = {
     return o.end <= now ? 'finished' : 'off';
   },
 
-  /**
-   * What the channels should show now, against what they do (discord_posts), as a list of jobs: new posts, edits, posts
-   * to close off, and pings for a seat or place that opened up in something that was full. Soonest first. No awaits.
-   */
-  discordPlan(rules, now) {
+  /** What the channels should show now: { key: what that post shows } for each session (or series) and event date. No awaits. */
+  discordWanted(rules, now) {
     const s = this.discordSettings();
     const want = new Map();
     if (s.sessionsChannel) {
@@ -1751,7 +2106,7 @@ export const discordMethods = {
         const message = this.discordSessionMessage(view, rules, now);
         want.set(key, {
           key, kind: 'session', targetId: view.id, channel: s.sessionsChannel, channelType: s.sessionsType, title: view.title, start: view.start,
-          message, hash: shortHash(JSON.stringify(message)), left: Math.max(0, view.seats - view.taken), thread: true, ref: view.id,
+          message, hash: shortHash(JSON.stringify(message)), url: message.embeds[0].url, left: Math.max(0, view.seats - view.taken), thread: true, ref: view.id,
         });
       }
     }
@@ -1761,13 +2116,31 @@ export const discordMethods = {
         const message = this.discordEventMessage(o, rules, now);
         want.set(`e:${o.id}`, {
           key: `e:${o.id}`, kind: 'event', targetId: o.id, channel: s.eventsChannel, channelType: s.eventsType,
-          title: `${o.title} · ${this.shortDay(o.start, rules)}`, start: o.start, message, hash: shortHash(JSON.stringify(message)),
-          left: o.capacity ? Math.max(0, o.capacity - this.placesTaken(o.id)) : null, thread: false, ref: occRef(o.id), capacity: Boolean(o.capacity),
+          title: `${o.title} · ${this.shortDay(o.start, rules)}`, start: o.start, message, hash: shortHash(JSON.stringify(message)), url: message.embeds[0].url,
+          left: o.capacity ? Math.max(0, o.capacity - this.placesTaken(o.id)) : null, thread: false, ref: occRef(o.id),
         });
       }
     }
+    return want;
+  },
+
+  /** A full session or date in the next week that has room again (not a series moving on to its next session), not pinged in the last half hour */
+  discordOpened(post, w, now) {
+    return w.left > 0 && post.seats_left === 0 && post.target_id === w.targetId && w.start > now && w.start - now <= PING_DAYS * DAY
+      && (!post.pinged_at || now - post.pinged_at >= PING_GAP);
+  },
+
+  /**
+   * What the channels should show, against what they do (discord_posts), as jobs: new posts, edits, pings, chat threads
+   * still to make, posts to close off, and rows to forget. Anything Discord asked to wait for, or refused and isn't due
+   * again yet, waits. No awaits.
+   */
+  discordPlan(rules, now) {
+    const s = this.discordSettings();
+    const want = this.discordWanted(rules, now);
     const rows = this.sql.exec("SELECT * FROM discord_posts WHERE status IN ('creating', 'live', 'failed')").toArray();
     const have = new Map(rows.map((r) => [r.id, r]));
+    const due = (post) => !post.retry_at || post.retry_at <= now;
     const jobs = [];
     for (const w of want.values()) {
       const post = have.get(w.key);
@@ -1775,59 +2148,80 @@ export const discordMethods = {
         jobs.push({ job: 'create', w });
         continue;
       }
-      if (post.status === 'creating') {
-        if (now - (post.updated_at || post.created_at) > CREATING_STALE) jobs.push({ job: 'create', w, post });
-        continue;
-      }
-      if (post.status === 'failed') {
-        if ((post.tries || 0) < MAX_TRIES && now - (post.updated_at || 0) >= RETRY_FAILED) jobs.push({ job: post.message_id ? 'edit' : 'create', w, post });
-        continue;
-      }
+      // the channel changed in /lair-setup: the old post stays where it is, and a new one goes up
       if (post.channel_id !== w.channel) {
         jobs.push({ job: 'move', post }, { job: 'create', w });
         continue;
       }
-      if (post.hash !== w.hash) jobs.push({ job: 'edit', w, post });
-      const opened = w.left > 0 && post.seats_left === 0 && w.start > now && w.start - now <= PING_DAYS * DAY && (!post.pinged_at || now - post.pinged_at >= PING_GAP);
-      if (s.pings && opened) jobs.push({ job: 'ping', w, post });
+      if (!post.message_id) {
+        // never went up: a claim that's still in flight (this round's own) waits; anything else is tried again when due
+        if (post.status === 'creating' && now - (post.updated_at || 0) < CLAIM_STALE && !post.retry_at) continue;
+        if (due(post)) jobs.push({ job: 'create', w, post });
+        continue;
+      }
+      if (due(post) && post.hash !== w.hash) jobs.push({ job: 'edit', w, post });
+      if (s.pings && this.discordOpened(post, w, now)) jobs.push({ job: 'ping', w, post });
+      if (w.thread && !post.thread_id && post.channel_type !== CHANNEL.FORUM && (!post.thread_retry_at || post.thread_retry_at <= now)) jobs.push({ job: 'thread', w, post });
     }
     for (const post of rows) {
-      if (post.status === 'live' && !want.has(post.id)) jobs.push({ job: 'end', post, why: this.discordEndReason(post, rules, now) });
+      if (want.has(post.id)) continue;
+      if (post.message_id) {
+        if (due(post)) jobs.push({ job: 'end', post, why: this.discordEndReason(post, rules, now) });
+      } else if (due(post)) jobs.push({ job: 'forget', post });
     }
-    const rank = { move: 0, ping: 1, edit: 2, end: 3, create: 4 };
+    const rank = { move: 0, edit: 1, ping: 2, create: 3, thread: 4, end: 5, forget: 6 };
     return jobs.sort((a, b) => rank[a.job] - rank[b.job] || (a.w?.start ?? a.post?.starts_at ?? 0) - (b.w?.start ?? b.post?.starts_at ?? 0));
   },
 
+  /** The channel a job's calls go to (for Discord's waits) */
+  discordJobPath(job) {
+    const post = job.post;
+    if (job.job === 'create') return `/channels/${job.w.channel}`;
+    return `/channels/${post?.message_channel || post?.channel_id}`;
+  },
+
   /**
-   * One round of posting (discordPlan's jobs, up to SYNC_BUDGET Discord calls): never two at once in this Lair, and held
-   * off while Discord says to wait. → { created, edited, ended, pinged, failed, more }
+   * One round of posting (discordPlan's jobs, up to SYNC_BUDGET Discord calls), never two at once in this Lair. A job
+   * whose channel Discord asked to wait for is left for later; the round sets the alarm for when there's more to do.
+   * → { created, edited, ended, pinged, threads, failed, more }
    */
-  async discordSync({ force = false } = {}) {
+  async discordSync() {
     if (!this.discordCanPost()) return { off: true };
     if (this.discordSyncing) {
       this.discordAgain = true;
       return { busy: true };
     }
-    if (!force && Date.now() < (this.discordBackoffUntil || 0)) return { waiting: true };
     this.discordSyncing = true;
-    const out = { created: 0, edited: 0, ended: 0, pinged: 0, failed: 0, more: false };
+    const out = { created: 0, edited: 0, ended: 0, pinged: 0, threads: 0, failed: 0, more: false };
+    let next = Infinity;
     try {
       const rules = await this.rules();
       const jobs = this.discordPlan(rules, Date.now());
       let calls = 0;
       for (const job of jobs) {
-        if (calls >= SYNC_BUDGET || Date.now() < (this.discordBackoffUntil || 0)) {
-          out.more = true;
-          break;
-        }
         if (job.job === 'move') {
-          // the channel changed in /lair-setup: the old post stays where it is, untouched, and a new one goes up
           this.sql.exec("UPDATE discord_posts SET id = ?, status = 'moved', updated_at = ? WHERE id = ?", `${job.post.id}~${Date.now()}`, Date.now(), job.post.id);
           continue;
         }
-        if (job.job === 'create') calls += await this.discordCreatePost(job.w, job.post, out);
+        // a row that never went up, with nothing to look for: just forgotten, no call
+        if (job.job === 'forget' && !job.post.unsure) {
+          calls += await this.discordForgetPost(job.post, out);
+          continue;
+        }
+        const wait = this.discordWaitFor(this.discordJobPath(job));
+        if (wait) {
+          next = Math.min(next, wait);
+          continue;
+        }
+        if (calls >= SYNC_BUDGET) {
+          out.more = true;
+          break;
+        }
+        if (job.job === 'forget') calls += await this.discordForgetPost(job.post, out);
+        else if (job.job === 'create') calls += await this.discordCreatePost(job.w, job.post, out);
         else if (job.job === 'edit') calls += await this.discordEditPost(job.post, job.w, out);
         else if (job.job === 'ping') calls += await this.discordPing(job.post, job.w, out);
+        else if (job.job === 'thread') calls += await this.discordThread(job.post, out);
         else if (job.job === 'end') calls += await this.discordEndPost(job.post, job.why, out);
       }
     } catch (error) {
@@ -1835,88 +2229,171 @@ export const discordMethods = {
       out.error = String(error?.message || error).slice(0, 300);
     } finally {
       this.discordSyncing = false;
-      if (this.discordAgain) {
-        this.discordAgain = false;
-        this.discordSoon();
-      }
     }
+    // when there's more to do: straight away (budget), when Discord said to, or when a refused post is next due
+    const now = Date.now();
+    const soonest = this.sql.exec(
+      "SELECT MIN(retry_at) AS r, MIN(thread_retry_at) AS t FROM discord_posts WHERE status IN ('creating', 'live', 'failed')",
+    ).toArray()[0] || {};
+    for (const at of [soonest.r, soonest.t]) if (at && at > now) next = Math.min(next, at);
+    if (out.more || this.discordAgain) next = Math.min(next, now + 1000);
+    this.discordAgain = false;
+    if (Number.isFinite(next)) this.discordWake(next);
     if (out.failed || out.error) this.note({ discordPosts: { ...out, at: new Date().toISOString() } });
     return out;
   },
 
-  /** A new post: a message (and a thread from it, for a session), or a forum post, which is its own thread. The row is claimed first. */
+  /**
+   * An earlier create that may have gone up (no answer, a 5xx, the object restarting mid-call): look for it before
+   * making another. A message in the channel by a bot with this post's link, or a forum post with its name, made since
+   * the post was first claimed. → { found: { messageId, threadId? } | null, res }
+   */
+  async discordFindPost(post) {
+    const since = (post.created_at || 0) - MIN;
+    if (post.channel_type === CHANNEL.FORUM) {
+      const guild = this.discordSettings().guild;
+      if (!guild) return { found: null, res: { kind: 'ok' } };
+      const res = await this.discordRest('GET', `/guilds/${guild}/threads/active`);
+      const t = res.ok ? (res.data?.threads || []).find((x) => x.parent_id === post.channel_id && x.name === clip(post.title, 100) && snowflakeTime(x.id) >= since) : null;
+      return { found: t ? { messageId: String(t.id), threadId: String(t.id), where: String(t.id) } : null, res };
+    }
+    const res = await this.discordRest('GET', `/channels/${post.channel_id}/messages?limit=50`);
+    const m = res.ok && Array.isArray(res.data)
+      ? res.data.find((x) => x.author?.bot && x.embeds?.[0]?.url === post.url && snowflakeTime(x.id) >= since)
+      : null;
+    return { found: m ? { messageId: String(m.id), threadId: m.thread?.id ? String(m.thread.id) : null, where: post.channel_id } : null, res };
+  },
+
+  /**
+   * A new post: a message (and a thread from it, for a session), or a forum post, which is its own thread. Claimed first
+   * ('creating', unsure until Discord answers). A post that may already be up (unsure) is looked for first.
+   */
   async discordCreatePost(w, post, out) {
     const now = Date.now();
-    if (post) this.sql.exec("UPDATE discord_posts SET status = 'creating', channel_id = ?, channel_type = ?, updated_at = ? WHERE id = ?", w.channel, w.channelType, now, w.key);
-    else {
+    if (post) {
       this.sql.exec(
-        `INSERT INTO discord_posts (id, kind, target_id, channel_id, channel_type, status, title, starts_at, tries, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'creating', ?, ?, 0, ?, ?)`,
-        w.key, w.kind, w.targetId, w.channel, w.channelType, w.title, w.start, now, now,
+        "UPDATE discord_posts SET status = 'creating', channel_type = ?, title = ?, starts_at = ?, target_id = ?, url = COALESCE(url, ?), updated_at = ? WHERE id = ?",
+        w.channelType, w.title, w.start, w.targetId, w.url, now, w.key,
+      );
+    } else {
+      this.sql.exec(
+        `INSERT INTO discord_posts (id, kind, target_id, channel_id, channel_type, status, title, starts_at, url, tries, unsure, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'creating', ?, ?, ?, 0, 0, ?, ?)`,
+        w.key, w.kind, w.targetId, w.channel, w.channelType, w.title, w.start, w.url, now, now,
       );
     }
-    const forum = w.channelType === CHANNEL.FORUM;
-    const name = clip(w.title, 100);
-    let calls = 1;
-    const res = forum
-      ? await this.discordRest('POST', `/channels/${w.channel}/threads`, { name, auto_archive_duration: THREAD_ARCHIVE, message: w.message })
-      : await this.discordRest('POST', `/channels/${w.channel}/messages`, { ...w.message, nonce: shortHash(`${w.key}|${w.channel}`).slice(0, 25), enforce_nonce: true });
-    if (!res.ok) {
-      this.sql.exec("UPDATE discord_posts SET status = 'failed', tries = tries + 1, error = ?, updated_at = ? WHERE id = ?", this.discordWhy(res), Date.now(), w.key);
-      out.failed += 1;
-      return calls;
-    }
-    let messageId;
-    let threadId = null;
-    let where = w.channel;
-    if (forum) {
-      // a forum post is a thread, and its first message has the thread's id
-      threadId = String(res.data?.id || '');
-      messageId = String(res.data?.message?.id || threadId);
-      where = threadId;
-    } else {
-      messageId = String(res.data?.id || '');
-      if (w.thread && messageId) {
-        calls += 1;
-        const t = await this.discordRest('POST', `/channels/${w.channel}/messages/${messageId}/threads`, { name, auto_archive_duration: THREAD_ARCHIVE });
-        if (t.ok) threadId = String(t.data?.id || messageId);
+    const row0 = this.sql.exec('SELECT * FROM discord_posts WHERE id = ?', w.key).toArray()[0];
+    let calls = 0;
+    if (row0.unsure) {
+      calls += 1;
+      const { found, res } = await this.discordFindPost(row0);
+      if (res.kind === 'wait') {
+        this.sql.exec("UPDATE discord_posts SET status = 'failed', retry_at = ?, updated_at = ? WHERE id = ?", res.until, Date.now(), w.key);
+        return calls;
+      }
+      if (found) {
+        // it went up after all: the next round brings it up to date (and makes its thread if it has none)
+        this.sql.exec(
+          `UPDATE discord_posts SET status = 'live', message_id = ?, message_channel = ?, thread_id = ?, hash = NULL, seats_left = ?, unsure = 0, tries = 0, retry_at = NULL,
+             error = NULL, updated_at = ? WHERE id = ?`,
+          found.messageId, found.where, found.threadId, w.left, Date.now(), w.key,
+        );
+        out.created += 1;
+        return calls;
       }
     }
-    this.sql.exec(
-      `UPDATE discord_posts SET status = 'live', message_id = ?, message_channel = ?, thread_id = ?, hash = ?, seats_left = ?, title = ?, starts_at = ?, error = NULL,
-         tries = 0, updated_at = ? WHERE id = ?`,
-      messageId, where, threadId, w.hash, w.left, w.title, w.start, Date.now(), w.key,
-    );
-    out.created += 1;
+    // from here on Discord may make it, so it's unsure until Discord says
+    this.sql.exec('UPDATE discord_posts SET unsure = 1, updated_at = ? WHERE id = ?', Date.now(), w.key);
+    const forum = w.channelType === CHANNEL.FORUM;
+    const name = clip(w.title, 100);
+    calls += 1;
+    const res = forum
+      ? await this.discordRest('POST', `/channels/${w.channel}/threads`, { name, auto_archive_duration: THREAD_ARCHIVE, message: w.message })
+      : await this.discordRest('POST', `/channels/${w.channel}/messages`, { ...w.message, nonce: shortHash(`${w.key}|${w.channel}|${row0.created_at}`).slice(0, 25), enforce_nonce: true });
+    const at = Date.now();
+    if (res.ok) {
+      const messageId = forum ? String(res.data?.message?.id || res.data?.id || '') : String(res.data?.id || '');
+      const threadId = forum ? String(res.data?.id || messageId) : null;
+      this.sql.exec(
+        `UPDATE discord_posts SET status = 'live', message_id = ?, message_channel = ?, thread_id = ?, hash = ?, seats_left = ?, unsure = 0, tries = 0, retry_at = NULL,
+           error = NULL, updated_at = ? WHERE id = ?`,
+        messageId, forum ? threadId : w.channel, threadId, w.hash, w.left, at, w.key,
+      );
+      out.created += 1;
+      // a session in a text channel gets its chat thread straight away
+      if (w.thread && !forum && messageId) calls += await this.discordThread({ id: w.key, channel_id: w.channel, message_id: messageId, title: w.title }, out);
+      return calls;
+    }
+    if (res.kind === 'wait') {
+      // Discord didn't take it: nothing new is up
+      this.sql.exec("UPDATE discord_posts SET status = 'failed', unsure = 0, retry_at = ?, updated_at = ? WHERE id = ?", res.until, at, w.key);
+    } else if (res.kind === 'unsure') {
+      this.sql.exec('UPDATE discord_posts SET unsure = 1, retry_at = ?, error = ?, updated_at = ? WHERE id = ?', at + UNSURE_RETRY, this.discordWhy(res), at, w.key);
+      out.failed += 1;
+    } else {
+      this.sql.exec(
+        "UPDATE discord_posts SET status = 'failed', unsure = 0, tries = tries + 1, retry_at = ?, error = ?, updated_at = ? WHERE id = ?",
+        this.discordBackoff((row0.tries || 0) + 1, at), this.discordWhy(res), at, w.key,
+      );
+      out.failed += 1;
+    }
     return calls;
   },
 
-  /** A post's card brought up to date (a forum thread that went quiet is opened again first) */
-  async discordEditPost(post, w, out) {
+  /** A session's chat thread, from its post in a text channel. 160004 means it has one already (the thread id is the message's). */
+  async discordThread(post, out) {
+    const res = await this.discordRest('POST', `/channels/${post.channel_id}/messages/${post.message_id}/threads`, { name: clip(post.title, 100), auto_archive_duration: THREAD_ARCHIVE });
+    const now = Date.now();
+    if (res.ok || res.data?.code === 160004) {
+      this.sql.exec('UPDATE discord_posts SET thread_id = ?, thread_retry_at = NULL WHERE id = ?', String(res.data?.id || post.message_id), post.id);
+      if (res.ok) out.threads += 1;
+    } else {
+      const retry = res.kind === 'wait' ? res.until : res.kind === 'unsure' ? now + UNSURE_RETRY : now + 6 * HOUR;
+      this.sql.exec('UPDATE discord_posts SET thread_retry_at = ?, error = COALESCE(error, ?) WHERE id = ?', retry, res.kind === 'refused' ? `thread: ${this.discordWhy(res)}` : null, post.id);
+      if (res.kind !== 'wait') out.failed += 1;
+    }
+    return 1;
+  },
+
+  /** PATCH a post's message, opening its forum thread again first if it went quiet (50083). → { res, calls } */
+  async discordPatchPost(post, body) {
     const where = post.message_channel || post.channel_id;
+    let res = await this.discordRest('PATCH', `/channels/${where}/messages/${post.message_id}`, body);
     let calls = 1;
-    let res = await this.discordRest('PATCH', `/channels/${where}/messages/${post.message_id}`, w.message);
     if (!res.ok && res.data?.code === 50083 && post.thread_id) {
       calls += 2;
       await this.discordRest('PATCH', `/channels/${post.thread_id}`, { archived: false });
-      res = await this.discordRest('PATCH', `/channels/${where}/messages/${post.message_id}`, w.message);
+      res = await this.discordRest('PATCH', `/channels/${where}/messages/${post.message_id}`, body);
     }
+    return { res, calls };
+  },
+
+  /** A post's card brought up to date */
+  async discordEditPost(post, w, out) {
+    const { res, calls } = await this.discordPatchPost(post, w.message);
     const now = Date.now();
     if (res.ok) {
       this.sql.exec(
-        "UPDATE discord_posts SET status = 'live', hash = ?, seats_left = ?, title = ?, starts_at = ?, target_id = ?, error = NULL, tries = 0, updated_at = ? WHERE id = ?",
+        "UPDATE discord_posts SET status = 'live', hash = ?, seats_left = ?, title = ?, starts_at = ?, target_id = ?, tries = 0, retry_at = NULL, error = NULL, updated_at = ? WHERE id = ?",
         w.hash, w.left, w.title, w.start, w.targetId, now, post.id,
       );
       out.edited += 1;
     } else if (res.status === 404 || [10003, 10008].includes(res.data?.code)) {
-      // deleted in Discord: put up a fresh one next round
+      // deleted in Discord: set aside, and a fresh one goes up next round
       this.sql.exec("UPDATE discord_posts SET id = ?, status = 'gone', error = ?, updated_at = ? WHERE id = ?", `${post.id}~${now}`, this.discordWhy(res), now, post.id);
+      this.discordWake(now + 1000);
+    } else if (res.data?.code === EDIT_LIMIT) {
+      // Discord's limit on edits to older messages (whatever status it comes with): later, without counting it against the post
+      this.sql.exec('UPDATE discord_posts SET retry_at = ?, error = ? WHERE id = ?', Math.max(now + EDIT_LIMIT_WAIT, res.until || 0), this.discordWhy(res), post.id);
+      out.failed += 1;
+    } else if (res.kind === 'wait') {
+      this.sql.exec('UPDATE discord_posts SET retry_at = ? WHERE id = ?', res.until, post.id);
+    } else if (res.kind === 'unsure') {
+      // no answer: try again soon, without counting it against the post
+      this.sql.exec('UPDATE discord_posts SET retry_at = ?, error = ? WHERE id = ?', now + UNSURE_RETRY, this.discordWhy(res), post.id);
       out.failed += 1;
     } else {
-      this.sql.exec(
-        `UPDATE discord_posts SET tries = tries + 1, error = ?, status = CASE WHEN tries + 1 >= ? THEN 'failed' ELSE status END, updated_at = ? WHERE id = ?`,
-        this.discordWhy(res), MAX_TRIES, now, post.id,
-      );
+      this.sql.exec('UPDATE discord_posts SET tries = tries + 1, retry_at = ?, error = ?, updated_at = ? WHERE id = ?', this.discordBackoff((post.tries || 0) + 1, now), this.discordWhy(res), now, post.id);
       out.failed += 1;
     }
     return calls;
@@ -1926,8 +2403,8 @@ export const discordMethods = {
   async discordPing(post, w, out) {
     const s = this.discordSettings();
     const rules = this.rulesCache;
-    // claimed first, so the next round can't ping it again
-    this.sql.exec('UPDATE discord_posts SET pinged_at = ? WHERE id = ?', Date.now(), post.id);
+    // claimed first (with what it shows now), so the next round can't ping the same seat again
+    this.sql.exec('UPDATE discord_posts SET pinged_at = ?, seats_left = ? WHERE id = ?', Date.now(), w.left, post.id);
     const when = `${this.discordDay(w.start, rules)}, ${this.discordClock(w.start, rules)}`;
     const what = w.kind === 'session' ? 'A seat just opened up' : 'A place just opened up';
     const more = w.left === 1 ? 'Just the one, so be quick.' : `${w.left} going.`;
@@ -1946,31 +2423,75 @@ export const discordMethods = {
   },
 
   /**
-   * A post that's done says so and loses its buttons. Its row is set aside under a new id, so the same session or date
-   * gets a fresh post if it comes back (approved again, or put back on the calendar). Discord refusing is tried again
-   * next round, up to MAX_TRIES times.
+   * A post that's done. An event date's post in a text channel is deleted (the channel stays a list of what's on); a
+   * session's is closed off (its chat thread stays), and a forum post is closed off and archived. Its row is set aside,
+   * so the same session or date gets a fresh post if it comes back.
    */
   async discordEndPost(post, why, out) {
-    const where = post.message_channel || post.channel_id;
-    const message = this.discordEndedMessage(post, why);
+    const forum = post.channel_type === CHANNEL.FORUM;
     let calls = 1;
-    let res = await this.discordRest('PATCH', `/channels/${where}/messages/${post.message_id}`, message);
-    if (!res.ok && res.data?.code === 50083 && post.thread_id) {
-      calls += 2;
-      await this.discordRest('PATCH', `/channels/${post.thread_id}`, { archived: false });
-      res = await this.discordRest('PATCH', `/channels/${where}/messages/${post.message_id}`, message);
+    let res;
+    if (post.kind === 'event' && !forum) res = await this.discordRest('DELETE', `/channels/${post.channel_id}/messages/${post.message_id}`);
+    else {
+      const patched = await this.discordPatchPost(post, this.discordEndedMessage(post, why));
+      res = patched.res;
+      calls = patched.calls;
+      if (res.ok && forum && post.thread_id) {
+        calls += 1;
+        await this.discordRest('PATCH', `/channels/${post.thread_id}`, { archived: true });
+      }
     }
     const now = Date.now();
-    const settled = res.ok || res.status === 404 || [10003, 10008].includes(res.data?.code) || (post.tries || 0) + 1 >= MAX_TRIES;
-    if (settled) {
+    const gone = res.status === 404 || [10003, 10008].includes(res.data?.code);
+    if (res.ok || gone || (res.kind === 'refused' && (post.tries || 0) + 1 >= END_TRIES)) {
       this.sql.exec(
         "UPDATE discord_posts SET id = ?, status = 'ended', error = ?, updated_at = ? WHERE id = ?",
-        `${post.id}~${now}`, res.ok ? null : this.discordWhy(res), now, post.id,
+        `${post.id}~${now}`, res.ok || gone ? null : this.discordWhy(res), now, post.id,
       );
-    } else this.sql.exec('UPDATE discord_posts SET tries = tries + 1, error = ?, updated_at = ? WHERE id = ?', this.discordWhy(res), now, post.id);
-    if (res.ok) out.ended += 1;
-    else out.failed += 1;
+      if (res.ok) out.ended += 1;
+    } else if (res.data?.code === EDIT_LIMIT) {
+      this.sql.exec('UPDATE discord_posts SET retry_at = ?, error = ? WHERE id = ?', Math.max(now + EDIT_LIMIT_WAIT, res.until || 0), this.discordWhy(res), post.id);
+    } else if (res.kind === 'wait') this.sql.exec('UPDATE discord_posts SET retry_at = ? WHERE id = ?', res.until, post.id);
+    else if (res.kind === 'unsure') {
+      this.sql.exec('UPDATE discord_posts SET retry_at = ?, error = ? WHERE id = ?', now + UNSURE_RETRY, this.discordWhy(res), post.id);
+      out.failed += 1;
+    } else {
+      this.sql.exec('UPDATE discord_posts SET tries = tries + 1, retry_at = ?, error = ? WHERE id = ?', this.discordBackoff((post.tries || 0) + 1, now), this.discordWhy(res), post.id);
+      out.failed += 1;
+    }
     return calls;
+  },
+
+  /**
+   * A post that never went up and isn't wanted any more. If an earlier try may have put it up after all, look for it and
+   * close that off; otherwise just forget the row.
+   */
+  async discordForgetPost(post, out) {
+    if (!post.unsure) {
+      this.sql.exec("UPDATE discord_posts SET id = ?, status = 'ended', updated_at = ? WHERE id = ?", `${post.id}~${Date.now()}`, Date.now(), post.id);
+      return 0;
+    }
+    if (this.discordWaitFor(`/channels/${post.channel_id}`)) return 0;
+    const { found, res } = await this.discordFindPost(post);
+    if (res.kind === 'wait' || res.kind === 'unsure') {
+      this.sql.exec('UPDATE discord_posts SET retry_at = ? WHERE id = ?', res.until || Date.now() + UNSURE_RETRY, post.id);
+      return 1;
+    }
+    if (found) {
+      const live = { ...post, message_id: found.messageId, message_channel: found.where, thread_id: found.threadId };
+      return 1 + await this.discordEndPost(live, this.discordEndReason(post, this.rulesCache, Date.now()), out);
+    }
+    this.sql.exec("UPDATE discord_posts SET id = ?, status = 'ended', updated_at = ? WHERE id = ?", `${post.id}~${Date.now()}`, Date.now(), post.id);
+    return 1;
+  },
+
+  /** The midday round-up is due: switched on, the bot can post, from midday, and not today yet. No awaits. */
+  discordDigestDue(rules, now) {
+    const s = this.discordSettings();
+    if (!s.digest || !this.discordCanPost()) return false;
+    const time = lairTime(rules.tz);
+    if (time.parts(now).h < DIGEST_HOUR) return false;
+    return this.sql.exec("SELECT value FROM meta WHERE key = 'discord-digest'").toArray()[0]?.value !== time.key(now);
   },
 
   /**
@@ -1979,12 +2500,10 @@ export const discordMethods = {
    * Noted for the day before it's sent, so it goes once.
    */
   async discordDigest(rules, now = Date.now()) {
+    if (!this.discordDigestDue(rules, now)) return null;
     const s = this.discordSettings();
-    if (!s.digest || !this.discordCanPost()) return null;
     const time = lairTime(rules.tz);
-    if (time.parts(now).h < DIGEST_HOUR) return null;
     const today = time.key(now);
-    if (this.sql.exec("SELECT value FROM meta WHERE key = 'discord-digest'").toArray()[0]?.value === today) return null;
     this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('discord-digest', ?)", today);
     const channel = [[s.sessionsChannel, s.sessionsType], [s.eventsChannel, s.eventsType]].find(([id, type]) => id && type !== CHANNEL.FORUM)?.[0];
     if (!channel) return { posted: false, reason: 'no text channel' };
@@ -2011,6 +2530,8 @@ export const discordMethods = {
       components: [selectRow(cid('pick'), 'Grab a spot', items.slice(0, 25).map((x) => ({ label: clip(x.label, 100), value: x.value, description: clip(x.desc, 100) })))],
       allowed_mentions: { parse: [] }, flags: 4096,
     });
+    // Discord asked to wait, or didn't answer: try again later today
+    if (res.kind === 'wait' || res.kind === 'unsure') this.sql.exec("DELETE FROM meta WHERE key = 'discord-digest'");
     return { posted: res.ok, items: items.length, ...(res.ok ? {} : { error: this.discordWhy(res) }) };
   },
 
@@ -2056,10 +2577,13 @@ export const discordMethods = {
     const base = String(this.env.PUBLIC_URL || 'https://dice-goblin-lair.dicegoblinnz.workers.dev').replace(/\/$/, '');
     const appId = this.env.DISCORD_APPLICATION_ID || null;
     const posts = Object.fromEntries(this.sql.exec('SELECT status, COUNT(*) AS n FROM discord_posts GROUP BY status').toArray().map((r) => [r.status, r.n]));
+    const problems = this.sql.exec(
+      "SELECT id, title, error, tries, retry_at FROM discord_posts WHERE status IN ('creating', 'live', 'failed') AND error IS NOT NULL ORDER BY updated_at DESC LIMIT 5",
+    ).toArray().map((r) => ({ post: r.id, title: r.title, error: r.error, tries: r.tries, retryAt: r.retry_at ? new Date(r.retry_at).toISOString() : null }));
     return {
       interactions: this.discordReady(), linking: this.discordCanLink(), posting: this.discordCanPost(), botToken: Boolean(this.env.DISCORD_BOT_TOKEN),
       guild: s.guild || null, sessionsChannel: s.sessionsChannel, eventsChannel: s.eventsChannel, pingRole: s.pingRole,
-      switches: { posts: s.posts, pings: s.pings, digest: s.digest }, posts,
+      switches: { posts: s.posts, pings: s.pings, digest: s.digest }, posts, problems,
       interactionsUrl: `${base}/discord/interactions`, redirectUri: this.discordRedirect(),
       installUrl: appId ? `https://discord.com/oauth2/authorize?client_id=${appId}&scope=bot%20applications.commands&permissions=${BOT_PERMISSIONS}` : null,
       linkedMembers: this.sql.exec('SELECT COUNT(*) AS n FROM discord_links').toArray()[0]?.n || 0,
@@ -2067,18 +2591,21 @@ export const discordMethods = {
   },
 
   /**
-   * The 10-minute maintenance's Discord part: commands registered, posts brought up to date and the midday round-up.
-   * action (from /setup?…&discord=): 'commands' registers again now, 'sync' posts now even while Discord said to wait.
+   * The 10-minute maintenance's Discord part: the slash commands registered, and the alarm set when the posts have
+   * something to do (the posting itself happens in the alarm, with its own allowance of outside calls). action (from
+   * /setup?…&discord=): 'commands' registers again now; 'sync' tries what Discord refused before, now.
    */
   async discordUpkeep(rules, { action = null } = {}) {
     const status = this.discordStatus();
     if (!this.env.DISCORD_BOT_TOKEN) return status;
     if (this.env.DISCORD_APPLICATION_ID) status.commands = await this.discordRegisterCommands({ force: action === 'commands' });
     if (this.discordCanPost()) {
-      status.sync = await this.discordSync({ force: action === 'sync' });
-      status.digest = await this.discordDigest(rules, Date.now());
+      // --- no awaits from here on ---
+      const now = Date.now();
+      if (action === 'sync') this.discordRetryNow();
+      status.pending = this.discordPlan(rules, now).length;
+      if (status.pending || this.discordDigestDue(rules, now)) this.discordWake(now);
     }
     return status;
   },
 };
-

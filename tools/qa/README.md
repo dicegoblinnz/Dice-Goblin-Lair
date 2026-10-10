@@ -89,8 +89,18 @@ type on, as Shopify's does.
 
 `round14/discord.mjs` drives the bot against the live stack the way Discord does: interactions signed with a throwaway
 Ed25519 key (`round14/keys.mjs` writes it, and the fake Discord settings, into `live/dev/.dev.vars`), Discord's API faked by
-`round14/fake-discord.mjs` on :8798 (the dev entry sends `discord.com` there). It checks PING and a bad signature, /lair-setup,
-/games, a guest's seat through the pop-up, the slash commands registered and the posts (with their threads) going up from
-the maintenance, the floor's chat link, Link Discord from My Lair adopting the guest seat, /mylair, and a full session's
-freed seat pinging the role by itself. Run `node round14/keys.mjs`, start `node round14/fake-discord.mjs`, then
-`DG_THEME=<theme> live/up.sh`, and `node round14/discord.mjs`.
+`round14/fake-discord.mjs` on :8798 (the dev entry sends `discord.com` there; it keeps each channel's messages and the
+threads, with real snowflake ids, and says the QA's Discord user owns the app). It checks PING and a bad signature; that
+nothing but /lair-setup answers before the app's owner ties Gobgob to the server, and that another server's manager can't;
+/games, a guest's seat through the pop-up, the slash commands registered and the posts (with their threads) going up by
+themselves (the Durable Object's alarm, in workerd); the floor's chat link, Link Discord from My Lair adopting the guest
+seat, /mylair, a full session's freed seat pinging the role by itself, a double tap booking one seat, and a 429 from
+Discord holding that channel for its `retry_after` before the post goes up by itself. Run `node round14/keys.mjs`, start
+`node round14/fake-discord.mjs`, then `DG_THEME=<theme> live/up.sh`, and `node round14/discord.mjs`.
+
+## boot.sh: the real Worker starts
+
+`boot.sh` boots `src/index.js` as it's deployed (the repo's `wrangler.toml`, local state in a throwaway folder) under
+workerd and checks it answers `/health`. workerd won't start a Worker whose main module exports anything but handlers and
+classes (a plain `export const` stops it, and Cloudflare would refuse the deploy), and neither the tests nor the dev entry
+above start the real module. Run it before pushing a change to `src/index.js`.

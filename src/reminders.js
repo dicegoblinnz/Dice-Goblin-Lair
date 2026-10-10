@@ -468,11 +468,14 @@ export const reminderMethods = {
       );
     } else {
       id = makeId('in');
+      const key = crypto.randomUUID();
       this.write(
         `INSERT INTO interests (id, kind, target_id, level, status, name, email, phone, note, customer_id, remove_key, title, starts_at, ends_at, created_at, updated_at, people)
          VALUES (?, 'event', ?, 'waitlist', 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        id, targetId, name, email, phone, note, me, crypto.randomUUID(), occurrence.title, occurrence.start, occurrence.end, now, now, people,
+        id, targetId, name, email, phone, note, me, key, occurrence.title, occurrence.start, occurrence.end, now, now, people,
       );
+      // Round 14: made through the Discord bot: theirs to take back there (a new row only)
+      this.discordMade('interest', id, who, now, key);
     }
     this.touchMember(me, { name, email, mobile: phone }, now);
     // --- saved ---

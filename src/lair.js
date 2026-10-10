@@ -689,8 +689,9 @@ export const MIGRATIONS = [
     'CREATE INDEX IF NOT EXISTS discord_items_user ON discord_items (user_id, kind)',
     `CREATE TABLE IF NOT EXISTS discord_posts (
       id TEXT PRIMARY KEY, kind TEXT NOT NULL, target_id TEXT, channel_id TEXT, channel_type INTEGER NOT NULL DEFAULT 0, message_id TEXT, message_channel TEXT,
-      thread_id TEXT, status TEXT NOT NULL, hash TEXT, seats_left INTEGER, pinged_at INTEGER, title TEXT, starts_at INTEGER, tries INTEGER NOT NULL DEFAULT 0,
-      error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+      thread_id TEXT, status TEXT NOT NULL, hash TEXT, seats_left INTEGER, pinged_at INTEGER, title TEXT, starts_at INTEGER, url TEXT,
+      tries INTEGER NOT NULL DEFAULT 0, retry_at INTEGER, unsure INTEGER NOT NULL DEFAULT 0, thread_retry_at INTEGER, error TEXT,
+      created_at INTEGER NOT NULL, updated_at INTEGER)`,
     'CREATE INDEX IF NOT EXISTS discord_posts_status ON discord_posts (status, starts_at)',
     'CREATE TABLE IF NOT EXISTS discord_settings (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER, updated_by TEXT)',
   ],
@@ -1406,6 +1407,21 @@ export class Lair {
     this.recent.set(client, hits);
   }
 
+  /**
+   * Round 14: the Durable Object's alarm, for work that has to happen a little later on its own (the Discord posts catching
+   * up after a booking, Discord asking the bot to wait). Each alarm is its own invocation, with its own allowance of
+   * outside calls, so it never eats into a booking's or the maintenance's. Never throws: an alarm that throws is retried
+   * by Cloudflare, and the work keeps its own retry times instead.
+   */
+  async alarm() {
+    try {
+      await this.useConfig();
+      await this.discordAlarm();
+    } catch (error) {
+      console.error('Lair: alarm failed', error);
+    }
+  }
+
   /* ---------------- HTTP ---------------- */
   async fetch(request) {
     const url = new URL(request.url);
@@ -1923,6 +1939,8 @@ export class Lair {
       split: kind === 'table' && input.split === true,
     });
     this.saveBooking(booking, now);
+    // Round 14: made through the Discord bot: theirs to change there (saved with the row, so a second tap sees it)
+    this.discordMade('booking', booking.id, who, now);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email, mobile: booking.phone }, now);
     // --- saved: the table is ours ---
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
@@ -2204,8 +2222,8 @@ export class Lair {
     const staffEdit = Boolean(who.staff) && this.bookingPerms(patch).every((need) => this.can(who, need));
     if (who.staff && !staffEdit && !(who.customerId && booking.customerId === who.customerId)) throw new RuleError(TEAM_WORDS.notYours, 403);
     if (!staffEdit) {
-      // Round 14: or they made it through the Discord bot (as a guest, before linking an account)
-      const own = (who.customerId && booking.customerId === who.customerId) || this.discordOwns(who, 'booking', booking.id);
+      // Round 14: or they made it through the Discord bot as a guest (until it joins an account, which then owns it)
+      const own = (who.customerId && booking.customerId === who.customerId) || (!booking.customerId && this.discordOwns(who, 'booking', booking.id));
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
       if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
@@ -4792,6 +4810,8 @@ export class Lair {
     for (const g of guests) {
       this.write('INSERT INTO event_join_guests (id, join_id, customer_id, name, code, created_at) VALUES (?, ?, ?, ?, ?, ?)', makeId('eg'), join.id, g.customerId, g.name, g.code, now);
     }
+    // Round 14: made through the Discord bot (saved with the row, before any checkout is made)
+    this.discordMade('join', join.id, who, now);
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // --- saved: the spaces are ours ---
     return { ...(await this.payOrConfirmJoin(join, rules, plan)), spacesLeft: left - people };
@@ -5071,8 +5091,8 @@ export class Lair {
     const now = Date.now();
     const join = this.joinById(id);
     if (!join) throw new RuleError('Sign-up not found.', 404);
-    // Round 14: or they made it through the Discord bot (as a guest, before linking an account)
-    const own = (who.customerId && join.customerId === who.customerId) || this.discordOwns(who, 'join', join.id);
+    // Round 14: or they made it through the Discord bot as a guest (until it joins an account, which then owns it)
+    const own = (who.customerId && join.customerId === who.customerId) || (!join.customerId && this.discordOwns(who, 'join', join.id));
     // Round 9: staff here means the desk or the Events tab
     const staffJoin = this.can(who, ['checkin', 'events']);
     // Round 8: someone else signed a guest up, so only that person (or the counter) changes it

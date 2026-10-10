@@ -16,9 +16,10 @@ These are the specs each build round was written against. Read them newest first
 | `lair-api-contract-v1.md` | Base contract | |
 
 Round 14, the Discord bot, covers: slash commands, buttons and pop-ups for TTRPG sessions, events and tables (as a
-linked member in one tap, or as a guest); /mylair and cancelling; Link Discord in My Lair (Discord's own sign-in); the
-posts in the server with live seat counts, chat threads, seat pings and the midday round-up; /lair-setup; setting it up;
-and the clash check fixed on the way.
+linked member in one tap, or as a guest, one tap at a time); /mylair and cancelling; Link Discord in My Lair (Discord's
+own sign-in); the posts in the server with live seat counts, chat threads, seat pings and the midday round-up, posted
+from the Durable Object's alarm, with Discord's waits per channel and posts that recover when Discord refuses or doesn't
+answer; /lair-setup (tied to the server by the app's owner); setting it up; and the clash check fixed on the way.
 
 Round 10, library memberships, covers: the Lair billing Grab, Stash and Hoard itself through a second Shopify app (Lair
 Memberships) in place of Simplee; failed payments, bank checks and retries; plan changes and cancelling; damage

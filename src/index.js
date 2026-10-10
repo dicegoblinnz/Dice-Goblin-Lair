@@ -60,8 +60,11 @@ async function posRoute(request, env, url) {
   return withCors(await internalCall(env, url.origin, `pos/${route}`, body || '{}', { 'X-Lair-Pos-User': String(claims.sub || '') }));
 }
 
-/** Discord waits 3 seconds for an answer; past this, the Worker answers "thinking" and puts the Lair's answer in afterwards */
-export const DISCORD_WAIT_MS = 2400;
+/**
+ * Discord waits 3 seconds for an answer; past this, the Worker answers "thinking" and puts the Lair's answer in afterwards.
+ * (Not exported: workerd treats every export of this module as an entry point, and a number there stops the Worker starting.)
+ */
+const DISCORD_WAIT_MS = 2400;
 const LATE = Symbol('late');
 
 /**

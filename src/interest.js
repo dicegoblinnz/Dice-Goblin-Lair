@@ -128,6 +128,8 @@ export const interestMethods = {
     );
     // Round 11: "Remind me the day before" (src/reminders.js)
     this.interestSaved(id, input, now);
+    // Round 14: made through the Discord bot: theirs to take back there (a new row only, never one matched by email)
+    this.discordMade('interest', id, who, now, key);
     this.touchMember(me, { name, email, mobile: phone }, now);
     // --- saved ---
     const row = this.interestRow(id);
