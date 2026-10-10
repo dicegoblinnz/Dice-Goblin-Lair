@@ -84,3 +84,13 @@ calendar, a session link opening its session, the Follow dialog's links, the cal
 game's feed (`GET /feeds/<key>.ics`, public and through the signed proxy) holding the dates the page links to. Run it
 under the live lock with `DG_THEME`, `OUT` and `QA_PORT`. The harness' stand-in proxy now passes the app's own content
 type on, as Shopify's does.
+
+## round14: the Discord bot (round 14)
+
+`round14/discord.mjs` drives the bot against the live stack the way Discord does: interactions signed with a throwaway
+Ed25519 key (`round14/keys.mjs` writes it, and the fake Discord settings, into `live/dev/.dev.vars`), Discord's API faked by
+`round14/fake-discord.mjs` on :8798 (the dev entry sends `discord.com` there). It checks PING and a bad signature, /lair-setup,
+/games, a guest's seat through the pop-up, the slash commands registered and the posts (with their threads) going up from
+the maintenance, the floor's chat link, Link Discord from My Lair adopting the guest seat, /mylair, and a full session's
+freed seat pinging the role by itself. Run `node round14/keys.mjs`, start `node round14/fake-discord.mjs`, then
+`DG_THEME=<theme> live/up.sh`, and `node round14/discord.mjs`.

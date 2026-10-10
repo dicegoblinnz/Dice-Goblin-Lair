@@ -40,6 +40,8 @@ import { adminMethods } from './admin.js';
 import { GAME_PEOPLE, PLAYER_WORDS, gamePlayerMethods, spotKey, spotLabel } from './warhammer.js';
 // Round 10: library memberships (Grab, Stash and Hoard) billed by the Lair through Shopify (src/memberships.js)
 import { membershipMethods, membershipUpkeep } from './memberships.js';
+// Round 14: the Discord bot (slash commands, buttons, Link Discord and the posts in the server: src/discord.js)
+import { discordMethods } from './discord.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -672,6 +674,26 @@ export const MIGRATIONS = [
     'CREATE TABLE IF NOT EXISTS series_skips (series_id TEXT NOT NULL, day TEXT NOT NULL, reason TEXT, told_at INTEGER NOT NULL, PRIMARY KEY (series_id, day))',
     'CREATE TABLE IF NOT EXISTS gone_dates (occurrence_id TEXT PRIMARY KEY, title TEXT, starts_at INTEGER, told_at INTEGER NOT NULL)',
   ],
+  // Round 14, Discord (10 Oct 2026, contract v14-discord). Only new tables, so the live rows stay as they are:
+  //  - discord_links: a Discord account linked to a member, one to one (My Lair's Link Discord)
+  //  - discord_states: Link Discord's states, each used once within 10 minutes
+  //  - discord_items: what a Discord user made through the bot (a booking, sign-up or interest), so it's theirs to change
+  //    there and joins their account when they link (item_key: a guest interest's key)
+  //  - discord_posts: the bot's posts in the server (one per session series or one-off, one per event date), with what they
+  //    last showed, so they're edited only when that changes
+  //  - discord_settings: /lair-setup's choices (the server, the channels, the role to ping, the switches)
+  [
+    'CREATE TABLE IF NOT EXISTS discord_links (user_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL UNIQUE, username TEXT, global_name TEXT, linked_at INTEGER NOT NULL, updated_at INTEGER)',
+    'CREATE TABLE IF NOT EXISTS discord_states (state TEXT PRIMARY KEY, customer_id TEXT NOT NULL, created_at INTEGER NOT NULL, used_at INTEGER)',
+    'CREATE TABLE IF NOT EXISTS discord_items (kind TEXT NOT NULL, item_id TEXT NOT NULL, user_id TEXT NOT NULL, item_key TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (kind, item_id))',
+    'CREATE INDEX IF NOT EXISTS discord_items_user ON discord_items (user_id, kind)',
+    `CREATE TABLE IF NOT EXISTS discord_posts (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, target_id TEXT, channel_id TEXT, channel_type INTEGER NOT NULL DEFAULT 0, message_id TEXT, message_channel TEXT,
+      thread_id TEXT, status TEXT NOT NULL, hash TEXT, seats_left INTEGER, pinged_at INTEGER, title TEXT, starts_at INTEGER, tries INTEGER NOT NULL DEFAULT 0,
+      error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+    'CREATE INDEX IF NOT EXISTS discord_posts_status ON discord_posts (status, starts_at)',
+    'CREATE TABLE IF NOT EXISTS discord_settings (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER, updated_by TEXT)',
+  ],
 ];
 /** Round 10 (library memberships) is MIGRATIONS[ROUND10 - 1]: the step that makes the memberships table */
 const ROUND10 = MIGRATIONS.findIndex((step) => step.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS memberships ('))) + 1;
@@ -724,6 +746,8 @@ const lineAmount = (item) => {
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
 const YEAR = 365 * 24 * HOUR;
+/** Round 14: writes to these tables change what the Discord posts show (seats, places, who's keen, the sessions themselves) */
+const DISCORD_WATCH = /\b(?:bookings|games|event_joins|interests|series|series_members)\b/i;
 
 export class Lair {
   constructor(ctx, env) {
@@ -843,6 +867,8 @@ export class Lair {
     this.sql.exec(query, ...bindings);
     this.version += 1;
     this.stateCache.clear();
+    // Round 14: a booking, seat, sign-up, interest or session changed, so the Discord posts catch up a moment later
+    if (DISCORD_WATCH.test(query)) this.discordSoon();
   }
 
   rowToBooking(r) {
@@ -1402,13 +1428,19 @@ export class Lair {
         if (b === 'memberships-webhook') return json(await this.membershipWebhook(body));
         const membershipsUrl = body.membershipsUrl || (typeof body.webhookUrl === 'string' ? body.webhookUrl.replace(/\/webhooks\/orders-paid$/, '/webhooks/memberships') : null);
         if (b === 'setup') {
-          return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true, membershipsUrl, membershipsSetup: body.memberships === 'plans' }));
+          return json(await this.checkConnection(body.webhookUrl, {
+            force: true, testEmail: body.testEmail === true, membershipsUrl, membershipsSetup: body.memberships === 'plans',
+            // Round 14: /setup?…&discord=commands registers the slash commands again now, &discord=sync posts now
+            discordAction: ['commands', 'sync'].includes(body.discord) ? body.discord : null,
+          }));
         }
         if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false, membershipsUrl }));
         // Round 11: a job the owner queued in the config database (admin_jobs), run by the Worker's cron (src/admin.js)
         if (b === 'admin-job') return json(await this.adminJob(body));
         // Round 11: the day-before reminders on their own, at a fixed time when `at` is given (the live checks' clock)
         if (b === 'reminders') return json(await this.remindersAt(Number(body.at) || Date.now()));
+        // Round 14: a Discord interaction (the Worker checked Discord's signature). The answer is Discord's, as JSON.
+        if (b === 'discord' && c === 'interaction') return json(await this.discordInteraction(body));
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
         if (b === 'pos' && c === 'today') return json(await this.posToday());
@@ -1482,6 +1514,10 @@ export class Lair {
       if (a === 'me' && b === 'membership' && c === 'resume' && !d) return json(await this.resumeMembership(body, who));
       if (a === 'me' && b === 'membership' && c === 'card' && !d) return json(await this.membershipCardEmail(body, who));
       if (a === 'me' && b === 'damage' && c && d === 'dispute') return json(await this.disputeDamageCharge(decodeURIComponent(c), body, who));
+      // Round 14: Link Discord in My Lair (start sends them to Discord; Discord sends them back to My Lair, which finishes it)
+      if (a === 'me' && b === 'discord' && c === 'start' && !d) return json(await this.discordStart(who));
+      if (a === 'me' && b === 'discord' && c === 'finish' && !d) return json(await this.discordFinish(body, who));
+      if (a === 'me' && b === 'discord' && c === 'unlink' && !d) return json(await this.discordUnlink(who));
       if (a === 'passes' && !b) return json(await this.createPass(body, who));
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
@@ -1786,6 +1822,8 @@ export class Lair {
     // Round 9, play: who's interested in sessions and maybe (or coming) to event dates: counts for everyone, names for
     // staff and a session's own GM only
     const interest = this.interestsIn(from, to);
+    // Round 14: where each session and event date is on Discord (its post, or a session's chat thread), for "Chat on Discord"
+    const discordPosts = this.discordPostLinks();
     return {
       now,
       bookings: st.bookings.filter((bk) => staffView || ACTIVE.has(bk.status)).map(view),
@@ -1807,9 +1845,13 @@ export class Lair {
         // Round 9, play: how many are interested (everyone), and who (staff and the session's GM)
         game.interested = interest.sessions[g.id] || 0;
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.interest = interest.rows.filter((r) => r.kind === 'session' && r.target_id === g.id).map((r) => this.interestPerson(r));
+        // Round 14: its Discord post's chat (one post for every session of a series), or null
+        game.discordUrl = discordPosts.get(g.seriesId ? `s:${g.seriesId}` : `g:${g.id}`) || null;
         return game;
       }),
       events: [],
+      // Round 14: { [occurrenceId]: its Discord post } for the event dates that have one
+      eventDiscord: Object.fromEntries([...discordPosts].filter(([key]) => key.startsWith('e:')).map(([key, url]) => [key.slice(2), url])),
       eventJoins,
       eventSpots,
       // Round 11: { [occurrenceId]: [{ id: 'T8+T9', label: 'T8 + T9', tables, free }] }
@@ -2162,7 +2204,8 @@ export class Lair {
     const staffEdit = Boolean(who.staff) && this.bookingPerms(patch).every((need) => this.can(who, need));
     if (who.staff && !staffEdit && !(who.customerId && booking.customerId === who.customerId)) throw new RuleError(TEAM_WORDS.notYours, 403);
     if (!staffEdit) {
-      const own = who.customerId && booking.customerId === who.customerId;
+      // Round 14: or they made it through the Discord bot (as a guest, before linking an account)
+      const own = (who.customerId && booking.customerId === who.customerId) || this.discordOwns(who, 'booking', booking.id);
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
       if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
@@ -5028,7 +5071,8 @@ export class Lair {
     const now = Date.now();
     const join = this.joinById(id);
     if (!join) throw new RuleError('Sign-up not found.', 404);
-    const own = who.customerId && join.customerId === who.customerId;
+    // Round 14: or they made it through the Discord bot (as a guest, before linking an account)
+    const own = (who.customerId && join.customerId === who.customerId) || this.discordOwns(who, 'join', join.id);
     // Round 9: staff here means the desk or the Events tab
     const staffJoin = this.can(who, ['checkin', 'events']);
     // Round 8: someone else signed a guest up, so only that person (or the counter) changes it
@@ -8790,6 +8834,8 @@ export class Lair {
       membership: this.membershipForMember(who.customerId, now),
       // Round 7: the player profile (the GM profile stays its own block, gmProfile)
       profile: this.profileView(this.memberRow(who.customerId)),
+      // Round 14: Link Discord: { ready (it's switched on), linked: { username, name, at } | null }
+      discord: this.discordMemberView(who.customerId),
       // Session passes: active ones, and ones used up in the last 30 days
       passes: this.memberPasses(who.customerId, now),
       // Round 9: early access offers open to them now, each with their own claim (and only their own checkout link)
@@ -8946,7 +8992,7 @@ export class Lair {
   }
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
-  async checkConnection(webhookUrl, { force = false, testEmail = false, membershipsUrl = null, membershipsSetup = false } = {}) {
+  async checkConnection(webhookUrl, { force = false, testEmail = false, membershipsUrl = null, membershipsSetup = false, discordAction = null } = {}) {
     if (force) this.rulesCache = null;
     const rules = await this.rules();
     const result = {
@@ -9084,6 +9130,12 @@ export class Lair {
       }
     }
     result.memberships = await membershipUpkeep(this, rules, { webhookUrl: membershipsUrl, force });
+    // Round 14: Discord: the slash commands registered, the posts brought up to date and the midday round-up (src/discord.js)
+    try {
+      result.discord = await this.discordUpkeep(rules, { action: discordAction });
+    } catch (error) {
+      console.error('Lair: Discord upkeep failed', error);
+    }
     this.note({ connection: result });
     return result;
   }
@@ -9103,3 +9155,5 @@ Object.assign(Lair.prototype, adminMethods);
 Object.assign(Lair.prototype, gamePlayerMethods);
 // Round 10: library memberships (src/memberships.js)
 Object.assign(Lair.prototype, membershipMethods);
+// Round 14: the Discord bot (src/discord.js)
+Object.assign(Lair.prototype, discordMethods);

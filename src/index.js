@@ -11,11 +11,14 @@
 //   /ics/<date id>.ics       an event date as a calendar file, for the reminder email's Add to calendar (public)
 //   /feeds/<key>.ics         round 13: a followed game's calendar, every date of its events (public; also through the
 //                            app proxy at www.dicegoblin.nz/apps/liar/feeds/<key>.ics, which the Our games page uses)
+//   /discord/interactions    round 14: the Discord bot's interactions endpoint (Ed25519 signature checked), answered by the
+//                            Lair; when the Lair is slow, Discord gets a deferred answer and the Lair's goes in afterwards
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
 import { Lair } from './lair.js';
 import { safeEqual, verifyProxySignature, verifySessionToken, verifyWebhook } from './shopify.js';
 import { withConfig } from './config.js';
+import { EPHEMERAL, INTERACTION, RESPONSE, deferFor, finishDeferred, verifyDiscord } from './discord.js';
 
 export { Lair };
 
@@ -55,6 +58,51 @@ async function posRoute(request, env, url) {
   if (!claims) return withCors(json({ error: 'Sign in to Shopify POS to use this.' }, 401));
   const body = request.method === 'GET' ? '{}' : await request.text();
   return withCors(await internalCall(env, url.origin, `pos/${route}`, body || '{}', { 'X-Lair-Pos-User': String(claims.sub || '') }));
+}
+
+/** Discord waits 3 seconds for an answer; past this, the Worker answers "thinking" and puts the Lair's answer in afterwards */
+export const DISCORD_WAIT_MS = 2400;
+const LATE = Symbol('late');
+
+/**
+ * Round 14: the Discord bot's interactions (src/discord.js). Discord signs each one (Ed25519, with the app's public key),
+ * and anything that doesn't check out gets a 401, which Discord tests for. A PING is answered here; everything else goes
+ * to the Lair, whose answer is Discord's. If the Lair takes too long (a cold start, Shopify being slow), Discord gets a
+ * deferred answer straight away and the Lair's answer edits it in when it comes (the interaction's token lasts 15 minutes).
+ */
+async function discordRoute(request, env, ctx, url) {
+  if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
+  if (!env.DISCORD_PUBLIC_KEY) return json({ error: 'The Discord bot is not set up yet.' }, 503);
+  const raw = await request.text();
+  const ok = await verifyDiscord(raw, request.headers.get('X-Signature-Ed25519'), request.headers.get('X-Signature-Timestamp'), env.DISCORD_PUBLIC_KEY);
+  if (!ok) return new Response('invalid request signature', { status: 401 });
+  let interaction;
+  try {
+    interaction = JSON.parse(raw);
+  } catch {
+    return json({ error: 'Bad request' }, 400);
+  }
+  if (interaction?.type === INTERACTION.PING) return json({ type: RESPONSE.PONG });
+  // The Lair's answer, or a plain "try again" when it couldn't give one (never a Lair error in Discord's place)
+  const shaped = (answer) => (answer && typeof answer.type === 'number'
+    ? answer
+    : { type: RESPONSE.MESSAGE, data: { content: "⚠️ Something went wrong on Gobgob's side. Try again, or book on dicegoblin.nz.", flags: EPHEMERAL } });
+  const work = internalCall(env, url.origin, 'discord/interaction', raw)
+    .then((res) => res.json())
+    .then(shaped)
+    .catch((error) => {
+      console.error('Lair: Discord interaction failed', error);
+      return shaped(null);
+    });
+  let timer;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(LATE), Number(env.DISCORD_WAIT_MS) || DISCORD_WAIT_MS);
+  });
+  const answer = await Promise.race([work, late]);
+  clearTimeout(timer);
+  if (answer !== LATE) return json(answer);
+  ctx?.waitUntil?.(work.then((a) => finishDeferred(env, interaction, a)));
+  return json(deferFor(interaction));
 }
 
 /**
@@ -193,6 +241,9 @@ export default {
 
     if (url.pathname.startsWith('/pos/')) return posRoute(request, env, url);
 
+    // Round 14: the Discord bot (Discord's own signature, not Shopify's)
+    if (url.pathname === '/discord/interactions') return discordRoute(request, env, ctx, url);
+
     // Shopify signs every app proxy request. The proxy URL should end in /proxy, but a signed request on any other
     // path is served the same way, so a proxy URL entered without "/proxy" still works.
     const proxyPath = url.pathname === '/proxy' || url.pathname.startsWith('/proxy/');
@@ -252,8 +303,10 @@ export default {
       if (!env.SETUP_KEY || !safeEqual(key, env.SETUP_KEY)) return json({ error: 'Not allowed' }, 403);
       const testEmail = url.searchParams.get('email') === 'test';
       const memberships = url.searchParams.get('memberships') || null;
+      // Round 14: &discord=commands registers the bot's slash commands again now; &discord=sync posts now
+      const discord = url.searchParams.get('discord') || null;
       return internalCall(env, url.origin, 'setup', JSON.stringify({
-        webhookUrl: `${url.origin}/webhooks/orders-paid`, testEmail, memberships, membershipsUrl: `${url.origin}/webhooks/memberships`,
+        webhookUrl: `${url.origin}/webhooks/orders-paid`, testEmail, memberships, membershipsUrl: `${url.origin}/webhooks/memberships`, discord,
       }));
     }
 

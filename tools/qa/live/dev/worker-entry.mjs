@@ -14,6 +14,8 @@ globalThis.fetch = async (input, init) => {
   if (url.host === 'api.resend.com') return realFetch(new Request(`${FAKE}/resend${url.pathname}`, request));
   // Round 7: Shopify's staged upload target for event pictures, which the Worker posts to itself
   if (url.host === 'shopify-staged-uploads.storage.googleapis.com') return realFetch(new Request(`${FAKE}/__upload${url.pathname}`, request));
+  // Round 14: Discord's API (the bot's posts, its slash commands, Link Discord) goes to the local fake (../../round14/fake-discord.mjs)
+  if (url.host === 'discord.com') return realFetch(new Request(`http://127.0.0.1:8798${url.pathname}${url.search}`, request));
   if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return realFetch(request);
   console.warn(`dev entry: refused an outbound request to ${url.host}`);
   return new Response(JSON.stringify({ message: `refused in dev: ${url.host}` }), { status: 503, headers: { 'Content-Type': 'application/json' } });

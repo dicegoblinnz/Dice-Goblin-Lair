@@ -17,6 +17,11 @@ export const CONFIG_KEYS = [
   // across: until then someone with no Lair membership borrows on their Simplee tags).
   'MEMBERSHIPS_CLIENT_ID', 'MEMBERSHIPS_CLIENT_SECRET', 'MEMBERSHIPS_PRODUCT_ID', 'MEMBERSHIPS_FEE_VARIANT_ID', 'MEMBERSHIPS_BILLING',
   'MEMBERSHIPS_SIMPLEE_TAGS',
+  // Round 14, the Discord bot (src/discord.js): the app's ID and public key (neither is secret), the server it works in
+  // (optional: the first /lair-setup ties it to its server) and where Link Discord comes back to (optional: My Lair). Its
+  // bot token and client secret are Worker secrets only (DISCORD_BOT_TOKEN, DISCORD_CLIENT_SECRET): they're not listed
+  // here, so this table can't hold them.
+  'DISCORD_APPLICATION_ID', 'DISCORD_PUBLIC_KEY', 'DISCORD_GUILD_ID', 'DISCORD_REDIRECT_URI',
 ];
 const TTL = 60_000;
 let cache = null;
