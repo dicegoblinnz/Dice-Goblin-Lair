@@ -1,0 +1,5332 @@
+[
+ {
+  "title": "7 Wonders Duel",
+  "code": "DGL12-001",
+  "qr": "DGL12-001",
+  "players": "2",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130128999"
+ },
+ {
+  "title": "A Little Wordy",
+  "code": "DGL12-002",
+  "qr": "DGL12-002",
+  "players": "2",
+  "time": "15 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130489447"
+ },
+ {
+  "title": "Android: Netrunner",
+  "code": "DGL12-003",
+  "qr": "DGL12-003",
+  "players": "2",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130620519"
+ },
+ {
+  "title": "Azul Duel",
+  "code": "DGL12-004",
+  "qr": "DGL12-004",
+  "players": "2",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131243111"
+ },
+ {
+  "title": "Backgammon",
+  "code": "DGL12-005",
+  "qr": "DGL12-005",
+  "players": "2",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7519131107431"
+ },
+ {
+  "title": "Battle of the Pyramids",
+  "code": "DGL12-006",
+  "qr": "DGL12-006",
+  "players": "2",
+  "time": "40 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131636327"
+ },
+ {
+  "title": "BattleCON: Trials of Indines",
+  "code": "DGL12-007",
+  "qr": "DGL12-007",
+  "players": "2",
+  "time": "10–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131505255"
+ },
+ {
+  "title": "BattleCON: War of Indines",
+  "code": "DGL12-008",
+  "qr": "DGL12-008",
+  "players": "2",
+  "time": "15–60 min",
+  "ages": "9 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131603559"
+ },
+ {
+  "title": "Codenames: Duet",
+  "code": "DGL12-009",
+  "qr": "DGL12-009",
+  "players": "2",
+  "time": "15–30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133569639"
+ },
+ {
+  "title": "Cosmic Encounter Duel",
+  "code": "DGL12-010",
+  "qr": "DGL12-010",
+  "players": "2",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133962855"
+ },
+ {
+  "title": "Escape Room: The Game – Puzzle Adventures: Secret of The Scientist",
+  "code": "DGL12-011",
+  "qr": "DGL12-011",
+  "players": "1–2",
+  "time": "150 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136092775"
+ },
+ {
+  "title": "Everdell Duo",
+  "code": "DGL12-012",
+  "qr": "DGL12-012",
+  "players": "1–2",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136223847"
+ },
+ {
+  "title": "Final Fantasy Trading Card Game Decks",
+  "code": "DGL12-013",
+  "qr": "DGL12-013",
+  "players": "2",
+  "time": "20 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136485991"
+ },
+ {
+  "title": "Five Nights at Freddy's: Survive 'Til 6AM",
+  "code": "DGL12-014",
+  "qr": "DGL12-014",
+  "players": "1–2",
+  "time": "20 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136551527"
+ },
+ {
+  "title": "Flesh and Blood Blitz decks",
+  "code": "DGL12-015",
+  "qr": "DGL12-015",
+  "players": "2",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136682599"
+ },
+ {
+  "title": "Foosketball",
+  "code": "DGL12-016",
+  "qr": "DGL12-016",
+  "players": "2",
+  "time": null,
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136813671"
+ },
+ {
+  "title": "The Fox in the Forest",
+  "code": "DGL12-017",
+  "qr": "DGL12-017",
+  "players": "2",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146676839"
+ },
+ {
+  "title": "Guess Who? Clue Game",
+  "code": "DGL12-018",
+  "qr": "DGL12-018",
+  "players": "2",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137600103"
+ },
+ {
+  "title": "Hive",
+  "code": "DGL12-019",
+  "qr": "DGL12-019",
+  "players": "2",
+  "time": "20 min",
+  "ages": "9 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137862247"
+ },
+ {
+  "title": "Imhotep: The Duel",
+  "code": "DGL12-020",
+  "qr": "DGL12-020",
+  "players": "2",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138189927"
+ },
+ {
+  "title": "Jaipur",
+  "code": "DGL12-021",
+  "qr": "DGL12-021",
+  "players": "2",
+  "time": "30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138484839"
+ },
+ {
+  "title": "King of Tokyo: Duel",
+  "code": "DGL12-022",
+  "qr": "DGL12-022",
+  "players": "2",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139107431"
+ },
+ {
+  "title": "Kingdomino Duel",
+  "code": "DGL12-023",
+  "qr": "DGL12-023",
+  "players": "2",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138976359"
+ },
+ {
+  "title": "KLASK",
+  "code": "DGL12-024",
+  "qr": "DGL12-024",
+  "players": "2",
+  "time": "10 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139205735"
+ },
+ {
+  "title": "Lindyhop",
+  "code": "DGL12-025",
+  "qr": "DGL12-025",
+  "players": "2",
+  "time": "15–30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139631719"
+ },
+ {
+  "title": "Lost Cities: The Board Game",
+  "code": "DGL12-026",
+  "qr": "DGL12-026",
+  "players": "2",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139828327"
+ },
+ {
+  "title": "Mr. Jack",
+  "code": "DGL12-027",
+  "qr": "DGL12-027",
+  "players": "2",
+  "time": "30 min",
+  "ages": "9 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140680295"
+ },
+ {
+  "title": "My Hero Academia Collectible Card Game 2-Player Rival Box",
+  "code": "DGL12-028",
+  "qr": "DGL12-028",
+  "players": "2",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140909671"
+ },
+ {
+  "title": "Orlog: Assassin's Creed Valhalla Dice Game",
+  "code": "DGL12-029",
+  "qr": "DGL12-029",
+  "players": "2",
+  "time": "10–15 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141597799"
+ },
+ {
+  "title": "Patchwork",
+  "code": "DGL12-030",
+  "qr": "DGL12-030",
+  "players": "2",
+  "time": "15–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141859943"
+ },
+ {
+  "title": "Riftbound: The League of Legends Trading Card Game Trial decks",
+  "code": "DGL12-031",
+  "qr": "DGL12-031",
+  "players": "2",
+  "time": null,
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143105127"
+ },
+ {
+  "title": "Rivals for Catan",
+  "code": "DGL12-032",
+  "qr": "DGL12-032",
+  "players": "2",
+  "time": "45–120 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143203431"
+ },
+ {
+  "title": "SHŌBU",
+  "code": "DGL12-033",
+  "qr": "DGL12-033",
+  "players": "2",
+  "time": "15–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144120935"
+ },
+ {
+  "title": "Sky Team",
+  "code": "DGL12-034",
+  "qr": "DGL12-034",
+  "players": "2",
+  "time": "20 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144317543"
+ },
+ {
+  "title": "Splendor Duel",
+  "code": "DGL12-035",
+  "qr": "DGL12-035",
+  "players": "2",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144841831"
+ },
+ {
+  "title": "Stratego",
+  "code": "DGL12-036",
+  "qr": "DGL12-036",
+  "players": "2",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145529959"
+ },
+ {
+  "title": "Targi",
+  "code": "DGL12-037",
+  "qr": "DGL12-037",
+  "players": "2",
+  "time": "60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146054247"
+ },
+ {
+  "title": "Trinity",
+  "code": "DGL12-038",
+  "qr": "DGL12-038",
+  "players": "2",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147954791"
+ },
+ {
+  "title": "Under Falling Skies",
+  "code": "DGL12-039",
+  "qr": "DGL12-039",
+  "players": "1",
+  "time": "20–40 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148216935"
+ },
+ {
+  "title": "Adventure Games: Monochrome Inc.",
+  "code": "DGL34-001",
+  "qr": "DGL34-001",
+  "players": "1–4",
+  "time": "75 min per chapter",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130161767"
+ },
+ {
+  "title": "Adventure Games: The Dungeon",
+  "code": "DGL34-002",
+  "qr": "DGL34-002",
+  "players": "1–4",
+  "time": "75 min per chapter",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130194535"
+ },
+ {
+  "title": "Adventure Games: The Grand Hotel Abaddon",
+  "code": "DGL34-003",
+  "qr": "DGL34-003",
+  "players": "1–4",
+  "time": "75 min per chapter",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130227303"
+ },
+ {
+  "title": "Adventure Games: The Volcanic Island",
+  "code": "DGL34-004",
+  "qr": "DGL34-004",
+  "players": "1–4",
+  "time": "75 min per chapter",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130260071"
+ },
+ {
+  "title": "The Adventures of Robin Hood",
+  "code": "DGL34-005",
+  "qr": "DGL34-005",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146349159"
+ },
+ {
+  "title": "Alchemists",
+  "code": "DGL34-006",
+  "qr": "DGL34-006",
+  "players": "2–4",
+  "time": "120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130391143"
+ },
+ {
+  "title": "Anno 1800: The Board Game",
+  "code": "DGL34-007",
+  "qr": "DGL34-007",
+  "players": "2–4",
+  "time": "120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130686055"
+ },
+ {
+  "title": "Arcadia Quest",
+  "code": "DGL34-008",
+  "qr": "DGL34-008",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130718823"
+ },
+ {
+  "title": "Arcadia Quest: Inferno",
+  "code": "DGL34-009",
+  "qr": "DGL34-009",
+  "players": "2–4",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130784359"
+ },
+ {
+  "title": "Arkham Horror: Final Hour",
+  "code": "DGL34-010",
+  "qr": "DGL34-010",
+  "players": "1–4",
+  "time": "60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130882663"
+ },
+ {
+  "title": "Arkham Horror: The Card Game",
+  "code": "DGL34-011",
+  "qr": "DGL34-011",
+  "players": "1–4",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130915431"
+ },
+ {
+  "title": "Ars Alchimia",
+  "code": "DGL34-012",
+  "qr": "DGL34-012",
+  "players": "2–4",
+  "time": "100 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130948199"
+ },
+ {
+  "title": "AuZtralia",
+  "code": "DGL34-013",
+  "qr": "DGL34-013",
+  "players": "1–4",
+  "time": "30–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131144807"
+ },
+ {
+  "title": "Azul",
+  "code": "DGL34-014",
+  "qr": "DGL34-014",
+  "players": "2–4",
+  "time": "30–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131210343"
+ },
+ {
+  "title": "The Batman Who Laughs Rising",
+  "code": "DGL34-015",
+  "qr": "DGL34-015",
+  "players": "1–4",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146414695"
+ },
+ {
+  "title": "BattleCON: Wanderers of Indines",
+  "code": "DGL34-016",
+  "qr": "DGL34-016",
+  "players": "2–4",
+  "time": "15–30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131570791"
+ },
+ {
+  "title": "The Binding of Isaac: Four Souls",
+  "code": "DGL34-017",
+  "qr": "DGL34-017",
+  "players": "2–4",
+  "time": "30–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146447463"
+ },
+ {
+  "title": "BioShock Infinite: The Siege of Columbia",
+  "code": "DGL34-018",
+  "qr": "DGL34-018",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131865703"
+ },
+ {
+  "title": "Blood Rage",
+  "code": "DGL34-019",
+  "qr": "DGL34-019",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132062311"
+ },
+ {
+  "title": "BONK",
+  "code": "DGL34-020",
+  "qr": "DGL34-020",
+  "players": "2–4",
+  "time": "10 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132127847"
+ },
+ {
+  "title": "Cat Capers",
+  "code": "DGL34-021",
+  "qr": "DGL34-021",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132783207"
+ },
+ {
+  "title": "Catan",
+  "code": "DGL34-022",
+  "qr": "DGL34-022",
+  "players": "3–4",
+  "time": "60+ min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132619367"
+ },
+ {
+  "title": "Catan: Starfarers",
+  "code": "DGL34-023",
+  "qr": "DGL34-023",
+  "players": "3–4",
+  "time": "120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132750439"
+ },
+ {
+  "title": "Century: Big Box",
+  "code": "DGL34-024",
+  "qr": "DGL34-024",
+  "players": "2–4",
+  "time": "30–40 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132914279"
+ },
+ {
+  "title": "Champions of Midgard",
+  "code": "DGL34-025",
+  "qr": "DGL34-025",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132947047"
+ },
+ {
+  "title": "Chocobo Party Up!",
+  "code": "DGL34-026",
+  "qr": "DGL34-026",
+  "players": "2–4",
+  "time": "30–45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133078119"
+ },
+ {
+  "title": "Chronicles of Crime",
+  "code": "DGL34-027",
+  "qr": "DGL34-027",
+  "players": "1–4",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133143655"
+ },
+ {
+  "title": "Chronicles of Crime: 1400",
+  "code": "DGL34-028",
+  "qr": "DGL34-028",
+  "players": "1–4",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133176423"
+ },
+ {
+  "title": "Chronicles of Crime: 1900",
+  "code": "DGL34-029",
+  "qr": "DGL34-029",
+  "players": "1–4",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133209191"
+ },
+ {
+  "title": "Clank!: A Deck-Building Adventure",
+  "code": "DGL34-030",
+  "qr": "DGL34-030",
+  "players": "2–4",
+  "time": "30–60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133274727"
+ },
+ {
+  "title": "Core Connection: Rise of Atlantis",
+  "code": "DGL34-031",
+  "qr": "DGL34-031",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133897319"
+ },
+ {
+  "title": "Cowboy Bebop: Space Serenade",
+  "code": "DGL34-032",
+  "qr": "DGL34-032",
+  "players": "2–4",
+  "time": "30–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134061159"
+ },
+ {
+  "title": "Crokinole",
+  "code": "DGL34-033",
+  "qr": "DGL34-033",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134224999"
+ },
+ {
+  "title": "Cry Havoc",
+  "code": "DGL34-034",
+  "qr": "DGL34-034",
+  "players": "2–4",
+  "time": "60–120 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134257767"
+ },
+ {
+  "title": "Dark Souls: The Board Game",
+  "code": "DGL34-035",
+  "qr": "DGL34-035",
+  "players": "1–4",
+  "time": "90–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134421607"
+ },
+ {
+  "title": "DC Deck-Building Game: Rebirth",
+  "code": "DGL34-036",
+  "qr": "DGL34-036",
+  "players": "1–4",
+  "time": "45–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134454375"
+ },
+ {
+  "title": "Dice Dodgems",
+  "code": "DGL34-037",
+  "qr": "DGL34-037",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134814823"
+ },
+ {
+  "title": "Diceborn Heroes",
+  "code": "DGL34-038",
+  "qr": "DGL34-038",
+  "players": "1–4",
+  "time": "60–90 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134782055"
+ },
+ {
+  "title": "Disney Villainous: Evil Comes Prepared",
+  "code": "DGL34-039",
+  "qr": "DGL34-039",
+  "players": "2–3",
+  "time": "40–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134945895"
+ },
+ {
+  "title": "Disney Villainous: Perfectly Wretched",
+  "code": "DGL34-040",
+  "qr": "DGL34-040",
+  "players": "2–3",
+  "time": "40–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134978663"
+ },
+ {
+  "title": "Disney Villainous: Wicked to the Core",
+  "code": "DGL34-041",
+  "qr": "DGL34-041",
+  "players": "2–3",
+  "time": "50–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135011431"
+ },
+ {
+  "title": "Dragon Ball Z: Road Trip",
+  "code": "DGL34-042",
+  "qr": "DGL34-042",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135371879"
+ },
+ {
+  "title": "Dragonwood",
+  "code": "DGL34-043",
+  "qr": "DGL34-043",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135437415"
+ },
+ {
+  "title": "Drop It",
+  "code": "DGL34-044",
+  "qr": "DGL34-044",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135502951"
+ },
+ {
+  "title": "Dune: House Secrets",
+  "code": "DGL34-045",
+  "qr": "DGL34-045",
+  "players": "1–4",
+  "time": "90–180 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135601255"
+ },
+ {
+  "title": "Dungeon Roll",
+  "code": "DGL34-046",
+  "qr": "DGL34-046",
+  "players": "1–4",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135699559"
+ },
+ {
+  "title": "Dungeons & Dragons: Adventure Begins",
+  "code": "DGL34-047",
+  "qr": "DGL34-047",
+  "players": "2–4",
+  "time": null,
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135863399"
+ },
+ {
+  "title": "Escape the Horde",
+  "code": "DGL34-048",
+  "qr": "DGL34-048",
+  "players": "2–4",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136158311"
+ },
+ {
+  "title": "Familiar Tales",
+  "code": "DGL34-049",
+  "qr": "DGL34-049",
+  "players": "1–4",
+  "time": "45–120 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136354919"
+ },
+ {
+  "title": "Five Tribes",
+  "code": "DGL34-050",
+  "qr": "DGL34-050",
+  "players": "2–4",
+  "time": "40–80 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136617063"
+ },
+ {
+  "title": "Floating Floors",
+  "code": "DGL34-051",
+  "qr": "DGL34-051",
+  "players": "2–4",
+  "time": "20–40 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136780903"
+ },
+ {
+  "title": "Forbidden Island",
+  "code": "DGL34-052",
+  "qr": "DGL34-052",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136846439"
+ },
+ {
+  "title": "Fort",
+  "code": "DGL34-053",
+  "qr": "DGL34-053",
+  "players": "2–4",
+  "time": "20–40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137010279"
+ },
+ {
+  "title": "Founders of Gloomhaven",
+  "code": "DGL34-054",
+  "qr": "DGL34-054",
+  "players": "1–4",
+  "time": "120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137075815"
+ },
+ {
+  "title": "Funfair",
+  "code": "DGL34-055",
+  "qr": "DGL34-055",
+  "players": "2–4",
+  "time": "30–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137108583"
+ },
+ {
+  "title": "Funkoverse Strategy Game: DC Comics",
+  "code": "DGL34-056",
+  "qr": "DGL34-056",
+  "players": "2–4",
+  "time": "20–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137141351"
+ },
+ {
+  "title": "Funkoverse Strategy Game: Game of Thrones",
+  "code": "DGL34-057",
+  "qr": "DGL34-057",
+  "players": "2–4",
+  "time": "20–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137174119"
+ },
+ {
+  "title": "Funkoverse Strategy Game: Harry Potter",
+  "code": "DGL34-058",
+  "qr": "DGL34-058",
+  "players": "2–4",
+  "time": "20–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137206887"
+ },
+ {
+  "title": "Galilean Moons",
+  "code": "DGL34-059",
+  "qr": "DGL34-059",
+  "players": "1–4",
+  "time": "40–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137239655"
+ },
+ {
+  "title": "The Game of Life",
+  "code": "DGL34-060",
+  "qr": "DGL34-060",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146742375"
+ },
+ {
+  "title": "Gardeners",
+  "code": "DGL34-061",
+  "qr": "DGL34-061",
+  "players": "1–4",
+  "time": "15 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137272423"
+ },
+ {
+  "title": "Gloom",
+  "code": "DGL34-062",
+  "qr": "DGL34-062",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137436263"
+ },
+ {
+  "title": "Gloomhaven: Jaws of the Lion",
+  "code": "DGL34-063",
+  "qr": "DGL34-063",
+  "players": "1–4",
+  "time": "30–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137469031"
+ },
+ {
+  "title": "Gnomopolis",
+  "code": "DGL34-064",
+  "qr": "DGL34-064",
+  "players": "1–4",
+  "time": "About 45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137501799"
+ },
+ {
+  "title": "Happy Little Dinosaurs",
+  "code": "DGL34-065",
+  "qr": "DGL34-065",
+  "players": "2–4",
+  "time": "30–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137665639"
+ },
+ {
+  "title": "Hey, That's My Fish!",
+  "code": "DGL34-066",
+  "qr": "DGL34-066",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137829479"
+ },
+ {
+  "title": "Ishtar: Gardens of Babylon",
+  "code": "DGL34-067",
+  "qr": "DGL34-067",
+  "players": "2–4",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138386535"
+ },
+ {
+  "title": "Jaws",
+  "code": "DGL34-068",
+  "qr": "DGL34-068",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138550375"
+ },
+ {
+  "title": "Karmaka",
+  "code": "DGL34-069",
+  "qr": "DGL34-069",
+  "players": "2–4",
+  "time": "25–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138681447"
+ },
+ {
+  "title": "Kiitos",
+  "code": "DGL34-070",
+  "qr": "DGL34-070",
+  "players": "2–4",
+  "time": "45–60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138910823"
+ },
+ {
+  "title": "Kitara",
+  "code": "DGL34-071",
+  "qr": "DGL34-071",
+  "players": "2–4",
+  "time": "40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139140199"
+ },
+ {
+  "title": "KLASK 4",
+  "code": "DGL34-072",
+  "qr": "DGL34-072",
+  "players": "4",
+  "time": "10 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139238503"
+ },
+ {
+  "title": "Komodo",
+  "code": "DGL34-073",
+  "qr": "DGL34-073",
+  "players": "2–4",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139271271"
+ },
+ {
+  "title": "Kung Fu Panda: The Board Game",
+  "code": "DGL34-074",
+  "qr": "DGL34-074",
+  "players": "2–4",
+  "time": "10–30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139369575"
+ },
+ {
+  "title": "Legends Untold: The Great Sewers Novice Set",
+  "code": "DGL34-075",
+  "qr": "DGL34-075",
+  "players": "1–4",
+  "time": "About 60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139533415"
+ },
+ {
+  "title": "The Lost Words",
+  "code": "DGL34-076",
+  "qr": "DGL34-076",
+  "players": "2–4",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146840679"
+ },
+ {
+  "title": "Love Formula",
+  "code": "DGL34-077",
+  "qr": "DGL34-077",
+  "players": "2–4",
+  "time": "15–30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139861095"
+ },
+ {
+  "title": "Love Letter",
+  "code": "DGL34-078",
+  "qr": "DGL34-078",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139893863"
+ },
+ {
+  "title": "Mage Knight Board Game",
+  "code": "DGL34-079",
+  "qr": "DGL34-079",
+  "players": "1–4",
+  "time": "60+ min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139926631"
+ },
+ {
+  "title": "Marvel Champions: The Card Game",
+  "code": "DGL34-080",
+  "qr": "DGL34-080",
+  "players": "1–4",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140090471"
+ },
+ {
+  "title": "Marvel United",
+  "code": "DGL34-081",
+  "qr": "DGL34-081",
+  "players": "1–4",
+  "time": "45+ min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140123239"
+ },
+ {
+  "title": "Mechs vs. Minions (League of Legends)",
+  "code": "DGL34-082",
+  "qr": "DGL34-082",
+  "players": "2–4",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140319847"
+ },
+ {
+  "title": "Mint Works",
+  "code": "DGL34-083",
+  "qr": "DGL34-083",
+  "players": "1–4",
+  "time": "10–20 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140352615"
+ },
+ {
+  "title": "Monopoly Speed",
+  "code": "DGL34-084",
+  "qr": "DGL34-084",
+  "players": "2–4",
+  "time": "10 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140483687"
+ },
+ {
+  "title": "My City",
+  "code": "DGL34-085",
+  "qr": "DGL34-085",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140876903"
+ },
+ {
+  "title": "Near and Far",
+  "code": "DGL34-086",
+  "qr": "DGL34-086",
+  "players": "2–4",
+  "time": "90–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141040743"
+ },
+ {
+  "title": "Ni no Kuni II: The Board Game",
+  "code": "DGL34-087",
+  "qr": "DGL34-087",
+  "players": "1–4",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141139047"
+ },
+ {
+  "title": "Nickelodeon Splat Attack!",
+  "code": "DGL34-088",
+  "qr": "DGL34-088",
+  "players": "2–4",
+  "time": "45–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141073511"
+ },
+ {
+  "title": "Nova Luna",
+  "code": "DGL34-089",
+  "qr": "DGL34-089",
+  "players": "1–4",
+  "time": "30–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141171815"
+ },
+ {
+  "title": "Oaxaca: Crafts of a Culture",
+  "code": "DGL34-090",
+  "qr": "DGL34-090",
+  "players": "1–4",
+  "time": "20–40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141335655"
+ },
+ {
+  "title": "Ohanami",
+  "code": "DGL34-091",
+  "qr": "DGL34-091",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141368423"
+ },
+ {
+  "title": "On Mars",
+  "code": "DGL34-092",
+  "qr": "DGL34-092",
+  "players": "1–4",
+  "time": "90–150 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141499495"
+ },
+ {
+  "title": "Orléans",
+  "code": "DGL34-093",
+  "qr": "DGL34-093",
+  "players": "2–4",
+  "time": "90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141565031"
+ },
+ {
+  "title": "Paladins of the West Kingdom",
+  "code": "DGL34-094",
+  "qr": "DGL34-094",
+  "players": "1–4",
+  "time": "90–120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141663335"
+ },
+ {
+  "title": "Pandemic",
+  "code": "DGL34-095",
+  "qr": "DGL34-095",
+  "players": "2–4",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141696103"
+ },
+ {
+  "title": "Pandemic: Hot Zone – North America",
+  "code": "DGL34-096",
+  "qr": "DGL34-096",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141761639"
+ },
+ {
+  "title": "Peaky Blinders: Under New Management",
+  "code": "DGL34-097",
+  "qr": "DGL34-097",
+  "players": "2–4",
+  "time": "90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141991015"
+ },
+ {
+  "title": "Planet",
+  "code": "DGL34-098",
+  "qr": "DGL34-098",
+  "players": "2–4",
+  "time": "30–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142285927"
+ },
+ {
+  "title": "Popcorn",
+  "code": "DGL34-099",
+  "qr": "DGL34-099",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142482535"
+ },
+ {
+  "title": "Raid the Pantry",
+  "code": "DGL34-100",
+  "qr": "DGL34-100",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142777447"
+ },
+ {
+  "title": "Realm of Sand",
+  "code": "DGL34-101",
+  "qr": "DGL34-101",
+  "players": "1–4",
+  "time": "30–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142842983"
+ },
+ {
+  "title": "The Red Dragon Inn",
+  "code": "DGL34-102",
+  "qr": "DGL34-102",
+  "players": "2–4",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146906215"
+ },
+ {
+  "title": "Regicide",
+  "code": "DGL34-103",
+  "qr": "DGL34-103",
+  "players": "1–4",
+  "time": "10–30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142941287"
+ },
+ {
+  "title": "Robinson Crusoe: Adventures on the Cursed Island",
+  "code": "DGL34-104",
+  "qr": "DGL34-104",
+  "players": "1–4",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143236199"
+ },
+ {
+  "title": "Root",
+  "code": "DGL34-105",
+  "qr": "DGL34-105",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143334503"
+ },
+ {
+  "title": "Rummikub",
+  "code": "DGL34-106",
+  "qr": "DGL34-106",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143531111"
+ },
+ {
+  "title": "Saints: The Card Game",
+  "code": "DGL34-107",
+  "qr": "DGL34-107",
+  "players": "2–4",
+  "time": "20–30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143629415"
+ },
+ {
+  "title": "Santorini: Second Edition",
+  "code": "DGL34-108",
+  "qr": "DGL34-108",
+  "players": "2–4",
+  "time": "15–20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143662183"
+ },
+ {
+  "title": "Shardhunters",
+  "code": "DGL34-109",
+  "qr": "DGL34-109",
+  "players": "1–4",
+  "time": "20 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143924327"
+ },
+ {
+  "title": "The Shared Dream",
+  "code": "DGL34-110",
+  "qr": "DGL34-110",
+  "players": "2–4",
+  "time": "90–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147070055"
+ },
+ {
+  "title": "Shelfie Stacker",
+  "code": "DGL34-111",
+  "qr": "DGL34-111",
+  "players": "1–4",
+  "time": "20–40 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143957095"
+ },
+ {
+  "title": "Sonar Family",
+  "code": "DGL34-112",
+  "qr": "DGL34-112",
+  "players": "2–4",
+  "time": "30–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144514151"
+ },
+ {
+  "title": "Sort it Out!",
+  "code": "DGL34-113",
+  "qr": "DGL34-113",
+  "players": "2–4",
+  "time": null,
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144579687"
+ },
+ {
+  "title": "Space Gate Odyssey",
+  "code": "DGL34-114",
+  "qr": "DGL34-114",
+  "players": "2–4",
+  "time": "90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144677991"
+ },
+ {
+  "title": "SpellBook",
+  "code": "DGL34-115",
+  "qr": "DGL34-115",
+  "players": "1–4",
+  "time": "45 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144743527"
+ },
+ {
+  "title": "Spirit Island",
+  "code": "DGL34-116",
+  "qr": "DGL34-116",
+  "players": "1–4",
+  "time": "90–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144776295"
+ },
+ {
+  "title": "Splendor",
+  "code": "DGL34-117",
+  "qr": "DGL34-117",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144809063"
+ },
+ {
+  "title": "Splendor: Marvel",
+  "code": "DGL34-118",
+  "qr": "DGL34-118",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144874599"
+ },
+ {
+  "title": "스플렌더: Pokémon (Splendor: Pokémon)",
+  "code": "DGL34-119",
+  "qr": "DGL34-119",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142351463"
+ },
+ {
+  "title": "Squirrel or Die",
+  "code": "DGL34-120",
+  "qr": "DGL34-120",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144972903"
+ },
+ {
+  "title": "Star Trek: Ascendancy",
+  "code": "DGL34-121",
+  "qr": "DGL34-121",
+  "players": "3",
+  "time": "180 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145103975"
+ },
+ {
+  "title": "Star Trek: Catan",
+  "code": "DGL34-122",
+  "qr": "DGL34-122",
+  "players": "3–4",
+  "time": "75 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145136743"
+ },
+ {
+  "title": "Star Wars: Dark Side Rising",
+  "code": "DGL34-123",
+  "qr": "DGL34-123",
+  "players": "2–4",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145169511"
+ },
+ {
+  "title": "Star Wars: Rebellion",
+  "code": "DGL34-124",
+  "qr": "DGL34-124",
+  "players": "2–4",
+  "time": "180–240 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145333351"
+ },
+ {
+  "title": "Star Wars Villainous: Scum and Villainy",
+  "code": "DGL34-125",
+  "qr": "DGL34-125",
+  "players": "2–3",
+  "time": "50 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145398887"
+ },
+ {
+  "title": "Starcadia Quest",
+  "code": "DGL34-126",
+  "qr": "DGL34-126",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145005671"
+ },
+ {
+  "title": "Starlight Stage",
+  "code": "DGL34-127",
+  "qr": "DGL34-127",
+  "players": "3–4",
+  "time": "30–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145038439"
+ },
+ {
+  "title": "Street Masters",
+  "code": "DGL34-128",
+  "qr": "DGL34-128",
+  "players": "1–4",
+  "time": "45–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145562727"
+ },
+ {
+  "title": "Sword Art Online Board Game: Sword of Fellows",
+  "code": "DGL34-129",
+  "qr": "DGL34-129",
+  "players": "1–4",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145759335"
+ },
+ {
+  "title": "Takenoko",
+  "code": "DGL34-130",
+  "qr": "DGL34-130",
+  "players": "2–4",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145890407"
+ },
+ {
+  "title": "Tekhenu: Obelisk of the Sun",
+  "code": "DGL34-131",
+  "qr": "DGL34-131",
+  "players": "1–4",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146119783"
+ },
+ {
+  "title": "Terraforming Mars: Ares Expedition",
+  "code": "DGL34-132",
+  "qr": "DGL34-132",
+  "players": "1–4",
+  "time": "45–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146250855"
+ },
+ {
+  "title": "The Terrifying Girl Disorder",
+  "code": "DGL34-133",
+  "qr": "DGL34-133",
+  "players": "3–4",
+  "time": "30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147102823"
+ },
+ {
+  "title": "Thanos Rising: Avengers Infinity War",
+  "code": "DGL34-134",
+  "qr": "DGL34-134",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146316391"
+ },
+ {
+  "title": "Through the Ages: A New Story of Civilization",
+  "code": "DGL34-135",
+  "qr": "DGL34-135",
+  "players": "2–4",
+  "time": "120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147201127"
+ },
+ {
+  "title": "T.I.M.E Stories",
+  "code": "DGL34-136",
+  "qr": "DGL34-136",
+  "players": "2–4",
+  "time": "90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147496039"
+ },
+ {
+  "title": "Tobago",
+  "code": "DGL34-137",
+  "qr": "DGL34-137",
+  "players": "2–4",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147659879"
+ },
+ {
+  "title": "Toy Story: Obstacles & Adventures",
+  "code": "DGL34-138",
+  "qr": "DGL34-138",
+  "players": "2–4",
+  "time": "45–90 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147790951"
+ },
+ {
+  "title": "Ubongo 3D",
+  "code": "DGL34-139",
+  "qr": "DGL34-139",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148151399"
+ },
+ {
+  "title": "Unsolved Case Files: Jamie Banks",
+  "code": "DGL34-140",
+  "qr": "DGL34-140",
+  "players": "1–4",
+  "time": "2–6 hours",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148708455"
+ },
+ {
+  "title": "Untold: Adventures Await",
+  "code": "DGL34-141",
+  "qr": "DGL34-141",
+  "players": "1–4",
+  "time": "45–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148773991"
+ },
+ {
+  "title": "Upkeep",
+  "code": "DGL34-142",
+  "qr": "DGL34-142",
+  "players": "2–4",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148806759"
+ },
+ {
+  "title": "Vault of Dragons",
+  "code": "DGL34-143",
+  "qr": "DGL34-143",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148905063"
+ },
+ {
+  "title": "Viscounts of the West Kingdom",
+  "code": "DGL34-144",
+  "qr": "DGL34-144",
+  "players": "1–4",
+  "time": "60–90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148937831"
+ },
+ {
+  "title": "VivaJava: The Coffee Game: The Dice Game",
+  "code": "DGL34-145",
+  "qr": "DGL34-145",
+  "players": "1–4",
+  "time": "20–40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149003367"
+ },
+ {
+  "title": "War Chest",
+  "code": "DGL34-146",
+  "qr": "DGL34-146",
+  "players": "2 or 4",
+  "time": "30–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149068903"
+ },
+ {
+  "title": "Whitehall Mystery",
+  "code": "DGL34-147",
+  "qr": "DGL34-147",
+  "players": "2–4",
+  "time": "45–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149396583"
+ },
+ {
+  "title": "World Changers",
+  "code": "DGL34-148",
+  "qr": "DGL34-148",
+  "players": "1–4",
+  "time": "10 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149560423"
+ },
+ {
+  "title": "XCOM: The Board Game",
+  "code": "DGL34-149",
+  "qr": "DGL34-149",
+  "players": "1–4",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149658727"
+ },
+ {
+  "title": "221B Baker Street: The Master Detective Game",
+  "code": "DGL56-001",
+  "qr": "DGL56-001",
+  "players": "2–6",
+  "time": "60–90 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498129899623"
+ },
+ {
+  "title": "5-Minute Dungeon",
+  "code": "DGL56-002",
+  "qr": "DGL56-002",
+  "players": "2–5",
+  "time": "5–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498129932391"
+ },
+ {
+  "title": "5-Minute Mystery",
+  "code": "DGL56-003",
+  "qr": "DGL56-003",
+  "players": "1–6",
+  "time": "5 min per case",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498129965159"
+ },
+ {
+  "title": "A Game of Thrones: The Board Game (Second Edition)",
+  "code": "DGL56-004",
+  "qr": "DGL56-004",
+  "players": "3–6",
+  "time": "120–240 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130358375"
+ },
+ {
+  "title": "Alhambra: Big Box",
+  "code": "DGL56-005",
+  "qr": "DGL56-005",
+  "players": "2–6",
+  "time": "60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130423911"
+ },
+ {
+  "title": "Alicematic Heroes",
+  "code": "DGL56-006",
+  "qr": "DGL56-006",
+  "players": "3–5",
+  "time": "60–80 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130456679"
+ },
+ {
+  "title": "Archaeology: The New Expedition",
+  "code": "DGL56-007",
+  "qr": "DGL56-007",
+  "players": "2–5",
+  "time": "20–30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130817127"
+ },
+ {
+  "title": "Argoat",
+  "code": "DGL56-008",
+  "qr": "DGL56-008",
+  "players": "3–5",
+  "time": "45–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130849895"
+ },
+ {
+  "title": "Astronomy Fluxx",
+  "code": "DGL56-009",
+  "qr": "DGL56-009",
+  "players": "2–6",
+  "time": "5–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131013735"
+ },
+ {
+  "title": "Atmosfear: Interactive App edition",
+  "code": "DGL56-010",
+  "qr": "DGL56-010",
+  "players": "3–6",
+  "time": "35–60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131079271"
+ },
+ {
+  "title": "Attack on Titan: The Last Stand",
+  "code": "DGL56-011",
+  "qr": "DGL56-011",
+  "players": "2–5",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131112039"
+ },
+ {
+  "title": "Balderdash",
+  "code": "DGL56-012",
+  "qr": "DGL56-012",
+  "players": "2–6",
+  "time": "60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131308647"
+ },
+ {
+  "title": "BattleCON: Devastation of Indines",
+  "code": "DGL56-013",
+  "qr": "DGL56-013",
+  "players": "1–5",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131472487"
+ },
+ {
+  "title": "Battlestar Galactica: The Board Game",
+  "code": "DGL56-014",
+  "qr": "DGL56-014",
+  "players": "3–6",
+  "time": "120–180 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131701863"
+ },
+ {
+  "title": "Betrayal at House on the Hill",
+  "code": "DGL56-015",
+  "qr": "DGL56-015",
+  "players": "3–6",
+  "time": "60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131800167"
+ },
+ {
+  "title": "Canvas",
+  "code": "DGL56-016",
+  "qr": "DGL56-016",
+  "players": "1–5",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132291687"
+ },
+ {
+  "title": "Cartoon Network Crossover Crisis Deck-Building Game",
+  "code": "DGL56-017",
+  "qr": "DGL56-017",
+  "players": "2–5",
+  "time": "30–45 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132586599"
+ },
+ {
+  "title": "Cat in the Box: Deluxe Edition",
+  "code": "DGL56-018",
+  "qr": "DGL56-018",
+  "players": "2–5",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132815975"
+ },
+ {
+  "title": "Catan: 25th Anniversary Edition",
+  "code": "DGL56-019",
+  "qr": "DGL56-019",
+  "players": "3–6",
+  "time": "60+ min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132652135"
+ },
+ {
+  "title": "Caylus 1303",
+  "code": "DGL56-020",
+  "qr": "DGL56-020",
+  "players": "2–5",
+  "time": "60–90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132881511"
+ },
+ {
+  "title": "Chocobo's Crystal Hunt",
+  "code": "DGL56-021",
+  "qr": "DGL56-021",
+  "players": "3–5",
+  "time": "10–20 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133110887"
+ },
+ {
+  "title": "Clue",
+  "code": "DGL56-022",
+  "qr": "DGL56-022",
+  "players": "2–6",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133307495"
+ },
+ {
+  "title": "Clue: Harry Potter Edition",
+  "code": "DGL56-023",
+  "qr": "DGL56-023",
+  "players": "3–5",
+  "time": "30 min",
+  "ages": "9 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133373031"
+ },
+ {
+  "title": "Clue: The Simpsons",
+  "code": "DGL56-024",
+  "qr": "DGL56-024",
+  "players": "3–6",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133405799"
+ },
+ {
+  "title": "CO₂",
+  "code": "DGL56-025",
+  "qr": "DGL56-025",
+  "players": "1–5",
+  "time": "120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133438567"
+ },
+ {
+  "title": "Coloretto",
+  "code": "DGL56-026",
+  "qr": "DGL56-026",
+  "players": "2–5",
+  "time": "15–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133733479"
+ },
+ {
+  "title": "Colt Express",
+  "code": "DGL56-027",
+  "qr": "DGL56-027",
+  "players": "2–6",
+  "time": "40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133766247"
+ },
+ {
+  "title": "Cosmic Encounter",
+  "code": "DGL56-028",
+  "qr": "DGL56-028",
+  "players": "3–5",
+  "time": "60–120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133930087"
+ },
+ {
+  "title": "Coup",
+  "code": "DGL56-029",
+  "qr": "DGL56-029",
+  "players": "2–6",
+  "time": "15 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133995623"
+ },
+ {
+  "title": "Courtisans",
+  "code": "DGL56-030",
+  "qr": "DGL56-030",
+  "players": "2–5",
+  "time": "20–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134028391"
+ },
+ {
+  "title": "Creature Comforts",
+  "code": "DGL56-031",
+  "qr": "DGL56-031",
+  "players": "1–5",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134159463"
+ },
+ {
+  "title": "The Crew: Family Adventure",
+  "code": "DGL56-032",
+  "qr": "DGL56-032",
+  "players": "2–5",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146578535"
+ },
+ {
+  "title": "The Crew: The Quest for Planet Nine",
+  "code": "DGL56-033",
+  "qr": "DGL56-033",
+  "players": "2–5",
+  "time": "20 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146611303"
+ },
+ {
+  "title": "Crimopolis",
+  "code": "DGL56-034",
+  "qr": "DGL56-034",
+  "players": "2–5",
+  "time": "30–100 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134192231"
+ },
+ {
+  "title": "Cursed Court",
+  "code": "DGL56-035",
+  "qr": "DGL56-035",
+  "players": "2–6",
+  "time": "30–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134290535"
+ },
+ {
+  "title": "Cutthroat Caverns",
+  "code": "DGL56-036",
+  "qr": "DGL56-036",
+  "players": "3–6",
+  "time": "90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134323303"
+ },
+ {
+  "title": "Descent: Journeys in the Dark (Second Edition)",
+  "code": "DGL56-037",
+  "qr": "DGL56-037",
+  "players": "2–5",
+  "time": "120–180 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134683751"
+ },
+ {
+  "title": "Detective: A Modern Crime Board Game",
+  "code": "DGL56-038",
+  "qr": "DGL56-038",
+  "players": "1–5",
+  "time": "120–180 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134716519"
+ },
+ {
+  "title": "Disney Villainous",
+  "code": "DGL56-039",
+  "qr": "DGL56-039",
+  "players": "2–6",
+  "time": "50–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134913127"
+ },
+ {
+  "title": "Dohdles!",
+  "code": "DGL56-040",
+  "qr": "DGL56-040",
+  "players": "3–6",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135175271"
+ },
+ {
+  "title": "Downforce",
+  "code": "DGL56-041",
+  "qr": "DGL56-041",
+  "players": "2–6",
+  "time": "20–40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135273575"
+ },
+ {
+  "title": "Draftosaurus",
+  "code": "DGL56-042",
+  "qr": "DGL56-042",
+  "players": "2–5",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135339111"
+ },
+ {
+  "title": "Dragonlance: Warriors of Krynn",
+  "code": "DGL56-043",
+  "qr": "DGL56-043",
+  "players": "3–5",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135404647"
+ },
+ {
+  "title": "Dream Crush",
+  "code": "DGL56-044",
+  "qr": "DGL56-044",
+  "players": "2–6",
+  "time": "Up to 30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135470183"
+ },
+ {
+  "title": "Dune",
+  "code": "DGL56-045",
+  "qr": "DGL56-045",
+  "players": "2–6",
+  "time": "120–180 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135535719"
+ },
+ {
+  "title": "Dune: Imperium – Uprising",
+  "code": "DGL56-046",
+  "qr": "DGL56-046",
+  "players": "1–4 or 6",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135634023"
+ },
+ {
+  "title": "Dungeon Mayhem: Monster Madness",
+  "code": "DGL56-047",
+  "qr": "DGL56-047",
+  "players": "2–6",
+  "time": "10–15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135666791"
+ },
+ {
+  "title": "Dungeons & Dragons: Castle Ravenloft Board Game",
+  "code": "DGL56-048",
+  "qr": "DGL56-048",
+  "players": "1–5",
+  "time": "60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135896167"
+ },
+ {
+  "title": "Dungeons & Dragons: Rock Paper Wizard",
+  "code": "DGL56-049",
+  "qr": "DGL56-049",
+  "players": "3–6",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135928935"
+ },
+ {
+  "title": "Dynamite Nurse",
+  "code": "DGL56-050",
+  "qr": "DGL56-050",
+  "players": "3–5",
+  "time": "50 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135961703"
+ },
+ {
+  "title": "Escape Room: The Game – Da Vinci's Telescope",
+  "code": "DGL56-051",
+  "qr": "DGL56-051",
+  "players": "3–5",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136060007"
+ },
+ {
+  "title": "Escape Room: The Game – Tomb Robbers",
+  "code": "DGL56-052",
+  "qr": "DGL56-052",
+  "players": "2–5",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136125543"
+ },
+ {
+  "title": "Escape Your House: Spy Team",
+  "code": "DGL56-053",
+  "qr": "DGL56-053",
+  "players": "3–6",
+  "time": "15 min per mission",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136191079"
+ },
+ {
+  "title": "Everdell: The Complete Collection",
+  "code": "DGL56-054",
+  "qr": "DGL56-054",
+  "players": "1–6",
+  "time": "40–120 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136256615"
+ },
+ {
+  "title": "Flaming Pyramids",
+  "code": "DGL56-055",
+  "qr": "DGL56-055",
+  "players": "2–6",
+  "time": "10–20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136649831"
+ },
+ {
+  "title": "For Sale",
+  "code": "DGL56-056",
+  "qr": "DGL56-056",
+  "players": "3–6",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136944743"
+ },
+ {
+  "title": "For Sale Autorama",
+  "code": "DGL56-057",
+  "qr": "DGL56-057",
+  "players": "3–6",
+  "time": "30–45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136977511"
+ },
+ {
+  "title": "Forever Home",
+  "code": "DGL56-058",
+  "qr": "DGL56-058",
+  "players": "1–5",
+  "time": "20–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136879207"
+ },
+ {
+  "title": "The Game",
+  "code": "DGL56-059",
+  "qr": "DGL56-059",
+  "players": "1–5",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146709607"
+ },
+ {
+  "title": "The Grizzled",
+  "code": "DGL56-060",
+  "qr": "DGL56-060",
+  "players": "2–5",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146775143"
+ },
+ {
+  "title": "Hadrian's Wall",
+  "code": "DGL56-061",
+  "qr": "DGL56-061",
+  "players": "1–6",
+  "time": "30–60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137632871"
+ },
+ {
+  "title": "Harry Potter and the Sorcerer's Stone: Trivia Game",
+  "code": "DGL56-062",
+  "qr": "DGL56-062",
+  "players": "2–6",
+  "time": "60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137698407"
+ },
+ {
+  "title": "HODL UP",
+  "code": "DGL56-063",
+  "qr": "DGL56-063",
+  "players": "2–6",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137927783"
+ },
+ {
+  "title": "Homeland: The Game",
+  "code": "DGL56-064",
+  "qr": "DGL56-064",
+  "players": "3–6",
+  "time": "90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137960551"
+ },
+ {
+  "title": "Horrified",
+  "code": "DGL56-065",
+  "qr": "DGL56-065",
+  "players": "1–5",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137993319"
+ },
+ {
+  "title": "Iliad",
+  "code": "DGL56-066",
+  "qr": "DGL56-066",
+  "players": "2–6",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138124391"
+ },
+ {
+  "title": "Illusion",
+  "code": "DGL56-067",
+  "qr": "DGL56-067",
+  "players": "2–5",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138157159"
+ },
+ {
+  "title": "Infinity Gauntlet: A Love Letter Game",
+  "code": "DGL56-068",
+  "qr": "DGL56-068",
+  "players": "2–6",
+  "time": "15 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138255463"
+ },
+ {
+  "title": "Ironrise",
+  "code": "DGL56-069",
+  "qr": "DGL56-069",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138353767"
+ },
+ {
+  "title": "Isla Dorada",
+  "code": "DGL56-070",
+  "qr": "DGL56-070",
+  "players": "3–6",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138419303"
+ },
+ {
+  "title": "It's a Wonderful World",
+  "code": "DGL56-071",
+  "qr": "DGL56-071",
+  "players": "1–5",
+  "time": "30–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138452071"
+ },
+ {
+  "title": "Jamaica",
+  "code": "DGL56-072",
+  "qr": "DGL56-072",
+  "players": "2–6",
+  "time": "30–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138517607"
+ },
+ {
+  "title": "Kemet",
+  "code": "DGL56-073",
+  "qr": "DGL56-073",
+  "players": "2–5",
+  "time": "90–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138746983"
+ },
+ {
+  "title": "Kenakalan",
+  "code": "DGL56-074",
+  "qr": "DGL56-074",
+  "players": "2–6",
+  "time": "15–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138812519"
+ },
+ {
+  "title": "King of Monster Island",
+  "code": "DGL56-075",
+  "qr": "DGL56-075",
+  "players": "1–5",
+  "time": "45–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139009127"
+ },
+ {
+  "title": "King of New York",
+  "code": "DGL56-076",
+  "qr": "DGL56-076",
+  "players": "2–6",
+  "time": "40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139041895"
+ },
+ {
+  "title": "King of Tokyo",
+  "code": "DGL56-077",
+  "qr": "DGL56-077",
+  "players": "2–6",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139074663"
+ },
+ {
+  "title": "League of the Lexicon",
+  "code": "DGL56-078",
+  "qr": "DGL56-078",
+  "players": "2–6",
+  "time": "30–90 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139467879"
+ },
+ {
+  "title": "Legendary: A Marvel Deck Building Game",
+  "code": "DGL56-079",
+  "qr": "DGL56-079",
+  "players": "1–5",
+  "time": "30–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139500647"
+ },
+ {
+  "title": "Let's Hit Each Other with Fake Swords",
+  "code": "DGL56-080",
+  "qr": "DGL56-080",
+  "players": "3–6",
+  "time": "15 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139566183"
+ },
+ {
+  "title": "Letters from Whitechapel",
+  "code": "DGL56-081",
+  "qr": "DGL56-081",
+  "players": "2–6",
+  "time": "90–150 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139598951"
+ },
+ {
+  "title": "Loaded Answers",
+  "code": "DGL56-082",
+  "qr": "DGL56-082",
+  "players": "4–6",
+  "time": "60–90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139697255"
+ },
+ {
+  "title": "Lords of Waterdeep",
+  "code": "DGL56-083",
+  "qr": "DGL56-083",
+  "players": "2–5",
+  "time": "60–120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139730023"
+ },
+ {
+  "title": "Lost Cities: Roll & Write",
+  "code": "DGL56-084",
+  "qr": "DGL56-084",
+  "players": "2–5",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139762791"
+ },
+ {
+  "title": "Magic: The Gathering – Arena of the Planeswalkers",
+  "code": "DGL56-085",
+  "qr": "DGL56-085",
+  "players": "2–5",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140024935"
+ },
+ {
+  "title": "Manifest",
+  "code": "DGL56-086",
+  "qr": "DGL56-086",
+  "players": "2–5",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140057703"
+ },
+ {
+  "title": "Marvel Zombies: A Zombicide Game",
+  "code": "DGL56-087",
+  "qr": "DGL56-087",
+  "players": "1–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140156007"
+ },
+ {
+  "title": "Masters of the Universe: The Board Game – Clash for Eternia",
+  "code": "DGL56-088",
+  "qr": "DGL56-088",
+  "players": "1–5",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140221543"
+ },
+ {
+  "title": "Math Fluxx",
+  "code": "DGL56-089",
+  "qr": "DGL56-089",
+  "players": "2–6",
+  "time": "5–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140254311"
+ },
+ {
+  "title": "Miraris",
+  "code": "DGL56-090",
+  "qr": "DGL56-090",
+  "players": "3–6",
+  "time": "10–20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140385383"
+ },
+ {
+  "title": "Monopoly Gamer: Overwatch Collector's Edition",
+  "code": "DGL56-091",
+  "qr": "DGL56-091",
+  "players": "2–6",
+  "time": null,
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140450919"
+ },
+ {
+  "title": "Monopoly: The Here & Now New Zealand Edition",
+  "code": "DGL56-092",
+  "qr": "DGL56-092",
+  "players": "2–6",
+  "time": "45–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140516455"
+ },
+ {
+  "title": "Mottainai",
+  "code": "DGL56-093",
+  "qr": "DGL56-093",
+  "players": "2–5",
+  "time": "15–30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140614759"
+ },
+ {
+  "title": "Muffin Time",
+  "code": "DGL56-094",
+  "qr": "DGL56-094",
+  "players": "2–6",
+  "time": "20–40 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140713063"
+ },
+ {
+  "title": "Munchkin",
+  "code": "DGL56-095",
+  "qr": "DGL56-095",
+  "players": "3–6",
+  "time": "60–120 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140745831"
+ },
+ {
+  "title": "Munchkin Booty",
+  "code": "DGL56-096",
+  "qr": "DGL56-096",
+  "players": "3–6",
+  "time": "90 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140778599"
+ },
+ {
+  "title": "Munchkin Harry Potter Deluxe",
+  "code": "DGL56-097",
+  "qr": "DGL56-097",
+  "players": "3–6",
+  "time": "60–120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140811367"
+ },
+ {
+  "title": "My Little Scythe",
+  "code": "DGL56-098",
+  "qr": "DGL56-098",
+  "players": "1–6",
+  "time": "45–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140975207"
+ },
+ {
+  "title": "Nidavellir",
+  "code": "DGL56-099",
+  "qr": "DGL56-099",
+  "players": "2–5",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141106279"
+ },
+ {
+  "title": "Once Upon a Time: The Storytelling Card Game",
+  "code": "DGL56-100",
+  "qr": "DGL56-100",
+  "players": "2–6",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141433959"
+ },
+ {
+  "title": "Order of the Stick Adventure Game: The Dungeon of Dorukan",
+  "code": "DGL56-101",
+  "qr": "DGL56-101",
+  "players": "2–6",
+  "time": "180–360 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141532263"
+ },
+ {
+  "title": "Ovation",
+  "code": "DGL56-102",
+  "qr": "DGL56-102",
+  "players": "1–5",
+  "time": "40–60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141630567"
+ },
+ {
+  "title": "Pandemic: Fall of Rome",
+  "code": "DGL56-103",
+  "qr": "DGL56-103",
+  "players": "1–5",
+  "time": "45–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141728871"
+ },
+ {
+  "title": "Pandemic: Rising Tide",
+  "code": "DGL56-104",
+  "qr": "DGL56-104",
+  "players": "2–5",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141794407"
+ },
+ {
+  "title": "Pandemic: The Cure",
+  "code": "DGL56-105",
+  "qr": "DGL56-105",
+  "players": "2–5",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141827175"
+ },
+ {
+  "title": "Pictomania (Second Edition)",
+  "code": "DGL56-106",
+  "qr": "DGL56-106",
+  "players": "3–6",
+  "time": "25 min",
+  "ages": "9 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142122087"
+ },
+ {
+  "title": "Pictures",
+  "code": "DGL56-107",
+  "qr": "DGL56-107",
+  "players": "3–5",
+  "time": "20–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142154855"
+ },
+ {
+  "title": "Pirates vs. Dinosaurs",
+  "code": "DGL56-108",
+  "qr": "DGL56-108",
+  "players": "2–6",
+  "time": "90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142187623"
+ },
+ {
+  "title": "Point Salad",
+  "code": "DGL56-109",
+  "qr": "DGL56-109",
+  "players": "2–6",
+  "time": "15–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142318695"
+ },
+ {
+  "title": "Power Grid",
+  "code": "DGL56-110",
+  "qr": "DGL56-110",
+  "players": "2–6",
+  "time": "120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142515303"
+ },
+ {
+  "title": "Power Rangers: Heroes of the Grid",
+  "code": "DGL56-111",
+  "qr": "DGL56-111",
+  "players": "2–5",
+  "time": "45–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142548071"
+ },
+ {
+  "title": "Processing: A Game of Serving Humanity",
+  "code": "DGL56-112",
+  "qr": "DGL56-112",
+  "players": "3–6",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142580839"
+ },
+ {
+  "title": "Puerto Rico",
+  "code": "DGL56-113",
+  "qr": "DGL56-113",
+  "players": "3–5",
+  "time": "90–150 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142613607"
+ },
+ {
+  "title": "Raccoon Tycoon",
+  "code": "DGL56-114",
+  "qr": "DGL56-114",
+  "players": "2–5",
+  "time": "60–90 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142711911"
+ },
+ {
+  "title": "Red Panda",
+  "code": "DGL56-115",
+  "qr": "DGL56-115",
+  "players": "2–6",
+  "time": "5–20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142908519"
+ },
+ {
+  "title": "[redacted]",
+  "code": "DGL56-116",
+  "qr": "DGL56-116",
+  "players": "2–6",
+  "time": "45–60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142875751"
+ },
+ {
+  "title": "Rick and Morty: Close Rick-Counters of the Rick Kind Deck-Building Game",
+  "code": "DGL56-117",
+  "qr": "DGL56-117",
+  "players": "2–5",
+  "time": "30–70 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143039591"
+ },
+ {
+  "title": "Rising 5: Runes of Asteros",
+  "code": "DGL56-118",
+  "qr": "DGL56-118",
+  "players": "1–5",
+  "time": "15–25 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143137895"
+ },
+ {
+  "title": "Risk",
+  "code": "DGL56-119",
+  "qr": "DGL56-119",
+  "players": "2–6",
+  "time": "1–8 hours",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143170663"
+ },
+ {
+  "title": "Rum & Bones",
+  "code": "DGL56-120",
+  "qr": "DGL56-120",
+  "players": "2–6",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143498343"
+ },
+ {
+  "title": "Scattergories",
+  "code": "DGL56-121",
+  "qr": "DGL56-121",
+  "players": "2–6",
+  "time": "30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143694951"
+ },
+ {
+  "title": "Sheriff of Nottingham",
+  "code": "DGL56-122",
+  "qr": "DGL56-122",
+  "players": "3–5",
+  "time": "60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143989863"
+ },
+ {
+  "title": "Skull",
+  "code": "DGL56-123",
+  "qr": "DGL56-123",
+  "players": "3–6",
+  "time": "15–45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144284775"
+ },
+ {
+  "title": "Small World",
+  "code": "DGL56-124",
+  "qr": "DGL56-124",
+  "players": "2–5",
+  "time": "40–80 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144350311"
+ },
+ {
+  "title": "Small World of Warcraft",
+  "code": "DGL56-125",
+  "qr": "DGL56-125",
+  "players": "2–5",
+  "time": "40–80 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144383079"
+ },
+ {
+  "title": "Small World Underground",
+  "code": "DGL56-126",
+  "qr": "DGL56-126",
+  "players": "2–5",
+  "time": "30–90 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144415847"
+ },
+ {
+  "title": "Smartphone Inc.",
+  "code": "DGL56-127",
+  "qr": "DGL56-127",
+  "players": "1–5",
+  "time": "60–90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144481383"
+ },
+ {
+  "title": "Star Wars: Imperial Assault",
+  "code": "DGL56-128",
+  "qr": "DGL56-128",
+  "players": "2–5",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145235047"
+ },
+ {
+  "title": "Star Wars: Jabba's Palace – A Love Letter Game",
+  "code": "DGL56-129",
+  "qr": "DGL56-129",
+  "players": "2–6",
+  "time": "20 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145267815"
+ },
+ {
+  "title": "Star Wars: Unlock!",
+  "code": "DGL56-130",
+  "qr": "DGL56-130",
+  "players": "1–6",
+  "time": "60 min per adventure",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145366119"
+ },
+ {
+  "title": "Stella: Dixit Universe",
+  "code": "DGL56-131",
+  "qr": "DGL56-131",
+  "players": "3–6",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145464423"
+ },
+ {
+  "title": "Stupid Deaths",
+  "code": "DGL56-132",
+  "qr": "DGL56-132",
+  "players": "2–6",
+  "time": null,
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145628263"
+ },
+ {
+  "title": "Super Dungeon Explore with Expansions",
+  "code": "DGL56-133",
+  "qr": "DGL56-133",
+  "players": "2–6",
+  "time": "120 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145661031"
+ },
+ {
+  "title": "Sushi Go!",
+  "code": "DGL56-134",
+  "qr": "DGL56-134",
+  "players": "2–5",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145726567"
+ },
+ {
+  "title": "Tales of the Arabian Nights",
+  "code": "DGL56-135",
+  "qr": "DGL56-135",
+  "players": "1–6",
+  "time": "120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145923175"
+ },
+ {
+  "title": "Talisman: Kingdom Hearts",
+  "code": "DGL56-136",
+  "qr": "DGL56-136",
+  "players": "2–6",
+  "time": "60–90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145988711"
+ },
+ {
+  "title": "Terra Mystica",
+  "code": "DGL56-137",
+  "qr": "DGL56-137",
+  "players": "2–5",
+  "time": "60–150 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146283623"
+ },
+ {
+  "title": "Ticket to Ride",
+  "code": "DGL56-138",
+  "qr": "DGL56-138",
+  "players": "2–5",
+  "time": "30–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147299431"
+ },
+ {
+  "title": "Ticket to Ride: Europe",
+  "code": "DGL56-139",
+  "qr": "DGL56-139",
+  "players": "2–5",
+  "time": "30–60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147332199"
+ },
+ {
+  "title": "Tiny Towns",
+  "code": "DGL56-140",
+  "qr": "DGL56-140",
+  "players": "1–6",
+  "time": "45–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147627111"
+ },
+ {
+  "title": "Tokaido",
+  "code": "DGL56-141",
+  "qr": "DGL56-141",
+  "players": "2–5",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147692647"
+ },
+ {
+  "title": "Treasure Island",
+  "code": "DGL56-142",
+  "qr": "DGL56-142",
+  "players": "2–5",
+  "time": "45 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147922023"
+ },
+ {
+  "title": "Trivial Pursuit: 2000s",
+  "code": "DGL56-143",
+  "qr": "DGL56-143",
+  "players": "2–6",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148053095"
+ },
+ {
+  "title": "Unlock!: Epic Adventures",
+  "code": "DGL56-144",
+  "qr": "DGL56-144",
+  "players": "1–6",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148249703"
+ },
+ {
+  "title": "Unlock!: Escape Adventures",
+  "code": "DGL56-145",
+  "qr": "DGL56-145",
+  "players": "1–6",
+  "time": "45–75 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148348007"
+ },
+ {
+  "title": "Unlock!: Exotic Adventures",
+  "code": "DGL56-146",
+  "qr": "DGL56-146",
+  "players": "1–6",
+  "time": "60–90 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148413543"
+ },
+ {
+  "title": "Unlock!: Heroic Adventures",
+  "code": "DGL56-147",
+  "qr": "DGL56-147",
+  "players": "1–6",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148479079"
+ },
+ {
+  "title": "Unlock!: Mystery Adventures",
+  "code": "DGL56-148",
+  "qr": "DGL56-148",
+  "players": "1–6",
+  "time": "45–75 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148511847"
+ },
+ {
+  "title": "Unlock!: Secret Adventures – A Noside Story",
+  "code": "DGL56-149",
+  "qr": "DGL56-149",
+  "players": "1–6",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148544615"
+ },
+ {
+  "title": "Unlock!: Secret Adventures – The Adventurers of Oz",
+  "code": "DGL56-150",
+  "qr": "DGL56-150",
+  "players": "1–6",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148577383"
+ },
+ {
+  "title": "Unlock!: Secret Adventures – Tombstone Express",
+  "code": "DGL56-151",
+  "qr": "DGL56-151",
+  "players": "1–6",
+  "time": "60 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148610151"
+ },
+ {
+  "title": "Unlock!: Timeless Adventures",
+  "code": "DGL56-152",
+  "qr": "DGL56-152",
+  "players": "1–6",
+  "time": "60 min per adventure",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148642919"
+ },
+ {
+  "title": "The Vibe",
+  "code": "DGL56-153",
+  "qr": "DGL56-153",
+  "players": "2–6",
+  "time": "5–20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147168359"
+ },
+ {
+  "title": "Viticulture Essential Edition",
+  "code": "DGL56-154",
+  "qr": "DGL56-154",
+  "players": "1–6",
+  "time": "45–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148970599"
+ },
+ {
+  "title": "Western Legends",
+  "code": "DGL56-155",
+  "qr": "DGL56-155",
+  "players": "2–6",
+  "time": "60–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149265511"
+ },
+ {
+  "title": "Wingspan",
+  "code": "DGL56-156",
+  "qr": "DGL56-156",
+  "players": "1–5",
+  "time": "40–70 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149429351"
+ },
+ {
+  "title": "Wyrmspan",
+  "code": "DGL56-157",
+  "qr": "DGL56-157",
+  "players": "1–5",
+  "time": "90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149625959"
+ },
+ {
+  "title": "X-Men: Mutant Insurrection",
+  "code": "DGL56-158",
+  "qr": "DGL56-158",
+  "players": "1–6",
+  "time": "60–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149691495"
+ },
+ {
+  "title": "5 Second Rule",
+  "code": "DGL7+-001",
+  "qr": "DGL7+-001",
+  "players": "3+",
+  "time": "20–30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130063463"
+ },
+ {
+  "title": "7 Wonders",
+  "code": "DGL7+-002",
+  "qr": "DGL7+-002",
+  "players": "3–7",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130096231"
+ },
+ {
+  "title": "A Fake Artist Goes to New York",
+  "code": "DGL7+-003",
+  "qr": "DGL7+-003",
+  "players": "5–10",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130292839"
+ },
+ {
+  "title": "A Matter of Taste",
+  "code": "DGL7+-004",
+  "qr": "DGL7+-004",
+  "players": "2–8",
+  "time": "30–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7504656859239"
+ },
+ {
+  "title": "Articulate!",
+  "code": "DGL7+-005",
+  "qr": "DGL7+-005",
+  "players": "4–20",
+  "time": "60 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130980967"
+ },
+ {
+  "title": "Atlantis Rising (Second Edition)",
+  "code": "DGL7+-006",
+  "qr": "DGL7+-006",
+  "players": "1–7",
+  "time": "60–120 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131046503"
+ },
+ {
+  "title": "Beat That!",
+  "code": "DGL7+-007",
+  "qr": "DGL7+-007",
+  "players": "2–8",
+  "time": "30–90 min",
+  "ages": "9 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131734631"
+ },
+ {
+  "title": "Blank Marry Kill",
+  "code": "DGL7+-008",
+  "qr": "DGL7+-008",
+  "players": "3–10",
+  "time": "15–30 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131964007"
+ },
+ {
+  "title": "Blood on the Clocktower",
+  "code": "DGL7+-009",
+  "qr": "DGL7+-009",
+  "players": "5–20",
+  "time": "30–120 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132029543"
+ },
+ {
+  "title": "Brain Fart",
+  "code": "DGL7+-010",
+  "qr": "DGL7+-010",
+  "players": "3+",
+  "time": null,
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132193383"
+ },
+ {
+  "title": "Cards Against Humanity",
+  "code": "DGL7+-011",
+  "qr": "DGL7+-011",
+  "players": "4–20",
+  "time": "30–90 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132553831"
+ },
+ {
+  "title": "Caverna: The Cave Farmers",
+  "code": "DGL7+-012",
+  "qr": "DGL7+-012",
+  "players": "1–7",
+  "time": "30 min per player",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132848743"
+ },
+ {
+  "title": "The Chameleon",
+  "code": "DGL7+-013",
+  "qr": "DGL7+-013",
+  "players": "3–8",
+  "time": "15 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146480231"
+ },
+ {
+  "title": "The Chameleon: Picture Edition",
+  "code": "DGL7+-014",
+  "qr": "DGL7+-014",
+  "players": "3–8",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146545767"
+ },
+ {
+  "title": "Codenames",
+  "code": "DGL7+-015",
+  "qr": "DGL7+-015",
+  "players": "2–8",
+  "time": "15 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133504103"
+ },
+ {
+  "title": "Codenames: Disney – Family Edition",
+  "code": "DGL7+-016",
+  "qr": "DGL7+-016",
+  "players": "2–8",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133536871"
+ },
+ {
+  "title": "Codenames: Harry Potter",
+  "code": "DGL7+-017",
+  "qr": "DGL7+-017",
+  "players": "2+",
+  "time": "15 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133602407"
+ },
+ {
+  "title": "Codenames: Marvel",
+  "code": "DGL7+-018",
+  "qr": "DGL7+-018",
+  "players": "2–8",
+  "time": "15 min",
+  "ages": "9 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133635175"
+ },
+ {
+  "title": "Codenames: Pictures",
+  "code": "DGL7+-019",
+  "qr": "DGL7+-019",
+  "players": "2–8",
+  "time": "15 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133667943"
+ },
+ {
+  "title": "Codenames: The Simpsons",
+  "code": "DGL7+-020",
+  "qr": "DGL7+-020",
+  "players": "2–8",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133700711"
+ },
+ {
+  "title": "Concept",
+  "code": "DGL7+-021",
+  "qr": "DGL7+-021",
+  "players": "4–12",
+  "time": "40 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133799015"
+ },
+ {
+  "title": "Daring Contest",
+  "code": "DGL7+-022",
+  "qr": "DGL7+-022",
+  "players": "4–8",
+  "time": "30–45 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134388839"
+ },
+ {
+  "title": "DC Spyfall",
+  "code": "DGL7+-023",
+  "qr": "DGL7+-023",
+  "players": "3–8",
+  "time": "15–30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134487143"
+ },
+ {
+  "title": "Deception: Murder in Hong Kong",
+  "code": "DGL7+-024",
+  "qr": "DGL7+-024",
+  "players": "4–12",
+  "time": "20 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134585447"
+ },
+ {
+  "title": "Decrypto",
+  "code": "DGL7+-025",
+  "qr": "DGL7+-025",
+  "players": "3–8",
+  "time": "15–45 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134650983"
+ },
+ {
+  "title": "Detective Club",
+  "code": "DGL7+-026",
+  "qr": "DGL7+-026",
+  "players": "4–8",
+  "time": "45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134749287"
+ },
+ {
+  "title": "Disturbed Friends",
+  "code": "DGL7+-027",
+  "qr": "DGL7+-027",
+  "players": "4–10",
+  "time": "10–90 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135044199"
+ },
+ {
+  "title": "Dixit",
+  "code": "DGL7+-028",
+  "qr": "DGL7+-028",
+  "players": "3–8",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135076967"
+ },
+ {
+  "title": "Dixit: Odyssey",
+  "code": "DGL7+-029",
+  "qr": "DGL7+-029",
+  "players": "3–12",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135109735"
+ },
+ {
+  "title": "Doctor Who DVD Board Game",
+  "code": "DGL7+-030",
+  "qr": "DGL7+-030",
+  "players": "2+",
+  "time": "60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135142503"
+ },
+ {
+  "title": "Don't Get Got!",
+  "code": "DGL7+-031",
+  "qr": "DGL7+-031",
+  "players": "2–10",
+  "time": "All day",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135240807"
+ },
+ {
+  "title": "Dracula's Feast: New Blood",
+  "code": "DGL7+-032",
+  "qr": "DGL7+-032",
+  "players": "4–8",
+  "time": "10–15 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135306343"
+ },
+ {
+  "title": "Dune: Betrayal",
+  "code": "DGL7+-033",
+  "qr": "DGL7+-033",
+  "players": "4–8",
+  "time": "20–40 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135568487"
+ },
+ {
+  "title": "The Epic Beard Game",
+  "code": "DGL7+-034",
+  "qr": "DGL7+-034",
+  "players": "3–8",
+  "time": "45–75 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146644071"
+ },
+ {
+  "title": "Fangs",
+  "code": "DGL7+-035",
+  "qr": "DGL7+-035",
+  "players": "5–8",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136387687"
+ },
+ {
+  "title": "Flick 'em Up!: Dead of Winter",
+  "code": "DGL7+-036",
+  "qr": "DGL7+-036",
+  "players": "1–10",
+  "time": "30–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136715367"
+ },
+ {
+  "title": "Flipology",
+  "code": "DGL7+-037",
+  "qr": "DGL7+-037",
+  "players": "2–8",
+  "time": null,
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136748135"
+ },
+ {
+  "title": "Forgotten Waters",
+  "code": "DGL7+-038",
+  "qr": "DGL7+-038",
+  "players": "3–7",
+  "time": "120–240 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136911975"
+ },
+ {
+  "title": "Fortune and Glory: The Cliffhanger Game",
+  "code": "DGL7+-039",
+  "qr": "DGL7+-039",
+  "players": "1–8",
+  "time": "90–240 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137043047"
+ },
+ {
+  "title": "Geek Out! The 00s Edition",
+  "code": "DGL7+-040",
+  "qr": "DGL7+-040",
+  "players": "2+",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137305191"
+ },
+ {
+  "title": "Geek Out! The 80's Edition",
+  "code": "DGL7+-041",
+  "qr": "DGL7+-041",
+  "players": "2+",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137337959"
+ },
+ {
+  "title": "Geek Out! The 90's Edition",
+  "code": "DGL7+-042",
+  "qr": "DGL7+-042",
+  "players": "2+",
+  "time": null,
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137370727"
+ },
+ {
+  "title": "GoodCritters",
+  "code": "DGL7+-043",
+  "qr": "DGL7+-043",
+  "players": "4–8",
+  "time": "30–45 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137534567"
+ },
+ {
+  "title": "Ignite",
+  "code": "DGL7+-044",
+  "qr": "DGL7+-044",
+  "players": "2–8",
+  "time": "40–160 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138091623"
+ },
+ {
+  "title": "Incohearent",
+  "code": "DGL7+-045",
+  "qr": "DGL7+-045",
+  "players": "2–20",
+  "time": "20–40 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138222695"
+ },
+ {
+  "title": "Joking Hazard",
+  "code": "DGL7+-046",
+  "qr": "DGL7+-046",
+  "players": "3–10",
+  "time": "30–90 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138615911"
+ },
+ {
+  "title": "Just One",
+  "code": "DGL7+-047",
+  "qr": "DGL7+-047",
+  "players": "3–7",
+  "time": "20 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138648679"
+ },
+ {
+  "title": "Kaupapa",
+  "code": "DGL7+-048",
+  "qr": "DGL7+-048",
+  "players": "4+",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138714215"
+ },
+ {
+  "title": "Kemomimi Panic",
+  "code": "DGL7+-049",
+  "qr": "DGL7+-049",
+  "players": "4–8",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138779751"
+ },
+ {
+  "title": "Kill Doctor Lucky",
+  "code": "DGL7+-050",
+  "qr": "DGL7+-050",
+  "players": "2–8",
+  "time": "20–40 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138943591"
+ },
+ {
+  "title": "The Last Brave",
+  "code": "DGL7+-051",
+  "qr": "DGL7+-051",
+  "players": "3–7",
+  "time": "10 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146807911"
+ },
+ {
+  "title": "Llamas Unleashed",
+  "code": "DGL7+-052",
+  "qr": "DGL7+-052",
+  "players": "2–8",
+  "time": "30–45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139664487"
+ },
+ {
+  "title": "Magic Maze",
+  "code": "DGL7+-053",
+  "qr": "DGL7+-053",
+  "players": "1–8",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139959399"
+ },
+ {
+  "title": "Monikers",
+  "code": "DGL7+-054",
+  "qr": "DGL7+-054",
+  "players": "4–16",
+  "time": "30–60 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140418151"
+ },
+ {
+  "title": "Muse",
+  "code": "DGL7+-055",
+  "qr": "DGL7+-055",
+  "players": "2–12",
+  "time": "30 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140844135"
+ },
+ {
+  "title": "Mysterium",
+  "code": "DGL7+-056",
+  "qr": "DGL7+-056",
+  "players": "2–7",
+  "time": "42 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141007975"
+ },
+ {
+  "title": "OK Boomer!",
+  "code": "DGL7+-057",
+  "qr": "DGL7+-057",
+  "players": "2+",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141401191"
+ },
+ {
+  "title": "One Night Ultimate Werewolf",
+  "code": "DGL7+-058",
+  "qr": "DGL7+-058",
+  "players": "3–10",
+  "time": "10 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141466727"
+ },
+ {
+  "title": "Radioactive Bunniez Collector's Edition",
+  "code": "DGL7+-059",
+  "qr": "DGL7+-059",
+  "players": "2–8",
+  "time": "5–15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142744679"
+ },
+ {
+  "title": "Ready Set Bet",
+  "code": "DGL7+-060",
+  "qr": "DGL7+-060",
+  "players": "2–9",
+  "time": "45–60 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142810215"
+ },
+ {
+  "title": "The Resistance",
+  "code": "DGL7+-061",
+  "qr": "DGL7+-061",
+  "players": "5–10",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146938983"
+ },
+ {
+  "title": "Saboteur",
+  "code": "DGL7+-062",
+  "qr": "DGL7+-062",
+  "players": "3–10",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143563879"
+ },
+ {
+  "title": "Saboteur: 20th Anniversary Edition",
+  "code": "DGL7+-063",
+  "qr": "DGL7+-063",
+  "players": "2–12",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143596647"
+ },
+ {
+  "title": "Scooby-Doo: Escape from the Haunted Mansion",
+  "code": "DGL7+-064",
+  "qr": "DGL7+-064",
+  "players": "1+",
+  "time": "60–120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143727719"
+ },
+ {
+  "title": "Scrawl",
+  "code": "DGL7+-065",
+  "qr": "DGL7+-065",
+  "players": "4–8",
+  "time": "30 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143793255"
+ },
+ {
+  "title": "Secret Hitler",
+  "code": "DGL7+-066",
+  "qr": "DGL7+-066",
+  "players": "5–10",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143826023"
+ },
+ {
+  "title": "Sherlock Holmes Consulting Detective: Carlton House & Queen's Park",
+  "code": "DGL7+-067",
+  "qr": "DGL7+-067",
+  "players": "1–8",
+  "time": "90 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144022631"
+ },
+ {
+  "title": "Sherlock Holmes Consulting Detective: The Baker Street Irregulars",
+  "code": "DGL7+-068",
+  "qr": "DGL7+-068",
+  "players": "1–8",
+  "time": "90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144055399"
+ },
+ {
+  "title": "Sherlock Holmes Consulting Detective: The Thames Murders & Other Cases",
+  "code": "DGL7+-069",
+  "qr": "DGL7+-069",
+  "players": "1–8",
+  "time": "90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144088167"
+ },
+ {
+  "title": "Sidibaba",
+  "code": "DGL7+-070",
+  "qr": "DGL7+-070",
+  "players": "3–7",
+  "time": "45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144153703"
+ },
+ {
+  "title": "Sketchagrams",
+  "code": "DGL7+-071",
+  "qr": "DGL7+-071",
+  "players": "3+",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144252007"
+ },
+ {
+  "title": "Smart Ass",
+  "code": "DGL7+-072",
+  "qr": "DGL7+-072",
+  "players": "2–12",
+  "time": "30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144448615"
+ },
+ {
+  "title": "Spyfall: Time Travel",
+  "code": "DGL7+-073",
+  "qr": "DGL7+-073",
+  "players": "2–8",
+  "time": "15–45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144940135"
+ },
+ {
+  "title": "Stay Cool",
+  "code": "DGL7+-074",
+  "qr": "DGL7+-074",
+  "players": "3–7",
+  "time": "10–30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145431655"
+ },
+ {
+  "title": "Taboo",
+  "code": "DGL7+-075",
+  "qr": "DGL7+-075",
+  "players": "4+",
+  "time": "20 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145792103"
+ },
+ {
+  "title": "Taco Cat Goat Cheese Pizza",
+  "code": "DGL7+-076",
+  "qr": "DGL7+-076",
+  "players": "2–8",
+  "time": "10–30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145824871"
+ },
+ {
+  "title": "Tannhäuser",
+  "code": "DGL7+-077",
+  "qr": "DGL7+-077",
+  "players": "2–10",
+  "time": "60–120 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146021479"
+ },
+ {
+  "title": "Telestrations: 12 Player Party Pack",
+  "code": "DGL7+-078",
+  "qr": "DGL7+-078",
+  "players": "4–12",
+  "time": "30 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146152551"
+ },
+ {
+  "title": "Telestrations After Dark",
+  "code": "DGL7+-079",
+  "qr": "DGL7+-079",
+  "players": "4–8",
+  "time": "30 min",
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146185319"
+ },
+ {
+  "title": "Telestrations: Upside Drawn",
+  "code": "DGL7+-080",
+  "qr": "DGL7+-080",
+  "players": "4–12",
+  "time": "20 min",
+  "ages": "12 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146218087"
+ },
+ {
+  "title": "Texas Hold'em Poker Set",
+  "code": "DGL7+-081",
+  "qr": "DGL7+-081",
+  "players": "2–10",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142416999"
+ },
+ {
+  "title": "Tilt 'N' Shout",
+  "code": "DGL7+-082",
+  "qr": "DGL7+-082",
+  "players": "2+",
+  "time": "20 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147430503"
+ },
+ {
+  "title": "Timeline: Classic",
+  "code": "DGL7+-083",
+  "qr": "DGL7+-083",
+  "players": "2–8",
+  "time": "15 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147463271"
+ },
+ {
+  "title": "Trapwords",
+  "code": "DGL7+-084",
+  "qr": "DGL7+-084",
+  "players": "4–8",
+  "time": "30–45 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147856487"
+ },
+ {
+  "title": "Tripoley",
+  "code": "DGL7+-085",
+  "qr": "DGL7+-085",
+  "players": "2–9",
+  "time": "60 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148020327"
+ },
+ {
+  "title": "The Ultimate Date Night Game for Fun Couples",
+  "code": "DGL7+-086",
+  "qr": "DGL7+-086",
+  "players": "2+",
+  "time": null,
+  "ages": "18 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147135591"
+ },
+ {
+  "title": "Ultimate Werewolf Deluxe Edition",
+  "code": "DGL7+-087",
+  "qr": "DGL7+-087",
+  "players": "5–75",
+  "time": "30 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149167207"
+ },
+ {
+  "title": "Unstable Unicorns",
+  "code": "DGL7+-088",
+  "qr": "DGL7+-088",
+  "players": "2–8",
+  "time": "30–45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148741223"
+ },
+ {
+  "title": "Wavelength",
+  "code": "DGL7+-089",
+  "qr": "DGL7+-089",
+  "players": "2–12",
+  "time": "30–45 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149134439"
+ },
+ {
+  "title": "Werewords",
+  "code": "DGL7+-090",
+  "qr": "DGL7+-090",
+  "players": "4–10",
+  "time": "10 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149199975"
+ },
+ {
+  "title": "Werewords Deluxe Edition",
+  "code": "DGL7+-091",
+  "qr": "DGL7+-091",
+  "players": "2–20",
+  "time": "10 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149232743"
+ },
+ {
+  "title": "What Do You Meme?: BSFW Edition",
+  "code": "DGL7+-092",
+  "qr": "DGL7+-092",
+  "players": "3+",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149298279"
+ },
+ {
+  "title": "What Were You Thinking?",
+  "code": "DGL7+-093",
+  "qr": "DGL7+-093",
+  "players": "3+",
+  "time": "15 min",
+  "ages": "10 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149363815"
+ },
+ {
+  "title": "Witch Hunt",
+  "code": "DGL7+-094",
+  "qr": "DGL7+-094",
+  "players": "7–22",
+  "time": "30–90 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149462119"
+ },
+ {
+  "title": "Wits & Wagers: It's Vegas, Baby!",
+  "code": "DGL7+-095",
+  "qr": "DGL7+-095",
+  "players": "5+",
+  "time": "30–40 min",
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149527655"
+ },
+ {
+  "title": "Yahtzee",
+  "code": "DGL7+-096",
+  "qr": "DGL7+-096",
+  "players": "2–10",
+  "time": "30 min",
+  "ages": "8 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149724263"
+ },
+ {
+  "title": "1000 and One Treasures",
+  "code": "DGLF-001",
+  "qr": "DGLF-001",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "5 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498129866855"
+ },
+ {
+  "title": "A Game of Cat & Mouth",
+  "code": "DGLF-002",
+  "qr": "DGLF-002",
+  "players": "2",
+  "time": "15–20 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130325607"
+ },
+ {
+  "title": "Andor: The Family Fantasy Game",
+  "code": "DGLF-003",
+  "qr": "DGLF-003",
+  "players": "2–4",
+  "time": "30–45 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130554983"
+ },
+ {
+  "title": "Bananagrams",
+  "code": "DGLF-004",
+  "qr": "DGLF-004",
+  "players": "1–8",
+  "time": "15 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131341415"
+ },
+ {
+  "title": "Battleship",
+  "code": "DGLF-005",
+  "qr": "DGLF-005",
+  "players": "2",
+  "time": "30 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131669095"
+ },
+ {
+  "title": "Blokus",
+  "code": "DGLF-006",
+  "qr": "DGLF-006",
+  "players": "2–4",
+  "time": "20–30 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131996775"
+ },
+ {
+  "title": "Boba Master",
+  "code": "DGLF-007",
+  "qr": "DGLF-007",
+  "players": "2–10",
+  "time": "20–60 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132095079"
+ },
+ {
+  "title": "Bottle Topps",
+  "code": "DGLF-008",
+  "qr": "DGLF-008",
+  "players": "1–6",
+  "time": "30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132160615"
+ },
+ {
+  "title": "Carcassonne Big Box 7",
+  "code": "DGLF-009",
+  "qr": "DGLF-009",
+  "players": "2–6",
+  "time": "35 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132324455"
+ },
+ {
+  "title": "Catan Junior",
+  "code": "DGLF-010",
+  "qr": "DGLF-010",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132717671"
+ },
+ {
+  "title": "Checkers",
+  "code": "DGLF-011",
+  "qr": "DGLF-011",
+  "players": "2",
+  "time": "30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7519131074663"
+ },
+ {
+  "title": "Chess",
+  "code": "DGLF-012",
+  "qr": "DGLF-012",
+  "players": "2",
+  "time": null,
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133045351"
+ },
+ {
+  "title": "Coconuts",
+  "code": "DGLF-013",
+  "qr": "DGLF-013",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133471335"
+ },
+ {
+  "title": "Concept Kids: Animals",
+  "code": "DGLF-014",
+  "qr": "DGLF-014",
+  "players": "2–12",
+  "time": "20 min",
+  "ages": "4 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133831783"
+ },
+ {
+  "title": "Connect Four",
+  "code": "DGLF-015",
+  "qr": "DGLF-015",
+  "players": "2",
+  "time": "10 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498133864551"
+ },
+ {
+  "title": "Cranium Cadoo",
+  "code": "DGLF-016",
+  "qr": "DGLF-016",
+  "players": "2+",
+  "time": "45 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134126695"
+ },
+ {
+  "title": "Exploding Kittens: Party Pack",
+  "code": "DGLF-017",
+  "qr": "DGLF-017",
+  "players": "2–10",
+  "time": "15 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136289383"
+ },
+ {
+  "title": "Exploding Minions",
+  "code": "DGLF-018",
+  "qr": "DGLF-018",
+  "players": "2–5",
+  "time": "15 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136322151"
+ },
+ {
+  "title": "Fastrack",
+  "code": "DGLF-019",
+  "qr": "DGLF-019",
+  "players": "2",
+  "time": "10 min",
+  "ages": "5 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136420455"
+ },
+ {
+  "title": "Glimstone Grab",
+  "code": "DGLF-020",
+  "qr": "DGLF-020",
+  "players": "1–4",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137403495"
+ },
+ {
+  "title": "Granny Wars: A Game of Tit for Tat",
+  "code": "DGLF-021",
+  "qr": "DGLF-021",
+  "players": "2–8",
+  "time": "20 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137567335"
+ },
+ {
+  "title": "Hoard",
+  "code": "DGLF-022",
+  "qr": "DGLF-022",
+  "players": "2–6",
+  "time": "10–45 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498137895015"
+ },
+ {
+  "title": "ICECOOL",
+  "code": "DGLF-023",
+  "qr": "DGLF-023",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138026087"
+ },
+ {
+  "title": "ICECOOL2",
+  "code": "DGLF-024",
+  "qr": "DGLF-024",
+  "players": "2–4",
+  "time": "30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138058855"
+ },
+ {
+  "title": "Jenga",
+  "code": "DGLF-025",
+  "qr": "DGLF-025",
+  "players": "1+",
+  "time": "20 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138583143"
+ },
+ {
+  "title": "Kids Know Best",
+  "code": "DGLF-026",
+  "qr": "DGLF-026",
+  "players": "2–4",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138845287"
+ },
+ {
+  "title": "Kiwetin",
+  "code": "DGLF-027",
+  "qr": "DGLF-027",
+  "players": "2–6",
+  "time": "5–20 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139172967"
+ },
+ {
+  "title": "Kraken Attack!",
+  "code": "DGLF-028",
+  "qr": "DGLF-028",
+  "players": "1–4",
+  "time": "25 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139304039"
+ },
+ {
+  "title": "Labyrinth",
+  "code": "DGLF-029",
+  "qr": "DGLF-029",
+  "players": "2–4",
+  "time": "20 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139402343"
+ },
+ {
+  "title": "Monsieur Carrousel",
+  "code": "DGLF-030",
+  "qr": "DGLF-030",
+  "players": "1–6",
+  "time": "15 min",
+  "ages": "4 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140549223"
+ },
+ {
+  "title": "Pharaoh's Gulo Gulo",
+  "code": "DGLF-031",
+  "qr": "DGLF-031",
+  "players": "2–6",
+  "time": "20 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142023783"
+ },
+ {
+  "title": "Pick-Up Pete",
+  "code": "DGLF-032",
+  "qr": "DGLF-032",
+  "players": "2–4",
+  "time": null,
+  "ages": "4 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142089319"
+ },
+ {
+  "title": "Pitch Out",
+  "code": "DGLF-033",
+  "qr": "DGLF-033",
+  "players": "2",
+  "time": "5–10 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142253159"
+ },
+ {
+  "title": "PitchCar",
+  "code": "DGLF-034",
+  "qr": "DGLF-034",
+  "players": "2–8",
+  "time": "30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142220391"
+ },
+ {
+  "title": "Pokémon Trading Card Game: Battle Academy",
+  "code": "DGLF-035",
+  "qr": "DGLF-035",
+  "players": "2",
+  "time": "30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142384231"
+ },
+ {
+  "title": "Qwirkle",
+  "code": "DGLF-036",
+  "qr": "DGLF-036",
+  "players": "2–4",
+  "time": "30–45 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142679143"
+ },
+ {
+  "title": "Rhino Hero",
+  "code": "DGLF-037",
+  "qr": "DGLF-037",
+  "players": "2–5",
+  "time": "5–15 min",
+  "ages": "5 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142974055"
+ },
+ {
+  "title": "Rhino Hero: Super Battle",
+  "code": "DGLF-038",
+  "qr": "DGLF-038",
+  "players": "2–4",
+  "time": "10–20 min",
+  "ages": "5 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143006823"
+ },
+ {
+  "title": "Sequence",
+  "code": "DGLF-039",
+  "qr": "DGLF-039",
+  "players": "2–12",
+  "time": "10–30 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143858791"
+ },
+ {
+  "title": "Similo",
+  "code": "DGLF-040",
+  "qr": "DGLF-040",
+  "players": "2–8",
+  "time": "10–15 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144186471"
+ },
+ {
+  "title": "Simon Air",
+  "code": "DGLF-041",
+  "qr": "DGLF-041",
+  "players": "1–2",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144219239"
+ },
+ {
+  "title": "SOS Dino",
+  "code": "DGLF-042",
+  "qr": "DGLF-042",
+  "players": "1–4",
+  "time": "25 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144612455"
+ },
+ {
+  "title": "SpongeBob Card Scramble!",
+  "code": "DGLF-043",
+  "qr": "DGLF-043",
+  "players": "2–4",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143760487"
+ },
+ {
+  "title": "Spot it!",
+  "code": "DGLF-044",
+  "qr": "DGLF-044",
+  "players": "2–8",
+  "time": "15 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498144907367"
+ },
+ {
+  "title": "Stuffed Fables",
+  "code": "DGLF-045",
+  "qr": "DGLF-045",
+  "players": "2–4",
+  "time": "60–90 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145595495"
+ },
+ {
+  "title": "Tacocat Spelled Backwards",
+  "code": "DGLF-046",
+  "qr": "DGLF-046",
+  "players": "2",
+  "time": "15–20 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145857639"
+ },
+ {
+  "title": "Throw Throw Avocado",
+  "code": "DGLF-047",
+  "qr": "DGLF-047",
+  "players": "2–6",
+  "time": "15 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147233895"
+ },
+ {
+  "title": "Throw Throw Burrito",
+  "code": "DGLF-048",
+  "qr": "DGLF-048",
+  "players": "2–6",
+  "time": "15 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147266663"
+ },
+ {
+  "title": "Ticket to Ride: First Journey (Europe)",
+  "code": "DGLF-049",
+  "qr": "DGLF-049",
+  "players": "2–4",
+  "time": "15–30 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147364967"
+ },
+ {
+  "title": "TopSpin",
+  "code": "DGLF-050",
+  "qr": "DGLF-050",
+  "players": "2–4",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147758183"
+ },
+ {
+  "title": "Troll & Dragon",
+  "code": "DGLF-051",
+  "qr": "DGLF-051",
+  "players": "2–5",
+  "time": "20 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148085863"
+ },
+ {
+  "title": "Trouble",
+  "code": "DGLF-052",
+  "qr": "DGLF-052",
+  "players": "2–4",
+  "time": "45 min",
+  "ages": "4 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148118631"
+ },
+ {
+  "title": "UNO",
+  "code": "DGLF-053",
+  "qr": "DGLF-053",
+  "players": "2–10",
+  "time": "30 min",
+  "ages": "7 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148675687"
+ },
+ {
+  "title": "Valley of the Vikings",
+  "code": "DGLF-054",
+  "qr": "DGLF-054",
+  "players": "2–4",
+  "time": "15–20 min",
+  "ages": "6 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148839527"
+ },
+ {
+  "title": "Viva Topo!",
+  "code": "DGLF-055",
+  "qr": "DGLF-055",
+  "players": "2–4",
+  "time": "20–30 min",
+  "ages": "4 years or older",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149036135"
+ },
+ {
+  "title": "Altered Carbon - The Roleplaying Game",
+  "code": "DGLRPG-001",
+  "qr": "DGLRPG-001",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130522215"
+ },
+ {
+  "title": "Animal Adventures RPG Starter Set",
+  "code": "DGLRPG-002",
+  "qr": "DGLRPG-002",
+  "players": "2–8",
+  "time": null,
+  "ages": "Teens",
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498130653287"
+ },
+ {
+  "title": "Avatar Legends: The Roleplaying Game",
+  "code": "DGLRPG-003",
+  "qr": "DGLRPG-003",
+  "players": "3–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131177575"
+ },
+ {
+  "title": "BESM (Big Eyes, Small Mouth) (4th Edition)",
+  "code": "DGLRPG-004",
+  "qr": "DGLRPG-004",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131767399"
+ },
+ {
+  "title": "Blades in the Dark",
+  "code": "DGLRPG-005",
+  "qr": "DGLRPG-005",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498131931239"
+ },
+ {
+  "title": "Call of Cthulhu (7th Edition)",
+  "code": "DGLRPG-006",
+  "qr": "DGLRPG-006",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498132258919"
+ },
+ {
+  "title": "Cyberpunk RED (Core Rulebook)",
+  "code": "DGLRPG-007",
+  "qr": "DGLRPG-007",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134356071"
+ },
+ {
+  "title": "D&D – Glory of the Giants (Hobby Exclusive)",
+  "code": "DGLRPG-008",
+  "qr": "DGLRPG-008",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7505987272807"
+ },
+ {
+  "title": "Death in Space",
+  "code": "DGLRPG-009",
+  "qr": "DGLRPG-009",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498134552679"
+ },
+ {
+  "title": "Dungeons & Dragons Dungeon Master's Guide (5th Edition)",
+  "code": "DGLRPG-010",
+  "qr": "DGLRPG-010",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135797863"
+ },
+ {
+  "title": "Dungeons & Dragons Monster Manual (5th Edition)",
+  "code": "DGLRPG-011",
+  "qr": "DGLRPG-011",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135765095"
+ },
+ {
+  "title": "Dungeons & Dragons Player's Handbook (5th Edition)",
+  "code": "DGLRPG-012",
+  "qr": "DGLRPG-012",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498135830631"
+ },
+ {
+  "title": "Fiasco RPG",
+  "code": "DGLRPG-013",
+  "qr": "DGLRPG-013",
+  "players": "3–5",
+  "time": "60–180 min",
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498136453223"
+ },
+ {
+  "title": "Into the Odd",
+  "code": "DGLRPG-014",
+  "qr": "DGLRPG-014",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138288231"
+ },
+ {
+  "title": "Kids on Brooms",
+  "code": "DGLRPG-015",
+  "qr": "DGLRPG-015",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498138878055"
+ },
+ {
+  "title": "KULT: Divinity Lost",
+  "code": "DGLRPG-016",
+  "qr": "DGLRPG-016",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139336807"
+ },
+ {
+  "title": "Lancer",
+  "code": "DGLRPG-017",
+  "qr": "DGLRPG-017",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498139435111"
+ },
+ {
+  "title": "Masks of Nyarlathotep (5th edition)",
+  "code": "DGLRPG-018",
+  "qr": "DGLRPG-018",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140188775"
+ },
+ {
+  "title": "Mothership Player's Survival Guide",
+  "code": "DGLRPG-019",
+  "qr": "DGLRPG-019",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140581991"
+ },
+ {
+  "title": "My Little Pony: Tails of Equestria, The Storytelling Game",
+  "code": "DGLRPG-020",
+  "qr": "DGLRPG-020",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498140942439"
+ },
+ {
+  "title": "Numenera Destiny",
+  "code": "DGLRPG-021",
+  "qr": "DGLRPG-021",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141237351"
+ },
+ {
+  "title": "Numenera Discovery",
+  "code": "DGLRPG-022",
+  "qr": "DGLRPG-022",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141302887"
+ },
+ {
+  "title": "Pathfinder Roleplaying Game",
+  "code": "DGLRPG-023",
+  "qr": "DGLRPG-023",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498141958247"
+ },
+ {
+  "title": "Quest-O-Nomicon",
+  "code": "DGLRPG-024",
+  "qr": "DGLRPG-024",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498142646375"
+ },
+ {
+  "title": "Root the tabletop roleplaying game",
+  "code": "DGLRPG-025",
+  "qr": "DGLRPG-025",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143400039"
+ },
+ {
+  "title": "Shadowrun: Sixth World (6th Edition)",
+  "code": "DGLRPG-026",
+  "qr": "DGLRPG-026",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498143891559"
+ },
+ {
+  "title": "Star Trek Adventures",
+  "code": "DGLRPG-027",
+  "qr": "DGLRPG-027",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145071207"
+ },
+ {
+  "title": "Star Wars: Edge of the Empire",
+  "code": "DGLRPG-028",
+  "qr": "DGLRPG-028",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145202279"
+ },
+ {
+  "title": "Strange Squad",
+  "code": "DGLRPG-029",
+  "qr": "DGLRPG-029",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145497191"
+ },
+ {
+  "title": "Talisman Adventures Fantasy Roleplaying Game Core Rulebook",
+  "code": "DGLRPG-030",
+  "qr": "DGLRPG-030",
+  "players": "2–6",
+  "time": "120–240 min",
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498145955943"
+ },
+ {
+  "title": "Teens in Space",
+  "code": "DGLRPG-031",
+  "qr": "DGLRPG-031",
+  "players": "3–7",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498146087015"
+ },
+ {
+  "title": "Tiny Dungeon 2nd Edition",
+  "code": "DGLRPG-032",
+  "qr": "DGLRPG-032",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147528807"
+ },
+ {
+  "title": "Tiny Frontiers",
+  "code": "DGLRPG-033",
+  "qr": "DGLRPG-033",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147561575"
+ },
+ {
+  "title": "Tiny Pirates",
+  "code": "DGLRPG-034",
+  "qr": "DGLRPG-034",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498147594343"
+ },
+ {
+  "title": "Vampire: The Masquerade 5th Edition Core Book",
+  "code": "DGLRPG-035",
+  "qr": "DGLRPG-035",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498148872295"
+ },
+ {
+  "title": "World of Warcraft: The Roleplaying Game",
+  "code": "DGLRPG-036",
+  "qr": "DGLRPG-036",
+  "players": "2–6",
+  "time": null,
+  "ages": null,
+  "status": "ACTIVE",
+  "productId": "gid://shopify/Product/7498149593191"
+ }
+]
