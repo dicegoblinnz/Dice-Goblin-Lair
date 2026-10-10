@@ -97,6 +97,8 @@ async function madeAnyway(call) {
     return await call;
   } catch (error) {
     if (error?.partial) return error.partial;
+    // one Shopify turned away before it ran was refused: nothing moved
+    if (error?.nothingRan) error.refused = true;
     throw error;
   }
 }
@@ -183,6 +185,8 @@ export class ShopifyAdmin {
       }
       const error = new Error(`Shopify API: ${errors.map((e) => e.message).join('; ')}`);
       if (made) error.partial = data;
+      // a mutation Shopify turned away before it ran (a permission it still doesn't have): nothing happened
+      else if (/^\s*mutation\b/.test(query)) error.nothingRan = true;
       throw error;
     }
     return data;
@@ -782,15 +786,25 @@ export class ShopifyAdmin {
 /** Optional emails through Resend (set RESEND_API_KEY and FROM_EMAIL; STAFF_EMAIL gets staff alerts). */
 export const emailReady = (env) => Boolean(env.RESEND_API_KEY && env.FROM_EMAIL);
 
-/** One email as Resend wants it: an HTML version and a plain-text copy. */
-const resendEmail = (env, { to, subject, text, html = null, replyTo = null }) => ({
-  from: env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(replyTo || env.REPLY_TO ? { reply_to: replyTo || env.REPLY_TO } : {}),
-});
+/**
+ * One email as Resend wants it: an HTML version and a plain-text copy. pinned: an email kept to be sent again exactly
+ * as it was (a receipt under its idempotency key), with the from and reply-to it was made with, whatever the settings
+ * say now.
+ */
+const resendEmail = (env, { to, subject, text, html = null, replyTo = null, from = null, pinned = false }) => {
+  const reply = pinned ? replyTo : replyTo || env.REPLY_TO;
+  return { from: (pinned && from) || env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(reply ? { reply_to: reply } : {}) };
+};
+/** The from and reply-to an email would go with now, to keep with one that's pinned */
+export const emailSender = (env, replyTo = null) => ({ from: env.FROM_EMAIL || null, replyTo: replyTo || env.REPLY_TO || null });
 
 /** How long to wait before sending once more when Resend says it's busy (too many requests a second) */
 const RESEND_AGAIN_AFTER = 1000;
-/** An email request with no answer by then is given up (a hung request mustn't hold up the 10-minute run's billing) */
-const RESEND_TIMEOUT = 15_000;
+/**
+ * An email request with no answer by then is given up, so a hung one never holds up the 10-minute run's billing: one
+ * with a key (sent again safely), sooner; one without, later, since it may still go; a batch, later still.
+ */
+const RESEND_TIMEOUT = { key: 15_000, single: 30_000, batch: 60_000 };
 const pause = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
@@ -799,14 +813,15 @@ const pause = (ms) => new Promise((resolve) => {
  * One request to Resend. Never throws; returns { ok, attempted, status, code (Resend's error name), message }.
  * Turned away for sending too fast (429), it waits a moment and sends once more: Resend never took it, so it can't go
  * twice. With an idempotency key (key) Resend can also tell a second send of the same email, so a server error or no
- * answer at all (nothing within RESEND_TIMEOUT) gets one more try too.
+ * answer at all (nothing within RESEND_TIMEOUT.key) gets one more try too.
  */
 async function postToResend(env, path, body, { key = null } = {}) {
   const headers = { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) };
   for (let attempt = 1; ; attempt += 1) {
     let response;
     try {
-      response = await fetch(`https://api.resend.com/${path}`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(RESEND_TIMEOUT) });
+      const wait = key ? RESEND_TIMEOUT.key : Array.isArray(body) ? RESEND_TIMEOUT.batch : RESEND_TIMEOUT.single;
+      response = await fetch(`https://api.resend.com/${path}`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(wait) });
     } catch (error) {
       if (key && attempt < 2) {
         await pause(RESEND_AGAIN_AFTER);

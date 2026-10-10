@@ -2097,12 +2097,14 @@ test('a receipt whose answer never came back is sent again after 15 minutes: the
     setNow(JOINED + 14 * MIN);
     await maintenance();
     assert.equal(sentWith(mail, subject).length, 1);
-    // the footer changes meanwhile, but the letter kept is what goes again
+    // the footer and the reply-to address change meanwhile, but the email kept is what goes again
     lair.rulesCache = { ...lair.rulesCache, contact: { ...(lair.rulesCache.contact || {}), phone: '09 000 0000' } };
+    setEnv({ REPLY_TO: 'hello@dicegoblin.test' });
     setNow(JOINED + 15 * MIN);
     await maintenance();
     const [first, again] = sentWith(mail, subject);
-    assert.deepEqual([again.key, again.html, again.text], [receiptKey(pid), first.html, first.text]);
+    assert.deepEqual([again.key, again.html, again.text, again.from, again.reply_to], [receiptKey(pid), first.html, first.text, first.from, undefined]);
+    assert.equal(sentWith(mail, 'About Catan: a charge for damaged')[0].reply_to, undefined, '(as the first went)');
     assert.deepEqual([payment(pid).receipt_status, payment(pid).receipt_tries], ['sent', 2]);
   } finally {
     mail.restore();
@@ -2178,6 +2180,15 @@ test("no email address for a receipt: none goes, and staff see why; email that i
   }
 });
 
+test("the member page's store credit tool: Shopify not answering may mean it went through, so staff are told to check the balance before trying again", async () => {
+  await join();
+  const credit = fakeCredit({ [SAM]: 5000 });
+  credit.state.throws = 1;
+  const lost = await call('POST', `members/${SAM}/credit`, { amount: -1000, note: 'Snacks', key: 'k1' }, 'staff');
+  assert.equal(lost.status, 502);
+  assert.equal(lost.data.error, "Shopify didn't confirm the change (Shopify API error 502), so it may have gone through. Check Sam's balance before you try again.");
+});
+
 test('Resend busy (sending too fast): the email waits a moment and goes once more, so a notice still counts; busy twice, it was turned away', async () => {
   const mail = scriptedEmails();
   try {
@@ -2214,7 +2225,7 @@ test('a store credit take-off Shopify made but answered with a denied field is n
       // made: the debit happened and a field of its answer was denied. turned away: denied before it ran (the old
       // token), then made with the fresh one
       if (mode === 'made') return new Response(JSON.stringify({ data: { storeCreditAccountDebit: { storeCreditAccountTransaction: tx, userErrors: [] } }, errors: denied(['storeCreditAccountDebit', 'storeCreditAccountTransaction', 'balanceAfterTransaction']) }));
-      if (posts.filter(([p]) => p.startsWith('mutation')).length === 2) return new Response(JSON.stringify({ data: { storeCreditAccountDebit: null }, errors: denied(['storeCreditAccountDebit']) }));
+      if (mode === 'never allowed' || posts.filter(([p]) => p.startsWith('mutation')).length === 2) return new Response(JSON.stringify({ data: { storeCreditAccountDebit: null }, errors: denied(['storeCreditAccountDebit']) }));
       return new Response(JSON.stringify({ data: { storeCreditAccountDebit: { storeCreditAccountTransaction: { ...tx, id: `gid://shopify/StoreCreditAccountDebitTransaction/${n}`, balanceAfterTransaction: { amount: '55.0', currencyCode: 'NZD' } }, userErrors: [] } } }));
     }
     if (posts.filter(([p]) => p.startsWith('query')).length === 1) return new Response(JSON.stringify({ data: { customer: null }, errors: denied(['customer']) }));
@@ -2228,6 +2239,10 @@ test('a store credit take-off Shopify made but answered with a denied field is n
     mode = 'turned away';
     assert.deepEqual(await admin.changeStoreCredit(SAM, -500, 'NZD'), { id: 'gid://shopify/StoreCreditAccountDebitTransaction/5', balanceAfter: 5500 });
     assert.deepEqual(posts.slice(3), [['mutation LairCreditTake($id:', 'tok-3'], ['mutation LairCreditTake($id:', 'tok-4']], 'nothing ran, so it was safe to ask again');
+    // still not allowed with the fresh token: Shopify refused it, so nothing came off
+    mode = 'never allowed';
+    await assert.rejects(admin.changeStoreCredit(SAM, -500, 'NZD'), (error) => /Access denied/.test(error.message) && error.refused === true);
+    assert.equal(posts.length, 7, 'asked twice, both turned away');
   } finally {
     globalThis.fetch = realFetch;
   }

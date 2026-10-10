@@ -142,8 +142,9 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
   by its marker (`_lair_payment`) before another is made, and a bill by its key.
 - **Paid:** the charge is `paid` (`paidVia` `credit` or `card`), the member gets a receipt ("Paid: the $40 charge for
   Catan", with the store credit left), and the one-off contract is cancelled on the next run. Receipts are kept on the
-  payment (11 Oct 2026, Mo: "the email didn't show up"): the letter is made once and sent exactly as it is, with its own
-  Resend idempotency key (`lair-receipt-<payment id>`), every time, so Resend can never send it twice. One Resend turns
+  payment (11 Oct 2026, Mo: "the email didn't show up"): the email is made once (from and reply-to included) and sent
+  exactly as it is, with its own Resend idempotency key (`lair-receipt-<payment id>`), every time, so Resend can never
+  send it twice; it's dropped from the payment once it's gone or given up. One Resend turns
   away is sent again by the 10-minute run (its last step, after billing) after 10 minutes, 30 minutes, then 1, 2, 4 and
   8 hours; one whose answer never came back (no answer in 15 seconds) after 15 minutes. A letter Resend refuses for
   itself (400, 422: an address it won't take) is made again, with a new key, for the next try, so a corrected address
@@ -386,9 +387,11 @@ Not confirmed by Shopify's documentation, so check these with test payments:
 - `src/shopify.js` (11 Oct 2026): a mutation Shopify made but answered with an `ACCESS_DENIED` field is never sent again
   (it used to be, with a fresh token, which could have taken store credit twice); its error carries what Shopify did
   answer (`error.partial`), and the store credit calls use it. One Shopify turned away before it ran (the error is on
-  its top-level field, and nothing came back) is still asked again with a fresh token, as queries are. Resend requests
-  time out after 15 seconds, wait and go once more when Resend is busy (429), and with a key also after a server error
-  or no answer.
+  its top-level field, and nothing came back) is still asked again with a fresh token, as queries are; turned away again,
+  it's refused (`error.refused`: nothing moved). Resend requests time out (15 seconds with a key, 30 without, 60 for a
+  batch), wait and go once more when Resend is busy (429), and with a key also after a server error or no answer. The
+  member page's store credit tool says a change Shopify didn't confirm "may have gone through" and to check the balance
+  before trying again (it used to say nothing changed).
 - `src/index.js`: `/webhooks/memberships`. `src/config.js`: the `MEMBERSHIPS_*` keys. `src/shopify.js`: a second app's
   login (its own token key); store credit refusals marked (`error.refused`), and an account's latest debits
   (`storeCreditDebits`).

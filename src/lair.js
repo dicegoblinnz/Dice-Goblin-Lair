@@ -8151,9 +8151,13 @@ export class Lair {
       done = await this.shopify.changeStoreCredit(id, amount, currency);
     } catch (error) {
       const insufficient = error?.code === 'INSUFFICIENT_FUNDS';
+      const said = String(error?.message || error).replace(/^Shopify API:\s*/, '').slice(0, 160);
+      // (Shopify saying no means nothing moved; no answer means it may have, so staff look before trying again)
       const message = insufficient
         ? `${first} doesn't have that much store credit, so nothing came off. Check their balance and take off less.`
-        : this.creditTrouble(error, 'change') || `Shopify didn't change the store credit (${String(error?.message || error).replace(/^Shopify API:\s*/, '').slice(0, 160)}). Nothing changed. Try again.`;
+        : this.creditTrouble(error, 'change') || (error?.refused
+          ? `Shopify didn't change the store credit (${said}). Nothing changed. Try again.`
+          : `Shopify didn't confirm the change (${said}), so it may have gone through. Check ${first}'s balance before you try again.`);
       this.write("UPDATE member_credit SET status = 'failed', message = ?, updated_at = ? WHERE id = ?", message, Date.now(), changeId);
       throw new RuleError(message, insufficient ? 409 : 502);
     }

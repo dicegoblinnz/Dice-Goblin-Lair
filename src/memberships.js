@@ -31,7 +31,7 @@
 // These are Lair methods: lair.js copies them onto Lair.prototype, so `this` is the Durable Object. The usual rule
 // holds: every await first, then one synchronous read-check-write.
 import { HOUR, MIN, LairTime, RuleError, libraryPlan, makeId } from './core.js';
-import { ShopifyAdmin, emailReady } from './shopify.js';
+import { ShopifyAdmin, emailReady, emailSender } from './shopify.js';
 
 /* ---------- small helpers (the same as lair.js's) ---------- */
 const parse = (text, fallback) => {
@@ -3784,8 +3784,9 @@ export const membershipMethods = {
         this.write("UPDATE damage_payments SET receipt_status = 'none', receipt_error = ?, receipt_next_at = NULL WHERE id = ?", 'No email address on file.', pid);
         return null;
       }
-      // the first letter has the plain key; one made again after the email service turned the letter itself away, a new one
-      letter = { ...made, key: p.receipt_tries ? `${receiptKey(pid)}-${tries}` : receiptKey(pid) };
+      // the first letter has the plain key; one made again after the email service turned the letter itself away, a new
+      // one. It keeps the from and reply-to it's made with, so a try after the settings change sends the same email.
+      letter = { ...made, ...emailSender(this.env, made.replyTo), pinned: true, key: p.receipt_tries ? `${receiptKey(pid)}-${tries}` : receiptKey(pid) };
       this.write('UPDATE damage_payments SET receipt_letter = ? WHERE id = ?', JSON.stringify(letter), pid);
     }
     // until its answer comes back; one that never does is sent again after RECEIPT_STUCK
@@ -3805,12 +3806,14 @@ export const membershipMethods = {
     if (!p || p.receipt_status === 'sent') return result;
     const now = Date.now();
     if (result?.ok) {
-      this.write("UPDATE damage_payments SET receipt_status = 'sent', receipt_at = ?, receipt_error = NULL, receipt_next_at = NULL WHERE id = ?", now, pid);
+      // (the letter isn't needed once it's gone)
+      this.write("UPDATE damage_payments SET receipt_status = 'sent', receipt_at = ?, receipt_error = NULL, receipt_next_at = NULL, receipt_letter = NULL WHERE id = ?", now, pid);
       return result;
     }
     if (p.receipt_tries !== tries || p.receipt_status !== 'sending') return result;
     const error = [result?.status || null, result?.message || 'No answer'].filter(Boolean).join(': ').slice(0, 300);
-    const letterProblem = [400, 422].includes(result?.status) || (result?.status === 409 && result?.code === 'invalid_idempotent_request');
+    // (anything else, Resend holding the key for other words included, goes again as it is: it can never go twice)
+    const letterProblem = [400, 422].includes(result?.status);
     this.damageReceiptFailed(p, this.feeRow(p.fee_id), tries, error, now, { remake: letterProblem });
     return result;
   },
@@ -3831,7 +3834,7 @@ export const membershipMethods = {
 
   /** A receipt the email service wouldn't take, tries after tries: it stops, and staff hear so they can tell the member. No awaits. */
   damageReceiptGivenUp(p, f, error, now) {
-    this.write("UPDATE damage_payments SET receipt_status = 'failed', receipt_error = ?, receipt_next_at = NULL WHERE id = ?", String(error).slice(0, 300), p.id);
+    this.write("UPDATE damage_payments SET receipt_status = 'failed', receipt_error = ?, receipt_next_at = NULL, receipt_letter = NULL WHERE id = ?", String(error).slice(0, 300), p.id);
     const name = this.memberName(p.customer_id);
     this.staffAlert(`receipt:${p.id}`, `A receipt couldn't be emailed: ${name}`, {
       title: "A receipt that didn't go",
