@@ -18,6 +18,19 @@ Each sticker has:
 
 There's no heading or footer, so everything can be big (Mo, 10 Oct 2026).
 
+### Spine labels (`--spine`, 11 Oct 2026)
+
+Mo asked for each game's spine label to print with its sticker, two games a page. With `--spine`:
+
+- The bottom 30 mm of each page holds the two spine labels, each in a 30 mm square either side of the middle cut
+  line, so each sits under its own sticker. Cut across above them, down the middle, then round each square.
+- The spine label is 25 × 25 mm with its outline printed, so it fits a 3 cm spine and looks finished however it's cut
+  out. It has the section in a black band (3–4 PLAYERS, KIDS & FAMILY, RPG BOOKS), then the size letter and number big
+  (M052), then the full code small. Today's codes have no size letter, so they show just the number.
+- The sticker above is 70 mm tall instead of 100. The name gets two lines' room (15 pt, smaller when it's long), the
+  shelf line goes (the spine label says it), and the QR code is 38 mm instead of 52. It still read from every 'phone
+  photo' in the tests; scratches it can take are about three quarters the size.
+
 ### The Dice Goblin logo (11 Oct 2026, two options for Mo to pick from)
 
 Mo asked for the logo on the stickers, in black and white. `--logo=` picks one of two ways (leave it off for the
@@ -49,6 +62,7 @@ from 'phone photos'.
   - every page is 150 × 100 mm, in pure black and white
   - every sticker's ink sits inside its 4 mm margin
   - every QR code is read back from a 203 dpi one-bit render (a thermal printer's resolution) and matched to its game
+  - with `--spine`: each spine label has 2 mm clear inside its square, and nothing else is printed in the strip
 - `games-2026-10-10.json` lists all 533 library games as they were on 10 October 2026.
 - `test-games.json` holds the four games of the test print.
 - `extract_pages.py` and `build_games.py` turned the Shopify query results into the games list (see below).
@@ -60,11 +74,12 @@ You need Python 3 with `reportlab segno fonttools brotli zxing-cpp pypdf numpy p
 `opencv-python` for the sample check), and poppler's `pdftoppm`. The fonts are the theme's own (Archivo Black and Poppins), read from the website repo's `assets` folder.
 
 ```sh
-python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|qr-stacked|band]
-python3 verify_stickers.py stickers.pdf games-2026-10-10.json
+python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|qr-stacked|band] [--spine]
+python3 verify_stickers.py stickers.pdf games-2026-10-10.json [render_dir] [--spine]
 ```
 
-- Stickers come out in shelf-code order, so each shelf's games are together.
+- Stickers come out in shelf order, so each shelf's games are together: by section, then small, medium and large boxes
+  (S, M, L: top shelf down), then number.
 - `layout.json` is optional. It records each sticker's choices: name lines and size, details lines, QR size and page.
 - To print new games only, give `library_stickers.py` a list with just those games.
 
