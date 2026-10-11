@@ -20,10 +20,9 @@ Layouts (--layout=):
   box        (the default) two 75 x 100 mm stickers a page, for the box.
   box-label  (Mo, 11 Oct: "print the core and the spine and have 2 games at once") each game's 25 mm spine label prints
              under its sticker, in a 30 mm square either side of the middle cut line; the stickers above are 70 mm tall.
-  spine      (Mo, 11 Oct: "make the QR code be placed and everything written on the spine of the game ... split it
-             into maybe 50 and get 3 games at a time") one tall sticker per game for its spine, with everything on it.
-             Medium and large boxes get 50 mm wide ones, three a page; small boxes and RPG books get 30 mm ones, five
-             a page.
+  spine      (Mo, 11 Oct: "make the QR code be placed and everything written on the spine of the game") one tall
+             30 mm sticker per game for its spine, with everything on it, five a page (Mo picked these over 50 mm ones,
+             three a page: "It looks better I feel and should be easy enough to install on all").
 
 Usage: python3 library_stickers.py games.json stickers.pdf [fonts_dir] [layout_report.json] [--logo=qr|qr-stacked|band] [--layout=box|box-label|spine]
 games.json is a list of {title, code, qr, players, time, ages}; code is the shelf code (custom.library_code),
@@ -154,11 +153,10 @@ SPINE_QR_BOX = (PAGE_H - MARGIN - SPINE_TITLE_HEIGHT - QR_GAP) - (spine_block_to
 
 # Everything on the spine (--layout=spine). One tall sticker per game, running down its spine: the section in a black
 # band, the size letter and number big, the full code, the QR code, then the name and details. Every sticker is laid
-# out from the top, so on a shelf the numbers and codes line up. Medium and large boxes get wide ones, three a page,
-# with Gobgob in the QR code. Small boxes and RPG books, whose spines are about 3 to 4 cm, get narrow ones, five a
-# page: a plain QR code (Gobgob's bigger version read from half as many 'phone photos' at that size), the name and
-# details running down the spine like a book's title, and Gobgob at the foot. A game's 'spine' field ('wide' or
-# 'narrow') overrides the choice, for a thin medium box, say.
+# out from the top, so on a shelf the numbers and codes line up. Every game gets a narrow one, five a page (Mo, 11 Oct:
+# he liked them better than the wide ones, three a page): a plain QR code (Gobgob's bigger version read from half as
+# many 'phone photos' at that size), the name and details running down the spine like a book's title, and Gobgob at
+# the foot. A game with a 'spine' field of 'wide' gets the 50 mm one instead, with Gobgob in its QR code.
 TALL = {
     'wide': {'w': 50 * mm, 'pad': 2.5 * mm, 'band': 11 * mm, 'band_big': 24, 'number': 34, 'code': 7.5,
              'gap': 2.4 * mm, 'name': 15, 'name_min': 8, 'stats': 9.5, 'stats_min': 9},
@@ -624,11 +622,8 @@ def draw_spine(c, x, y, code):
 
 
 def tall_kind(game):
-    """'wide' or 'narrow': small boxes (S) and RPG books are narrow, everything else wide, unless the game says."""
-    if game.get('spine') in TALL:
-        return game['spine']
-    shelf, _, rest = game['code'].partition('-')
-    return 'narrow' if shelf == 'DGLRPG' or (rest[:1] == 'S' and rest[1:].isdigit()) else 'wide'
+    """'narrow' for every game, unless its 'spine' field asks for 'wide'."""
+    return game['spine'] if game.get('spine') in TALL else 'narrow'
 
 
 def tall_pages(games):

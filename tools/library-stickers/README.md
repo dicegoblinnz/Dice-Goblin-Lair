@@ -30,17 +30,35 @@ for its spine, 100 mm tall:
 - From the top: the section in a black band (3–4 PLAYERS, KIDS & FAMILY, RPG BOOKS), the size letter and number big
   (M052), the full code, the QR code, then the name and details. Every sticker is laid out from the top, so with each
   stuck at the same height the numbers line up along the shelf.
-- Medium and large boxes get 50 mm wide stickers, three a page, with Gobgob in the QR code (41 mm).
-- Small boxes and RPG books have spines about 3 to 4 cm wide, so they get 30 mm stickers, five a page. Their QR code
-  is the plain one (23 mm): Gobgob's version read from about half the 'phone photos' at that size, the plain one from
-  nearly all. The name and details run down the spine like a book's title, and Gobgob sits at the foot.
-- Which width a game gets comes from its code (S and RPG narrow, the rest wide). A `spine` field of `wide` or
-  `narrow` in the games list overrides it, for a thin medium box, say.
+- Every game gets a 30 mm wide sticker, five a page: Mo picked these over 50 mm ones, three a page ("It looks better
+  I feel and should be easy enough to install on all", 11 Oct). They fit spines down to about 3 cm.
+- The QR code is the plain one (23 mm): Gobgob's version read from about half the 'phone photos' at that size, the
+  plain one from nearly all. The name and details run down the spine like a book's title, and Gobgob sits at the foot.
+- A `spine` field of `wide` in the games list gives that game the 50 mm sticker instead, with Gobgob in its 41 mm QR
+  code, on pages of three.
 - Pages hold one width, in shelf order, so every page of a width has its cut lines in the same places and a stack
   can be cut at once.
 - An outline is printed 2 mm inside the cut lines, so a sticker looks finished however it's cut out.
 - All 533 games build and check both ways (every game wide, and every game narrow): no name cut short, every QR code
   read at 203 dpi.
+
+### The renumbering (`renumber-2026-10-11/`, 11–12 Oct 2026)
+
+Mo: "find out the sizes of all first and then assign the codes accordingly". Every board game got a box size and a
+new code: section, size letter, then its place in A–Z order within that run (DGL34-022 Catan is now DGL34-M011). RPG
+books keep their codes.
+
+- Sizes come from BoardGameGeek's printings (`bgg-printings.json`: each game's English printings, else any language),
+  read through its versions API one request at a time. `classify.py` takes the size most recent English printings
+  have: small if the longest side is 24 cm or less; large if longer than 32 cm, 3 kg or more, or thicker than 9 cm on
+  a box over 27.5 cm; medium otherwise. 446 games had measurements.
+- `final_sizes.py` adds 5 corrections (where BGG mixes in another box: Munchkin, Munchkin Harry Potter Deluxe, Everdell:
+  The Complete Collection, Ready Set Bet, Smartphone Inc.) and educated guesses for the 51 with no measurements (card
+  decks, mass-market and kids' games), each marked as such.
+- `assign_codes.py` numbers each section and size from 001 (a leading "The" ignored, as before) and writes `codes.json`:
+  old code, new code, size and where it came from, for all 533. `print-games.json` is the sticker list in shelf order.
+- 194 small, 227 medium, 76 large, 36 RPG books. The spine stickers: 107 pages, five a page.
+- Running the three scripts again from the kept data gives the same codes.
 
 ### Spine labels (`--layout=box-label`, 11 Oct 2026)
 

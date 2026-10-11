@@ -1,0 +1,4266 @@
+[
+{
+"title": "7 Wonders Duel",
+"code": "DGL12-S001",
+"qr": "DGL12-S001",
+"players": "2",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "A Little Wordy",
+"code": "DGL12-S002",
+"qr": "DGL12-S002",
+"players": "2",
+"time": "15 min",
+"ages": "10 years or older"
+},
+{
+"title": "BattleCON: War of Indines",
+"code": "DGL12-S003",
+"qr": "DGL12-S003",
+"players": "2",
+"time": "15–60 min",
+"ages": "9 years or older"
+},
+{
+"title": "Codenames: Duet",
+"code": "DGL12-S004",
+"qr": "DGL12-S004",
+"players": "2",
+"time": "15–30 min",
+"ages": "12 years or older"
+},
+{
+"title": "Final Fantasy Trading Card Game Decks",
+"code": "DGL12-S005",
+"qr": "DGL12-S005",
+"players": "2",
+"time": "20 min",
+"ages": "Teens"
+},
+{
+"title": "Flesh and Blood Blitz decks",
+"code": "DGL12-S006",
+"qr": "DGL12-S006",
+"players": "2",
+"time": null,
+"ages": null
+},
+{
+"title": "The Fox in the Forest",
+"code": "DGL12-S007",
+"qr": "DGL12-S007",
+"players": "2",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Hive",
+"code": "DGL12-S008",
+"qr": "DGL12-S008",
+"players": "2",
+"time": "20 min",
+"ages": "9 years or older"
+},
+{
+"title": "Imhotep: The Duel",
+"code": "DGL12-S009",
+"qr": "DGL12-S009",
+"players": "2",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Jaipur",
+"code": "DGL12-S010",
+"qr": "DGL12-S010",
+"players": "2",
+"time": "30 min",
+"ages": "12 years or older"
+},
+{
+"title": "King of Tokyo: Duel",
+"code": "DGL12-S011",
+"qr": "DGL12-S011",
+"players": "2",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Kingdomino Duel",
+"code": "DGL12-S012",
+"qr": "DGL12-S012",
+"players": "2",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Lindyhop",
+"code": "DGL12-S013",
+"qr": "DGL12-S013",
+"players": "2",
+"time": "15–30 min",
+"ages": "10 years or older"
+},
+{
+"title": "My Hero Academia Collectible Card Game 2-Player Rival Box",
+"code": "DGL12-S014",
+"qr": "DGL12-S014",
+"players": "2",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Patchwork",
+"code": "DGL12-S015",
+"qr": "DGL12-S015",
+"players": "2",
+"time": "15–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Riftbound: The League of Legends Trading Card Game Trial decks",
+"code": "DGL12-S016",
+"qr": "DGL12-S016",
+"players": "2",
+"time": null,
+"ages": "Teens"
+},
+{
+"title": "Rivals for Catan",
+"code": "DGL12-S017",
+"qr": "DGL12-S017",
+"players": "2",
+"time": "45–120 min",
+"ages": "10 years or older"
+},
+{
+"title": "SHŌBU",
+"code": "DGL12-S018",
+"qr": "DGL12-S018",
+"players": "2",
+"time": "15–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Splendor Duel",
+"code": "DGL12-S019",
+"qr": "DGL12-S019",
+"players": "2",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Targi",
+"code": "DGL12-S020",
+"qr": "DGL12-S020",
+"players": "2",
+"time": "60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Trinity",
+"code": "DGL12-S021",
+"qr": "DGL12-S021",
+"players": "2",
+"time": null,
+"ages": null
+},
+{
+"title": "Android: Netrunner",
+"code": "DGL12-M001",
+"qr": "DGL12-M001",
+"players": "2",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Azul Duel",
+"code": "DGL12-M002",
+"qr": "DGL12-M002",
+"players": "2",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Battle of the Pyramids",
+"code": "DGL12-M003",
+"qr": "DGL12-M003",
+"players": "2",
+"time": "40 min",
+"ages": "8 years or older"
+},
+{
+"title": "BattleCON: Trials of Indines",
+"code": "DGL12-M004",
+"qr": "DGL12-M004",
+"players": "2",
+"time": "10–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Cosmic Encounter Duel",
+"code": "DGL12-M005",
+"qr": "DGL12-M005",
+"players": "2",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Everdell Duo",
+"code": "DGL12-M006",
+"qr": "DGL12-M006",
+"players": "1–2",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Five Nights at Freddy's: Survive 'Til 6AM",
+"code": "DGL12-M007",
+"qr": "DGL12-M007",
+"players": "1–2",
+"time": "20 min",
+"ages": "Teens"
+},
+{
+"title": "Guess Who? Clue Game",
+"code": "DGL12-M008",
+"qr": "DGL12-M008",
+"players": "2",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Lost Cities: The Board Game",
+"code": "DGL12-M009",
+"qr": "DGL12-M009",
+"players": "2",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Mr. Jack",
+"code": "DGL12-M010",
+"qr": "DGL12-M010",
+"players": "2",
+"time": "30 min",
+"ages": "9 years or older"
+},
+{
+"title": "Orlog: Assassin's Creed Valhalla Dice Game",
+"code": "DGL12-M011",
+"qr": "DGL12-M011",
+"players": "2",
+"time": "10–15 min",
+"ages": "Teens"
+},
+{
+"title": "Sky Team",
+"code": "DGL12-M012",
+"qr": "DGL12-M012",
+"players": "2",
+"time": "20 min",
+"ages": "12 years or older"
+},
+{
+"title": "Under Falling Skies",
+"code": "DGL12-M013",
+"qr": "DGL12-M013",
+"players": "1",
+"time": "20–40 min",
+"ages": "12 years or older"
+},
+{
+"title": "Backgammon",
+"code": "DGL12-L001",
+"qr": "DGL12-L001",
+"players": "2",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Escape Room: The Game – Puzzle Adventures: Secret of The Scientist",
+"code": "DGL12-L002",
+"qr": "DGL12-L002",
+"players": "1–2",
+"time": "150 min",
+"ages": "Teens"
+},
+{
+"title": "Foosketball",
+"code": "DGL12-L003",
+"qr": "DGL12-L003",
+"players": "2",
+"time": null,
+"ages": "8 years or older"
+},
+{
+"title": "KLASK",
+"code": "DGL12-L004",
+"qr": "DGL12-L004",
+"players": "2",
+"time": "10 min",
+"ages": "8 years or older"
+},
+{
+"title": "Stratego",
+"code": "DGL12-L005",
+"qr": "DGL12-L005",
+"players": "2",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Adventure Games: Monochrome Inc.",
+"code": "DGL34-S001",
+"qr": "DGL34-S001",
+"players": "1–4",
+"time": "75 min per chapter",
+"ages": "Teens"
+},
+{
+"title": "Adventure Games: The Dungeon",
+"code": "DGL34-S002",
+"qr": "DGL34-S002",
+"players": "1–4",
+"time": "75 min per chapter",
+"ages": "12 years or older"
+},
+{
+"title": "Adventure Games: The Grand Hotel Abaddon",
+"code": "DGL34-S003",
+"qr": "DGL34-S003",
+"players": "1–4",
+"time": "75 min per chapter",
+"ages": "12 years or older"
+},
+{
+"title": "Adventure Games: The Volcanic Island",
+"code": "DGL34-S004",
+"qr": "DGL34-S004",
+"players": "1–4",
+"time": "75 min per chapter",
+"ages": "12 years or older"
+},
+{
+"title": "Ars Alchimia",
+"code": "DGL34-S005",
+"qr": "DGL34-S005",
+"players": "2–4",
+"time": "100 min",
+"ages": "10 years or older"
+},
+{
+"title": "Cat Capers",
+"code": "DGL34-S006",
+"qr": "DGL34-S006",
+"players": "2–4",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Chocobo Party Up!",
+"code": "DGL34-S007",
+"qr": "DGL34-S007",
+"players": "2–4",
+"time": "30–45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Core Connection: Rise of Atlantis",
+"code": "DGL34-S008",
+"qr": "DGL34-S008",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Dice Dodgems",
+"code": "DGL34-S009",
+"qr": "DGL34-S009",
+"players": "2–4",
+"time": "30 min",
+"ages": null
+},
+{
+"title": "Diceborn Heroes",
+"code": "DGL34-S010",
+"qr": "DGL34-S010",
+"players": "1–4",
+"time": "60–90 min",
+"ages": "10 years or older"
+},
+{
+"title": "Dragonwood",
+"code": "DGL34-S011",
+"qr": "DGL34-S011",
+"players": "2–4",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Dungeon Roll",
+"code": "DGL34-S012",
+"qr": "DGL34-S012",
+"players": "1–4",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Floating Floors",
+"code": "DGL34-S013",
+"qr": "DGL34-S013",
+"players": "2–4",
+"time": "20–40 min",
+"ages": "12 years or older"
+},
+{
+"title": "Forbidden Island",
+"code": "DGL34-S014",
+"qr": "DGL34-S014",
+"players": "2–4",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Fort",
+"code": "DGL34-S015",
+"qr": "DGL34-S015",
+"players": "2–4",
+"time": "20–40 min",
+"ages": "10 years or older"
+},
+{
+"title": "Gardeners",
+"code": "DGL34-S016",
+"qr": "DGL34-S016",
+"players": "1–4",
+"time": "15 min",
+"ages": "10 years or older"
+},
+{
+"title": "Gloom",
+"code": "DGL34-S017",
+"qr": "DGL34-S017",
+"players": "2–4",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Happy Little Dinosaurs",
+"code": "DGL34-S018",
+"qr": "DGL34-S018",
+"players": "2–4",
+"time": "30–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Hey, That's My Fish!",
+"code": "DGL34-S019",
+"qr": "DGL34-S019",
+"players": "2–4",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Karmaka",
+"code": "DGL34-S020",
+"qr": "DGL34-S020",
+"players": "2–4",
+"time": "25–60 min",
+"ages": "Teens"
+},
+{
+"title": "Kiitos",
+"code": "DGL34-S021",
+"qr": "DGL34-S021",
+"players": "2–4",
+"time": "45–60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Kitara",
+"code": "DGL34-S022",
+"qr": "DGL34-S022",
+"players": "2–4",
+"time": "40 min",
+"ages": "10 years or older"
+},
+{
+"title": "Legends Untold: The Great Sewers Novice Set",
+"code": "DGL34-S023",
+"qr": "DGL34-S023",
+"players": "1–4",
+"time": "About 60 min",
+"ages": "12 years or older"
+},
+{
+"title": "The Lost Words",
+"code": "DGL34-S024",
+"qr": "DGL34-S024",
+"players": "2–4",
+"time": null,
+"ages": null
+},
+{
+"title": "Love Formula",
+"code": "DGL34-S025",
+"qr": "DGL34-S025",
+"players": "2–4",
+"time": "15–30 min",
+"ages": "12 years or older"
+},
+{
+"title": "Love Letter",
+"code": "DGL34-S026",
+"qr": "DGL34-S026",
+"players": "2–4",
+"time": "20 min",
+"ages": "10 years or older"
+},
+{
+"title": "Mint Works",
+"code": "DGL34-S027",
+"qr": "DGL34-S027",
+"players": "1–4",
+"time": "10–20 min",
+"ages": "Teens"
+},
+{
+"title": "Oaxaca: Crafts of a Culture",
+"code": "DGL34-S028",
+"qr": "DGL34-S028",
+"players": "1–4",
+"time": "20–40 min",
+"ages": "10 years or older"
+},
+{
+"title": "Ohanami",
+"code": "DGL34-S029",
+"qr": "DGL34-S029",
+"players": "2–4",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Paladins of the West Kingdom",
+"code": "DGL34-S030",
+"qr": "DGL34-S030",
+"players": "1–4",
+"time": "90–120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Pandemic: Hot Zone – North America",
+"code": "DGL34-S031",
+"qr": "DGL34-S031",
+"players": "2–4",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Raid the Pantry",
+"code": "DGL34-S032",
+"qr": "DGL34-S032",
+"players": "2–4",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Regicide",
+"code": "DGL34-S033",
+"qr": "DGL34-S033",
+"players": "1–4",
+"time": "10–30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Saints: The Card Game",
+"code": "DGL34-S034",
+"qr": "DGL34-S034",
+"players": "2–4",
+"time": "20–30 min",
+"ages": "Teens"
+},
+{
+"title": "Shardhunters",
+"code": "DGL34-S035",
+"qr": "DGL34-S035",
+"players": "1–4",
+"time": "20 min",
+"ages": "12 years or older"
+},
+{
+"title": "Shelfie Stacker",
+"code": "DGL34-S036",
+"qr": "DGL34-S036",
+"players": "1–4",
+"time": "20–40 min",
+"ages": "8 years or older"
+},
+{
+"title": "Squirrel or Die",
+"code": "DGL34-S037",
+"qr": "DGL34-S037",
+"players": "2–4",
+"time": "20 min",
+"ages": "12 years or older"
+},
+{
+"title": "Sword Art Online Board Game: Sword of Fellows",
+"code": "DGL34-S038",
+"qr": "DGL34-S038",
+"players": "1–4",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "The Terrifying Girl Disorder",
+"code": "DGL34-S039",
+"qr": "DGL34-S039",
+"players": "3–4",
+"time": "30 min",
+"ages": "12 years or older"
+},
+{
+"title": "Viscounts of the West Kingdom",
+"code": "DGL34-S040",
+"qr": "DGL34-S040",
+"players": "1–4",
+"time": "60–90 min",
+"ages": "12 years or older"
+},
+{
+"title": "VivaJava: The Coffee Game: The Dice Game",
+"code": "DGL34-S041",
+"qr": "DGL34-S041",
+"players": "1–4",
+"time": "20–40 min",
+"ages": "10 years or older"
+},
+{
+"title": "War Chest",
+"code": "DGL34-S042",
+"qr": "DGL34-S042",
+"players": "2 or 4",
+"time": "30–60 min",
+"ages": "Teens"
+},
+{
+"title": "World Changers",
+"code": "DGL34-S043",
+"qr": "DGL34-S043",
+"players": "1–4",
+"time": "10 min",
+"ages": "10 years or older"
+},
+{
+"title": "The Adventures of Robin Hood",
+"code": "DGL34-M001",
+"qr": "DGL34-M001",
+"players": "2–4",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Alchemists",
+"code": "DGL34-M002",
+"qr": "DGL34-M002",
+"players": "2–4",
+"time": "120 min",
+"ages": "Teens"
+},
+{
+"title": "Anno 1800: The Board Game",
+"code": "DGL34-M003",
+"qr": "DGL34-M003",
+"players": "2–4",
+"time": "120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Arkham Horror: Final Hour",
+"code": "DGL34-M004",
+"qr": "DGL34-M004",
+"players": "1–4",
+"time": "60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Arkham Horror: The Card Game",
+"code": "DGL34-M005",
+"qr": "DGL34-M005",
+"players": "1–4",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "AuZtralia",
+"code": "DGL34-M006",
+"qr": "DGL34-M006",
+"players": "1–4",
+"time": "30–120 min",
+"ages": "Teens"
+},
+{
+"title": "Azul",
+"code": "DGL34-M007",
+"qr": "DGL34-M007",
+"players": "2–4",
+"time": "30–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Batman Who Laughs Rising",
+"code": "DGL34-M008",
+"qr": "DGL34-M008",
+"players": "1–4",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "BattleCON: Wanderers of Indines",
+"code": "DGL34-M009",
+"qr": "DGL34-M009",
+"players": "2–4",
+"time": "15–30 min",
+"ages": "12 years or older"
+},
+{
+"title": "BioShock Infinite: The Siege of Columbia",
+"code": "DGL34-M010",
+"qr": "DGL34-M010",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "Catan",
+"code": "DGL34-M011",
+"qr": "DGL34-M011",
+"players": "3–4",
+"time": "60+ min",
+"ages": "10 years or older"
+},
+{
+"title": "Champions of Midgard",
+"code": "DGL34-M012",
+"qr": "DGL34-M012",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "10 years or older"
+},
+{
+"title": "Chronicles of Crime",
+"code": "DGL34-M013",
+"qr": "DGL34-M013",
+"players": "1–4",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "Chronicles of Crime: 1400",
+"code": "DGL34-M014",
+"qr": "DGL34-M014",
+"players": "1–4",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "Chronicles of Crime: 1900",
+"code": "DGL34-M015",
+"qr": "DGL34-M015",
+"players": "1–4",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "Clank!: A Deck-Building Adventure",
+"code": "DGL34-M016",
+"qr": "DGL34-M016",
+"players": "2–4",
+"time": "30–60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Cowboy Bebop: Space Serenade",
+"code": "DGL34-M017",
+"qr": "DGL34-M017",
+"players": "2–4",
+"time": "30–90 min",
+"ages": "Teens"
+},
+{
+"title": "DC Deck-Building Game: Rebirth",
+"code": "DGL34-M018",
+"qr": "DGL34-M018",
+"players": "1–4",
+"time": "45–90 min",
+"ages": "Teens"
+},
+{
+"title": "Disney Villainous: Evil Comes Prepared",
+"code": "DGL34-M019",
+"qr": "DGL34-M019",
+"players": "2–3",
+"time": "40–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Disney Villainous: Perfectly Wretched",
+"code": "DGL34-M020",
+"qr": "DGL34-M020",
+"players": "2–3",
+"time": "40–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Disney Villainous: Wicked to the Core",
+"code": "DGL34-M021",
+"qr": "DGL34-M021",
+"players": "2–3",
+"time": "50–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Dragon Ball Z: Road Trip",
+"code": "DGL34-M022",
+"qr": "DGL34-M022",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Drop It",
+"code": "DGL34-M023",
+"qr": "DGL34-M023",
+"players": "2–4",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Dune: House Secrets",
+"code": "DGL34-M024",
+"qr": "DGL34-M024",
+"players": "1–4",
+"time": "90–180 min",
+"ages": "Teens"
+},
+{
+"title": "Dungeons & Dragons: Adventure Begins",
+"code": "DGL34-M025",
+"qr": "DGL34-M025",
+"players": "2–4",
+"time": null,
+"ages": "10 years or older"
+},
+{
+"title": "Escape the Horde",
+"code": "DGL34-M026",
+"qr": "DGL34-M026",
+"players": "2–4",
+"time": null,
+"ages": null
+},
+{
+"title": "Five Tribes",
+"code": "DGL34-M027",
+"qr": "DGL34-M027",
+"players": "2–4",
+"time": "40–80 min",
+"ages": "Teens"
+},
+{
+"title": "Founders of Gloomhaven",
+"code": "DGL34-M028",
+"qr": "DGL34-M028",
+"players": "1–4",
+"time": "120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Funfair",
+"code": "DGL34-M029",
+"qr": "DGL34-M029",
+"players": "2–4",
+"time": "30–60 min",
+"ages": "Teens"
+},
+{
+"title": "Funkoverse Strategy Game: DC Comics",
+"code": "DGL34-M030",
+"qr": "DGL34-M030",
+"players": "2–4",
+"time": "20–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Funkoverse Strategy Game: Game of Thrones",
+"code": "DGL34-M031",
+"qr": "DGL34-M031",
+"players": "2–4",
+"time": "20–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Funkoverse Strategy Game: Harry Potter",
+"code": "DGL34-M032",
+"qr": "DGL34-M032",
+"players": "2–4",
+"time": "20–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Galilean Moons",
+"code": "DGL34-M033",
+"qr": "DGL34-M033",
+"players": "1–4",
+"time": "40–60 min",
+"ages": "Teens"
+},
+{
+"title": "Gnomopolis",
+"code": "DGL34-M034",
+"qr": "DGL34-M034",
+"players": "1–4",
+"time": "About 45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Ishtar: Gardens of Babylon",
+"code": "DGL34-M035",
+"qr": "DGL34-M035",
+"players": "2–4",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Jaws",
+"code": "DGL34-M036",
+"qr": "DGL34-M036",
+"players": "2–4",
+"time": "60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Komodo",
+"code": "DGL34-M037",
+"qr": "DGL34-M037",
+"players": "2–4",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Kung Fu Panda: The Board Game",
+"code": "DGL34-M038",
+"qr": "DGL34-M038",
+"players": "2–4",
+"time": "10–30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Marvel Champions: The Card Game",
+"code": "DGL34-M039",
+"qr": "DGL34-M039",
+"players": "1–4",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Marvel United",
+"code": "DGL34-M040",
+"qr": "DGL34-M040",
+"players": "1–4",
+"time": "45+ min",
+"ages": "Teens"
+},
+{
+"title": "My City",
+"code": "DGL34-M041",
+"qr": "DGL34-M041",
+"players": "2–4",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Near and Far",
+"code": "DGL34-M042",
+"qr": "DGL34-M042",
+"players": "2–4",
+"time": "90–120 min",
+"ages": "Teens"
+},
+{
+"title": "Ni no Kuni II: The Board Game",
+"code": "DGL34-M043",
+"qr": "DGL34-M043",
+"players": "1–4",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Nickelodeon Splat Attack!",
+"code": "DGL34-M044",
+"qr": "DGL34-M044",
+"players": "2–4",
+"time": "45–60 min",
+"ages": "Teens"
+},
+{
+"title": "Nova Luna",
+"code": "DGL34-M045",
+"qr": "DGL34-M045",
+"players": "1–4",
+"time": "30–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Orléans",
+"code": "DGL34-M046",
+"qr": "DGL34-M046",
+"players": "2–4",
+"time": "90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Pandemic",
+"code": "DGL34-M047",
+"qr": "DGL34-M047",
+"players": "2–4",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Peaky Blinders: Under New Management",
+"code": "DGL34-M048",
+"qr": "DGL34-M048",
+"players": "2–4",
+"time": "90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Planet",
+"code": "DGL34-M049",
+"qr": "DGL34-M049",
+"players": "2–4",
+"time": "30–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Popcorn",
+"code": "DGL34-M050",
+"qr": "DGL34-M050",
+"players": "2–4",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Realm of Sand",
+"code": "DGL34-M051",
+"qr": "DGL34-M051",
+"players": "1–4",
+"time": "30–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "The Red Dragon Inn",
+"code": "DGL34-M052",
+"qr": "DGL34-M052",
+"players": "2–4",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Robinson Crusoe: Adventures on the Cursed Island",
+"code": "DGL34-M053",
+"qr": "DGL34-M053",
+"players": "1–4",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "Root",
+"code": "DGL34-M054",
+"qr": "DGL34-M054",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "10 years or older"
+},
+{
+"title": "Santorini: Second Edition",
+"code": "DGL34-M055",
+"qr": "DGL34-M055",
+"players": "2–4",
+"time": "15–20 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Shared Dream",
+"code": "DGL34-M056",
+"qr": "DGL34-M056",
+"players": "2–4",
+"time": "90–120 min",
+"ages": "Teens"
+},
+{
+"title": "Sonar Family",
+"code": "DGL34-M057",
+"qr": "DGL34-M057",
+"players": "2–4",
+"time": "30–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Sort it Out!",
+"code": "DGL34-M058",
+"qr": "DGL34-M058",
+"players": "2–4",
+"time": null,
+"ages": "12 years or older"
+},
+{
+"title": "Space Gate Odyssey",
+"code": "DGL34-M059",
+"qr": "DGL34-M059",
+"players": "2–4",
+"time": "90 min",
+"ages": "12 years or older"
+},
+{
+"title": "SpellBook",
+"code": "DGL34-M060",
+"qr": "DGL34-M060",
+"players": "1–4",
+"time": "45 min",
+"ages": "12 years or older"
+},
+{
+"title": "Spirit Island",
+"code": "DGL34-M061",
+"qr": "DGL34-M061",
+"players": "1–4",
+"time": "90–120 min",
+"ages": "Teens"
+},
+{
+"title": "Splendor",
+"code": "DGL34-M062",
+"qr": "DGL34-M062",
+"players": "2–4",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Splendor: Marvel",
+"code": "DGL34-M063",
+"qr": "DGL34-M063",
+"players": "2–4",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "스플렌더: Pokémon (Splendor: Pokémon)",
+"code": "DGL34-M064",
+"qr": "DGL34-M064",
+"players": "2–4",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Star Trek: Catan",
+"code": "DGL34-M065",
+"qr": "DGL34-M065",
+"players": "3–4",
+"time": "75 min",
+"ages": "10 years or older"
+},
+{
+"title": "Star Wars: Dark Side Rising",
+"code": "DGL34-M066",
+"qr": "DGL34-M066",
+"players": "2–4",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Star Wars Villainous: Scum and Villainy",
+"code": "DGL34-M067",
+"qr": "DGL34-M067",
+"players": "2–3",
+"time": "50 min",
+"ages": "10 years or older"
+},
+{
+"title": "Starlight Stage",
+"code": "DGL34-M068",
+"qr": "DGL34-M068",
+"players": "3–4",
+"time": "30–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Takenoko",
+"code": "DGL34-M069",
+"qr": "DGL34-M069",
+"players": "2–4",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Tekhenu: Obelisk of the Sun",
+"code": "DGL34-M070",
+"qr": "DGL34-M070",
+"players": "1–4",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "Terraforming Mars: Ares Expedition",
+"code": "DGL34-M071",
+"qr": "DGL34-M071",
+"players": "1–4",
+"time": "45–60 min",
+"ages": "Teens"
+},
+{
+"title": "Thanos Rising: Avengers Infinity War",
+"code": "DGL34-M072",
+"qr": "DGL34-M072",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "10 years or older"
+},
+{
+"title": "T.I.M.E Stories",
+"code": "DGL34-M073",
+"qr": "DGL34-M073",
+"players": "2–4",
+"time": "90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Tobago",
+"code": "DGL34-M074",
+"qr": "DGL34-M074",
+"players": "2–4",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unsolved Case Files: Jamie Banks",
+"code": "DGL34-M075",
+"qr": "DGL34-M075",
+"players": "1–4",
+"time": "2–6 hours",
+"ages": "Teens"
+},
+{
+"title": "Untold: Adventures Await",
+"code": "DGL34-M076",
+"qr": "DGL34-M076",
+"players": "1–4",
+"time": "45–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Upkeep",
+"code": "DGL34-M077",
+"qr": "DGL34-M077",
+"players": "2–4",
+"time": null,
+"ages": null
+},
+{
+"title": "Vault of Dragons",
+"code": "DGL34-M078",
+"qr": "DGL34-M078",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "Whitehall Mystery",
+"code": "DGL34-M079",
+"qr": "DGL34-M079",
+"players": "2–4",
+"time": "45–60 min",
+"ages": "Teens"
+},
+{
+"title": "XCOM: The Board Game",
+"code": "DGL34-M080",
+"qr": "DGL34-M080",
+"players": "1–4",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "Arcadia Quest",
+"code": "DGL34-L001",
+"qr": "DGL34-L001",
+"players": "2–4",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Arcadia Quest: Inferno",
+"code": "DGL34-L002",
+"qr": "DGL34-L002",
+"players": "2–4",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "The Binding of Isaac: Four Souls",
+"code": "DGL34-L003",
+"qr": "DGL34-L003",
+"players": "2–4",
+"time": "30–60 min",
+"ages": "Teens"
+},
+{
+"title": "Blood Rage",
+"code": "DGL34-L004",
+"qr": "DGL34-L004",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "BONK",
+"code": "DGL34-L005",
+"qr": "DGL34-L005",
+"players": "2–4",
+"time": "10 min",
+"ages": "8 years or older"
+},
+{
+"title": "Catan: Starfarers",
+"code": "DGL34-L006",
+"qr": "DGL34-L006",
+"players": "3–4",
+"time": "120 min",
+"ages": "Teens"
+},
+{
+"title": "Century: Big Box",
+"code": "DGL34-L007",
+"qr": "DGL34-L007",
+"players": "2–4",
+"time": "30–40 min",
+"ages": "8 years or older"
+},
+{
+"title": "Crokinole",
+"code": "DGL34-L008",
+"qr": "DGL34-L008",
+"players": "2–4",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Cry Havoc",
+"code": "DGL34-L009",
+"qr": "DGL34-L009",
+"players": "2–4",
+"time": "60–120 min",
+"ages": "10 years or older"
+},
+{
+"title": "Dark Souls: The Board Game",
+"code": "DGL34-L010",
+"qr": "DGL34-L010",
+"players": "1–4",
+"time": "90–120 min",
+"ages": "Teens"
+},
+{
+"title": "Familiar Tales",
+"code": "DGL34-L011",
+"qr": "DGL34-L011",
+"players": "1–4",
+"time": "45–120 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Game of Life",
+"code": "DGL34-L012",
+"qr": "DGL34-L012",
+"players": "2–4",
+"time": "60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Gloomhaven: Jaws of the Lion",
+"code": "DGL34-L013",
+"qr": "DGL34-L013",
+"players": "1–4",
+"time": "30–120 min",
+"ages": "Teens"
+},
+{
+"title": "KLASK 4",
+"code": "DGL34-L014",
+"qr": "DGL34-L014",
+"players": "4",
+"time": "10 min",
+"ages": "8 years or older"
+},
+{
+"title": "Mage Knight Board Game",
+"code": "DGL34-L015",
+"qr": "DGL34-L015",
+"players": "1–4",
+"time": "60+ min",
+"ages": "Teens"
+},
+{
+"title": "Mechs vs. Minions (League of Legends)",
+"code": "DGL34-L016",
+"qr": "DGL34-L016",
+"players": "2–4",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "Monopoly Speed",
+"code": "DGL34-L017",
+"qr": "DGL34-L017",
+"players": "2–4",
+"time": "10 min",
+"ages": "8 years or older"
+},
+{
+"title": "On Mars",
+"code": "DGL34-L018",
+"qr": "DGL34-L018",
+"players": "1–4",
+"time": "90–150 min",
+"ages": "Teens"
+},
+{
+"title": "Rummikub",
+"code": "DGL34-L019",
+"qr": "DGL34-L019",
+"players": "2–4",
+"time": "60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Star Trek: Ascendancy",
+"code": "DGL34-L020",
+"qr": "DGL34-L020",
+"players": "3",
+"time": "180 min",
+"ages": "Teens"
+},
+{
+"title": "Star Wars: Rebellion",
+"code": "DGL34-L021",
+"qr": "DGL34-L021",
+"players": "2–4",
+"time": "180–240 min",
+"ages": "Teens"
+},
+{
+"title": "Starcadia Quest",
+"code": "DGL34-L022",
+"qr": "DGL34-L022",
+"players": "2–4",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Street Masters",
+"code": "DGL34-L023",
+"qr": "DGL34-L023",
+"players": "1–4",
+"time": "45–120 min",
+"ages": "Teens"
+},
+{
+"title": "Through the Ages: A New Story of Civilization",
+"code": "DGL34-L024",
+"qr": "DGL34-L024",
+"players": "2–4",
+"time": "120 min",
+"ages": "Teens"
+},
+{
+"title": "Toy Story: Obstacles & Adventures",
+"code": "DGL34-L025",
+"qr": "DGL34-L025",
+"players": "2–4",
+"time": "45–90 min",
+"ages": "8 years or older"
+},
+{
+"title": "Ubongo 3D",
+"code": "DGL34-L026",
+"qr": "DGL34-L026",
+"players": "2–4",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Archaeology: The New Expedition",
+"code": "DGL56-S001",
+"qr": "DGL56-S001",
+"players": "2–5",
+"time": "20–30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Argoat",
+"code": "DGL56-S002",
+"qr": "DGL56-S002",
+"players": "3–5",
+"time": "45–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Astronomy Fluxx",
+"code": "DGL56-S003",
+"qr": "DGL56-S003",
+"players": "2–6",
+"time": "5–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Cat in the Box: Deluxe Edition",
+"code": "DGL56-S004",
+"qr": "DGL56-S004",
+"players": "2–5",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Chocobo's Crystal Hunt",
+"code": "DGL56-S005",
+"qr": "DGL56-S005",
+"players": "3–5",
+"time": "10–20 min",
+"ages": "Teens"
+},
+{
+"title": "Coloretto",
+"code": "DGL56-S006",
+"qr": "DGL56-S006",
+"players": "2–5",
+"time": "15–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Coup",
+"code": "DGL56-S007",
+"qr": "DGL56-S007",
+"players": "2–6",
+"time": "15 min",
+"ages": "Teens"
+},
+{
+"title": "Courtisans",
+"code": "DGL56-S008",
+"qr": "DGL56-S008",
+"players": "2–5",
+"time": "20–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Crew: Family Adventure",
+"code": "DGL56-S009",
+"qr": "DGL56-S009",
+"players": "2–5",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Crew: The Quest for Planet Nine",
+"code": "DGL56-S010",
+"qr": "DGL56-S010",
+"players": "2–5",
+"time": "20 min",
+"ages": "10 years or older"
+},
+{
+"title": "Cutthroat Caverns",
+"code": "DGL56-S011",
+"qr": "DGL56-S011",
+"players": "3–6",
+"time": "90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Draftosaurus",
+"code": "DGL56-S012",
+"qr": "DGL56-S012",
+"players": "2–5",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Dungeon Mayhem: Monster Madness",
+"code": "DGL56-S013",
+"qr": "DGL56-S013",
+"players": "2–6",
+"time": "10–15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Dungeons & Dragons: Rock Paper Wizard",
+"code": "DGL56-S014",
+"qr": "DGL56-S014",
+"players": "3–6",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Dynamite Nurse",
+"code": "DGL56-S015",
+"qr": "DGL56-S015",
+"players": "3–5",
+"time": "50 min",
+"ages": "Teens"
+},
+{
+"title": "Escape Room: The Game – Da Vinci's Telescope",
+"code": "DGL56-S016",
+"qr": "DGL56-S016",
+"players": "3–5",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Escape Room: The Game – Tomb Robbers",
+"code": "DGL56-S017",
+"qr": "DGL56-S017",
+"players": "2–5",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Flaming Pyramids",
+"code": "DGL56-S018",
+"qr": "DGL56-S018",
+"players": "2–6",
+"time": "10–20 min",
+"ages": "8 years or older"
+},
+{
+"title": "For Sale",
+"code": "DGL56-S019",
+"qr": "DGL56-S019",
+"players": "3–6",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "For Sale Autorama",
+"code": "DGL56-S020",
+"qr": "DGL56-S020",
+"players": "3–6",
+"time": "30–45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Forever Home",
+"code": "DGL56-S021",
+"qr": "DGL56-S021",
+"players": "1–5",
+"time": "20–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Game",
+"code": "DGL56-S022",
+"qr": "DGL56-S022",
+"players": "1–5",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Grizzled",
+"code": "DGL56-S023",
+"qr": "DGL56-S023",
+"players": "2–5",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Hadrian's Wall",
+"code": "DGL56-S024",
+"qr": "DGL56-S024",
+"players": "1–6",
+"time": "30–60 min",
+"ages": "12 years or older"
+},
+{
+"title": "HODL UP",
+"code": "DGL56-S025",
+"qr": "DGL56-S025",
+"players": "2–6",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Iliad",
+"code": "DGL56-S026",
+"qr": "DGL56-S026",
+"players": "2–6",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Illusion",
+"code": "DGL56-S027",
+"qr": "DGL56-S027",
+"players": "2–5",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Infinity Gauntlet: A Love Letter Game",
+"code": "DGL56-S028",
+"qr": "DGL56-S028",
+"players": "2–6",
+"time": "15 min",
+"ages": "10 years or older"
+},
+{
+"title": "Kenakalan",
+"code": "DGL56-S029",
+"qr": "DGL56-S029",
+"players": "2–6",
+"time": "15–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "League of the Lexicon",
+"code": "DGL56-S030",
+"qr": "DGL56-S030",
+"players": "2–6",
+"time": "30–90 min",
+"ages": "8 years or older"
+},
+{
+"title": "Loaded Answers",
+"code": "DGL56-S031",
+"qr": "DGL56-S031",
+"players": "4–6",
+"time": "60–90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Lost Cities: Roll & Write",
+"code": "DGL56-S032",
+"qr": "DGL56-S032",
+"players": "2–5",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Math Fluxx",
+"code": "DGL56-S033",
+"qr": "DGL56-S033",
+"players": "2–6",
+"time": "5–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Miraris",
+"code": "DGL56-S034",
+"qr": "DGL56-S034",
+"players": "3–6",
+"time": "10–20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Mottainai",
+"code": "DGL56-S035",
+"qr": "DGL56-S035",
+"players": "2–5",
+"time": "15–30 min",
+"ages": "Teens"
+},
+{
+"title": "Muffin Time",
+"code": "DGL56-S036",
+"qr": "DGL56-S036",
+"players": "2–6",
+"time": "20–40 min",
+"ages": "12 years or older"
+},
+{
+"title": "Munchkin",
+"code": "DGL56-S037",
+"qr": "DGL56-S037",
+"players": "3–6",
+"time": "60–120 min",
+"ages": "10 years or older"
+},
+{
+"title": "Munchkin Booty",
+"code": "DGL56-S038",
+"qr": "DGL56-S038",
+"players": "3–6",
+"time": "90 min",
+"ages": "10 years or older"
+},
+{
+"title": "Once Upon a Time: The Storytelling Card Game",
+"code": "DGL56-S039",
+"qr": "DGL56-S039",
+"players": "2–6",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Pictomania (Second Edition)",
+"code": "DGL56-S040",
+"qr": "DGL56-S040",
+"players": "3–6",
+"time": "25 min",
+"ages": "9 years or older"
+},
+{
+"title": "Point Salad",
+"code": "DGL56-S041",
+"qr": "DGL56-S041",
+"players": "2–6",
+"time": "15–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Processing: A Game of Serving Humanity",
+"code": "DGL56-S042",
+"qr": "DGL56-S042",
+"players": "3–6",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Red Panda",
+"code": "DGL56-S043",
+"qr": "DGL56-S043",
+"players": "2–6",
+"time": "5–20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Skull",
+"code": "DGL56-S044",
+"qr": "DGL56-S044",
+"players": "3–6",
+"time": "15–45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Star Wars: Jabba's Palace – A Love Letter Game",
+"code": "DGL56-S045",
+"qr": "DGL56-S045",
+"players": "2–6",
+"time": "20 min",
+"ages": "10 years or older"
+},
+{
+"title": "Stupid Deaths",
+"code": "DGL56-S046",
+"qr": "DGL56-S046",
+"players": "2–6",
+"time": null,
+"ages": "12 years or older"
+},
+{
+"title": "Sushi Go!",
+"code": "DGL56-S047",
+"qr": "DGL56-S047",
+"players": "2–5",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Unlock!: Secret Adventures – A Noside Story",
+"code": "DGL56-S048",
+"qr": "DGL56-S048",
+"players": "1–6",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unlock!: Secret Adventures – The Adventurers of Oz",
+"code": "DGL56-S049",
+"qr": "DGL56-S049",
+"players": "1–6",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unlock!: Secret Adventures – Tombstone Express",
+"code": "DGL56-S050",
+"qr": "DGL56-S050",
+"players": "1–6",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "The Vibe",
+"code": "DGL56-S051",
+"qr": "DGL56-S051",
+"players": "2–6",
+"time": "5–20 min",
+"ages": "8 years or older"
+},
+{
+"title": "221B Baker Street: The Master Detective Game",
+"code": "DGL56-M001",
+"qr": "DGL56-M001",
+"players": "2–6",
+"time": "60–90 min",
+"ages": "10 years or older"
+},
+{
+"title": "5-Minute Dungeon",
+"code": "DGL56-M002",
+"qr": "DGL56-M002",
+"players": "2–5",
+"time": "5–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "5-Minute Mystery",
+"code": "DGL56-M003",
+"qr": "DGL56-M003",
+"players": "1–6",
+"time": "5 min per case",
+"ages": "8 years or older"
+},
+{
+"title": "A Game of Thrones: The Board Game (Second Edition)",
+"code": "DGL56-M004",
+"qr": "DGL56-M004",
+"players": "3–6",
+"time": "120–240 min",
+"ages": "Teens"
+},
+{
+"title": "Alicematic Heroes",
+"code": "DGL56-M005",
+"qr": "DGL56-M005",
+"players": "3–5",
+"time": "60–80 min",
+"ages": "12 years or older"
+},
+{
+"title": "Atmosfear: Interactive App edition",
+"code": "DGL56-M006",
+"qr": "DGL56-M006",
+"players": "3–6",
+"time": "35–60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Balderdash",
+"code": "DGL56-M007",
+"qr": "DGL56-M007",
+"players": "2–6",
+"time": "60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Battlestar Galactica: The Board Game",
+"code": "DGL56-M008",
+"qr": "DGL56-M008",
+"players": "3–6",
+"time": "120–180 min",
+"ages": "Teens"
+},
+{
+"title": "Betrayal at House on the Hill",
+"code": "DGL56-M009",
+"qr": "DGL56-M009",
+"players": "3–6",
+"time": "60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Canvas",
+"code": "DGL56-M010",
+"qr": "DGL56-M010",
+"players": "1–5",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Cartoon Network Crossover Crisis Deck-Building Game",
+"code": "DGL56-M011",
+"qr": "DGL56-M011",
+"players": "2–5",
+"time": "30–45 min",
+"ages": "12 years or older"
+},
+{
+"title": "Caylus 1303",
+"code": "DGL56-M012",
+"qr": "DGL56-M012",
+"players": "2–5",
+"time": "60–90 min",
+"ages": "12 years or older"
+},
+{
+"title": "CO₂",
+"code": "DGL56-M013",
+"qr": "DGL56-M013",
+"players": "1–5",
+"time": "120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Colt Express",
+"code": "DGL56-M014",
+"qr": "DGL56-M014",
+"players": "2–6",
+"time": "40 min",
+"ages": "10 years or older"
+},
+{
+"title": "Cosmic Encounter",
+"code": "DGL56-M015",
+"qr": "DGL56-M015",
+"players": "3–5",
+"time": "60–120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Creature Comforts",
+"code": "DGL56-M016",
+"qr": "DGL56-M016",
+"players": "1–5",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Crimopolis",
+"code": "DGL56-M017",
+"qr": "DGL56-M017",
+"players": "2–5",
+"time": "30–100 min",
+"ages": "12 years or older"
+},
+{
+"title": "Cursed Court",
+"code": "DGL56-M018",
+"qr": "DGL56-M018",
+"players": "2–6",
+"time": "30–60 min",
+"ages": "Teens"
+},
+{
+"title": "Detective: A Modern Crime Board Game",
+"code": "DGL56-M019",
+"qr": "DGL56-M019",
+"players": "1–5",
+"time": "120–180 min",
+"ages": "Teens"
+},
+{
+"title": "Disney Villainous",
+"code": "DGL56-M020",
+"qr": "DGL56-M020",
+"players": "2–6",
+"time": "50–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Dohdles!",
+"code": "DGL56-M021",
+"qr": "DGL56-M021",
+"players": "3–6",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Downforce",
+"code": "DGL56-M022",
+"qr": "DGL56-M022",
+"players": "2–6",
+"time": "20–40 min",
+"ages": "10 years or older"
+},
+{
+"title": "Dream Crush",
+"code": "DGL56-M023",
+"qr": "DGL56-M023",
+"players": "2–6",
+"time": "Up to 30 min",
+"ages": "Teens"
+},
+{
+"title": "Dune",
+"code": "DGL56-M024",
+"qr": "DGL56-M024",
+"players": "2–6",
+"time": "120–180 min",
+"ages": "Teens"
+},
+{
+"title": "Dune: Imperium – Uprising",
+"code": "DGL56-M025",
+"qr": "DGL56-M025",
+"players": "1–4 or 6",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "Escape Your House: Spy Team",
+"code": "DGL56-M026",
+"qr": "DGL56-M026",
+"players": "3–6",
+"time": "15 min per mission",
+"ages": "8 years or older"
+},
+{
+"title": "Harry Potter and the Sorcerer's Stone: Trivia Game",
+"code": "DGL56-M027",
+"qr": "DGL56-M027",
+"players": "2–6",
+"time": "60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Homeland: The Game",
+"code": "DGL56-M028",
+"qr": "DGL56-M028",
+"players": "3–6",
+"time": "90 min",
+"ages": "Teens"
+},
+{
+"title": "Horrified",
+"code": "DGL56-M029",
+"qr": "DGL56-M029",
+"players": "1–5",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Ironrise",
+"code": "DGL56-M030",
+"qr": "DGL56-M030",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Isla Dorada",
+"code": "DGL56-M031",
+"qr": "DGL56-M031",
+"players": "3–6",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "It's a Wonderful World",
+"code": "DGL56-M032",
+"qr": "DGL56-M032",
+"players": "1–5",
+"time": "30–60 min",
+"ages": "Teens"
+},
+{
+"title": "Jamaica",
+"code": "DGL56-M033",
+"qr": "DGL56-M033",
+"players": "2–6",
+"time": "30–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "King of New York",
+"code": "DGL56-M034",
+"qr": "DGL56-M034",
+"players": "2–6",
+"time": "40 min",
+"ages": "10 years or older"
+},
+{
+"title": "King of Tokyo",
+"code": "DGL56-M035",
+"qr": "DGL56-M035",
+"players": "2–6",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Letters from Whitechapel",
+"code": "DGL56-M036",
+"qr": "DGL56-M036",
+"players": "2–6",
+"time": "90–150 min",
+"ages": "Teens"
+},
+{
+"title": "Manifest",
+"code": "DGL56-M037",
+"qr": "DGL56-M037",
+"players": "2–5",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Monopoly Gamer: Overwatch Collector's Edition",
+"code": "DGL56-M038",
+"qr": "DGL56-M038",
+"players": "2–6",
+"time": null,
+"ages": "Teens"
+},
+{
+"title": "Munchkin Harry Potter Deluxe",
+"code": "DGL56-M039",
+"qr": "DGL56-M039",
+"players": "3–6",
+"time": "60–120 min",
+"ages": "12 years or older"
+},
+{
+"title": "My Little Scythe",
+"code": "DGL56-M040",
+"qr": "DGL56-M040",
+"players": "1–6",
+"time": "45–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Nidavellir",
+"code": "DGL56-M041",
+"qr": "DGL56-M041",
+"players": "2–5",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Order of the Stick Adventure Game: The Dungeon of Dorukan",
+"code": "DGL56-M042",
+"qr": "DGL56-M042",
+"players": "2–6",
+"time": "180–360 min",
+"ages": "12 years or older"
+},
+{
+"title": "Ovation",
+"code": "DGL56-M043",
+"qr": "DGL56-M043",
+"players": "1–5",
+"time": "40–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Pandemic: Fall of Rome",
+"code": "DGL56-M044",
+"qr": "DGL56-M044",
+"players": "1–5",
+"time": "45–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Pandemic: Rising Tide",
+"code": "DGL56-M045",
+"qr": "DGL56-M045",
+"players": "2–5",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Pandemic: The Cure",
+"code": "DGL56-M046",
+"qr": "DGL56-M046",
+"players": "2–5",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Pictures",
+"code": "DGL56-M047",
+"qr": "DGL56-M047",
+"players": "3–5",
+"time": "20–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Pirates vs. Dinosaurs",
+"code": "DGL56-M048",
+"qr": "DGL56-M048",
+"players": "2–6",
+"time": "90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Puerto Rico",
+"code": "DGL56-M049",
+"qr": "DGL56-M049",
+"players": "3–5",
+"time": "90–150 min",
+"ages": "12 years or older"
+},
+{
+"title": "Raccoon Tycoon",
+"code": "DGL56-M050",
+"qr": "DGL56-M050",
+"players": "2–5",
+"time": "60–90 min",
+"ages": "8 years or older"
+},
+{
+"title": "[redacted]",
+"code": "DGL56-M051",
+"qr": "DGL56-M051",
+"players": "2–6",
+"time": "45–60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Rick and Morty: Close Rick-Counters of the Rick Kind Deck-Building Game",
+"code": "DGL56-M052",
+"qr": "DGL56-M052",
+"players": "2–5",
+"time": "30–70 min",
+"ages": "Teens"
+},
+{
+"title": "Rising 5: Runes of Asteros",
+"code": "DGL56-M053",
+"qr": "DGL56-M053",
+"players": "1–5",
+"time": "15–25 min",
+"ages": "12 years or older"
+},
+{
+"title": "Scattergories",
+"code": "DGL56-M054",
+"qr": "DGL56-M054",
+"players": "2–6",
+"time": "30 min",
+"ages": "12 years or older"
+},
+{
+"title": "Sheriff of Nottingham",
+"code": "DGL56-M055",
+"qr": "DGL56-M055",
+"players": "3–5",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Small World",
+"code": "DGL56-M056",
+"qr": "DGL56-M056",
+"players": "2–5",
+"time": "40–80 min",
+"ages": "8 years or older"
+},
+{
+"title": "Small World of Warcraft",
+"code": "DGL56-M057",
+"qr": "DGL56-M057",
+"players": "2–5",
+"time": "40–80 min",
+"ages": "8 years or older"
+},
+{
+"title": "Small World Underground",
+"code": "DGL56-M058",
+"qr": "DGL56-M058",
+"players": "2–5",
+"time": "30–90 min",
+"ages": "8 years or older"
+},
+{
+"title": "Smartphone Inc.",
+"code": "DGL56-M059",
+"qr": "DGL56-M059",
+"players": "1–5",
+"time": "60–90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Star Wars: Unlock!",
+"code": "DGL56-M060",
+"qr": "DGL56-M060",
+"players": "1–6",
+"time": "60 min per adventure",
+"ages": "10 years or older"
+},
+{
+"title": "Stella: Dixit Universe",
+"code": "DGL56-M061",
+"qr": "DGL56-M061",
+"players": "3–6",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Talisman: Kingdom Hearts",
+"code": "DGL56-M062",
+"qr": "DGL56-M062",
+"players": "2–6",
+"time": "60–90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Ticket to Ride",
+"code": "DGL56-M063",
+"qr": "DGL56-M063",
+"players": "2–5",
+"time": "30–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Ticket to Ride: Europe",
+"code": "DGL56-M064",
+"qr": "DGL56-M064",
+"players": "2–5",
+"time": "30–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Tiny Towns",
+"code": "DGL56-M065",
+"qr": "DGL56-M065",
+"players": "1–6",
+"time": "45–60 min",
+"ages": "Teens"
+},
+{
+"title": "Tokaido",
+"code": "DGL56-M066",
+"qr": "DGL56-M066",
+"players": "2–5",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Treasure Island",
+"code": "DGL56-M067",
+"qr": "DGL56-M067",
+"players": "2–5",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Trivial Pursuit: 2000s",
+"code": "DGL56-M068",
+"qr": "DGL56-M068",
+"players": "2–6",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Unlock!: Epic Adventures",
+"code": "DGL56-M069",
+"qr": "DGL56-M069",
+"players": "1–6",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unlock!: Escape Adventures",
+"code": "DGL56-M070",
+"qr": "DGL56-M070",
+"players": "1–6",
+"time": "45–75 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unlock!: Exotic Adventures",
+"code": "DGL56-M071",
+"qr": "DGL56-M071",
+"players": "1–6",
+"time": "60–90 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unlock!: Heroic Adventures",
+"code": "DGL56-M072",
+"qr": "DGL56-M072",
+"players": "1–6",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unlock!: Mystery Adventures",
+"code": "DGL56-M073",
+"qr": "DGL56-M073",
+"players": "1–6",
+"time": "45–75 min",
+"ages": "10 years or older"
+},
+{
+"title": "Unlock!: Timeless Adventures",
+"code": "DGL56-M074",
+"qr": "DGL56-M074",
+"players": "1–6",
+"time": "60 min per adventure",
+"ages": "10 years or older"
+},
+{
+"title": "Viticulture Essential Edition",
+"code": "DGL56-M075",
+"qr": "DGL56-M075",
+"players": "1–6",
+"time": "45–90 min",
+"ages": "Teens"
+},
+{
+"title": "Wingspan",
+"code": "DGL56-M076",
+"qr": "DGL56-M076",
+"players": "1–5",
+"time": "40–70 min",
+"ages": "10 years or older"
+},
+{
+"title": "Wyrmspan",
+"code": "DGL56-M077",
+"qr": "DGL56-M077",
+"players": "1–5",
+"time": "90 min",
+"ages": "Teens"
+},
+{
+"title": "X-Men: Mutant Insurrection",
+"code": "DGL56-M078",
+"qr": "DGL56-M078",
+"players": "1–6",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "Alhambra: Big Box",
+"code": "DGL56-L001",
+"qr": "DGL56-L001",
+"players": "2–6",
+"time": "60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Attack on Titan: The Last Stand",
+"code": "DGL56-L002",
+"qr": "DGL56-L002",
+"players": "2–5",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "BattleCON: Devastation of Indines",
+"code": "DGL56-L003",
+"qr": "DGL56-L003",
+"players": "1–5",
+"time": "45 min",
+"ages": "10 years or older"
+},
+{
+"title": "Catan: 25th Anniversary Edition",
+"code": "DGL56-L004",
+"qr": "DGL56-L004",
+"players": "3–6",
+"time": "60+ min",
+"ages": "10 years or older"
+},
+{
+"title": "Clue",
+"code": "DGL56-L005",
+"qr": "DGL56-L005",
+"players": "2–6",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Clue: Harry Potter Edition",
+"code": "DGL56-L006",
+"qr": "DGL56-L006",
+"players": "3–5",
+"time": "30 min",
+"ages": "9 years or older"
+},
+{
+"title": "Clue: The Simpsons",
+"code": "DGL56-L007",
+"qr": "DGL56-L007",
+"players": "3–6",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Descent: Journeys in the Dark (Second Edition)",
+"code": "DGL56-L008",
+"qr": "DGL56-L008",
+"players": "2–5",
+"time": "120–180 min",
+"ages": "Teens"
+},
+{
+"title": "Dragonlance: Warriors of Krynn",
+"code": "DGL56-L009",
+"qr": "DGL56-L009",
+"players": "3–5",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "Dungeons & Dragons: Castle Ravenloft Board Game",
+"code": "DGL56-L010",
+"qr": "DGL56-L010",
+"players": "1–5",
+"time": "60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Everdell: The Complete Collection",
+"code": "DGL56-L011",
+"qr": "DGL56-L011",
+"players": "1–6",
+"time": "40–120 min",
+"ages": "10 years or older"
+},
+{
+"title": "Kemet",
+"code": "DGL56-L012",
+"qr": "DGL56-L012",
+"players": "2–5",
+"time": "90–120 min",
+"ages": "Teens"
+},
+{
+"title": "King of Monster Island",
+"code": "DGL56-L013",
+"qr": "DGL56-L013",
+"players": "1–5",
+"time": "45–60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Legendary: A Marvel Deck Building Game",
+"code": "DGL56-L014",
+"qr": "DGL56-L014",
+"players": "1–5",
+"time": "30–60 min",
+"ages": "Teens"
+},
+{
+"title": "Let's Hit Each Other with Fake Swords",
+"code": "DGL56-L015",
+"qr": "DGL56-L015",
+"players": "3–6",
+"time": "15 min",
+"ages": "10 years or older"
+},
+{
+"title": "Lords of Waterdeep",
+"code": "DGL56-L016",
+"qr": "DGL56-L016",
+"players": "2–5",
+"time": "60–120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Magic: The Gathering – Arena of the Planeswalkers",
+"code": "DGL56-L017",
+"qr": "DGL56-L017",
+"players": "2–5",
+"time": "60 min",
+"ages": "10 years or older"
+},
+{
+"title": "Marvel Zombies: A Zombicide Game",
+"code": "DGL56-L018",
+"qr": "DGL56-L018",
+"players": "1–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Masters of the Universe: The Board Game – Clash for Eternia",
+"code": "DGL56-L019",
+"qr": "DGL56-L019",
+"players": "1–5",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Monopoly: The Here & Now New Zealand Edition",
+"code": "DGL56-L020",
+"qr": "DGL56-L020",
+"players": "2–6",
+"time": "45–60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Power Grid",
+"code": "DGL56-L021",
+"qr": "DGL56-L021",
+"players": "2–6",
+"time": "120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Power Rangers: Heroes of the Grid",
+"code": "DGL56-L022",
+"qr": "DGL56-L022",
+"players": "2–5",
+"time": "45–60 min",
+"ages": "Teens"
+},
+{
+"title": "Risk",
+"code": "DGL56-L023",
+"qr": "DGL56-L023",
+"players": "2–6",
+"time": "1–8 hours",
+"ages": "10 years or older"
+},
+{
+"title": "Rum & Bones",
+"code": "DGL56-L024",
+"qr": "DGL56-L024",
+"players": "2–6",
+"time": "60 min",
+"ages": "Teens"
+},
+{
+"title": "Star Wars: Imperial Assault",
+"code": "DGL56-L025",
+"qr": "DGL56-L025",
+"players": "2–5",
+"time": "60–120 min",
+"ages": "Teens"
+},
+{
+"title": "Super Dungeon Explore with Expansions",
+"code": "DGL56-L026",
+"qr": "DGL56-L026",
+"players": "2–6",
+"time": "120 min",
+"ages": "10 years or older"
+},
+{
+"title": "Tales of the Arabian Nights",
+"code": "DGL56-L027",
+"qr": "DGL56-L027",
+"players": "1–6",
+"time": "120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Terra Mystica",
+"code": "DGL56-L028",
+"qr": "DGL56-L028",
+"players": "2–5",
+"time": "60–150 min",
+"ages": "12 years or older"
+},
+{
+"title": "Western Legends",
+"code": "DGL56-L029",
+"qr": "DGL56-L029",
+"players": "2–6",
+"time": "60–90 min",
+"ages": "Teens"
+},
+{
+"title": "A Fake Artist Goes to New York",
+"code": "DGL7+-S001",
+"qr": "DGL7+-S001",
+"players": "5–10",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "A Matter of Taste",
+"code": "DGL7+-S002",
+"qr": "DGL7+-S002",
+"players": "2–8",
+"time": "30–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Beat That!",
+"code": "DGL7+-S003",
+"qr": "DGL7+-S003",
+"players": "2–8",
+"time": "30–90 min",
+"ages": "9 years or older"
+},
+{
+"title": "Blank Marry Kill",
+"code": "DGL7+-S004",
+"qr": "DGL7+-S004",
+"players": "3–10",
+"time": "15–30 min",
+"ages": "18 years or older"
+},
+{
+"title": "Cards Against Humanity",
+"code": "DGL7+-S005",
+"qr": "DGL7+-S005",
+"players": "4–20",
+"time": "30–90 min",
+"ages": "18 years or older"
+},
+{
+"title": "Codenames",
+"code": "DGL7+-S006",
+"qr": "DGL7+-S006",
+"players": "2–8",
+"time": "15 min",
+"ages": "Teens"
+},
+{
+"title": "Codenames: Disney – Family Edition",
+"code": "DGL7+-S007",
+"qr": "DGL7+-S007",
+"players": "2–8",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Codenames: Harry Potter",
+"code": "DGL7+-S008",
+"qr": "DGL7+-S008",
+"players": "2+",
+"time": "15 min",
+"ages": "12 years or older"
+},
+{
+"title": "Codenames: Marvel",
+"code": "DGL7+-S009",
+"qr": "DGL7+-S009",
+"players": "2–8",
+"time": "15 min",
+"ages": "9 years or older"
+},
+{
+"title": "Codenames: Pictures",
+"code": "DGL7+-S010",
+"qr": "DGL7+-S010",
+"players": "2–8",
+"time": "15 min",
+"ages": "10 years or older"
+},
+{
+"title": "Codenames: The Simpsons",
+"code": "DGL7+-S011",
+"qr": "DGL7+-S011",
+"players": "2–8",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Daring Contest",
+"code": "DGL7+-S012",
+"qr": "DGL7+-S012",
+"players": "4–8",
+"time": "30–45 min",
+"ages": "18 years or older"
+},
+{
+"title": "DC Spyfall",
+"code": "DGL7+-S013",
+"qr": "DGL7+-S013",
+"players": "3–8",
+"time": "15–30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Decrypto",
+"code": "DGL7+-S014",
+"qr": "DGL7+-S014",
+"players": "3–8",
+"time": "15–45 min",
+"ages": "12 years or older"
+},
+{
+"title": "Detective Club",
+"code": "DGL7+-S015",
+"qr": "DGL7+-S015",
+"players": "4–8",
+"time": "45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Disturbed Friends",
+"code": "DGL7+-S016",
+"qr": "DGL7+-S016",
+"players": "4–10",
+"time": "10–90 min",
+"ages": "18 years or older"
+},
+{
+"title": "Don't Get Got!",
+"code": "DGL7+-S017",
+"qr": "DGL7+-S017",
+"players": "2–10",
+"time": "All day",
+"ages": "Teens"
+},
+{
+"title": "Dracula's Feast: New Blood",
+"code": "DGL7+-S018",
+"qr": "DGL7+-S018",
+"players": "4–8",
+"time": "10–15 min",
+"ages": "10 years or older"
+},
+{
+"title": "Dune: Betrayal",
+"code": "DGL7+-S019",
+"qr": "DGL7+-S019",
+"players": "4–8",
+"time": "20–40 min",
+"ages": "Teens"
+},
+{
+"title": "The Epic Beard Game",
+"code": "DGL7+-S020",
+"qr": "DGL7+-S020",
+"players": "3–8",
+"time": "45–75 min",
+"ages": "8 years or older"
+},
+{
+"title": "Fangs",
+"code": "DGL7+-S021",
+"qr": "DGL7+-S021",
+"players": "5–8",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Flipology",
+"code": "DGL7+-S022",
+"qr": "DGL7+-S022",
+"players": "2–8",
+"time": null,
+"ages": "8 years or older"
+},
+{
+"title": "Geek Out! The 00s Edition",
+"code": "DGL7+-S023",
+"qr": "DGL7+-S023",
+"players": "2+",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Geek Out! The 80's Edition",
+"code": "DGL7+-S024",
+"qr": "DGL7+-S024",
+"players": "2+",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Geek Out! The 90's Edition",
+"code": "DGL7+-S025",
+"qr": "DGL7+-S025",
+"players": "2+",
+"time": null,
+"ages": "Teens"
+},
+{
+"title": "GoodCritters",
+"code": "DGL7+-S026",
+"qr": "DGL7+-S026",
+"players": "4–8",
+"time": "30–45 min",
+"ages": "12 years or older"
+},
+{
+"title": "Incohearent",
+"code": "DGL7+-S027",
+"qr": "DGL7+-S027",
+"players": "2–20",
+"time": "20–40 min",
+"ages": "18 years or older"
+},
+{
+"title": "Joking Hazard",
+"code": "DGL7+-S028",
+"qr": "DGL7+-S028",
+"players": "3–10",
+"time": "30–90 min",
+"ages": "18 years or older"
+},
+{
+"title": "Just One",
+"code": "DGL7+-S029",
+"qr": "DGL7+-S029",
+"players": "3–7",
+"time": "20 min",
+"ages": "8 years or older"
+},
+{
+"title": "Kaupapa",
+"code": "DGL7+-S030",
+"qr": "DGL7+-S030",
+"players": "4+",
+"time": null,
+"ages": null
+},
+{
+"title": "Kemomimi Panic",
+"code": "DGL7+-S031",
+"qr": "DGL7+-S031",
+"players": "4–8",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "The Last Brave",
+"code": "DGL7+-S032",
+"qr": "DGL7+-S032",
+"players": "3–7",
+"time": "10 min",
+"ages": "10 years or older"
+},
+{
+"title": "Llamas Unleashed",
+"code": "DGL7+-S033",
+"qr": "DGL7+-S033",
+"players": "2–8",
+"time": "30–45 min",
+"ages": "Teens"
+},
+{
+"title": "Monikers",
+"code": "DGL7+-S034",
+"qr": "DGL7+-S034",
+"players": "4–16",
+"time": "30–60 min",
+"ages": "18 years or older"
+},
+{
+"title": "Muse",
+"code": "DGL7+-S035",
+"qr": "DGL7+-S035",
+"players": "2–12",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "OK Boomer!",
+"code": "DGL7+-S036",
+"qr": "DGL7+-S036",
+"players": "2+",
+"time": null,
+"ages": null
+},
+{
+"title": "One Night Ultimate Werewolf",
+"code": "DGL7+-S037",
+"qr": "DGL7+-S037",
+"players": "3–10",
+"time": "10 min",
+"ages": "8 years or older"
+},
+{
+"title": "Radioactive Bunniez Collector's Edition",
+"code": "DGL7+-S038",
+"qr": "DGL7+-S038",
+"players": "2–8",
+"time": "5–15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Ready Set Bet",
+"code": "DGL7+-S039",
+"qr": "DGL7+-S039",
+"players": "2–9",
+"time": "45–60 min",
+"ages": "Teens"
+},
+{
+"title": "The Resistance",
+"code": "DGL7+-S040",
+"qr": "DGL7+-S040",
+"players": "5–10",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Saboteur",
+"code": "DGL7+-S041",
+"qr": "DGL7+-S041",
+"players": "3–10",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Saboteur: 20th Anniversary Edition",
+"code": "DGL7+-S042",
+"qr": "DGL7+-S042",
+"players": "2–12",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Spyfall: Time Travel",
+"code": "DGL7+-S043",
+"qr": "DGL7+-S043",
+"players": "2–8",
+"time": "15–45 min",
+"ages": "Teens"
+},
+{
+"title": "Stay Cool",
+"code": "DGL7+-S044",
+"qr": "DGL7+-S044",
+"players": "3–7",
+"time": "10–30 min",
+"ages": "12 years or older"
+},
+{
+"title": "Taboo",
+"code": "DGL7+-S045",
+"qr": "DGL7+-S045",
+"players": "4+",
+"time": "20 min",
+"ages": "12 years or older"
+},
+{
+"title": "Taco Cat Goat Cheese Pizza",
+"code": "DGL7+-S046",
+"qr": "DGL7+-S046",
+"players": "2–8",
+"time": "10–30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Timeline: Classic",
+"code": "DGL7+-S047",
+"qr": "DGL7+-S047",
+"players": "2–8",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Trapwords",
+"code": "DGL7+-S048",
+"qr": "DGL7+-S048",
+"players": "4–8",
+"time": "30–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "The Ultimate Date Night Game for Fun Couples",
+"code": "DGL7+-S049",
+"qr": "DGL7+-S049",
+"players": "2+",
+"time": null,
+"ages": "18 years or older"
+},
+{
+"title": "Ultimate Werewolf Deluxe Edition",
+"code": "DGL7+-S050",
+"qr": "DGL7+-S050",
+"players": "5–75",
+"time": "30 min",
+"ages": "Teens"
+},
+{
+"title": "Unstable Unicorns",
+"code": "DGL7+-S051",
+"qr": "DGL7+-S051",
+"players": "2–8",
+"time": "30–45 min",
+"ages": "Teens"
+},
+{
+"title": "Werewords",
+"code": "DGL7+-S052",
+"qr": "DGL7+-S052",
+"players": "4–10",
+"time": "10 min",
+"ages": "8 years or older"
+},
+{
+"title": "Werewords Deluxe Edition",
+"code": "DGL7+-S053",
+"qr": "DGL7+-S053",
+"players": "2–20",
+"time": "10 min",
+"ages": "8 years or older"
+},
+{
+"title": "What Do You Meme?: BSFW Edition",
+"code": "DGL7+-S054",
+"qr": "DGL7+-S054",
+"players": "3+",
+"time": null,
+"ages": null
+},
+{
+"title": "Witch Hunt",
+"code": "DGL7+-S055",
+"qr": "DGL7+-S055",
+"players": "7–22",
+"time": "30–90 min",
+"ages": "Teens"
+},
+{
+"title": "Wits & Wagers: It's Vegas, Baby!",
+"code": "DGL7+-S056",
+"qr": "DGL7+-S056",
+"players": "5+",
+"time": "30–40 min",
+"ages": "Teens"
+},
+{
+"title": "Yahtzee",
+"code": "DGL7+-S057",
+"qr": "DGL7+-S057",
+"players": "2–10",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "5 Second Rule",
+"code": "DGL7+-M001",
+"qr": "DGL7+-M001",
+"players": "3+",
+"time": "20–30 min",
+"ages": "10 years or older"
+},
+{
+"title": "7 Wonders",
+"code": "DGL7+-M002",
+"qr": "DGL7+-M002",
+"players": "3–7",
+"time": "30 min",
+"ages": "10 years or older"
+},
+{
+"title": "Articulate!",
+"code": "DGL7+-M003",
+"qr": "DGL7+-M003",
+"players": "4–20",
+"time": "60 min",
+"ages": "12 years or older"
+},
+{
+"title": "Atlantis Rising (Second Edition)",
+"code": "DGL7+-M004",
+"qr": "DGL7+-M004",
+"players": "1–7",
+"time": "60–120 min",
+"ages": "10 years or older"
+},
+{
+"title": "Brain Fart",
+"code": "DGL7+-M005",
+"qr": "DGL7+-M005",
+"players": "3+",
+"time": null,
+"ages": "Teens"
+},
+{
+"title": "The Chameleon",
+"code": "DGL7+-M006",
+"qr": "DGL7+-M006",
+"players": "3–8",
+"time": "15 min",
+"ages": "Teens"
+},
+{
+"title": "The Chameleon: Picture Edition",
+"code": "DGL7+-M007",
+"qr": "DGL7+-M007",
+"players": "3–8",
+"time": null,
+"ages": null
+},
+{
+"title": "Concept",
+"code": "DGL7+-M008",
+"qr": "DGL7+-M008",
+"players": "4–12",
+"time": "40 min",
+"ages": "10 years or older"
+},
+{
+"title": "Deception: Murder in Hong Kong",
+"code": "DGL7+-M009",
+"qr": "DGL7+-M009",
+"players": "4–12",
+"time": "20 min",
+"ages": "Teens"
+},
+{
+"title": "Dixit",
+"code": "DGL7+-M010",
+"qr": "DGL7+-M010",
+"players": "3–8",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Dixit: Odyssey",
+"code": "DGL7+-M011",
+"qr": "DGL7+-M011",
+"players": "3–12",
+"time": "30 min",
+"ages": "8 years or older"
+},
+{
+"title": "Doctor Who DVD Board Game",
+"code": "DGL7+-M012",
+"qr": "DGL7+-M012",
+"players": "2+",
+"time": "60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Flick 'em Up!: Dead of Winter",
+"code": "DGL7+-M013",
+"qr": "DGL7+-M013",
+"players": "1–10",
+"time": "30–45 min",
+"ages": "8 years or older"
+},
+{
+"title": "Forgotten Waters",
+"code": "DGL7+-M014",
+"qr": "DGL7+-M014",
+"players": "3–7",
+"time": "120–240 min",
+"ages": "Teens"
+},
+{
+"title": "Kill Doctor Lucky",
+"code": "DGL7+-M015",
+"qr": "DGL7+-M015",
+"players": "2–8",
+"time": "20–40 min",
+"ages": "12 years or older"
+},
+{
+"title": "Magic Maze",
+"code": "DGL7+-M016",
+"qr": "DGL7+-M016",
+"players": "1–8",
+"time": "15 min",
+"ages": "8 years or older"
+},
+{
+"title": "Mysterium",
+"code": "DGL7+-M017",
+"qr": "DGL7+-M017",
+"players": "2–7",
+"time": "42 min",
+"ages": "10 years or older"
+},
+{
+"title": "Scooby-Doo: Escape from the Haunted Mansion",
+"code": "DGL7+-M018",
+"qr": "DGL7+-M018",
+"players": "1+",
+"time": "60–120 min",
+"ages": "12 years or older"
+},
+{
+"title": "Scrawl",
+"code": "DGL7+-M019",
+"qr": "DGL7+-M019",
+"players": "4–8",
+"time": "30 min",
+"ages": "18 years or older"
+},
+{
+"title": "Sherlock Holmes Consulting Detective: Carlton House & Queen's Park",
+"code": "DGL7+-M020",
+"qr": "DGL7+-M020",
+"players": "1–8",
+"time": "90 min",
+"ages": "12 years or older"
+},
+{
+"title": "Sherlock Holmes Consulting Detective: The Baker Street Irregulars",
+"code": "DGL7+-M021",
+"qr": "DGL7+-M021",
+"players": "1–8",
+"time": "90 min",
+"ages": "Teens"
+},
+{
+"title": "Sherlock Holmes Consulting Detective: The Thames Murders & Other Cases",
+"code": "DGL7+-M022",
+"qr": "DGL7+-M022",
+"players": "1–8",
+"time": "90 min",
+"ages": "Teens"
+},
+{
+"title": "Sidibaba",
+"code": "DGL7+-M023",
+"qr": "DGL7+-M023",
+"players": "3–7",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Sketchagrams",
+"code": "DGL7+-M024",
+"qr": "DGL7+-M024",
+"players": "3+",
+"time": null,
+"ages": null
+},
+{
+"title": "Smart Ass",
+"code": "DGL7+-M025",
+"qr": "DGL7+-M025",
+"players": "2–12",
+"time": "30 min",
+"ages": "12 years or older"
+},
+{
+"title": "Telestrations: 12 Player Party Pack",
+"code": "DGL7+-M026",
+"qr": "DGL7+-M026",
+"players": "4–12",
+"time": "30 min",
+"ages": "12 years or older"
+},
+{
+"title": "Telestrations After Dark",
+"code": "DGL7+-M027",
+"qr": "DGL7+-M027",
+"players": "4–8",
+"time": "30 min",
+"ages": "18 years or older"
+},
+{
+"title": "Telestrations: Upside Drawn",
+"code": "DGL7+-M028",
+"qr": "DGL7+-M028",
+"players": "4–12",
+"time": "20 min",
+"ages": "12 years or older"
+},
+{
+"title": "Texas Hold'em Poker Set",
+"code": "DGL7+-M029",
+"qr": "DGL7+-M029",
+"players": "2–10",
+"time": null,
+"ages": null
+},
+{
+"title": "Tilt 'N' Shout",
+"code": "DGL7+-M030",
+"qr": "DGL7+-M030",
+"players": "2+",
+"time": "20 min",
+"ages": "10 years or older"
+},
+{
+"title": "Tripoley",
+"code": "DGL7+-M031",
+"qr": "DGL7+-M031",
+"players": "2–9",
+"time": "60 min",
+"ages": "8 years or older"
+},
+{
+"title": "Wavelength",
+"code": "DGL7+-M032",
+"qr": "DGL7+-M032",
+"players": "2–12",
+"time": "30–45 min",
+"ages": "Teens"
+},
+{
+"title": "What Were You Thinking?",
+"code": "DGL7+-M033",
+"qr": "DGL7+-M033",
+"players": "3+",
+"time": "15 min",
+"ages": "10 years or older"
+},
+{
+"title": "Blood on the Clocktower",
+"code": "DGL7+-L001",
+"qr": "DGL7+-L001",
+"players": "5–20",
+"time": "30–120 min",
+"ages": "Teens"
+},
+{
+"title": "Caverna: The Cave Farmers",
+"code": "DGL7+-L002",
+"qr": "DGL7+-L002",
+"players": "1–7",
+"time": "30 min per player",
+"ages": "12 years or older"
+},
+{
+"title": "Fortune and Glory: The Cliffhanger Game",
+"code": "DGL7+-L003",
+"qr": "DGL7+-L003",
+"players": "1–8",
+"time": "90–240 min",
+"ages": "12 years or older"
+},
+{
+"title": "Ignite",
+"code": "DGL7+-L004",
+"qr": "DGL7+-L004",
+"players": "2–8",
+"time": "40–160 min",
+"ages": "Teens"
+},
+{
+"title": "Secret Hitler",
+"code": "DGL7+-L005",
+"qr": "DGL7+-L005",
+"players": "5–10",
+"time": "45 min",
+"ages": "Teens"
+},
+{
+"title": "Tannhäuser",
+"code": "DGL7+-L006",
+"qr": "DGL7+-L006",
+"players": "2–10",
+"time": "60–120 min",
+"ages": "12 years or older"
+},
+{
+"title": "1000 and One Treasures",
+"code": "DGLF-S001",
+"qr": "DGLF-S001",
+"players": "2–4",
+"time": "20 min",
+"ages": "5 years or older"
+},
+{
+"title": "Bananagrams",
+"code": "DGLF-S002",
+"qr": "DGLF-S002",
+"players": "1–8",
+"time": "15 min",
+"ages": "7 years or older"
+},
+{
+"title": "Boba Master",
+"code": "DGLF-S003",
+"qr": "DGLF-S003",
+"players": "2–10",
+"time": "20–60 min",
+"ages": "7 years or older"
+},
+{
+"title": "Bottle Topps",
+"code": "DGLF-S004",
+"qr": "DGLF-S004",
+"players": "1–6",
+"time": "30 min",
+"ages": "6 years or older"
+},
+{
+"title": "Exploding Kittens: Party Pack",
+"code": "DGLF-S005",
+"qr": "DGLF-S005",
+"players": "2–10",
+"time": "15 min",
+"ages": "7 years or older"
+},
+{
+"title": "Exploding Minions",
+"code": "DGLF-S006",
+"qr": "DGLF-S006",
+"players": "2–5",
+"time": "15 min",
+"ages": "7 years or older"
+},
+{
+"title": "Fastrack",
+"code": "DGLF-S007",
+"qr": "DGLF-S007",
+"players": "2",
+"time": "10 min",
+"ages": "5 years or older"
+},
+{
+"title": "Glimstone Grab",
+"code": "DGLF-S008",
+"qr": "DGLF-S008",
+"players": "1–4",
+"time": null,
+"ages": null
+},
+{
+"title": "Granny Wars: A Game of Tit for Tat",
+"code": "DGLF-S009",
+"qr": "DGLF-S009",
+"players": "2–8",
+"time": "20 min",
+"ages": "7 years or older"
+},
+{
+"title": "Hoard",
+"code": "DGLF-S010",
+"qr": "DGLF-S010",
+"players": "2–6",
+"time": "10–45 min",
+"ages": "6 years or older"
+},
+{
+"title": "Kiwetin",
+"code": "DGLF-S011",
+"qr": "DGLF-S011",
+"players": "2–6",
+"time": "5–20 min",
+"ages": "7 years or older"
+},
+{
+"title": "Kraken Attack!",
+"code": "DGLF-S012",
+"qr": "DGLF-S012",
+"players": "1–4",
+"time": "25 min",
+"ages": "7 years or older"
+},
+{
+"title": "Pick-Up Pete",
+"code": "DGLF-S013",
+"qr": "DGLF-S013",
+"players": "2–4",
+"time": null,
+"ages": "4 years or older"
+},
+{
+"title": "Pitch Out",
+"code": "DGLF-S014",
+"qr": "DGLF-S014",
+"players": "2",
+"time": "5–10 min",
+"ages": "7 years or older"
+},
+{
+"title": "Rhino Hero",
+"code": "DGLF-S015",
+"qr": "DGLF-S015",
+"players": "2–5",
+"time": "5–15 min",
+"ages": "5 years or older"
+},
+{
+"title": "Similo",
+"code": "DGLF-S016",
+"qr": "DGLF-S016",
+"players": "2–8",
+"time": "10–15 min",
+"ages": "7 years or older"
+},
+{
+"title": "SOS Dino",
+"code": "DGLF-S017",
+"qr": "DGLF-S017",
+"players": "1–4",
+"time": "25 min",
+"ages": "7 years or older"
+},
+{
+"title": "SpongeBob Card Scramble!",
+"code": "DGLF-S018",
+"qr": "DGLF-S018",
+"players": "2–4",
+"time": null,
+"ages": null
+},
+{
+"title": "Spot it!",
+"code": "DGLF-S019",
+"qr": "DGLF-S019",
+"players": "2–8",
+"time": "15 min",
+"ages": "7 years or older"
+},
+{
+"title": "Tacocat Spelled Backwards",
+"code": "DGLF-S020",
+"qr": "DGLF-S020",
+"players": "2",
+"time": "15–20 min",
+"ages": "7 years or older"
+},
+{
+"title": "Troll & Dragon",
+"code": "DGLF-S021",
+"qr": "DGLF-S021",
+"players": "2–5",
+"time": "20 min",
+"ages": "7 years or older"
+},
+{
+"title": "UNO",
+"code": "DGLF-S022",
+"qr": "DGLF-S022",
+"players": "2–10",
+"time": "30 min",
+"ages": "7 years or older"
+},
+{
+"title": "A Game of Cat & Mouth",
+"code": "DGLF-M001",
+"qr": "DGLF-M001",
+"players": "2",
+"time": "15–20 min",
+"ages": "7 years or older"
+},
+{
+"title": "Andor: The Family Fantasy Game",
+"code": "DGLF-M002",
+"qr": "DGLF-M002",
+"players": "2–4",
+"time": "30–45 min",
+"ages": "7 years or older"
+},
+{
+"title": "Battleship",
+"code": "DGLF-M003",
+"qr": "DGLF-M003",
+"players": "2",
+"time": "30 min",
+"ages": "7 years or older"
+},
+{
+"title": "Blokus",
+"code": "DGLF-M004",
+"qr": "DGLF-M004",
+"players": "2–4",
+"time": "20–30 min",
+"ages": "7 years or older"
+},
+{
+"title": "Catan Junior",
+"code": "DGLF-M005",
+"qr": "DGLF-M005",
+"players": "2–4",
+"time": "30 min",
+"ages": "6 years or older"
+},
+{
+"title": "Coconuts",
+"code": "DGLF-M006",
+"qr": "DGLF-M006",
+"players": "2–4",
+"time": "20 min",
+"ages": "6 years or older"
+},
+{
+"title": "Concept Kids: Animals",
+"code": "DGLF-M007",
+"qr": "DGLF-M007",
+"players": "2–12",
+"time": "20 min",
+"ages": "4 years or older"
+},
+{
+"title": "Connect Four",
+"code": "DGLF-M008",
+"qr": "DGLF-M008",
+"players": "2",
+"time": "10 min",
+"ages": "6 years or older"
+},
+{
+"title": "Cranium Cadoo",
+"code": "DGLF-M009",
+"qr": "DGLF-M009",
+"players": "2+",
+"time": "45 min",
+"ages": "7 years or older"
+},
+{
+"title": "Jenga",
+"code": "DGLF-M010",
+"qr": "DGLF-M010",
+"players": "1+",
+"time": "20 min",
+"ages": "6 years or older"
+},
+{
+"title": "Kids Know Best",
+"code": "DGLF-M011",
+"qr": "DGLF-M011",
+"players": "2–4",
+"time": null,
+"ages": null
+},
+{
+"title": "Monsieur Carrousel",
+"code": "DGLF-M012",
+"qr": "DGLF-M012",
+"players": "1–6",
+"time": "15 min",
+"ages": "4 years or older"
+},
+{
+"title": "Pokémon Trading Card Game: Battle Academy",
+"code": "DGLF-M013",
+"qr": "DGLF-M013",
+"players": "2",
+"time": "30 min",
+"ages": "6 years or older"
+},
+{
+"title": "Qwirkle",
+"code": "DGLF-M014",
+"qr": "DGLF-M014",
+"players": "2–4",
+"time": "30–45 min",
+"ages": "6 years or older"
+},
+{
+"title": "Sequence",
+"code": "DGLF-M015",
+"qr": "DGLF-M015",
+"players": "2–12",
+"time": "10–30 min",
+"ages": "7 years or older"
+},
+{
+"title": "Simon Air",
+"code": "DGLF-M016",
+"qr": "DGLF-M016",
+"players": "1–2",
+"time": null,
+"ages": null
+},
+{
+"title": "Stuffed Fables",
+"code": "DGLF-M017",
+"qr": "DGLF-M017",
+"players": "2–4",
+"time": "60–90 min",
+"ages": "7 years or older"
+},
+{
+"title": "Throw Throw Avocado",
+"code": "DGLF-M018",
+"qr": "DGLF-M018",
+"players": "2–6",
+"time": "15 min",
+"ages": "7 years or older"
+},
+{
+"title": "Throw Throw Burrito",
+"code": "DGLF-M019",
+"qr": "DGLF-M019",
+"players": "2–6",
+"time": "15 min",
+"ages": "7 years or older"
+},
+{
+"title": "Ticket to Ride: First Journey (Europe)",
+"code": "DGLF-M020",
+"qr": "DGLF-M020",
+"players": "2–4",
+"time": "15–30 min",
+"ages": "6 years or older"
+},
+{
+"title": "Trouble",
+"code": "DGLF-M021",
+"qr": "DGLF-M021",
+"players": "2–4",
+"time": "45 min",
+"ages": "4 years or older"
+},
+{
+"title": "Valley of the Vikings",
+"code": "DGLF-M022",
+"qr": "DGLF-M022",
+"players": "2–4",
+"time": "15–20 min",
+"ages": "6 years or older"
+},
+{
+"title": "Viva Topo!",
+"code": "DGLF-M023",
+"qr": "DGLF-M023",
+"players": "2–4",
+"time": "20–30 min",
+"ages": "4 years or older"
+},
+{
+"title": "Carcassonne Big Box 7",
+"code": "DGLF-L001",
+"qr": "DGLF-L001",
+"players": "2–6",
+"time": "35 min",
+"ages": "7 years or older"
+},
+{
+"title": "Checkers",
+"code": "DGLF-L002",
+"qr": "DGLF-L002",
+"players": "2",
+"time": "30 min",
+"ages": "6 years or older"
+},
+{
+"title": "Chess",
+"code": "DGLF-L003",
+"qr": "DGLF-L003",
+"players": "2",
+"time": null,
+"ages": "6 years or older"
+},
+{
+"title": "ICECOOL",
+"code": "DGLF-L004",
+"qr": "DGLF-L004",
+"players": "2–4",
+"time": "30 min",
+"ages": "6 years or older"
+},
+{
+"title": "ICECOOL2",
+"code": "DGLF-L005",
+"qr": "DGLF-L005",
+"players": "2–4",
+"time": "30 min",
+"ages": "6 years or older"
+},
+{
+"title": "Labyrinth",
+"code": "DGLF-L006",
+"qr": "DGLF-L006",
+"players": "2–4",
+"time": "20 min",
+"ages": "7 years or older"
+},
+{
+"title": "Pharaoh's Gulo Gulo",
+"code": "DGLF-L007",
+"qr": "DGLF-L007",
+"players": "2–6",
+"time": "20 min",
+"ages": "7 years or older"
+},
+{
+"title": "PitchCar",
+"code": "DGLF-L008",
+"qr": "DGLF-L008",
+"players": "2–8",
+"time": "30 min",
+"ages": "6 years or older"
+},
+{
+"title": "Rhino Hero: Super Battle",
+"code": "DGLF-L009",
+"qr": "DGLF-L009",
+"players": "2–4",
+"time": "10–20 min",
+"ages": "5 years or older"
+},
+{
+"title": "TopSpin",
+"code": "DGLF-L010",
+"qr": "DGLF-L010",
+"players": "2–4",
+"time": null,
+"ages": null
+},
+{
+"title": "Altered Carbon - The Roleplaying Game",
+"code": "DGLRPG-001",
+"qr": "DGLRPG-001",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Animal Adventures RPG Starter Set",
+"code": "DGLRPG-002",
+"qr": "DGLRPG-002",
+"players": "2–8",
+"time": null,
+"ages": "Teens"
+},
+{
+"title": "Avatar Legends: The Roleplaying Game",
+"code": "DGLRPG-003",
+"qr": "DGLRPG-003",
+"players": "3–6",
+"time": null,
+"ages": null
+},
+{
+"title": "BESM (Big Eyes, Small Mouth) (4th Edition)",
+"code": "DGLRPG-004",
+"qr": "DGLRPG-004",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Blades in the Dark",
+"code": "DGLRPG-005",
+"qr": "DGLRPG-005",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Call of Cthulhu (7th Edition)",
+"code": "DGLRPG-006",
+"qr": "DGLRPG-006",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Cyberpunk RED (Core Rulebook)",
+"code": "DGLRPG-007",
+"qr": "DGLRPG-007",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "D&D – Glory of the Giants (Hobby Exclusive)",
+"code": "DGLRPG-008",
+"qr": "DGLRPG-008",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Death in Space",
+"code": "DGLRPG-009",
+"qr": "DGLRPG-009",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Dungeons & Dragons Dungeon Master's Guide (5th Edition)",
+"code": "DGLRPG-010",
+"qr": "DGLRPG-010",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Dungeons & Dragons Monster Manual (5th Edition)",
+"code": "DGLRPG-011",
+"qr": "DGLRPG-011",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Dungeons & Dragons Player's Handbook (5th Edition)",
+"code": "DGLRPG-012",
+"qr": "DGLRPG-012",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Fiasco RPG",
+"code": "DGLRPG-013",
+"qr": "DGLRPG-013",
+"players": "3–5",
+"time": "60–180 min",
+"ages": null
+},
+{
+"title": "Into the Odd",
+"code": "DGLRPG-014",
+"qr": "DGLRPG-014",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Kids on Brooms",
+"code": "DGLRPG-015",
+"qr": "DGLRPG-015",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "KULT: Divinity Lost",
+"code": "DGLRPG-016",
+"qr": "DGLRPG-016",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Lancer",
+"code": "DGLRPG-017",
+"qr": "DGLRPG-017",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Masks of Nyarlathotep (5th edition)",
+"code": "DGLRPG-018",
+"qr": "DGLRPG-018",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Mothership Player's Survival Guide",
+"code": "DGLRPG-019",
+"qr": "DGLRPG-019",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "My Little Pony: Tails of Equestria, The Storytelling Game",
+"code": "DGLRPG-020",
+"qr": "DGLRPG-020",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Numenera Destiny",
+"code": "DGLRPG-021",
+"qr": "DGLRPG-021",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Numenera Discovery",
+"code": "DGLRPG-022",
+"qr": "DGLRPG-022",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Pathfinder Roleplaying Game",
+"code": "DGLRPG-023",
+"qr": "DGLRPG-023",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Quest-O-Nomicon",
+"code": "DGLRPG-024",
+"qr": "DGLRPG-024",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Root the tabletop roleplaying game",
+"code": "DGLRPG-025",
+"qr": "DGLRPG-025",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Shadowrun: Sixth World (6th Edition)",
+"code": "DGLRPG-026",
+"qr": "DGLRPG-026",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Star Trek Adventures",
+"code": "DGLRPG-027",
+"qr": "DGLRPG-027",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Star Wars: Edge of the Empire",
+"code": "DGLRPG-028",
+"qr": "DGLRPG-028",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Strange Squad",
+"code": "DGLRPG-029",
+"qr": "DGLRPG-029",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Talisman Adventures Fantasy Roleplaying Game Core Rulebook",
+"code": "DGLRPG-030",
+"qr": "DGLRPG-030",
+"players": "2–6",
+"time": "120–240 min",
+"ages": null
+},
+{
+"title": "Teens in Space",
+"code": "DGLRPG-031",
+"qr": "DGLRPG-031",
+"players": "3–7",
+"time": null,
+"ages": null
+},
+{
+"title": "Tiny Dungeon 2nd Edition",
+"code": "DGLRPG-032",
+"qr": "DGLRPG-032",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Tiny Frontiers",
+"code": "DGLRPG-033",
+"qr": "DGLRPG-033",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Tiny Pirates",
+"code": "DGLRPG-034",
+"qr": "DGLRPG-034",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "Vampire: The Masquerade 5th Edition Core Book",
+"code": "DGLRPG-035",
+"qr": "DGLRPG-035",
+"players": "2–6",
+"time": null,
+"ages": null
+},
+{
+"title": "World of Warcraft: The Roleplaying Game",
+"code": "DGLRPG-036",
+"qr": "DGLRPG-036",
+"players": "2–6",
+"time": null,
+"ages": null
+}
+]

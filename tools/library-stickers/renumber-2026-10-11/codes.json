@@ -1,0 +1,8162 @@
+[
+ {
+  "old_code": "DGL12-001",
+  "new_code": "DGL12-S001",
+  "title": "7 Wonders Duel",
+  "size": "S",
+  "size_source": "BGG, printings split M1/S23",
+  "why": null,
+  "dims_cm": [
+   20.3,
+   20.3,
+   5.1
+  ],
+  "kg": 0.55,
+  "bgg_id": 173346,
+  "productId": "gid://shopify/Product/7498130128999"
+ },
+ {
+  "old_code": "DGL12-002",
+  "new_code": "DGL12-S002",
+  "title": "A Little Wordy",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.3,
+   13.0,
+   5.0
+  ],
+  "kg": 0.42,
+  "bgg_id": 335869,
+  "productId": "gid://shopify/Product/7498130489447"
+ },
+ {
+  "old_code": "DGL12-008",
+  "new_code": "DGL12-S003",
+  "title": "BattleCON: War of Indines",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.3,
+   15.2,
+   7.6
+  ],
+  "kg": 1.36,
+  "bgg_id": 89409,
+  "productId": "gid://shopify/Product/7498131603559"
+ },
+ {
+  "old_code": "DGL12-009",
+  "new_code": "DGL12-S004",
+  "title": "Codenames: Duet",
+  "size": "S",
+  "size_source": "BGG, printings split M1/S4",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.1
+  ],
+  "kg": 0.66,
+  "bgg_id": 224037,
+  "productId": "gid://shopify/Product/7498133569639"
+ },
+ {
+  "old_code": "DGL12-013",
+  "new_code": "DGL12-S005",
+  "title": "Final Fantasy Trading Card Game Decks",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498136485991"
+ },
+ {
+  "old_code": "DGL12-015",
+  "new_code": "DGL12-S006",
+  "title": "Flesh and Blood Blitz decks",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498136682599"
+ },
+ {
+  "old_code": "DGL12-017",
+  "new_code": "DGL12-S007",
+  "title": "The Fox in the Forest",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.9,
+   11.1,
+   2.9
+  ],
+  "kg": 0.14,
+  "bgg_id": 221965,
+  "productId": "gid://shopify/Product/7498146676839"
+ },
+ {
+  "old_code": "DGL12-019",
+  "new_code": "DGL12-S008",
+  "title": "Hive",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.0,
+   21.0,
+   5.5
+  ],
+  "kg": 0.76,
+  "bgg_id": 2655,
+  "productId": "gid://shopify/Product/7498137862247"
+ },
+ {
+  "old_code": "DGL12-020",
+  "new_code": "DGL12-S009",
+  "title": "Imhotep: The Duel",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.2,
+   20.2,
+   4.8
+  ],
+  "kg": null,
+  "bgg_id": 255674,
+  "productId": "gid://shopify/Product/7498138189927"
+ },
+ {
+  "old_code": "DGL12-021",
+  "new_code": "DGL12-S010",
+  "title": "Jaipur",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.5,
+   10.3,
+   3.9
+  ],
+  "kg": 0.3,
+  "bgg_id": 54043,
+  "productId": "gid://shopify/Product/7498138484839"
+ },
+ {
+  "old_code": "DGL12-022",
+  "new_code": "DGL12-S011",
+  "title": "King of Tokyo: Duel",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   20.5,
+   16.0,
+   5.0
+  ],
+  "kg": 0.55,
+  "bgg_id": 422484,
+  "productId": "gid://shopify/Product/7498139107431"
+ },
+ {
+  "old_code": "DGL12-023",
+  "new_code": "DGL12-S012",
+  "title": "Kingdomino Duel",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.1,
+   11.1,
+   4.1
+  ],
+  "kg": 0.28,
+  "bgg_id": 281960,
+  "productId": "gid://shopify/Product/7498138976359"
+ },
+ {
+  "old_code": "DGL12-025",
+  "new_code": "DGL12-S013",
+  "title": "Lindyhop",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.0,
+   10.0,
+   3.0
+  ],
+  "kg": null,
+  "bgg_id": 367829,
+  "productId": "gid://shopify/Product/7498139631719"
+ },
+ {
+  "old_code": "DGL12-028",
+  "new_code": "DGL12-S014",
+  "title": "My Hero Academia Collectible Card Game 2-Player Rival Box",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498140909671"
+ },
+ {
+  "old_code": "DGL12-030",
+  "new_code": "DGL12-S015",
+  "title": "Patchwork",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.0,
+   20.0,
+   4.5
+  ],
+  "kg": 0.57,
+  "bgg_id": 163412,
+  "productId": "gid://shopify/Product/7498141859943"
+ },
+ {
+  "old_code": "DGL12-031",
+  "new_code": "DGL12-S016",
+  "title": "Riftbound: The League of Legends Trading Card Game Trial decks",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498143105127"
+ },
+ {
+  "old_code": "DGL12-032",
+  "new_code": "DGL12-S017",
+  "title": "Rivals for Catan",
+  "size": "S",
+  "size_source": "BGG, printings split M1/S2",
+  "why": null,
+  "dims_cm": [
+   21.6,
+   16.5,
+   4.8
+  ],
+  "kg": 0.36,
+  "bgg_id": 66056,
+  "productId": "gid://shopify/Product/7498143203431"
+ },
+ {
+  "old_code": "DGL12-033",
+  "new_code": "DGL12-S018",
+  "title": "SHŌBU",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   24.1,
+   17.8,
+   5.1
+  ],
+  "kg": 0.96,
+  "bgg_id": 272380,
+  "productId": "gid://shopify/Product/7498144120935"
+ },
+ {
+  "old_code": "DGL12-035",
+  "new_code": "DGL12-S019",
+  "title": "Splendor Duel",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   5.0
+  ],
+  "kg": 0.44,
+  "bgg_id": 364073,
+  "productId": "gid://shopify/Product/7498144841831"
+ },
+ {
+  "old_code": "DGL12-037",
+  "new_code": "DGL12-S020",
+  "title": "Targi",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.3,
+   20.3,
+   4.8
+  ],
+  "kg": 0.47,
+  "bgg_id": 118048,
+  "productId": "gid://shopify/Product/7498146054247"
+ },
+ {
+  "old_code": "DGL12-038",
+  "new_code": "DGL12-S021",
+  "title": "Trinity",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498147954791"
+ },
+ {
+  "old_code": "DGL12-003",
+  "new_code": "DGL12-M001",
+  "title": "Android: Netrunner",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   5.1
+  ],
+  "kg": 0.9,
+  "bgg_id": 124742,
+  "productId": "gid://shopify/Product/7498130620519"
+ },
+ {
+  "old_code": "DGL12-004",
+  "new_code": "DGL12-M002",
+  "title": "Azul Duel",
+  "size": "M",
+  "size_source": "BGG, printings split M1/S1",
+  "why": null,
+  "dims_cm": [
+   25.0,
+   25.0,
+   5.0
+  ],
+  "kg": 0.67,
+  "bgg_id": 431038,
+  "productId": "gid://shopify/Product/7498131243111"
+ },
+ {
+  "old_code": "DGL12-006",
+  "new_code": "DGL12-M003",
+  "title": "Battle of the Pyramids",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 34710,
+  "productId": "gid://shopify/Product/7498131636327"
+ },
+ {
+  "old_code": "DGL12-007",
+  "new_code": "DGL12-M004",
+  "title": "BattleCON: Trials of Indines",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   17.1,
+   11.1
+  ],
+  "kg": null,
+  "bgg_id": 204728,
+  "productId": "gid://shopify/Product/7498131505255"
+ },
+ {
+  "old_code": "DGL12-010",
+  "new_code": "DGL12-M005",
+  "title": "Cosmic Encounter Duel",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   5.1
+  ],
+  "kg": 0.84,
+  "bgg_id": 298572,
+  "productId": "gid://shopify/Product/7498133962855"
+ },
+ {
+  "old_code": "DGL12-012",
+  "new_code": "DGL12-M006",
+  "title": "Everdell Duo",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.0,
+   25.0,
+   5.3
+  ],
+  "kg": 0.99,
+  "bgg_id": 425005,
+  "productId": "gid://shopify/Product/7498136223847"
+ },
+ {
+  "old_code": "DGL12-014",
+  "new_code": "DGL12-M007",
+  "title": "Five Nights at Freddy's: Survive 'Til 6AM",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.5,
+   22.6,
+   5.6
+  ],
+  "kg": null,
+  "bgg_id": 319288,
+  "productId": "gid://shopify/Product/7498136551527"
+ },
+ {
+  "old_code": "DGL12-018",
+  "new_code": "DGL12-M008",
+  "title": "Guess Who? Clue Game",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498137600103"
+ },
+ {
+  "old_code": "DGL12-026",
+  "new_code": "DGL12-M009",
+  "title": "Lost Cities: The Board Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.0
+  ],
+  "kg": null,
+  "bgg_id": 42487,
+  "productId": "gid://shopify/Product/7498139828327"
+ },
+ {
+  "old_code": "DGL12-027",
+  "new_code": "DGL12-M010",
+  "title": "Mr. Jack",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   28.5,
+   25.7,
+   6.7
+  ],
+  "kg": 0.98,
+  "bgg_id": 21763,
+  "productId": "gid://shopify/Product/7498140680295"
+ },
+ {
+  "old_code": "DGL12-029",
+  "new_code": "DGL12-M011",
+  "title": "Orlog: Assassin's Creed Valhalla Dice Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.4,
+   22.9,
+   6.3
+  ],
+  "kg": 1.36,
+  "bgg_id": 342479,
+  "productId": "gid://shopify/Product/7498141597799"
+ },
+ {
+  "old_code": "DGL12-034",
+  "new_code": "DGL12-M012",
+  "title": "Sky Team",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   18.5,
+   5.0
+  ],
+  "kg": 0.56,
+  "bgg_id": 373106,
+  "productId": "gid://shopify/Product/7498144317543"
+ },
+ {
+  "old_code": "DGL12-039",
+  "new_code": "DGL12-M013",
+  "title": "Under Falling Skies",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   18.5,
+   6.0
+  ],
+  "kg": 1.36,
+  "bgg_id": 306735,
+  "productId": "gid://shopify/Product/7498148216935"
+ },
+ {
+  "old_code": "DGL12-005",
+  "new_code": "DGL12-L001",
+  "title": "Backgammon",
+  "size": "L",
+  "size_source": "BGG, printings split L4/M2/S1",
+  "why": null,
+  "dims_cm": [
+   39.0,
+   23.8,
+   4.5
+  ],
+  "kg": 1.11,
+  "bgg_id": 2397,
+  "productId": "gid://shopify/Product/7519131107431"
+ },
+ {
+  "old_code": "DGL12-011",
+  "new_code": "DGL12-L002",
+  "title": "Escape Room: The Game – Puzzle Adventures: Secret of The Scientist",
+  "size": "L",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   33.0,
+   23.5,
+   4.5
+  ],
+  "kg": 0.7,
+  "bgg_id": 337690,
+  "productId": "gid://shopify/Product/7498136092775"
+ },
+ {
+  "old_code": "DGL12-016",
+  "new_code": "DGL12-L003",
+  "title": "Foosketball",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   40.6,
+   27.9,
+   6.3
+  ],
+  "kg": null,
+  "bgg_id": 333672,
+  "productId": "gid://shopify/Product/7498136813671"
+ },
+ {
+  "old_code": "DGL12-024",
+  "new_code": "DGL12-L004",
+  "title": "KLASK",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   46.0,
+   37.0,
+   15.0
+  ],
+  "kg": 2.42,
+  "bgg_id": 165722,
+  "productId": "gid://shopify/Product/7498139205735"
+ },
+ {
+  "old_code": "DGL12-036",
+  "new_code": "DGL12-L005",
+  "title": "Stratego",
+  "size": "L",
+  "size_source": "BGG, printings split L5/M4/S2",
+  "why": null,
+  "dims_cm": [
+   40.0,
+   27.0,
+   6.0
+  ],
+  "kg": 1.28,
+  "bgg_id": 1917,
+  "productId": "gid://shopify/Product/7498145529959"
+ },
+ {
+  "old_code": "DGL34-001",
+  "new_code": "DGL34-S001",
+  "title": "Adventure Games: Monochrome Inc.",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.0
+  ],
+  "kg": null,
+  "bgg_id": 267814,
+  "productId": "gid://shopify/Product/7498130161767"
+ },
+ {
+  "old_code": "DGL34-002",
+  "new_code": "DGL34-S002",
+  "title": "Adventure Games: The Dungeon",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.0
+  ],
+  "kg": null,
+  "bgg_id": 267813,
+  "productId": "gid://shopify/Product/7498130194535"
+ },
+ {
+  "old_code": "DGL34-003",
+  "new_code": "DGL34-S003",
+  "title": "Adventure Games: The Grand Hotel Abaddon",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.0
+  ],
+  "kg": 0.45,
+  "bgg_id": 295949,
+  "productId": "gid://shopify/Product/7498130227303"
+ },
+ {
+  "old_code": "DGL34-004",
+  "new_code": "DGL34-S004",
+  "title": "Adventure Games: The Volcanic Island",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   17.8,
+   13.0,
+   4.0
+  ],
+  "kg": 0.44,
+  "bgg_id": 284082,
+  "productId": "gid://shopify/Product/7498130260071"
+ },
+ {
+  "old_code": "DGL34-012",
+  "new_code": "DGL34-S005",
+  "title": "Ars Alchimia",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.0,
+   15.2,
+   4.5
+  ],
+  "kg": 0.63,
+  "bgg_id": 160432,
+  "productId": "gid://shopify/Product/7498130948199"
+ },
+ {
+  "old_code": "DGL34-021",
+  "new_code": "DGL34-S006",
+  "title": "Cat Capers",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.5,
+   14.5,
+   4.0
+  ],
+  "kg": 0.5,
+  "bgg_id": 176943,
+  "productId": "gid://shopify/Product/7498132783207"
+ },
+ {
+  "old_code": "DGL34-026",
+  "new_code": "DGL34-S007",
+  "title": "Chocobo Party Up!",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 283161,
+  "productId": "gid://shopify/Product/7498133078119"
+ },
+ {
+  "old_code": "DGL34-031",
+  "new_code": "DGL34-S008",
+  "title": "Core Connection: Rise of Atlantis",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.6,
+   21.6,
+   8.3
+  ],
+  "kg": null,
+  "bgg_id": 267036,
+  "productId": "gid://shopify/Product/7498133897319"
+ },
+ {
+  "old_code": "DGL34-037",
+  "new_code": "DGL34-S009",
+  "title": "Dice Dodgems",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498134814823"
+ },
+ {
+  "old_code": "DGL34-038",
+  "new_code": "DGL34-S010",
+  "title": "Diceborn Heroes",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.9,
+   22.9,
+   7.6
+  ],
+  "kg": null,
+  "bgg_id": 215521,
+  "productId": "gid://shopify/Product/7498134782055"
+ },
+ {
+  "old_code": "DGL34-043",
+  "new_code": "DGL34-S011",
+  "title": "Dragonwood",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.3,
+   16.5,
+   5.1
+  ],
+  "kg": 0.42,
+  "bgg_id": 172933,
+  "productId": "gid://shopify/Product/7498135437415"
+ },
+ {
+  "old_code": "DGL34-046",
+  "new_code": "DGL34-S012",
+  "title": "Dungeon Roll",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   10.4,
+   9.1,
+   7.6
+  ],
+  "kg": 0.3,
+  "bgg_id": 138788,
+  "productId": "gid://shopify/Product/7498135699559"
+ },
+ {
+  "old_code": "DGL34-051",
+  "new_code": "DGL34-S013",
+  "title": "Floating Floors",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.0,
+   13.6,
+   5.0
+  ],
+  "kg": null,
+  "bgg_id": 334712,
+  "productId": "gid://shopify/Product/7498136780903"
+ },
+ {
+  "old_code": "DGL34-052",
+  "new_code": "DGL34-S014",
+  "title": "Forbidden Island",
+  "size": "S",
+  "size_source": "BGG, printings split L1/S25",
+  "why": null,
+  "dims_cm": [
+   22.2,
+   16.5,
+   7.0
+  ],
+  "kg": 0.6,
+  "bgg_id": 65244,
+  "productId": "gid://shopify/Product/7498136846439"
+ },
+ {
+  "old_code": "DGL34-053",
+  "new_code": "DGL34-S015",
+  "title": "Fort",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.5,
+   14.5,
+   5.5
+  ],
+  "kg": 0.68,
+  "bgg_id": 296912,
+  "productId": "gid://shopify/Product/7498137010279"
+ },
+ {
+  "old_code": "DGL34-061",
+  "new_code": "DGL34-S016",
+  "title": "Gardeners",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   6.6
+  ],
+  "kg": 0.87,
+  "bgg_id": 361840,
+  "productId": "gid://shopify/Product/7498137272423"
+ },
+ {
+  "old_code": "DGL34-062",
+  "new_code": "DGL34-S017",
+  "title": "Gloom",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   13.7,
+   9.5,
+   1.9
+  ],
+  "kg": 0.27,
+  "bgg_id": 12692,
+  "productId": "gid://shopify/Product/7498137436263"
+ },
+ {
+  "old_code": "DGL34-065",
+  "new_code": "DGL34-S018",
+  "title": "Happy Little Dinosaurs",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.6,
+   15.0,
+   4.8
+  ],
+  "kg": 0.59,
+  "bgg_id": 325414,
+  "productId": "gid://shopify/Product/7498137665639"
+ },
+ {
+  "old_code": "DGL34-066",
+  "new_code": "DGL34-S019",
+  "title": "Hey, That's My Fish!",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.7,
+   12.7,
+   3.7
+  ],
+  "kg": 0.26,
+  "bgg_id": 8203,
+  "productId": "gid://shopify/Product/7498137829479"
+ },
+ {
+  "old_code": "DGL34-069",
+  "new_code": "DGL34-S020",
+  "title": "Karmaka",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.7,
+   16.5,
+   3.5
+  ],
+  "kg": 0.42,
+  "bgg_id": 172552,
+  "productId": "gid://shopify/Product/7498138681447"
+ },
+ {
+  "old_code": "DGL34-070",
+  "new_code": "DGL34-S021",
+  "title": "Kiitos",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.5,
+   10.0,
+   3.2
+  ],
+  "kg": 0.23,
+  "bgg_id": 300509,
+  "productId": "gid://shopify/Product/7498138910823"
+ },
+ {
+  "old_code": "DGL34-071",
+  "new_code": "DGL34-S022",
+  "title": "Kitara",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   24.0,
+   24.0,
+   7.0
+  ],
+  "kg": 0.45,
+  "bgg_id": 293267,
+  "productId": "gid://shopify/Product/7498139140199"
+ },
+ {
+  "old_code": "DGL34-075",
+  "new_code": "DGL34-S023",
+  "title": "Legends Untold: The Great Sewers Novice Set",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.5,
+   16.4,
+   6.0
+  ],
+  "kg": 0.82,
+  "bgg_id": 216179,
+  "productId": "gid://shopify/Product/7498139533415"
+ },
+ {
+  "old_code": "DGL34-076",
+  "new_code": "DGL34-S024",
+  "title": "The Lost Words",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.1
+  ],
+  "kg": null,
+  "bgg_id": 317847,
+  "productId": "gid://shopify/Product/7498146840679"
+ },
+ {
+  "old_code": "DGL34-077",
+  "new_code": "DGL34-S025",
+  "title": "Love Formula",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.5,
+   9.8,
+   8.0
+  ],
+  "kg": 0.45,
+  "bgg_id": 230063,
+  "productId": "gid://shopify/Product/7498139861095"
+ },
+ {
+  "old_code": "DGL34-078",
+  "new_code": "DGL34-S026",
+  "title": "Love Letter",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.0,
+   11.6,
+   3.3
+  ],
+  "kg": 0.12,
+  "bgg_id": 129622,
+  "productId": "gid://shopify/Product/7498139893863"
+ },
+ {
+  "old_code": "DGL34-083",
+  "new_code": "DGL34-S027",
+  "title": "Mint Works",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   9.0,
+   6.0,
+   2.0
+  ],
+  "kg": null,
+  "bgg_id": 200077,
+  "productId": "gid://shopify/Product/7498140352615"
+ },
+ {
+  "old_code": "DGL34-090",
+  "new_code": "DGL34-S028",
+  "title": "Oaxaca: Crafts of a Culture",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   14.0,
+   8.9,
+   3.2
+  ],
+  "kg": 0.14,
+  "bgg_id": 147241,
+  "productId": "gid://shopify/Product/7498141335655"
+ },
+ {
+  "old_code": "DGL34-091",
+  "new_code": "DGL34-S029",
+  "title": "Ohanami",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.1,
+   11.0,
+   2.3
+  ],
+  "kg": 1.13,
+  "bgg_id": 270314,
+  "productId": "gid://shopify/Product/7498141368423"
+ },
+ {
+  "old_code": "DGL34-094",
+  "new_code": "DGL34-S030",
+  "title": "Paladins of the West Kingdom",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   23.0,
+   6.7
+  ],
+  "kg": 1.89,
+  "bgg_id": 266810,
+  "productId": "gid://shopify/Product/7498141663335"
+ },
+ {
+  "old_code": "DGL34-096",
+  "new_code": "DGL34-S031",
+  "title": "Pandemic: Hot Zone – North America",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.1,
+   14.7,
+   5.1
+  ],
+  "kg": null,
+  "bgg_id": 301919,
+  "productId": "gid://shopify/Product/7498141761639"
+ },
+ {
+  "old_code": "DGL34-100",
+  "new_code": "DGL34-S032",
+  "title": "Raid the Pantry",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.5,
+   11.5,
+   3.5
+  ],
+  "kg": 0.3,
+  "bgg_id": 124918,
+  "productId": "gid://shopify/Product/7498142777447"
+ },
+ {
+  "old_code": "DGL34-103",
+  "new_code": "DGL34-S033",
+  "title": "Regicide",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   9.3,
+   6.5,
+   2.4
+  ],
+  "kg": 0.19,
+  "bgg_id": 307002,
+  "productId": "gid://shopify/Product/7498142941287"
+ },
+ {
+  "old_code": "DGL34-107",
+  "new_code": "DGL34-S034",
+  "title": "Saints: The Card Game",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498143629415"
+ },
+ {
+  "old_code": "DGL34-109",
+  "new_code": "DGL34-S035",
+  "title": "Shardhunters",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 252163,
+  "productId": "gid://shopify/Product/7498143924327"
+ },
+ {
+  "old_code": "DGL34-111",
+  "new_code": "DGL34-S036",
+  "title": "Shelfie Stacker",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   23.0,
+   7.0
+  ],
+  "kg": 1.43,
+  "bgg_id": 281455,
+  "productId": "gid://shopify/Product/7498143957095"
+ },
+ {
+  "old_code": "DGL34-120",
+  "new_code": "DGL34-S037",
+  "title": "Squirrel or Die",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.7,
+   4.4,
+   4.4
+  ],
+  "kg": 0.1,
+  "bgg_id": 163983,
+  "productId": "gid://shopify/Product/7498144972903"
+ },
+ {
+  "old_code": "DGL34-129",
+  "new_code": "DGL34-S038",
+  "title": "Sword Art Online Board Game: Sword of Fellows",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   13.0,
+   8.5,
+   3.5
+  ],
+  "kg": 0.2,
+  "bgg_id": 220368,
+  "productId": "gid://shopify/Product/7498145759335"
+ },
+ {
+  "old_code": "DGL34-133",
+  "new_code": "DGL34-S039",
+  "title": "The Terrifying Girl Disorder",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   11.9,
+   8.9,
+   3.3
+  ],
+  "kg": null,
+  "bgg_id": 186695,
+  "productId": "gid://shopify/Product/7498147102823"
+ },
+ {
+  "old_code": "DGL34-144",
+  "new_code": "DGL34-S040",
+  "title": "Viscounts of the West Kingdom",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   23.0,
+   6.0
+  ],
+  "kg": 2.0,
+  "bgg_id": 296151,
+  "productId": "gid://shopify/Product/7498148937831"
+ },
+ {
+  "old_code": "DGL34-145",
+  "new_code": "DGL34-S041",
+  "title": "VivaJava: The Coffee Game: The Dice Game",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.3,
+   22.3,
+   5.3
+  ],
+  "kg": 0.72,
+  "bgg_id": 139899,
+  "productId": "gid://shopify/Product/7498149003367"
+ },
+ {
+  "old_code": "DGL34-146",
+  "new_code": "DGL34-S042",
+  "title": "War Chest",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   19.0,
+   12.0
+  ],
+  "kg": 2.04,
+  "bgg_id": 249259,
+  "productId": "gid://shopify/Product/7498149068903"
+ },
+ {
+  "old_code": "DGL34-148",
+  "new_code": "DGL34-S043",
+  "title": "World Changers",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   12.9,
+   4.1
+  ],
+  "kg": 0.36,
+  "bgg_id": 315624,
+  "productId": "gid://shopify/Product/7498149560423"
+ },
+ {
+  "old_code": "DGL34-005",
+  "new_code": "DGL34-M001",
+  "title": "The Adventures of Robin Hood",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.0
+  ],
+  "kg": 2.1,
+  "bgg_id": 326494,
+  "productId": "gid://shopify/Product/7498146349159"
+ },
+ {
+  "old_code": "DGL34-006",
+  "new_code": "DGL34-M002",
+  "title": "Alchemists",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.8,
+   29.8,
+   7.2
+  ],
+  "kg": 2.4,
+  "bgg_id": 161970,
+  "productId": "gid://shopify/Product/7498130391143"
+ },
+ {
+  "old_code": "DGL34-007",
+  "new_code": "DGL34-M003",
+  "title": "Anno 1800: The Board Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   30.0,
+   7.0
+  ],
+  "kg": null,
+  "bgg_id": 311193,
+  "productId": "gid://shopify/Product/7498130686055"
+ },
+ {
+  "old_code": "DGL34-010",
+  "new_code": "DGL34-M004",
+  "title": "Arkham Horror: Final Hour",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   5.1
+  ],
+  "kg": null,
+  "bgg_id": 285773,
+  "productId": "gid://shopify/Product/7498130882663"
+ },
+ {
+  "old_code": "DGL34-011",
+  "new_code": "DGL34-M005",
+  "title": "Arkham Horror: The Card Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   5.1
+  ],
+  "kg": 0.93,
+  "bgg_id": 205637,
+  "productId": "gid://shopify/Product/7498130915431"
+ },
+ {
+  "old_code": "DGL34-013",
+  "new_code": "DGL34-M006",
+  "title": "AuZtralia",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.0
+  ],
+  "kg": 2.48,
+  "bgg_id": 231581,
+  "productId": "gid://shopify/Product/7498131144807"
+ },
+ {
+  "old_code": "DGL34-014",
+  "new_code": "DGL34-M007",
+  "title": "Azul",
+  "size": "M",
+  "size_source": "BGG, printings split M11/S1",
+  "why": null,
+  "dims_cm": [
+   26.0,
+   26.0,
+   7.0
+  ],
+  "kg": 1.23,
+  "bgg_id": 230802,
+  "productId": "gid://shopify/Product/7498131210343"
+ },
+ {
+  "old_code": "DGL34-015",
+  "new_code": "DGL34-M008",
+  "title": "The Batman Who Laughs Rising",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   28.0,
+   28.0,
+   8.0
+  ],
+  "kg": 1.0,
+  "bgg_id": 308329,
+  "productId": "gid://shopify/Product/7498146414695"
+ },
+ {
+  "old_code": "DGL34-016",
+  "new_code": "DGL34-M009",
+  "title": "BattleCON: Wanderers of Indines",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   17.1,
+   11.9
+  ],
+  "kg": 1.58,
+  "bgg_id": 174400,
+  "productId": "gid://shopify/Product/7498131570791"
+ },
+ {
+  "old_code": "DGL34-018",
+  "new_code": "DGL34-M010",
+  "title": "BioShock Infinite: The Siege of Columbia",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.6,
+  "bgg_id": 132428,
+  "productId": "gid://shopify/Product/7498131865703"
+ },
+ {
+  "old_code": "DGL34-022",
+  "new_code": "DGL34-M011",
+  "title": "Catan",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   24.0,
+   8.0
+  ],
+  "kg": 1.1,
+  "bgg_id": 13,
+  "productId": "gid://shopify/Product/7498132619367"
+ },
+ {
+  "old_code": "DGL34-025",
+  "new_code": "DGL34-M012",
+  "title": "Champions of Midgard",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.86,
+  "bgg_id": 172287,
+  "productId": "gid://shopify/Product/7498132947047"
+ },
+ {
+  "old_code": "DGL34-027",
+  "new_code": "DGL34-M013",
+  "title": "Chronicles of Crime",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 0.92,
+  "bgg_id": 239188,
+  "productId": "gid://shopify/Product/7498133143655"
+ },
+ {
+  "old_code": "DGL34-028",
+  "new_code": "DGL34-M014",
+  "title": "Chronicles of Crime: 1400",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   19.4,
+   5.7
+  ],
+  "kg": 0.65,
+  "bgg_id": 300300,
+  "productId": "gid://shopify/Product/7498133176423"
+ },
+ {
+  "old_code": "DGL34-029",
+  "new_code": "DGL34-M015",
+  "title": "Chronicles of Crime: 1900",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   20.3,
+   7.6
+  ],
+  "kg": 0.66,
+  "bgg_id": 302098,
+  "productId": "gid://shopify/Product/7498133209191"
+ },
+ {
+  "old_code": "DGL34-030",
+  "new_code": "DGL34-M016",
+  "title": "Clank!: A Deck-Building Adventure",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.0,
+   31.0,
+   8.0
+  ],
+  "kg": 1.48,
+  "bgg_id": 201808,
+  "productId": "gid://shopify/Product/7498133274727"
+ },
+ {
+  "old_code": "DGL34-032",
+  "new_code": "DGL34-M017",
+  "title": "Cowboy Bebop: Space Serenade",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.36,
+  "bgg_id": 283642,
+  "productId": "gid://shopify/Product/7498134061159"
+ },
+ {
+  "old_code": "DGL34-036",
+  "new_code": "DGL34-M018",
+  "title": "DC Deck-Building Game: Rebirth",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 246535,
+  "productId": "gid://shopify/Product/7498134454375"
+ },
+ {
+  "old_code": "DGL34-039",
+  "new_code": "DGL34-M019",
+  "title": "Disney Villainous: Evil Comes Prepared",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.5,
+   16.3,
+   6.4
+  ],
+  "kg": null,
+  "bgg_id": 284760,
+  "productId": "gid://shopify/Product/7498134945895"
+ },
+ {
+  "old_code": "DGL34-040",
+  "new_code": "DGL34-M020",
+  "title": "Disney Villainous: Perfectly Wretched",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.5,
+   16.3,
+   6.4
+  ],
+  "kg": null,
+  "bgg_id": 299047,
+  "productId": "gid://shopify/Product/7498134978663"
+ },
+ {
+  "old_code": "DGL34-041",
+  "new_code": "DGL34-M021",
+  "title": "Disney Villainous: Wicked to the Core",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.5,
+   16.3,
+   6.4
+  ],
+  "kg": null,
+  "bgg_id": 271518,
+  "productId": "gid://shopify/Product/7498135011431"
+ },
+ {
+  "old_code": "DGL34-042",
+  "new_code": "DGL34-M022",
+  "title": "Dragon Ball Z: Road Trip",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498135371879"
+ },
+ {
+  "old_code": "DGL34-044",
+  "new_code": "DGL34-M023",
+  "title": "Drop It",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.6,
+   29.5,
+   7.0
+  ],
+  "kg": 1.18,
+  "bgg_id": 244916,
+  "productId": "gid://shopify/Product/7498135502951"
+ },
+ {
+  "old_code": "DGL34-045",
+  "new_code": "DGL34-M024",
+  "title": "Dune: House Secrets",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.5
+  ],
+  "kg": 0.96,
+  "bgg_id": 329713,
+  "productId": "gid://shopify/Product/7498135601255"
+ },
+ {
+  "old_code": "DGL34-047",
+  "new_code": "DGL34-M025",
+  "title": "Dungeons & Dragons: Adventure Begins",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   29.4,
+   29.4,
+   6.5
+  ],
+  "kg": 1.17,
+  "bgg_id": 315196,
+  "productId": "gid://shopify/Product/7498135863399"
+ },
+ {
+  "old_code": "DGL34-048",
+  "new_code": "DGL34-M026",
+  "title": "Escape the Horde",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498136158311"
+ },
+ {
+  "old_code": "DGL34-050",
+  "new_code": "DGL34-M027",
+  "title": "Five Tribes",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.76,
+  "bgg_id": 157354,
+  "productId": "gid://shopify/Product/7498136617063"
+ },
+ {
+  "old_code": "DGL34-054",
+  "new_code": "DGL34-M028",
+  "title": "Founders of Gloomhaven",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.9,
+   27.9,
+   5.1
+  ],
+  "kg": null,
+  "bgg_id": 214032,
+  "productId": "gid://shopify/Product/7498137075815"
+ },
+ {
+  "old_code": "DGL34-055",
+  "new_code": "DGL34-M029",
+  "title": "Funfair",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.8,
+   26.8,
+   7.2
+  ],
+  "kg": null,
+  "bgg_id": 315881,
+  "productId": "gid://shopify/Product/7498137108583"
+ },
+ {
+  "old_code": "DGL34-056",
+  "new_code": "DGL34-M030",
+  "title": "Funkoverse Strategy Game: DC Comics",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.6
+  ],
+  "kg": null,
+  "bgg_id": 292034,
+  "productId": "gid://shopify/Product/7498137141351"
+ },
+ {
+  "old_code": "DGL34-057",
+  "new_code": "DGL34-M031",
+  "title": "Funkoverse Strategy Game: Game of Thrones",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.6
+  ],
+  "kg": null,
+  "bgg_id": 313292,
+  "productId": "gid://shopify/Product/7498137174119"
+ },
+ {
+  "old_code": "DGL34-058",
+  "new_code": "DGL34-M032",
+  "title": "Funkoverse Strategy Game: Harry Potter",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.6
+  ],
+  "kg": null,
+  "bgg_id": 292032,
+  "productId": "gid://shopify/Product/7498137206887"
+ },
+ {
+  "old_code": "DGL34-059",
+  "new_code": "DGL34-M033",
+  "title": "Galilean Moons",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.5,
+   22.6,
+   5.6
+  ],
+  "kg": null,
+  "bgg_id": 226802,
+  "productId": "gid://shopify/Product/7498137239655"
+ },
+ {
+  "old_code": "DGL34-064",
+  "new_code": "DGL34-M034",
+  "title": "Gnomopolis",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.5,
+   22.6,
+   9.0
+  ],
+  "kg": 1.5,
+  "bgg_id": 202819,
+  "productId": "gid://shopify/Product/7498137501799"
+ },
+ {
+  "old_code": "DGL34-067",
+  "new_code": "DGL34-M035",
+  "title": "Ishtar: Gardens of Babylon",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.35,
+  "bgg_id": 271088,
+  "productId": "gid://shopify/Product/7498138386535"
+ },
+ {
+  "old_code": "DGL34-068",
+  "new_code": "DGL34-M036",
+  "title": "Jaws",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   27.0,
+   6.0
+  ],
+  "kg": 0.84,
+  "bgg_id": 272738,
+  "productId": "gid://shopify/Product/7498138550375"
+ },
+ {
+  "old_code": "DGL34-073",
+  "new_code": "DGL34-M037",
+  "title": "Komodo",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   20.0,
+   5.5
+  ],
+  "kg": 0.8,
+  "bgg_id": 124992,
+  "productId": "gid://shopify/Product/7498139271271"
+ },
+ {
+  "old_code": "DGL34-074",
+  "new_code": "DGL34-M038",
+  "title": "Kung Fu Panda: The Board Game",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 186986,
+  "productId": "gid://shopify/Product/7498139369575"
+ },
+ {
+  "old_code": "DGL34-080",
+  "new_code": "DGL34-M039",
+  "title": "Marvel Champions: The Card Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.2,
+   25.4,
+   7.6
+  ],
+  "kg": 1.43,
+  "bgg_id": 285774,
+  "productId": "gid://shopify/Product/7498140090471"
+ },
+ {
+  "old_code": "DGL34-081",
+  "new_code": "DGL34-M040",
+  "title": "Marvel United",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.9,
+   25.9,
+   7.1
+  ],
+  "kg": 1.03,
+  "bgg_id": 298047,
+  "productId": "gid://shopify/Product/7498140123239"
+ },
+ {
+  "old_code": "DGL34-085",
+  "new_code": "DGL34-M041",
+  "title": "My City",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.0
+  ],
+  "kg": 1.51,
+  "bgg_id": 295486,
+  "productId": "gid://shopify/Product/7498140876903"
+ },
+ {
+  "old_code": "DGL34-086",
+  "new_code": "DGL34-M042",
+  "title": "Near and Far",
+  "size": "M",
+  "size_source": "BGG, printings split L1/M2",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 2.8,
+  "bgg_id": 195421,
+  "productId": "gid://shopify/Product/7498141040743"
+ },
+ {
+  "old_code": "DGL34-087",
+  "new_code": "DGL34-M043",
+  "title": "Ni no Kuni II: The Board Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   22.0,
+   7.0
+  ],
+  "kg": 0.97,
+  "bgg_id": 285125,
+  "productId": "gid://shopify/Product/7498141139047"
+ },
+ {
+  "old_code": "DGL34-088",
+  "new_code": "DGL34-M044",
+  "title": "Nickelodeon Splat Attack!",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 236803,
+  "productId": "gid://shopify/Product/7498141073511"
+ },
+ {
+  "old_code": "DGL34-089",
+  "new_code": "DGL34-M045",
+  "title": "Nova Luna",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.0,
+   25.0,
+   6.0
+  ],
+  "kg": 0.8,
+  "bgg_id": 284435,
+  "productId": "gid://shopify/Product/7498141171815"
+ },
+ {
+  "old_code": "DGL34-093",
+  "new_code": "DGL34-M046",
+  "title": "Orléans",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.7,
+   22.6,
+   7.3
+  ],
+  "kg": 1.99,
+  "bgg_id": 164928,
+  "productId": "gid://shopify/Product/7498141565031"
+ },
+ {
+  "old_code": "DGL34-095",
+  "new_code": "DGL34-M047",
+  "title": "Pandemic",
+  "size": "M",
+  "size_source": "BGG, printings split L1/M7",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   22.1,
+   4.2
+  ],
+  "kg": 2.22,
+  "bgg_id": 30549,
+  "productId": "gid://shopify/Product/7498141696103"
+ },
+ {
+  "old_code": "DGL34-097",
+  "new_code": "DGL34-M048",
+  "title": "Peaky Blinders: Under New Management",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   27.0,
+   6.5
+  ],
+  "kg": 1.9,
+  "bgg_id": 290822,
+  "productId": "gid://shopify/Product/7498141991015"
+ },
+ {
+  "old_code": "DGL34-098",
+  "new_code": "DGL34-M049",
+  "title": "Planet",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   30.0,
+   9.0
+  ],
+  "kg": 1.3,
+  "bgg_id": 252929,
+  "productId": "gid://shopify/Product/7498142285927"
+ },
+ {
+  "old_code": "DGL34-099",
+  "new_code": "DGL34-M050",
+  "title": "Popcorn",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 430563,
+  "productId": "gid://shopify/Product/7498142482535"
+ },
+ {
+  "old_code": "DGL34-101",
+  "new_code": "DGL34-M051",
+  "title": "Realm of Sand",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   19.0,
+   5.0
+  ],
+  "kg": null,
+  "bgg_id": 256623,
+  "productId": "gid://shopify/Product/7498142842983"
+ },
+ {
+  "old_code": "DGL34-102",
+  "new_code": "DGL34-M052",
+  "title": "The Red Dragon Inn",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   5.3
+  ],
+  "kg": 0.91,
+  "bgg_id": 24310,
+  "productId": "gid://shopify/Product/7498146906215"
+ },
+ {
+  "old_code": "DGL34-104",
+  "new_code": "DGL34-M053",
+  "title": "Robinson Crusoe: Adventures on the Cursed Island",
+  "size": "M",
+  "size_source": "BGG, printings split L1/M5",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.97,
+  "bgg_id": 121921,
+  "productId": "gid://shopify/Product/7498143236199"
+ },
+ {
+  "old_code": "DGL34-105",
+  "new_code": "DGL34-M054",
+  "title": "Root",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.0,
+   22.5,
+   7.0
+  ],
+  "kg": 1.81,
+  "bgg_id": 237182,
+  "productId": "gid://shopify/Product/7498143334503"
+ },
+ {
+  "old_code": "DGL34-108",
+  "new_code": "DGL34-M055",
+  "title": "Santorini: Second Edition",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   30.5,
+   7.0
+  ],
+  "kg": 1.18,
+  "bgg_id": 439107,
+  "productId": "gid://shopify/Product/7498143662183"
+ },
+ {
+  "old_code": "DGL34-110",
+  "new_code": "DGL34-M056",
+  "title": "The Shared Dream",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.0,
+   29.0,
+   7.5
+  ],
+  "kg": 2.29,
+  "bgg_id": 201861,
+  "productId": "gid://shopify/Product/7498147070055"
+ },
+ {
+  "old_code": "DGL34-112",
+  "new_code": "DGL34-M057",
+  "title": "Sonar Family",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   29.6,
+   29.6,
+   6.0
+  ],
+  "kg": 1.25,
+  "bgg_id": 259809,
+  "productId": "gid://shopify/Product/7498144514151"
+ },
+ {
+  "old_code": "DGL34-113",
+  "new_code": "DGL34-M058",
+  "title": "Sort it Out!",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.3
+  ],
+  "kg": 1.0,
+  "bgg_id": 178028,
+  "productId": "gid://shopify/Product/7498144579687"
+ },
+ {
+  "old_code": "DGL34-114",
+  "new_code": "DGL34-M059",
+  "title": "Space Gate Odyssey",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   8.0
+  ],
+  "kg": 2.17,
+  "bgg_id": 266179,
+  "productId": "gid://shopify/Product/7498144677991"
+ },
+ {
+  "old_code": "DGL34-115",
+  "new_code": "DGL34-M060",
+  "title": "SpellBook",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   21.3,
+   6.0
+  ],
+  "kg": 0.94,
+  "bgg_id": 391834,
+  "productId": "gid://shopify/Product/7498144743527"
+ },
+ {
+  "old_code": "DGL34-116",
+  "new_code": "DGL34-M061",
+  "title": "Spirit Island",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.2,
+   29.2,
+   7.8
+  ],
+  "kg": 1.99,
+  "bgg_id": 162886,
+  "productId": "gid://shopify/Product/7498144776295"
+ },
+ {
+  "old_code": "DGL34-117",
+  "new_code": "DGL34-M062",
+  "title": "Splendor",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   21.5,
+   6.5
+  ],
+  "kg": 1.04,
+  "bgg_id": 148228,
+  "productId": "gid://shopify/Product/7498144809063"
+ },
+ {
+  "old_code": "DGL34-118",
+  "new_code": "DGL34-M063",
+  "title": "Splendor: Marvel",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   21.5,
+   6.7
+  ],
+  "kg": null,
+  "bgg_id": 293296,
+  "productId": "gid://shopify/Product/7498144874599"
+ },
+ {
+  "old_code": "DGL34-119",
+  "new_code": "DGL34-M064",
+  "title": "스플렌더: Pokémon (Splendor: Pokémon)",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   27.8,
+   21.5,
+   6.8
+  ],
+  "kg": null,
+  "bgg_id": 406291,
+  "productId": "gid://shopify/Product/7498142351463"
+ },
+ {
+  "old_code": "DGL34-122",
+  "new_code": "DGL34-M065",
+  "title": "Star Trek: Catan",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.8,
+   29.8,
+   7.0
+  ],
+  "kg": null,
+  "bgg_id": 117985,
+  "productId": "gid://shopify/Product/7498145136743"
+ },
+ {
+  "old_code": "DGL34-123",
+  "new_code": "DGL34-M066",
+  "title": "Star Wars: Dark Side Rising",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   28.0,
+   28.0,
+   8.0
+  ],
+  "kg": null,
+  "bgg_id": 280986,
+  "productId": "gid://shopify/Product/7498145169511"
+ },
+ {
+  "old_code": "DGL34-125",
+  "new_code": "DGL34-M067",
+  "title": "Star Wars Villainous: Scum and Villainy",
+  "size": "M",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   17.0,
+   6.0
+  ],
+  "kg": null,
+  "bgg_id": 387836,
+  "productId": "gid://shopify/Product/7498145398887"
+ },
+ {
+  "old_code": "DGL34-127",
+  "new_code": "DGL34-M068",
+  "title": "Starlight Stage",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498145038439"
+ },
+ {
+  "old_code": "DGL34-130",
+  "new_code": "DGL34-M069",
+  "title": "Takenoko",
+  "size": "M",
+  "size_source": "BGG, printings split L2/M13",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.21,
+  "bgg_id": 70919,
+  "productId": "gid://shopify/Product/7498145890407"
+ },
+ {
+  "old_code": "DGL34-131",
+  "new_code": "DGL34-M070",
+  "title": "Tekhenu: Obelisk of the Sun",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 2.49,
+  "bgg_id": 297030,
+  "productId": "gid://shopify/Product/7498146119783"
+ },
+ {
+  "old_code": "DGL34-132",
+  "new_code": "DGL34-M071",
+  "title": "Terraforming Mars: Ares Expedition",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.0,
+   20.0,
+   9.0
+  ],
+  "kg": 1.4,
+  "bgg_id": 328871,
+  "productId": "gid://shopify/Product/7498146250855"
+ },
+ {
+  "old_code": "DGL34-134",
+  "new_code": "DGL34-M072",
+  "title": "Thanos Rising: Avengers Infinity War",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.9,
+   27.9,
+   7.6
+  ],
+  "kg": 1.0,
+  "bgg_id": 248158,
+  "productId": "gid://shopify/Product/7498146316391"
+ },
+ {
+  "old_code": "DGL34-136",
+  "new_code": "DGL34-M073",
+  "title": "T.I.M.E Stories",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.77,
+  "bgg_id": 146508,
+  "productId": "gid://shopify/Product/7498147496039"
+ },
+ {
+  "old_code": "DGL34-137",
+  "new_code": "DGL34-M074",
+  "title": "Tobago",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.18,
+  "bgg_id": 42215,
+  "productId": "gid://shopify/Product/7498147659879"
+ },
+ {
+  "old_code": "DGL34-140",
+  "new_code": "DGL34-M075",
+  "title": "Unsolved Case Files: Jamie Banks",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 342257,
+  "productId": "gid://shopify/Product/7498148708455"
+ },
+ {
+  "old_code": "DGL34-141",
+  "new_code": "DGL34-M076",
+  "title": "Untold: Adventures Await",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.3
+  ],
+  "kg": null,
+  "bgg_id": 226588,
+  "productId": "gid://shopify/Product/7498148773991"
+ },
+ {
+  "old_code": "DGL34-142",
+  "new_code": "DGL34-M077",
+  "title": "Upkeep",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   7.0
+  ],
+  "kg": 2.0,
+  "bgg_id": 300125,
+  "productId": "gid://shopify/Product/7498148806759"
+ },
+ {
+  "old_code": "DGL34-143",
+  "new_code": "DGL34-M078",
+  "title": "Vault of Dragons",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   7.0
+  ],
+  "kg": 1.6,
+  "bgg_id": 255332,
+  "productId": "gid://shopify/Product/7498148905063"
+ },
+ {
+  "old_code": "DGL34-147",
+  "new_code": "DGL34-M079",
+  "title": "Whitehall Mystery",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   5.1
+  ],
+  "kg": 0.82,
+  "bgg_id": 190082,
+  "productId": "gid://shopify/Product/7498149396583"
+ },
+ {
+  "old_code": "DGL34-149",
+  "new_code": "DGL34-M080",
+  "title": "XCOM: The Board Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.0
+  ],
+  "kg": 1.45,
+  "bgg_id": 163602,
+  "productId": "gid://shopify/Product/7498149658727"
+ },
+ {
+  "old_code": "DGL34-008",
+  "new_code": "DGL34-L001",
+  "title": "Arcadia Quest",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.0,
+   31.0,
+   10.7
+  ],
+  "kg": 2.27,
+  "bgg_id": 155068,
+  "productId": "gid://shopify/Product/7498130718823"
+ },
+ {
+  "old_code": "DGL34-009",
+  "new_code": "DGL34-L002",
+  "title": "Arcadia Quest: Inferno",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   30.0,
+   10.0
+  ],
+  "kg": null,
+  "bgg_id": 179803,
+  "productId": "gid://shopify/Product/7498130784359"
+ },
+ {
+  "old_code": "DGL34-017",
+  "new_code": "DGL34-L003",
+  "title": "The Binding of Isaac: Four Souls",
+  "size": "L",
+  "size_source": "BGG, printings split L2/M1/S1",
+  "why": null,
+  "dims_cm": [
+   34.8,
+   10.8,
+   7.7
+  ],
+  "kg": 1.0,
+  "bgg_id": 255664,
+  "productId": "gid://shopify/Product/7498146447463"
+ },
+ {
+  "old_code": "DGL34-019",
+  "new_code": "DGL34-L004",
+  "title": "Blood Rage",
+  "size": "L",
+  "size_source": "BGG, printings split L3/M1",
+  "why": null,
+  "dims_cm": [
+   30.9,
+   30.9,
+   10.6
+  ],
+  "kg": null,
+  "bgg_id": 170216,
+  "productId": "gid://shopify/Product/7498132062311"
+ },
+ {
+  "old_code": "DGL34-020",
+  "new_code": "DGL34-L005",
+  "title": "BONK",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   58.7,
+   41.6,
+   10.0
+  ],
+  "kg": 2.49,
+  "bgg_id": 230852,
+  "productId": "gid://shopify/Product/7498132127847"
+ },
+ {
+  "old_code": "DGL34-023",
+  "new_code": "DGL34-L006",
+  "title": "Catan: Starfarers",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   37.1,
+   29.8,
+   12.1
+  ],
+  "kg": 2.61,
+  "bgg_id": 282853,
+  "productId": "gid://shopify/Product/7498132750439"
+ },
+ {
+  "old_code": "DGL34-024",
+  "new_code": "DGL34-L007",
+  "title": "Century: Big Box",
+  "size": "L",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   42.9,
+   31.1,
+   10.0
+  ],
+  "kg": 2.84,
+  "bgg_id": 382315,
+  "productId": "gid://shopify/Product/7498132914279"
+ },
+ {
+  "old_code": "DGL34-033",
+  "new_code": "DGL34-L008",
+  "title": "Crokinole",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   59.0,
+   59.0,
+   4.8
+  ],
+  "kg": 2.52,
+  "bgg_id": 521,
+  "productId": "gid://shopify/Product/7498134224999"
+ },
+ {
+  "old_code": "DGL34-034",
+  "new_code": "DGL34-L009",
+  "title": "Cry Havoc",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   10.0
+  ],
+  "kg": 2.55,
+  "bgg_id": 192457,
+  "productId": "gid://shopify/Product/7498134257767"
+ },
+ {
+  "old_code": "DGL34-035",
+  "new_code": "DGL34-L010",
+  "title": "Dark Souls: The Board Game",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.6,
+   30.6,
+   13.9
+  ],
+  "kg": 2.3,
+  "bgg_id": 197831,
+  "productId": "gid://shopify/Product/7498134421607"
+ },
+ {
+  "old_code": "DGL34-049",
+  "new_code": "DGL34-L011",
+  "title": "Familiar Tales",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.4,
+   30.4,
+   10.6
+  ],
+  "kg": 2.1,
+  "bgg_id": 350948,
+  "productId": "gid://shopify/Product/7498136354919"
+ },
+ {
+  "old_code": "DGL34-060",
+  "new_code": "DGL34-L012",
+  "title": "The Game of Life",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   40.0,
+   26.7,
+   5.0
+  ],
+  "kg": null,
+  "bgg_id": 2921,
+  "productId": "gid://shopify/Product/7498146742375"
+ },
+ {
+  "old_code": "DGL34-063",
+  "new_code": "DGL34-L013",
+  "title": "Gloomhaven: Jaws of the Lion",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.2,
+   22.9,
+   10.2
+  ],
+  "kg": 2.63,
+  "bgg_id": 291457,
+  "productId": "gid://shopify/Product/7498137469031"
+ },
+ {
+  "old_code": "DGL34-072",
+  "new_code": "DGL34-L014",
+  "title": "KLASK 4",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   52.0,
+   52.0,
+   7.0
+  ],
+  "kg": 3.4,
+  "bgg_id": 270131,
+  "productId": "gid://shopify/Product/7498139238503"
+ },
+ {
+  "old_code": "DGL34-079",
+  "new_code": "DGL34-L015",
+  "title": "Mage Knight Board Game",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   35.3,
+   25.0,
+   7.6
+  ],
+  "kg": 1.9,
+  "bgg_id": 96848,
+  "productId": "gid://shopify/Product/7498139926631"
+ },
+ {
+  "old_code": "DGL34-082",
+  "new_code": "DGL34-L016",
+  "title": "Mechs vs. Minions (League of Legends)",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   51.0,
+   34.0,
+   12.0
+  ],
+  "kg": 5.83,
+  "bgg_id": 209010,
+  "productId": "gid://shopify/Product/7498140319847"
+ },
+ {
+  "old_code": "DGL34-084",
+  "new_code": "DGL34-L017",
+  "title": "Monopoly Speed",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   40.1,
+   26.7,
+   4.1
+  ],
+  "kg": null,
+  "bgg_id": 295824,
+  "productId": "gid://shopify/Product/7498140483687"
+ },
+ {
+  "old_code": "DGL34-092",
+  "new_code": "DGL34-L018",
+  "title": "On Mars",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   39.5,
+   31.9,
+   8.0
+  ],
+  "kg": 3.67,
+  "bgg_id": 184267,
+  "productId": "gid://shopify/Product/7498141499495"
+ },
+ {
+  "old_code": "DGL34-106",
+  "new_code": "DGL34-L019",
+  "title": "Rummikub",
+  "size": "L",
+  "size_source": "BGG, printings split L11/M6/S4",
+  "why": null,
+  "dims_cm": [
+   36.8,
+   26.7,
+   5.2
+  ],
+  "kg": 1.14,
+  "bgg_id": 811,
+  "productId": "gid://shopify/Product/7498143531111"
+ },
+ {
+  "old_code": "DGL34-121",
+  "new_code": "DGL34-L020",
+  "title": "Star Trek: Ascendancy",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   47.0,
+   31.8,
+   9.5
+  ],
+  "kg": 2.49,
+  "bgg_id": 193949,
+  "productId": "gid://shopify/Product/7498145103975"
+ },
+ {
+  "old_code": "DGL34-124",
+  "new_code": "DGL34-L021",
+  "title": "Star Wars: Rebellion",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.4,
+   29.4,
+   13.6
+  ],
+  "kg": 2.64,
+  "bgg_id": 187645,
+  "productId": "gid://shopify/Product/7498145333351"
+ },
+ {
+  "old_code": "DGL34-126",
+  "new_code": "DGL34-L022",
+  "title": "Starcadia Quest",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.7,
+   30.7,
+   10.9
+  ],
+  "kg": 2.81,
+  "bgg_id": 257193,
+  "productId": "gid://shopify/Product/7498145005671"
+ },
+ {
+  "old_code": "DGL34-128",
+  "new_code": "DGL34-L023",
+  "title": "Street Masters",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   30.5,
+   10.2
+  ],
+  "kg": null,
+  "bgg_id": 218421,
+  "productId": "gid://shopify/Product/7498145562727"
+ },
+ {
+  "old_code": "DGL34-135",
+  "new_code": "DGL34-L024",
+  "title": "Through the Ages: A New Story of Civilization",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   37.0,
+   25.5,
+   7.5
+  ],
+  "kg": 1.8,
+  "bgg_id": 182028,
+  "productId": "gid://shopify/Product/7498147201127"
+ },
+ {
+  "old_code": "DGL34-138",
+  "new_code": "DGL34-L025",
+  "title": "Toy Story: Obstacles & Adventures",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   23.5,
+   10.8
+  ],
+  "kg": null,
+  "bgg_id": 282418,
+  "productId": "gid://shopify/Product/7498147790951"
+ },
+ {
+  "old_code": "DGL34-139",
+  "new_code": "DGL34-L026",
+  "title": "Ubongo 3D",
+  "size": "L",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   11.4
+  ],
+  "kg": 1.86,
+  "bgg_id": 46396,
+  "productId": "gid://shopify/Product/7498148151399"
+ },
+ {
+  "old_code": "DGL56-007",
+  "new_code": "DGL56-S001",
+  "title": "Archaeology: The New Expedition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.3,
+   11.8,
+   3.3
+  ],
+  "kg": 0.31,
+  "bgg_id": 191300,
+  "productId": "gid://shopify/Product/7498130817127"
+ },
+ {
+  "old_code": "DGL56-008",
+  "new_code": "DGL56-S002",
+  "title": "Argoat",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   13.7,
+   9.8,
+   5.7
+  ],
+  "kg": null,
+  "bgg_id": 226616,
+  "productId": "gid://shopify/Product/7498130849895"
+ },
+ {
+  "old_code": "DGL56-009",
+  "new_code": "DGL56-S003",
+  "title": "Astronomy Fluxx",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.7,
+   9.5,
+   2.5
+  ],
+  "kg": 0.19,
+  "bgg_id": 290025,
+  "productId": "gid://shopify/Product/7498131013735"
+ },
+ {
+  "old_code": "DGL56-018",
+  "new_code": "DGL56-S004",
+  "title": "Cat in the Box: Deluxe Edition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.0
+  ],
+  "kg": 0.39,
+  "bgg_id": 345972,
+  "productId": "gid://shopify/Product/7498132815975"
+ },
+ {
+  "old_code": "DGL56-021",
+  "new_code": "DGL56-S005",
+  "title": "Chocobo's Crystal Hunt",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   14.8,
+   10.5,
+   3.0
+  ],
+  "kg": null,
+  "bgg_id": 205226,
+  "productId": "gid://shopify/Product/7498133110887"
+ },
+ {
+  "old_code": "DGL56-026",
+  "new_code": "DGL56-S006",
+  "title": "Coloretto",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   11.9,
+   9.4,
+   2.0
+  ],
+  "kg": null,
+  "bgg_id": 5782,
+  "productId": "gid://shopify/Product/7498133733479"
+ },
+ {
+  "old_code": "DGL56-029",
+  "new_code": "DGL56-S007",
+  "title": "Coup",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.2,
+   10.8,
+   3.2
+  ],
+  "kg": 0.09,
+  "bgg_id": 131357,
+  "productId": "gid://shopify/Product/7498133995623"
+ },
+ {
+  "old_code": "DGL56-030",
+  "new_code": "DGL56-S008",
+  "title": "Courtisans",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.0,
+   10.0,
+   5.0
+  ],
+  "kg": 0.35,
+  "bgg_id": 402283,
+  "productId": "gid://shopify/Product/7498134028391"
+ },
+ {
+  "old_code": "DGL56-032",
+  "new_code": "DGL56-S009",
+  "title": "The Crew: Family Adventure",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.0
+  ],
+  "kg": null,
+  "bgg_id": 406299,
+  "productId": "gid://shopify/Product/7498146578535"
+ },
+ {
+  "old_code": "DGL56-033",
+  "new_code": "DGL56-S010",
+  "title": "The Crew: The Quest for Planet Nine",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.7,
+   12.7,
+   3.8
+  ],
+  "kg": 0.29,
+  "bgg_id": 284083,
+  "productId": "gid://shopify/Product/7498146611303"
+ },
+ {
+  "old_code": "DGL56-036",
+  "new_code": "DGL56-S011",
+  "title": "Cutthroat Caverns",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   24.1,
+   16.5,
+   5.1
+  ],
+  "kg": 0.67,
+  "bgg_id": 28259,
+  "productId": "gid://shopify/Product/7498134323303"
+ },
+ {
+  "old_code": "DGL56-042",
+  "new_code": "DGL56-S012",
+  "title": "Draftosaurus",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.2,
+   20.1,
+   5.8
+  ],
+  "kg": 0.43,
+  "bgg_id": 264055,
+  "productId": "gid://shopify/Product/7498135339111"
+ },
+ {
+  "old_code": "DGL56-047",
+  "new_code": "DGL56-S013",
+  "title": "Dungeon Mayhem: Monster Madness",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.5,
+   14.6,
+   7.6
+  ],
+  "kg": null,
+  "bgg_id": 295577,
+  "productId": "gid://shopify/Product/7498135666791"
+ },
+ {
+  "old_code": "DGL56-049",
+  "new_code": "DGL56-S014",
+  "title": "Dungeons & Dragons: Rock Paper Wizard",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.9,
+   12.7,
+   3.8
+  ],
+  "kg": null,
+  "bgg_id": 207062,
+  "productId": "gid://shopify/Product/7498135928935"
+ },
+ {
+  "old_code": "DGL56-050",
+  "new_code": "DGL56-S015",
+  "title": "Dynamite Nurse",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.5,
+   10.2,
+   8.0
+  ],
+  "kg": null,
+  "bgg_id": 108341,
+  "productId": "gid://shopify/Product/7498135961703"
+ },
+ {
+  "old_code": "DGL56-051",
+  "new_code": "DGL56-S016",
+  "title": "Escape Room: The Game – Da Vinci's Telescope",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498136060007"
+ },
+ {
+  "old_code": "DGL56-052",
+  "new_code": "DGL56-S017",
+  "title": "Escape Room: The Game – Tomb Robbers",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498136125543"
+ },
+ {
+  "old_code": "DGL56-055",
+  "new_code": "DGL56-S018",
+  "title": "Flaming Pyramids",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.0,
+   11.0,
+   4.0
+  ],
+  "kg": null,
+  "bgg_id": 236639,
+  "productId": "gid://shopify/Product/7498136649831"
+ },
+ {
+  "old_code": "DGL56-056",
+  "new_code": "DGL56-S019",
+  "title": "For Sale",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.6,
+   15.9,
+   5.1
+  ],
+  "kg": 0.36,
+  "bgg_id": 172,
+  "productId": "gid://shopify/Product/7498136944743"
+ },
+ {
+  "old_code": "DGL56-057",
+  "new_code": "DGL56-S020",
+  "title": "For Sale Autorama",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   21.4,
+   15.8,
+   5.0
+  ],
+  "kg": null,
+  "bgg_id": 318709,
+  "productId": "gid://shopify/Product/7498136977511"
+ },
+ {
+  "old_code": "DGL56-058",
+  "new_code": "DGL56-S021",
+  "title": "Forever Home",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.0,
+   22.0,
+   5.0
+  ],
+  "kg": 0.96,
+  "bgg_id": 385999,
+  "productId": "gid://shopify/Product/7498136879207"
+ },
+ {
+  "old_code": "DGL56-059",
+  "new_code": "DGL56-S022",
+  "title": "The Game",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   13.3,
+   10.4,
+   2.3
+  ],
+  "kg": 0.23,
+  "bgg_id": 173090,
+  "productId": "gid://shopify/Product/7498146709607"
+ },
+ {
+  "old_code": "DGL56-060",
+  "new_code": "DGL56-S023",
+  "title": "The Grizzled",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   13.8,
+   13.8,
+   5.1
+  ],
+  "kg": 0.31,
+  "bgg_id": 171668,
+  "productId": "gid://shopify/Product/7498146775143"
+ },
+ {
+  "old_code": "DGL56-061",
+  "new_code": "DGL56-S024",
+  "title": "Hadrian's Wall",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   23.0,
+   6.7
+  ],
+  "kg": 2.34,
+  "bgg_id": 304783,
+  "productId": "gid://shopify/Product/7498137632871"
+ },
+ {
+  "old_code": "DGL56-063",
+  "new_code": "DGL56-S025",
+  "title": "HODL UP",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 400178,
+  "productId": "gid://shopify/Product/7498137927783"
+ },
+ {
+  "old_code": "DGL56-066",
+  "new_code": "DGL56-S026",
+  "title": "Iliad",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.1,
+   9.4,
+   3.3
+  ],
+  "kg": 0.26,
+  "bgg_id": 21654,
+  "productId": "gid://shopify/Product/7498138124391"
+ },
+ {
+  "old_code": "DGL56-067",
+  "new_code": "DGL56-S027",
+  "title": "Illusion",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   11.9,
+   9.4,
+   2.0
+  ],
+  "kg": null,
+  "bgg_id": 244995,
+  "productId": "gid://shopify/Product/7498138157159"
+ },
+ {
+  "old_code": "DGL56-068",
+  "new_code": "DGL56-S028",
+  "title": "Infinity Gauntlet: A Love Letter Game",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   14.6,
+   9.5,
+   3.2
+  ],
+  "kg": 0.11,
+  "bgg_id": 304285,
+  "productId": "gid://shopify/Product/7498138255463"
+ },
+ {
+  "old_code": "DGL56-074",
+  "new_code": "DGL56-S029",
+  "title": "Kenakalan",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.0,
+   12.0,
+   5.0
+  ],
+  "kg": 0.38,
+  "bgg_id": 130713,
+  "productId": "gid://shopify/Product/7498138812519"
+ },
+ {
+  "old_code": "DGL56-078",
+  "new_code": "DGL56-S030",
+  "title": "League of the Lexicon",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.0,
+   13.0,
+   12.0
+  ],
+  "kg": null,
+  "bgg_id": 339545,
+  "productId": "gid://shopify/Product/7498139467879"
+ },
+ {
+  "old_code": "DGL56-082",
+  "new_code": "DGL56-S031",
+  "title": "Loaded Answers",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498139697255"
+ },
+ {
+  "old_code": "DGL56-084",
+  "new_code": "DGL56-S032",
+  "title": "Lost Cities: Roll & Write",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.0
+  ],
+  "kg": 0.3,
+  "bgg_id": 327831,
+  "productId": "gid://shopify/Product/7498139762791"
+ },
+ {
+  "old_code": "DGL56-089",
+  "new_code": "DGL56-S033",
+  "title": "Math Fluxx",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.5,
+   9.4,
+   2.7
+  ],
+  "kg": 0.18,
+  "bgg_id": 219430,
+  "productId": "gid://shopify/Product/7498140254311"
+ },
+ {
+  "old_code": "DGL56-090",
+  "new_code": "DGL56-S034",
+  "title": "Miraris",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   14.0,
+   10.2,
+   4.1
+  ],
+  "kg": null,
+  "bgg_id": 245876,
+  "productId": "gid://shopify/Product/7498140385383"
+ },
+ {
+  "old_code": "DGL56-093",
+  "new_code": "DGL56-S035",
+  "title": "Mottainai",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.1,
+   11.7,
+   3.2
+  ],
+  "kg": 0.3,
+  "bgg_id": 175199,
+  "productId": "gid://shopify/Product/7498140614759"
+ },
+ {
+  "old_code": "DGL56-094",
+  "new_code": "DGL56-S036",
+  "title": "Muffin Time",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   18.3,
+   14.5,
+   9.0
+  ],
+  "kg": 0.33,
+  "bgg_id": 286735,
+  "productId": "gid://shopify/Product/7498140713063"
+ },
+ {
+  "old_code": "DGL56-095",
+  "new_code": "DGL56-S037",
+  "title": "Munchkin",
+  "size": "S",
+  "size_source": "corrected",
+  "why": "the standard Munchkin card-game box; BGG mixes in bigger printings",
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 1927,
+  "productId": "gid://shopify/Product/7498140745831"
+ },
+ {
+  "old_code": "DGL56-096",
+  "new_code": "DGL56-S038",
+  "title": "Munchkin Booty",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.7,
+   15.9,
+   4.4
+  ],
+  "kg": 0.37,
+  "bgg_id": 31920,
+  "productId": "gid://shopify/Product/7498140778599"
+ },
+ {
+  "old_code": "DGL56-100",
+  "new_code": "DGL56-S039",
+  "title": "Once Upon a Time: The Storytelling Card Game",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.5,
+   15.9,
+   4.5
+  ],
+  "kg": 0.43,
+  "bgg_id": 1234,
+  "productId": "gid://shopify/Product/7498141433959"
+ },
+ {
+  "old_code": "DGL56-106",
+  "new_code": "DGL56-S040",
+  "title": "Pictomania (Second Edition)",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   6.0
+  ],
+  "kg": 0.78,
+  "bgg_id": 252526,
+  "productId": "gid://shopify/Product/7498142122087"
+ },
+ {
+  "old_code": "DGL56-109",
+  "new_code": "DGL56-S041",
+  "title": "Point Salad",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.5,
+   14.5,
+   4.5
+  ],
+  "kg": 0.33,
+  "bgg_id": 274960,
+  "productId": "gid://shopify/Product/7498142318695"
+ },
+ {
+  "old_code": "DGL56-112",
+  "new_code": "DGL56-S042",
+  "title": "Processing: A Game of Serving Humanity",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.8,
+   11.9,
+   3.8
+  ],
+  "kg": null,
+  "bgg_id": 260592,
+  "productId": "gid://shopify/Product/7498142580839"
+ },
+ {
+  "old_code": "DGL56-115",
+  "new_code": "DGL56-S043",
+  "title": "Red Panda",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   10.0,
+   10.0,
+   3.0
+  ],
+  "kg": null,
+  "bgg_id": 244203,
+  "productId": "gid://shopify/Product/7498142908519"
+ },
+ {
+  "old_code": "DGL56-123",
+  "new_code": "DGL56-S044",
+  "title": "Skull",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   13.3,
+   13.3,
+   5.2
+  ],
+  "kg": 0.4,
+  "bgg_id": 92415,
+  "productId": "gid://shopify/Product/7498144284775"
+ },
+ {
+  "old_code": "DGL56-129",
+  "new_code": "DGL56-S045",
+  "title": "Star Wars: Jabba's Palace – A Love Letter Game",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.8,
+   11.4,
+   3.2
+  ],
+  "kg": 0.1,
+  "bgg_id": 353470,
+  "productId": "gid://shopify/Product/7498145267815"
+ },
+ {
+  "old_code": "DGL56-132",
+  "new_code": "DGL56-S046",
+  "title": "Stupid Deaths",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   11.9,
+   9.4,
+   2.0
+  ],
+  "kg": null,
+  "bgg_id": 258855,
+  "productId": "gid://shopify/Product/7498145628263"
+ },
+ {
+  "old_code": "DGL56-134",
+  "new_code": "DGL56-S047",
+  "title": "Sushi Go!",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   14.3,
+   10.2,
+   3.8
+  ],
+  "kg": 0.25,
+  "bgg_id": 133473,
+  "productId": "gid://shopify/Product/7498145726567"
+ },
+ {
+  "old_code": "DGL56-149",
+  "new_code": "DGL56-S048",
+  "title": "Unlock!: Secret Adventures – A Noside Story",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.1,
+   9.5,
+   3.2
+  ],
+  "kg": null,
+  "bgg_id": 245352,
+  "productId": "gid://shopify/Product/7498148544615"
+ },
+ {
+  "old_code": "DGL56-150",
+  "new_code": "DGL56-S049",
+  "title": "Unlock!: Secret Adventures – The Adventurers of Oz",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.1,
+   9.5,
+   3.2
+  ],
+  "kg": null,
+  "bgg_id": 245354,
+  "productId": "gid://shopify/Product/7498148577383"
+ },
+ {
+  "old_code": "DGL56-151",
+  "new_code": "DGL56-S050",
+  "title": "Unlock!: Secret Adventures – Tombstone Express",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.1,
+   9.5,
+   3.2
+  ],
+  "kg": null,
+  "bgg_id": 245353,
+  "productId": "gid://shopify/Product/7498148610151"
+ },
+ {
+  "old_code": "DGL56-153",
+  "new_code": "DGL56-S051",
+  "title": "The Vibe",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.7,
+   12.2,
+   3.4
+  ],
+  "kg": 0.44,
+  "bgg_id": 426692,
+  "productId": "gid://shopify/Product/7498147168359"
+ },
+ {
+  "old_code": "DGL56-001",
+  "new_code": "DGL56-M001",
+  "title": "221B Baker Street: The Master Detective Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.9,
+   27.9,
+   7.5
+  ],
+  "kg": null,
+  "bgg_id": 1275,
+  "productId": "gid://shopify/Product/7498129899623"
+ },
+ {
+  "old_code": "DGL56-002",
+  "new_code": "DGL56-M002",
+  "title": "5-Minute Dungeon",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.4,
+   5.1
+  ],
+  "kg": 1.21,
+  "bgg_id": 207830,
+  "productId": "gid://shopify/Product/7498129932391"
+ },
+ {
+  "old_code": "DGL56-003",
+  "new_code": "DGL56-M003",
+  "title": "5-Minute Mystery",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.5,
+   20.0,
+   6.9
+  ],
+  "kg": null,
+  "bgg_id": 294514,
+  "productId": "gid://shopify/Product/7498129965159"
+ },
+ {
+  "old_code": "DGL56-004",
+  "new_code": "DGL56-M004",
+  "title": "A Game of Thrones: The Board Game (Second Edition)",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   30.0,
+   7.6
+  ],
+  "kg": 2.09,
+  "bgg_id": 103343,
+  "productId": "gid://shopify/Product/7498130358375"
+ },
+ {
+  "old_code": "DGL56-006",
+  "new_code": "DGL56-M005",
+  "title": "Alicematic Heroes",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.3,
+   29.3,
+   5.9
+  ],
+  "kg": 1.02,
+  "bgg_id": 226089,
+  "productId": "gid://shopify/Product/7498130456679"
+ },
+ {
+  "old_code": "DGL56-010",
+  "new_code": "DGL56-M006",
+  "title": "Atmosfear: Interactive App edition",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.5,
+   26.5,
+   7.0
+  ],
+  "kg": null,
+  "bgg_id": 337017,
+  "productId": "gid://shopify/Product/7498131079271"
+ },
+ {
+  "old_code": "DGL56-012",
+  "new_code": "DGL56-M007",
+  "title": "Balderdash",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   20.2,
+   5.4
+  ],
+  "kg": 0.74,
+  "bgg_id": 163,
+  "productId": "gid://shopify/Product/7498131308647"
+ },
+ {
+  "old_code": "DGL56-014",
+  "new_code": "DGL56-M008",
+  "title": "Battlestar Galactica: The Board Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 37111,
+  "productId": "gid://shopify/Product/7498131701863"
+ },
+ {
+  "old_code": "DGL56-015",
+  "new_code": "DGL56-M009",
+  "title": "Betrayal at House on the Hill",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   8.6
+  ],
+  "kg": null,
+  "bgg_id": 10547,
+  "productId": "gid://shopify/Product/7498131800167"
+ },
+ {
+  "old_code": "DGL56-016",
+  "new_code": "DGL56-M010",
+  "title": "Canvas",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   20.3,
+   3.9
+  ],
+  "kg": null,
+  "bgg_id": 290236,
+  "productId": "gid://shopify/Product/7498132291687"
+ },
+ {
+  "old_code": "DGL56-017",
+  "new_code": "DGL56-M011",
+  "title": "Cartoon Network Crossover Crisis Deck-Building Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.1,
+   20.3,
+   7.6
+  ],
+  "kg": null,
+  "bgg_id": 194233,
+  "productId": "gid://shopify/Product/7498132586599"
+ },
+ {
+  "old_code": "DGL56-020",
+  "new_code": "DGL56-M012",
+  "title": "Caylus 1303",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 284818,
+  "productId": "gid://shopify/Product/7498132881511"
+ },
+ {
+  "old_code": "DGL56-025",
+  "new_code": "DGL56-M013",
+  "title": "CO₂",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.2,
+   31.2,
+   7.3
+  ],
+  "kg": 1.5,
+  "bgg_id": 72225,
+  "productId": "gid://shopify/Product/7498133438567"
+ },
+ {
+  "old_code": "DGL56-027",
+  "new_code": "DGL56-M014",
+  "title": "Colt Express",
+  "size": "M",
+  "size_source": "BGG, printings split L1/M7",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.16,
+  "bgg_id": 158899,
+  "productId": "gid://shopify/Product/7498133766247"
+ },
+ {
+  "old_code": "DGL56-028",
+  "new_code": "DGL56-M015",
+  "title": "Cosmic Encounter",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.8,
+   29.8,
+   7.0
+  ],
+  "kg": 1.6,
+  "bgg_id": 39463,
+  "productId": "gid://shopify/Product/7498133930087"
+ },
+ {
+  "old_code": "DGL56-031",
+  "new_code": "DGL56-M016",
+  "title": "Creature Comforts",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   21.3,
+   6.1
+  ],
+  "kg": 1.42,
+  "bgg_id": 304051,
+  "productId": "gid://shopify/Product/7498134159463"
+ },
+ {
+  "old_code": "DGL56-034",
+  "new_code": "DGL56-M017",
+  "title": "Crimopolis",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 2.09,
+  "bgg_id": 260904,
+  "productId": "gid://shopify/Product/7498134192231"
+ },
+ {
+  "old_code": "DGL56-035",
+  "new_code": "DGL56-M018",
+  "title": "Cursed Court",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   25.5,
+   7.7
+  ],
+  "kg": null,
+  "bgg_id": 226213,
+  "productId": "gid://shopify/Product/7498134290535"
+ },
+ {
+  "old_code": "DGL56-038",
+  "new_code": "DGL56-M019",
+  "title": "Detective: A Modern Crime Board Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.5
+  ],
+  "kg": 1.33,
+  "bgg_id": 223321,
+  "productId": "gid://shopify/Product/7498134716519"
+ },
+ {
+  "old_code": "DGL56-039",
+  "new_code": "DGL56-M020",
+  "title": "Disney Villainous",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.6,
+   26.6,
+   6.4
+  ],
+  "kg": 1.27,
+  "bgg_id": 256382,
+  "productId": "gid://shopify/Product/7498134913127"
+ },
+ {
+  "old_code": "DGL56-040",
+  "new_code": "DGL56-M021",
+  "title": "Dohdles!",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.0
+  ],
+  "kg": null,
+  "bgg_id": 172164,
+  "productId": "gid://shopify/Product/7498135175271"
+ },
+ {
+  "old_code": "DGL56-041",
+  "new_code": "DGL56-M022",
+  "title": "Downforce",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.0
+  ],
+  "kg": 1.61,
+  "bgg_id": 215311,
+  "productId": "gid://shopify/Product/7498135273575"
+ },
+ {
+  "old_code": "DGL56-044",
+  "new_code": "DGL56-M023",
+  "title": "Dream Crush",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   30.5,
+   7.6
+  ],
+  "kg": null,
+  "bgg_id": 315059,
+  "productId": "gid://shopify/Product/7498135470183"
+ },
+ {
+  "old_code": "DGL56-045",
+  "new_code": "DGL56-M024",
+  "title": "Dune",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.7
+  ],
+  "kg": 1.11,
+  "bgg_id": 283355,
+  "productId": "gid://shopify/Product/7498135535719"
+ },
+ {
+  "old_code": "DGL56-046",
+  "new_code": "DGL56-M025",
+  "title": "Dune: Imperium – Uprising",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   30.5,
+   8.0
+  ],
+  "kg": 1.59,
+  "bgg_id": 397598,
+  "productId": "gid://shopify/Product/7498135634023"
+ },
+ {
+  "old_code": "DGL56-053",
+  "new_code": "DGL56-M026",
+  "title": "Escape Your House: Spy Team",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 351224,
+  "productId": "gid://shopify/Product/7498136191079"
+ },
+ {
+  "old_code": "DGL56-062",
+  "new_code": "DGL56-M027",
+  "title": "Harry Potter and the Sorcerer's Stone: Trivia Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.8,
+   26.8,
+   8.2
+  ],
+  "kg": null,
+  "bgg_id": 5750,
+  "productId": "gid://shopify/Product/7498137698407"
+ },
+ {
+  "old_code": "DGL56-064",
+  "new_code": "DGL56-M028",
+  "title": "Homeland: The Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   7.2
+  ],
+  "kg": 1.36,
+  "bgg_id": 160968,
+  "productId": "gid://shopify/Product/7498137960551"
+ },
+ {
+  "old_code": "DGL56-065",
+  "new_code": "DGL56-M029",
+  "title": "Horrified",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.3
+  ],
+  "kg": 1.25,
+  "bgg_id": 282524,
+  "productId": "gid://shopify/Product/7498137993319"
+ },
+ {
+  "old_code": "DGL56-069",
+  "new_code": "DGL56-M030",
+  "title": "Ironrise",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 245651,
+  "productId": "gid://shopify/Product/7498138353767"
+ },
+ {
+  "old_code": "DGL56-070",
+  "new_code": "DGL56-M031",
+  "title": "Isla Dorada",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   30.0,
+   7.6
+  ],
+  "kg": 1.63,
+  "bgg_id": 68182,
+  "productId": "gid://shopify/Product/7498138419303"
+ },
+ {
+  "old_code": "DGL56-071",
+  "new_code": "DGL56-M032",
+  "title": "It's a Wonderful World",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.33,
+  "bgg_id": 271324,
+  "productId": "gid://shopify/Product/7498138452071"
+ },
+ {
+  "old_code": "DGL56-072",
+  "new_code": "DGL56-M033",
+  "title": "Jamaica",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.5,
+   22.5,
+   7.0
+  ],
+  "kg": 1.63,
+  "bgg_id": 28023,
+  "productId": "gid://shopify/Product/7498138517607"
+ },
+ {
+  "old_code": "DGL56-076",
+  "new_code": "DGL56-M034",
+  "title": "King of New York",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   25.5,
+   6.7
+  ],
+  "kg": null,
+  "bgg_id": 160499,
+  "productId": "gid://shopify/Product/7498139041895"
+ },
+ {
+  "old_code": "DGL56-077",
+  "new_code": "DGL56-M035",
+  "title": "King of Tokyo",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   25.5,
+   7.0
+  ],
+  "kg": 0.8,
+  "bgg_id": 70323,
+  "productId": "gid://shopify/Product/7498139074663"
+ },
+ {
+  "old_code": "DGL56-081",
+  "new_code": "DGL56-M036",
+  "title": "Letters from Whitechapel",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.3,
+   29.3,
+   7.1
+  ],
+  "kg": 1.52,
+  "bgg_id": 59959,
+  "productId": "gid://shopify/Product/7498139598951"
+ },
+ {
+  "old_code": "DGL56-086",
+  "new_code": "DGL56-M037",
+  "title": "Manifest",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.6,
+   29.6,
+   7.1
+  ],
+  "kg": 1.76,
+  "bgg_id": 152471,
+  "productId": "gid://shopify/Product/7498140057703"
+ },
+ {
+  "old_code": "DGL56-091",
+  "new_code": "DGL56-M038",
+  "title": "Monopoly Gamer: Overwatch Collector's Edition",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 272803,
+  "productId": "gid://shopify/Product/7498140450919"
+ },
+ {
+  "old_code": "DGL56-097",
+  "new_code": "DGL56-M039",
+  "title": "Munchkin Harry Potter Deluxe",
+  "size": "M",
+  "size_source": "corrected",
+  "why": "the Deluxe box with a board; BGG only sizes the plain card game",
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 249824,
+  "productId": "gid://shopify/Product/7498140811367"
+ },
+ {
+  "old_code": "DGL56-098",
+  "new_code": "DGL56-M040",
+  "title": "My Little Scythe",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 226320,
+  "productId": "gid://shopify/Product/7498140975207"
+ },
+ {
+  "old_code": "DGL56-099",
+  "new_code": "DGL56-M041",
+  "title": "Nidavellir",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.0,
+   25.0,
+   7.6
+  ],
+  "kg": 1.39,
+  "bgg_id": 293014,
+  "productId": "gid://shopify/Product/7498141106279"
+ },
+ {
+  "old_code": "DGL56-101",
+  "new_code": "DGL56-M042",
+  "title": "Order of the Stick Adventure Game: The Dungeon of Dorukan",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 0.85,
+  "bgg_id": 24157,
+  "productId": "gid://shopify/Product/7498141532263"
+ },
+ {
+  "old_code": "DGL56-102",
+  "new_code": "DGL56-M043",
+  "title": "Ovation",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   18.0,
+   6.5
+  ],
+  "kg": null,
+  "bgg_id": 326264,
+  "productId": "gid://shopify/Product/7498141630567"
+ },
+ {
+  "old_code": "DGL56-103",
+  "new_code": "DGL56-M044",
+  "title": "Pandemic: Fall of Rome",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   22.6,
+   5.0
+  ],
+  "kg": 1.11,
+  "bgg_id": 260428,
+  "productId": "gid://shopify/Product/7498141728871"
+ },
+ {
+  "old_code": "DGL56-104",
+  "new_code": "DGL56-M045",
+  "title": "Pandemic: Rising Tide",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   22.5,
+   4.4
+  ],
+  "kg": null,
+  "bgg_id": 234671,
+  "productId": "gid://shopify/Product/7498141794407"
+ },
+ {
+  "old_code": "DGL56-105",
+  "new_code": "DGL56-M046",
+  "title": "Pandemic: The Cure",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   22.3,
+   5.7
+  ],
+  "kg": 0.9,
+  "bgg_id": 150658,
+  "productId": "gid://shopify/Product/7498141827175"
+ },
+ {
+  "old_code": "DGL56-107",
+  "new_code": "DGL56-M047",
+  "title": "Pictures",
+  "size": "M",
+  "size_source": "BGG, printings split L1/M5",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.28,
+  "bgg_id": 284108,
+  "productId": "gid://shopify/Product/7498142154855"
+ },
+ {
+  "old_code": "DGL56-108",
+  "new_code": "DGL56-M048",
+  "title": "Pirates vs. Dinosaurs",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 2.27,
+  "bgg_id": 73472,
+  "productId": "gid://shopify/Product/7498142187623"
+ },
+ {
+  "old_code": "DGL56-113",
+  "new_code": "DGL56-M049",
+  "title": "Puerto Rico",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.1,
+   24.4,
+   6.1
+  ],
+  "kg": 1.11,
+  "bgg_id": 3076,
+  "productId": "gid://shopify/Product/7498142613607"
+ },
+ {
+  "old_code": "DGL56-114",
+  "new_code": "DGL56-M050",
+  "title": "Raccoon Tycoon",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.2,
+   22.9,
+   7.5
+  ],
+  "kg": 1.68,
+  "bgg_id": 254386,
+  "productId": "gid://shopify/Product/7498142711911"
+ },
+ {
+  "old_code": "DGL56-116",
+  "new_code": "DGL56-M051",
+  "title": "[redacted]",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.5,
+   22.5,
+   7.0
+  ],
+  "kg": 1.2,
+  "bgg_id": 161578,
+  "productId": "gid://shopify/Product/7498142875751"
+ },
+ {
+  "old_code": "DGL56-117",
+  "new_code": "DGL56-M052",
+  "title": "Rick and Morty: Close Rick-Counters of the Rick Kind Deck-Building Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.1,
+   20.3,
+   7.6
+  ],
+  "kg": null,
+  "bgg_id": 221372,
+  "productId": "gid://shopify/Product/7498143039591"
+ },
+ {
+  "old_code": "DGL56-118",
+  "new_code": "DGL56-M053",
+  "title": "Rising 5: Runes of Asteros",
+  "size": "M",
+  "size_source": "BGG, printings split L1/M2",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   27.5,
+   6.0
+  ],
+  "kg": null,
+  "bgg_id": 185196,
+  "productId": "gid://shopify/Product/7498143137895"
+ },
+ {
+  "old_code": "DGL56-121",
+  "new_code": "DGL56-M054",
+  "title": "Scattergories",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   20.0,
+   5.0
+  ],
+  "kg": 1.11,
+  "bgg_id": 2381,
+  "productId": "gid://shopify/Product/7498143694951"
+ },
+ {
+  "old_code": "DGL56-122",
+  "new_code": "DGL56-M055",
+  "title": "Sheriff of Nottingham",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   25.5,
+   7.8
+  ],
+  "kg": 1.39,
+  "bgg_id": 157969,
+  "productId": "gid://shopify/Product/7498143989863"
+ },
+ {
+  "old_code": "DGL56-124",
+  "new_code": "DGL56-M056",
+  "title": "Small World",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.9,
+  "bgg_id": 40692,
+  "productId": "gid://shopify/Product/7498144350311"
+ },
+ {
+  "old_code": "DGL56-125",
+  "new_code": "DGL56-M057",
+  "title": "Small World of Warcraft",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 309630,
+  "productId": "gid://shopify/Product/7498144383079"
+ },
+ {
+  "old_code": "DGL56-126",
+  "new_code": "DGL56-M058",
+  "title": "Small World Underground",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 2.0,
+  "bgg_id": 97786,
+  "productId": "gid://shopify/Product/7498144415847"
+ },
+ {
+  "old_code": "DGL56-127",
+  "new_code": "DGL56-M059",
+  "title": "Smartphone Inc.",
+  "size": "M",
+  "size_source": "corrected",
+  "why": "the retail box (7 cm); the Kickstarter box was thicker",
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 246684,
+  "productId": "gid://shopify/Product/7498144481383"
+ },
+ {
+  "old_code": "DGL56-130",
+  "new_code": "DGL56-M060",
+  "title": "Star Wars: Unlock!",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   21.5,
+   6.0
+  ],
+  "kg": null,
+  "bgg_id": 312267,
+  "productId": "gid://shopify/Product/7498145366119"
+ },
+ {
+  "old_code": "DGL56-131",
+  "new_code": "DGL56-M061",
+  "title": "Stella: Dixit Universe",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   27.5,
+   5.5
+  ],
+  "kg": 1.17,
+  "bgg_id": 329845,
+  "productId": "gid://shopify/Product/7498145464423"
+ },
+ {
+  "old_code": "DGL56-136",
+  "new_code": "DGL56-M062",
+  "title": "Talisman: Kingdom Hearts",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 273976,
+  "productId": "gid://shopify/Product/7498145988711"
+ },
+ {
+  "old_code": "DGL56-138",
+  "new_code": "DGL56-M063",
+  "title": "Ticket to Ride",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.37,
+  "bgg_id": 9209,
+  "productId": "gid://shopify/Product/7498147299431"
+ },
+ {
+  "old_code": "DGL56-139",
+  "new_code": "DGL56-M064",
+  "title": "Ticket to Ride: Europe",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.5,
+  "bgg_id": 14996,
+  "productId": "gid://shopify/Product/7498147332199"
+ },
+ {
+  "old_code": "DGL56-140",
+  "new_code": "DGL56-M065",
+  "title": "Tiny Towns",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.3
+  ],
+  "kg": 1.27,
+  "bgg_id": 265736,
+  "productId": "gid://shopify/Product/7498147627111"
+ },
+ {
+  "old_code": "DGL56-141",
+  "new_code": "DGL56-M066",
+  "title": "Tokaido",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.8,
+   30.8,
+   7.3
+  ],
+  "kg": 1.19,
+  "bgg_id": 123540,
+  "productId": "gid://shopify/Product/7498147692647"
+ },
+ {
+  "old_code": "DGL56-142",
+  "new_code": "DGL56-M067",
+  "title": "Treasure Island",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.3,
+   29.3,
+   8.0
+  ],
+  "kg": 1.83,
+  "bgg_id": 242639,
+  "productId": "gid://shopify/Product/7498147922023"
+ },
+ {
+  "old_code": "DGL56-143",
+  "new_code": "DGL56-M068",
+  "title": "Trivial Pursuit: 2000s",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.9,
+   27.9,
+   6.3
+  ],
+  "kg": 1.86,
+  "bgg_id": 207911,
+  "productId": "gid://shopify/Product/7498148053095"
+ },
+ {
+  "old_code": "DGL56-144",
+  "new_code": "DGL56-M069",
+  "title": "Unlock!: Epic Adventures",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   21.5,
+   6.5
+  ],
+  "kg": 0.79,
+  "bgg_id": 294612,
+  "productId": "gid://shopify/Product/7498148249703"
+ },
+ {
+  "old_code": "DGL56-145",
+  "new_code": "DGL56-M070",
+  "title": "Unlock!: Escape Adventures",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   21.5,
+   6.5
+  ],
+  "kg": 0.72,
+  "bgg_id": 213460,
+  "productId": "gid://shopify/Product/7498148348007"
+ },
+ {
+  "old_code": "DGL56-146",
+  "new_code": "DGL56-M071",
+  "title": "Unlock!: Exotic Adventures",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   28.0,
+   21.5,
+   6.5
+  ],
+  "kg": 0.78,
+  "bgg_id": 254226,
+  "productId": "gid://shopify/Product/7498148413543"
+ },
+ {
+  "old_code": "DGL56-147",
+  "new_code": "DGL56-M072",
+  "title": "Unlock!: Heroic Adventures",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   21.5,
+   6.0
+  ],
+  "kg": 0.7,
+  "bgg_id": 266121,
+  "productId": "gid://shopify/Product/7498148479079"
+ },
+ {
+  "old_code": "DGL56-148",
+  "new_code": "DGL56-M073",
+  "title": "Unlock!: Mystery Adventures",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   21.5,
+   6.5
+  ],
+  "kg": 0.73,
+  "bgg_id": 228867,
+  "productId": "gid://shopify/Product/7498148511847"
+ },
+ {
+  "old_code": "DGL56-152",
+  "new_code": "DGL56-M074",
+  "title": "Unlock!: Timeless Adventures",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   28.0,
+   21.5,
+   6.5
+  ],
+  "kg": 0.8,
+  "bgg_id": 279613,
+  "productId": "gid://shopify/Product/7498148642919"
+ },
+ {
+  "old_code": "DGL56-154",
+  "new_code": "DGL56-M075",
+  "title": "Viticulture Essential Edition",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   22.0,
+   10.5
+  ],
+  "kg": 1.92,
+  "bgg_id": 183394,
+  "productId": "gid://shopify/Product/7498148970599"
+ },
+ {
+  "old_code": "DGL56-156",
+  "new_code": "DGL56-M076",
+  "title": "Wingspan",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.4,
+   29.4,
+   7.6
+  ],
+  "kg": 2.07,
+  "bgg_id": 266192,
+  "productId": "gid://shopify/Product/7498149429351"
+ },
+ {
+  "old_code": "DGL56-157",
+  "new_code": "DGL56-M077",
+  "title": "Wyrmspan",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   30.0,
+   7.0
+  ],
+  "kg": 2.6,
+  "bgg_id": 410201,
+  "productId": "gid://shopify/Product/7498149625959"
+ },
+ {
+  "old_code": "DGL56-158",
+  "new_code": "DGL56-M078",
+  "title": "X-Men: Mutant Insurrection",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 315937,
+  "productId": "gid://shopify/Product/7498149691495"
+ },
+ {
+  "old_code": "DGL56-005",
+  "new_code": "DGL56-L001",
+  "title": "Alhambra: Big Box",
+  "size": "L",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498130423911"
+ },
+ {
+  "old_code": "DGL56-011",
+  "new_code": "DGL56-L002",
+  "title": "Attack on Titan: The Last Stand",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   40.6,
+   25.4,
+   6.3
+  ],
+  "kg": null,
+  "bgg_id": 181254,
+  "productId": "gid://shopify/Product/7498131112039"
+ },
+ {
+  "old_code": "DGL56-013",
+  "new_code": "DGL56-L003",
+  "title": "BattleCON: Devastation of Indines",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   33.7,
+   27.9,
+   14.0
+  ],
+  "kg": null,
+  "bgg_id": 123123,
+  "productId": "gid://shopify/Product/7498131472487"
+ },
+ {
+  "old_code": "DGL56-019",
+  "new_code": "DGL56-L004",
+  "title": "Catan: 25th Anniversary Edition",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.2,
+   29.2,
+   10.2
+  ],
+  "kg": null,
+  "bgg_id": 305668,
+  "productId": "gid://shopify/Product/7498132652135"
+ },
+ {
+  "old_code": "DGL56-022",
+  "new_code": "DGL56-L005",
+  "title": "Clue",
+  "size": "L",
+  "size_source": "BGG, printings split L4/M2/S1",
+  "why": null,
+  "dims_cm": [
+   40.0,
+   26.8,
+   4.6
+  ],
+  "kg": 0.96,
+  "bgg_id": 130592,
+  "productId": "gid://shopify/Product/7498133307495"
+ },
+ {
+  "old_code": "DGL56-023",
+  "new_code": "DGL56-L006",
+  "title": "Clue: Harry Potter Edition",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   40.1,
+   26.7,
+   6.3
+  ],
+  "kg": null,
+  "bgg_id": 38026,
+  "productId": "gid://shopify/Product/7498133373031"
+ },
+ {
+  "old_code": "DGL56-024",
+  "new_code": "DGL56-L007",
+  "title": "Clue: The Simpsons",
+  "size": "L",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498133405799"
+ },
+ {
+  "old_code": "DGL56-037",
+  "new_code": "DGL56-L008",
+  "title": "Descent: Journeys in the Dark (Second Edition)",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.8,
+   29.8,
+   10.8
+  ],
+  "kg": 2.65,
+  "bgg_id": 104162,
+  "productId": "gid://shopify/Product/7498134683751"
+ },
+ {
+  "old_code": "DGL56-043",
+  "new_code": "DGL56-L009",
+  "title": "Dragonlance: Warriors of Krynn",
+  "size": "L",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 361552,
+  "productId": "gid://shopify/Product/7498135404647"
+ },
+ {
+  "old_code": "DGL56-048",
+  "new_code": "DGL56-L010",
+  "title": "Dungeons & Dragons: Castle Ravenloft Board Game",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.2,
+   31.2,
+   11.9
+  ],
+  "kg": 3.0,
+  "bgg_id": 59946,
+  "productId": "gid://shopify/Product/7498135896167"
+ },
+ {
+  "old_code": "DGL56-054",
+  "new_code": "DGL56-L011",
+  "title": "Everdell: The Complete Collection",
+  "size": "L",
+  "size_source": "corrected",
+  "why": "the Complete Collection is a huge box; BGG only sizes base Everdell",
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 199792,
+  "productId": "gid://shopify/Product/7498136256615"
+ },
+ {
+  "old_code": "DGL56-073",
+  "new_code": "DGL56-L012",
+  "title": "Kemet",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   39.5,
+   27.5,
+   8.0
+  ],
+  "kg": null,
+  "bgg_id": 127023,
+  "productId": "gid://shopify/Product/7498138746983"
+ },
+ {
+  "old_code": "DGL56-075",
+  "new_code": "DGL56-L013",
+  "title": "King of Monster Island",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   36.5,
+   25.5,
+   7.2
+  ],
+  "kg": null,
+  "bgg_id": 350755,
+  "productId": "gid://shopify/Product/7498139009127"
+ },
+ {
+  "old_code": "DGL56-079",
+  "new_code": "DGL56-L014",
+  "title": "Legendary: A Marvel Deck Building Game",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.2,
+   29.2,
+   10.2
+  ],
+  "kg": 2.09,
+  "bgg_id": 129437,
+  "productId": "gid://shopify/Product/7498139500647"
+ },
+ {
+  "old_code": "DGL56-080",
+  "new_code": "DGL56-L015",
+  "title": "Let's Hit Each Other with Fake Swords",
+  "size": "L",
+  "size_source": "BGG, printings split L2/M1",
+  "why": null,
+  "dims_cm": [
+   38.2,
+   25.5,
+   7.7
+  ],
+  "kg": null,
+  "bgg_id": 423729,
+  "productId": "gid://shopify/Product/7498139566183"
+ },
+ {
+  "old_code": "DGL56-083",
+  "new_code": "DGL56-L016",
+  "title": "Lords of Waterdeep",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   35.5,
+   28.0,
+   7.5
+  ],
+  "kg": 1.68,
+  "bgg_id": 110327,
+  "productId": "gid://shopify/Product/7498139730023"
+ },
+ {
+  "old_code": "DGL56-085",
+  "new_code": "DGL56-L017",
+  "title": "Magic: The Gathering – Arena of the Planeswalkers",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   46.0,
+   26.7,
+   6.3
+  ],
+  "kg": 1.66,
+  "bgg_id": 167698,
+  "productId": "gid://shopify/Product/7498140024935"
+ },
+ {
+  "old_code": "DGL56-087",
+  "new_code": "DGL56-L018",
+  "title": "Marvel Zombies: A Zombicide Game",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   32.0,
+   32.0,
+   10.9
+  ],
+  "kg": null,
+  "bgg_id": 351817,
+  "productId": "gid://shopify/Product/7498140156007"
+ },
+ {
+  "old_code": "DGL56-088",
+  "new_code": "DGL56-L019",
+  "title": "Masters of the Universe: The Board Game – Clash for Eternia",
+  "size": "L",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 311475,
+  "productId": "gid://shopify/Product/7498140221543"
+ },
+ {
+  "old_code": "DGL56-092",
+  "new_code": "DGL56-L020",
+  "title": "Monopoly: The Here & Now New Zealand Edition",
+  "size": "L",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 34168,
+  "productId": "gid://shopify/Product/7498140516455"
+ },
+ {
+  "old_code": "DGL56-110",
+  "new_code": "DGL56-L021",
+  "title": "Power Grid",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   37.1,
+   27.2,
+   5.6
+  ],
+  "kg": null,
+  "bgg_id": 2651,
+  "productId": "gid://shopify/Product/7498142515303"
+ },
+ {
+  "old_code": "DGL56-111",
+  "new_code": "DGL56-L022",
+  "title": "Power Rangers: Heroes of the Grid",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   33.5,
+   33.5,
+   12.4
+  ],
+  "kg": 2.45,
+  "bgg_id": 258148,
+  "productId": "gid://shopify/Product/7498142548071"
+ },
+ {
+  "old_code": "DGL56-119",
+  "new_code": "DGL56-L023",
+  "title": "Risk",
+  "size": "L",
+  "size_source": "BGG, printings split L6/M1",
+  "why": null,
+  "dims_cm": [
+   43.4,
+   28.6,
+   5.3
+  ],
+  "kg": 1.34,
+  "bgg_id": 181,
+  "productId": "gid://shopify/Product/7498143170663"
+ },
+ {
+  "old_code": "DGL56-120",
+  "new_code": "DGL56-L024",
+  "title": "Rum & Bones",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.7,
+   30.7,
+   10.5
+  ],
+  "kg": null,
+  "bgg_id": 168788,
+  "productId": "gid://shopify/Product/7498143498343"
+ },
+ {
+  "old_code": "DGL56-128",
+  "new_code": "DGL56-L025",
+  "title": "Star Wars: Imperial Assault",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   13.3
+  ],
+  "kg": 2.57,
+  "bgg_id": 164153,
+  "productId": "gid://shopify/Product/7498145235047"
+ },
+ {
+  "old_code": "DGL56-133",
+  "new_code": "DGL56-L026",
+  "title": "Super Dungeon Explore with Expansions",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   33.5,
+   33.5,
+   10.7
+  ],
+  "kg": 2.27,
+  "bgg_id": 92190,
+  "productId": "gid://shopify/Product/7498145661031"
+ },
+ {
+  "old_code": "DGL56-135",
+  "new_code": "DGL56-L027",
+  "title": "Tales of the Arabian Nights",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   37.1,
+   27.2,
+   6.5
+  ],
+  "kg": 3.45,
+  "bgg_id": 34119,
+  "productId": "gid://shopify/Product/7498145923175"
+ },
+ {
+  "old_code": "DGL56-137",
+  "new_code": "DGL56-L028",
+  "title": "Terra Mystica",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.5,
+   22.7,
+   9.1
+  ],
+  "kg": 2.18,
+  "bgg_id": 120677,
+  "productId": "gid://shopify/Product/7498146283623"
+ },
+ {
+  "old_code": "DGL56-155",
+  "new_code": "DGL56-L029",
+  "title": "Western Legends",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   39.5,
+   27.5,
+   8.0
+  ],
+  "kg": 2.2,
+  "bgg_id": 232405,
+  "productId": "gid://shopify/Product/7498149265511"
+ },
+ {
+  "old_code": "DGL7+-003",
+  "new_code": "DGL7+-S001",
+  "title": "A Fake Artist Goes to New York",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   11.0,
+   6.5,
+   3.5
+  ],
+  "kg": 0.15,
+  "bgg_id": 135779,
+  "productId": "gid://shopify/Product/7498130292839"
+ },
+ {
+  "old_code": "DGL7+-004",
+  "new_code": "DGL7+-S002",
+  "title": "A Matter of Taste",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7504656859239"
+ },
+ {
+  "old_code": "DGL7+-007",
+  "new_code": "DGL7+-S003",
+  "title": "Beat That!",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   14.0,
+   14.0
+  ],
+  "kg": 0.7,
+  "bgg_id": 290610,
+  "productId": "gid://shopify/Product/7498131734631"
+ },
+ {
+  "old_code": "DGL7+-008",
+  "new_code": "DGL7+-S004",
+  "title": "Blank Marry Kill",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 202516,
+  "productId": "gid://shopify/Product/7498131964007"
+ },
+ {
+  "old_code": "DGL7+-011",
+  "new_code": "DGL7+-S005",
+  "title": "Cards Against Humanity",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.0,
+   10.6,
+   7.0
+  ],
+  "kg": 1.07,
+  "bgg_id": 50381,
+  "productId": "gid://shopify/Product/7498132553831"
+ },
+ {
+  "old_code": "DGL7+-015",
+  "new_code": "DGL7+-S006",
+  "title": "Codenames",
+  "size": "S",
+  "size_source": "BGG, printings split M2/S9",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.1
+  ],
+  "kg": 0.59,
+  "bgg_id": 178900,
+  "productId": "gid://shopify/Product/7498133504103"
+ },
+ {
+  "old_code": "DGL7+-016",
+  "new_code": "DGL7+-S007",
+  "title": "Codenames: Disney – Family Edition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.2
+  ],
+  "kg": 0.63,
+  "bgg_id": 220775,
+  "productId": "gid://shopify/Product/7498133536871"
+ },
+ {
+  "old_code": "DGL7+-017",
+  "new_code": "DGL7+-S008",
+  "title": "Codenames: Harry Potter",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.6,
+   16.0,
+   5.2
+  ],
+  "kg": null,
+  "bgg_id": 249821,
+  "productId": "gid://shopify/Product/7498133602407"
+ },
+ {
+  "old_code": "DGL7+-018",
+  "new_code": "DGL7+-S009",
+  "title": "Codenames: Marvel",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.5,
+   15.7,
+   5.2
+  ],
+  "kg": null,
+  "bgg_id": 220774,
+  "productId": "gid://shopify/Product/7498133635175"
+ },
+ {
+  "old_code": "DGL7+-019",
+  "new_code": "DGL7+-S010",
+  "title": "Codenames: Pictures",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.0
+  ],
+  "kg": 0.62,
+  "bgg_id": 198773,
+  "productId": "gid://shopify/Product/7498133667943"
+ },
+ {
+  "old_code": "DGL7+-020",
+  "new_code": "DGL7+-S011",
+  "title": "Codenames: The Simpsons",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.5,
+   16.0,
+   5.0
+  ],
+  "kg": 0.63,
+  "bgg_id": 290028,
+  "productId": "gid://shopify/Product/7498133700711"
+ },
+ {
+  "old_code": "DGL7+-022",
+  "new_code": "DGL7+-S012",
+  "title": "Daring Contest",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   11.9,
+   9.4,
+   2.0
+  ],
+  "kg": null,
+  "bgg_id": 248722,
+  "productId": "gid://shopify/Product/7498134388839"
+ },
+ {
+  "old_code": "DGL7+-023",
+  "new_code": "DGL7+-S013",
+  "title": "DC Spyfall",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   20.4,
+   20.4,
+   4.7
+  ],
+  "kg": null,
+  "bgg_id": 221371,
+  "productId": "gid://shopify/Product/7498134487143"
+ },
+ {
+  "old_code": "DGL7+-025",
+  "new_code": "DGL7+-S014",
+  "title": "Decrypto",
+  "size": "S",
+  "size_source": "BGG, printings split L1/S7",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.0
+  ],
+  "kg": 0.52,
+  "bgg_id": 225694,
+  "productId": "gid://shopify/Product/7498134650983"
+ },
+ {
+  "old_code": "DGL7+-026",
+  "new_code": "DGL7+-S015",
+  "title": "Detective Club",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.2,
+   22.2,
+   7.6
+  ],
+  "kg": 1.25,
+  "bgg_id": 256788,
+  "productId": "gid://shopify/Product/7498134749287"
+ },
+ {
+  "old_code": "DGL7+-027",
+  "new_code": "DGL7+-S016",
+  "title": "Disturbed Friends",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.1,
+   10.2,
+   7.0
+  ],
+  "kg": 0.79,
+  "bgg_id": 173075,
+  "productId": "gid://shopify/Product/7498135044199"
+ },
+ {
+  "old_code": "DGL7+-031",
+  "new_code": "DGL7+-S017",
+  "title": "Don't Get Got!",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.5,
+   15.5,
+   9.5
+  ],
+  "kg": 0.48,
+  "bgg_id": 262547,
+  "productId": "gid://shopify/Product/7498135240807"
+ },
+ {
+  "old_code": "DGL7+-032",
+  "new_code": "DGL7+-S018",
+  "title": "Dracula's Feast: New Blood",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.0,
+   15.0,
+   3.9
+  ],
+  "kg": null,
+  "bgg_id": 269847,
+  "productId": "gid://shopify/Product/7498135306343"
+ },
+ {
+  "old_code": "DGL7+-033",
+  "new_code": "DGL7+-S019",
+  "title": "Dune: Betrayal",
+  "size": "S",
+  "size_source": "BGG (other-language printings)",
+  "why": null,
+  "dims_cm": [
+   20.0,
+   15.0,
+   4.2
+  ],
+  "kg": 0.37,
+  "bgg_id": 343696,
+  "productId": "gid://shopify/Product/7498135568487"
+ },
+ {
+  "old_code": "DGL7+-034",
+  "new_code": "DGL7+-S020",
+  "title": "The Epic Beard Game",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.1,
+   10.8,
+   7.6
+  ],
+  "kg": null,
+  "bgg_id": 275030,
+  "productId": "gid://shopify/Product/7498146644071"
+ },
+ {
+  "old_code": "DGL7+-035",
+  "new_code": "DGL7+-S021",
+  "title": "Fangs",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   13.0,
+   4.3
+  ],
+  "kg": 0.27,
+  "bgg_id": 337262,
+  "productId": "gid://shopify/Product/7498136387687"
+ },
+ {
+  "old_code": "DGL7+-037",
+  "new_code": "DGL7+-S022",
+  "title": "Flipology",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.5,
+   10.0,
+   3.0
+  ],
+  "kg": 0.22,
+  "bgg_id": 261140,
+  "productId": "gid://shopify/Product/7498136748135"
+ },
+ {
+  "old_code": "DGL7+-040",
+  "new_code": "DGL7+-S023",
+  "title": "Geek Out! The 00s Edition",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498137305191"
+ },
+ {
+  "old_code": "DGL7+-041",
+  "new_code": "DGL7+-S024",
+  "title": "Geek Out! The 80's Edition",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498137337959"
+ },
+ {
+  "old_code": "DGL7+-042",
+  "new_code": "DGL7+-S025",
+  "title": "Geek Out! The 90's Edition",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498137370727"
+ },
+ {
+  "old_code": "DGL7+-043",
+  "new_code": "DGL7+-S026",
+  "title": "GoodCritters",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   24.1,
+   14.3,
+   4.4
+  ],
+  "kg": null,
+  "bgg_id": 255615,
+  "productId": "gid://shopify/Product/7498137534567"
+ },
+ {
+  "old_code": "DGL7+-045",
+  "new_code": "DGL7+-S027",
+  "title": "Incohearent",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.8,
+   10.7,
+   7.2
+  ],
+  "kg": 0.93,
+  "bgg_id": 289020,
+  "productId": "gid://shopify/Product/7498138222695"
+ },
+ {
+  "old_code": "DGL7+-046",
+  "new_code": "DGL7+-S028",
+  "title": "Joking Hazard",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.3,
+   10.2,
+   7.0
+  ],
+  "kg": 0.74,
+  "bgg_id": 193621,
+  "productId": "gid://shopify/Product/7498138615911"
+ },
+ {
+  "old_code": "DGL7+-047",
+  "new_code": "DGL7+-S029",
+  "title": "Just One",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.0
+  ],
+  "kg": 0.59,
+  "bgg_id": 254640,
+  "productId": "gid://shopify/Product/7498138648679"
+ },
+ {
+  "old_code": "DGL7+-048",
+  "new_code": "DGL7+-S030",
+  "title": "Kaupapa",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498138714215"
+ },
+ {
+  "old_code": "DGL7+-049",
+  "new_code": "DGL7+-S031",
+  "title": "Kemomimi Panic",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   19.5,
+   10.4,
+   3.5
+  ],
+  "kg": null,
+  "bgg_id": 73759,
+  "productId": "gid://shopify/Product/7498138779751"
+ },
+ {
+  "old_code": "DGL7+-051",
+  "new_code": "DGL7+-S032",
+  "title": "The Last Brave",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498146807911"
+ },
+ {
+  "old_code": "DGL7+-052",
+  "new_code": "DGL7+-S033",
+  "title": "Llamas Unleashed",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.7,
+   7.6,
+   7.6
+  ],
+  "kg": 0.36,
+  "bgg_id": 268936,
+  "productId": "gid://shopify/Product/7498139664487"
+ },
+ {
+  "old_code": "DGL7+-054",
+  "new_code": "DGL7+-S034",
+  "title": "Monikers",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.5,
+   10.2,
+   7.6
+  ],
+  "kg": 0.73,
+  "bgg_id": 156546,
+  "productId": "gid://shopify/Product/7498140418151"
+ },
+ {
+  "old_code": "DGL7+-055",
+  "new_code": "DGL7+-S035",
+  "title": "Muse",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.2,
+   16.2,
+   4.6
+  ],
+  "kg": 0.33,
+  "bgg_id": 234396,
+  "productId": "gid://shopify/Product/7498140844135"
+ },
+ {
+  "old_code": "DGL7+-057",
+  "new_code": "DGL7+-S036",
+  "title": "OK Boomer!",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.8,
+   16.5,
+   5.1
+  ],
+  "kg": null,
+  "bgg_id": 313463,
+  "productId": "gid://shopify/Product/7498141401191"
+ },
+ {
+  "old_code": "DGL7+-058",
+  "new_code": "DGL7+-S037",
+  "title": "One Night Ultimate Werewolf",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.2,
+   12.8,
+   3.8
+  ],
+  "kg": 0.21,
+  "bgg_id": 147949,
+  "productId": "gid://shopify/Product/7498141466727"
+ },
+ {
+  "old_code": "DGL7+-059",
+  "new_code": "DGL7+-S038",
+  "title": "Radioactive Bunniez Collector's Edition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.0,
+   10.0,
+   4.5
+  ],
+  "kg": 0.25,
+  "bgg_id": 340384,
+  "productId": "gid://shopify/Product/7498142744679"
+ },
+ {
+  "old_code": "DGL7+-060",
+  "new_code": "DGL7+-S039",
+  "title": "Ready Set Bet",
+  "size": "S",
+  "size_source": "corrected",
+  "why": "the standard 24 cm box; BGG also lists an outsized printing",
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 351040,
+  "productId": "gid://shopify/Product/7498142810215"
+ },
+ {
+  "old_code": "DGL7+-061",
+  "new_code": "DGL7+-S040",
+  "title": "The Resistance",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.0,
+   15.0,
+   4.7
+  ],
+  "kg": 0.3,
+  "bgg_id": 41114,
+  "productId": "gid://shopify/Product/7498146938983"
+ },
+ {
+  "old_code": "DGL7+-062",
+  "new_code": "DGL7+-S041",
+  "title": "Saboteur",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.1,
+   9.4,
+   2.0
+  ],
+  "kg": 0.2,
+  "bgg_id": 9220,
+  "productId": "gid://shopify/Product/7498143563879"
+ },
+ {
+  "old_code": "DGL7+-063",
+  "new_code": "DGL7+-S042",
+  "title": "Saboteur: 20th Anniversary Edition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.0,
+   11.9,
+   5.4
+  ],
+  "kg": null,
+  "bgg_id": 406322,
+  "productId": "gid://shopify/Product/7498143596647"
+ },
+ {
+  "old_code": "DGL7+-073",
+  "new_code": "DGL7+-S043",
+  "title": "Spyfall: Time Travel",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   20.4,
+   20.4,
+   4.7
+  ],
+  "kg": 0.67,
+  "bgg_id": 256085,
+  "productId": "gid://shopify/Product/7498144940135"
+ },
+ {
+  "old_code": "DGL7+-074",
+  "new_code": "DGL7+-S044",
+  "title": "Stay Cool",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.0
+  ],
+  "kg": null,
+  "bgg_id": 267475,
+  "productId": "gid://shopify/Product/7498145431655"
+ },
+ {
+  "old_code": "DGL7+-075",
+  "new_code": "DGL7+-S045",
+  "title": "Taboo",
+  "size": "S",
+  "size_source": "BGG, printings split M2/S2",
+  "why": null,
+  "dims_cm": [
+   13.5,
+   13.5,
+   5.1
+  ],
+  "kg": 0.33,
+  "bgg_id": 1111,
+  "productId": "gid://shopify/Product/7498145792103"
+ },
+ {
+  "old_code": "DGL7+-076",
+  "new_code": "DGL7+-S046",
+  "title": "Taco Cat Goat Cheese Pizza",
+  "size": "S",
+  "size_source": "BGG, printings split M2/S10",
+  "why": null,
+  "dims_cm": [
+   12.0,
+   8.0,
+   4.0
+  ],
+  "kg": 0.2,
+  "bgg_id": 253664,
+  "productId": "gid://shopify/Product/7498145824871"
+ },
+ {
+  "old_code": "DGL7+-083",
+  "new_code": "DGL7+-S047",
+  "title": "Timeline: Classic",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.5,
+   11.4,
+   3.2
+  ],
+  "kg": null,
+  "bgg_id": 257284,
+  "productId": "gid://shopify/Product/7498147463271"
+ },
+ {
+  "old_code": "DGL7+-084",
+  "new_code": "DGL7+-S048",
+  "title": "Trapwords",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.0,
+   16.0,
+   5.1
+  ],
+  "kg": null,
+  "bgg_id": 257527,
+  "productId": "gid://shopify/Product/7498147856487"
+ },
+ {
+  "old_code": "DGL7+-086",
+  "new_code": "DGL7+-S049",
+  "title": "The Ultimate Date Night Game for Fun Couples",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498147135591"
+ },
+ {
+  "old_code": "DGL7+-087",
+  "new_code": "DGL7+-S050",
+  "title": "Ultimate Werewolf Deluxe Edition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.8,
+   12.6,
+   2.3
+  ],
+  "kg": 0.36,
+  "bgg_id": 152241,
+  "productId": "gid://shopify/Product/7498149167207"
+ },
+ {
+  "old_code": "DGL7+-088",
+  "new_code": "DGL7+-S051",
+  "title": "Unstable Unicorns",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   14.6,
+   9.5,
+   3.8
+  ],
+  "kg": 0.35,
+  "bgg_id": 234190,
+  "productId": "gid://shopify/Product/7498148741223"
+ },
+ {
+  "old_code": "DGL7+-090",
+  "new_code": "DGL7+-S052",
+  "title": "Werewords",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.8,
+   12.7,
+   3.8
+  ],
+  "kg": 0.28,
+  "bgg_id": 219215,
+  "productId": "gid://shopify/Product/7498149199975"
+ },
+ {
+  "old_code": "DGL7+-091",
+  "new_code": "DGL7+-S053",
+  "title": "Werewords Deluxe Edition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.8,
+   12.7,
+   3.8
+  ],
+  "kg": 0.45,
+  "bgg_id": 245422,
+  "productId": "gid://shopify/Product/7498149232743"
+ },
+ {
+  "old_code": "DGL7+-092",
+  "new_code": "DGL7+-S054",
+  "title": "What Do You Meme?: BSFW Edition",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   17.1,
+   12.1,
+   10.7
+  ],
+  "kg": 1.36,
+  "bgg_id": 316165,
+  "productId": "gid://shopify/Product/7498149298279"
+ },
+ {
+  "old_code": "DGL7+-094",
+  "new_code": "DGL7+-S055",
+  "title": "Witch Hunt",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.7,
+   12.8,
+   3.9
+  ],
+  "kg": null,
+  "bgg_id": 164236,
+  "productId": "gid://shopify/Product/7498149462119"
+ },
+ {
+  "old_code": "DGL7+-095",
+  "new_code": "DGL7+-S056",
+  "title": "Wits & Wagers: It's Vegas, Baby!",
+  "size": "S",
+  "size_source": "BGG, printings split M1/S1",
+  "why": null,
+  "dims_cm": [
+   19.0,
+   19.0,
+   7.6
+  ],
+  "kg": null,
+  "bgg_id": 286428,
+  "productId": "gid://shopify/Product/7498149527655"
+ },
+ {
+  "old_code": "DGL7+-096",
+  "new_code": "DGL7+-S057",
+  "title": "Yahtzee",
+  "size": "S",
+  "size_source": "BGG, printings split L1/M2/S11",
+  "why": null,
+  "dims_cm": [
+   15.2,
+   12.7,
+   10.2
+  ],
+  "kg": 0.23,
+  "bgg_id": 2243,
+  "productId": "gid://shopify/Product/7498149724263"
+ },
+ {
+  "old_code": "DGL7+-001",
+  "new_code": "DGL7+-M001",
+  "title": "5 Second Rule",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   20.3,
+   6.3
+  ],
+  "kg": 0.56,
+  "bgg_id": 86073,
+  "productId": "gid://shopify/Product/7498130063463"
+ },
+ {
+  "old_code": "DGL7+-002",
+  "new_code": "DGL7+-M002",
+  "title": "7 Wonders",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.13,
+  "bgg_id": 68448,
+  "productId": "gid://shopify/Product/7498130096231"
+ },
+ {
+  "old_code": "DGL7+-005",
+  "new_code": "DGL7+-M003",
+  "title": "Articulate!",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 6541,
+  "productId": "gid://shopify/Product/7498130980967"
+ },
+ {
+  "old_code": "DGL7+-006",
+  "new_code": "DGL7+-M004",
+  "title": "Atlantis Rising (Second Edition)",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.54,
+  "bgg_id": 248490,
+  "productId": "gid://shopify/Product/7498131046503"
+ },
+ {
+  "old_code": "DGL7+-010",
+  "new_code": "DGL7+-M005",
+  "title": "Brain Fart",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   20.3,
+   6.3
+  ],
+  "kg": null,
+  "bgg_id": 267565,
+  "productId": "gid://shopify/Product/7498132193383"
+ },
+ {
+  "old_code": "DGL7+-013",
+  "new_code": "DGL7+-M006",
+  "title": "The Chameleon",
+  "size": "M",
+  "size_source": "BGG, printings split M4/S2",
+  "why": null,
+  "dims_cm": [
+   28.5,
+   17.1,
+   5.8
+  ],
+  "kg": 0.55,
+  "bgg_id": 227072,
+  "productId": "gid://shopify/Product/7498146480231"
+ },
+ {
+  "old_code": "DGL7+-014",
+  "new_code": "DGL7+-M007",
+  "title": "The Chameleon: Picture Edition",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.0,
+   17.0,
+   6.0
+  ],
+  "kg": null,
+  "bgg_id": 398059,
+  "productId": "gid://shopify/Product/7498146545767"
+ },
+ {
+  "old_code": "DGL7+-021",
+  "new_code": "DGL7+-M008",
+  "title": "Concept",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.6,
+   27.6,
+   5.7
+  ],
+  "kg": 1.0,
+  "bgg_id": 147151,
+  "productId": "gid://shopify/Product/7498133799015"
+ },
+ {
+  "old_code": "DGL7+-024",
+  "new_code": "DGL7+-M009",
+  "title": "Deception: Murder in Hong Kong",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.9,
+   27.9,
+   6.3
+  ],
+  "kg": 1.08,
+  "bgg_id": 156129,
+  "productId": "gid://shopify/Product/7498134585447"
+ },
+ {
+  "old_code": "DGL7+-028",
+  "new_code": "DGL7+-M010",
+  "title": "Dixit",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.7,
+   27.7,
+   5.7
+  ],
+  "kg": 0.81,
+  "bgg_id": 39856,
+  "productId": "gid://shopify/Product/7498135076967"
+ },
+ {
+  "old_code": "DGL7+-029",
+  "new_code": "DGL7+-M011",
+  "title": "Dixit: Odyssey",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.8,
+   27.7,
+   5.7
+  ],
+  "kg": 0.94,
+  "bgg_id": 92828,
+  "productId": "gid://shopify/Product/7498135109735"
+ },
+ {
+  "old_code": "DGL7+-030",
+  "new_code": "DGL7+-M012",
+  "title": "Doctor Who DVD Board Game",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498135142503"
+ },
+ {
+  "old_code": "DGL7+-036",
+  "new_code": "DGL7+-M013",
+  "title": "Flick 'em Up!: Dead of Winter",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.0,
+   26.0,
+   10.1
+  ],
+  "kg": 1.78,
+  "bgg_id": 207016,
+  "productId": "gid://shopify/Product/7498136715367"
+ },
+ {
+  "old_code": "DGL7+-038",
+  "new_code": "DGL7+-M014",
+  "title": "Forgotten Waters",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.3
+  ],
+  "kg": 1.82,
+  "bgg_id": 302723,
+  "productId": "gid://shopify/Product/7498136911975"
+ },
+ {
+  "old_code": "DGL7+-050",
+  "new_code": "DGL7+-M015",
+  "title": "Kill Doctor Lucky",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.8,
+   20.2,
+   4.0
+  ],
+  "kg": 0.78,
+  "bgg_id": 257,
+  "productId": "gid://shopify/Product/7498138943591"
+ },
+ {
+  "old_code": "DGL7+-053",
+  "new_code": "DGL7+-M016",
+  "title": "Magic Maze",
+  "size": "M",
+  "size_source": "BGG, printings split M11/S1",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   6.3
+  ],
+  "kg": 0.87,
+  "bgg_id": 209778,
+  "productId": "gid://shopify/Product/7498139959399"
+ },
+ {
+  "old_code": "DGL7+-056",
+  "new_code": "DGL7+-M017",
+  "title": "Mysterium",
+  "size": "M",
+  "size_source": "BGG, printings split L1/M19",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": 1.54,
+  "bgg_id": 181304,
+  "productId": "gid://shopify/Product/7498141007975"
+ },
+ {
+  "old_code": "DGL7+-064",
+  "new_code": "DGL7+-M018",
+  "title": "Scooby-Doo: Escape from the Haunted Mansion",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   25.4,
+   5.0
+  ],
+  "kg": 0.78,
+  "bgg_id": 302344,
+  "productId": "gid://shopify/Product/7498143727719"
+ },
+ {
+  "old_code": "DGL7+-065",
+  "new_code": "DGL7+-M019",
+  "title": "Scrawl",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.2,
+   24.2,
+   6.1
+  ],
+  "kg": 0.93,
+  "bgg_id": 202982,
+  "productId": "gid://shopify/Product/7498143793255"
+ },
+ {
+  "old_code": "DGL7+-067",
+  "new_code": "DGL7+-M020",
+  "title": "Sherlock Holmes Consulting Detective: Carlton House & Queen's Park",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.0,
+   23.5,
+   6.5
+  ],
+  "kg": null,
+  "bgg_id": 223931,
+  "productId": "gid://shopify/Product/7498144022631"
+ },
+ {
+  "old_code": "DGL7+-068",
+  "new_code": "DGL7+-M021",
+  "title": "Sherlock Holmes Consulting Detective: The Baker Street Irregulars",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.0,
+   23.5,
+   6.5
+  ],
+  "kg": 2.01,
+  "bgg_id": 296345,
+  "productId": "gid://shopify/Product/7498144055399"
+ },
+ {
+  "old_code": "DGL7+-069",
+  "new_code": "DGL7+-M022",
+  "title": "Sherlock Holmes Consulting Detective: The Thames Murders & Other Cases",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.2,
+   23.0,
+   6.0
+  ],
+  "kg": 1.93,
+  "bgg_id": 2511,
+  "productId": "gid://shopify/Product/7498144088167"
+ },
+ {
+  "old_code": "DGL7+-070",
+  "new_code": "DGL7+-M023",
+  "title": "Sidibaba",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 38402,
+  "productId": "gid://shopify/Product/7498144153703"
+ },
+ {
+  "old_code": "DGL7+-071",
+  "new_code": "DGL7+-M024",
+  "title": "Sketchagrams",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   5.1
+  ],
+  "kg": null,
+  "bgg_id": 274472,
+  "productId": "gid://shopify/Product/7498144252007"
+ },
+ {
+  "old_code": "DGL7+-072",
+  "new_code": "DGL7+-M025",
+  "title": "Smart Ass",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   27.5,
+   7.0
+  ],
+  "kg": 1.39,
+  "bgg_id": 27389,
+  "productId": "gid://shopify/Product/7498144448615"
+ },
+ {
+  "old_code": "DGL7+-078",
+  "new_code": "DGL7+-M026",
+  "title": "Telestrations: 12 Player Party Pack",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.5,
+   25.4,
+   6.7
+  ],
+  "kg": 1.57,
+  "bgg_id": 153016,
+  "productId": "gid://shopify/Product/7498146152551"
+ },
+ {
+  "old_code": "DGL7+-079",
+  "new_code": "DGL7+-M027",
+  "title": "Telestrations After Dark",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.5,
+   25.5,
+   8.0
+  ],
+  "kg": 0.98,
+  "bgg_id": 173761,
+  "productId": "gid://shopify/Product/7498146185319"
+ },
+ {
+  "old_code": "DGL7+-080",
+  "new_code": "DGL7+-M028",
+  "title": "Telestrations: Upside Drawn",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 302463,
+  "productId": "gid://shopify/Product/7498146218087"
+ },
+ {
+  "old_code": "DGL7+-081",
+  "new_code": "DGL7+-M029",
+  "title": "Texas Hold'em Poker Set",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498142416999"
+ },
+ {
+  "old_code": "DGL7+-082",
+  "new_code": "DGL7+-M030",
+  "title": "Tilt 'N' Shout",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   18.0,
+   6.0
+  ],
+  "kg": null,
+  "bgg_id": 425226,
+  "productId": "gid://shopify/Product/7498147430503"
+ },
+ {
+  "old_code": "DGL7+-085",
+  "new_code": "DGL7+-M031",
+  "title": "Tripoley",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   6.6
+  ],
+  "kg": 0.68,
+  "bgg_id": 4853,
+  "productId": "gid://shopify/Product/7498148020327"
+ },
+ {
+  "old_code": "DGL7+-089",
+  "new_code": "DGL7+-M032",
+  "title": "Wavelength",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   27.0,
+   7.6
+  ],
+  "kg": 1.14,
+  "bgg_id": 262543,
+  "productId": "gid://shopify/Product/7498149134439"
+ },
+ {
+  "old_code": "DGL7+-093",
+  "new_code": "DGL7+-M033",
+  "title": "What Were You Thinking?",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 2667,
+  "productId": "gid://shopify/Product/7498149363815"
+ },
+ {
+  "old_code": "DGL7+-009",
+  "new_code": "DGL7+-L001",
+  "title": "Blood on the Clocktower",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   36.5,
+   30.0,
+   8.5
+  ],
+  "kg": 4.0,
+  "bgg_id": 240980,
+  "productId": "gid://shopify/Product/7498132029543"
+ },
+ {
+  "old_code": "DGL7+-012",
+  "new_code": "DGL7+-L002",
+  "title": "Caverna: The Cave Farmers",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   31.5,
+   22.6,
+   10.2
+  ],
+  "kg": 2.7,
+  "bgg_id": 102794,
+  "productId": "gid://shopify/Product/7498132848743"
+ },
+ {
+  "old_code": "DGL7+-039",
+  "new_code": "DGL7+-L003",
+  "title": "Fortune and Glory: The Cliffhanger Game",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   36.0,
+   30.0,
+   12.5
+  ],
+  "kg": 3.25,
+  "bgg_id": 95103,
+  "productId": "gid://shopify/Product/7498137043047"
+ },
+ {
+  "old_code": "DGL7+-044",
+  "new_code": "DGL7+-L004",
+  "title": "Ignite",
+  "size": "L",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 260934,
+  "productId": "gid://shopify/Product/7498138091623"
+ },
+ {
+  "old_code": "DGL7+-066",
+  "new_code": "DGL7+-L005",
+  "title": "Secret Hitler",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   38.1,
+   15.2,
+   5.2
+  ],
+  "kg": 0.95,
+  "bgg_id": 188834,
+  "productId": "gid://shopify/Product/7498143826023"
+ },
+ {
+  "old_code": "DGL7+-077",
+  "new_code": "DGL7+-L006",
+  "title": "Tannhäuser",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   35.0,
+   35.0,
+   6.0
+  ],
+  "kg": 2.28,
+  "bgg_id": 25261,
+  "productId": "gid://shopify/Product/7498146021479"
+ },
+ {
+  "old_code": "DGLF-001",
+  "new_code": "DGLF-S001",
+  "title": "1000 and One Treasures",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.9,
+   22.8,
+   4.9
+  ],
+  "kg": null,
+  "bgg_id": 93997,
+  "productId": "gid://shopify/Product/7498129866855"
+ },
+ {
+  "old_code": "DGLF-004",
+  "new_code": "DGLF-S002",
+  "title": "Bananagrams",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   7.5,
+   7.5,
+   2.5
+  ],
+  "kg": null,
+  "bgg_id": 27225,
+  "productId": "gid://shopify/Product/7498131341415"
+ },
+ {
+  "old_code": "DGLF-007",
+  "new_code": "DGLF-S003",
+  "title": "Boba Master",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498132095079"
+ },
+ {
+  "old_code": "DGLF-008",
+  "new_code": "DGLF-S004",
+  "title": "Bottle Topps",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.5,
+   15.2,
+   8.3
+  ],
+  "kg": 0.68,
+  "bgg_id": 2693,
+  "productId": "gid://shopify/Product/7498132160615"
+ },
+ {
+  "old_code": "DGLF-017",
+  "new_code": "DGLF-S005",
+  "title": "Exploding Kittens: Party Pack",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.4,
+   10.0,
+   3.9
+  ],
+  "kg": 0.36,
+  "bgg_id": 256804,
+  "productId": "gid://shopify/Product/7498136289383"
+ },
+ {
+  "old_code": "DGLF-018",
+  "new_code": "DGLF-S006",
+  "title": "Exploding Minions",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.1,
+   14.5,
+   6.1
+  ],
+  "kg": null,
+  "bgg_id": 341164,
+  "productId": "gid://shopify/Product/7498136322151"
+ },
+ {
+  "old_code": "DGLF-019",
+  "new_code": "DGLF-S007",
+  "title": "Fastrack",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.5,
+   15.2,
+   2.5
+  ],
+  "kg": null,
+  "bgg_id": 41762,
+  "productId": "gid://shopify/Product/7498136420455"
+ },
+ {
+  "old_code": "DGLF-020",
+  "new_code": "DGLF-S008",
+  "title": "Glimstone Grab",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498137403495"
+ },
+ {
+  "old_code": "DGLF-021",
+  "new_code": "DGLF-S009",
+  "title": "Granny Wars: A Game of Tit for Tat",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.5,
+   10.0,
+   2.2
+  ],
+  "kg": 0.22,
+  "bgg_id": 146765,
+  "productId": "gid://shopify/Product/7498137567335"
+ },
+ {
+  "old_code": "DGLF-022",
+  "new_code": "DGLF-S010",
+  "title": "Hoard",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   15.5,
+   11.5,
+   4.0
+  ],
+  "kg": null,
+  "bgg_id": 180471,
+  "productId": "gid://shopify/Product/7498137895015"
+ },
+ {
+  "old_code": "DGLF-027",
+  "new_code": "DGLF-S011",
+  "title": "Kiwetin",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   22.9,
+   12.7,
+   10.2
+  ],
+  "kg": 0.45,
+  "bgg_id": 216357,
+  "productId": "gid://shopify/Product/7498139172967"
+ },
+ {
+  "old_code": "DGLF-028",
+  "new_code": "DGLF-S012",
+  "title": "Kraken Attack!",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   23.9,
+   23.9,
+   7.2
+  ],
+  "kg": null,
+  "bgg_id": 293309,
+  "productId": "gid://shopify/Product/7498139304039"
+ },
+ {
+  "old_code": "DGLF-032",
+  "new_code": "DGLF-S013",
+  "title": "Pick-Up Pete",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498142089319"
+ },
+ {
+  "old_code": "DGLF-033",
+  "new_code": "DGLF-S014",
+  "title": "Pitch Out",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   21.3,
+   18.1,
+   7.9
+  ],
+  "kg": 0.52,
+  "bgg_id": 255635,
+  "productId": "gid://shopify/Product/7498142253159"
+ },
+ {
+  "old_code": "DGLF-037",
+  "new_code": "DGLF-S015",
+  "title": "Rhino Hero",
+  "size": "S",
+  "size_source": "BGG, printings split L2/S6",
+  "why": null,
+  "dims_cm": [
+   18.0,
+   11.5,
+   4.0
+  ],
+  "kg": 0.22,
+  "bgg_id": 91514,
+  "productId": "gid://shopify/Product/7498142974055"
+ },
+ {
+  "old_code": "DGLF-040",
+  "new_code": "DGLF-S016",
+  "title": "Similo",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.5,
+   9.5,
+   2.5
+  ],
+  "kg": 0.11,
+  "bgg_id": 268620,
+  "productId": "gid://shopify/Product/7498144186471"
+ },
+ {
+  "old_code": "DGLF-042",
+  "new_code": "DGLF-S017",
+  "title": "SOS Dino",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   24.0,
+   24.0,
+   7.0
+  ],
+  "kg": null,
+  "bgg_id": 244320,
+  "productId": "gid://shopify/Product/7498144612455"
+ },
+ {
+  "old_code": "DGLF-043",
+  "new_code": "DGLF-S018",
+  "title": "SpongeBob Card Scramble!",
+  "size": "S",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498143760487"
+ },
+ {
+  "old_code": "DGLF-044",
+  "new_code": "DGLF-S019",
+  "title": "Spot it!",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   13.0,
+   13.0,
+   5.0
+  ],
+  "kg": 0.19,
+  "bgg_id": 63268,
+  "productId": "gid://shopify/Product/7498144907367"
+ },
+ {
+  "old_code": "DGLF-046",
+  "new_code": "DGLF-S020",
+  "title": "Tacocat Spelled Backwards",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   16.0,
+   11.2,
+   4.3
+  ],
+  "kg": 0.29,
+  "bgg_id": 333373,
+  "productId": "gid://shopify/Product/7498145857639"
+ },
+ {
+  "old_code": "DGLF-051",
+  "new_code": "DGLF-S021",
+  "title": "Troll & Dragon",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   11.0,
+   8.0,
+   5.0
+  ],
+  "kg": null,
+  "bgg_id": 245085,
+  "productId": "gid://shopify/Product/7498148085863"
+ },
+ {
+  "old_code": "DGLF-053",
+  "new_code": "DGLF-S022",
+  "title": "UNO",
+  "size": "S",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   12.8,
+   9.4,
+   2.5
+  ],
+  "kg": 0.17,
+  "bgg_id": 2223,
+  "productId": "gid://shopify/Product/7498148675687"
+ },
+ {
+  "old_code": "DGLF-002",
+  "new_code": "DGLF-M001",
+  "title": "A Game of Cat & Mouth",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   8.2
+  ],
+  "kg": 1.18,
+  "bgg_id": 321539,
+  "productId": "gid://shopify/Product/7498130325607"
+ },
+ {
+  "old_code": "DGLF-003",
+  "new_code": "DGLF-M002",
+  "title": "Andor: The Family Fantasy Game",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 295488,
+  "productId": "gid://shopify/Product/7498130554983"
+ },
+ {
+  "old_code": "DGLF-005",
+  "new_code": "DGLF-M003",
+  "title": "Battleship",
+  "size": "M",
+  "size_source": "BGG, printings split L2/M5/S2",
+  "why": null,
+  "dims_cm": [
+   26.8,
+   26.7,
+   7.4
+  ],
+  "kg": 0.84,
+  "bgg_id": 2425,
+  "productId": "gid://shopify/Product/7498131669095"
+ },
+ {
+  "old_code": "DGLF-006",
+  "new_code": "DGLF-M004",
+  "title": "Blokus",
+  "size": "M",
+  "size_source": "BGG, printings split M4/S2",
+  "why": null,
+  "dims_cm": [
+   26.6,
+   26.6,
+   3.8
+  ],
+  "kg": 0.58,
+  "bgg_id": 2453,
+  "productId": "gid://shopify/Product/7498131996775"
+ },
+ {
+  "old_code": "DGLF-010",
+  "new_code": "DGLF-M005",
+  "title": "Catan Junior",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   8.3
+  ],
+  "kg": 1.05,
+  "bgg_id": 125921,
+  "productId": "gid://shopify/Product/7498132717671"
+ },
+ {
+  "old_code": "DGLF-013",
+  "new_code": "DGLF-M006",
+  "title": "Coconuts",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.0,
+   27.0,
+   9.5
+  ],
+  "kg": 0.91,
+  "bgg_id": 145639,
+  "productId": "gid://shopify/Product/7498133471335"
+ },
+ {
+  "old_code": "DGLF-014",
+  "new_code": "DGLF-M007",
+  "title": "Concept Kids: Animals",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   27.5,
+   4.8
+  ],
+  "kg": 0.86,
+  "bgg_id": 247314,
+  "productId": "gid://shopify/Product/7498133831783"
+ },
+ {
+  "old_code": "DGLF-015",
+  "new_code": "DGLF-M008",
+  "title": "Connect Four",
+  "size": "M",
+  "size_source": "BGG, printings split L3/M8/S5",
+  "why": null,
+  "dims_cm": [
+   27.5,
+   18.6,
+   5.1
+  ],
+  "kg": 0.24,
+  "bgg_id": 2719,
+  "productId": "gid://shopify/Product/7498133864551"
+ },
+ {
+  "old_code": "DGLF-016",
+  "new_code": "DGLF-M009",
+  "title": "Cranium Cadoo",
+  "size": "M",
+  "size_source": "BGG, printings split M4/S1",
+  "why": null,
+  "dims_cm": [
+   26.6,
+   23.4,
+   7.4
+  ],
+  "kg": 1.5,
+  "bgg_id": 6420,
+  "productId": "gid://shopify/Product/7498134126695"
+ },
+ {
+  "old_code": "DGLF-025",
+  "new_code": "DGLF-M010",
+  "title": "Jenga",
+  "size": "M",
+  "size_source": "BGG, printings split L2/M10/S3",
+  "why": null,
+  "dims_cm": [
+   27.9,
+   9.3,
+   8.1
+  ],
+  "kg": 1.15,
+  "bgg_id": 2452,
+  "productId": "gid://shopify/Product/7498138583143"
+ },
+ {
+  "old_code": "DGLF-026",
+  "new_code": "DGLF-M011",
+  "title": "Kids Know Best",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498138845287"
+ },
+ {
+  "old_code": "DGLF-030",
+  "new_code": "DGLF-M012",
+  "title": "Monsieur Carrousel",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": 264318,
+  "productId": "gid://shopify/Product/7498140549223"
+ },
+ {
+  "old_code": "DGLF-035",
+  "new_code": "DGLF-M013",
+  "title": "Pokémon Trading Card Game: Battle Academy",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.7,
+   29.7,
+   7.1
+  ],
+  "kg": null,
+  "bgg_id": 310953,
+  "productId": "gid://shopify/Product/7498142384231"
+ },
+ {
+  "old_code": "DGLF-036",
+  "new_code": "DGLF-M014",
+  "title": "Qwirkle",
+  "size": "M",
+  "size_source": "BGG, printings split M9/S3",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   7.0
+  ],
+  "kg": 0.99,
+  "bgg_id": 25669,
+  "productId": "gid://shopify/Product/7498142679143"
+ },
+ {
+  "old_code": "DGLF-039",
+  "new_code": "DGLF-M015",
+  "title": "Sequence",
+  "size": "M",
+  "size_source": "BGG, printings split L3/M10/S1",
+  "why": null,
+  "dims_cm": [
+   26.3,
+   20.6,
+   5.9
+  ],
+  "kg": 0.86,
+  "bgg_id": 2375,
+  "productId": "gid://shopify/Product/7498143858791"
+ },
+ {
+  "old_code": "DGLF-041",
+  "new_code": "DGLF-M016",
+  "title": "Simon Air",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498144219239"
+ },
+ {
+  "old_code": "DGLF-045",
+  "new_code": "DGLF-M017",
+  "title": "Stuffed Fables",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   29.5,
+   29.5,
+   7.3
+  ],
+  "kg": null,
+  "bgg_id": 233312,
+  "productId": "gid://shopify/Product/7498145595495"
+ },
+ {
+  "old_code": "DGLF-047",
+  "new_code": "DGLF-M018",
+  "title": "Throw Throw Avocado",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   22.9,
+   7.6
+  ],
+  "kg": 0.67,
+  "bgg_id": 340420,
+  "productId": "gid://shopify/Product/7498147233895"
+ },
+ {
+  "old_code": "DGLF-048",
+  "new_code": "DGLF-M019",
+  "title": "Throw Throw Burrito",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   25.4,
+   22.9,
+   7.6
+  ],
+  "kg": 0.67,
+  "bgg_id": 274533,
+  "productId": "gid://shopify/Product/7498147266663"
+ },
+ {
+  "old_code": "DGLF-049",
+  "new_code": "DGLF-M020",
+  "title": "Ticket to Ride: First Journey (Europe)",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   27.6,
+   27.6,
+   5.7
+  ],
+  "kg": null,
+  "bgg_id": 218208,
+  "productId": "gid://shopify/Product/7498147364967"
+ },
+ {
+  "old_code": "DGLF-052",
+  "new_code": "DGLF-M021",
+  "title": "Trouble",
+  "size": "M",
+  "size_source": "BGG, printings split L3/M16/S3",
+  "why": null,
+  "dims_cm": [
+   26.7,
+   26.7,
+   4.8
+  ],
+  "kg": 0.31,
+  "bgg_id": 1410,
+  "productId": "gid://shopify/Product/7498148118631"
+ },
+ {
+  "old_code": "DGLF-054",
+  "new_code": "DGLF-M022",
+  "title": "Valley of the Vikings",
+  "size": "M",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   30.8,
+   21.8,
+   6.6
+  ],
+  "kg": 0.96,
+  "bgg_id": 269526,
+  "productId": "gid://shopify/Product/7498148839527"
+ },
+ {
+  "old_code": "DGLF-055",
+  "new_code": "DGLF-M023",
+  "title": "Viva Topo!",
+  "size": "M",
+  "size_source": "guess",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498149036135"
+ },
+ {
+  "old_code": "DGLF-009",
+  "new_code": "DGLF-L001",
+  "title": "Carcassonne Big Box 7",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   43.3,
+   31.3,
+   10.0
+  ],
+  "kg": null,
+  "bgg_id": 364405,
+  "productId": "gid://shopify/Product/7498132324455"
+ },
+ {
+  "old_code": "DGLF-011",
+  "new_code": "DGLF-L002",
+  "title": "Checkers",
+  "size": "L",
+  "size_source": "BGG, printings split L5/M4/S1",
+  "why": null,
+  "dims_cm": [
+   35.3,
+   34.0,
+   4.6
+  ],
+  "kg": 1.36,
+  "bgg_id": 2083,
+  "productId": "gid://shopify/Product/7519131074663"
+ },
+ {
+  "old_code": "DGLF-012",
+  "new_code": "DGLF-L003",
+  "title": "Chess",
+  "size": "L",
+  "size_source": "BGG, printings split L10/M7/S4",
+  "why": null,
+  "dims_cm": [
+   39.5,
+   28.2,
+   6.8
+  ],
+  "kg": 1.6,
+  "bgg_id": 171,
+  "productId": "gid://shopify/Product/7498133045351"
+ },
+ {
+  "old_code": "DGLF-023",
+  "new_code": "DGLF-L004",
+  "title": "ICECOOL",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   40.5,
+   20.6,
+   5.8
+  ],
+  "kg": 0.94,
+  "bgg_id": 177524,
+  "productId": "gid://shopify/Product/7498138026087"
+ },
+ {
+  "old_code": "DGLF-024",
+  "new_code": "DGLF-L005",
+  "title": "ICECOOL2",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   40.8,
+   20.8,
+   5.8
+  ],
+  "kg": 1.06,
+  "bgg_id": 244513,
+  "productId": "gid://shopify/Product/7498138058855"
+ },
+ {
+  "old_code": "DGLF-029",
+  "new_code": "DGLF-L006",
+  "title": "Labyrinth",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   37.0,
+   27.1,
+   5.6
+  ],
+  "kg": 0.88,
+  "bgg_id": 1219,
+  "productId": "gid://shopify/Product/7498139402343"
+ },
+ {
+  "old_code": "DGLF-031",
+  "new_code": "DGLF-L007",
+  "title": "Pharaoh's Gulo Gulo",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   34.5,
+   34.5,
+   7.0
+  ],
+  "kg": 1.2,
+  "bgg_id": 175088,
+  "productId": "gid://shopify/Product/7498142023783"
+ },
+ {
+  "old_code": "DGLF-034",
+  "new_code": "DGLF-L008",
+  "title": "PitchCar",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   36.8,
+   26.7,
+   5.1
+  ],
+  "kg": null,
+  "bgg_id": 150,
+  "productId": "gid://shopify/Product/7498142220391"
+ },
+ {
+  "old_code": "DGLF-038",
+  "new_code": "DGLF-L009",
+  "title": "Rhino Hero: Super Battle",
+  "size": "L",
+  "size_source": "BGG, printings split L7/M1",
+  "why": null,
+  "dims_cm": [
+   37.0,
+   27.0,
+   5.5
+  ],
+  "kg": 0.91,
+  "bgg_id": 218333,
+  "productId": "gid://shopify/Product/7498143006823"
+ },
+ {
+  "old_code": "DGLF-050",
+  "new_code": "DGLF-L010",
+  "title": "TopSpin",
+  "size": "L",
+  "size_source": "BGG",
+  "why": null,
+  "dims_cm": [
+   42.7,
+   42.2,
+   17.3
+  ],
+  "kg": 0.34,
+  "bgg_id": 235248,
+  "productId": "gid://shopify/Product/7498147758183"
+ },
+ {
+  "old_code": "DGLRPG-001",
+  "new_code": "DGLRPG-001",
+  "title": "Altered Carbon - The Roleplaying Game",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498130522215"
+ },
+ {
+  "old_code": "DGLRPG-002",
+  "new_code": "DGLRPG-002",
+  "title": "Animal Adventures RPG Starter Set",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498130653287"
+ },
+ {
+  "old_code": "DGLRPG-003",
+  "new_code": "DGLRPG-003",
+  "title": "Avatar Legends: The Roleplaying Game",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498131177575"
+ },
+ {
+  "old_code": "DGLRPG-004",
+  "new_code": "DGLRPG-004",
+  "title": "BESM (Big Eyes, Small Mouth) (4th Edition)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498131767399"
+ },
+ {
+  "old_code": "DGLRPG-005",
+  "new_code": "DGLRPG-005",
+  "title": "Blades in the Dark",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498131931239"
+ },
+ {
+  "old_code": "DGLRPG-006",
+  "new_code": "DGLRPG-006",
+  "title": "Call of Cthulhu (7th Edition)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498132258919"
+ },
+ {
+  "old_code": "DGLRPG-007",
+  "new_code": "DGLRPG-007",
+  "title": "Cyberpunk RED (Core Rulebook)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498134356071"
+ },
+ {
+  "old_code": "DGLRPG-008",
+  "new_code": "DGLRPG-008",
+  "title": "D&D – Glory of the Giants (Hobby Exclusive)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7505987272807"
+ },
+ {
+  "old_code": "DGLRPG-009",
+  "new_code": "DGLRPG-009",
+  "title": "Death in Space",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498134552679"
+ },
+ {
+  "old_code": "DGLRPG-010",
+  "new_code": "DGLRPG-010",
+  "title": "Dungeons & Dragons Dungeon Master's Guide (5th Edition)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498135797863"
+ },
+ {
+  "old_code": "DGLRPG-011",
+  "new_code": "DGLRPG-011",
+  "title": "Dungeons & Dragons Monster Manual (5th Edition)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498135765095"
+ },
+ {
+  "old_code": "DGLRPG-012",
+  "new_code": "DGLRPG-012",
+  "title": "Dungeons & Dragons Player's Handbook (5th Edition)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498135830631"
+ },
+ {
+  "old_code": "DGLRPG-013",
+  "new_code": "DGLRPG-013",
+  "title": "Fiasco RPG",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498136453223"
+ },
+ {
+  "old_code": "DGLRPG-014",
+  "new_code": "DGLRPG-014",
+  "title": "Into the Odd",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498138288231"
+ },
+ {
+  "old_code": "DGLRPG-015",
+  "new_code": "DGLRPG-015",
+  "title": "Kids on Brooms",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498138878055"
+ },
+ {
+  "old_code": "DGLRPG-016",
+  "new_code": "DGLRPG-016",
+  "title": "KULT: Divinity Lost",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498139336807"
+ },
+ {
+  "old_code": "DGLRPG-017",
+  "new_code": "DGLRPG-017",
+  "title": "Lancer",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498139435111"
+ },
+ {
+  "old_code": "DGLRPG-018",
+  "new_code": "DGLRPG-018",
+  "title": "Masks of Nyarlathotep (5th edition)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498140188775"
+ },
+ {
+  "old_code": "DGLRPG-019",
+  "new_code": "DGLRPG-019",
+  "title": "Mothership Player's Survival Guide",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498140581991"
+ },
+ {
+  "old_code": "DGLRPG-020",
+  "new_code": "DGLRPG-020",
+  "title": "My Little Pony: Tails of Equestria, The Storytelling Game",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498140942439"
+ },
+ {
+  "old_code": "DGLRPG-021",
+  "new_code": "DGLRPG-021",
+  "title": "Numenera Destiny",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498141237351"
+ },
+ {
+  "old_code": "DGLRPG-022",
+  "new_code": "DGLRPG-022",
+  "title": "Numenera Discovery",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498141302887"
+ },
+ {
+  "old_code": "DGLRPG-023",
+  "new_code": "DGLRPG-023",
+  "title": "Pathfinder Roleplaying Game",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498141958247"
+ },
+ {
+  "old_code": "DGLRPG-024",
+  "new_code": "DGLRPG-024",
+  "title": "Quest-O-Nomicon",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498142646375"
+ },
+ {
+  "old_code": "DGLRPG-025",
+  "new_code": "DGLRPG-025",
+  "title": "Root the tabletop roleplaying game",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498143400039"
+ },
+ {
+  "old_code": "DGLRPG-026",
+  "new_code": "DGLRPG-026",
+  "title": "Shadowrun: Sixth World (6th Edition)",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498143891559"
+ },
+ {
+  "old_code": "DGLRPG-027",
+  "new_code": "DGLRPG-027",
+  "title": "Star Trek Adventures",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498145071207"
+ },
+ {
+  "old_code": "DGLRPG-028",
+  "new_code": "DGLRPG-028",
+  "title": "Star Wars: Edge of the Empire",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498145202279"
+ },
+ {
+  "old_code": "DGLRPG-029",
+  "new_code": "DGLRPG-029",
+  "title": "Strange Squad",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498145497191"
+ },
+ {
+  "old_code": "DGLRPG-030",
+  "new_code": "DGLRPG-030",
+  "title": "Talisman Adventures Fantasy Roleplaying Game Core Rulebook",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498145955943"
+ },
+ {
+  "old_code": "DGLRPG-031",
+  "new_code": "DGLRPG-031",
+  "title": "Teens in Space",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498146087015"
+ },
+ {
+  "old_code": "DGLRPG-032",
+  "new_code": "DGLRPG-032",
+  "title": "Tiny Dungeon 2nd Edition",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498147528807"
+ },
+ {
+  "old_code": "DGLRPG-033",
+  "new_code": "DGLRPG-033",
+  "title": "Tiny Frontiers",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498147561575"
+ },
+ {
+  "old_code": "DGLRPG-034",
+  "new_code": "DGLRPG-034",
+  "title": "Tiny Pirates",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498147594343"
+ },
+ {
+  "old_code": "DGLRPG-035",
+  "new_code": "DGLRPG-035",
+  "title": "Vampire: The Masquerade 5th Edition Core Book",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498148872295"
+ },
+ {
+  "old_code": "DGLRPG-036",
+  "new_code": "DGLRPG-036",
+  "title": "World of Warcraft: The Roleplaying Game",
+  "size": null,
+  "size_source": "RPG book",
+  "why": null,
+  "dims_cm": null,
+  "kg": null,
+  "bgg_id": null,
+  "productId": "gid://shopify/Product/7498149593191"
+ }
+]
