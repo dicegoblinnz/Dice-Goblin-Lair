@@ -26,6 +26,10 @@ plain stickers):
 - `--logo=qr`: Gobgob in the middle of the QR code. The code is QR version 5 at error correction H, with its middle
   11 × 11 modules left white for him. In tests it read with an 11 mm scuff anywhere on it, and from blurred, turned and
   tilted "phone photos" nearly as often as the plain code (a bigger hole, or version 6, read noticeably less often).
+- `--logo=qr-stacked`: the stacked DICE / Gobgob / GOBLIN logo in the middle of the QR code instead (Mo sent it to
+  try, 11 Oct), in a taller white space (11 × 13 modules) so the words are about 14 mm tall in all. It read as well in
+  the tests (a 9 mm scuff anywhere; 13 × 15 didn't). `dg-logo-stacked.png` is Mo's full-size file; without it the
+  theme's smaller `dg-logo-stacked-640.png` is used.
 - `--logo=band`: the DICE GOBLIN wordmark across the top, 58 mm wide, above the name. The QR code stays the plain
   one, but smaller (about 38 mm instead of 52) to make room.
 
@@ -33,7 +37,8 @@ The logos are the theme's own PNGs (`gobgob-480.png`, `dg-wordmark-960.png`). Ev
 `LOGO_THRESHOLD` prints black (the outlines, Gobgob's hood); the bright green and the bag go white. They're traced into
 solid shapes (potrace), so they print crisp, and each is stored once in the PDF.
 
-`build_logo_samples.py` makes the two-page sample Mo saw (the same two games with each option), and
+`build_logo_samples.py` makes the samples Mo saw (the same two games with each option: `qr,band` by default, or
+`qr-stacked`), and
 `verify_logo_samples.py` checks it: pure black, the 4 mm margins, every QR code read from the printer's render and
 from 'phone photos'.
 
@@ -55,7 +60,7 @@ You need Python 3 with `reportlab segno fonttools brotli zxing-cpp pypdf numpy p
 `opencv-python` for the sample check), and poppler's `pdftoppm`. The fonts are the theme's own (Archivo Black and Poppins), read from the website repo's `assets` folder.
 
 ```sh
-python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|band]
+python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|qr-stacked|band]
 python3 verify_stickers.py stickers.pdf games-2026-10-10.json
 ```
 
