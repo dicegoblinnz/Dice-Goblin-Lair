@@ -4,11 +4,14 @@ Nothing here ships: the Worker bundles only `src/`.
 
 These scripts make the stickers that go on the library games' boxes. The output is a PDF for Dice Goblin's thermal sticker printer:
 
-- Pages are landscape, 150 × 100 mm.
-- Each page holds two 75 × 100 mm stickers, with a dashed cut line down the middle.
+- Pages are landscape, 150 × 100 mm, with dashed lines to cut along.
 - It's black and white only, with no greys.
+- `--layout=` picks how the stickers are laid out:
+  - `box` (the default): two 75 × 100 mm stickers a page, for the box (below).
+  - `box-label`: the same with each game's spine label underneath (see Spine labels).
+  - `spine`: one tall sticker per game with everything on it, for the spine (see Spine stickers).
 
-Each sticker has:
+Each box sticker has:
 
 - the game's name
 - a QR code holding the copy's barcode, the value Shopify POS and My Lair find the copy by
@@ -18,9 +21,30 @@ Each sticker has:
 
 There's no heading or footer, so everything can be big (Mo, 10 Oct 2026).
 
-### Spine labels (`--spine`, 11 Oct 2026)
+### Spine stickers (`--layout=spine`, 11 Oct 2026)
 
-Mo asked for each game's spine label to print with its sticker, two games a page. With `--spine`:
+Mo: "make the QR code be placed and everything written on the spine of the game and I will have it all spine
+facing ... split it into maybe 50 and get 3 games at a time". With `--layout=spine` each game gets one tall sticker
+for its spine, 100 mm tall:
+
+- From the top: the section in a black band (3–4 PLAYERS, KIDS & FAMILY, RPG BOOKS), the size letter and number big
+  (M052), the full code, the QR code, then the name and details. Every sticker is laid out from the top, so with each
+  stuck at the same height the numbers line up along the shelf.
+- Medium and large boxes get 50 mm wide stickers, three a page, with Gobgob in the QR code (41 mm).
+- Small boxes and RPG books have spines about 3 to 4 cm wide, so they get 30 mm stickers, five a page. Their QR code
+  is the plain one (23 mm): Gobgob's version read from about half the 'phone photos' at that size, the plain one from
+  nearly all. The name and details run down the spine like a book's title, and Gobgob sits at the foot.
+- Which width a game gets comes from its code (S and RPG narrow, the rest wide). A `spine` field of `wide` or
+  `narrow` in the games list overrides it, for a thin medium box, say.
+- Pages hold one width, in shelf order, so every page of a width has its cut lines in the same places and a stack
+  can be cut at once.
+- An outline is printed 2 mm inside the cut lines, so a sticker looks finished however it's cut out.
+- All 533 games build and check both ways (every game wide, and every game narrow): no name cut short, every QR code
+  read at 203 dpi.
+
+### Spine labels (`--layout=box-label`, 11 Oct 2026)
+
+Mo asked for each game's spine label to print with its sticker, two games a page. With `--layout=box-label`:
 
 - The bottom 30 mm of each page holds the two spine labels, each in a 30 mm square either side of the middle cut
   line, so each sits under its own sticker. Cut across above them, down the middle, then round each square.
@@ -60,9 +84,12 @@ from 'phone photos'.
 - `library_stickers.py` makes the PDF from a games list.
 - `verify_stickers.py` checks a PDF the way the printer will see it:
   - every page is 150 × 100 mm, in pure black and white
-  - every sticker's ink sits inside its 4 mm margin
+  - every box sticker's ink sits inside its 4 mm margin
   - every QR code is read back from a 203 dpi one-bit render (a thermal printer's resolution) and matched to its game
-  - with `--spine`: each spine label has 2 mm clear inside its square, and nothing else is printed in the strip
+  - with `--layout=box-label`: each spine label has 2 mm clear inside its square, and nothing else is printed in the
+    strip
+  - with `--layout=spine`: each spine sticker has 1.6 mm clear inside its cut lines, and a page's empty places are
+    empty
 - `games-2026-10-10.json` lists all 533 library games as they were on 10 October 2026.
 - `test-games.json` holds the four games of the test print.
 - `extract_pages.py` and `build_games.py` turned the Shopify query results into the games list (see below).
@@ -74,8 +101,8 @@ You need Python 3 with `reportlab segno fonttools brotli zxing-cpp pypdf numpy p
 `opencv-python` for the sample check), and poppler's `pdftoppm`. The fonts are the theme's own (Archivo Black and Poppins), read from the website repo's `assets` folder.
 
 ```sh
-python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|qr-stacked|band] [--spine]
-python3 verify_stickers.py stickers.pdf games-2026-10-10.json [render_dir] [--spine]
+python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|qr-stacked|band] [--layout=box|box-label|spine]
+python3 verify_stickers.py stickers.pdf games-2026-10-10.json [render_dir] [--layout=box|box-label|spine]
 ```
 
 - Stickers come out in shelf order, so each shelf's games are together: by section, then small, medium and large boxes

@@ -16,11 +16,16 @@ The Dice Goblin logo (Mo, 11 Oct: "have a dice goblin logo on it even in black a
   band  the DICE GOBLIN wordmark across the top, above the name; the QR code is smaller to make room.
 The logos are the theme's own PNGs, turned into black and white and traced into solid shapes, so they print crisp.
 
-Spine labels (Mo, 11 Oct: "print the core and the spine and have 2 games at once"): with --spine each game's spine
-label prints under its own sticker, in a 30 mm square either side of the middle cut line along the bottom of the page.
-The stickers above are 70 mm tall, with the name on two lines and a smaller QR code.
+Layouts (--layout=):
+  box        (the default) two 75 x 100 mm stickers a page, for the box.
+  box-label  (Mo, 11 Oct: "print the core and the spine and have 2 games at once") each game's 25 mm spine label prints
+             under its sticker, in a 30 mm square either side of the middle cut line; the stickers above are 70 mm tall.
+  spine      (Mo, 11 Oct: "make the QR code be placed and everything written on the spine of the game ... split it
+             into maybe 50 and get 3 games at a time") one tall sticker per game for its spine, with everything on it.
+             Medium and large boxes get 50 mm wide ones, three a page; small boxes and RPG books get 30 mm ones, five
+             a page.
 
-Usage: python3 library_stickers.py games.json stickers.pdf [fonts_dir] [layout_report.json] [--logo=qr|qr-stacked|band] [--spine]
+Usage: python3 library_stickers.py games.json stickers.pdf [fonts_dir] [layout_report.json] [--logo=qr|qr-stacked|band] [--layout=box|box-label|spine]
 games.json is a list of {title, code, qr, players, time, ages}; code is the shelf code (custom.library_code),
 qr the variant barcode (else SKU, else the shelf code).
 """
@@ -146,6 +151,23 @@ def spine_block_top(stats_lines, stats_size, code_size):
 
 # The QR code with spine labels: as big as a full 70 mm sticker has room for (two lines of name, the details on one line)
 SPINE_QR_BOX = (PAGE_H - MARGIN - SPINE_TITLE_HEIGHT - QR_GAP) - (spine_block_top(1, STATS_SIZE, SPINE_CODE_SIZE) + QR_GAP)
+
+# Everything on the spine (--layout=spine). One tall sticker per game, running down its spine: the section in a black
+# band, the size letter and number big, the full code, the QR code, then the name and details. Every sticker is laid
+# out from the top, so on a shelf the numbers and codes line up. Medium and large boxes get wide ones, three a page,
+# with Gobgob in the QR code. Small boxes and RPG books, whose spines are about 3 to 4 cm, get narrow ones, five a
+# page: a plain QR code (Gobgob's bigger version read from half as many 'phone photos' at that size), the name and
+# details running down the spine like a book's title, and Gobgob at the foot. A game's 'spine' field ('wide' or
+# 'narrow') overrides the choice, for a thin medium box, say.
+TALL = {
+    'wide': {'w': 50 * mm, 'pad': 2.5 * mm, 'band': 11 * mm, 'band_big': 24, 'number': 34, 'code': 7.5,
+             'gap': 2.4 * mm, 'name': 15, 'name_min': 8, 'stats': 9.5, 'stats_min': 9},
+    'narrow': {'w': 30 * mm, 'pad': 1.5 * mm, 'band': 8.5 * mm, 'band_big': 14, 'number': 24, 'code': 6,
+               'gap': 1.8 * mm, 'name': 11, 'name_min': 7, 'stats': 7.5, 'stats_min': 7},
+}
+TALL_INSET = 2 * mm  # the printed outline sits this far inside the cut lines and the page's edges
+TALL_RADIUS = 2.5 * mm
+TALL_FOOT_LOGO = 11 * mm  # Gobgob's width at the foot of a narrow sticker
 
 
 def load_fonts(fonts_dir):
@@ -601,6 +623,184 @@ def draw_spine(c, x, y, code):
     c.restoreState()
 
 
+def tall_kind(game):
+    """'wide' or 'narrow': small boxes (S) and RPG books are narrow, everything else wide, unless the game says."""
+    if game.get('spine') in TALL:
+        return game['spine']
+    shelf, _, rest = game['code'].partition('-')
+    return 'narrow' if shelf == 'DGLRPG' or (rest[:1] == 'S' and rest[1:].isdigit()) else 'wide'
+
+
+def tall_pages(games):
+    """The pages of tall stickers, games in the order given: a run of one width shares pages, three wide or five
+    narrow a page, so every page's cut lines are in the same places as others of its width."""
+    pages = []
+    for game in games:
+        kind = tall_kind(game)
+        per = round(PAGE_W / TALL[kind]['w'])
+        if pages and pages[-1][0] == kind and len(pages[-1][1]) < per:
+            pages[-1][1].append(game)
+        else:
+            pages.append((kind, [game]))
+    return pages
+
+
+def fit_lines(parts, font, max_w, start, smallest, most=3):
+    """Details (players, time, ages) on as few lines as fit at a readable size: one line, else split where the lines
+    come out most even, up to `most` lines, shrinking to `smallest` before taking another line."""
+    for n in range(1, min(most, len(parts)) + 1):
+        best = None
+        for cuts in combinations(range(1, len(parts)), n - 1):
+            bounds = (0,) + cuts + (len(parts),)
+            lines = [' · '.join(parts[a:b]) for a, b in zip(bounds, bounds[1:])]
+            widest = max(width(line, font, start) for line in lines)
+            if best is None or widest < best[0]:
+                best = (widest, lines)
+        lines = best[1]
+        size = start
+        while size > smallest and max(width(line, font, size) for line in lines) > max_w:
+            size -= 0.25
+        if max(width(line, font, size) for line in lines) <= max_w or n == min(most, len(parts)):
+            return lines, size
+    return [], start
+
+
+def tall_band(c, x, y, w, h, big, small, big_size):
+    """The black band across a tall sticker's top (clipped to its rounded corners by the caller), the section in white:
+    '3–4' big, 'PLAYERS' small, side by side, as big as fits."""
+    c.setFillColorRGB(*BLACK)
+    c.rect(x, y, w, h, stroke=0, fill=1)
+    ratio, gap_ratio = 0.36, 0.22  # the small word's size, and the space before it, against the big one's
+    room = w - 4 * mm
+    while (width(big, 'Display', big_size) + (big_size * gap_ratio if small else 0)
+           + width(small, 'Body', big_size * ratio)) > room:
+        big_size -= 0.1
+    gap = big_size * gap_ratio if small else 0
+    small_size = big_size * ratio
+    total = width(big, 'Display', big_size) + gap + width(small, 'Body', small_size)
+    base = y + h / 2 - big_size * CAP['Display'] / 2
+    c.setFillColorRGB(1, 1, 1)
+    sx = x + (w - total) / 2
+    c.setFont('Display', big_size)
+    c.drawString(sx, base, big)
+    if small:
+        c.setFont('Body', small_size)
+        c.drawString(sx + width(big, 'Display', big_size) + gap, base, small)
+    c.setFillColorRGB(*BLACK)
+
+
+def draw_tall(c, x0, game, kind, logo=None):
+    """One tall spine sticker, its cut piece starting at x0. See TALL. logo 'qr' or 'qr-stacked' puts that logo in a
+    wide sticker's QR code and Gobgob at a narrow one's foot; without one, there's no logo."""
+    t = TALL[kind]
+    lx, ly = x0 + TALL_INSET, TALL_INSET
+    lw, lh = t['w'] - 2 * TALL_INSET, PAGE_H - 2 * TALL_INSET
+    inner = lw - 2 * t['pad']
+    cx = x0 + t['w'] / 2
+    top = ly + lh
+    big, small, main = spine_parts(game['code'])
+    c.saveState()
+    outline = c.beginPath()
+    outline.roundRect(lx, ly, lw, lh, TALL_RADIUS)
+    c.setStrokeColorRGB(*BLACK)
+    c.setLineWidth(SPINE_LINE)
+    c.drawPath(outline, stroke=1, fill=0)
+    c.saveState()
+    clip = c.beginPath()
+    clip.roundRect(lx, ly, lw, lh, TALL_RADIUS)
+    c.clipPath(clip, stroke=0, fill=0)
+    tall_band(c, lx, top - t['band'], lw, t['band'], big, small, t['band_big'])
+    c.restoreState()
+
+    # the size letter and number, then the full code, then the QR code: the same place on every sticker of a width
+    number_size = fit_size(main, 'Display', inner, t['number'], 10)
+    base = top - t['band'] - t['gap'] - number_size * CAP['Display']
+    draw_centred(c, cx, base, main, 'Display', number_size)
+    code_size = fit_size(game['code'], 'Body', inner, t['code'], 5)
+    base -= 0.6 * t['gap'] + code_size * CAP['Body']
+    draw_centred(c, cx, base, game['code'], 'Body', code_size)
+    qr_size = inner
+    qr_top = base - t['gap']
+    in_qr = {'qr': 'gobgob', 'qr-stacked': 'stacked'}.get(logo) if kind == 'wide' else None
+    draw_qr(c, game['qr'], cx - qr_size / 2, qr_top - qr_size, qr_size, logo=in_qr)
+
+    # the name and details underneath
+    name = sticker_title(game['title'])
+    parts = [p for p in (players_label(game.get('players')), (game.get('time') or '').strip(),
+                         ages_label(game.get('ages'))) if p]
+    floor = ly + t['pad']
+    if kind == 'narrow' and logo in ('qr', 'qr-stacked'):
+        foot_h = logo_height('gobgob', TALL_FOOT_LOGO)
+        draw_logo(c, 'gobgob', cx - TALL_FOOT_LOGO / 2, floor, TALL_FOOT_LOGO)
+        floor += foot_h + t['gap']
+    room_top = qr_top - qr_size - t['gap']
+    if kind == 'wide':
+        info = tall_text_upright(c, cx, room_top, floor, inner, name, parts, t)
+    else:
+        info = tall_text_down(c, lx + t['pad'], room_top, floor, inner, name, parts, t)
+    c.restoreState()
+    return {'kind': kind, 'number_size': number_size, 'qr_mm': qr_size / mm, **info}
+
+
+def text_block(name, parts, line_w, height, t):
+    """The name's lines and size, and the details' lines and size, for a block line_w long and height deep: the
+    details first (they're short), then the name as big as fits what's left."""
+    stats_lines, stats_size = fit_lines(parts, 'BodyMedium', line_w, t['stats'], t['stats_min']) if parts else ([], 0)
+    stats_h = (stats_size * CAP['BodyMedium'] + (len(stats_lines) - 1) * stats_size * STATS_LEAD) if stats_lines else 0
+    gap = t['gap'] if stats_lines else 0
+    name_room = height - stats_h - gap - DESCENDER_ROOM
+    lines, size = fit_title(name, line_w, t['name'], t['name_min'], name_room)
+    name_h = size * ink_top(lines[0], 'Display') + (len(lines) - 1) * size * TITLE_LEAD
+    return lines, size, name_h, stats_lines, stats_size, stats_h, gap
+
+
+def tall_text_upright(c, cx, room_top, floor, inner, name, parts, t):
+    """Wide stickers: the name and details centred across, the pair centred in the room under the QR code."""
+    lines, size, name_h, stats_lines, stats_size, stats_h, gap = text_block(name, parts, inner, room_top - floor, t)
+    block = name_h + gap + stats_h + DESCENDER_ROOM
+    y = room_top - (room_top - floor - block) / 2
+    first = y - size * ink_top(lines[0], 'Display')
+    for i, line in enumerate(lines):
+        draw_centred(c, cx, first - i * size * TITLE_LEAD, line, 'Display', size)
+    y = first - (len(lines) - 1) * size * TITLE_LEAD - gap - stats_size * CAP['BodyMedium']
+    for i, line in enumerate(stats_lines):
+        draw_centred(c, cx, y - i * stats_size * STATS_LEAD, line, 'BodyMedium', stats_size)
+    return {'title_lines': lines, 'title_size': size, 'stats_lines': stats_lines, 'stats_size': stats_size}
+
+
+def tall_text_down(c, left, room_top, floor, inner, name, parts, t):
+    """Narrow stickers: the name and details run down the spine, like a book's title (tilt your head right to read
+    them), each line centred along the room under the QR code and the pair centred across the sticker."""
+    length = room_top - floor
+    lines, size, name_h, stats_lines, stats_size, stats_h, gap = text_block(name, parts, length, inner, t)
+    block = name_h + gap + stats_h + DESCENDER_ROOM
+    c.saveState()
+    # text space: x runs down the spine from room_top, y runs across from the sticker's right edge (minus) to its left
+    c.translate(left + inner - (inner - block) / 2, room_top)
+    c.rotate(-90)
+    mid = length / 2
+    first = -size * ink_top(lines[0], 'Display')
+    for i, line in enumerate(lines):
+        draw_centred(c, mid, first - i * size * TITLE_LEAD, line, 'Display', size)
+    y = first - (len(lines) - 1) * size * TITLE_LEAD - gap - stats_size * CAP['BodyMedium']
+    for i, line in enumerate(stats_lines):
+        draw_centred(c, mid, y - i * stats_size * STATS_LEAD, line, 'BodyMedium', stats_size)
+    c.restoreState()
+    return {'title_lines': lines, 'title_size': size, 'stats_lines': stats_lines, 'stats_size': stats_size}
+
+
+def tall_cut_lines(c, kind):
+    """Dashed lines between a page's tall stickers."""
+    w = TALL[kind]['w']
+    c.saveState()
+    c.setStrokeColorRGB(*BLACK)
+    c.setLineWidth(0.25 * mm)
+    c.setDash(1.6 * mm, 1.6 * mm)
+    for i in range(1, round(PAGE_W / w)):
+        c.line(i * w, 0, i * w, PAGE_H)
+    c.restoreState()
+
+
 def cut_line(c, spine=False):
     """The dashed lines to cut along: down the middle, and with spine labels, across above them and round each one."""
     c.saveState()
@@ -615,16 +815,33 @@ def cut_line(c, spine=False):
     c.restoreState()
 
 
-def build(games, out, fonts_dir, report=None, logo=None, spine=False):
+LAYOUTS = ('box', 'box-label', 'spine')
+
+
+def build(games, out, fonts_dir, report=None, logo=None, layout_name='box'):
+    """The PDF: games in shelf order, laid out as layout_name (see LAYOUTS). Returns the pages' games and layout."""
     load_fonts(fonts_dir)
     load_logos(fonts_dir)
     games = sorted(games, key=lambda g: shelf_order(g['code']))
     c = canvas.Canvas(out, pagesize=(PAGE_W, PAGE_H), pageCompression=1)
     c.setTitle('Dice Goblin library stickers')
     c.setAuthor('Dice Goblin')
-    c.setSubject('Library game stickers with their spine labels, two games per 150 x 100 mm page' if spine
-                 else 'Library game stickers, 75 x 100 mm, two per 150 x 100 mm page')
+    c.setSubject({'box': 'Library game stickers, 75 x 100 mm, two per 150 x 100 mm page',
+                  'box-label': 'Library game stickers with their spine labels, two games per 150 x 100 mm page',
+                  'spine': 'Library spine stickers, 50 or 30 mm wide, three or five per 150 x 100 mm page'}[layout_name])
     layout = []
+    if layout_name == 'spine':
+        for n, (kind, page) in enumerate(tall_pages(games), 1):
+            for j, game in enumerate(page):
+                info = draw_tall(c, j * TALL[kind]['w'], game, kind, logo)
+                layout.append({'code': game['code'], 'page': n, **info})
+            tall_cut_lines(c, kind)
+            c.showPage()
+        c.save()
+        if report:
+            json.dump(layout, open(report, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+        return games
+    spine = layout_name == 'box-label'
     for i in range(0, len(games), 2):
         pair = games[i:i + 2]
         for j, game in enumerate(pair):
@@ -641,15 +858,24 @@ def build(games, out, fonts_dir, report=None, logo=None, spine=False):
     return games
 
 
+def option(name, default=None):
+    found = [a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith(f'--{name}=')]
+    return found[-1] if found else default
+
+
 if __name__ == '__main__':
-    flags = [a for a in sys.argv[1:] if a.startswith('--logo=')]
-    spine = '--spine' in sys.argv[1:]
-    args = [a for a in sys.argv[1:] if not a.startswith('--logo=') and a != '--spine']
-    logo = flags[-1].split('=', 1)[1] if flags else None
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    logo = option('logo')
+    layout_name = option('layout', 'box')
     if logo not in (None, 'qr', 'qr-stacked', 'band'):
         sys.exit('--logo is qr, qr-stacked or band')
+    if layout_name not in LAYOUTS:
+        sys.exit(f"--layout is {', '.join(LAYOUTS)}")
+    if logo == 'band' and layout_name == 'spine':
+        sys.exit('--logo=band is for the box stickers; spine stickers take qr or qr-stacked')
     games = json.load(open(args[0], encoding='utf-8'))
     fonts = args[2] if len(args) > 2 else '/home/claude/dice-goblin-website/assets'
     report = args[3] if len(args) > 3 else None
-    done = build(games, args[1], fonts, report, logo, spine)
-    print(f'{len(done)} stickers on {(len(done) + 1) // 2} pages: {args[1]}')
+    done = build(games, args[1], fonts, report, logo, layout_name)
+    pages = len(tall_pages(done)) if layout_name == 'spine' else (len(done) + 1) // 2
+    print(f'{len(done)} stickers on {pages} pages: {args[1]}')
