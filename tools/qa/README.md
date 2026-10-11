@@ -84,3 +84,23 @@ calendar, a session link opening its session, the Follow dialog's links, the cal
 game's feed (`GET /feeds/<key>.ics`, public and through the signed proxy) holding the dates the page links to. Run it
 under the live lock with `DG_THEME`, `OUT` and `QA_PORT`. The harness' stand-in proxy now passes the app's own content
 type on, as Shopify's does.
+
+## round14: the one booking page (round 14)
+
+The Book a table, TTRPG sessions and Events calendar pages are one view now (Mo, 11 Oct): Show (Events, TTRPG games,
+Free tables, in any mix), the map at a day and time with a sheet per table, everything on the day, Looking for players,
+and Book. Round 9's tabs are gone, so `round9/play.mjs` and `round10/tables.mjs` (which drove them) are kept as they were,
+for the record; these two take their place.
+- `round14/one-page.mjs`: demo mode on the theme mock, phone then desktop: each page's own switch and heading, the
+  address keeping the switches (`?show=`, the old `?tab=`, `?players=1`), the strip of days and the month, a day and a
+  time, the map following the switches, a TTRPG game's sheet and joining it, a free table's sheet and booking it end to
+  end (and Back, the browser's too), "I'm interested", an event sign-up with a guest, an event's table, "I'm coming"
+  (one tap for a member), Looking for players, Run a game and hosting, old links (`#game=`, `#event=`, `?join=`),
+  the keyboard, axe and no sideways scroll. `DG_THEME=… PORT=4953 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round14/one-page.mjs [phone|desktop]`.
+- `round14/one-page-live.mjs`: the live stack with the store's events and GM games (`DG_SIM_EVENTS`, `DG_SIM_GAMES`; the
+  games move on to their next date still to come): each open day of the next week against the app (the calendar
+  feed's event dates and the floor's TTRPG games in the list, the counts, the line above the map at the day's busiest
+  hour), every game's table and sheet, every event's tables and sheet (two events on the same tables at once: the
+  sheet's "Also on these tables"), Looking for players, and a free table booked end to end. Run it under the live lock.
+- `live/flow-booking.mjs` opens the booking with Book a table, and picks days on the strip or in the month; the
+  simulation and `round11/reminders.mjs` read the page's new rows (`.play-row`, `.play-said`) and its note above the map.

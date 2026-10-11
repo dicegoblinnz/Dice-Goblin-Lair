@@ -150,7 +150,7 @@ try {
     await visit(ctx, '/', `${tag} home what's on`, { scroll: 'lair-glance' });
     await visit(ctx, '/pages/book-a-table', `${tag} book tables`);
     await visit(ctx, '/pages/gm-games', `${tag} ttrpg board`);
-    const board = await visit(ctx, '/pages/gm-games', `${tag} ttrpg board lower`, { scroll: '.cal-card:nth-of-type(6), .gm-card:nth-of-type(6)' });
+    const board = await visit(ctx, '/pages/gm-games', `${tag} ttrpg board lower`, { scroll: '.play-row:nth-of-type(6), .cal-card:nth-of-type(6), .gm-card:nth-of-type(6)' });
     await board.close();
     await visit(ctx, '/pages/events-calendar', `${tag} events`);
     await visit(ctx, '/pages/events-calendar', `${tag} events what's on`, { scroll: '.whats-on' });
@@ -280,7 +280,7 @@ try {
     const said = await mine.evaluate(() => document.body.innerText);
     if (!/isn’t on the events calendar any more/.test(said)) issue(`${tag} after changes my lair bookings`, "the deleted date's sign-up doesn't say it's gone");
     await mine.close();
-    const b = await visit(ctx, '/pages/gm-games', `${tag} after changes ttrpg board`, { wait: 2000, scroll: '.cal-card:nth-of-type(10)' });
+    const b = await visit(ctx, '/pages/gm-games', `${tag} after changes ttrpg board`, { wait: 2000, scroll: '.play-row:nth-of-type(10), .cal-card:nth-of-type(10)' });
     await b.close();
     const e = await visit(ctx, '/pages/events-calendar#event=blood-on-the-clocktower-october%402026-10-18', `${tag} after changes deleted event link`, { wait: 2000 });
     const sheet = await e.evaluate(() => (document.querySelector('dialog[open]')?.textContent || '').replace(/\s+/g, ' '));
@@ -288,7 +288,8 @@ try {
     await e.close();
     // the cancelled Mist Walkers session's link (the sessions board says it couldn't find it)
     const c = await visit(ctx, `/pages/gm-games#game=${encodeURIComponent(mist)}`, `${tag} after changes cancelled session link`, { wait: 2000 });
-    const words = await c.evaluate(() => [...document.querySelectorAll('[data-notice]')].map((el) => (el.hidden ? '' : el.textContent)).join(' '));
+    // round 14: the one booking page says it above its map (the board's own notice is in its hidden list); only what shows counts
+    const words = await c.evaluate(() => [...document.querySelectorAll('[data-notice], .play-summary__note')].map((el) => (el.hidden || !el.getClientRects().length ? '' : el.textContent)).join(' '));
     if (!/couldn’t find that game/.test(words)) issue(`${tag} after changes cancelled session link`, 'the link to the cancelled session says nothing', words.slice(0, 200));
     await c.close();
     await ctx.close();

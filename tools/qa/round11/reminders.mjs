@@ -187,9 +187,10 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   const day = await page.evaluate((id) => window.Lair.store.time.key(window.Lair.store.data.events.find((e) => e.id === id).startMs), dates.open.id);
   await page.evaluate((key) => document.querySelector('lair-play')?.selectDay?.(key), day);
   await page.waitForTimeout(400);
+  // round 14: the one booking page's rows (.play-row), with what they said (.play-said); round 9's were .play-item
   const listed = await page.evaluate((id) => {
-    const item = document.querySelector(`.play-item [data-play-target="${CSS.escape(id)}"]`)?.closest('.play-item');
-    return item ? { said: item.querySelector('.play-item__said')?.textContent.trim(), toggle: item.querySelector('[data-interest-remind]')?.getAttribute('aria-pressed') || null } : null;
+    const item = document.querySelector(`.play-row [data-play-target="${CSS.escape(id)}"], .play-item [data-play-target="${CSS.escape(id)}"]`)?.closest('.play-row, .play-item');
+    return item ? { said: item.querySelector('.play-said, .play-item__said')?.textContent.trim(), toggle: item.querySelector('[data-interest-remind]')?.getAttribute('aria-pressed') || null } : null;
   }, dates.open.id);
   check(`${tag}: the day's list shows "You're a maybe" with the toggle pressed`, listed && listed.said === 'You’re a maybe' && listed.toggle === 'true', listed);
   if (listed) await shot(page, `${tag}-2-day-list`);

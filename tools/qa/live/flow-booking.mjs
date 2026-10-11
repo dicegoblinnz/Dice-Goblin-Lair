@@ -24,15 +24,30 @@ const SUN2 = addDays(nextDow(0), 7); // Riftbound championship (locked T4-T13)
 
 async function openBooking(p) {
   await p.goto(`${BASE}/pages/book-a-table`, { waitUntil: 'networkidle' });
-  // Round 9: the one booking page (lair-play): its month view picks the day, and the booking's own day strip steps aside
-  await p.waitForSelector('lair-play [data-play-date], [data-dates] [data-day]');
+  // Round 9: the one booking page (lair-play): its days pick the day, and the booking's own day strip steps aside (round
+  // 14: the strip of days is for phones and the month for desktop, so wait for the page to be ready, not for one of them)
+  await p.waitForFunction(() => document.querySelector('lair-play')?.ready === true || (!document.querySelector('lair-play') && Boolean(document.querySelector('[data-dates] [data-day]'))), null, { timeout: 30000 });
+  // Round 14: the page opens on the map; Book a table (under it) turns it to the booking
+  if (await p.locator('lair-play [data-play-book]').count()) {
+    await p.click('lair-play [data-play-book]');
+    await p.waitForSelector('lair-play[data-mode="book"]');
+  }
   await p.waitForSelector('lair-booking [data-dates] [data-day]', { state: 'attached' });
 }
 async function pickDay(p, key) {
   if (await p.locator('lair-play [data-play-date]').count()) {
+    // round 14: the strip of days on phones when the day is on it; else the month (a tap away on phones)
+    const strip = p.locator(`lair-play [data-play-strip] [data-play-date="${key}"]`);
+    if ((await strip.count()) && (await strip.first().isVisible())) {
+      await strip.first().click();
+      await p.waitForTimeout(200);
+      return;
+    }
+    const cal = p.locator('lair-play [data-play-cal]');
+    if ((await cal.isVisible()) && (await cal.getAttribute('aria-expanded')) !== 'true') await cal.click();
     // the month view: on to the day's month (the next-month arrow), then tap the day
-    for (let i = 0; i < 3 && !(await p.locator(`lair-play [data-play-date="${key}"]`).count()); i += 1) await p.click('lair-play [data-play-month="1"]');
-    await p.click(`lair-play [data-play-date="${key}"]`);
+    for (let i = 0; i < 3 && !(await p.locator(`lair-play [data-play-days] [data-play-date="${key}"]`).count()); i += 1) await p.click('lair-play [data-play-month="1"]');
+    await p.click(`lair-play [data-play-days] [data-play-date="${key}"]`);
     await p.waitForTimeout(200);
     return;
   }
