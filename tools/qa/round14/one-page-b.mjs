@@ -288,6 +288,24 @@ for (const vp of [{ width: 1366, height: 768 }, { width: 1280, height: 720 }, { 
     await page.waitForTimeout(500);
     check('phone: then Back leaves the page', (await page.evaluate(() => window.location.href)) === 'about:blank', await page.evaluate(() => window.location.href));
 
+    // a switch (or Looking for players) tapped with the sheet open: the address keeps it, through a reload
+    for (const [label, selector] of [['Events', '[data-play-layer="events"]'], ['Looking for players', '[data-play-show] [data-play-players]']]) {
+      await open('/pages/gm-games');
+      await at(game.day, game.minutes);
+      await tap(`lair-play-floor [data-table="${game.table}"]`);
+      await tap(selector);
+      await page.waitForTimeout(800);
+      const shown = () => page.evaluate(() => ({
+        on: [...document.querySelectorAll('[data-play-layer][aria-pressed="true"]')].map((b) => b.dataset.playLayer).join(),
+        players: document.querySelector('lair-play').players, url: window.location.search,
+      }));
+      const s1 = await shown();
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.waitForFunction(() => document.querySelector('lair-play')?.ready === true, null, { timeout: 20000 });
+      const s2 = await shown();
+      check(`phone: ${label} tapped with the sheet open stays in the address (and a reload keeps it)`, s1.on === s2.on && s1.players === s2.players && s1.url === s2.url, { s1, s2 });
+    }
+
     // a link to another page with the sheet open: it goes there, and stays (no Back from the sheet stops it)
     await open('/pages/gm-games');
     await at(game.day, game.minutes);
