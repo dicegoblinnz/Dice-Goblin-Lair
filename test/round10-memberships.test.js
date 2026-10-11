@@ -1786,6 +1786,7 @@ test("a damage charge billed on its own: every line that isn't a damage charge c
   const wrong = await ask(true);
   assert.deepEqual([wrong.ok, wrong.errors[0].code], [false, 'LINES'], 'a bill that still has the month on it is never billed as damage only');
   assert.deepEqual(await ask(false), { ok: true, errors: [] }, "a renewal's bill keeps the month and adds the charge");
+  assert.deepEqual(calls.filter(([n]) => n === 'MembershipLineAdd').map(([, v]) => v.input.sellingPlanName), Array(3).fill('One-off charge'), "a charge on a bill isn't called a monthly delivery either");
   committed = [plan];
   assert.equal((await ask(false)).ok, false, 'a renewal bill missing its damage charge says so');
 });
@@ -1812,6 +1813,8 @@ test("a card charge's one-off contract is one Shopify takes: a $0 delivery price
   assert.deepEqual([input.contract.deliveryPrice, input.contract.deliveryMethod], ['0.00', undefined], 'a $0 delivery price, and no delivery method: nothing is shipped');
   assert.deepEqual(input.lines.map(({ line }) => [line.productVariantId, line.quantity, line.currentPrice]), [[FEE_VARIANT, 1, '5.00']]);
   assert.deepEqual(input.contract.customAttributes, [{ key: '_lair_payment', value: 'dp_1' }]);
+  // its order and Shopify's emails say what it is, never Shopify's own "Subscription, Delivery every day" (11 Oct 2026)
+  assert.equal(input.lines[0].line.sellingPlanName, 'One-off charge');
 });
 
 test('while a plan change is with Shopify, nothing is billed for that member; the bill after it is on the new plan', async () => {

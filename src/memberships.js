@@ -123,6 +123,12 @@ const EVENT_KEEP_DAYS = 7;
 export const GROUP_CODE = 'lair-library-membership';
 /** The product damage charges are billed as (made by setup when there's no MEMBERSHIPS_FEE_VARIANT_ID) */
 export const FEE_HANDLE = 'library-damage-charge';
+/**
+ * What a damage charge's line says under its name on Shopify's order and its emails. A subscription line with no name
+ * of its own gets Shopify's, from the contract's delivery policy: "Subscription, Delivery every day" on a card charge's
+ * one-off contract (11 Oct 2026, Mo: "it said delivery every day, I don't do that"). Nothing is delivered for one.
+ */
+export const FEE_LINE_NAME = 'One-off charge';
 /** What Lair Memberships needs from Shopify (read_orders: a billing attempt's order) */
 export const MEMBERSHIP_SCOPES = [
   'read_own_subscription_contracts', 'write_own_subscription_contracts', 'read_customer_payment_methods', 'read_orders', 'write_products',
@@ -462,7 +468,7 @@ export class MembershipsAdmin extends ShopifyAdmin {
           },
           lines: [{
             line: {
-              productVariantId: gid('ProductVariant', feeVariantId), quantity: 1, currentPrice: decimal(fee.amount),
+              productVariantId: gid('ProductVariant', feeVariantId), quantity: 1, currentPrice: decimal(fee.amount), sellingPlanName: FEE_LINE_NAME,
               customAttributes: [{ key: 'For', value: fee.label.slice(0, 250) }, { key: '_lair_charge', value: fee.id }],
             },
           }],
@@ -551,7 +557,7 @@ export class MembershipsAdmin extends ShopifyAdmin {
         {
           draftId: draft.id,
           input: {
-            productVariantId: gid('ProductVariant', feeVariantId), quantity: 1, currentPrice: decimal(fee.amount),
+            productVariantId: gid('ProductVariant', feeVariantId), quantity: 1, currentPrice: decimal(fee.amount), sellingPlanName: FEE_LINE_NAME,
             customAttributes: [{ key: 'For', value: fee.label.slice(0, 250) }, { key: '_lair_charge', value: fee.id }],
           },
         },

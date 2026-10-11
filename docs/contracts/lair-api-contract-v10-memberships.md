@@ -40,6 +40,10 @@ can be taken straight away.
   hour), billed once (`lair-damage-<payment>`), then cancelled. It has no library plan on it, so it never becomes a
   membership. (Without the delivery price Shopify refuses it: "Delivery price can't be blank", Mo's first card charge,
   11 Oct 2026.)
+- Every damage charge line Shopify bills (the one-off contract's, and one added to a member's bill) is named "One-off
+  charge" (`sellingPlanName`), so its order and Shopify's emails say that under "Library damage charge". A line with
+  no name of its own gets Shopify's, from the contract's policies: Mo's first card charge's order said "Subscription,
+  Delivery every day" (11 Oct 2026). Membership lines keep their plan's name ("Stash").
 - Code: `src/memberships.js` (all of it), wired into `src/lair.js` (migration, routes, the library plan), `src/index.js`
   (`/webhooks/memberships`) and `src/config.js`. Tests: `test/round10-memberships.test.js`.
 
