@@ -59,6 +59,16 @@ books keep their codes.
   old code, new code, size and where it came from, for all 533. `print-games.json` is the sticker list in shelf order.
 - 194 small, 227 medium, 76 large, 36 RPG books. The spine stickers: 107 pages, five a page.
 - Running the three scripts again from the kept data gives the same codes.
+- **Live in Shopify since 12 Oct 2026** (Mo: "Yes switch now"). For all 497 board games the product's
+  `custom.library_code`, then the variant's barcode and SKU, were set to the new code (`shopify-switch.json` lists
+  each product and variant with its old and new code, for checking or putting back), then read back: all 497 match.
+  The "Library code" metafield definition's rule was changed to fit:
+  `^(DGL(12|34|56|7\+|F)-[SML][0-9]{3}|DGLRPG-[0-9]{3})$` (the old rule only allowed three digits after the dash, so
+  the first try was refused for the codes while the barcodes and SKUs went through; the rule was widened, the batch
+  run again and the rest followed).
+- The Lair learns each game's new code the first time its new sticker is scanned (it looks the barcode up in
+  Shopify). Until then its saved copy of the old code still shows on the staff page and My Lair, and current holds and
+  loans keep the code they were made with.
 
 ### Spine labels (`--layout=box-label`, 11 Oct 2026)
 

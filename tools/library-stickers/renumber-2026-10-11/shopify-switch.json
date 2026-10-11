@@ -1,0 +1,3481 @@
+[
+{
+"productId": "gid://shopify/Product/7498130128999",
+"variantId": "gid://shopify/ProductVariant/42078218911847",
+"title": "7 Wonders Duel (Library)",
+"old": "DGL12-001",
+"new": "DGL12-S001"
+},
+{
+"productId": "gid://shopify/Product/7498130489447",
+"variantId": "gid://shopify/ProductVariant/42078219272295",
+"title": "A Little Wordy (Library)",
+"old": "DGL12-002",
+"new": "DGL12-S002"
+},
+{
+"productId": "gid://shopify/Product/7498131603559",
+"variantId": "gid://shopify/ProductVariant/42078221369447",
+"title": "BattleCON: War of Indines (Library)",
+"old": "DGL12-008",
+"new": "DGL12-S003"
+},
+{
+"productId": "gid://shopify/Product/7498133569639",
+"variantId": "gid://shopify/ProductVariant/42078223401063",
+"title": "Codenames: Duet (Library)",
+"old": "DGL12-009",
+"new": "DGL12-S004"
+},
+{
+"productId": "gid://shopify/Product/7498136485991",
+"variantId": "gid://shopify/ProductVariant/42078226514023",
+"title": "Final Fantasy Trading Card Game Decks (Library)",
+"old": "DGL12-013",
+"new": "DGL12-S005"
+},
+{
+"productId": "gid://shopify/Product/7498136682599",
+"variantId": "gid://shopify/ProductVariant/42078228512871",
+"title": "Flesh and Blood Blitz decks (Library)",
+"old": "DGL12-015",
+"new": "DGL12-S006"
+},
+{
+"productId": "gid://shopify/Product/7498146676839",
+"variantId": "gid://shopify/ProductVariant/42078239195239",
+"title": "The Fox in the Forest (Library)",
+"old": "DGL12-017",
+"new": "DGL12-S007"
+},
+{
+"productId": "gid://shopify/Product/7498137862247",
+"variantId": "gid://shopify/ProductVariant/42078229725287",
+"title": "Hive (Library)",
+"old": "DGL12-019",
+"new": "DGL12-S008"
+},
+{
+"productId": "gid://shopify/Product/7498138189927",
+"variantId": "gid://shopify/ProductVariant/42078230052967",
+"title": "Imhotep: The Duel (Library)",
+"old": "DGL12-020",
+"new": "DGL12-S009"
+},
+{
+"productId": "gid://shopify/Product/7498138484839",
+"variantId": "gid://shopify/ProductVariant/42078230347879",
+"title": "Jaipur (Library)",
+"old": "DGL12-021",
+"new": "DGL12-S010"
+},
+{
+"productId": "gid://shopify/Product/7498139107431",
+"variantId": "gid://shopify/ProductVariant/42078231134311",
+"title": "King of Tokyo: Duel (Library)",
+"old": "DGL12-022",
+"new": "DGL12-S011"
+},
+{
+"productId": "gid://shopify/Product/7498138976359",
+"variantId": "gid://shopify/ProductVariant/42078231003239",
+"title": "Kingdomino Duel (Library)",
+"old": "DGL12-023",
+"new": "DGL12-S012"
+},
+{
+"productId": "gid://shopify/Product/7498139631719",
+"variantId": "gid://shopify/ProductVariant/42078231658599",
+"title": "Lindyhop (Library)",
+"old": "DGL12-025",
+"new": "DGL12-S013"
+},
+{
+"productId": "gid://shopify/Product/7498140909671",
+"variantId": "gid://shopify/ProductVariant/42078232969319",
+"title": "My Hero Academia Collectible Card Game 2-Player Rival Box (Library)",
+"old": "DGL12-028",
+"new": "DGL12-S014"
+},
+{
+"productId": "gid://shopify/Product/7498141859943",
+"variantId": "gid://shopify/ProductVariant/42078233985127",
+"title": "Patchwork (Library)",
+"old": "DGL12-030",
+"new": "DGL12-S015"
+},
+{
+"productId": "gid://shopify/Product/7498143105127",
+"variantId": "gid://shopify/ProductVariant/42078235394151",
+"title": "Riftbound: The League of Legends Trading Card Game Trial decks (Library)",
+"old": "DGL12-031",
+"new": "DGL12-S016"
+},
+{
+"productId": "gid://shopify/Product/7498143203431",
+"variantId": "gid://shopify/ProductVariant/42078235492455",
+"title": "Rivals for Catan (Library)",
+"old": "DGL12-032",
+"new": "DGL12-S017"
+},
+{
+"productId": "gid://shopify/Product/7498144120935",
+"variantId": "gid://shopify/ProductVariant/42078236508263",
+"title": "SHŌBU (Library)",
+"old": "DGL12-033",
+"new": "DGL12-S018"
+},
+{
+"productId": "gid://shopify/Product/7498144841831",
+"variantId": "gid://shopify/ProductVariant/42078237294695",
+"title": "Splendor Duel (Library)",
+"old": "DGL12-035",
+"new": "DGL12-S019"
+},
+{
+"productId": "gid://shopify/Product/7498146054247",
+"variantId": "gid://shopify/ProductVariant/42078238539879",
+"title": "Targi (Library)",
+"old": "DGL12-037",
+"new": "DGL12-S020"
+},
+{
+"productId": "gid://shopify/Product/7498147954791",
+"variantId": "gid://shopify/ProductVariant/42078240669799",
+"title": "Trinity (Library)",
+"old": "DGL12-038",
+"new": "DGL12-S021"
+},
+{
+"productId": "gid://shopify/Product/7498130620519",
+"variantId": "gid://shopify/ProductVariant/42078219403367",
+"title": "Android: Netrunner (Library)",
+"old": "DGL12-003",
+"new": "DGL12-M001"
+},
+{
+"productId": "gid://shopify/Product/7498131243111",
+"variantId": "gid://shopify/ProductVariant/42078220910695",
+"title": "Azul Duel (Library)",
+"old": "DGL12-004",
+"new": "DGL12-M002"
+},
+{
+"productId": "gid://shopify/Product/7498131636327",
+"variantId": "gid://shopify/ProductVariant/42078221402215",
+"title": "Battle of the Pyramids (Library)",
+"old": "DGL12-006",
+"new": "DGL12-M003"
+},
+{
+"productId": "gid://shopify/Product/7498131505255",
+"variantId": "gid://shopify/ProductVariant/42078221205607",
+"title": "BattleCON: Trials of Indines (Library)",
+"old": "DGL12-007",
+"new": "DGL12-M004"
+},
+{
+"productId": "gid://shopify/Product/7498133962855",
+"variantId": "gid://shopify/ProductVariant/42078223794279",
+"title": "Cosmic Encounter Duel (Library)",
+"old": "DGL12-010",
+"new": "DGL12-M005"
+},
+{
+"productId": "gid://shopify/Product/7498136223847",
+"variantId": "gid://shopify/ProductVariant/42078226251879",
+"title": "Everdell Duo (Library)",
+"old": "DGL12-012",
+"new": "DGL12-M006"
+},
+{
+"productId": "gid://shopify/Product/7498136551527",
+"variantId": "gid://shopify/ProductVariant/42078226579559",
+"title": "Five Nights at Freddy's: Survive 'Til 6AM (Library)",
+"old": "DGL12-014",
+"new": "DGL12-M007"
+},
+{
+"productId": "gid://shopify/Product/7498137600103",
+"variantId": "gid://shopify/ProductVariant/42078229430375",
+"title": "Guess Who? Clue Game (Library)",
+"old": "DGL12-018",
+"new": "DGL12-M008"
+},
+{
+"productId": "gid://shopify/Product/7498139828327",
+"variantId": "gid://shopify/ProductVariant/42078231855207",
+"title": "Lost Cities: The Board Game (Library)",
+"old": "DGL12-026",
+"new": "DGL12-M009"
+},
+{
+"productId": "gid://shopify/Product/7498140680295",
+"variantId": "gid://shopify/ProductVariant/42078232739943",
+"title": "Mr. Jack (Library)",
+"old": "DGL12-027",
+"new": "DGL12-M010"
+},
+{
+"productId": "gid://shopify/Product/7498141597799",
+"variantId": "gid://shopify/ProductVariant/42078233690215",
+"title": "Orlog: Assassin's Creed Valhalla Dice Game (Library)",
+"old": "DGL12-029",
+"new": "DGL12-M011"
+},
+{
+"productId": "gid://shopify/Product/7498144317543",
+"variantId": "gid://shopify/ProductVariant/42078236737639",
+"title": "Sky Team (Library)",
+"old": "DGL12-034",
+"new": "DGL12-M012"
+},
+{
+"productId": "gid://shopify/Product/7498148216935",
+"variantId": "gid://shopify/ProductVariant/42078243291239",
+"title": "Under Falling Skies (Library)",
+"old": "DGL12-039",
+"new": "DGL12-M013"
+},
+{
+"productId": "gid://shopify/Product/7519131107431",
+"variantId": "gid://shopify/ProductVariant/42142383931495",
+"title": "Backgammon (Library)",
+"old": "DGL12-005",
+"new": "DGL12-L001"
+},
+{
+"productId": "gid://shopify/Product/7498136092775",
+"variantId": "gid://shopify/ProductVariant/42078226120807",
+"title": "Escape Room: The Game – Puzzle Adventures: Secret of The Scientist (Library)",
+"old": "DGL12-011",
+"new": "DGL12-L002"
+},
+{
+"productId": "gid://shopify/Product/7498136813671",
+"variantId": "gid://shopify/ProductVariant/42078228643943",
+"title": "Foosketball (Library)",
+"old": "DGL12-016",
+"new": "DGL12-L003"
+},
+{
+"productId": "gid://shopify/Product/7498139205735",
+"variantId": "gid://shopify/ProductVariant/42078231232615",
+"title": "KLASK (Library)",
+"old": "DGL12-024",
+"new": "DGL12-L004"
+},
+{
+"productId": "gid://shopify/Product/7498145529959",
+"variantId": "gid://shopify/ProductVariant/42078238015591",
+"title": "Stratego (Library)",
+"old": "DGL12-036",
+"new": "DGL12-L005"
+},
+{
+"productId": "gid://shopify/Product/7498130161767",
+"variantId": "gid://shopify/ProductVariant/42078218944615",
+"title": "Adventure Games: Monochrome Inc. (Library)",
+"old": "DGL34-001",
+"new": "DGL34-S001"
+},
+{
+"productId": "gid://shopify/Product/7498130194535",
+"variantId": "gid://shopify/ProductVariant/42078218977383",
+"title": "Adventure Games: The Dungeon (Library)",
+"old": "DGL34-002",
+"new": "DGL34-S002"
+},
+{
+"productId": "gid://shopify/Product/7498130227303",
+"variantId": "gid://shopify/ProductVariant/42078219010151",
+"title": "Adventure Games: The Grand Hotel Abaddon (Library)",
+"old": "DGL34-003",
+"new": "DGL34-S003"
+},
+{
+"productId": "gid://shopify/Product/7498130260071",
+"variantId": "gid://shopify/ProductVariant/42078219042919",
+"title": "Adventure Games: The Volcanic Island (Library)",
+"old": "DGL34-004",
+"new": "DGL34-S004"
+},
+{
+"productId": "gid://shopify/Product/7498130948199",
+"variantId": "gid://shopify/ProductVariant/42078220615783",
+"title": "Ars Alchimia (Library)",
+"old": "DGL34-012",
+"new": "DGL34-S005"
+},
+{
+"productId": "gid://shopify/Product/7498132783207",
+"variantId": "gid://shopify/ProductVariant/42078222614631",
+"title": "Cat Capers (Library)",
+"old": "DGL34-021",
+"new": "DGL34-S006"
+},
+{
+"productId": "gid://shopify/Product/7498133078119",
+"variantId": "gid://shopify/ProductVariant/42078222909543",
+"title": "Chocobo Party Up! (Library)",
+"old": "DGL34-026",
+"new": "DGL34-S007"
+},
+{
+"productId": "gid://shopify/Product/7498133897319",
+"variantId": "gid://shopify/ProductVariant/42078223728743",
+"title": "Core Connection: Rise of Atlantis (Library)",
+"old": "DGL34-031",
+"new": "DGL34-S008"
+},
+{
+"productId": "gid://shopify/Product/7498134814823",
+"variantId": "gid://shopify/ProductVariant/42078224810087",
+"title": "Dice Dodgems (Library)",
+"old": "DGL34-037",
+"new": "DGL34-S009"
+},
+{
+"productId": "gid://shopify/Product/7498134782055",
+"variantId": "gid://shopify/ProductVariant/42078224777319",
+"title": "Diceborn Heroes (Library)",
+"old": "DGL34-038",
+"new": "DGL34-S010"
+},
+{
+"productId": "gid://shopify/Product/7498135437415",
+"variantId": "gid://shopify/ProductVariant/42078225432679",
+"title": "Dragonwood (Library)",
+"old": "DGL34-043",
+"new": "DGL34-S011"
+},
+{
+"productId": "gid://shopify/Product/7498135699559",
+"variantId": "gid://shopify/ProductVariant/42078225694823",
+"title": "Dungeon Roll (Library)",
+"old": "DGL34-046",
+"new": "DGL34-S012"
+},
+{
+"productId": "gid://shopify/Product/7498136780903",
+"variantId": "gid://shopify/ProductVariant/42078228611175",
+"title": "Floating Floors (Library)",
+"old": "DGL34-051",
+"new": "DGL34-S013"
+},
+{
+"productId": "gid://shopify/Product/7498136846439",
+"variantId": "gid://shopify/ProductVariant/42078228676711",
+"title": "Forbidden Island (Library)",
+"old": "DGL34-052",
+"new": "DGL34-S014"
+},
+{
+"productId": "gid://shopify/Product/7498137010279",
+"variantId": "gid://shopify/ProductVariant/42078228840551",
+"title": "Fort (Library)",
+"old": "DGL34-053",
+"new": "DGL34-S015"
+},
+{
+"productId": "gid://shopify/Product/7498137272423",
+"variantId": "gid://shopify/ProductVariant/42078229102695",
+"title": "Gardeners (Library)",
+"old": "DGL34-061",
+"new": "DGL34-S016"
+},
+{
+"productId": "gid://shopify/Product/7498137436263",
+"variantId": "gid://shopify/ProductVariant/42078229266535",
+"title": "Gloom (Library)",
+"old": "DGL34-062",
+"new": "DGL34-S017"
+},
+{
+"productId": "gid://shopify/Product/7498137665639",
+"variantId": "gid://shopify/ProductVariant/42078229528679",
+"title": "Happy Little Dinosaurs (Library)",
+"old": "DGL34-065",
+"new": "DGL34-S018"
+},
+{
+"productId": "gid://shopify/Product/7498137829479",
+"variantId": "gid://shopify/ProductVariant/42078229692519",
+"title": "Hey, That's My Fish! (Library)",
+"old": "DGL34-066",
+"new": "DGL34-S019"
+},
+{
+"productId": "gid://shopify/Product/7498138681447",
+"variantId": "gid://shopify/ProductVariant/42078230544487",
+"title": "Karmaka (Library)",
+"old": "DGL34-069",
+"new": "DGL34-S020"
+},
+{
+"productId": "gid://shopify/Product/7498138910823",
+"variantId": "gid://shopify/ProductVariant/42078230773863",
+"title": "Kiitos (Library)",
+"old": "DGL34-070",
+"new": "DGL34-S021"
+},
+{
+"productId": "gid://shopify/Product/7498139140199",
+"variantId": "gid://shopify/ProductVariant/42078231167079",
+"title": "Kitara (Library)",
+"old": "DGL34-071",
+"new": "DGL34-S022"
+},
+{
+"productId": "gid://shopify/Product/7498139533415",
+"variantId": "gid://shopify/ProductVariant/42078231560295",
+"title": "Legends Untold: The Great Sewers Novice Set (Library)",
+"old": "DGL34-075",
+"new": "DGL34-S023"
+},
+{
+"productId": "gid://shopify/Product/7498146840679",
+"variantId": "gid://shopify/ProductVariant/42078239424615",
+"title": "The Lost Words (Library)",
+"old": "DGL34-076",
+"new": "DGL34-S024"
+},
+{
+"productId": "gid://shopify/Product/7498139861095",
+"variantId": "gid://shopify/ProductVariant/42078231887975",
+"title": "Love Formula (Library)",
+"old": "DGL34-077",
+"new": "DGL34-S025"
+},
+{
+"productId": "gid://shopify/Product/7498139893863",
+"variantId": "gid://shopify/ProductVariant/42078231920743",
+"title": "Love Letter (Library)",
+"old": "DGL34-078",
+"new": "DGL34-S026"
+},
+{
+"productId": "gid://shopify/Product/7498140352615",
+"variantId": "gid://shopify/ProductVariant/42078232412263",
+"title": "Mint Works (Library)",
+"old": "DGL34-083",
+"new": "DGL34-S027"
+},
+{
+"productId": "gid://shopify/Product/7498141335655",
+"variantId": "gid://shopify/ProductVariant/42078233428071",
+"title": "Oaxaca: Crafts of a Culture (Library)",
+"old": "DGL34-090",
+"new": "DGL34-S028"
+},
+{
+"productId": "gid://shopify/Product/7498141368423",
+"variantId": "gid://shopify/ProductVariant/42078233460839",
+"title": "Ohanami (Library)",
+"old": "DGL34-091",
+"new": "DGL34-S029"
+},
+{
+"productId": "gid://shopify/Product/7498141663335",
+"variantId": "gid://shopify/ProductVariant/42078233755751",
+"title": "Paladins of the West Kingdom (Library)",
+"old": "DGL34-094",
+"new": "DGL34-S030"
+},
+{
+"productId": "gid://shopify/Product/7498141761639",
+"variantId": "gid://shopify/ProductVariant/42078233886823",
+"title": "Pandemic: Hot Zone – North America (Library)",
+"old": "DGL34-096",
+"new": "DGL34-S031"
+},
+{
+"productId": "gid://shopify/Product/7498142777447",
+"variantId": "gid://shopify/ProductVariant/42078235033703",
+"title": "Raid the Pantry (Library)",
+"old": "DGL34-100",
+"new": "DGL34-S032"
+},
+{
+"productId": "gid://shopify/Product/7498142941287",
+"variantId": "gid://shopify/ProductVariant/42078235197543",
+"title": "Regicide (Library)",
+"old": "DGL34-103",
+"new": "DGL34-S033"
+},
+{
+"productId": "gid://shopify/Product/7498143629415",
+"variantId": "gid://shopify/ProductVariant/42078235983975",
+"title": "Saints: The Card Game (Library)",
+"old": "DGL34-107",
+"new": "DGL34-S034"
+},
+{
+"productId": "gid://shopify/Product/7498143924327",
+"variantId": "gid://shopify/ProductVariant/42078236278887",
+"title": "Shardhunters (Library)",
+"old": "DGL34-109",
+"new": "DGL34-S035"
+},
+{
+"productId": "gid://shopify/Product/7498143957095",
+"variantId": "gid://shopify/ProductVariant/42078236311655",
+"title": "Shelfie Stacker (Library)",
+"old": "DGL34-111",
+"new": "DGL34-S036"
+},
+{
+"productId": "gid://shopify/Product/7498144972903",
+"variantId": "gid://shopify/ProductVariant/42078237425767",
+"title": "Squirrel or Die (Library)",
+"old": "DGL34-120",
+"new": "DGL34-S037"
+},
+{
+"productId": "gid://shopify/Product/7498145759335",
+"variantId": "gid://shopify/ProductVariant/42078238244967",
+"title": "Sword Art Online Board Game: Sword of Fellows (Library)",
+"old": "DGL34-129",
+"new": "DGL34-S038"
+},
+{
+"productId": "gid://shopify/Product/7498147102823",
+"variantId": "gid://shopify/ProductVariant/42078239686759",
+"title": "The Terrifying Girl Disorder (Library)",
+"old": "DGL34-133",
+"new": "DGL34-S039"
+},
+{
+"productId": "gid://shopify/Product/7498148937831",
+"variantId": "gid://shopify/ProductVariant/42078244044903",
+"title": "Viscounts of the West Kingdom (Library)",
+"old": "DGL34-144",
+"new": "DGL34-S040"
+},
+{
+"productId": "gid://shopify/Product/7498149003367",
+"variantId": "gid://shopify/ProductVariant/42078244110439",
+"title": "VivaJava: The Coffee Game: The Dice Game (Library)",
+"old": "DGL34-145",
+"new": "DGL34-S041"
+},
+{
+"productId": "gid://shopify/Product/7498149068903",
+"variantId": "gid://shopify/ProductVariant/42078244175975",
+"title": "War Chest (Library)",
+"old": "DGL34-146",
+"new": "DGL34-S042"
+},
+{
+"productId": "gid://shopify/Product/7498149560423",
+"variantId": "gid://shopify/ProductVariant/42078247321703",
+"title": "World Changers (Library)",
+"old": "DGL34-148",
+"new": "DGL34-S043"
+},
+{
+"productId": "gid://shopify/Product/7498146349159",
+"variantId": "gid://shopify/ProductVariant/42078238834791",
+"title": "The Adventures of Robin Hood (Library)",
+"old": "DGL34-005",
+"new": "DGL34-M001"
+},
+{
+"productId": "gid://shopify/Product/7498130391143",
+"variantId": "gid://shopify/ProductVariant/42078219173991",
+"title": "Alchemists (Library)",
+"old": "DGL34-006",
+"new": "DGL34-M002"
+},
+{
+"productId": "gid://shopify/Product/7498130686055",
+"variantId": "gid://shopify/ProductVariant/42078219468903",
+"title": "Anno 1800: The Board Game (Library)",
+"old": "DGL34-007",
+"new": "DGL34-M003"
+},
+{
+"productId": "gid://shopify/Product/7498130882663",
+"variantId": "gid://shopify/ProductVariant/42078220550247",
+"title": "Arkham Horror: Final Hour (Library)",
+"old": "DGL34-010",
+"new": "DGL34-M004"
+},
+{
+"productId": "gid://shopify/Product/7498130915431",
+"variantId": "gid://shopify/ProductVariant/42078220583015",
+"title": "Arkham Horror: The Card Game (Library)",
+"old": "DGL34-011",
+"new": "DGL34-M005"
+},
+{
+"productId": "gid://shopify/Product/7498131144807",
+"variantId": "gid://shopify/ProductVariant/42078220812391",
+"title": "AuZtralia (Library)",
+"old": "DGL34-013",
+"new": "DGL34-M006"
+},
+{
+"productId": "gid://shopify/Product/7498131210343",
+"variantId": "gid://shopify/ProductVariant/42078220877927",
+"title": "Azul (Library)",
+"old": "DGL34-014",
+"new": "DGL34-M007"
+},
+{
+"productId": "gid://shopify/Product/7498146414695",
+"variantId": "gid://shopify/ProductVariant/42078238900327",
+"title": "The Batman Who Laughs Rising (Library)",
+"old": "DGL34-015",
+"new": "DGL34-M008"
+},
+{
+"productId": "gid://shopify/Product/7498131570791",
+"variantId": "gid://shopify/ProductVariant/42078221336679",
+"title": "BattleCON: Wanderers of Indines (Library)",
+"old": "DGL34-016",
+"new": "DGL34-M009"
+},
+{
+"productId": "gid://shopify/Product/7498131865703",
+"variantId": "gid://shopify/ProductVariant/42078221631591",
+"title": "BioShock Infinite: The Siege of Columbia (Library)",
+"old": "DGL34-018",
+"new": "DGL34-M010"
+},
+{
+"productId": "gid://shopify/Product/7498132619367",
+"variantId": "gid://shopify/ProductVariant/42078222418023",
+"title": "Catan (Library)",
+"old": "DGL34-022",
+"new": "DGL34-M011"
+},
+{
+"productId": "gid://shopify/Product/7498132947047",
+"variantId": "gid://shopify/ProductVariant/42078222778471",
+"title": "Champions of Midgard (Library)",
+"old": "DGL34-025",
+"new": "DGL34-M012"
+},
+{
+"productId": "gid://shopify/Product/7498133143655",
+"variantId": "gid://shopify/ProductVariant/42078222975079",
+"title": "Chronicles of Crime (Library)",
+"old": "DGL34-027",
+"new": "DGL34-M013"
+},
+{
+"productId": "gid://shopify/Product/7498133176423",
+"variantId": "gid://shopify/ProductVariant/42078223007847",
+"title": "Chronicles of Crime: 1400 (Library)",
+"old": "DGL34-028",
+"new": "DGL34-M014"
+},
+{
+"productId": "gid://shopify/Product/7498133209191",
+"variantId": "gid://shopify/ProductVariant/42078223040615",
+"title": "Chronicles of Crime: 1900 (Library)",
+"old": "DGL34-029",
+"new": "DGL34-M015"
+},
+{
+"productId": "gid://shopify/Product/7498133274727",
+"variantId": "gid://shopify/ProductVariant/42078223106151",
+"title": "Clank!: A Deck-Building Adventure (Library)",
+"old": "DGL34-030",
+"new": "DGL34-M016"
+},
+{
+"productId": "gid://shopify/Product/7498134061159",
+"variantId": "gid://shopify/ProductVariant/42078223892583",
+"title": "Cowboy Bebop: Space Serenade (Library)",
+"old": "DGL34-032",
+"new": "DGL34-M017"
+},
+{
+"productId": "gid://shopify/Product/7498134454375",
+"variantId": "gid://shopify/ProductVariant/42078224285799",
+"title": "DC Deck-Building Game: Rebirth (Library)",
+"old": "DGL34-036",
+"new": "DGL34-M018"
+},
+{
+"productId": "gid://shopify/Product/7498134945895",
+"variantId": "gid://shopify/ProductVariant/42078224941159",
+"title": "Disney Villainous: Evil Comes Prepared (Library)",
+"old": "DGL34-039",
+"new": "DGL34-M019"
+},
+{
+"productId": "gid://shopify/Product/7498134978663",
+"variantId": "gid://shopify/ProductVariant/42078224973927",
+"title": "Disney Villainous: Perfectly Wretched (Library)",
+"old": "DGL34-040",
+"new": "DGL34-M020"
+},
+{
+"productId": "gid://shopify/Product/7498135011431",
+"variantId": "gid://shopify/ProductVariant/42078225006695",
+"title": "Disney Villainous: Wicked to the Core (Library)",
+"old": "DGL34-041",
+"new": "DGL34-M021"
+},
+{
+"productId": "gid://shopify/Product/7498135371879",
+"variantId": "gid://shopify/ProductVariant/42078225367143",
+"title": "Dragon Ball Z: Road Trip (Library)",
+"old": "DGL34-042",
+"new": "DGL34-M022"
+},
+{
+"productId": "gid://shopify/Product/7498135502951",
+"variantId": "gid://shopify/ProductVariant/42078225498215",
+"title": "Drop It (Library)",
+"old": "DGL34-044",
+"new": "DGL34-M023"
+},
+{
+"productId": "gid://shopify/Product/7498135601255",
+"variantId": "gid://shopify/ProductVariant/42078225596519",
+"title": "Dune: House Secrets (Library)",
+"old": "DGL34-045",
+"new": "DGL34-M024"
+},
+{
+"productId": "gid://shopify/Product/7498135863399",
+"variantId": "gid://shopify/ProductVariant/42078225891431",
+"title": "Dungeons & Dragons: Adventure Begins (Library)",
+"old": "DGL34-047",
+"new": "DGL34-M025"
+},
+{
+"productId": "gid://shopify/Product/7498136158311",
+"variantId": "gid://shopify/ProductVariant/42078226186343",
+"title": "Escape the Horde (Library)",
+"old": "DGL34-048",
+"new": "DGL34-M026"
+},
+{
+"productId": "gid://shopify/Product/7498136617063",
+"variantId": "gid://shopify/ProductVariant/42078228447335",
+"title": "Five Tribes (Library)",
+"old": "DGL34-050",
+"new": "DGL34-M027"
+},
+{
+"productId": "gid://shopify/Product/7498137075815",
+"variantId": "gid://shopify/ProductVariant/42078228906087",
+"title": "Founders of Gloomhaven (Library)",
+"old": "DGL34-054",
+"new": "DGL34-M028"
+},
+{
+"productId": "gid://shopify/Product/7498137108583",
+"variantId": "gid://shopify/ProductVariant/42078228938855",
+"title": "Funfair (Library)",
+"old": "DGL34-055",
+"new": "DGL34-M029"
+},
+{
+"productId": "gid://shopify/Product/7498137141351",
+"variantId": "gid://shopify/ProductVariant/42078228971623",
+"title": "Funkoverse Strategy Game: DC Comics (Library)",
+"old": "DGL34-056",
+"new": "DGL34-M030"
+},
+{
+"productId": "gid://shopify/Product/7498137174119",
+"variantId": "gid://shopify/ProductVariant/42078229004391",
+"title": "Funkoverse Strategy Game: Game of Thrones (Library)",
+"old": "DGL34-057",
+"new": "DGL34-M031"
+},
+{
+"productId": "gid://shopify/Product/7498137206887",
+"variantId": "gid://shopify/ProductVariant/42078229037159",
+"title": "Funkoverse Strategy Game: Harry Potter (Library)",
+"old": "DGL34-058",
+"new": "DGL34-M032"
+},
+{
+"productId": "gid://shopify/Product/7498137239655",
+"variantId": "gid://shopify/ProductVariant/42078229069927",
+"title": "Galilean Moons (Library)",
+"old": "DGL34-059",
+"new": "DGL34-M033"
+},
+{
+"productId": "gid://shopify/Product/7498137501799",
+"variantId": "gid://shopify/ProductVariant/42078229332071",
+"title": "Gnomopolis (Library)",
+"old": "DGL34-064",
+"new": "DGL34-M034"
+},
+{
+"productId": "gid://shopify/Product/7498138386535",
+"variantId": "gid://shopify/ProductVariant/42078230249575",
+"title": "Ishtar: Gardens of Babylon (Library)",
+"old": "DGL34-067",
+"new": "DGL34-M035"
+},
+{
+"productId": "gid://shopify/Product/7498138550375",
+"variantId": "gid://shopify/ProductVariant/42078230413415",
+"title": "Jaws (Library)",
+"old": "DGL34-068",
+"new": "DGL34-M036"
+},
+{
+"productId": "gid://shopify/Product/7498139271271",
+"variantId": "gid://shopify/ProductVariant/42078231298151",
+"title": "Komodo (Library)",
+"old": "DGL34-073",
+"new": "DGL34-M037"
+},
+{
+"productId": "gid://shopify/Product/7498139369575",
+"variantId": "gid://shopify/ProductVariant/42078231396455",
+"title": "Kung Fu Panda: The Board Game (Library)",
+"old": "DGL34-074",
+"new": "DGL34-M038"
+},
+{
+"productId": "gid://shopify/Product/7498140090471",
+"variantId": "gid://shopify/ProductVariant/42078232117351",
+"title": "Marvel Champions: The Card Game (Library)",
+"old": "DGL34-080",
+"new": "DGL34-M039"
+},
+{
+"productId": "gid://shopify/Product/7498140123239",
+"variantId": "gid://shopify/ProductVariant/42078232150119",
+"title": "Marvel United (Library)",
+"old": "DGL34-081",
+"new": "DGL34-M040"
+},
+{
+"productId": "gid://shopify/Product/7498140876903",
+"variantId": "gid://shopify/ProductVariant/42078232936551",
+"title": "My City (Library)",
+"old": "DGL34-085",
+"new": "DGL34-M041"
+},
+{
+"productId": "gid://shopify/Product/7498141040743",
+"variantId": "gid://shopify/ProductVariant/42078233100391",
+"title": "Near and Far (Library)",
+"old": "DGL34-086",
+"new": "DGL34-M042"
+},
+{
+"productId": "gid://shopify/Product/7498141139047",
+"variantId": "gid://shopify/ProductVariant/42078233198695",
+"title": "Ni no Kuni II: The Board Game (Library)",
+"old": "DGL34-087",
+"new": "DGL34-M043"
+},
+{
+"productId": "gid://shopify/Product/7498141073511",
+"variantId": "gid://shopify/ProductVariant/42078233133159",
+"title": "Nickelodeon Splat Attack! (Library)",
+"old": "DGL34-088",
+"new": "DGL34-M044"
+},
+{
+"productId": "gid://shopify/Product/7498141171815",
+"variantId": "gid://shopify/ProductVariant/42078233231463",
+"title": "Nova Luna (Library)",
+"old": "DGL34-089",
+"new": "DGL34-M045"
+},
+{
+"productId": "gid://shopify/Product/7498141565031",
+"variantId": "gid://shopify/ProductVariant/42078233657447",
+"title": "Orléans (Library)",
+"old": "DGL34-093",
+"new": "DGL34-M046"
+},
+{
+"productId": "gid://shopify/Product/7498141696103",
+"variantId": "gid://shopify/ProductVariant/42078233788519",
+"title": "Pandemic (Library)",
+"old": "DGL34-095",
+"new": "DGL34-M047"
+},
+{
+"productId": "gid://shopify/Product/7498141991015",
+"variantId": "gid://shopify/ProductVariant/42078234116199",
+"title": "Peaky Blinders: Under New Management (Library)",
+"old": "DGL34-097",
+"new": "DGL34-M048"
+},
+{
+"productId": "gid://shopify/Product/7498142285927",
+"variantId": "gid://shopify/ProductVariant/42078234542183",
+"title": "Planet (Library)",
+"old": "DGL34-098",
+"new": "DGL34-M049"
+},
+{
+"productId": "gid://shopify/Product/7498142482535",
+"variantId": "gid://shopify/ProductVariant/42078234738791",
+"title": "Popcorn (Library)",
+"old": "DGL34-099",
+"new": "DGL34-M050"
+},
+{
+"productId": "gid://shopify/Product/7498142842983",
+"variantId": "gid://shopify/ProductVariant/42078235099239",
+"title": "Realm of Sand (Library)",
+"old": "DGL34-101",
+"new": "DGL34-M051"
+},
+{
+"productId": "gid://shopify/Product/7498146906215",
+"variantId": "gid://shopify/ProductVariant/42078239490151",
+"title": "The Red Dragon Inn (Library)",
+"old": "DGL34-102",
+"new": "DGL34-M052"
+},
+{
+"productId": "gid://shopify/Product/7498143236199",
+"variantId": "gid://shopify/ProductVariant/42078235557991",
+"title": "Robinson Crusoe: Adventures on the Cursed Island (Library)",
+"old": "DGL34-104",
+"new": "DGL34-M053"
+},
+{
+"productId": "gid://shopify/Product/7498143334503",
+"variantId": "gid://shopify/ProductVariant/42078235689063",
+"title": "Root (Library)",
+"old": "DGL34-105",
+"new": "DGL34-M054"
+},
+{
+"productId": "gid://shopify/Product/7498143662183",
+"variantId": "gid://shopify/ProductVariant/42078236016743",
+"title": "Santorini: Second Edition (Library)",
+"old": "DGL34-108",
+"new": "DGL34-M055"
+},
+{
+"productId": "gid://shopify/Product/7498147070055",
+"variantId": "gid://shopify/ProductVariant/42078239653991",
+"title": "The Shared Dream (Library)",
+"old": "DGL34-110",
+"new": "DGL34-M056"
+},
+{
+"productId": "gid://shopify/Product/7498144514151",
+"variantId": "gid://shopify/ProductVariant/42078236967015",
+"title": "Sonar Family (Library)",
+"old": "DGL34-112",
+"new": "DGL34-M057"
+},
+{
+"productId": "gid://shopify/Product/7498144579687",
+"variantId": "gid://shopify/ProductVariant/42078237032551",
+"title": "Sort it Out! (Library)",
+"old": "DGL34-113",
+"new": "DGL34-M058"
+},
+{
+"productId": "gid://shopify/Product/7498144677991",
+"variantId": "gid://shopify/ProductVariant/42078237130855",
+"title": "Space Gate Odyssey (Library)",
+"old": "DGL34-114",
+"new": "DGL34-M059"
+},
+{
+"productId": "gid://shopify/Product/7498144743527",
+"variantId": "gid://shopify/ProductVariant/42078237196391",
+"title": "SpellBook (Library)",
+"old": "DGL34-115",
+"new": "DGL34-M060"
+},
+{
+"productId": "gid://shopify/Product/7498144776295",
+"variantId": "gid://shopify/ProductVariant/42078237229159",
+"title": "Spirit Island (Library)",
+"old": "DGL34-116",
+"new": "DGL34-M061"
+},
+{
+"productId": "gid://shopify/Product/7498144809063",
+"variantId": "gid://shopify/ProductVariant/42078237261927",
+"title": "Splendor (Library)",
+"old": "DGL34-117",
+"new": "DGL34-M062"
+},
+{
+"productId": "gid://shopify/Product/7498144874599",
+"variantId": "gid://shopify/ProductVariant/42078237327463",
+"title": "Splendor: Marvel (Library)",
+"old": "DGL34-118",
+"new": "DGL34-M063"
+},
+{
+"productId": "gid://shopify/Product/7498142351463",
+"variantId": "gid://shopify/ProductVariant/42078234607719",
+"title": "스플렌더: Pokémon (Splendor: Pokémon) (Library)",
+"old": "DGL34-119",
+"new": "DGL34-M064"
+},
+{
+"productId": "gid://shopify/Product/7498145136743",
+"variantId": "gid://shopify/ProductVariant/42078237622375",
+"title": "Star Trek: Catan (Library)",
+"old": "DGL34-122",
+"new": "DGL34-M065"
+},
+{
+"productId": "gid://shopify/Product/7498145169511",
+"variantId": "gid://shopify/ProductVariant/42078237655143",
+"title": "Star Wars: Dark Side Rising (Library)",
+"old": "DGL34-123",
+"new": "DGL34-M066"
+},
+{
+"productId": "gid://shopify/Product/7498145398887",
+"variantId": "gid://shopify/ProductVariant/42078237884519",
+"title": "Star Wars Villainous: Scum and Villainy (Library)",
+"old": "DGL34-125",
+"new": "DGL34-M067"
+},
+{
+"productId": "gid://shopify/Product/7498145038439",
+"variantId": "gid://shopify/ProductVariant/42078237491303",
+"title": "Starlight Stage (Library)",
+"old": "DGL34-127",
+"new": "DGL34-M068"
+},
+{
+"productId": "gid://shopify/Product/7498145890407",
+"variantId": "gid://shopify/ProductVariant/42078238376039",
+"title": "Takenoko (Library)",
+"old": "DGL34-130",
+"new": "DGL34-M069"
+},
+{
+"productId": "gid://shopify/Product/7498146119783",
+"variantId": "gid://shopify/ProductVariant/42078238605415",
+"title": "Tekhenu: Obelisk of the Sun (Library)",
+"old": "DGL34-131",
+"new": "DGL34-M070"
+},
+{
+"productId": "gid://shopify/Product/7498146250855",
+"variantId": "gid://shopify/ProductVariant/42078238736487",
+"title": "Terraforming Mars: Ares Expedition (Library)",
+"old": "DGL34-132",
+"new": "DGL34-M071"
+},
+{
+"productId": "gid://shopify/Product/7498146316391",
+"variantId": "gid://shopify/ProductVariant/42078238802023",
+"title": "Thanos Rising: Avengers Infinity War (Library)",
+"old": "DGL34-134",
+"new": "DGL34-M072"
+},
+{
+"productId": "gid://shopify/Product/7498147496039",
+"variantId": "gid://shopify/ProductVariant/42078240079975",
+"title": "T.I.M.E Stories (Library)",
+"old": "DGL34-136",
+"new": "DGL34-M073"
+},
+{
+"productId": "gid://shopify/Product/7498147659879",
+"variantId": "gid://shopify/ProductVariant/42078240309351",
+"title": "Tobago (Library)",
+"old": "DGL34-137",
+"new": "DGL34-M074"
+},
+{
+"productId": "gid://shopify/Product/7498148708455",
+"variantId": "gid://shopify/ProductVariant/42078243815527",
+"title": "Unsolved Case Files: Jamie Banks (Library)",
+"old": "DGL34-140",
+"new": "DGL34-M075"
+},
+{
+"productId": "gid://shopify/Product/7498148773991",
+"variantId": "gid://shopify/ProductVariant/42078243881063",
+"title": "Untold: Adventures Await (Library)",
+"old": "DGL34-141",
+"new": "DGL34-M076"
+},
+{
+"productId": "gid://shopify/Product/7498148806759",
+"variantId": "gid://shopify/ProductVariant/42078243913831",
+"title": "Upkeep (Library)",
+"old": "DGL34-142",
+"new": "DGL34-M077"
+},
+{
+"productId": "gid://shopify/Product/7498148905063",
+"variantId": "gid://shopify/ProductVariant/42078244012135",
+"title": "Vault of Dragons (Library)",
+"old": "DGL34-143",
+"new": "DGL34-M078"
+},
+{
+"productId": "gid://shopify/Product/7498149396583",
+"variantId": "gid://shopify/ProductVariant/42078245224551",
+"title": "Whitehall Mystery (Library)",
+"old": "DGL34-147",
+"new": "DGL34-M079"
+},
+{
+"productId": "gid://shopify/Product/7498149658727",
+"variantId": "gid://shopify/ProductVariant/42078247420007",
+"title": "XCOM: The Board Game (Library)",
+"old": "DGL34-149",
+"new": "DGL34-M080"
+},
+{
+"productId": "gid://shopify/Product/7498130718823",
+"variantId": "gid://shopify/ProductVariant/42078219501671",
+"title": "Arcadia Quest (Library)",
+"old": "DGL34-008",
+"new": "DGL34-L001"
+},
+{
+"productId": "gid://shopify/Product/7498130784359",
+"variantId": "gid://shopify/ProductVariant/42078219534439",
+"title": "Arcadia Quest: Inferno (Library)",
+"old": "DGL34-009",
+"new": "DGL34-L002"
+},
+{
+"productId": "gid://shopify/Product/7498146447463",
+"variantId": "gid://shopify/ProductVariant/42078238933095",
+"title": "The Binding of Isaac: Four Souls (Library)",
+"old": "DGL34-017",
+"new": "DGL34-L003"
+},
+{
+"productId": "gid://shopify/Product/7498132062311",
+"variantId": "gid://shopify/ProductVariant/42078221860967",
+"title": "Blood Rage (Library)",
+"old": "DGL34-019",
+"new": "DGL34-L004"
+},
+{
+"productId": "gid://shopify/Product/7498132127847",
+"variantId": "gid://shopify/ProductVariant/42078221926503",
+"title": "BONK (Library)",
+"old": "DGL34-020",
+"new": "DGL34-L005"
+},
+{
+"productId": "gid://shopify/Product/7498132750439",
+"variantId": "gid://shopify/ProductVariant/42078222581863",
+"title": "Catan: Starfarers (Library)",
+"old": "DGL34-023",
+"new": "DGL34-L006"
+},
+{
+"productId": "gid://shopify/Product/7498132914279",
+"variantId": "gid://shopify/ProductVariant/42078222745703",
+"title": "Century: Big Box (Library)",
+"old": "DGL34-024",
+"new": "DGL34-L007"
+},
+{
+"productId": "gid://shopify/Product/7498134224999",
+"variantId": "gid://shopify/ProductVariant/42078224056423",
+"title": "Crokinole (Library)",
+"old": "DGL34-033",
+"new": "DGL34-L008"
+},
+{
+"productId": "gid://shopify/Product/7498134257767",
+"variantId": "gid://shopify/ProductVariant/42078224089191",
+"title": "Cry Havoc (Library)",
+"old": "DGL34-034",
+"new": "DGL34-L009"
+},
+{
+"productId": "gid://shopify/Product/7498134421607",
+"variantId": "gid://shopify/ProductVariant/42078224253031",
+"title": "Dark Souls: The Board Game (Library)",
+"old": "DGL34-035",
+"new": "DGL34-L010"
+},
+{
+"productId": "gid://shopify/Product/7498136354919",
+"variantId": "gid://shopify/ProductVariant/42078226382951",
+"title": "Familiar Tales (Library)",
+"old": "DGL34-049",
+"new": "DGL34-L011"
+},
+{
+"productId": "gid://shopify/Product/7498146742375",
+"variantId": "gid://shopify/ProductVariant/42078239326311",
+"title": "The Game of Life (Library)",
+"old": "DGL34-060",
+"new": "DGL34-L012"
+},
+{
+"productId": "gid://shopify/Product/7498137469031",
+"variantId": "gid://shopify/ProductVariant/42078229299303",
+"title": "Gloomhaven: Jaws of the Lion (Library)",
+"old": "DGL34-063",
+"new": "DGL34-L013"
+},
+{
+"productId": "gid://shopify/Product/7498139238503",
+"variantId": "gid://shopify/ProductVariant/42078231265383",
+"title": "KLASK 4 (Library)",
+"old": "DGL34-072",
+"new": "DGL34-L014"
+},
+{
+"productId": "gid://shopify/Product/7498139926631",
+"variantId": "gid://shopify/ProductVariant/42078231953511",
+"title": "Mage Knight Board Game (Library)",
+"old": "DGL34-079",
+"new": "DGL34-L015"
+},
+{
+"productId": "gid://shopify/Product/7498140319847",
+"variantId": "gid://shopify/ProductVariant/42078232346727",
+"title": "Mechs vs. Minions (League of Legends) (Library)",
+"old": "DGL34-082",
+"new": "DGL34-L016"
+},
+{
+"productId": "gid://shopify/Product/7498140483687",
+"variantId": "gid://shopify/ProductVariant/42078232543335",
+"title": "Monopoly Speed (Library)",
+"old": "DGL34-084",
+"new": "DGL34-L017"
+},
+{
+"productId": "gid://shopify/Product/7498141499495",
+"variantId": "gid://shopify/ProductVariant/42078233591911",
+"title": "On Mars (Library)",
+"old": "DGL34-092",
+"new": "DGL34-L018"
+},
+{
+"productId": "gid://shopify/Product/7498143531111",
+"variantId": "gid://shopify/ProductVariant/42078235885671",
+"title": "Rummikub (Library)",
+"old": "DGL34-106",
+"new": "DGL34-L019"
+},
+{
+"productId": "gid://shopify/Product/7498145103975",
+"variantId": "gid://shopify/ProductVariant/42078237589607",
+"title": "Star Trek: Ascendancy (Library)",
+"old": "DGL34-121",
+"new": "DGL34-L020"
+},
+{
+"productId": "gid://shopify/Product/7498145333351",
+"variantId": "gid://shopify/ProductVariant/42078237818983",
+"title": "Star Wars: Rebellion (Library)",
+"old": "DGL34-124",
+"new": "DGL34-L021"
+},
+{
+"productId": "gid://shopify/Product/7498145005671",
+"variantId": "gid://shopify/ProductVariant/42078237458535",
+"title": "Starcadia Quest (Library)",
+"old": "DGL34-126",
+"new": "DGL34-L022"
+},
+{
+"productId": "gid://shopify/Product/7498145562727",
+"variantId": "gid://shopify/ProductVariant/42078238048359",
+"title": "Street Masters (Library)",
+"old": "DGL34-128",
+"new": "DGL34-L023"
+},
+{
+"productId": "gid://shopify/Product/7498147201127",
+"variantId": "gid://shopify/ProductVariant/42078239785063",
+"title": "Through the Ages: A New Story of Civilization (Library)",
+"old": "DGL34-135",
+"new": "DGL34-L024"
+},
+{
+"productId": "gid://shopify/Product/7498147790951",
+"variantId": "gid://shopify/ProductVariant/42078240440423",
+"title": "Toy Story: Obstacles & Adventures (Library)",
+"old": "DGL34-138",
+"new": "DGL34-L025"
+},
+{
+"productId": "gid://shopify/Product/7498148151399",
+"variantId": "gid://shopify/ProductVariant/42078240866407",
+"title": "Ubongo 3D (Library)",
+"old": "DGL34-139",
+"new": "DGL34-L026"
+},
+{
+"productId": "gid://shopify/Product/7498130817127",
+"variantId": "gid://shopify/ProductVariant/42078220484711",
+"title": "Archaeology: The New Expedition (Library)",
+"old": "DGL56-007",
+"new": "DGL56-S001"
+},
+{
+"productId": "gid://shopify/Product/7498130849895",
+"variantId": "gid://shopify/ProductVariant/42078220517479",
+"title": "Argoat (Library)",
+"old": "DGL56-008",
+"new": "DGL56-S002"
+},
+{
+"productId": "gid://shopify/Product/7498131013735",
+"variantId": "gid://shopify/ProductVariant/42078220681319",
+"title": "Astronomy Fluxx (Library)",
+"old": "DGL56-009",
+"new": "DGL56-S003"
+},
+{
+"productId": "gid://shopify/Product/7498132815975",
+"variantId": "gid://shopify/ProductVariant/42078222647399",
+"title": "Cat in the Box: Deluxe Edition (Library)",
+"old": "DGL56-018",
+"new": "DGL56-S004"
+},
+{
+"productId": "gid://shopify/Product/7498133110887",
+"variantId": "gid://shopify/ProductVariant/42078222942311",
+"title": "Chocobo's Crystal Hunt (Library)",
+"old": "DGL56-021",
+"new": "DGL56-S005"
+},
+{
+"productId": "gid://shopify/Product/7498133733479",
+"variantId": "gid://shopify/ProductVariant/42078223564903",
+"title": "Coloretto (Library)",
+"old": "DGL56-026",
+"new": "DGL56-S006"
+},
+{
+"productId": "gid://shopify/Product/7498133995623",
+"variantId": "gid://shopify/ProductVariant/42078223827047",
+"title": "Coup (Library)",
+"old": "DGL56-029",
+"new": "DGL56-S007"
+},
+{
+"productId": "gid://shopify/Product/7498134028391",
+"variantId": "gid://shopify/ProductVariant/42078223859815",
+"title": "Courtisans (Library)",
+"old": "DGL56-030",
+"new": "DGL56-S008"
+},
+{
+"productId": "gid://shopify/Product/7498146578535",
+"variantId": "gid://shopify/ProductVariant/42078239096935",
+"title": "The Crew: Family Adventure (Library)",
+"old": "DGL56-032",
+"new": "DGL56-S009"
+},
+{
+"productId": "gid://shopify/Product/7498146611303",
+"variantId": "gid://shopify/ProductVariant/42078239129703",
+"title": "The Crew: The Quest for Planet Nine (Library)",
+"old": "DGL56-033",
+"new": "DGL56-S010"
+},
+{
+"productId": "gid://shopify/Product/7498134323303",
+"variantId": "gid://shopify/ProductVariant/42078224154727",
+"title": "Cutthroat Caverns (Library)",
+"old": "DGL56-036",
+"new": "DGL56-S011"
+},
+{
+"productId": "gid://shopify/Product/7498135339111",
+"variantId": "gid://shopify/ProductVariant/42078225334375",
+"title": "Draftosaurus (Library)",
+"old": "DGL56-042",
+"new": "DGL56-S012"
+},
+{
+"productId": "gid://shopify/Product/7498135666791",
+"variantId": "gid://shopify/ProductVariant/42078225662055",
+"title": "Dungeon Mayhem: Monster Madness (Library)",
+"old": "DGL56-047",
+"new": "DGL56-S013"
+},
+{
+"productId": "gid://shopify/Product/7498135928935",
+"variantId": "gid://shopify/ProductVariant/42078225956967",
+"title": "Dungeons & Dragons: Rock Paper Wizard (Library)",
+"old": "DGL56-049",
+"new": "DGL56-S014"
+},
+{
+"productId": "gid://shopify/Product/7498135961703",
+"variantId": "gid://shopify/ProductVariant/42078225989735",
+"title": "Dynamite Nurse (Library)",
+"old": "DGL56-050",
+"new": "DGL56-S015"
+},
+{
+"productId": "gid://shopify/Product/7498136060007",
+"variantId": "gid://shopify/ProductVariant/42078226088039",
+"title": "Escape Room: The Game – Da Vinci's Telescope (Library)",
+"old": "DGL56-051",
+"new": "DGL56-S016"
+},
+{
+"productId": "gid://shopify/Product/7498136125543",
+"variantId": "gid://shopify/ProductVariant/42078226153575",
+"title": "Escape Room: The Game – Tomb Robbers (Library)",
+"old": "DGL56-052",
+"new": "DGL56-S017"
+},
+{
+"productId": "gid://shopify/Product/7498136649831",
+"variantId": "gid://shopify/ProductVariant/42078228480103",
+"title": "Flaming Pyramids (Library)",
+"old": "DGL56-055",
+"new": "DGL56-S018"
+},
+{
+"productId": "gid://shopify/Product/7498136944743",
+"variantId": "gid://shopify/ProductVariant/42078228775015",
+"title": "For Sale (Library)",
+"old": "DGL56-056",
+"new": "DGL56-S019"
+},
+{
+"productId": "gid://shopify/Product/7498136977511",
+"variantId": "gid://shopify/ProductVariant/42078228807783",
+"title": "For Sale Autorama (Library)",
+"old": "DGL56-057",
+"new": "DGL56-S020"
+},
+{
+"productId": "gid://shopify/Product/7498136879207",
+"variantId": "gid://shopify/ProductVariant/42078228709479",
+"title": "Forever Home (Library)",
+"old": "DGL56-058",
+"new": "DGL56-S021"
+},
+{
+"productId": "gid://shopify/Product/7498146709607",
+"variantId": "gid://shopify/ProductVariant/42078239228007",
+"title": "The Game (Library)",
+"old": "DGL56-059",
+"new": "DGL56-S022"
+},
+{
+"productId": "gid://shopify/Product/7498146775143",
+"variantId": "gid://shopify/ProductVariant/42078239359079",
+"title": "The Grizzled (Library)",
+"old": "DGL56-060",
+"new": "DGL56-S023"
+},
+{
+"productId": "gid://shopify/Product/7498137632871",
+"variantId": "gid://shopify/ProductVariant/42078229463143",
+"title": "Hadrian's Wall (Library)",
+"old": "DGL56-061",
+"new": "DGL56-S024"
+},
+{
+"productId": "gid://shopify/Product/7498137927783",
+"variantId": "gid://shopify/ProductVariant/42078229790823",
+"title": "HODL UP (Library)",
+"old": "DGL56-063",
+"new": "DGL56-S025"
+},
+{
+"productId": "gid://shopify/Product/7498138124391",
+"variantId": "gid://shopify/ProductVariant/42078229987431",
+"title": "Iliad (Library)",
+"old": "DGL56-066",
+"new": "DGL56-S026"
+},
+{
+"productId": "gid://shopify/Product/7498138157159",
+"variantId": "gid://shopify/ProductVariant/42078230020199",
+"title": "Illusion (Library)",
+"old": "DGL56-067",
+"new": "DGL56-S027"
+},
+{
+"productId": "gid://shopify/Product/7498138255463",
+"variantId": "gid://shopify/ProductVariant/42078230118503",
+"title": "Infinity Gauntlet: A Love Letter Game (Library)",
+"old": "DGL56-068",
+"new": "DGL56-S028"
+},
+{
+"productId": "gid://shopify/Product/7498138812519",
+"variantId": "gid://shopify/ProductVariant/42078230675559",
+"title": "Kenakalan (Library)",
+"old": "DGL56-074",
+"new": "DGL56-S029"
+},
+{
+"productId": "gid://shopify/Product/7498139467879",
+"variantId": "gid://shopify/ProductVariant/42078231494759",
+"title": "League of the Lexicon (Library)",
+"old": "DGL56-078",
+"new": "DGL56-S030"
+},
+{
+"productId": "gid://shopify/Product/7498139697255",
+"variantId": "gid://shopify/ProductVariant/42078231724135",
+"title": "Loaded Answers (Library)",
+"old": "DGL56-082",
+"new": "DGL56-S031"
+},
+{
+"productId": "gid://shopify/Product/7498139762791",
+"variantId": "gid://shopify/ProductVariant/42078231789671",
+"title": "Lost Cities: Roll & Write (Library)",
+"old": "DGL56-084",
+"new": "DGL56-S032"
+},
+{
+"productId": "gid://shopify/Product/7498140254311",
+"variantId": "gid://shopify/ProductVariant/42078232281191",
+"title": "Math Fluxx (Library)",
+"old": "DGL56-089",
+"new": "DGL56-S033"
+},
+{
+"productId": "gid://shopify/Product/7498140385383",
+"variantId": "gid://shopify/ProductVariant/42078232445031",
+"title": "Miraris (Library)",
+"old": "DGL56-090",
+"new": "DGL56-S034"
+},
+{
+"productId": "gid://shopify/Product/7498140614759",
+"variantId": "gid://shopify/ProductVariant/42078232674407",
+"title": "Mottainai (Library)",
+"old": "DGL56-093",
+"new": "DGL56-S035"
+},
+{
+"productId": "gid://shopify/Product/7498140713063",
+"variantId": "gid://shopify/ProductVariant/42078232772711",
+"title": "Muffin Time (Library)",
+"old": "DGL56-094",
+"new": "DGL56-S036"
+},
+{
+"productId": "gid://shopify/Product/7498140745831",
+"variantId": "gid://shopify/ProductVariant/42078232805479",
+"title": "Munchkin (Library)",
+"old": "DGL56-095",
+"new": "DGL56-S037"
+},
+{
+"productId": "gid://shopify/Product/7498140778599",
+"variantId": "gid://shopify/ProductVariant/42078232838247",
+"title": "Munchkin Booty (Library)",
+"old": "DGL56-096",
+"new": "DGL56-S038"
+},
+{
+"productId": "gid://shopify/Product/7498141433959",
+"variantId": "gid://shopify/ProductVariant/42078233526375",
+"title": "Once Upon a Time: The Storytelling Card Game (Library)",
+"old": "DGL56-100",
+"new": "DGL56-S039"
+},
+{
+"productId": "gid://shopify/Product/7498142122087",
+"variantId": "gid://shopify/ProductVariant/42078234247271",
+"title": "Pictomania (Second Edition) (Library)",
+"old": "DGL56-106",
+"new": "DGL56-S040"
+},
+{
+"productId": "gid://shopify/Product/7498142318695",
+"variantId": "gid://shopify/ProductVariant/42078234574951",
+"title": "Point Salad (Library)",
+"old": "DGL56-109",
+"new": "DGL56-S041"
+},
+{
+"productId": "gid://shopify/Product/7498142580839",
+"variantId": "gid://shopify/ProductVariant/42078234837095",
+"title": "Processing: A Game of Serving Humanity (Library)",
+"old": "DGL56-112",
+"new": "DGL56-S042"
+},
+{
+"productId": "gid://shopify/Product/7498142908519",
+"variantId": "gid://shopify/ProductVariant/42078235164775",
+"title": "Red Panda (Library)",
+"old": "DGL56-115",
+"new": "DGL56-S043"
+},
+{
+"productId": "gid://shopify/Product/7498144284775",
+"variantId": "gid://shopify/ProductVariant/42078236672103",
+"title": "Skull (Library)",
+"old": "DGL56-123",
+"new": "DGL56-S044"
+},
+{
+"productId": "gid://shopify/Product/7498145267815",
+"variantId": "gid://shopify/ProductVariant/42078237753447",
+"title": "Star Wars: Jabba's Palace – A Love Letter Game (Library)",
+"old": "DGL56-129",
+"new": "DGL56-S045"
+},
+{
+"productId": "gid://shopify/Product/7498145628263",
+"variantId": "gid://shopify/ProductVariant/42078238113895",
+"title": "Stupid Deaths (Library)",
+"old": "DGL56-132",
+"new": "DGL56-S046"
+},
+{
+"productId": "gid://shopify/Product/7498145726567",
+"variantId": "gid://shopify/ProductVariant/42078238212199",
+"title": "Sushi Go! (Library)",
+"old": "DGL56-134",
+"new": "DGL56-S047"
+},
+{
+"productId": "gid://shopify/Product/7498148544615",
+"variantId": "gid://shopify/ProductVariant/42078243651687",
+"title": "Unlock!: Secret Adventures – A Noside Story (Library)",
+"old": "DGL56-149",
+"new": "DGL56-S048"
+},
+{
+"productId": "gid://shopify/Product/7498148577383",
+"variantId": "gid://shopify/ProductVariant/42078243684455",
+"title": "Unlock!: Secret Adventures – The Adventurers of Oz (Library)",
+"old": "DGL56-150",
+"new": "DGL56-S049"
+},
+{
+"productId": "gid://shopify/Product/7498148610151",
+"variantId": "gid://shopify/ProductVariant/42078243717223",
+"title": "Unlock!: Secret Adventures – Tombstone Express (Library)",
+"old": "DGL56-151",
+"new": "DGL56-S050"
+},
+{
+"productId": "gid://shopify/Product/7498147168359",
+"variantId": "gid://shopify/ProductVariant/42078239752295",
+"title": "The Vibe (Library)",
+"old": "DGL56-153",
+"new": "DGL56-S051"
+},
+{
+"productId": "gid://shopify/Product/7498129899623",
+"variantId": "gid://shopify/ProductVariant/42078215766119",
+"title": "221B Baker Street: The Master Detective Game (Library)",
+"old": "DGL56-001",
+"new": "DGL56-M001"
+},
+{
+"productId": "gid://shopify/Product/7498129932391",
+"variantId": "gid://shopify/ProductVariant/42106974666855",
+"title": "5-Minute Dungeon (Library)",
+"old": "DGL56-002",
+"new": "DGL56-M002"
+},
+{
+"productId": "gid://shopify/Product/7498129965159",
+"variantId": "gid://shopify/ProductVariant/42078215831655",
+"title": "5-Minute Mystery (Library)",
+"old": "DGL56-003",
+"new": "DGL56-M003"
+},
+{
+"productId": "gid://shopify/Product/7498130358375",
+"variantId": "gid://shopify/ProductVariant/42078219141223",
+"title": "A Game of Thrones: The Board Game (Second Edition) (Library)",
+"old": "DGL56-004",
+"new": "DGL56-M004"
+},
+{
+"productId": "gid://shopify/Product/7498130456679",
+"variantId": "gid://shopify/ProductVariant/42078219239527",
+"title": "Alicematic Heroes (Library)",
+"old": "DGL56-006",
+"new": "DGL56-M005"
+},
+{
+"productId": "gid://shopify/Product/7498131079271",
+"variantId": "gid://shopify/ProductVariant/42078220746855",
+"title": "Atmosfear: Interactive App edition (Library)",
+"old": "DGL56-010",
+"new": "DGL56-M006"
+},
+{
+"productId": "gid://shopify/Product/7498131308647",
+"variantId": "gid://shopify/ProductVariant/42078220976231",
+"title": "Balderdash (Library)",
+"old": "DGL56-012",
+"new": "DGL56-M007"
+},
+{
+"productId": "gid://shopify/Product/7498131701863",
+"variantId": "gid://shopify/ProductVariant/42078221467751",
+"title": "Battlestar Galactica: The Board Game (Library)",
+"old": "DGL56-014",
+"new": "DGL56-M008"
+},
+{
+"productId": "gid://shopify/Product/7498131800167",
+"variantId": "gid://shopify/ProductVariant/42078221566055",
+"title": "Betrayal at House on the Hill (Library)",
+"old": "DGL56-015",
+"new": "DGL56-M009"
+},
+{
+"productId": "gid://shopify/Product/7498132291687",
+"variantId": "gid://shopify/ProductVariant/42078222090343",
+"title": "Canvas (Library)",
+"old": "DGL56-016",
+"new": "DGL56-M010"
+},
+{
+"productId": "gid://shopify/Product/7498132586599",
+"variantId": "gid://shopify/ProductVariant/42078222385255",
+"title": "Cartoon Network Crossover Crisis Deck-Building Game (Library)",
+"old": "DGL56-017",
+"new": "DGL56-M011"
+},
+{
+"productId": "gid://shopify/Product/7498132881511",
+"variantId": "gid://shopify/ProductVariant/42078222712935",
+"title": "Caylus 1303 (Library)",
+"old": "DGL56-020",
+"new": "DGL56-M012"
+},
+{
+"productId": "gid://shopify/Product/7498133438567",
+"variantId": "gid://shopify/ProductVariant/42078223269991",
+"title": "CO₂ (Library)",
+"old": "DGL56-025",
+"new": "DGL56-M013"
+},
+{
+"productId": "gid://shopify/Product/7498133766247",
+"variantId": "gid://shopify/ProductVariant/42078223597671",
+"title": "Colt Express (Library)",
+"old": "DGL56-027",
+"new": "DGL56-M014"
+},
+{
+"productId": "gid://shopify/Product/7498133930087",
+"variantId": "gid://shopify/ProductVariant/42078223761511",
+"title": "Cosmic Encounter (Library)",
+"old": "DGL56-028",
+"new": "DGL56-M015"
+},
+{
+"productId": "gid://shopify/Product/7498134159463",
+"variantId": "gid://shopify/ProductVariant/42078223990887",
+"title": "Creature Comforts (Library)",
+"old": "DGL56-031",
+"new": "DGL56-M016"
+},
+{
+"productId": "gid://shopify/Product/7498134192231",
+"variantId": "gid://shopify/ProductVariant/42078224023655",
+"title": "Crimopolis (Library)",
+"old": "DGL56-034",
+"new": "DGL56-M017"
+},
+{
+"productId": "gid://shopify/Product/7498134290535",
+"variantId": "gid://shopify/ProductVariant/42078224121959",
+"title": "Cursed Court (Library)",
+"old": "DGL56-035",
+"new": "DGL56-M018"
+},
+{
+"productId": "gid://shopify/Product/7498134716519",
+"variantId": "gid://shopify/ProductVariant/42078224711783",
+"title": "Detective: A Modern Crime Board Game (Library)",
+"old": "DGL56-038",
+"new": "DGL56-M019"
+},
+{
+"productId": "gid://shopify/Product/7498134913127",
+"variantId": "gid://shopify/ProductVariant/42078224908391",
+"title": "Disney Villainous (Library)",
+"old": "DGL56-039",
+"new": "DGL56-M020"
+},
+{
+"productId": "gid://shopify/Product/7498135175271",
+"variantId": "gid://shopify/ProductVariant/42078225170535",
+"title": "Dohdles! (Library)",
+"old": "DGL56-040",
+"new": "DGL56-M021"
+},
+{
+"productId": "gid://shopify/Product/7498135273575",
+"variantId": "gid://shopify/ProductVariant/42078225268839",
+"title": "Downforce (Library)",
+"old": "DGL56-041",
+"new": "DGL56-M022"
+},
+{
+"productId": "gid://shopify/Product/7498135470183",
+"variantId": "gid://shopify/ProductVariant/42078225465447",
+"title": "Dream Crush (Library)",
+"old": "DGL56-044",
+"new": "DGL56-M023"
+},
+{
+"productId": "gid://shopify/Product/7498135535719",
+"variantId": "gid://shopify/ProductVariant/42078225530983",
+"title": "Dune (Library)",
+"old": "DGL56-045",
+"new": "DGL56-M024"
+},
+{
+"productId": "gid://shopify/Product/7498135634023",
+"variantId": "gid://shopify/ProductVariant/42078225629287",
+"title": "Dune: Imperium – Uprising (Library)",
+"old": "DGL56-046",
+"new": "DGL56-M025"
+},
+{
+"productId": "gid://shopify/Product/7498136191079",
+"variantId": "gid://shopify/ProductVariant/42078226219111",
+"title": "Escape Your House: Spy Team (Library)",
+"old": "DGL56-053",
+"new": "DGL56-M026"
+},
+{
+"productId": "gid://shopify/Product/7498137698407",
+"variantId": "gid://shopify/ProductVariant/42078229561447",
+"title": "Harry Potter and the Sorcerer's Stone: Trivia Game (Library)",
+"old": "DGL56-062",
+"new": "DGL56-M027"
+},
+{
+"productId": "gid://shopify/Product/7498137960551",
+"variantId": "gid://shopify/ProductVariant/42078229823591",
+"title": "Homeland: The Game (Library)",
+"old": "DGL56-064",
+"new": "DGL56-M028"
+},
+{
+"productId": "gid://shopify/Product/7498137993319",
+"variantId": "gid://shopify/ProductVariant/42078229856359",
+"title": "Horrified (Library)",
+"old": "DGL56-065",
+"new": "DGL56-M029"
+},
+{
+"productId": "gid://shopify/Product/7498138353767",
+"variantId": "gid://shopify/ProductVariant/42078230216807",
+"title": "Ironrise (Library)",
+"old": "DGL56-069",
+"new": "DGL56-M030"
+},
+{
+"productId": "gid://shopify/Product/7498138419303",
+"variantId": "gid://shopify/ProductVariant/42078230282343",
+"title": "Isla Dorada (Library)",
+"old": "DGL56-070",
+"new": "DGL56-M031"
+},
+{
+"productId": "gid://shopify/Product/7498138452071",
+"variantId": "gid://shopify/ProductVariant/42078230315111",
+"title": "It's a Wonderful World (Library)",
+"old": "DGL56-071",
+"new": "DGL56-M032"
+},
+{
+"productId": "gid://shopify/Product/7498138517607",
+"variantId": "gid://shopify/ProductVariant/42078230380647",
+"title": "Jamaica (Library)",
+"old": "DGL56-072",
+"new": "DGL56-M033"
+},
+{
+"productId": "gid://shopify/Product/7498139041895",
+"variantId": "gid://shopify/ProductVariant/42078231068775",
+"title": "King of New York (Library)",
+"old": "DGL56-076",
+"new": "DGL56-M034"
+},
+{
+"productId": "gid://shopify/Product/7498139074663",
+"variantId": "gid://shopify/ProductVariant/42078231101543",
+"title": "King of Tokyo (Library)",
+"old": "DGL56-077",
+"new": "DGL56-M035"
+},
+{
+"productId": "gid://shopify/Product/7498139598951",
+"variantId": "gid://shopify/ProductVariant/42078231625831",
+"title": "Letters from Whitechapel (Library)",
+"old": "DGL56-081",
+"new": "DGL56-M036"
+},
+{
+"productId": "gid://shopify/Product/7498140057703",
+"variantId": "gid://shopify/ProductVariant/42078232084583",
+"title": "Manifest (Library)",
+"old": "DGL56-086",
+"new": "DGL56-M037"
+},
+{
+"productId": "gid://shopify/Product/7498140450919",
+"variantId": "gid://shopify/ProductVariant/42078232510567",
+"title": "Monopoly Gamer: Overwatch Collector's Edition (Library)",
+"old": "DGL56-091",
+"new": "DGL56-M038"
+},
+{
+"productId": "gid://shopify/Product/7498140811367",
+"variantId": "gid://shopify/ProductVariant/42078232871015",
+"title": "Munchkin Harry Potter Deluxe (Library)",
+"old": "DGL56-097",
+"new": "DGL56-M039"
+},
+{
+"productId": "gid://shopify/Product/7498140975207",
+"variantId": "gid://shopify/ProductVariant/42078233034855",
+"title": "My Little Scythe (Library)",
+"old": "DGL56-098",
+"new": "DGL56-M040"
+},
+{
+"productId": "gid://shopify/Product/7498141106279",
+"variantId": "gid://shopify/ProductVariant/42078233165927",
+"title": "Nidavellir (Library)",
+"old": "DGL56-099",
+"new": "DGL56-M041"
+},
+{
+"productId": "gid://shopify/Product/7498141532263",
+"variantId": "gid://shopify/ProductVariant/42078233624679",
+"title": "Order of the Stick Adventure Game: The Dungeon of Dorukan (Library)",
+"old": "DGL56-101",
+"new": "DGL56-M042"
+},
+{
+"productId": "gid://shopify/Product/7498141630567",
+"variantId": "gid://shopify/ProductVariant/42078233722983",
+"title": "Ovation (Library)",
+"old": "DGL56-102",
+"new": "DGL56-M043"
+},
+{
+"productId": "gid://shopify/Product/7498141728871",
+"variantId": "gid://shopify/ProductVariant/42078233821287",
+"title": "Pandemic: Fall of Rome (Library)",
+"old": "DGL56-103",
+"new": "DGL56-M044"
+},
+{
+"productId": "gid://shopify/Product/7498141794407",
+"variantId": "gid://shopify/ProductVariant/42078233919591",
+"title": "Pandemic: Rising Tide (Library)",
+"old": "DGL56-104",
+"new": "DGL56-M045"
+},
+{
+"productId": "gid://shopify/Product/7498141827175",
+"variantId": "gid://shopify/ProductVariant/42078233952359",
+"title": "Pandemic: The Cure (Library)",
+"old": "DGL56-105",
+"new": "DGL56-M046"
+},
+{
+"productId": "gid://shopify/Product/7498142154855",
+"variantId": "gid://shopify/ProductVariant/42078234280039",
+"title": "Pictures (Library)",
+"old": "DGL56-107",
+"new": "DGL56-M047"
+},
+{
+"productId": "gid://shopify/Product/7498142187623",
+"variantId": "gid://shopify/ProductVariant/42078234312807",
+"title": "Pirates vs. Dinosaurs (Library)",
+"old": "DGL56-108",
+"new": "DGL56-M048"
+},
+{
+"productId": "gid://shopify/Product/7498142613607",
+"variantId": "gid://shopify/ProductVariant/42078234869863",
+"title": "Puerto Rico (Library)",
+"old": "DGL56-113",
+"new": "DGL56-M049"
+},
+{
+"productId": "gid://shopify/Product/7498142711911",
+"variantId": "gid://shopify/ProductVariant/42078234968167",
+"title": "Raccoon Tycoon (Library)",
+"old": "DGL56-114",
+"new": "DGL56-M050"
+},
+{
+"productId": "gid://shopify/Product/7498142875751",
+"variantId": "gid://shopify/ProductVariant/42078235132007",
+"title": "[redacted] (Library)",
+"old": "DGL56-116",
+"new": "DGL56-M051"
+},
+{
+"productId": "gid://shopify/Product/7498143039591",
+"variantId": "gid://shopify/ProductVariant/42078235295847",
+"title": "Rick and Morty: Close Rick-Counters of the Rick Kind Deck-Building Game (Library)",
+"old": "DGL56-117",
+"new": "DGL56-M052"
+},
+{
+"productId": "gid://shopify/Product/7498143137895",
+"variantId": "gid://shopify/ProductVariant/42078235426919",
+"title": "Rising 5: Runes of Asteros (Library)",
+"old": "DGL56-118",
+"new": "DGL56-M053"
+},
+{
+"productId": "gid://shopify/Product/7498143694951",
+"variantId": "gid://shopify/ProductVariant/42078236049511",
+"title": "Scattergories (Library)",
+"old": "DGL56-121",
+"new": "DGL56-M054"
+},
+{
+"productId": "gid://shopify/Product/7498143989863",
+"variantId": "gid://shopify/ProductVariant/42078236344423",
+"title": "Sheriff of Nottingham (Library)",
+"old": "DGL56-122",
+"new": "DGL56-M055"
+},
+{
+"productId": "gid://shopify/Product/7498144350311",
+"variantId": "gid://shopify/ProductVariant/42078236770407",
+"title": "Small World (Library)",
+"old": "DGL56-124",
+"new": "DGL56-M056"
+},
+{
+"productId": "gid://shopify/Product/7498144383079",
+"variantId": "gid://shopify/ProductVariant/42078236803175",
+"title": "Small World of Warcraft (Library)",
+"old": "DGL56-125",
+"new": "DGL56-M057"
+},
+{
+"productId": "gid://shopify/Product/7498144415847",
+"variantId": "gid://shopify/ProductVariant/42078236835943",
+"title": "Small World Underground (Library)",
+"old": "DGL56-126",
+"new": "DGL56-M058"
+},
+{
+"productId": "gid://shopify/Product/7498144481383",
+"variantId": "gid://shopify/ProductVariant/42078236934247",
+"title": "Smartphone Inc. (Library)",
+"old": "DGL56-127",
+"new": "DGL56-M059"
+},
+{
+"productId": "gid://shopify/Product/7498145366119",
+"variantId": "gid://shopify/ProductVariant/42078237851751",
+"title": "Star Wars: Unlock! (Library)",
+"old": "DGL56-130",
+"new": "DGL56-M060"
+},
+{
+"productId": "gid://shopify/Product/7498145464423",
+"variantId": "gid://shopify/ProductVariant/42078237950055",
+"title": "Stella: Dixit Universe (Library)",
+"old": "DGL56-131",
+"new": "DGL56-M061"
+},
+{
+"productId": "gid://shopify/Product/7498145988711",
+"variantId": "gid://shopify/ProductVariant/42078238474343",
+"title": "Talisman: Kingdom Hearts (Library)",
+"old": "DGL56-136",
+"new": "DGL56-M062"
+},
+{
+"productId": "gid://shopify/Product/7498147299431",
+"variantId": "gid://shopify/ProductVariant/42078239883367",
+"title": "Ticket to Ride (Library)",
+"old": "DGL56-138",
+"new": "DGL56-M063"
+},
+{
+"productId": "gid://shopify/Product/7498147332199",
+"variantId": "gid://shopify/ProductVariant/42078239916135",
+"title": "Ticket to Ride: Europe (Library)",
+"old": "DGL56-139",
+"new": "DGL56-M064"
+},
+{
+"productId": "gid://shopify/Product/7498147627111",
+"variantId": "gid://shopify/ProductVariant/42078240276583",
+"title": "Tiny Towns (Library)",
+"old": "DGL56-140",
+"new": "DGL56-M065"
+},
+{
+"productId": "gid://shopify/Product/7498147692647",
+"variantId": "gid://shopify/ProductVariant/42078240342119",
+"title": "Tokaido (Library)",
+"old": "DGL56-141",
+"new": "DGL56-M066"
+},
+{
+"productId": "gid://shopify/Product/7498147922023",
+"variantId": "gid://shopify/ProductVariant/42078240571495",
+"title": "Treasure Island (Library)",
+"old": "DGL56-142",
+"new": "DGL56-M067"
+},
+{
+"productId": "gid://shopify/Product/7498148053095",
+"variantId": "gid://shopify/ProductVariant/42078240768103",
+"title": "Trivial Pursuit: 2000s (Library)",
+"old": "DGL56-143",
+"new": "DGL56-M068"
+},
+{
+"productId": "gid://shopify/Product/7498148249703",
+"variantId": "gid://shopify/ProductVariant/42078243324007",
+"title": "Unlock!: Epic Adventures (Library)",
+"old": "DGL56-144",
+"new": "DGL56-M069"
+},
+{
+"productId": "gid://shopify/Product/7498148348007",
+"variantId": "gid://shopify/ProductVariant/42078243422311",
+"title": "Unlock!: Escape Adventures (Library)",
+"old": "DGL56-145",
+"new": "DGL56-M070"
+},
+{
+"productId": "gid://shopify/Product/7498148413543",
+"variantId": "gid://shopify/ProductVariant/42078243487847",
+"title": "Unlock!: Exotic Adventures (Library)",
+"old": "DGL56-146",
+"new": "DGL56-M071"
+},
+{
+"productId": "gid://shopify/Product/7498148479079",
+"variantId": "gid://shopify/ProductVariant/42078243553383",
+"title": "Unlock!: Heroic Adventures (Library)",
+"old": "DGL56-147",
+"new": "DGL56-M072"
+},
+{
+"productId": "gid://shopify/Product/7498148511847",
+"variantId": "gid://shopify/ProductVariant/42078243618919",
+"title": "Unlock!: Mystery Adventures (Library)",
+"old": "DGL56-148",
+"new": "DGL56-M073"
+},
+{
+"productId": "gid://shopify/Product/7498148642919",
+"variantId": "gid://shopify/ProductVariant/42078243749991",
+"title": "Unlock!: Timeless Adventures (Library)",
+"old": "DGL56-152",
+"new": "DGL56-M074"
+},
+{
+"productId": "gid://shopify/Product/7498148970599",
+"variantId": "gid://shopify/ProductVariant/42078244077671",
+"title": "Viticulture Essential Edition (Library)",
+"old": "DGL56-154",
+"new": "DGL56-M075"
+},
+{
+"productId": "gid://shopify/Product/7498149429351",
+"variantId": "gid://shopify/ProductVariant/42078245257319",
+"title": "Wingspan (Library)",
+"old": "DGL56-156",
+"new": "DGL56-M076"
+},
+{
+"productId": "gid://shopify/Product/7498149625959",
+"variantId": "gid://shopify/ProductVariant/42078247387239",
+"title": "Wyrmspan (Library)",
+"old": "DGL56-157",
+"new": "DGL56-M077"
+},
+{
+"productId": "gid://shopify/Product/7498149691495",
+"variantId": "gid://shopify/ProductVariant/42078247452775",
+"title": "X-Men: Mutant Insurrection (Library)",
+"old": "DGL56-158",
+"new": "DGL56-M078"
+},
+{
+"productId": "gid://shopify/Product/7498130423911",
+"variantId": "gid://shopify/ProductVariant/42078219206759",
+"title": "Alhambra: Big Box (Library)",
+"old": "DGL56-005",
+"new": "DGL56-L001"
+},
+{
+"productId": "gid://shopify/Product/7498131112039",
+"variantId": "gid://shopify/ProductVariant/42078220779623",
+"title": "Attack on Titan: The Last Stand (Library)",
+"old": "DGL56-011",
+"new": "DGL56-L002"
+},
+{
+"productId": "gid://shopify/Product/7498131472487",
+"variantId": "gid://shopify/ProductVariant/42078221172839",
+"title": "BattleCON: Devastation of Indines (Library)",
+"old": "DGL56-013",
+"new": "DGL56-L003"
+},
+{
+"productId": "gid://shopify/Product/7498132652135",
+"variantId": "gid://shopify/ProductVariant/42078222483559",
+"title": "Catan: 25th Anniversary Edition (Library)",
+"old": "DGL56-019",
+"new": "DGL56-L004"
+},
+{
+"productId": "gid://shopify/Product/7498133307495",
+"variantId": "gid://shopify/ProductVariant/42078223138919",
+"title": "Clue (Library)",
+"old": "DGL56-022",
+"new": "DGL56-L005"
+},
+{
+"productId": "gid://shopify/Product/7498133373031",
+"variantId": "gid://shopify/ProductVariant/42078223204455",
+"title": "Clue: Harry Potter Edition (Library)",
+"old": "DGL56-023",
+"new": "DGL56-L006"
+},
+{
+"productId": "gid://shopify/Product/7498133405799",
+"variantId": "gid://shopify/ProductVariant/42078223237223",
+"title": "Clue: The Simpsons (Library)",
+"old": "DGL56-024",
+"new": "DGL56-L007"
+},
+{
+"productId": "gid://shopify/Product/7498134683751",
+"variantId": "gid://shopify/ProductVariant/42078224679015",
+"title": "Descent: Journeys in the Dark (Second Edition) (Library)",
+"old": "DGL56-037",
+"new": "DGL56-L008"
+},
+{
+"productId": "gid://shopify/Product/7498135404647",
+"variantId": "gid://shopify/ProductVariant/42078225399911",
+"title": "Dragonlance: Warriors of Krynn (Library)",
+"old": "DGL56-043",
+"new": "DGL56-L009"
+},
+{
+"productId": "gid://shopify/Product/7498135896167",
+"variantId": "gid://shopify/ProductVariant/42078225924199",
+"title": "Dungeons & Dragons: Castle Ravenloft Board Game (Library)",
+"old": "DGL56-048",
+"new": "DGL56-L010"
+},
+{
+"productId": "gid://shopify/Product/7498136256615",
+"variantId": "gid://shopify/ProductVariant/42078226284647",
+"title": "Everdell: The Complete Collection (Library)",
+"old": "DGL56-054",
+"new": "DGL56-L011"
+},
+{
+"productId": "gid://shopify/Product/7498138746983",
+"variantId": "gid://shopify/ProductVariant/42078230610023",
+"title": "Kemet (Library)",
+"old": "DGL56-073",
+"new": "DGL56-L012"
+},
+{
+"productId": "gid://shopify/Product/7498139009127",
+"variantId": "gid://shopify/ProductVariant/42078231036007",
+"title": "King of Monster Island (Library)",
+"old": "DGL56-075",
+"new": "DGL56-L013"
+},
+{
+"productId": "gid://shopify/Product/7498139500647",
+"variantId": "gid://shopify/ProductVariant/42078231527527",
+"title": "Legendary: A Marvel Deck Building Game (Library)",
+"old": "DGL56-079",
+"new": "DGL56-L014"
+},
+{
+"productId": "gid://shopify/Product/7498139566183",
+"variantId": "gid://shopify/ProductVariant/42078231593063",
+"title": "Let's Hit Each Other with Fake Swords (Library)",
+"old": "DGL56-080",
+"new": "DGL56-L015"
+},
+{
+"productId": "gid://shopify/Product/7498139730023",
+"variantId": "gid://shopify/ProductVariant/42078231756903",
+"title": "Lords of Waterdeep (Library)",
+"old": "DGL56-083",
+"new": "DGL56-L016"
+},
+{
+"productId": "gid://shopify/Product/7498140024935",
+"variantId": "gid://shopify/ProductVariant/42078232051815",
+"title": "Magic: The Gathering – Arena of the Planeswalkers (Library)",
+"old": "DGL56-085",
+"new": "DGL56-L017"
+},
+{
+"productId": "gid://shopify/Product/7498140156007",
+"variantId": "gid://shopify/ProductVariant/42078232182887",
+"title": "Marvel Zombies: A Zombicide Game (Library)",
+"old": "DGL56-087",
+"new": "DGL56-L018"
+},
+{
+"productId": "gid://shopify/Product/7498140221543",
+"variantId": "gid://shopify/ProductVariant/42078232248423",
+"title": "Masters of the Universe: The Board Game – Clash for Eternia (Library)",
+"old": "DGL56-088",
+"new": "DGL56-L019"
+},
+{
+"productId": "gid://shopify/Product/7498140516455",
+"variantId": "gid://shopify/ProductVariant/42078232576103",
+"title": "Monopoly: The Here & Now New Zealand Edition (Library)",
+"old": "DGL56-092",
+"new": "DGL56-L020"
+},
+{
+"productId": "gid://shopify/Product/7498142515303",
+"variantId": "gid://shopify/ProductVariant/42078234771559",
+"title": "Power Grid (Library)",
+"old": "DGL56-110",
+"new": "DGL56-L021"
+},
+{
+"productId": "gid://shopify/Product/7498142548071",
+"variantId": "gid://shopify/ProductVariant/42078234804327",
+"title": "Power Rangers: Heroes of the Grid (Library)",
+"old": "DGL56-111",
+"new": "DGL56-L022"
+},
+{
+"productId": "gid://shopify/Product/7498143170663",
+"variantId": "gid://shopify/ProductVariant/42078235459687",
+"title": "Risk (Library)",
+"old": "DGL56-119",
+"new": "DGL56-L023"
+},
+{
+"productId": "gid://shopify/Product/7498143498343",
+"variantId": "gid://shopify/ProductVariant/42078235852903",
+"title": "Rum & Bones (Library)",
+"old": "DGL56-120",
+"new": "DGL56-L024"
+},
+{
+"productId": "gid://shopify/Product/7498145235047",
+"variantId": "gid://shopify/ProductVariant/42078237720679",
+"title": "Star Wars: Imperial Assault (Library)",
+"old": "DGL56-128",
+"new": "DGL56-L025"
+},
+{
+"productId": "gid://shopify/Product/7498145661031",
+"variantId": "gid://shopify/ProductVariant/42078238146663",
+"title": "Super Dungeon Explore with Expansions (Library)",
+"old": "DGL56-133",
+"new": "DGL56-L026"
+},
+{
+"productId": "gid://shopify/Product/7498145923175",
+"variantId": "gid://shopify/ProductVariant/42078238408807",
+"title": "Tales of the Arabian Nights (Library)",
+"old": "DGL56-135",
+"new": "DGL56-L027"
+},
+{
+"productId": "gid://shopify/Product/7498146283623",
+"variantId": "gid://shopify/ProductVariant/42078238769255",
+"title": "Terra Mystica (Library)",
+"old": "DGL56-137",
+"new": "DGL56-L028"
+},
+{
+"productId": "gid://shopify/Product/7498149265511",
+"variantId": "gid://shopify/ProductVariant/42078244372583",
+"title": "Western Legends (Library)",
+"old": "DGL56-155",
+"new": "DGL56-L029"
+},
+{
+"productId": "gid://shopify/Product/7498130292839",
+"variantId": "gid://shopify/ProductVariant/42078219075687",
+"title": "A Fake Artist Goes to New York (Library)",
+"old": "DGL7+-003",
+"new": "DGL7+-S001"
+},
+{
+"productId": "gid://shopify/Product/7504656859239",
+"variantId": "gid://shopify/ProductVariant/42095621832807",
+"title": "A Matter of Taste (Library)",
+"old": "DGL7+-004",
+"new": "DGL7+-S002"
+},
+{
+"productId": "gid://shopify/Product/7498131734631",
+"variantId": "gid://shopify/ProductVariant/42078221500519",
+"title": "Beat That! (Library)",
+"old": "DGL7+-007",
+"new": "DGL7+-S003"
+},
+{
+"productId": "gid://shopify/Product/7498131964007",
+"variantId": "gid://shopify/ProductVariant/42078221729895",
+"title": "Blank Marry Kill (Library)",
+"old": "DGL7+-008",
+"new": "DGL7+-S004"
+},
+{
+"productId": "gid://shopify/Product/7498132553831",
+"variantId": "gid://shopify/ProductVariant/42078222352487",
+"title": "Cards Against Humanity (Library)",
+"old": "DGL7+-011",
+"new": "DGL7+-S005"
+},
+{
+"productId": "gid://shopify/Product/7498133504103",
+"variantId": "gid://shopify/ProductVariant/42078223335527",
+"title": "Codenames (Library)",
+"old": "DGL7+-015",
+"new": "DGL7+-S006"
+},
+{
+"productId": "gid://shopify/Product/7498133536871",
+"variantId": "gid://shopify/ProductVariant/42078223368295",
+"title": "Codenames: Disney – Family Edition (Library)",
+"old": "DGL7+-016",
+"new": "DGL7+-S007"
+},
+{
+"productId": "gid://shopify/Product/7498133602407",
+"variantId": "gid://shopify/ProductVariant/42078223433831",
+"title": "Codenames: Harry Potter (Library)",
+"old": "DGL7+-017",
+"new": "DGL7+-S008"
+},
+{
+"productId": "gid://shopify/Product/7498133635175",
+"variantId": "gid://shopify/ProductVariant/42078223466599",
+"title": "Codenames: Marvel (Library)",
+"old": "DGL7+-018",
+"new": "DGL7+-S009"
+},
+{
+"productId": "gid://shopify/Product/7498133667943",
+"variantId": "gid://shopify/ProductVariant/42078223499367",
+"title": "Codenames: Pictures (Library)",
+"old": "DGL7+-019",
+"new": "DGL7+-S010"
+},
+{
+"productId": "gid://shopify/Product/7498133700711",
+"variantId": "gid://shopify/ProductVariant/42078223532135",
+"title": "Codenames: The Simpsons (Library)",
+"old": "DGL7+-020",
+"new": "DGL7+-S011"
+},
+{
+"productId": "gid://shopify/Product/7498134388839",
+"variantId": "gid://shopify/ProductVariant/42078224220263",
+"title": "Daring Contest (Library)",
+"old": "DGL7+-022",
+"new": "DGL7+-S012"
+},
+{
+"productId": "gid://shopify/Product/7498134487143",
+"variantId": "gid://shopify/ProductVariant/42078224318567",
+"title": "DC Spyfall (Library)",
+"old": "DGL7+-023",
+"new": "DGL7+-S013"
+},
+{
+"productId": "gid://shopify/Product/7498134650983",
+"variantId": "gid://shopify/ProductVariant/42078224482407",
+"title": "Decrypto (Library)",
+"old": "DGL7+-025",
+"new": "DGL7+-S014"
+},
+{
+"productId": "gid://shopify/Product/7498134749287",
+"variantId": "gid://shopify/ProductVariant/42078224744551",
+"title": "Detective Club (Library)",
+"old": "DGL7+-026",
+"new": "DGL7+-S015"
+},
+{
+"productId": "gid://shopify/Product/7498135044199",
+"variantId": "gid://shopify/ProductVariant/42078225039463",
+"title": "Disturbed Friends (Library)",
+"old": "DGL7+-027",
+"new": "DGL7+-S016"
+},
+{
+"productId": "gid://shopify/Product/7498135240807",
+"variantId": "gid://shopify/ProductVariant/42078225236071",
+"title": "Don't Get Got! (Library)",
+"old": "DGL7+-031",
+"new": "DGL7+-S017"
+},
+{
+"productId": "gid://shopify/Product/7498135306343",
+"variantId": "gid://shopify/ProductVariant/42078225301607",
+"title": "Dracula's Feast: New Blood (Library)",
+"old": "DGL7+-032",
+"new": "DGL7+-S018"
+},
+{
+"productId": "gid://shopify/Product/7498135568487",
+"variantId": "gid://shopify/ProductVariant/42078225563751",
+"title": "Dune: Betrayal (Library)",
+"old": "DGL7+-033",
+"new": "DGL7+-S019"
+},
+{
+"productId": "gid://shopify/Product/7498146644071",
+"variantId": "gid://shopify/ProductVariant/42078239162471",
+"title": "The Epic Beard Game (Library)",
+"old": "DGL7+-034",
+"new": "DGL7+-S020"
+},
+{
+"productId": "gid://shopify/Product/7498136387687",
+"variantId": "gid://shopify/ProductVariant/42078226415719",
+"title": "Fangs (Library)",
+"old": "DGL7+-035",
+"new": "DGL7+-S021"
+},
+{
+"productId": "gid://shopify/Product/7498136748135",
+"variantId": "gid://shopify/ProductVariant/42078228578407",
+"title": "Flipology (Library)",
+"old": "DGL7+-037",
+"new": "DGL7+-S022"
+},
+{
+"productId": "gid://shopify/Product/7498137305191",
+"variantId": "gid://shopify/ProductVariant/42078229135463",
+"title": "Geek Out! The 00s Edition (Library)",
+"old": "DGL7+-040",
+"new": "DGL7+-S023"
+},
+{
+"productId": "gid://shopify/Product/7498137337959",
+"variantId": "gid://shopify/ProductVariant/42078229168231",
+"title": "Geek Out! The 80's Edition (Library)",
+"old": "DGL7+-041",
+"new": "DGL7+-S024"
+},
+{
+"productId": "gid://shopify/Product/7498137370727",
+"variantId": "gid://shopify/ProductVariant/42078229200999",
+"title": "Geek Out! The 90's Edition (Library)",
+"old": "DGL7+-042",
+"new": "DGL7+-S025"
+},
+{
+"productId": "gid://shopify/Product/7498137534567",
+"variantId": "gid://shopify/ProductVariant/42078229364839",
+"title": "GoodCritters (Library)",
+"old": "DGL7+-043",
+"new": "DGL7+-S026"
+},
+{
+"productId": "gid://shopify/Product/7498138222695",
+"variantId": "gid://shopify/ProductVariant/42078230085735",
+"title": "Incohearent (Library)",
+"old": "DGL7+-045",
+"new": "DGL7+-S027"
+},
+{
+"productId": "gid://shopify/Product/7498138615911",
+"variantId": "gid://shopify/ProductVariant/42078230478951",
+"title": "Joking Hazard (Library)",
+"old": "DGL7+-046",
+"new": "DGL7+-S028"
+},
+{
+"productId": "gid://shopify/Product/7498138648679",
+"variantId": "gid://shopify/ProductVariant/42078230511719",
+"title": "Just One (Library)",
+"old": "DGL7+-047",
+"new": "DGL7+-S029"
+},
+{
+"productId": "gid://shopify/Product/7498138714215",
+"variantId": "gid://shopify/ProductVariant/42078230577255",
+"title": "Kaupapa (Library)",
+"old": "DGL7+-048",
+"new": "DGL7+-S030"
+},
+{
+"productId": "gid://shopify/Product/7498138779751",
+"variantId": "gid://shopify/ProductVariant/42078230642791",
+"title": "Kemomimi Panic (Library)",
+"old": "DGL7+-049",
+"new": "DGL7+-S031"
+},
+{
+"productId": "gid://shopify/Product/7498146807911",
+"variantId": "gid://shopify/ProductVariant/42078239391847",
+"title": "The Last Brave (Library)",
+"old": "DGL7+-051",
+"new": "DGL7+-S032"
+},
+{
+"productId": "gid://shopify/Product/7498139664487",
+"variantId": "gid://shopify/ProductVariant/42078231691367",
+"title": "Llamas Unleashed (Library)",
+"old": "DGL7+-052",
+"new": "DGL7+-S033"
+},
+{
+"productId": "gid://shopify/Product/7498140418151",
+"variantId": "gid://shopify/ProductVariant/42078232477799",
+"title": "Monikers (Library)",
+"old": "DGL7+-054",
+"new": "DGL7+-S034"
+},
+{
+"productId": "gid://shopify/Product/7498140844135",
+"variantId": "gid://shopify/ProductVariant/42078232903783",
+"title": "Muse (Library)",
+"old": "DGL7+-055",
+"new": "DGL7+-S035"
+},
+{
+"productId": "gid://shopify/Product/7498141401191",
+"variantId": "gid://shopify/ProductVariant/42078233493607",
+"title": "OK Boomer! (Library)",
+"old": "DGL7+-057",
+"new": "DGL7+-S036"
+},
+{
+"productId": "gid://shopify/Product/7498141466727",
+"variantId": "gid://shopify/ProductVariant/42078233559143",
+"title": "One Night Ultimate Werewolf (Library)",
+"old": "DGL7+-058",
+"new": "DGL7+-S037"
+},
+{
+"productId": "gid://shopify/Product/7498142744679",
+"variantId": "gid://shopify/ProductVariant/42078235000935",
+"title": "Radioactive Bunniez Collector's Edition (Library)",
+"old": "DGL7+-059",
+"new": "DGL7+-S038"
+},
+{
+"productId": "gid://shopify/Product/7498142810215",
+"variantId": "gid://shopify/ProductVariant/42078235066471",
+"title": "Ready Set Bet (Library)",
+"old": "DGL7+-060",
+"new": "DGL7+-S039"
+},
+{
+"productId": "gid://shopify/Product/7498146938983",
+"variantId": "gid://shopify/ProductVariant/42078239522919",
+"title": "The Resistance (Library)",
+"old": "DGL7+-061",
+"new": "DGL7+-S040"
+},
+{
+"productId": "gid://shopify/Product/7498143563879",
+"variantId": "gid://shopify/ProductVariant/42078235918439",
+"title": "Saboteur (Library)",
+"old": "DGL7+-062",
+"new": "DGL7+-S041"
+},
+{
+"productId": "gid://shopify/Product/7498143596647",
+"variantId": "gid://shopify/ProductVariant/42078235951207",
+"title": "Saboteur: 20th Anniversary Edition (Library)",
+"old": "DGL7+-063",
+"new": "DGL7+-S042"
+},
+{
+"productId": "gid://shopify/Product/7498144940135",
+"variantId": "gid://shopify/ProductVariant/42078237392999",
+"title": "Spyfall: Time Travel (Library)",
+"old": "DGL7+-073",
+"new": "DGL7+-S043"
+},
+{
+"productId": "gid://shopify/Product/7498145431655",
+"variantId": "gid://shopify/ProductVariant/42078237917287",
+"title": "Stay Cool (Library)",
+"old": "DGL7+-074",
+"new": "DGL7+-S044"
+},
+{
+"productId": "gid://shopify/Product/7498145792103",
+"variantId": "gid://shopify/ProductVariant/42078238277735",
+"title": "Taboo (Library)",
+"old": "DGL7+-075",
+"new": "DGL7+-S045"
+},
+{
+"productId": "gid://shopify/Product/7498145824871",
+"variantId": "gid://shopify/ProductVariant/42078238310503",
+"title": "Taco Cat Goat Cheese Pizza (Library)",
+"old": "DGL7+-076",
+"new": "DGL7+-S046"
+},
+{
+"productId": "gid://shopify/Product/7498147463271",
+"variantId": "gid://shopify/ProductVariant/42078240047207",
+"title": "Timeline: Classic (Library)",
+"old": "DGL7+-083",
+"new": "DGL7+-S047"
+},
+{
+"productId": "gid://shopify/Product/7498147856487",
+"variantId": "gid://shopify/ProductVariant/42078240505959",
+"title": "Trapwords (Library)",
+"old": "DGL7+-084",
+"new": "DGL7+-S048"
+},
+{
+"productId": "gid://shopify/Product/7498147135591",
+"variantId": "gid://shopify/ProductVariant/42078239719527",
+"title": "The Ultimate Date Night Game for Fun Couples (Library)",
+"old": "DGL7+-086",
+"new": "DGL7+-S049"
+},
+{
+"productId": "gid://shopify/Product/7498149167207",
+"variantId": "gid://shopify/ProductVariant/42078244274279",
+"title": "Ultimate Werewolf Deluxe Edition (Library)",
+"old": "DGL7+-087",
+"new": "DGL7+-S050"
+},
+{
+"productId": "gid://shopify/Product/7498148741223",
+"variantId": "gid://shopify/ProductVariant/42078243848295",
+"title": "Unstable Unicorns (Library)",
+"old": "DGL7+-088",
+"new": "DGL7+-S051"
+},
+{
+"productId": "gid://shopify/Product/7498149199975",
+"variantId": "gid://shopify/ProductVariant/42078244307047",
+"title": "Werewords (Library)",
+"old": "DGL7+-090",
+"new": "DGL7+-S052"
+},
+{
+"productId": "gid://shopify/Product/7498149232743",
+"variantId": "gid://shopify/ProductVariant/42078244339815",
+"title": "Werewords Deluxe Edition (Library)",
+"old": "DGL7+-091",
+"new": "DGL7+-S053"
+},
+{
+"productId": "gid://shopify/Product/7498149298279",
+"variantId": "gid://shopify/ProductVariant/42078244405351",
+"title": "What Do You Meme?: BSFW Edition (Library)",
+"old": "DGL7+-092",
+"new": "DGL7+-S054"
+},
+{
+"productId": "gid://shopify/Product/7498149462119",
+"variantId": "gid://shopify/ProductVariant/42078245290087",
+"title": "Witch Hunt (Library)",
+"old": "DGL7+-094",
+"new": "DGL7+-S055"
+},
+{
+"productId": "gid://shopify/Product/7498149527655",
+"variantId": "gid://shopify/ProductVariant/42078247288935",
+"title": "Wits & Wagers: It's Vegas, Baby! (Library)",
+"old": "DGL7+-095",
+"new": "DGL7+-S056"
+},
+{
+"productId": "gid://shopify/Product/7498149724263",
+"variantId": "gid://shopify/ProductVariant/42078247485543",
+"title": "Yahtzee (Library)",
+"old": "DGL7+-096",
+"new": "DGL7+-S057"
+},
+{
+"productId": "gid://shopify/Product/7498130063463",
+"variantId": "gid://shopify/ProductVariant/42078218715239",
+"title": "5 Second Rule (Library)",
+"old": "DGL7+-001",
+"new": "DGL7+-M001"
+},
+{
+"productId": "gid://shopify/Product/7498130096231",
+"variantId": "gid://shopify/ProductVariant/42078218879079",
+"title": "7 Wonders (Library)",
+"old": "DGL7+-002",
+"new": "DGL7+-M002"
+},
+{
+"productId": "gid://shopify/Product/7498130980967",
+"variantId": "gid://shopify/ProductVariant/42078220648551",
+"title": "Articulate! (Library)",
+"old": "DGL7+-005",
+"new": "DGL7+-M003"
+},
+{
+"productId": "gid://shopify/Product/7498131046503",
+"variantId": "gid://shopify/ProductVariant/42078220714087",
+"title": "Atlantis Rising (Second Edition) (Library)",
+"old": "DGL7+-006",
+"new": "DGL7+-M004"
+},
+{
+"productId": "gid://shopify/Product/7498132193383",
+"variantId": "gid://shopify/ProductVariant/42078221992039",
+"title": "Brain Fart (Library)",
+"old": "DGL7+-010",
+"new": "DGL7+-M005"
+},
+{
+"productId": "gid://shopify/Product/7498146480231",
+"variantId": "gid://shopify/ProductVariant/42078238965863",
+"title": "The Chameleon (Library)",
+"old": "DGL7+-013",
+"new": "DGL7+-M006"
+},
+{
+"productId": "gid://shopify/Product/7498146545767",
+"variantId": "gid://shopify/ProductVariant/42078239031399",
+"title": "The Chameleon: Picture Edition (Library)",
+"old": "DGL7+-014",
+"new": "DGL7+-M007"
+},
+{
+"productId": "gid://shopify/Product/7498133799015",
+"variantId": "gid://shopify/ProductVariant/42078223630439",
+"title": "Concept (Library)",
+"old": "DGL7+-021",
+"new": "DGL7+-M008"
+},
+{
+"productId": "gid://shopify/Product/7498134585447",
+"variantId": "gid://shopify/ProductVariant/42078224416871",
+"title": "Deception: Murder in Hong Kong (Library)",
+"old": "DGL7+-024",
+"new": "DGL7+-M009"
+},
+{
+"productId": "gid://shopify/Product/7498135076967",
+"variantId": "gid://shopify/ProductVariant/42078225072231",
+"title": "Dixit (Library)",
+"old": "DGL7+-028",
+"new": "DGL7+-M010"
+},
+{
+"productId": "gid://shopify/Product/7498135109735",
+"variantId": "gid://shopify/ProductVariant/42078225104999",
+"title": "Dixit: Odyssey (Library)",
+"old": "DGL7+-029",
+"new": "DGL7+-M011"
+},
+{
+"productId": "gid://shopify/Product/7498135142503",
+"variantId": "gid://shopify/ProductVariant/42078225137767",
+"title": "Doctor Who DVD Board Game (Library)",
+"old": "DGL7+-030",
+"new": "DGL7+-M012"
+},
+{
+"productId": "gid://shopify/Product/7498136715367",
+"variantId": "gid://shopify/ProductVariant/42078228545639",
+"title": "Flick 'em Up!: Dead of Winter (Library)",
+"old": "DGL7+-036",
+"new": "DGL7+-M013"
+},
+{
+"productId": "gid://shopify/Product/7498136911975",
+"variantId": "gid://shopify/ProductVariant/42078228742247",
+"title": "Forgotten Waters (Library)",
+"old": "DGL7+-038",
+"new": "DGL7+-M014"
+},
+{
+"productId": "gid://shopify/Product/7498138943591",
+"variantId": "gid://shopify/ProductVariant/42078230970471",
+"title": "Kill Doctor Lucky (Library)",
+"old": "DGL7+-050",
+"new": "DGL7+-M015"
+},
+{
+"productId": "gid://shopify/Product/7498139959399",
+"variantId": "gid://shopify/ProductVariant/42078231986279",
+"title": "Magic Maze (Library)",
+"old": "DGL7+-053",
+"new": "DGL7+-M016"
+},
+{
+"productId": "gid://shopify/Product/7498141007975",
+"variantId": "gid://shopify/ProductVariant/42078233067623",
+"title": "Mysterium (Library)",
+"old": "DGL7+-056",
+"new": "DGL7+-M017"
+},
+{
+"productId": "gid://shopify/Product/7498143727719",
+"variantId": "gid://shopify/ProductVariant/42078236082279",
+"title": "Scooby-Doo: Escape from the Haunted Mansion (Library)",
+"old": "DGL7+-064",
+"new": "DGL7+-M018"
+},
+{
+"productId": "gid://shopify/Product/7498143793255",
+"variantId": "gid://shopify/ProductVariant/42078236147815",
+"title": "Scrawl (Library)",
+"old": "DGL7+-065",
+"new": "DGL7+-M019"
+},
+{
+"productId": "gid://shopify/Product/7498144022631",
+"variantId": "gid://shopify/ProductVariant/42078236377191",
+"title": "Sherlock Holmes Consulting Detective: Carlton House & Queen's Park (Library)",
+"old": "DGL7+-067",
+"new": "DGL7+-M020"
+},
+{
+"productId": "gid://shopify/Product/7498144055399",
+"variantId": "gid://shopify/ProductVariant/42078236409959",
+"title": "Sherlock Holmes Consulting Detective: The Baker Street Irregulars (Library)",
+"old": "DGL7+-068",
+"new": "DGL7+-M021"
+},
+{
+"productId": "gid://shopify/Product/7498144088167",
+"variantId": "gid://shopify/ProductVariant/42078236442727",
+"title": "Sherlock Holmes Consulting Detective: The Thames Murders & Other Cases (Library)",
+"old": "DGL7+-069",
+"new": "DGL7+-M022"
+},
+{
+"productId": "gid://shopify/Product/7498144153703",
+"variantId": "gid://shopify/ProductVariant/42078236541031",
+"title": "Sidibaba (Library)",
+"old": "DGL7+-070",
+"new": "DGL7+-M023"
+},
+{
+"productId": "gid://shopify/Product/7498144252007",
+"variantId": "gid://shopify/ProductVariant/42078236639335",
+"title": "Sketchagrams (Library)",
+"old": "DGL7+-071",
+"new": "DGL7+-M024"
+},
+{
+"productId": "gid://shopify/Product/7498144448615",
+"variantId": "gid://shopify/ProductVariant/42078236868711",
+"title": "Smart Ass (Library)",
+"old": "DGL7+-072",
+"new": "DGL7+-M025"
+},
+{
+"productId": "gid://shopify/Product/7498146152551",
+"variantId": "gid://shopify/ProductVariant/42078238638183",
+"title": "Telestrations: 12 Player Party Pack (Library)",
+"old": "DGL7+-078",
+"new": "DGL7+-M026"
+},
+{
+"productId": "gid://shopify/Product/7498146185319",
+"variantId": "gid://shopify/ProductVariant/42078238670951",
+"title": "Telestrations After Dark (Library)",
+"old": "DGL7+-079",
+"new": "DGL7+-M027"
+},
+{
+"productId": "gid://shopify/Product/7498146218087",
+"variantId": "gid://shopify/ProductVariant/42078238703719",
+"title": "Telestrations: Upside Drawn (Library)",
+"old": "DGL7+-080",
+"new": "DGL7+-M028"
+},
+{
+"productId": "gid://shopify/Product/7498142416999",
+"variantId": "gid://shopify/ProductVariant/42078234673255",
+"title": "Texas Hold'em Poker Set (Library)",
+"old": "DGL7+-081",
+"new": "DGL7+-M029"
+},
+{
+"productId": "gid://shopify/Product/7498147430503",
+"variantId": "gid://shopify/ProductVariant/42078240014439",
+"title": "Tilt 'N' Shout (Library)",
+"old": "DGL7+-082",
+"new": "DGL7+-M030"
+},
+{
+"productId": "gid://shopify/Product/7498148020327",
+"variantId": "gid://shopify/ProductVariant/42078240735335",
+"title": "Tripoley (Library)",
+"old": "DGL7+-085",
+"new": "DGL7+-M031"
+},
+{
+"productId": "gid://shopify/Product/7498149134439",
+"variantId": "gid://shopify/ProductVariant/42078244241511",
+"title": "Wavelength (Library)",
+"old": "DGL7+-089",
+"new": "DGL7+-M032"
+},
+{
+"productId": "gid://shopify/Product/7498149363815",
+"variantId": "gid://shopify/ProductVariant/42078245191783",
+"title": "What Were You Thinking? (Library)",
+"old": "DGL7+-093",
+"new": "DGL7+-M033"
+},
+{
+"productId": "gid://shopify/Product/7498132029543",
+"variantId": "gid://shopify/ProductVariant/42078221828199",
+"title": "Blood on the Clocktower (Library)",
+"old": "DGL7+-009",
+"new": "DGL7+-L001"
+},
+{
+"productId": "gid://shopify/Product/7498132848743",
+"variantId": "gid://shopify/ProductVariant/42078222680167",
+"title": "Caverna: The Cave Farmers (Library)",
+"old": "DGL7+-012",
+"new": "DGL7+-L002"
+},
+{
+"productId": "gid://shopify/Product/7498137043047",
+"variantId": "gid://shopify/ProductVariant/42078228873319",
+"title": "Fortune and Glory: The Cliffhanger Game (Library)",
+"old": "DGL7+-039",
+"new": "DGL7+-L003"
+},
+{
+"productId": "gid://shopify/Product/7498138091623",
+"variantId": "gid://shopify/ProductVariant/42078229954663",
+"title": "Ignite (Library)",
+"old": "DGL7+-044",
+"new": "DGL7+-L004"
+},
+{
+"productId": "gid://shopify/Product/7498143826023",
+"variantId": "gid://shopify/ProductVariant/42078236180583",
+"title": "Secret Hitler (Library)",
+"old": "DGL7+-066",
+"new": "DGL7+-L005"
+},
+{
+"productId": "gid://shopify/Product/7498146021479",
+"variantId": "gid://shopify/ProductVariant/42078238507111",
+"title": "Tannhäuser (Library)",
+"old": "DGL7+-077",
+"new": "DGL7+-L006"
+},
+{
+"productId": "gid://shopify/Product/7498129866855",
+"variantId": "gid://shopify/ProductVariant/42078215733351",
+"title": "1000 and One Treasures (Library)",
+"old": "DGLF-001",
+"new": "DGLF-S001"
+},
+{
+"productId": "gid://shopify/Product/7498131341415",
+"variantId": "gid://shopify/ProductVariant/42078221008999",
+"title": "Bananagrams (Library)",
+"old": "DGLF-004",
+"new": "DGLF-S002"
+},
+{
+"productId": "gid://shopify/Product/7498132095079",
+"variantId": "gid://shopify/ProductVariant/42078221893735",
+"title": "Boba Master (Library)",
+"old": "DGLF-007",
+"new": "DGLF-S003"
+},
+{
+"productId": "gid://shopify/Product/7498132160615",
+"variantId": "gid://shopify/ProductVariant/42078221959271",
+"title": "Bottle Topps (Library)",
+"old": "DGLF-008",
+"new": "DGLF-S004"
+},
+{
+"productId": "gid://shopify/Product/7498136289383",
+"variantId": "gid://shopify/ProductVariant/42078226317415",
+"title": "Exploding Kittens: Party Pack (Library)",
+"old": "DGLF-017",
+"new": "DGLF-S005"
+},
+{
+"productId": "gid://shopify/Product/7498136322151",
+"variantId": "gid://shopify/ProductVariant/42078226350183",
+"title": "Exploding Minions (Library)",
+"old": "DGLF-018",
+"new": "DGLF-S006"
+},
+{
+"productId": "gid://shopify/Product/7498136420455",
+"variantId": "gid://shopify/ProductVariant/42078226448487",
+"title": "Fastrack (Library)",
+"old": "DGLF-019",
+"new": "DGLF-S007"
+},
+{
+"productId": "gid://shopify/Product/7498137403495",
+"variantId": "gid://shopify/ProductVariant/42078229233767",
+"title": "Glimstone Grab (Library)",
+"old": "DGLF-020",
+"new": "DGLF-S008"
+},
+{
+"productId": "gid://shopify/Product/7498137567335",
+"variantId": "gid://shopify/ProductVariant/42078229397607",
+"title": "Granny Wars: A Game of Tit for Tat (Library)",
+"old": "DGLF-021",
+"new": "DGLF-S009"
+},
+{
+"productId": "gid://shopify/Product/7498137895015",
+"variantId": "gid://shopify/ProductVariant/42078229758055",
+"title": "Hoard (Library)",
+"old": "DGLF-022",
+"new": "DGLF-S010"
+},
+{
+"productId": "gid://shopify/Product/7498139172967",
+"variantId": "gid://shopify/ProductVariant/42078231199847",
+"title": "Kiwetin (Library)",
+"old": "DGLF-027",
+"new": "DGLF-S011"
+},
+{
+"productId": "gid://shopify/Product/7498139304039",
+"variantId": "gid://shopify/ProductVariant/42078231330919",
+"title": "Kraken Attack! (Library)",
+"old": "DGLF-028",
+"new": "DGLF-S012"
+},
+{
+"productId": "gid://shopify/Product/7498142089319",
+"variantId": "gid://shopify/ProductVariant/42078234214503",
+"title": "Pick-Up Pete (Library)",
+"old": "DGLF-032",
+"new": "DGLF-S013"
+},
+{
+"productId": "gid://shopify/Product/7498142253159",
+"variantId": "gid://shopify/ProductVariant/42078234378343",
+"title": "Pitch Out (Library)",
+"old": "DGLF-033",
+"new": "DGLF-S014"
+},
+{
+"productId": "gid://shopify/Product/7498142974055",
+"variantId": "gid://shopify/ProductVariant/42078235230311",
+"title": "Rhino Hero (Library)",
+"old": "DGLF-037",
+"new": "DGLF-S015"
+},
+{
+"productId": "gid://shopify/Product/7498144186471",
+"variantId": "gid://shopify/ProductVariant/42078236573799",
+"title": "Similo (Library)",
+"old": "DGLF-040",
+"new": "DGLF-S016"
+},
+{
+"productId": "gid://shopify/Product/7498144612455",
+"variantId": "gid://shopify/ProductVariant/42078237065319",
+"title": "SOS Dino (Library)",
+"old": "DGLF-042",
+"new": "DGLF-S017"
+},
+{
+"productId": "gid://shopify/Product/7498143760487",
+"variantId": "gid://shopify/ProductVariant/42078236115047",
+"title": "SpongeBob Card Scramble! (Library)",
+"old": "DGLF-043",
+"new": "DGLF-S018"
+},
+{
+"productId": "gid://shopify/Product/7498144907367",
+"variantId": "gid://shopify/ProductVariant/42078237360231",
+"title": "Spot it! (Library)",
+"old": "DGLF-044",
+"new": "DGLF-S019"
+},
+{
+"productId": "gid://shopify/Product/7498145857639",
+"variantId": "gid://shopify/ProductVariant/42078238343271",
+"title": "Tacocat Spelled Backwards (Library)",
+"old": "DGLF-046",
+"new": "DGLF-S020"
+},
+{
+"productId": "gid://shopify/Product/7498148085863",
+"variantId": "gid://shopify/ProductVariant/42078240800871",
+"title": "Troll & Dragon (Library)",
+"old": "DGLF-051",
+"new": "DGLF-S021"
+},
+{
+"productId": "gid://shopify/Product/7498148675687",
+"variantId": "gid://shopify/ProductVariant/42078243782759",
+"title": "UNO (Library)",
+"old": "DGLF-053",
+"new": "DGLF-S022"
+},
+{
+"productId": "gid://shopify/Product/7498130325607",
+"variantId": "gid://shopify/ProductVariant/42078219108455",
+"title": "A Game of Cat & Mouth (Library)",
+"old": "DGLF-002",
+"new": "DGLF-M001"
+},
+{
+"productId": "gid://shopify/Product/7498130554983",
+"variantId": "gid://shopify/ProductVariant/42078219337831",
+"title": "Andor: The Family Fantasy Game (Library)",
+"old": "DGLF-003",
+"new": "DGLF-M002"
+},
+{
+"productId": "gid://shopify/Product/7498131669095",
+"variantId": "gid://shopify/ProductVariant/42078221434983",
+"title": "Battleship (Library)",
+"old": "DGLF-005",
+"new": "DGLF-M003"
+},
+{
+"productId": "gid://shopify/Product/7498131996775",
+"variantId": "gid://shopify/ProductVariant/42078221795431",
+"title": "Blokus (Library)",
+"old": "DGLF-006",
+"new": "DGLF-M004"
+},
+{
+"productId": "gid://shopify/Product/7498132717671",
+"variantId": "gid://shopify/ProductVariant/42078222549095",
+"title": "Catan Junior (Library)",
+"old": "DGLF-010",
+"new": "DGLF-M005"
+},
+{
+"productId": "gid://shopify/Product/7498133471335",
+"variantId": "gid://shopify/ProductVariant/42078223302759",
+"title": "Coconuts (Library)",
+"old": "DGLF-013",
+"new": "DGLF-M006"
+},
+{
+"productId": "gid://shopify/Product/7498133831783",
+"variantId": "gid://shopify/ProductVariant/42078223663207",
+"title": "Concept Kids: Animals (Library)",
+"old": "DGLF-014",
+"new": "DGLF-M007"
+},
+{
+"productId": "gid://shopify/Product/7498133864551",
+"variantId": "gid://shopify/ProductVariant/42078223695975",
+"title": "Connect Four (Library)",
+"old": "DGLF-015",
+"new": "DGLF-M008"
+},
+{
+"productId": "gid://shopify/Product/7498134126695",
+"variantId": "gid://shopify/ProductVariant/42078223958119",
+"title": "Cranium Cadoo (Library)",
+"old": "DGLF-016",
+"new": "DGLF-M009"
+},
+{
+"productId": "gid://shopify/Product/7498138583143",
+"variantId": "gid://shopify/ProductVariant/42078230446183",
+"title": "Jenga (Library)",
+"old": "DGLF-025",
+"new": "DGLF-M010"
+},
+{
+"productId": "gid://shopify/Product/7498138845287",
+"variantId": "gid://shopify/ProductVariant/42078230708327",
+"title": "Kids Know Best (Library)",
+"old": "DGLF-026",
+"new": "DGLF-M011"
+},
+{
+"productId": "gid://shopify/Product/7498140549223",
+"variantId": "gid://shopify/ProductVariant/42078232608871",
+"title": "Monsieur Carrousel (Library)",
+"old": "DGLF-030",
+"new": "DGLF-M012"
+},
+{
+"productId": "gid://shopify/Product/7498142384231",
+"variantId": "gid://shopify/ProductVariant/42078234640487",
+"title": "Pokémon Trading Card Game: Battle Academy (Library)",
+"old": "DGLF-035",
+"new": "DGLF-M013"
+},
+{
+"productId": "gid://shopify/Product/7498142679143",
+"variantId": "gid://shopify/ProductVariant/42078234935399",
+"title": "Qwirkle (Library)",
+"old": "DGLF-036",
+"new": "DGLF-M014"
+},
+{
+"productId": "gid://shopify/Product/7498143858791",
+"variantId": "gid://shopify/ProductVariant/42078236213351",
+"title": "Sequence (Library)",
+"old": "DGLF-039",
+"new": "DGLF-M015"
+},
+{
+"productId": "gid://shopify/Product/7498144219239",
+"variantId": "gid://shopify/ProductVariant/42078236606567",
+"title": "Simon Air (Library)",
+"old": "DGLF-041",
+"new": "DGLF-M016"
+},
+{
+"productId": "gid://shopify/Product/7498145595495",
+"variantId": "gid://shopify/ProductVariant/42078238081127",
+"title": "Stuffed Fables (Library)",
+"old": "DGLF-045",
+"new": "DGLF-M017"
+},
+{
+"productId": "gid://shopify/Product/7498147233895",
+"variantId": "gid://shopify/ProductVariant/42078239817831",
+"title": "Throw Throw Avocado (Library)",
+"old": "DGLF-047",
+"new": "DGLF-M018"
+},
+{
+"productId": "gid://shopify/Product/7498147266663",
+"variantId": "gid://shopify/ProductVariant/42078239850599",
+"title": "Throw Throw Burrito (Library)",
+"old": "DGLF-048",
+"new": "DGLF-M019"
+},
+{
+"productId": "gid://shopify/Product/7498147364967",
+"variantId": "gid://shopify/ProductVariant/42078239948903",
+"title": "Ticket to Ride: First Journey (Europe) (Library)",
+"old": "DGLF-049",
+"new": "DGLF-M020"
+},
+{
+"productId": "gid://shopify/Product/7498148118631",
+"variantId": "gid://shopify/ProductVariant/42078240833639",
+"title": "Trouble (Library)",
+"old": "DGLF-052",
+"new": "DGLF-M021"
+},
+{
+"productId": "gid://shopify/Product/7498148839527",
+"variantId": "gid://shopify/ProductVariant/42078243946599",
+"title": "Valley of the Vikings (Library)",
+"old": "DGLF-054",
+"new": "DGLF-M022"
+},
+{
+"productId": "gid://shopify/Product/7498149036135",
+"variantId": "gid://shopify/ProductVariant/42078244143207",
+"title": "Viva Topo! (Library)",
+"old": "DGLF-055",
+"new": "DGLF-M023"
+},
+{
+"productId": "gid://shopify/Product/7498132324455",
+"variantId": "gid://shopify/ProductVariant/42078222123111",
+"title": "Carcassonne Big Box 7 (Library)",
+"old": "DGLF-009",
+"new": "DGLF-L001"
+},
+{
+"productId": "gid://shopify/Product/7519131074663",
+"variantId": "gid://shopify/ProductVariant/42142383898727",
+"title": "Checkers (Library)",
+"old": "DGLF-011",
+"new": "DGLF-L002"
+},
+{
+"productId": "gid://shopify/Product/7498133045351",
+"variantId": "gid://shopify/ProductVariant/42078222876775",
+"title": "Chess (Library)",
+"old": "DGLF-012",
+"new": "DGLF-L003"
+},
+{
+"productId": "gid://shopify/Product/7498138026087",
+"variantId": "gid://shopify/ProductVariant/42078229889127",
+"title": "ICECOOL (Library)",
+"old": "DGLF-023",
+"new": "DGLF-L004"
+},
+{
+"productId": "gid://shopify/Product/7498138058855",
+"variantId": "gid://shopify/ProductVariant/42078229921895",
+"title": "ICECOOL2 (Library)",
+"old": "DGLF-024",
+"new": "DGLF-L005"
+},
+{
+"productId": "gid://shopify/Product/7498139402343",
+"variantId": "gid://shopify/ProductVariant/42078231429223",
+"title": "Labyrinth (Library)",
+"old": "DGLF-029",
+"new": "DGLF-L006"
+},
+{
+"productId": "gid://shopify/Product/7498142023783",
+"variantId": "gid://shopify/ProductVariant/42078234148967",
+"title": "Pharaoh's Gulo Gulo (Library)",
+"old": "DGLF-031",
+"new": "DGLF-L007"
+},
+{
+"productId": "gid://shopify/Product/7498142220391",
+"variantId": "gid://shopify/ProductVariant/42078234345575",
+"title": "PitchCar (Library)",
+"old": "DGLF-034",
+"new": "DGLF-L008"
+},
+{
+"productId": "gid://shopify/Product/7498143006823",
+"variantId": "gid://shopify/ProductVariant/42078235263079",
+"title": "Rhino Hero: Super Battle (Library)",
+"old": "DGLF-038",
+"new": "DGLF-L009"
+},
+{
+"productId": "gid://shopify/Product/7498147758183",
+"variantId": "gid://shopify/ProductVariant/42078240407655",
+"title": "TopSpin (Library)",
+"old": "DGLF-050",
+"new": "DGLF-L010"
+}
+]
