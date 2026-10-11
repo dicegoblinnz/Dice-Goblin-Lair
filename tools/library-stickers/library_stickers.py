@@ -8,7 +8,13 @@ Each sticker: the game's name, a QR code holding the copy's barcode (what Shopif
 by, the same value the website's QR code holds), the shelf code in big type, the shelf, and players / play time /
 ages. No heading or footer, so all of it can be big (Mo, 10 Oct).
 
-Usage: python3 library_stickers.py games.json stickers.pdf [fonts_dir] [layout_report.json]
+The Dice Goblin logo (Mo, 11 Oct: "have a dice goblin logo on it even in black and white"), two ways to choose from:
+  qr    Gobgob in the middle of the QR code. The code is a bigger QR version (5) so the logo covers under a tenth
+        of it, and it still reads with an 11 mm scuff anywhere on it, as today's plain code does.
+  band  the DICE GOBLIN wordmark across the top, above the name; the QR code is smaller to make room.
+The logos are the theme's own PNGs, turned into black and white and traced into solid shapes, so they print crisp.
+
+Usage: python3 library_stickers.py games.json stickers.pdf [fonts_dir] [layout_report.json] [--logo=qr|band]
 games.json is a list of {title, code, qr, players, time, ages}; code is the shelf code (custom.library_code),
 qr the variant barcode (else SKU, else the shelf code).
 """
@@ -19,13 +25,17 @@ import sys
 import tempfile
 from itertools import combinations
 
+import numpy as np
+import potrace
 import segno
 from fontTools.merge import Merger
 from fontTools.ttLib import TTFont as FTFont
+from PIL import Image
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
+from reportlab.pdfgen.canvas import FILL_EVEN_ODD
 
 PAGE_W, PAGE_H = 150 * mm, 100 * mm
 LABEL_W = 75 * mm
@@ -83,6 +93,15 @@ def bottom_block_top(stats_lines, stats_size, shelf_size, code_size):
 # Every QR code is the same size: as big as a full sticker (three lines of name and every detail on one line)
 # has room for. The few stickers whose details need two lines get a slightly smaller one.
 QR_BOX = (PAGE_H - MARGIN - TITLE_HEIGHT - QR_GAP) - (bottom_block_top(1, STATS_SIZE, SHELF_SIZE, CODE_SIZE) + QR_GAP)
+
+# The logo (11 Oct). In the QR code: version 5 (37 modules) at error correction H, with the middle 11 x 11 modules
+# left white for Gobgob (no alignment pattern sits there in version 5). In tests it read with a scuff of up to 11 mm
+# anywhere on it, and from blurred, turned and tilted 'phone photos' nearly as often as today's plain version 1 code
+# (a bigger hole or version 6 read noticeably less often). Across the top: the wordmark, BAND_W wide.
+LOGO_THRESHOLD = 0.32  # how dark a colour has to be to print black (Gobgob's hood and outlines, not the bright green)
+QR_LOGO_VERSION, QR_LOGO_HOLE = 5, 11
+BAND_W, BAND_GAP = 58 * mm, 2.6 * mm
+LOGOS = {}  # 'gobgob' / 'wordmark' -> the theme's PNG, set by load_logos
 
 
 def load_fonts(fonts_dir):
@@ -301,13 +320,85 @@ def players_label(players):
     return f'{text} player' if text == '1' else f'{text} players'
 
 
-def draw_qr(c, value, x, y, size):
+def load_logos(assets_dir):
+    LOGOS['gobgob'] = os.path.join(assets_dir, 'gobgob-480.png')
+    LOGOS['wordmark'] = os.path.join(assets_dir, 'dg-wordmark-960.png')
+
+
+TRACED = {}  # logo name -> (curves, width, height) in the traced bitmap's pixels
+
+
+def traced_logo(name):
+    """The logo as solid black shapes: the theme's PNG enlarged twice over, laid on white, every pixel darker than
+    LOGO_THRESHOLD black (the outlines, Gobgob's hood; the bright green and the bag go white), then traced into curves,
+    so it prints crisp at any size and the PDF holds it once."""
+    if name not in TRACED:
+        im = Image.open(LOGOS[name]).convert('RGBA')
+        flat = Image.alpha_composite(Image.new('RGBA', im.size, (255, 255, 255, 255)), im).convert('RGB')
+        big = flat.resize((im.width * 2, im.height * 2), Image.LANCZOS)
+        rgb = np.asarray(big, dtype=float) / 255
+        lum = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+        # (potracer traces the False pixels, so the light ones are passed as True)
+        curves = potrace.Bitmap(lum >= LOGO_THRESHOLD).trace(
+            turdsize=12, turnpolicy=potrace.POTRACE_TURNPOLICY_MINORITY, alphamax=1.0, opticurve=True, opttolerance=0.2)
+        TRACED[name] = (list(curves), big.width, big.height)
+    return TRACED[name]
+
+
+def logo_height(name, width):
+    _, w_px, h_px = traced_logo(name)
+    return width * h_px / w_px
+
+
+def draw_logo(c, name, x, y, width):
+    """The logo, width wide, its bottom left corner at (x, y), as one Form XObject drawn once per PDF."""
+    curves, w_px, h_px = traced_logo(name)
+    form = f'logo-{name}'
+    if form not in DRAWN_FORMS:
+        # the form is the logo at its bitmap's size in points, y up
+        c.beginForm(form, 0, 0, w_px, h_px)
+        c.setFillColorRGB(*BLACK)
+        path = c.beginPath()
+        for curve in curves:
+            path.moveTo(curve.start_point.x, h_px - curve.start_point.y)
+            for seg in curve.segments:
+                if seg.is_corner:
+                    path.lineTo(seg.c.x, h_px - seg.c.y)
+                    path.lineTo(seg.end_point.x, h_px - seg.end_point.y)
+                else:
+                    path.curveTo(seg.c1.x, h_px - seg.c1.y, seg.c2.x, h_px - seg.c2.y, seg.end_point.x, h_px - seg.end_point.y)
+            path.close()
+        c.drawPath(path, stroke=0, fill=1, fillMode=FILL_EVEN_ODD)
+        c.endForm()
+        DRAWN_FORMS.add(form)
+    k = width / w_px
+    c.saveState()
+    c.translate(x, y)
+    c.scale(k, k)
+    c.doForm(form)
+    c.restoreState()
+    return h_px * k
+
+
+DRAWN_FORMS = set()
+
+
+def draw_qr(c, value, x, y, size, logo=False):
     """A QR code as solid black squares, its 4-module quiet zone inside size. Error correction H, so a scuffed
-    sticker still scans. Each row's runs are one rectangle, so no hairlines show between modules."""
-    qr = segno.make(value, error='h', micro=False, boost_error=False)
+    sticker still scans. Each row's runs are one rectangle, so no hairlines show between modules. logo: Gobgob in the
+    middle, on QR_LOGO_HOLE x QR_LOGO_HOLE modules left white, half a module clear all round."""
+    if logo:
+        qr = segno.make(value, error='h', version=QR_LOGO_VERSION, boost_error=False)
+    else:
+        qr = segno.make(value, error='h', micro=False, boost_error=False)
     rows = [list(r) for r in qr.matrix]
     n = len(rows)
     module = size / (n + 8)
+    if logo:
+        h0 = (n - QR_LOGO_HOLE) // 2
+        for r in range(h0, h0 + QR_LOGO_HOLE):
+            for col in range(h0, h0 + QR_LOGO_HOLE):
+                rows[r][col] = 0
     c.setFillColorRGB(*BLACK)
     for r, row in enumerate(rows):
         col = 0
@@ -319,16 +410,31 @@ def draw_qr(c, value, x, y, size):
                 c.rect(x + (4 + start) * module, y + size - (4 + r + 1) * module, (col - start) * module, module, stroke=0, fill=1)
             else:
                 col += 1
+    if logo:
+        # Gobgob as big as fits inside the white square, half a module clear all round
+        room = (QR_LOGO_HOLE - 1) * module
+        w = min(room, room * room / logo_height('gobgob', room))
+        h = logo_height('gobgob', w)
+        mid_x = x + (4 + n / 2) * module
+        mid_y = y + size - (4 + n / 2) * module
+        draw_logo(c, 'gobgob', mid_x - w / 2, mid_y - h / 2, w)
     return qr
 
 
-def draw_sticker(c, x0, game):
+def draw_sticker(c, x0, game, logo=None):
     """The game's name at the top, the shelf code and its details along the bottom, and the QR code as big as
-    possible in the middle (Mo, 10 Oct: no heading or footer, everything bigger)."""
+    possible in the middle (Mo, 10 Oct: no heading or footer, everything bigger). logo: None, 'qr' (Gobgob in the
+    QR code) or 'band' (the wordmark above the name)."""
     left, right = x0 + MARGIN, x0 + LABEL_W - MARGIN
     inner = right - left
     cx = x0 + LABEL_W / 2
     top, bottom = PAGE_H - MARGIN, MARGIN
+    qr_box = QR_BOX
+    if logo == 'band':
+        band_h = logo_height('wordmark', BAND_W)
+        draw_logo(c, 'wordmark', cx - BAND_W / 2, top - band_h, BAND_W)
+        top -= band_h + BAND_GAP
+        qr_box -= band_h + BAND_GAP
     c.setFillColorRGB(*BLACK)
 
     # The game's name, the top of its first line's ink at the top margin
@@ -359,9 +465,9 @@ def draw_sticker(c, x0, game):
 
     # The QR code, centred in the space between the name and the shelf code
     room = (title_bottom - QR_GAP) - (code_top + QR_GAP)
-    qr_size = min(QR_BOX, room)
+    qr_size = min(qr_box, room)
     qr_y = code_top + QR_GAP + (room - qr_size) / 2
-    draw_qr(c, game['qr'], cx - qr_size / 2, qr_y, qr_size)
+    draw_qr(c, game['qr'], cx - qr_size / 2, qr_y, qr_size, logo=logo == 'qr')
     return {'title_lines': lines, 'title_size': size, 'stats_lines': stats_lines, 'stats_size': stats_size,
             'shelf_size': shelf_size, 'code_size': code_size, 'qr_mm': qr_size / mm}
 
@@ -375,8 +481,9 @@ def cut_line(c):
     c.restoreState()
 
 
-def build(games, out, fonts_dir, report=None):
+def build(games, out, fonts_dir, report=None, logo=None):
     load_fonts(fonts_dir)
+    load_logos(fonts_dir)
     games = sorted(games, key=lambda g: g['code'])
     c = canvas.Canvas(out, pagesize=(PAGE_W, PAGE_H), pageCompression=1)
     c.setTitle('Dice Goblin library stickers')
@@ -386,7 +493,7 @@ def build(games, out, fonts_dir, report=None):
     for i in range(0, len(games), 2):
         pair = games[i:i + 2]
         for j, game in enumerate(pair):
-            info = draw_sticker(c, j * LABEL_W, game)
+            info = draw_sticker(c, j * LABEL_W, game, logo)
             layout.append({'code': game['code'], 'page': i // 2 + 1, **info})
         cut_line(c)
         c.showPage()
@@ -397,8 +504,13 @@ def build(games, out, fonts_dir, report=None):
 
 
 if __name__ == '__main__':
-    games = json.load(open(sys.argv[1], encoding='utf-8'))
-    fonts = sys.argv[3] if len(sys.argv) > 3 else '/home/claude/dice-goblin-website/assets'
-    report = sys.argv[4] if len(sys.argv) > 4 else None
-    done = build(games, sys.argv[2], fonts, report)
-    print(f'{len(done)} stickers on {(len(done) + 1) // 2} pages: {sys.argv[2]}')
+    flags = [a for a in sys.argv[1:] if a.startswith('--logo=')]
+    args = [a for a in sys.argv[1:] if not a.startswith('--logo=')]
+    logo = flags[-1].split('=', 1)[1] if flags else None
+    if logo not in (None, 'qr', 'band'):
+        sys.exit('--logo is qr or band')
+    games = json.load(open(args[0], encoding='utf-8'))
+    fonts = args[2] if len(args) > 2 else '/home/claude/dice-goblin-website/assets'
+    report = args[3] if len(args) > 3 else None
+    done = build(games, args[1], fonts, report, logo)
+    print(f'{len(done)} stickers on {(len(done) + 1) // 2} pages: {args[1]}')
