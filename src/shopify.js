@@ -103,6 +103,19 @@ async function madeAnyway(call) {
   }
 }
 
+/**
+ * The orders the Lair makes for store credit (createPaidDraft and the calls after it): each call gives up after this,
+ * so a try never outlives the claim the Lair keeps on it while it's with Shopify
+ */
+export const SHOPIFY_ORDER_TIMEOUT = 30_000;
+const ORDER_FIELDS = 'id name totalPriceSet { shopMoney { amount currencyCode } }';
+/** An order as { id, name, total (cents, or null) }, or null */
+const orderOf = (o) => {
+  if (!o?.id) return null;
+  const amount = o.totalPriceSet?.shopMoney?.amount;
+  return { id: o.id, name: o.name || null, total: amount != null && Number.isFinite(Number(amount)) ? Math.round(Number(amount) * 100) : null };
+};
+
 export class ShopifyAdmin {
   /**
    * The Lair's own Shopify app by default. Library memberships log in as a second app (Lair Memberships) with their own
@@ -152,20 +165,23 @@ export class ShopifyAdmin {
 
   /**
    * One Admin API call: its data, or an error. A mutation Shopify made but answered with errors (a denied field) is
-   * never sent again; its error carries the answer it did give (error.partial).
+   * never sent again; its error carries the answer it did give (error.partial). options: { timeout } (ms: no answer by
+   * then throws, as a lost answer does), or true for the one try again after a fresh token.
    */
-  async graphql(query, variables = {}, retried = false) {
+  async graphql(query, variables = {}, options = {}) {
+    const { retried = false, timeout = null } = typeof options === 'boolean' ? { retried: options } : options || {};
     const response = await fetch(`https://${this.shop}/admin/api/${this.version}/graphql.json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': await this.accessToken() },
       body: JSON.stringify({ query, variables }),
+      ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}),
     });
     if ((response.status === 401 || response.status === 403) && !retried) {
       // The saved token was revoked or is missing a newly added scope: get a fresh one and try once more.
       this.token = null;
       this.tokenExpires = 0;
       await this.storage?.delete?.(this.tokenKey);
-      return this.graphql(query, variables, true);
+      return this.graphql(query, variables, { retried: true, timeout });
     }
     if (!response.ok) throw new Error(`Shopify API error ${response.status}`);
     const { data, errors } = await response.json();
@@ -181,7 +197,7 @@ export class ShopifyAdmin {
         this.token = null;
         this.tokenExpires = 0;
         await this.storage?.delete?.(this.tokenKey);
-        if (!made) return this.graphql(query, variables, true);
+        if (!made) return this.graphql(query, variables, { retried: true, timeout });
       }
       const error = new Error(`Shopify API: ${errors.map((e) => e.message).join('; ')}`);
       if (made) error.partial = data;
@@ -655,65 +671,86 @@ export class ShopifyAdmin {
    * 11 Oct 2026 (Mo: store credit taken for a damage charge "wasn't on the account, my orders list or any information
    * regarding it"): something the Lair has been paid for another way gets a Shopify order of its own, so it shows in
    * Orders, on the customer and in the reports. This is its draft: for the customer, one line (the variant at the price
-   * paid, with lineAttributes as its properties, nothing shipped), tagged, with the Lair's marker on it (attributes, so a
-   * draft whose answer was lost is found again by findMarkedDraft rather than made twice). completePaidDraft then makes
-   * it a paid order: Shopify works out the tax as it does at checkout, and emails the customer its order confirmation.
-   * Returns { id } (the draft's), or throws: error.refused when Shopify said no, so nothing was made.
+   * paid, with lineAttributes as its properties, nothing shipped, no automatic discounts), tagged, with the Lair's
+   * marker on it (attributes, so one whose answer was lost is found again by findMarkedDraft or, once it's an order,
+   * findMarkedOrder, rather than made twice). completePaidDraft then makes it a paid order: Shopify works out the tax as
+   * it does at checkout, and emails the customer its order confirmation. Every call here gives up after `timeout` ms (a
+   * lost answer). Returns { id, ready } (the draft's; ready: Shopify has finished working it out), or throws:
+   * error.refused when Shopify said no, so nothing was made.
    */
-  async createPaidDraft({ customerId, variantId, cents, currency, note, tags, marker, lineAttributes = {} }) {
+  async createPaidDraft({ customerId, variantId, cents, currency, note, tags, marker, lineAttributes = {} }, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
     const attrs = (list) => Object.entries(list || {}).filter(([, v]) => v != null && v !== '').map(([key, value]) => ({ key, value: String(value).slice(0, 250) }));
     const data = await madeAnyway(this.graphql(
-      'mutation LairPaidDraft($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } userErrors { field message } } }',
+      'mutation LairPaidDraft($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id ready } userErrors { field message } } }',
       {
         input: {
           purchasingEntity: { customerId: `gid://shopify/Customer/${customerId}` },
-          tags, note, customAttributes: attrs(marker),
+          tags, note, customAttributes: attrs(marker), acceptAutomaticDiscounts: false,
           lineItems: [{
             variantId: String(variantId).startsWith('gid://') ? String(variantId) : `gid://shopify/ProductVariant/${variantId}`, quantity: 1,
             priceOverride: { amount: (cents / 100).toFixed(2), currencyCode: currency }, requiresShipping: false, customAttributes: attrs(lineAttributes),
           }],
         },
       },
+      { timeout },
     ));
     const result = data?.draftOrderCreate;
     // no answer for it: it may or may not have been made (the caller looks for it before making another)
     if (!result) throw new Error('Shopify gave no answer for the draft order.');
     if (result.userErrors?.length) throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true });
     if (!result.draftOrder?.id) throw new Error('Shopify gave no draft order back.');
-    return { id: result.draftOrder.id };
+    return { id: result.draftOrder.id, ready: result.draftOrder.ready !== false };
   }
 
   /**
    * Make a draft order a paid order (draftOrderComplete with no payment terms: marked as paid). A draft only ever
-   * becomes one order, so asking again can't make a second. Returns { order: { id, name } or null, status, errors }:
-   * no order and errors when Shopify said no (one completed already says no too: draftOrderState tells).
+   * becomes one order, so asking again can't make a second. Returns { order: { id, name, total (cents) } or null, status,
+   * errors }: no order and errors when Shopify said no (one completed already says no too: draftOrderState tells).
    */
-  async completePaidDraft(id) {
+  async completePaidDraft(id, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
     const data = await madeAnyway(this.graphql(
-      'mutation LairPaidDraftComplete($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id status order { id name } } userErrors { field message } } }',
+      `mutation LairPaidDraftComplete($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id status order { ${ORDER_FIELDS} } } userErrors { field message } } }`,
       { id },
+      { timeout },
     ));
     const result = data?.draftOrderComplete;
     if (!result) throw new Error('Shopify gave no answer for completing the draft order.');
-    const order = result.draftOrder?.order?.id ? { id: result.draftOrder.order.id, name: result.draftOrder.order.name || null } : null;
-    return { order, status: result.draftOrder?.status || null, errors: (result.userErrors || []).map((e) => String(e.message || '').trim()).filter(Boolean) };
+    return { order: orderOf(result.draftOrder?.order), status: result.draftOrder?.status || null, errors: (result.userErrors || []).map((e) => String(e.message || '').trim()).filter(Boolean) };
   }
 
-  /** A draft order's status and the order it became: { id, status, order: { id, name } or null }, or null when there's no such draft */
-  async draftOrderState(id) {
-    const data = await this.graphql('query LairDraftState($id: ID!) { draftOrder(id: $id) { id status order { id name } } }', { id });
+  /**
+   * A draft order's status, whether Shopify has finished working it out (ready), and the order it became: { id, status,
+   * ready, order: { id, name, total } or null }, or null when there's no such draft
+   */
+  async draftOrderState(id, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const data = await this.graphql(`query LairDraftState($id: ID!) { draftOrder(id: $id) { id status ready order { ${ORDER_FIELDS} } } }`, { id }, { timeout });
     const d = data.draftOrder;
-    return d ? { id: d.id, status: d.status || null, order: d.order?.id ? { id: d.order.id, name: d.order.name || null } : null } : null;
+    return d ? { id: d.id, status: d.status || null, ready: d.ready !== false, order: orderOf(d.order) } : null;
   }
 
-  /** The customer's latest draft order with this tag and the marker key = value (its 10 latest are looked at), as draftOrderState, or null */
-  async findMarkedDraft(customerId, tag, key, value) {
+  /**
+   * The customer's draft order with this tag and the marker key = value (their 10 latest with the tag are looked at;
+   * one that became an order first), as draftOrderState, or null
+   */
+  async findMarkedDraft(customerId, tag, key, value, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
     const data = await this.graphql(
-      'query LairMarkedDrafts($query: String!) { draftOrders(first: 10, reverse: true, sortKey: ID, query: $query) { nodes { id status customAttributes { key value } order { id name } } } }',
+      `query LairMarkedDrafts($query: String!) { draftOrders(first: 10, reverse: true, sortKey: ID, query: $query) { nodes { id status ready customAttributes { key value } order { ${ORDER_FIELDS} } } } }`,
       { query: `customer_id:${String(customerId).replace(/\D/g, '')} tag:"${String(tag).replace(/"/g, '')}"` },
+      { timeout },
     );
-    const d = (data.draftOrders?.nodes || []).find((n) => (n.customAttributes || []).some((a) => a.key === key && a.value === value));
-    return d ? { id: d.id, status: d.status || null, order: d.order?.id ? { id: d.order.id, name: d.order.name || null } : null } : null;
+    const marked = (data.draftOrders?.nodes || []).filter((n) => (n.customAttributes || []).some((a) => a.key === key && a.value === value));
+    const d = marked.find((n) => n.order?.id) || marked[0];
+    return d ? { id: d.id, status: d.status || null, ready: d.ready !== false, order: orderOf(d.order) } : null;
+  }
+
+  /** The customer's order with this tag and the marker key = value (their 10 latest with the tag are looked at), as { id, name, total }, or null */
+  async findMarkedOrder(customerId, tag, key, value, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const data = await this.graphql(
+      `query LairMarkedOrders($query: String!) { orders(first: 10, reverse: true, sortKey: CREATED_AT, query: $query) { nodes { ${ORDER_FIELDS} customAttributes { key value } } } }`,
+      { query: `customer_id:${String(customerId).replace(/\D/g, '')} tag:"${String(tag).replace(/"/g, '')}"` },
+      { timeout },
+    );
+    return orderOf((data.orders?.nodes || []).find((n) => (n.customAttributes || []).some((a) => a.key === key && a.value === value)));
   }
 
   async creditCustomer(customerId, cents, currency) {
