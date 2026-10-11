@@ -1944,13 +1944,19 @@ function fakeCredit(start = {}) {
   Object.assign(state, {
     draftCalls: [], completeCalls: [], stateCalls: 0, findDraftCalls: 0, findOrderCalls: 0, draftN: 0,
     draftThrows: 0, draftLost: 0, draftErrors: null, completeThrows: 0, completeLost: 0, completeErrors: null, completedElsewhere: 0, hang: false,
-    notReady: 0, holdLook: null, extra: 0,
+    notReady: 0, holdLook: null, holdCreate: null, extra: 0, deleted: [],
   });
   const hung = () => new Promise(() => {});
   const copy = (o) => (o ? { ...o } : null);
   lair.shopify.createPaidDraft = async (args) => {
     state.draftCalls.push(JSON.parse(JSON.stringify(args)));
     if (state.hang) return hung();
+    if (state.holdCreate) {
+      // (slow to reach Shopify: it lands when the test says)
+      const hold = state.holdCreate;
+      state.holdCreate = null;
+      await hold;
+    }
     if (state.draftThrows > 0) {
       state.draftThrows -= 1;
       throw new Error('Shopify API error 502');
@@ -1993,6 +1999,13 @@ function fakeCredit(start = {}) {
       throw new Error('Shopify API error 504');
     }
     return { order: copy(d.order), status: 'COMPLETED', errors: [] };
+  };
+  lair.shopify.deleteDraftIfOpen = async (id) => {
+    const d = drafts.get(id);
+    if (!d || d.status === 'COMPLETED') return false;
+    drafts.delete(id);
+    state.deleted.push(id);
+    return true;
   };
   lair.shopify.draftOrderState = async (id) => {
     state.stateCalls += 1;
@@ -2469,6 +2482,39 @@ test("store credit's last try: a completion whose answer was lost is found by th
     assert.deepEqual(listed.payment.order, {
       status: 'stopped', name: null, id: null, url: null, draftUrl: 'https://dice-goblin.myshopify.com/admin/draft_orders/802', error: 'Variant is not available', nextAt: null,
     });
+    // staff mark the draft as paid in Shopify: the Lair's daily look shows it, without completing anything itself
+    const completes = credit.state.completeCalls.length;
+    credit.drafts.get('gid://shopify/DraftOrder/802').status = 'COMPLETED';
+    credit.drafts.get('gid://shopify/DraftOrder/802').order = { id: 'gid://shopify/Order/1750', name: '#1750', total: 2000 };
+    setNow(clock + 12 * HOUR);
+    await maintenance();
+    assert.equal(payment(pb).order_status, 'stopped', 'once a day');
+    setNow(clock + 12 * HOUR);
+    const run = await maintenance();
+    assert.ok(run.orders.includes(pb));
+    assert.deepEqual([payment(pb).order_status, payment(pb).order_id, payment(pb).order_name, payment(pb).order_next_at], ['made', 'gid://shopify/Order/1750', '#1750', null]);
+    assert.equal(credit.state.completeCalls.length, completes, 'it only looked');
+    // the last look also finds a draft whose making lost its answer, and hands that one over
+    const c = (await logDamage({ customerId: SAM, title: 'Root', reason: 'damaged', amount: 3000 })).data.charge.id;
+    credit.state.completeErrors = null;
+    credit.state.draftErrors = 'Shopify is busy';
+    const pc = (await chargeNow(c, { use: 'credit' })).data.payment.id;
+    await settle();
+    for (const wait of [10, 30, 60, 180, 360, 720]) {
+      setNow(clock + wait * MIN);
+      await maintenance();
+    }
+    credit.state.draftErrors = null;
+    credit.state.draftLost = 1;
+    credit.state.completeErrors = 'Variant is not available';
+    setNow(clock + DAY);
+    await maintenance();
+    assert.deepEqual([payment(pc).order_tries, payment(pc).order_status, payment(pc).order_draft], [8, 'failed', null]);
+    setNow(clock + HOUR);
+    await maintenance();
+    assert.deepEqual([payment(pc).order_status, payment(pc).order_draft], ['stopped', 'gid://shopify/DraftOrder/803']);
+    const handed = mail.sent.filter((e) => e.to === 'staff@dicegoblin.test' && /^A store credit payment has no Shopify order/.test(e.subject)).at(-1);
+    assert.match(handed.text, /admin\/draft_orders\/803/, 'its draft is in the email');
   } finally {
     mail.restore();
   }
@@ -2502,6 +2548,35 @@ test("store credit's order: a try that outlives its claim stops at its next step
     await settle();
     assert.deepEqual([credit.drafts.size, credit.orders.length, credit.state.draftCalls.length], [1, 1, 2], 'one draft made, one order');
     assert.deepEqual(orderOf(pid), ['made', 'gid://shopify/Order/1701', '#1701', 3]);
+  } finally {
+    mail.restore();
+  }
+});
+
+test("store credit's order: a draft that reaches Shopify after a newer try made the order is a spare, and is deleted", async () => {
+  const mail = captureEmails();
+  try {
+    await join();
+    const credit = fakeCredit({ [SAM]: 10000 });
+    const id = (await logDamage({ customerId: SAM, title: 'Catan', reason: 'damaged', amount: 1000 })).data.charge.id;
+    credit.state.draftThrows = 1;
+    const pid = (await chargeNow(id, { use: 'credit' })).data.payment.id;
+    await settle();
+    // the second try's draft is slow to reach Shopify
+    let land;
+    credit.state.holdCreate = new Promise((resolve) => { land = resolve; });
+    setNow(JOINED + 10 * MIN);
+    const slow = lair.retryDamageOrders(Date.now());
+    await settle();
+    // a third try takes over and makes the order
+    setNow(JOINED + 25 * MIN);
+    await lair.retryDamageOrders(Date.now());
+    assert.deepEqual(orderOf(pid), ['made', 'gid://shopify/Order/1701', '#1701', 3]);
+    // then the slow draft lands: it isn't the one kept, so it goes
+    land();
+    await slow;
+    await settle();
+    assert.deepEqual([payment(pid).order_draft, credit.state.deleted, credit.drafts.size, credit.orders.length], ['gid://shopify/DraftOrder/801', ['gid://shopify/DraftOrder/802'], 1, 1]);
   } finally {
     mail.restore();
   }
@@ -2681,6 +2756,34 @@ test("store credit's order, the Shopify calls: the draft's input (the member, th
     const searches = asked.filter((a) => /Marked/.test(a.name)).map((a) => a.variables.query);
     assert.deepEqual(searches, Array(3).fill(`customer_id:${SAM} tag:"lair-damage"`));
     assert.ok(asked.every((a) => a.timed), 'every call has its time limit');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  // the limit holds on a call asked again with a fresh token (and on the login), and a call with no answer by then
+  // throws as a lost answer does (not a refusal: it may have happened)
+  const fresh = new ShopifyAdmin({ SHOP: 'dice-goblin.myshopify.com', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret', API_VERSION: '2026-07' }, fakeCtx().storage);
+  const calls = [];
+  let mode = 'login again';
+  globalThis.fetch = async (url, init) => {
+    calls.push([String(url).endsWith('/access_token') ? 'login' : 'call', init.signal instanceof AbortSignal]);
+    if (String(url).endsWith('/admin/oauth/access_token')) return new Response(JSON.stringify({ access_token: `tok-${calls.length}`, expires_in: 86399 }), { status: 200 });
+    if (mode === 'hang') return new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+    if (calls.filter(([k]) => k === 'call').length === 1) return new Response('', { status: 401 });
+    return new Response(JSON.stringify({ data: { draftOrder: null } }));
+  };
+  try {
+    assert.equal(await fresh.draftOrderState('gid://shopify/DraftOrder/9'), null);
+    assert.deepEqual(calls, [['login', true], ['call', true], ['login', true], ['call', true]]);
+    mode = 'hang';
+    const started = realNow();
+    // (Node's time limit timers don't keep the test running by themselves)
+    const awake = setTimeout(() => {}, 2000);
+    await assert.rejects(
+      fresh.createPaidDraft({ customerId: SAM, variantId: FEE_VARIANT, cents: 100, currency: 'NZD', tags: [], note: '', marker: {} }, { timeout: 40 }),
+      (error) => error.refused !== true && /abort|time/i.test(`${error.name} ${error.message}`),
+    );
+    assert.ok(realNow() - started < 2000, 'it gave up at its limit');
+    clearTimeout(awake);
   } finally {
     globalThis.fetch = realFetch;
   }

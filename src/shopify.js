@@ -136,8 +136,11 @@ export class ShopifyAdmin {
     return Boolean(this.shop && this.clientId && this.clientSecret);
   }
 
-  /** Client credentials grant: the app and the store are in the same organization. Tokens last 24h. */
-  async accessToken() {
+  /**
+   * Client credentials grant: the app and the store are in the same organization. Tokens last 24h. timeout (ms): a
+   * login with no answer by then throws (the call it's for has the same limit).
+   */
+  async accessToken({ timeout = null } = {}) {
     if (this.token && Date.now() < this.tokenExpires - 5 * 60_000) return this.token;
     const saved = await this.storage?.get?.(this.tokenKey);
     if (saved && saved.clientId === this.clientId && Date.now() < saved.expires - 5 * 60_000) {
@@ -149,6 +152,7 @@ export class ShopifyAdmin {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'client_credentials', client_id: this.clientId, client_secret: this.clientSecret }),
+      ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}),
     });
     if (!response.ok) {
       const body = await response.text();
@@ -172,7 +176,7 @@ export class ShopifyAdmin {
     const { retried = false, timeout = null } = typeof options === 'boolean' ? { retried: options } : options || {};
     const response = await fetch(`https://${this.shop}/admin/api/${this.version}/graphql.json`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': await this.accessToken() },
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': await this.accessToken({ timeout }) },
       body: JSON.stringify({ query, variables }),
       ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}),
     });

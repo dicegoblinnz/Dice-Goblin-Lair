@@ -191,6 +191,13 @@ const ORDER_RETRY = [10 * MIN, 30 * MIN, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DA
 const ORDER_STUCK = 15 * MIN;
 /** After the last try, one more look (only a look: is it in Shopify after all?) this long on, before staff are told */
 const ORDER_LAST_LOOK = HOUR;
+/**
+ * One handed to staff with its draft is looked at once a day (marked as paid in Shopify: it's an order now) until this
+ * long after it was paid
+ */
+const ORDER_RECHECK_UNTIL = 9 * DAY;
+/** A draft is only asked for while the try's claim has at least this long left, so it's never made after a new try took over */
+const ORDER_SEND_MARGIN = 5 * MIN;
 /** A new draft Shopify is still working out can't be completed yet: it's asked again after this, up to this many times */
 const ORDER_READY_WAIT = 1000;
 const ORDER_READY_TRIES = 5;
@@ -3980,8 +3987,10 @@ export const membershipMethods = {
           this.write('UPDATE damage_payments SET order_draft = NULL WHERE id = ?', pid);
         }
       }
+      let searched = false;
       if (!order && !draft && p.order_sent_at) {
         // an earlier try may have made it: as an order (once completed), else as a draft
+        searched = true;
         order = await shopify.findMarkedOrder(p.customer_id, ORDER_TAG, '_lair_payment', pid);
         if (!(p = mine())) return superseded;
         if (!order) {
@@ -3991,18 +4000,28 @@ export const membershipMethods = {
             draft = found.id;
             order = found.order;
             this.write('UPDATE damage_payments SET order_draft = ? WHERE id = ?', draft, pid);
+            p = mine();
           }
         }
       }
       if (!order && lookOnly) {
-        // --- no awaits from here on ---
-        // (the last look: not in Shopify, so staff are told, with its draft when there is one)
-        this.damageOrderStopped(p, f, p.order_error || 'Shopify made no order.', Date.now());
-        return { payment: pid, order: null, stopped: true };
+        // the last look: an order made from another of its drafts counts too
+        if (!searched) {
+          order = await shopify.findMarkedOrder(p.customer_id, ORDER_TAG, '_lair_payment', pid);
+          if (!(p = mine())) return superseded;
+        }
+        if (!order) {
+          // --- no awaits from here on ---
+          // (not in Shopify, so staff are told, with its draft when there is one)
+          this.damageOrderStopped(p, f, p.order_error || 'Shopify made no order.', Date.now());
+          return { payment: pid, order: null, stopped: true };
+        }
       }
       if (!order && !draft) {
         const variantId = this.feeVariantId();
         if (!variantId) throw new Error("There's no damage charge product to make it with (run setup with memberships=plans).");
+        // (Shopify was slow this try: never asked for while a new try could take over before it's back)
+        if ((p.order_next_at || 0) - Date.now() < ORDER_SEND_MARGIN) throw new Error("Shopify was slow, so the order wasn't asked for this time.");
         // (noted first: a try after this one's answer is lost looks for the draft before making another)
         this.write('UPDATE damage_payments SET order_sent_at = COALESCE(order_sent_at, ?) WHERE id = ?', Date.now(), pid);
         const made = await shopify.createPaidDraft({
@@ -4011,8 +4030,10 @@ export const membershipMethods = {
           note: `Library damage charge, paid from store credit through the Dice Goblin Lair (${pid}).`,
           marker: { _lair_payment: pid }, lineAttributes: { For: f ? feeLabel(f) : 'Library damage charge', _lair_charge: p.fee_id },
         });
-        // kept at once, so every later try completes this one (a draft becomes one order at most)
+        // kept at once, so every later try completes this one (a draft becomes one order at most); one made while
+        // another try's was kept is a spare, and goes
         this.write('UPDATE damage_payments SET order_draft = COALESCE(order_draft, ?) WHERE id = ?', made.id, pid);
+        if (this.damagePaymentRow(pid)?.order_draft !== made.id) this.later(shopify.deleteDraftIfOpen(made.id));
         if (!(p = mine())) return superseded;
         draft = p.order_draft;
         // Shopify still working the new draft out can't complete it yet
@@ -4083,7 +4104,9 @@ export const membershipMethods = {
    * The store credit came off and the charge is paid either way: only Shopify's record of it is missing. No awaits.
    */
   damageOrderStopped(p, f, error, now) {
-    this.write("UPDATE damage_payments SET order_status = 'stopped', order_error = ?, order_next_at = NULL WHERE id = ?", String(error).slice(0, 300), p.id);
+    // (with a draft for staff to mark as paid, it's looked at once a day, so the order shows once they have)
+    const recheck = p.order_draft && now - (p.completed_at || p.created_at) < ORDER_RECHECK_UNTIL ? now + DAY : null;
+    this.write("UPDATE damage_payments SET order_status = 'stopped', order_error = ?, order_next_at = ? WHERE id = ?", String(error).slice(0, 300), recheck, p.id);
     const name = this.memberName(p.customer_id);
     const draft = this.draftOrderUrl(p.order_draft);
     const tz = this.rulesCache?.tz || 'Pacific/Auckland';
@@ -4112,7 +4135,46 @@ export const membershipMethods = {
       const making = this.damageOrder(id);
       if (making) await making;
     }
-    return due;
+    // ones handed to staff with their draft: marked as paid in Shopify yet?
+    const handed = this.sql.exec(
+      `SELECT id FROM damage_payments WHERE method = 'credit' AND status = 'paid' AND order_status = 'stopped' AND order_draft IS NOT NULL
+         AND order_next_at IS NOT NULL AND order_next_at <= ? ORDER BY order_next_at LIMIT ?`,
+      Date.now(), CHECKS_A_RUN,
+    ).toArray().map((r) => r.id);
+    for (const id of handed) await this.recheckStoppedOrder(id);
+    return [...due, ...handed];
+  },
+
+  /**
+   * Store credit's order handed to staff with its draft (stopped): once a day, until ORDER_RECHECK_UNTIL after it was
+   * paid, the draft (or an order with its marker) is looked at, so one staff marked as paid shows as made. It only
+   * looks, so it can never make an order. Claimed for ORDER_STUCK first, so overlapping runs look once.
+   */
+  async recheckStoppedOrder(pid) {
+    const p = this.damagePaymentRow(pid);
+    const now = Date.now();
+    if (!p || p.order_status !== 'stopped' || !p.order_draft || p.order_next_at == null || p.order_next_at > now || !this.shopify?.configured) return;
+    const claim = now + ORDER_STUCK;
+    this.write('UPDATE damage_payments SET order_next_at = ? WHERE id = ?', claim, pid);
+    let order = null;
+    try {
+      order = (await this.shopify.draftOrderState(p.order_draft))?.order || null;
+      if (!order) order = await this.shopify.findMarkedOrder(p.customer_id, ORDER_TAG, '_lair_payment', pid);
+    } catch (error) {
+      console.error("Lair: could not look at a store credit order's draft", error);
+    }
+    // --- no awaits from here on ---
+    const fresh = this.damagePaymentRow(pid);
+    if (fresh?.order_status !== 'stopped' || fresh.order_next_at !== claim) return;
+    const at = Date.now();
+    if (order) {
+      this.write(
+        "UPDATE damage_payments SET order_status = 'made', order_id = ?, order_name = ?, order_error = NULL, order_next_at = NULL WHERE id = ?",
+        order.id, order.name || null, pid,
+      );
+      return;
+    }
+    this.write('UPDATE damage_payments SET order_next_at = ? WHERE id = ?', at - (fresh.completed_at || fresh.created_at) < ORDER_RECHECK_UNTIL ? at + DAY : null, pid);
   },
 
   /** Taking a damage charge now didn't work: the member hears where it goes instead. No awaits. */

@@ -168,14 +168,16 @@ after the Lair ended it: staff hear; the Lair doesn't bill it.
     order at most; a try that may have made one (its answer lost) looks for it by its marker first, as an order and then
     as a draft (one that became an order first); a completion whose answer was lost, or that Shopify turns away because
     it's an order already, is read back from the draft; a kept draft that's gone (deleted before it was completed) is
-    looked for again, then made again. Every Shopify call for it gives up after 30 seconds, so a try is over long before
-    its 15-minute claim runs out, and a try that somehow outlives it stops at its next step (only the try holding the
-    claim writes).
+    looked for again, then made again. Every Shopify call for it (and the login before it) gives up after 30 seconds,
+    and a draft is only asked for while the try's 15-minute claim has at least 5 minutes left, so it's back before a new
+    try can take over; a try that somehow outlives its claim stops at its next step (only the try holding the claim
+    writes), and a draft it made after another was kept is a spare and is deleted.
   - **Tried again:** Shopify turning it away (or not answering) is tried again by the 10-minute run (its last steps,
     before receipts) after 10 minutes, 30 minutes, then 1, 3, 6, 12 and 24 hours; a try that never finished, after 15
-    minutes. An hour after the last try, one more look (only a look): an order found is recorded; none, and staff hear
-    ("A store credit payment has no Shopify order"): with its draft's link to mark as paid when there is one, else how to
-    make it by hand.
+    minutes. An hour after the last try, one more look (only a look, for its draft and for an order with its marker): an
+    order found is recorded; none, and staff hear ("A store credit payment has no Shopify order"): with its draft's link
+    to mark as paid when there is one, else how to make it by hand. One handed over with its draft is looked at once a
+    day until 9 days after it was paid, so it shows as made once staff have marked it as paid.
   - When the order columns first went in, store credit damage payments from the last 7 days got theirs too (once).
   - A store credit payment that paid a charge paid another way tells staff to refund its order in Shopify back to store
     credit (so the sales stay right), not to add the credit back on the member page.
