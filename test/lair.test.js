@@ -1313,7 +1313,12 @@ test('emails: one layout with a big title, a details table, a button and a foote
     footer: { name: 'Dice Goblin Lair', address: '1 Goblin Lane, Auckland 1010', phone: '021 159 6894', hours },
   });
   assert.match(html, /<h1[^>]*>You&#39;re booked in!<\/h1>/);
-  assert.match(html, />Dice Goblin<\/td>/);
+  // round 14: Mo's logo in the header, linked to the shop; "Dice Goblin" in green when an email app blocks pictures
+  assert.match(html, /<a href="https:\/\/www\.dicegoblin\.nz\/"[^>]*><img src="https:\/\/cdn\.shopify\.com\/s\/files\/1\/0638\/6253\/8343\/files\/dice-goblin-email-logo\.png\?v=1791710791" width="280" height="54" alt="Dice Goblin" style="[^"]*color:#46d06c;/);
+  assert.doesNotMatch(html, />Dice Goblin<\/td>/, 'no green words in the header any more');
+  const branded = renderEmail({ title: 'x', brand: { logo: 'https://example.com/logo.png', url: 'https://shop.example/' } }).html;
+  assert.match(branded, /<a href="https:\/\/shop\.example\/"[^>]*><img src="https:\/\/example\.com\/logo\.png"/);
+  assert.match(renderEmail({ title: 'x', brand: { logo: 'javascript:alert(1)' } }).html, /<img src="https:\/\/cdn\.shopify\.com\//, 'only http(s) pictures');
   assert.match(html, /Kia ora &lt;Sam&gt;/);
   assert.match(html, /font:700[^"]*">When<\/td><td[^>]*>Friday 2 October/);
   assert.doesNotMatch(html, />Setup</, 'empty rows are left out');

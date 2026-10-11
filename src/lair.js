@@ -2021,7 +2021,9 @@ export class Lair {
   letter(to, subject, content, extra = {}) {
     const rules = this.rulesCache || rulesFromSettings({}, FALLBACK_ROOMS, []);
     const footer = { name: 'Dice Goblin Lair', address: rules.contact?.address, phone: rules.contact?.phone, hours: hoursSummary(rules.hours) };
-    return { to, subject, ...renderEmail({ ...content, footer }), ...extra };
+    // Round 14: Mo's logo in the header (EMAIL_LOGO_URL can point at another picture), linked to the shop
+    const brand = { logo: this.env.EMAIL_LOGO_URL || null, url: this.link('/') };
+    return { to, subject, ...renderEmail({ ...content, footer, brand }), ...extra };
   }
 
   /** Where a page lives on the website (theme settings, with the theme's defaults) */

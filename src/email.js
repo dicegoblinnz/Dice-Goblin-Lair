@@ -1,11 +1,18 @@
 // Dice Goblin Lair — the email layout: one clean, mobile-friendly HTML email with a plain-text copy.
 //
-// Every email is a "Dice Goblin" header, a big title, a few short paragraphs, an optional details table (bold labels),
-// an optional button, a sign-off and a footer with the shop's address, phone and hours. Styles are inline because
-// most email apps strip <style> blocks. No images, so nothing breaks when an email app blocks them.
+// Every email is the Dice Goblin logo on a dark header, a big title, a few short paragraphs, an optional details table
+// (bold labels), an optional button, a sign-off and a footer with the shop's address, phone and hours. Styles are inline
+// because most email apps strip <style> blocks. Round 14 (11 Oct 2026, Mo: "the email signature can we have my
+// dicegoblin logo on it like the one attached. Instead of the dice goblin word written in green for the email sent to
+// clients. To make it clear it is from us."): the header is his logo (Shopify Files), linked to the shop. An email app
+// that blocks pictures shows its alt text, "Dice Goblin" in the same green, so the header reads as it did before.
 
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const C = { page: '#f4efe8', card: '#ffffff', ink: '#221b17', muted: '#6b5d52', head: '#16110f', goblin: '#46d06c', button: '#1f7a3d', line: '#e8dfd4', quote: '#faf6f0' };
+/** The logo in the header: Mo's Dice Goblin logo in Shopify Files (780 x 151, shown 280 wide) */
+export const EMAIL_LOGO = 'https://cdn.shopify.com/s/files/1/0638/6253/8343/files/dice-goblin-email-logo.png?v=1791710791';
+const LOGO_WIDTH = 280;
+const LOGO_HEIGHT = 54;
 
 const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 /** Escaped text with its line breaks kept */
@@ -52,9 +59,10 @@ export function hoursSummary(hours) {
  *   outro      paragraph(s) after the details
  *   signoff    the closing line(s); Gobgob signs by default
  *   footer     { name, address, phone, hours }
+ *   brand      { logo, url }: the header's logo (EMAIL_LOGO when not given) and where it links (the shop's home page)
  * Returns { html, text }.
  */
-export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {} }) {
+export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {} }) {
   // Round 11: small links under the button, http(s) only
   const extras = (Array.isArray(links) ? links : []).filter((l) => l && safeUrl(l.url) && String(l.label ?? '').trim()).map((l) => ({ label: String(l.label).trim(), url: safeUrl(l.url) }));
   const before = list(intro);
@@ -65,6 +73,8 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const signed = list(signoff ?? 'See you at the Lair!\nGobgob, the Dice Goblin');
   const foot = [footer.name || 'Dice Goblin Lair', footer.address, [footer.phone, footer.hours].filter(Boolean).join(' · ')].filter(Boolean);
   const said = String(quote ?? '').trim();
+  const logo = safeUrl(brand.logo) || EMAIL_LOGO;
+  const home = safeUrl(brand.url) || 'https://www.dicegoblin.nz/';
 
   const p = (text, extra = '') => `<p style="margin:0 0 14px;font:16px/1.55 ${FONT};color:${C.ink};${extra}">${lines(text)}</p>`;
   const html = `<!doctype html>
@@ -74,7 +84,7 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${C.page};">
 <tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:${C.card};border-radius:14px;overflow:hidden;">
-<tr><td style="background:${C.head};padding:18px 24px;font:800 20px/1.2 ${FONT};color:${C.goblin};letter-spacing:0.02em;">Dice Goblin</td></tr>
+<tr><td style="background:${C.head};padding:16px 24px;font:800 20px/1.2 ${FONT};color:${C.goblin};letter-spacing:0.02em;"><a href="${escapeHtml(home)}" style="display:inline-block;color:${C.goblin};text-decoration:none;"><img src="${escapeHtml(logo)}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" alt="Dice Goblin" style="display:block;width:${LOGO_WIDTH}px;max-width:100%;height:auto;border:0;outline:none;font:800 20px/1.2 ${FONT};color:${C.goblin};letter-spacing:0.02em;"></a></td></tr>
 <tr><td style="padding:28px 24px 10px;">
 <h1 style="margin:0 0 16px;font:800 28px/1.2 ${FONT};color:${C.ink};">${escapeHtml(title)}</h1>
 ${before.map((t) => p(t)).join('\n')}
