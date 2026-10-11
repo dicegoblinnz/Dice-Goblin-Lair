@@ -277,7 +277,8 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     const kind = (id) => document.querySelector(`lair-play-floor [data-table="${id}"]`);
     const all = [...document.querySelectorAll('lair-play-floor [data-table]')];
     return {
-      game: tables.map((id) => kind(id)?.dataset.kind), seats: kind(tables[0])?.dataset.seats || null,
+      // round 14b: the badge sits at the top right of the game's tables (one badge for the game)
+      game: tables.map((id) => kind(id)?.dataset.kind), seats: tables.map((id) => kind(id)?.dataset.seats).filter(Boolean).join() || null,
       label: kind(tables[0])?.getAttribute('aria-label'), dim: all.filter((b) => 'dim' in b.dataset).length,
       kinds: [...new Set(all.map((b) => b.dataset.kind))].sort(),
     };
@@ -294,12 +295,15 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     return {
       open: d.open, view: d.dataset.view, title: flat(d.querySelector('#play-sheet-title')?.textContent), tag: flat(d.querySelector('.play-tag')?.textContent),
       where: flat(d.querySelector('.play-sheet__where')?.textContent), facts: [...d.querySelectorAll('.play-fact')].map((f) => flat(f.textContent)),
+      // round 14b: from 750px the short popover, its time, GM and ages on one line and its seats and price on the next
+      brief: flat(d.querySelector('.play-sheet__brief')?.textContent), seats: flat(d.querySelector('.play-sheet__seats')?.textContent), blurb: Boolean(d.querySelector('.play-sheet__text')),
       join: flat(d.querySelector('[data-play-sheet-act="join-game"]')?.textContent), ask: Boolean(d.querySelector('[data-play-sheet-act="interest-game"]')), more: Boolean(d.querySelector('[data-play-sheet-act="game"]')),
       focus: document.activeElement?.id, picked: [...document.querySelectorAll('lair-play-floor .is-picked')].map((b) => b.dataset.table),
       docked: d.classList.contains('is-docked'),
     };
   });
-  check(`${tag}: a game's table opens its sheet: TTRPG, where, the title, time, GM, seats, price, Join · $15, I'm interested, All about this game`, sheet4.open && sheet4.view === 'game' && sheet4.tag === 'TTRPG' && sheet4.title === gameAt.title && sheet4.facts.length >= 4 && /seats? left/.test(sheet4.facts.join(' ')) && /a seat/.test(sheet4.facts.join(' ')) && /^Join · \$\d+$/.test(sheet4.join) && sheet4.ask && sheet4.more, sheet4);
+  const said4 = phone ? sheet4.facts.join(' ') : `${sheet4.brief} ${sheet4.seats}`;
+  check(`${tag}: a game's table opens its sheet: TTRPG, where, the title, time, GM, seats, price, Join · $15, I'm interested, All about this game`, sheet4.open && sheet4.view === 'game' && sheet4.tag === 'TTRPG' && sheet4.title === gameAt.title && (phone ? sheet4.facts.length >= 4 : Boolean(sheet4.brief) && !sheet4.blurb) && / to /.test(said4) && /seats? left/.test(said4) && /a seat/.test(said4) && /^Join · \$\d+$/.test(sheet4.join) && sheet4.ask && sheet4.more, sheet4);
   check(`${tag}: the sheet takes the focus, and the game's tables are ringed on the map`, sheet4.focus === 'play-sheet-title' && sheet4.picked.join() === gameAt.tables.join(), sheet4);
   check(`${tag}: ${phone ? 'along the bottom on phones' : 'beside the table on desktop'}`, sheet4.docked === phone, sheet4);
   await shot(page, `${tag}-3-game-sheet`);
@@ -345,7 +349,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     };
   });
   const clock5 = new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, hour: 'numeric', hourCycle: 'h12' }).format(new Date(`${free.day}T${String(free.minutes / 60).padStart(2, '0')}:00:00${offset(free.day)}`)).replace(/\s/g, '').toLowerCase();
-  check(`${tag}: a free table's sheet: Free table, "${free.pair[0]} is free from ${clock5}", How long (2 hours picked), the table beside it, Book, and what comes next`, sheet5.view === 'free' && sheet5.tag === 'Free table' && sheet5.title === `${free.pair[0]} is free from ${clock5}` && sheet5.lengths.includes('2 hours*') && new RegExp(`^Add ${free.pair[1]}`).test(sheet5.add) && /^Book /.test(sheet5.book) && /Next you tell us who’s coming\. Nothing to pay till you’re here\./.test(sheet5.small), sheet5);
+  check(`${tag}: a free table's sheet: Free table, "${free.pair[0]} is free from ${clock5}", How long (2, 3 or 4 hours, 3 picked, as approved), the table beside it, Book, and what comes next`, sheet5.view === 'free' && sheet5.tag === 'Free table' && sheet5.title === `${free.pair[0]} is free from ${clock5}` && sheet5.lengths.slice(0, 3).join() === '2 hours,3 hours*,4 hours' && !sheet5.lengths.some((x) => /^1 hour/.test(x)) && new RegExp(`^Add ${free.pair[1]}`).test(sheet5.add) && /^Book /.test(sheet5.book) && /Next you tell us who’s coming\. Nothing to pay till you’re here\./.test(sheet5.small), sheet5);
   await tap('[data-play-sheet] [data-play-len="3"]');
   await tap('[data-play-sheet] [data-play-add]');
   const book5 = await page.evaluate(() => ({ book: document.querySelector('[data-play-book-table]')?.textContent.trim(), picked: [...document.querySelectorAll('lair-play-floor .is-picked')].map((b) => b.dataset.table) }));
@@ -365,7 +369,8 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     };
   });
   check(`${tag}: Book turns the page to the booking with those tables, that time and 3 hours, enough people for two tables`, booking5.mode === 'book' && booking5.shown && booking5.mapHidden && booking5.state.day === free.day && booking5.state.start === free.minutes && booking5.state.hours === 3 && booking5.state.tables.join() === free.pair.join() && booking5.state.people === 5, booking5);
-  check(`${tag}: Who's coming is next (the focus is there), it says the tables are sorted, and the times above are the start times`, booking5.focus === 'who' && /^Sorted: /.test(booking5.who) && booking5.label === 'Start time' && booking5.starts.join() === String(free.minutes) && booking5.history === hist5 + 1, booking5);
+  // a phone's sheet is a step in the history already (round 14b): Book takes it over, so Back still leaves the booking
+  check(`${tag}: Who's coming is next (the focus is there), it says the tables are sorted, and the times above are the start times`, booking5.focus === 'who' && /^Sorted: /.test(booking5.who) && booking5.label === 'Start time' && booking5.starts.join() === String(free.minutes) && booking5.history === (phone ? hist5 : hist5 + 1), booking5);
   await shot(page, `${tag}-5-booking`);
   // the page leaves the booking alone: a tick, the people and the times stay as they're set
   await page.check('lair-booking input[name="extra"][value="celebrating"]');

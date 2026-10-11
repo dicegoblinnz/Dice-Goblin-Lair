@@ -178,7 +178,7 @@ try {
         play.tapTable(table);
         const d = document.querySelector('[data-play-sheet]');
         const flat = (x) => String(x || '').replace(/\s+/g, ' ').trim();
-        const out = { kind, view: d.dataset.view, title: flat(d.querySelector('#play-sheet-title')?.textContent), facts: [...d.querySelectorAll('.play-fact')].map((f) => flat(f.textContent)), join: flat(d.querySelector('[data-play-sheet-act="join-game"]')?.textContent), picked: [...document.querySelectorAll('lair-play-floor .is-picked')].map((b) => b.dataset.table) };
+        const out = { kind, view: d.dataset.view, title: flat(d.querySelector('#play-sheet-title')?.textContent), facts: [...d.querySelectorAll('.play-fact, .play-sheet__brief, .play-sheet__seats')].map((f) => flat(f.textContent)), join: flat(d.querySelector('[data-play-sheet-act="join-game"]')?.textContent), picked: [...document.querySelectorAll('lair-play-floor .is-picked')].map((b) => b.dataset.table) };
         play.closeSheet({ restore: false });
         return out;
       }, { day: lairKey(g.start), minutes, id: g.id, table: g.tables[0] });

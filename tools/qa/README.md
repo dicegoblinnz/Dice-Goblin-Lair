@@ -102,5 +102,14 @@ for the record; these two take their place.
   feed's event dates and the floor's TTRPG games in the list, the counts, the line above the map at the day's busiest
   hour), every game's table and sheet, every event's tables and sheet (two events on the same tables at once: the
   sheet's "Also on these tables"), Looking for players, and a free table booked end to end. Run it under the live lock.
+- `round14/one-page-b.mjs` (round 14b, after an independent check against the approved mock-up): demo mode, the first
+  screen at 320 to 414px (the intro just its heading on one line, no sideways scroll, See all our games under Run a game
+  and Host your own event, side by side at 390px); a table's sheet on wide screens (1366x768, 1280x720, 1024x768, a
+  tablet) opening in place, on screen under the header, as the short popover; on a phone the page dimmed behind it and
+  Back closing it (then leaving the page), its X, its Join, Host your own event, a `#game=` link, a drag on its handle,
+  a link elsewhere and Book, each leaving the history right; a game waiting for approval kept off the public map; How
+  long (2, 3 or 4 hours, 3 first); `?show=none`; the seats badge's corner; events before games at the same time; the
+  word spaces; the month's counts in Looking for players; the booking's map drawing events blue.
+  `DG_THEME=… PORT=4955 [OUT=…] node tools/qa/round14/one-page-b.mjs`. The two above read the short popover too.
 - `live/flow-booking.mjs` opens the booking with Book a table, and picks days on the strip or in the month; the
   simulation and `round11/reminders.mjs` read the page's new rows (`.play-row`, `.play-said`) and its note above the map.
