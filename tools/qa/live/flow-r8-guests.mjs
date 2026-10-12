@@ -35,9 +35,10 @@ const codes = { ria: (await me(RIA)).member?.code, manu: (await me(MANU)).member
 check('setup: Ria and Manu have member codes', Boolean(codes.ria && codes.manu), codes);
 const join = (id, body, who = RIA) => proxy('POST', `events/${id}/join`, { customer: who, body: { name: 'Ria Hohaia', email: 'ria.r8@example.com', ...body } });
 const floorJoins = async () => (await proxy('GET', `floor?from=${Date.now() - 3600000}&to=${Date.now() + 40 * 86400000}`, { customer: STAFF })).data.joins || [];
-// a clean slate on these dates (an earlier run on the same day signed up already)
+// a clean slate on these dates (an earlier run on the same day signed up already); staff cancel them (round 15: tonight's
+// is locked in, so Ria couldn't)
 for (const who of [RIA]) {
-  for (const j of (await me(who)).joins || []) if ([TONIGHT, LATER].includes(j.occurrenceId) && j.status !== 'cancelled') await proxy('POST', `events/joins/${j.id}/cancel`, { customer: who, body: {} });
+  for (const j of (await me(who)).joins || []) if ([TONIGHT, LATER].includes(j.occurrenceId) && j.status !== 'cancelled') await proxy('POST', `events/joins/${j.id}/cancel`, { customer: STAFF, body: {} });
 }
 
 /* 1. the messages */

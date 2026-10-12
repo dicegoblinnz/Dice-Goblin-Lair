@@ -111,5 +111,34 @@ for the record; these two take their place.
   long (2, 3 or 4 hours, 3 first); `?show=none`; the seats badge's corner; events before games at the same time; the
   word spaces; the month's counts in Looking for players; the booking's map drawing events blue.
   `DG_THEME=… PORT=4955 [OUT=…] node tools/qa/round14/one-page-b.mjs`. The two above read the short popover too.
-- `live/flow-booking.mjs` opens the booking with Book a table, and picks days on the strip or in the month; the
-  simulation and `round11/reminders.mjs` read the page's new rows (`.play-row`, `.play-said`) and its note above the map.
+- `live/flow-booking.mjs` picks days on the strip or in the month; the simulation and `round11/reminders.mjs` read the
+  page's new rows (`.play-row`, `.play-said`) and its note above the map. (Round 15: it books from a table's sheet on the
+  map, below.)
+
+## round15: everything on the tab, locked 24 hours before (round 15)
+
+Mo (12 Oct): no new page to book a table, no QR code per booking or sign-up, everything on the person's tab, paid at the
+counter on the day (or a few at once), and cancelled online only until 24 hours before; after that only staff take it off.
+- `round15/signups.mjs`: demo mode on the theme mock, phone and desktop, a guest and a member: a TTRPG seat, event sign-ups
+  (paid, inside 24 hours, free), an event's game table; the forms' lines about the tab and the lock, no paying online;
+  the confirmations (no QR or code, the tab's words, until when to cancel or locked in, Add to calendar's file, My Lair or
+  Make a free account); a member's own seat and sign-up with Cancel, and locked once the page clock moves inside 24
+  hours. Axe on each sheet.
+- `round15/mylair-staff.mjs` (with `lib.mjs` and `seed.mjs`): My Lair and the staff page in demo mode for Ruby (tables
+  more than and less than 24 hours away, an owed no-show, a seat, sign-ups either side of the 24 hours, an owed sign-up):
+  Cancel or locked in, no code per item, the tab card ("Pay at the counter: just give your name", Show my Goblin card),
+  staff's owed sign-ups (Mark paid, Waive) and paying several at once on a member's page.
+- `round15/demo.mjs`, `demo-b.mjs`, `demo-c.mjs`: the demo backend (`assets/lair-demo.js`) against the contract
+  (`docs/contracts/lair-api-contract-v15-tab.md`), with a movable clock.
+- Each takes `DG_THEME` (required), `PORT`, and where it says so `AXE` (a path to axe.min.js) and `OUT` (screenshots; the
+  system's temp folder otherwise).
+- The live flows follow round 15 too: `flow-booking.mjs` books from a table's sheet in the booking sheet over the page
+  (no code or QR on the confirmation, a guest pays on the day by name); `flow-events.mjs` signs up for events sold online
+  or in store with no checkout made (an older page sending `pay: 'now'` too, and with Shopify's checkout down); `flow-games.mjs`
+  and `flow-mylair.mjs` read the tab's words and Cancel by (or locked in, whichever it is when the run happens);
+  `flow-staff.mjs` has a sign-up paid at the counter ahead of time and cancelled in time as a refund due;
+  `flow-r5-regulars.mjs` has the one-off seat owed once it's over unpaid (no-show or not) and the Members view counting
+  it; the email checks read the round 15 words. Flows that tidy up a booking or sign-up inside 24 hours cancel it as
+  staff, since its owner no longer can.
+- The live run is best started in the morning: `seed-today.mjs` books for 5pm today (too soon to book online after about
+  4pm), and tonight's 6pm D&D only earns loyalty stamps when the run started before it.

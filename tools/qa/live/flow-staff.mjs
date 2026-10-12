@@ -1,7 +1,8 @@
 // Staff page, live (Mo, tagged staff), phone first: check-in by code (a fun code, lower case without dashes, a
 // legacy GOB- code, a member code); check in with a pass, switch passes, undo; the Passes tab (issue, search, edit,
 // void); the Members tab (codes, a pending dice prize "Mark done", a new member code); booking cards (pass, due,
-// refund states, a split bill "Paid $X of $Y").
+// refund states, a split bill "Paid $X of $Y"). Round 15: a sign-up paid at the counter ahead of time and cancelled online
+// in time is a refund due.
 import fs from 'node:fs';
 import { start, stop, context, page, overflow, shot, text, apiLog, PHONE, DESKTOP, BASE } from './harness.mjs';
 import { check, summary, proxy, pos, webhook, fake } from './client.mjs';
@@ -37,6 +38,15 @@ check(`${L} setup: Kiri books for 9pm, split`, late.status === 200, late.data.er
 await order(91000 + run, '7101', [{ title: 'Share', price: '10.00', properties: [{ name: '_booking', value: late.data.booking.ref }, { name: '_share', value: '1' }] }]);
 const noshow = await proxy('POST', `bookings/${late.data.booking.id}/update`, { customer: '7001', body: { status: 'noshow' } });
 check(`${L} setup: marked a no-show after a share was paid: refund 'ask'`, noshow.data.booking?.refund === 'ask', noshow.data.booking?.refund);
+// round 15, 'due': Kiri pays for a sign-up at the counter ahead of time, then cancels it online in time (more than 24
+// hours before): the money is to come back (staff are emailed). Before round 15 this was an online-paid sign-up.
+let FRI = addDays(today, 1);
+while (new Date(`${FRI}T12:00:00Z`).getUTCDay() !== 5) FRI = addDays(FRI, 1);
+const early = await proxy('POST', `events/pokemon-tcg-league@${addDays(FRI, L === 'desktop' ? 35 : 28)}/join`, { customer: '7102', body: { name: 'Kiri Smith', email: 'kiri@example.com', phone: '021 555 0102', people: 1 } });
+check(`${L} setup: Kiri signs up for the Pokémon league weeks ahead, on her tab`, early.status === 200 && early.data.join?.status === 'confirmed' && early.data.join.payment === 'store', early.data.error || early.data.join?.ref);
+await order(92000 + run, '7102', [{ title: 'Event entry', price: '10.00', properties: [{ name: '_booking', value: early.data.join.ref }] }]);
+const changed = await proxy('POST', `events/joins/${early.data.join.id}/cancel`, { customer: '7102', body: {} });
+check(`${L} setup: paid at the counter, then cancelled online in time: refund 'due'`, changed.status === 200 && changed.data.join?.refund === 'due', changed.data.error || changed.data.join);
 const gift = await proxy('POST', 'passes', { customer: '7001', body: { label: 'Gift pack: 5 sessions', sessions: 5, holderName: 'Hemi Walker' } });
 const A2 = (await proxy('GET', 'me', { customer: '7101' })).data.bookings.find((b) => b.id === T.A2.id);
 // a clean A2: not checked in yet, no pass used (an earlier run may have)
@@ -217,7 +227,7 @@ await shot(p, `staff-card-split-${L}`);
 const refunds = await text(p, '[data-refunds]');
 check(`${L}: Refunds to sort: "Refund due: $20" for the cancelled paid spot`, refunds.includes(spot.data.booking.ref) && /Refund due: \$20/.test(refunds), refunds.slice(0, 400));
 check(`${L}: Refunds to sort: "Refund? Your call." for the paid no-show`, refunds.includes(late.data.booking.ref) && /Refund\? Your call\./.test(refunds), refunds.slice(0, 600));
-check(`${L}: Refunds to sort: the online-paid sign-up Sam cancelled`, /Refund\? Your call/.test(refunds) && /Riftbound store championship|Event sign-up/.test(refunds), refunds.slice(0, 600));
+check(`${L}: Refunds to sort: the sign-up Kiri paid for at the counter and cancelled in time (round 15)`, refunds.includes(early.data.join.ref) && /Pokémon TCG league|Event sign-up/.test(refunds) && /Refund due: \$10/.test(refunds), refunds.slice(0, 800));
 await p.evaluate(() => document.querySelector('[data-refunds]').scrollIntoView({ block: 'start' }));
 await shot(p, `staff-refunds-${L}`);
 b = apiLog.length;

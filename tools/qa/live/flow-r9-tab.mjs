@@ -125,7 +125,8 @@ check('4: Void: the bill is cancelled and its draft order deleted; what was on i
 check('4: a cancelled bill can\'t be sent again', said(await proxy('POST', `bills/${second.id}/resend`, { customer: STAFF, body: {} })) === '409 That bill was cancelled. Make a new one with Bill now.');
 const back = await proxy('POST', `members/${HINE}/account`, { customer: STAFF, body: { billing: 'visit' } });
 check('4: back to pay each visit: what she owes stays owed, and the words say so', back.data.said === 'Hine pays each visit now. They still owe $4.50 from their account. That stays owed until they pay it, online or at the counter.' && back.data.account.owed.total === 450, back.data);
-check('4: pay each visit: no online paying for her', said(await proxy('POST', 'me/account/pay', { customer: HINE, body: {} })) === "409 You pay each visit, so there's nothing to pay online. Show your member code at the counter and we'll ring it up.");
+// round 15: she gives her name at the counter (or shows her Goblin card)
+check('4: pay each visit: no online paying for her', said(await proxy('POST', 'me/account/pay', { customer: HINE, body: {} })) === "409 You pay each visit, so there's nothing to pay online. Just give your name at the counter (or show your Goblin card) and we'll ring it up.");
 
 /* 5. the Accounts tab, and a pay-each-visit member at the counter */
 const list = (await proxy('GET', 'accounts', { customer: STAFF })).data.accounts || [];

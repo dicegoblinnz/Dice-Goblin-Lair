@@ -363,11 +363,12 @@ for (const vp of [{ width: 1366, height: 768 }, { width: 1280, height: 720 }, { 
     check('phone: How long is 2, 3 or 4 hours (then till close), 3 to start with, and Book says so', lengths.chips.slice(0, 3).join() === '2 hours,3 hours*,4 hours' && !lengths.chips.some((c) => /^1 hour/.test(c)) && new RegExp(`to ${end}$`).test(lengths.book || ''), { lengths, end });
     await tap('[data-play-sheet] [data-play-book-table]');
     await page.waitForTimeout(600);
-    const k1 = await page.evaluate(() => ({ mode: document.querySelector('lair-play').dataset.mode, depth: history.state?.playDepth || 0, book: Boolean(history.state?.playBook) }));
+    // Round 15: the booking is a sheet over the page that takes the table sheet's step; Back closes it, on the page
+    const k1 = await page.evaluate(() => ({ open: document.querySelector('[data-play-booking]').open, depth: history.state?.playDepth || 0, sheet: document.querySelector('[data-play-sheet]').open }));
     await page.goBack();
     await page.waitForTimeout(600);
-    const k2 = await page.evaluate(() => ({ mode: document.querySelector('lair-play')?.dataset.mode, url: window.location.pathname }));
-    check('phone: Book turns to the booking (taking the sheet\'s step), and Back comes back to the map', k1.mode === 'book' && k1.book && k1.depth === 0 && k2.mode === 'browse' && k2.url === '/pages/book-a-table', { k1, k2 });
+    const k2 = await page.evaluate(() => ({ open: document.querySelector('[data-play-booking]')?.open, depth: history.state?.playDepth || 0, url: window.location.pathname }));
+    check('phone: Book opens the booking sheet (taking the table sheet\'s step), and Back closes it, on the same page', k1.open && !k1.sheet && k1.depth === 1 && k2.open === false && k2.depth === 0 && k2.url === '/pages/book-a-table', { k1, k2 });
     await page.goBack();
     await page.waitForTimeout(500);
     check('phone: then Back leaves the page', (await page.evaluate(() => window.location.href)) === 'about:blank', await page.evaluate(() => window.location.href));
@@ -457,41 +458,14 @@ for (const vp of [{ width: 1366, height: 768 }, { width: 1280, height: 720 }, { 
     return out;
   });
   check('desktop, Looking for players: each of the next seven days in the month says how many', month.length > 0 && month.every((d) => d.got === d.want && /looking for players|closed/.test(d.label)), month);
-  await open('/pages/events-calendar');
-  const ev = await page.evaluate(() => {
-    const play = document.querySelector('lair-play');
-    const store = window.Lair.store;
-    const t = store.time;
-    for (let i = 1; i < 10; i += 1) {
-      const day = t.addDays(t.today(), i);
-      // an event's tables at a bookable time (the demo's events set their tables aside: still bookable, ringed)
-      const slot = store.slots(day).find((x) => x.bookable && store.allBlocks().some((b) => b.occurrenceId && !b.spots && (b.tables || []).length && b.start <= x.start && x.start < b.end));
-      if (slot) return { day, minutes: slot.minutes };
-    }
-    return null;
+  // Round 15: the booking is a sheet over the page, and its own map and When step aside (the page's map and the table's
+  // sheet picked them), so round 14b's check of the booking map's event colours went with it
+  await open('/pages/book-a-table');
+  const hidden = await page.evaluate(() => {
+    const b = document.querySelector('lair-booking');
+    return { map: getComputedStyle(b.querySelector('.booking__map')).display, when: getComputedStyle(b.querySelector('.booking__when')).display, inSheet: Boolean(b.closest('dialog[data-play-booking]')) };
   });
-  if (check('desktop: a time with an event holding tables', Boolean(ev), ev)) {
-    await page.evaluate(([d, mins]) => {
-      const play = document.querySelector('lair-play');
-      play.selectDay(d, { from: 'pick', time: mins });
-      play.enterBooking({ minutes: mins });
-    }, [ev.day, ev.minutes]);
-    await page.waitForTimeout(800);
-    const colours = await page.evaluate(() => {
-      const probe = document.createElement('i');
-      probe.style.background = 'var(--c-mana)';
-      document.body.append(probe);
-      const mana = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      const held = [...document.querySelectorAll('.play__book .floor__table[data-status="event"]')];
-      const soft = [...document.querySelectorAll('.play__book .floor__table[data-soft]')];
-      return {
-        mana, n: held.length + soft.length,
-        colours: [...new Set([...held.map((b) => getComputedStyle(b).backgroundColor), ...soft.map((b) => (getComputedStyle(b).boxShadow.includes(mana) ? mana : getComputedStyle(b).boxShadow))])],
-      };
-    });
-    check('desktop: the booking\'s map draws an event\'s tables blue, as the map above does', colours.n > 0 && colours.colours.every((c) => c === colours.mana), colours);
-  }
+  check('desktop: the booking lives in a sheet over the page, its own map and When stepped aside', hidden.inSheet && hidden.map === 'none' && hidden.when === 'none', hidden);
   await ctx.close();
 }
 

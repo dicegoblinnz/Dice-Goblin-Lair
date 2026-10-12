@@ -1,5 +1,7 @@
 // Staff camera check-in through the shared scanner (lair-scan.js). Chromium's fake camera plays a test pattern, and a
-// stand-in BarcodeDetector "reads" whatever window.__qaCode holds, like an iPad looking at a ticket's QR code.
+// stand-in BarcodeDetector "reads" whatever window.__qaCode holds, like an iPad looking at a QR code. Round 15: people no
+// longer get a code per booking (they give their name, or show their Goblin card), but a booking's code from before still
+// checks in, so the scan here is still a booking's code.
 import { start, stop, context, page, shot, text, apiLog, PHONE, DESKTOP, BASE } from './harness.mjs';
 import { check, summary, proxy } from './client.mjs';
 
@@ -8,6 +10,9 @@ const L = process.argv[2] === 'desktop' ? 'desktop' : 'phone';
 const tz = 'Pacific/Auckland';
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const at = (h) => Date.parse(`${today}T${String(h).padStart(2, '0')}:00:00+13:00`);
+// an earlier run's booking today (a run on a used state): staff cancel it, so the table is free again
+const floor = (await proxy('GET', `floor?from=${at(0)}&to=${at(24)}`, { customer: '7001' })).data;
+for (const old of (floor.bookings || []).filter((x) => x.name === `Camera ${L}` && x.status !== 'cancelled')) await proxy('POST', `bookings/${old.id}/update`, { customer: '7001', body: { status: 'cancelled' } });
 const made = await proxy('POST', 'bookings', { customer: '7001', body: { kind: 'table', tables: [L === 'desktop' ? 'T5' : 'T6'], start: at(18), end: at(19), people: 2, name: `Camera ${L}`, email: `camera.${L}@example.com`, staffOverride: true } });
 check(`${L}: a booking to scan`, made.status === 200, made.data.error || made.data.booking.ref);
 const ref = made.data.booking.ref;
@@ -29,7 +34,8 @@ check(`${L}: the staff page loads lair-scan.js before lair-staff.js`, scripts.in
 check(`${L}: the Camera button shows`, await p.isVisible('[data-camera]'));
 await p.click('[data-camera]');
 await p.waitForSelector('dialog.lair-scan[open]', { timeout: 5000 });
-check(`${L}: the scanner sheet opens, titled for tickets`, /Scan a ticket or card/.test(await text(p, 'dialog.lair-scan')));
+// round 15: no booking codes to scan any more, so it's for a member's Goblin card or a pass
+check(`${L}: the scanner sheet opens, titled for member cards and passes`, /Scan a member card or pass/.test(await text(p, 'dialog.lair-scan')));
 await p.waitForTimeout(800);
 const formats = await p.evaluate(() => window.__qaFormats);
 check(`${L}: it reads QR codes and Code 128`, Array.isArray(formats) && formats.includes('qr_code') && formats.includes('code_128'), formats);

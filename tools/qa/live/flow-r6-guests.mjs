@@ -22,13 +22,14 @@ check('round 7: the phone is a mobile, and checked (31 zeros are refused)', long
 const emails0 = (await fake('GET', 'emails')).length;
 const guest = await seat({ people: 2, name: 'Tama Walker', email: 'tama.w@example.com', phone: '021 555 0142', notes: 'New to Blades, keen to learn', players: [{ name: 'Tama Walker', character: 'Silver' }, { name: 'Ruby', character: '' }] });
 const booking = guest.data.booking || {};
-check('the guest has a seat with its own ticket code (the QR)', guest.status === 200 && booking.kind === 'gm-seat' && booking.status === 'confirmed' && /^TW-[A-Z]+-\d{1,2}$/.test(booking.ref || '') && booking.ticketCode === booking.ref && booking.amount === 3000, guest.data.error || booking);
+check('the guest has a seat, with its own code kept for staff (round 15: never shown or emailed to them)', guest.status === 200 && booking.kind === 'gm-seat' && booking.status === 'confirmed' && /^TW-[A-Z]+-\d{1,2}$/.test(booking.ref || '') && booking.ticketCode === booking.ref && booking.amount === 3000, guest.data.error || booking);
 await sleep(800);
 const toGm = (await emailsSince(emails0, 'ana@example.com'))[0];
 check('the GM is emailed: "New player for <title>, <when>: <name>"', toGm && /^New player for Blades in the Dark \(r6\), .+: Tama Walker$/.test(toGm.subject), toGm?.subject);
 check('with the player\'s details, the seats left, and that they pay at the counter', toGm && ['tama.w@example.com', '021 555 0142', 'Tama Walker (Silver), Ruby', 'New to Blades, keen to learn', 'They pay at the counter when they arrive.'].every((x) => toGm.text.includes(x)) && /Seats left: +2 of 4/.test(toGm.text) && toGm.reply_to === 'tama.w@example.com', toGm?.text?.slice(0, 500));
 const toGuest = (await emailsSince(emails0, 'tama.w@example.com'))[0];
-check('the guest\'s confirmation says their seats join an account made with this email', toGuest && toGuest.text.includes('Make an account with this email any time, and your seats will show up in My Lair.') && toGuest.text.includes(booking.ref), toGuest?.subject);
+// round 15: no code in it; they give their name at the counter, and an account made with this email puts it on their tab
+check('the guest\'s confirmation says their seats join an account made with this email', toGuest && toGuest.text.includes('Pay at the counter on the day: just give your name. Make a free Dice Goblin account with this email and it goes on your tab in My Lair.') && !toGuest.text.includes(booking.ref) && !toGuest.subject.includes(booking.ref), toGuest?.text?.slice(0, 600));
 
 /* 2. A member's seat emails the GM too; join-series still needs an account */
 const emails1 = (await fake('GET', 'emails')).length;

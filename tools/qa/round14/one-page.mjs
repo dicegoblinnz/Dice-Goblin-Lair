@@ -124,7 +124,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     return {
       layers: [...document.querySelectorAll('[data-play-layer]')].filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.dataset.playLayer),
       counts: Object.fromEntries([...document.querySelectorAll('[data-play-layer]')].map((b) => [b.dataset.playLayer, Number(b.querySelector('[data-play-count]').textContent)])),
-      players: play.players, mode: play.dataset.mode, day: play.day, time: play.time,
+      players: play.players, day: play.day, time: play.time,
       url: window.location.pathname + window.location.search, h1: document.querySelector('h1')?.textContent.trim(),
       summary: flat(document.querySelector('[data-play-summary]')?.textContent),
       list: document.querySelector('[data-play-list-title]')?.textContent || '',
@@ -349,7 +349,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     };
   });
   const clock5 = new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, hour: 'numeric', hourCycle: 'h12' }).format(new Date(`${free.day}T${String(free.minutes / 60).padStart(2, '0')}:00:00${offset(free.day)}`)).replace(/\s/g, '').toLowerCase();
-  check(`${tag}: a free table's sheet: Free table, "${free.pair[0]} is free from ${clock5}", How long (2, 3 or 4 hours, 3 picked, as approved), the table beside it, Book, and what comes next`, sheet5.view === 'free' && sheet5.tag === 'Free table' && sheet5.title === `${free.pair[0]} is free from ${clock5}` && sheet5.lengths.slice(0, 3).join() === '2 hours,3 hours*,4 hours' && !sheet5.lengths.some((x) => /^1 hour/.test(x)) && new RegExp(`^Add ${free.pair[1]}`).test(sheet5.add) && /^Book /.test(sheet5.book) && /Next you tell us who’s coming\. Nothing to pay till you’re here\./.test(sheet5.small), sheet5);
+  check(`${tag}: a free table's sheet: Free table, "${free.pair[0]} is free from ${clock5}", How long (2, 3 or 4 hours, 3 picked, as approved), the table beside it, Book, and what comes next`, sheet5.view === 'free' && sheet5.tag === 'Free table' && sheet5.title === `${free.pair[0]} is free from ${clock5}` && sheet5.lengths.slice(0, 3).join() === '2 hours,3 hours*,4 hours' && !sheet5.lengths.some((x) => /^1 hour/.test(x)) && new RegExp(`^Add ${free.pair[1]}`).test(sheet5.add) && /^Book /.test(sheet5.book) && /^Next you tell us who’s coming\. (You pay at the counter on the day\.|It goes on your tab, paid on the day\.)$/.test(sheet5.small), sheet5);
   await tap('[data-play-sheet] [data-play-len="3"]');
   await tap('[data-play-sheet] [data-play-add]');
   const book5 = await page.evaluate(() => ({ book: document.querySelector('[data-play-book-table]')?.textContent.trim(), picked: [...document.querySelectorAll('lair-play-floor .is-picked')].map((b) => b.dataset.table) }));
@@ -357,28 +357,54 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await shot(page, `${tag}-4-free-sheet`);
   const hist5 = await page.evaluate(() => history.length);
   await tap('[data-play-sheet] [data-play-book-table]');
-  await page.waitForTimeout(400);
-  const booking5 = await page.evaluate(() => {
+  await page.waitForTimeout(500);
+  // Round 15 (Mo, 12 Oct: "no need to go to new pages when you decide to book a table"): the booking is a sheet over
+  // the page, with the tables, when and Change in its heading; the map stays as it was under it
+  const bookState = () => page.evaluate(() => {
     const b = document.querySelector('lair-booking');
+    const d = document.querySelector('[data-play-booking]');
+    const flat = (x) => String(x || '').replace(/\s+/g, ' ').trim();
     return {
-      mode: document.querySelector('lair-play').dataset.mode, state: { day: b.state.day, start: b.state.start, hours: b.state.hours, tables: b.state.tables, people: b.state.people },
-      shown: !document.querySelector('[data-play-booking]').hidden, mapHidden: getComputedStyle(document.querySelector('.play__map')).display === 'none',
-      focus: document.activeElement?.dataset?.step || document.activeElement?.tagName, who: document.querySelector('[data-who-note]')?.textContent.replace(/\s+/g, ' ').trim(),
-      starts: [...document.querySelectorAll('[data-play-start]')].filter((x) => x.getAttribute('aria-pressed') === 'true').map((x) => x.dataset.playStart),
-      label: document.querySelector('[data-play-times-label]').textContent, history: history.length,
+      open: d.open, modal: d.matches(':modal'), state: { day: b.state.day, start: b.state.start, hours: b.state.hours, tables: b.state.tables, people: b.state.people },
+      title: flat(d.querySelector('[data-play-book-title]')?.textContent), when: flat(d.querySelector('[data-play-book-when] span')?.textContent), change: Boolean(d.querySelector('[data-play-book-change]')),
+      tags: flat(d.querySelector('[data-play-book-tags]')?.textContent),
+      map: getComputedStyle(document.querySelector('.play__map')).display !== 'none', ownWhen: getComputedStyle(b.querySelector('.booking__when')).display, ownMap: getComputedStyle(b.querySelector('.booking__map')).display,
+      focus: document.activeElement?.dataset?.step || document.activeElement?.tagName, who: flat(document.querySelector('[data-who-note]')?.textContent),
+      history: history.length, depth: history.state?.playDepth || 0, sheet: document.querySelector('[data-play-sheet]').open, url: window.location.pathname + window.location.search,
+      box: (() => { const r = d.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), bottom: Math.round(r.bottom), width: Math.round(r.width) }; })(),
+      vw: window.innerWidth, vh: window.innerHeight,
     };
   });
-  check(`${tag}: Book turns the page to the booking with those tables, that time and 3 hours, enough people for two tables`, booking5.mode === 'book' && booking5.shown && booking5.mapHidden && booking5.state.day === free.day && booking5.state.start === free.minutes && booking5.state.hours === 3 && booking5.state.tables.join() === free.pair.join() && booking5.state.people === 5, booking5);
-  // a phone's sheet is a step in the history already (round 14b): Book takes it over, so Back still leaves the booking
-  check(`${tag}: Who's coming is next (the focus is there), it says the tables are sorted, and the times above are the start times`, booking5.focus === 'who' && /^Sorted: /.test(booking5.who) && booking5.label === 'Start time' && booking5.starts.join() === String(free.minutes) && booking5.history === (phone ? hist5 : hist5 + 1), booking5);
+  const booking5 = await bookState();
+  check(`${tag}: Book opens the booking in a sheet over the page (the map still under it), with those tables, that time and 3 hours, enough people for two tables`, booking5.open && booking5.modal && booking5.map && !booking5.sheet && booking5.ownWhen === 'none' && booking5.ownMap === 'none' && booking5.state.day === free.day && booking5.state.start === free.minutes && booking5.state.hours === 3 && booking5.state.tables.join() === free.pair.join() && booking5.state.people === 5 && booking5.url === '/pages/book-a-table', booking5);
+  check(`${tag}: the booking sheet's heading: Table booking, the room and its seats, "Book ${free.pair[0]} and ${free.pair[1]}", the day and the time, and Change`, /^Table booking\s*\w+ room · seats \d+$/.test(booking5.tags) && booking5.title === `Book ${free.pair[0]} and ${free.pair[1]}` && new RegExp(`^\\w+day \\d{1,2} \\w+, ${clock5} to \\d{1,2}(:\\d\\d)?(am|pm)$`).test(booking5.when) && booking5.change, booking5);
+  // a phone's table sheet is a step in the history (round 14b): the booking sheet takes it over; desktop adds none
+  check(`${tag}: Who's coming is next (the focus is there), it says the tables are sorted; ${phone ? 'the table sheet\'s step in the history is the booking sheet\'s now' : 'no step in the history'}`, booking5.focus === 'who' && /^Sorted: /.test(booking5.who) && booking5.history === hist5 && booking5.depth === (phone ? 1 : 0), booking5);
+  check(`${tag}: ${phone ? 'along the bottom of the screen, full width' : 'a dialog in the middle of the screen'}`, phone ? booking5.box.left === 0 && booking5.box.right === booking5.vw && Math.abs(booking5.box.bottom - booking5.vh) <= 1 : booking5.box.left > 0 && booking5.box.width <= 640, booking5.box);
   await shot(page, `${tag}-5-booking`);
-  // the page leaves the booking alone: a tick, the people and the times stay as they're set
+  await scan(page, `${tag}: the booking sheet`, 'lair-play [data-play-booking][open]');
+  // Change: back to the table's sheet on the map, as it was picked; its Book comes back to the booking
+  await tap('[data-play-book-change]');
+  await page.waitForTimeout(600);
+  const change5 = await page.evaluate(() => {
+    const d = document.querySelector('[data-play-sheet]');
+    return {
+      book: document.querySelector('[data-play-booking]').open, sheet: d.open, view: d.dataset.view, len: d.querySelector('[data-play-len][aria-pressed="true"]')?.dataset.playLen,
+      add: Boolean(d.querySelector('[data-play-add]')?.checked), picked: [...document.querySelectorAll('lair-play-floor .is-picked')].map((b) => b.dataset.table), depth: history.state?.playDepth || 0, history: history.length,
+    };
+  });
+  check(`${tag}: Change closes the booking sheet and opens the table's sheet again: 3 hours, the table beside it ticked${phone ? ', in the same step in the history' : ''}`, !change5.book && change5.sheet && change5.view === 'free' && change5.len === '3' && change5.add && change5.picked.join() === free.pair.join() && change5.history === hist5 && change5.depth === (phone ? 1 : 0), change5);
+  await tap('[data-play-sheet] [data-play-book-table]');
+  await page.waitForTimeout(500);
+  const again5 = await bookState();
+  check(`${tag}: and its Book comes back to the booking`, again5.open && again5.state.tables.join() === free.pair.join() && again5.state.hours === 3 && again5.history === hist5, again5);
+  // the booking keeps what's set: a tick, the people
   await page.check('lair-booking input[name="extra"][value="celebrating"]');
   const stuck = await page.evaluate(() => {
     const b = document.querySelector('lair-booking');
-    return { ticked: b.state.extras.has('celebrating') && document.querySelector('lair-booking input[name="extra"][value="celebrating"]').checked, tables: b.state.tables, mode: document.querySelector('lair-play').dataset.mode };
+    return { ticked: b.state.extras.has('celebrating') && document.querySelector('lair-booking input[name="extra"][value="celebrating"]').checked, tables: b.state.tables, open: document.querySelector('[data-play-booking]').open };
   });
-  check(`${tag}: a tick in the booking sticks, and the tables stay picked`, stuck.ticked && stuck.tables.join() === free.pair.join() && stuck.mode === 'book', stuck);
+  check(`${tag}: a tick in the booking sticks, and the tables stay picked`, stuck.ticked && stuck.tables.join() === free.pair.join() && stuck.open, stuck);
   await page.click('[data-stepper="people"] [data-step-down]');
   await page.fill('#bk-name', 'Aroha Example');
   await page.fill('#bk-email', 'aroha@example.com');
@@ -389,26 +415,48 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   if (/Remove|tick/.test(fit)) await page.check('lair-booking input[name="extra"][value="wargame"]');
   await page.click('lair-booking [data-submit]');
   await page.waitForSelector('lair-booking [data-done]:not([hidden])', { timeout: 10000 }).catch(() => {});
-  const ticket = await page.evaluate(() => ({ ref: document.querySelector('lair-booking .ticket-qr__ref')?.textContent.trim(), qr: Boolean(document.querySelector('lair-booking [data-ticket-code] svg')), title: document.querySelector('lair-booking .ticket__title')?.textContent.trim(), tables: document.querySelector('lair-booking [data-done] .summary')?.textContent.replace(/\s+/g, ' ') }));
-  check(`${tag}: booked end to end from the free table's sheet: the ticket, its QR and the tables`, /^[A-Z]{1,3}-[A-Z]+-\d{1,2}$/.test(ticket.ref || '') && ticket.qr && /See you/.test(ticket.title || '') && ticket.tables.includes(`${free.pair[0]}, ${free.pair[1]}`), { ticket, free });
+  await page.waitForTimeout(300);
+  const ticket = await page.evaluate(() => ({
+    title: document.querySelector('lair-booking .ticket__title')?.textContent.trim(), tables: document.querySelector('lair-booking [data-done] .summary')?.textContent.replace(/\s+/g, ' '),
+    head: document.querySelector('[data-play-book-title]')?.textContent.trim(), change: Boolean(document.querySelector('[data-play-book-change]')), done: document.querySelector('lair-booking [data-again]')?.textContent.trim(),
+    open: document.querySelector('[data-play-booking]').open,
+  }));
+  check(`${tag}: booked end to end in the sheet: the confirmation and the tables; the heading says they're booked, no Change; Done`, ticket.open && /See you/.test(ticket.title || '') && ticket.tables.includes(`${free.pair[0]}, ${free.pair[1]}`) && ticket.head === `${free.pair[0]} and ${free.pair[1]} booked` && !ticket.change && ticket.done === 'Done', { ticket, free });
   await shot(page, `${tag}-6-booked`);
-  await tap('[data-play-back]');
+  await tap('lair-booking [data-again]');
   await page.waitForTimeout(500);
-  const back5 = await page.evaluate(() => {
-    const play = document.querySelector('lair-play');
-    const ids = window.__booked || [];
-    return { mode: play.dataset.mode, url: window.location.pathname + window.location.search, map: getComputedStyle(document.querySelector('.play__map')).display !== 'none', kinds: ids.map((id) => document.querySelector(`lair-play-floor [data-table="${id}"]`)?.dataset.kind) };
-  });
-  const kinds5 = await page.evaluate((ids) => ids.map((id) => document.querySelector(`lair-play-floor [data-table="${id}"]`)?.dataset.kind), free.pair);
-  check(`${tag}: Back to what's on: the map again, at the time booked, with those tables booked now`, back5.mode === 'browse' && back5.map && back5.url === '/pages/book-a-table' && kinds5.every((k) => k === 'booked'), { back5, kinds5 });
-  // the browser's Back leaves the booking too (and stays on the page)
+  const back5 = await page.evaluate((ids) => ({
+    open: document.querySelector('[data-play-booking]').open, url: window.location.pathname + window.location.search, depth: history.state?.playDepth || 0,
+    kinds: ids.map((id) => document.querySelector(`lair-play-floor [data-table="${id}"]`)?.dataset.kind), focus: document.activeElement?.dataset?.table || document.activeElement?.tagName,
+    locked: document.body.classList.contains('has-open-dialog'),
+  }), free.pair);
+  check(`${tag}: Done closes the sheet: the map at the time booked, those tables booked now, the focus back on the table, the page scrolls again`, !back5.open && back5.url === '/pages/book-a-table' && back5.depth === 0 && back5.kinds.every((k) => k === 'booked') && back5.focus === free.pair[0] && !back5.locked, back5);
+  // Book a table (under the map) opens a free table's sheet; its Book opens the booking; Back (phones) or Esc closes it
   await tap('[data-play-book]');
   await page.waitForTimeout(300);
-  const mode5 = await page.evaluate(() => document.querySelector('lair-play').dataset.mode);
-  await page.goBack();
-  await page.waitForTimeout(500);
-  const pop5 = await page.evaluate(() => ({ mode: document.querySelector('lair-play')?.dataset.mode, url: window.location.pathname }));
-  check(`${tag}: Book a table opens the booking, and the browser's Back comes back to the map on the same page`, mode5 === 'book' && pop5.mode === 'browse' && pop5.url === '/pages/book-a-table', { mode5, pop5 });
+  const viaList = await page.evaluate(() => ({ sheet: document.querySelector('[data-play-sheet]').open, view: document.querySelector('[data-play-sheet]').dataset.view, table: document.activeElement?.closest?.('[data-play-sheet]') ? 'sheet' : '' }));
+  check(`${tag}: Book a table opens a free table's sheet on the map`, viaList.sheet && viaList.view === 'free', viaList);
+  if (await page.$('[data-play-sheet] [data-play-book-table]')) {
+    await tap('[data-play-sheet] [data-play-book-table]');
+    await page.waitForTimeout(400);
+    const before = await page.evaluate(() => ({ open: document.querySelector('[data-play-booking]').open, history: history.length }));
+    if (phone) await page.goBack();
+    else await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    const pop5 = await page.evaluate(() => ({ open: document.querySelector('[data-play-booking]').open, url: window.location.pathname, depth: history.state?.playDepth || 0, sheet: document.querySelector('[data-play-sheet]').open }));
+    check(`${tag}: ${phone ? 'the browser\'s Back' : 'Esc'} closes the booking sheet and stays on the page`, before.open && !pop5.open && !pop5.sheet && pop5.url === '/pages/book-a-table' && pop5.depth === 0, { before, pop5 });
+    if (phone) {
+      // the X too, and the next Back leaves no sheet's step behind
+      await tap('[data-play-book]');
+      await page.waitForTimeout(300);
+      await tap('[data-play-sheet] [data-play-book-table]');
+      await page.waitForTimeout(400);
+      await tap('[data-play-book-close]');
+      await page.waitForTimeout(600);
+      const x5 = await page.evaluate(() => ({ open: document.querySelector('[data-play-booking]').open, depth: history.state?.playDepth || 0 }));
+      check(`${tag}: its X closes it, and steps back over its step in the history`, !x5.open && x5.depth === 0, x5);
+    }
+  } else check(`${tag}: the sheet Book a table opened can be booked`, false, viaList);
 
   /* ---------- 6. "I'm interested", as a guest, from a game's sheet ---------- */
   await open('/pages/gm-games');

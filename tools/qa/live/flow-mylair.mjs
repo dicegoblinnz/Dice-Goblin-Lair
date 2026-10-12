@@ -1,7 +1,8 @@
 // My Lair, live, phone first: the member code and its QR; the loyalty card (round 6: the spend dice's 410, and the rolls
 // staff give pay their face in store credit through the page, then pending when Shopify can't); passes and claiming
 // one; the tab (add, edit, clear, add again, in the cart after POST /pos/tab/:id/added, paid after a webhook with
-// _tab); and bookings with refund labels and a split bill.
+// _tab); and bookings with refund labels and a split bill. Round 15: the tab card says pay at the counter by name (Show
+// my Goblin card for the code), and sign-ups are on the tab with until when they can be cancelled (no code per sign-up).
 import fs from 'node:fs';
 import { start, stop, context, page, overflow, shot, text, apiLog, PHONE, DESKTOP, BASE } from './harness.mjs';
 import { check, summary, proxy, pos, webhook, fake } from './client.mjs';
@@ -109,7 +110,7 @@ check(`${L}: "Add to my tab" saves today's tab (open, 2 lines, 3 things)`, call?
 const sentItems = call ? JSON.parse(call.body).items : [];
 check(`${L}: the lines carry numeric variant ids, titles and cents from the catalogue`, sentItems.every((x) => /^\d+$/.test(x.variantId) && Number.isInteger(x.price) && x.price > 0 && x.title), sentItems);
 const card1 = await text(p, '[data-tab-card]');
-check(`${L}: the tab card: open, show your code to pay, with the code`, /Open tab/.test(card1) && /Show your code at the counter to pay/.test(card1) && card1.includes(me.member.code), card1.slice(0, 200));
+check(`${L}: the tab card: open, pay at the counter by name, Show my Goblin card (round 15)`, /Open tab/.test(card1) && /Pay at the counter: just give your name/.test(card1) && (await p.locator('[data-tab-card] [data-qr-show]', { hasText: 'Show my Goblin card' }).count()) === 1 && !card1.includes(me.member.code), card1.slice(0, 200));
 await shot(p, `mylair-tab-${L}`);
 // edit: one less of the first thing
 await p.click('[data-tab-edit]');
@@ -159,9 +160,15 @@ await shot(p, `mylair-tab-paid-${L}`);
 
 /* 5. Sam's bookings: the pass saved for check-in, what it covered */
 const bookingsText = await text(p, '[data-view="bookings"]'); // round 7: what's coming is one list, the kinds' parts below it
-check(`${L}: Sam's Fancy room booking shows the pass covered $40 and it's paid`, bookingsText.includes(T.A.ref) && /\$40/.test(bookingsText), bookingsText.slice(0, 400));
-const joinsText = await text(p, '[data-panel="joins"]');
-check(`${L}: the cancelled online-paid sign-up says "Have a chat with us about a refund"`, /Have a chat with us about a refund/.test(joinsText), joinsText.slice(0, 400));
+// (today's bookings are made by seed-today.mjs: after about 4pm some are too soon to book online, so they're missing)
+// round 15: no booking codes on the page, so the booking is found by its table (F1)
+const ticketWith = (pg, words) => pg.evaluate((w) => [...document.querySelectorAll('[data-view="bookings"] .ml-ticket, [data-view="bookings"] article')].map((x) => x.textContent.replace(/\s+/g, ' ')).find((x) => x.includes(w)) || '', words);
+const fancy = T.A ? await ticketWith(p, (T.A.tables || ['F1']).join(', ')) : '';
+check(`${L}: Sam's Fancy room booking shows the pass covered $40 and it's paid, and no code`, Boolean(T.A) && /\$40/.test(fancy) && !fancy.includes(T.A.ref), T.A ? (fancy || bookingsText).slice(0, 400) : 'no booking A in today.json (seed-today ran too late in the day)');
+// round 15: his sign-ups (from flow-events) are on his tab, with Cancel my sign-up and until when, or locked in; no code
+const joinsText = await p.evaluate(() => [...document.querySelectorAll('[data-coming] .ml-coming__item[data-kind="events"]')].map((x) => x.textContent.replace(/\s+/g, ' ')).join(' | '));
+const signUps = (me.joins || []).filter((j) => j.status === 'confirmed' && j.amount > 0 && j.start > Date.now() && !j.guestOf);
+check(`${L}: his sign-ups: on his tab, Cancel my sign-up until 24 hours before (or locked in), no codes`, signUps.length > 0 && /on your tab/i.test(joinsText) && (/Cancel my sign-up/.test(joinsText) || /Locked in: on your tab/.test(joinsText)) && !signUps.some((j) => joinsText.includes(j.ref)), joinsText.slice(0, 400));
 problems.push(...p.problems);
 await sam.close();
 
@@ -195,8 +202,9 @@ const kiri = await context(7102, DEVICE);
 const k = await page(kiri, `${L}/kiri`);
 await openLair(k, 'bookings');
 const kb = await text(k, '[data-view="bookings"]');
-check(`${L}: Kiri's booking: "Splitting the bill", paid $20 of $40, $20 left`, kb.includes(T.B.ref) && /Splitting the bill/.test(kb) && /Paid \$20 of \$40 · \$20 left/.test(kb), kb.slice(0, 500));
-await k.evaluate((ref) => [...document.querySelectorAll('[data-view="bookings"] .ml-ticket, [data-view="bookings"] article')].find((x) => x.textContent.includes(ref))?.scrollIntoView({ block: 'center' }), T.B.ref);
+const split = T.B ? await ticketWith(k, (T.B.tables || ['T10']).join(', ')) : '';
+check(`${L}: Kiri's booking: "Splitting the bill", paid $20 of $40, $20 left`, Boolean(T.B) && /Splitting the bill/.test(split) && /Paid \$20 of \$40 · \$20 left/.test(split), T.B ? (split || kb).slice(0, 500) : 'no booking B in today.json (seed-today ran too late in the day)');
+if (T.B) await k.evaluate((w) => [...document.querySelectorAll('[data-view="bookings"] .ml-ticket, [data-view="bookings"] article')].find((x) => x.textContent.includes(w))?.scrollIntoView({ block: 'center' }), (T.B.tables || ['T10']).join(', '));
 await shot(k, `mylair-split-${L}`);
 problems.push(...k.problems);
 await kiri.close();

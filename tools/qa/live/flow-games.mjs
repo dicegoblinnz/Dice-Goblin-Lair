@@ -1,7 +1,9 @@
 // GM games board, live: a seat without a pass, a seat with a pass (the GM fee is still paid), "join every session",
 // and the GM's tools (message the players, cancel a session). Ana (trusted GM) lists a weekly game first.
-// Round 5: a weekly regular ("save my seat every week") holds a seat in the next session only, with their member code
-// as the ticket; later sessions are seated as each one ends (flow-r5-regulars.mjs covers that part).
+// Round 5: a weekly regular ("save my seat every week") holds a seat in the next session only; later sessions are seated
+// as each one ends (flow-r5-regulars.mjs covers that part). Round 15 (Mo, 12 Oct 2026): a seat goes on the tab, paid at the
+// counter on the day, with no code or QR to show; it can be given up (skipped) online until 24 hours before, then it's
+// locked in (the checks follow whichever it is when the run happens).
 import fs from 'node:fs';
 import { start, stop, context, page, overflow, shot, text, apiLog, PHONE, DESKTOP, BASE } from './harness.mjs';
 import { check, summary, proxy, fake } from './client.mjs';
@@ -46,12 +48,22 @@ async function typeMobile(p, mobile) {
   await field.first().fill(mobile);
 }
 
+/** The TAB words on the page, for a reply's lock */
+const tab = (p, x) => p.evaluate((x) => {
+  const T = window.Lair.TAB;
+  const lock = window.Lair.lockOf(x || {});
+  return { onTab: T.onTab, ahead: T.ahead(), soon: T.soon(), cancel: lock.locked ? T.lockedNow() : lock.cancelUntil ? T.cancelBy(lock.cancelUntil) : '', locked: lock.locked, lockedLabel: T.lockedLabel, cancelUntil: lock.cancelUntil ? T.cancelUntil(lock.cancelUntil) : '' };
+}, x || null);
+/** No code or QR on a confirmation (round 15) */
+const noCode = async (p, ref) => !(await text(p, '.gm-done')).includes(ref || '?') && !(await p.locator('.gm-done [aria-label^="QR"], .gm-done .gm-ticket__stub, .gm-done [data-ticket-code]').count());
+
 /* 1. Leo: a seat, no pass */
 const leo = await context(7104, DEVICE);
 const pl = await page(leo, `${L}/leo`);
 await openJoin(pl, g.id);
 const form1 = await text(pl, '#gm-join-form');
-check(`${L}: the seat form says pay at the counter, $20 a seat`, /Pay at the counter/.test(form1) && /\$20 a seat/.test(form1) && !/online/i.test(form1), form1.slice(0, 300));
+const w1 = await tab(pl);
+check(`${L}: the seat form says it goes on the tab (cancel up to 24 hours before), $20 a seat, nothing online`, (form1.includes(w1.ahead) || form1.includes(w1.soon)) && /\$20 a seat/.test(form1) && !/online/i.test(form1), form1.slice(0, 400));
 await typeMobile(pl, '021 555 0104');
 let b = apiLog.length;
 await pl.click('[data-join-submit]');
@@ -61,7 +73,8 @@ let sent = call ? JSON.parse(call.body) : {};
 let got = call ? JSON.parse(call.text) : {};
 check(`${L}: the seat is booked, paid at the counter, no pay or pass sent`, call?.status === 200 && !('pay' in sent) && !('usePass' in sent) && got.booking?.status === 'confirmed' && got.booking.amount === 2000 && got.booking.payment === 'store', call ? `${call.body.slice(0, 120)} → ${call.text.slice(0, 160)}` : 'no call');
 const tk1 = await text(pl, '.gm-done');
-check(`${L}: Leo's ticket: code, QR, $20 at the counter`, tk1.includes(got.booking?.ref || '?') && /\$20/.test(tk1) && /Pay at the counter/.test(tk1) && Boolean(await pl.$('.gm-done svg')), tk1.slice(0, 260));
+const w1b = await tab(pl, { ...got.booking });
+check(`${L}: Leo's confirmation: $20 on your tab, TAB.onTab, until when to cancel (or locked in), no code or QR, See your tab in My Lair`, /Seat fee\s*\$20 on your tab/.test(tk1) && tk1.includes(w1b.onTab) && w1b.cancel && tk1.includes(w1b.cancel) && await noCode(pl, got.booking?.ref) && (await pl.locator('.gm-done a', { hasText: 'See your tab in My Lair' }).count()) === 1, tk1.slice(0, 500));
 out.leoSeat = got.booking;
 problems.push(...pl.problems);
 await leo.close();
@@ -75,6 +88,11 @@ const hasPass = Boolean(await ps.$('#gm-join-form input[name="usePass"]'));
 check(`${L}: Sam is offered his pass on the seat form`, hasPass);
 if (hasPass) await ps.check('#gm-join-form input[name="usePass"]');
 await ps.waitForTimeout(200);
+// the league pass, when he has more than one (a run on a used state: a birthday gift's pass comes first)
+if (await ps.locator('#gm-join-form select[name="passCode"]').isVisible().catch(() => false)) {
+  await ps.selectOption('#gm-join-form select[name="passCode"]', seed.samPass.code);
+  await ps.waitForTimeout(200);
+}
 const maths = await text(ps, '#gm-join-form [data-pass-maths]');
 check(`${L}: the pass maths: covers $10, the $10 GM fee is still paid`, /\$10/.test(maths) && /GM fee|pay \$10/i.test(maths), maths);
 b = apiLog.length;
@@ -85,7 +103,7 @@ sent = call ? JSON.parse(call.body) : {};
 got = call ? JSON.parse(call.text) : {};
 check(`${L}: usePass is sent and saved on the seat`, sent.usePass === seed.samPass.code && got.booking?.pass?.code === seed.samPass.code && !('pay' in sent), call ? `${call.body.slice(0, 160)} → ${call.text.slice(0, 200)}` : 'no call');
 const tk2 = await text(ps, '.gm-done');
-check(`${L}: Sam's ticket: the pass, and $10 to pay at the counter`, /Warhammer league/.test(tk2) && /Covers \$10/.test(tk2) && /Pay \$10 at the counter/.test(tk2), tk2.slice(0, 320));
+check(`${L}: Sam's confirmation: the pass covers $10 when he checks in, the seat on his tab, no code`, /Warhammer league/.test(tk2) && /Covers \$10 when you check in/.test(tk2) && /\$20 on your tab/.test(tk2) && await noCode(ps, got.booking?.ref), tk2.slice(0, 420));
 check(`${L}: no sideways scroll`, (await overflow(ps)) <= 0, await overflow(ps));
 await shot(ps, `gm-seat-ticket-pass-${L}`);
 out.samSeat = got.booking;
@@ -105,10 +123,12 @@ await pk.click('[data-join-submit]');
 await pk.waitForSelector('.gm-done', { timeout: 8000 }).catch(() => {});
 call = apiLog.slice(b).find((c) => c.method === 'POST' && /join-series/.test(c.route));
 got = call ? JSON.parse(call.text) : {};
-check(`${L}: a regular: a seat in the next session only, the member code is the ticket`, call?.status === 200 && got.booked?.length === 1 && got.booked[0].gameId === g.id && /^KS-[A-Z]+-\d+$/.test(got.booked[0].ref) && got.booked[0].ticketCode === kiriCode && !('pay' in JSON.parse(call.body)), call ? call.text.slice(0, 260) : 'no call');
+check(`${L}: a regular: a seat in the next session only`, call?.status === 200 && got.booked?.length === 1 && got.booked[0].gameId === g.id && /^KS-[A-Z]+-\d+$/.test(got.booked[0].ref) && !('pay' in JSON.parse(call.body)), call ? call.text.slice(0, 260) : 'no call');
 const tk3 = await text(pk, '.gm-done');
-const qr3 = await pk.evaluate(() => document.querySelector('.gm-done .gm-ticket__stub svg')?.getAttribute('aria-label') || '');
-check(`${L}: the "regular" ticket: seat saved every week, the next session, pay at the counter each week, the Goblin card as the ticket`, /A regular! Gobgob has saved your seat/.test(tk3) && /Your seat’s saved every week/.test(tk3) && /Each week\$20 Pay at the counter/.test(tk3) && /Your Goblin card is your ticket/.test(tk3) && Boolean(kiriCode) && qr3.includes(kiriCode), { qr3, tk3: tk3.slice(0, 400) });
+// the seat joining books is locked like a one-off seat (24 hours before), as GET /me has it
+const seat3 = ((await proxy('GET', 'me', { customer: '7102' })).data.seats || []).find((x) => x.gameId === g.id && x.status !== 'cancelled');
+const w3 = await tab(pk, seat3);
+check(`${L}: the "regular" confirmation: seat saved every week, $20 on her tab each week, TAB.onTab, until when to skip it (or locked in), no card or code`, /A regular! Gobgob has saved your seat/.test(tk3) && /Your seat’s saved every week/.test(tk3) && /Each week\s*\$20 on your tab/.test(tk3) && tk3.includes(w3.onTab) && w3.cancel && tk3.includes(w3.cancel) && !/Goblin card is your ticket/.test(tk3) && !tk3.includes(kiriCode || '?') && await noCode(pk, got.booked?.[0]?.ref), { seat3: seat3 && { cancelUntil: seat3.cancelUntil, locked: seat3.locked }, tk3: tk3.slice(0, 500) });
 out.series = got;
 problems.push(...pk.problems);
 await kiri.close();
@@ -160,14 +180,20 @@ await pk2.goto('about:blank');
 await pk2.goto(`${BASE}/pages/gm-games#game=${encodeURIComponent(g.id)}`, { waitUntil: 'networkidle' });
 await pk2.waitForSelector('[data-leave]', { timeout: 8000 }).catch(() => {});
 const youText = await text(pk2, '.gm-you');
-check(`${L}: Kiri's ticket on the game (her member code), with skip and leave`, Boolean(kiriCode) && youText.includes(kiriCode) && /Your seat’s saved every week/.test(youText) && Boolean(await pk2.$('[data-skip]')) && Boolean(await pk2.$('[data-leave]')), youText.slice(0, 200));
-await pk2.click('[data-skip]');
-await pk2.waitForSelector('[data-skip-do]');
-b = apiLog.length;
-await pk2.click('[data-skip-do]');
-await pk2.waitForTimeout(1500);
-call = apiLog.slice(b).find((c) => c.method === 'POST' && /^bookings\/.+\/update$/.test(c.route));
-check(`${L}: skipping a session cancels that seat only, and the seat stays saved after that`, call?.status === 200 && JSON.parse(call.body).status === 'cancelled' && JSON.parse(call.text).booking.status === 'cancelled' && /Skipped .+Your seat’s still saved after that\./.test(await text(pk2, 'gm-board dialog')), call ? call.text.slice(0, 160) : 'no call');
+const seat5 = ((await proxy('GET', 'me', { customer: '7102' })).data.seats || []).find((x) => x.gameId === g.id && x.status !== 'cancelled');
+const w5 = await tab(pk2, seat5);
+check(`${L}: Kiri's seat on the game: saved every week, $20 on her tab each week, no code; ${w5.locked ? 'locked in (no Skip), Stop saving my seat' : 'Skip this week with until when, Stop saving my seat'}`,
+  /Your seat’s saved every week/.test(youText) && /\$20 on your tab each week/.test(youText) && !youText.includes(kiriCode || '?') && Boolean(await pk2.$('[data-leave]'))
+  && (w5.locked ? youText.includes(w5.lockedLabel) && !(await pk2.$('[data-skip]')) : Boolean(await pk2.$('[data-skip]')) && youText.includes(w5.cancelUntil)), youText.slice(0, 300));
+if (!w5.locked) {
+  await pk2.click('[data-skip]');
+  await pk2.waitForSelector('[data-skip-do]');
+  b = apiLog.length;
+  await pk2.click('[data-skip-do]');
+  await pk2.waitForTimeout(1500);
+  call = apiLog.slice(b).find((c) => c.method === 'POST' && /^bookings\/.+\/update$/.test(c.route));
+  check(`${L}: skipping a session cancels that seat only, and the seat stays saved after that`, call?.status === 200 && JSON.parse(call.body).status === 'cancelled' && JSON.parse(call.text).booking.status === 'cancelled' && /Skipped .+Your seat’s still saved after that\./.test(await text(pk2, 'gm-board dialog')), call ? call.text.slice(0, 160) : 'no call');
+}
 const kiriMe = (await proxy('GET', 'me', { customer: '7102' })).data;
 check(`${L}: she's still a regular after skipping`, kiriMe.series?.some((m) => m.seriesId === g.seriesId), kiriMe.series);
 const coming = (kiriMe.seats || []).filter((x) => x.seriesId === g.seriesId && ['held', 'confirmed'].includes(x.status) && x.start > Date.now()).length;
@@ -179,7 +205,8 @@ await pk2.click('[data-leave-do]');
 await pk2.waitForTimeout(1500);
 call = apiLog.slice(b).find((c) => c.method === 'POST' && /^series\/.+\/leave$/.test(c.route));
 const left = call ? JSON.parse(call.text) : {};
-check(`${L}: leaving the series frees the seats to come (none after the skip)`, call?.status === 200 && left.ok === true && left.cancelled === coming && /Gobgob has stopped saving your seat/.test(await text(pk2, 'gm-board dialog')), call ? `${call.text} (coming ${coming})` : 'no call');
+// round 15: a seat that's locked in stays on her tab (kept); the rest are freed
+check(`${L}: leaving the series frees the seats to come (${w5.locked ? 'the locked-in one stays on her tab' : 'none after the skip'})`, call?.status === 200 && left.ok === true && left.cancelled + (left.kept || []).length === coming && (left.kept || []).length === (w5.locked ? 1 : 0) && /Gobgob has stopped saving your seat/.test(await text(pk2, 'gm-board dialog')), call ? `${call.text} (coming ${coming})` : 'no call');
 check(`${L}: she's not a regular any more`, !((await proxy('GET', 'me', { customer: '7102' })).data.series || []).some((m) => m.seriesId === g.seriesId));
 problems.push(...pk2.problems);
 await kiri2.close();
