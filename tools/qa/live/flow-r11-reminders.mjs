@@ -15,12 +15,14 @@
 //      staff; a member on it; taking it back; room left means sign up instead
 // Run inside the live lock: flock /tmp/lair-live.lock sh -c 'cd tools/qa/live && ./up.sh && node flow-r11-reminders.mjs; ./down.sh'
 import { WORKER, proxy, fake, check, summary } from './client.mjs';
-import { key, addDays, at, sleep } from './r6-time.mjs';
+import { key, addDays, nextDow, at, sleep } from './r6-time.mjs';
 
 const STAFF = '7001';
 const HINE = '7931'; // a member: Maybe, then the reminder; later on the waitlist
 const today = key(Date.now());
-const SAT = addDays(today, 9);
+// the first Saturday at least 9 days away (a reminder for a weekend date gives the lift's weekend hours; it was 9 days
+// on, a Saturday only when the run was on a Thursday)
+const SAT = nextDow(6, today, 9);
 const SUN = addDays(SAT, 1);
 const EVE = addDays(SAT, -1);
 const said = (res) => `${res.status} ${res.data?.error || ''}`.trim();

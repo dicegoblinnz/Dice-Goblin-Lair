@@ -19,13 +19,14 @@ import { proxy, pos, fake, webhook, check, summary } from './client.mjs';
 import { key } from './r6-time.mjs';
 
 const STAFF = '7001';
-const WIREMU = '7901'; // books 1 v 1
-const AROHA = '7902'; // his opponent, by member code
-const NGAIO = '7903'; // books 2 v 2
-const TIPENE = '7904'; // Ngaio's teammate, by member code
-const MEREANA = '7905'; // an opponent named by her email (a member: linked)
+// customers 7951 to 7956 (flow-r9-team has 7901 to 7903, so these were other people's member codes and emails)
+const WIREMU = '7951'; // books 1 v 1
+const AROHA = '7952'; // his opponent, by member code
+const NGAIO = '7953'; // books 2 v 2
+const TIPENE = '7954'; // Ngaio's teammate, by member code
+const MEREANA = '7955'; // an opponent named by her email (a member: linked)
 const INVITED = 'rawiri.r11@example.com'; // an opponent named by an email nobody has: invited
-const RAWIRI = '7906'; // …who makes his account with it
+const RAWIRI = '7956'; // …who makes his account with it
 const said = (res) => `${res.status} ${res.data?.error || ''}`.trim();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 for (const [id, name] of [[WIREMU, 'Wiremu Tane'], [AROHA, 'Aroha Hura'], [NGAIO, 'Ngaio Rau'], [TIPENE, 'Tipene Kauri'], [MEREANA, 'Mereana Pou']]) {
@@ -40,6 +41,13 @@ check('setup: everyone has a member code', Object.values(codes).every(Boolean), 
 const today = key(Date.now());
 const start = Math.ceil(Date.now() / 1800000) * 1800000 + 1800000;
 const end = start + 3 * 3600000;
+// a clean slate on T8-T21 for those hours: an earlier flow's walk-in or booking there (seed-today seats a walk-in at T12
+// for two hours) would take a pair before this flow starts; staff finish the walk-in and cancel the rest
+const HELD = Array.from({ length: 14 }, (_, i) => `T${8 + i}`);
+const earlier = (await proxy('GET', `floor?from=${start - 3600000}&to=${end + 3600000}`, { customer: STAFF })).data.bookings || [];
+for (const b of earlier.filter((x) => ['held', 'confirmed', 'seated'].includes(x.status) && x.start < end && x.end > start && (x.tables || []).some((t) => HELD.includes(t)))) {
+  await proxy('POST', `bookings/${b.id}/update`, { customer: STAFF, body: { status: b.status === 'seated' ? 'done' : 'cancelled' } });
+}
 const made = await proxy('POST', 'events', {
   customer: STAFF,
   body: { title: `Warhammer night r11 ${today}`, type: 'wargame', game: 'Warhammer', start, end, tables: 'T8-T21', lockTables: true, gameTables: 'T8+T9, T10+T11, T12+T13, T14+T15, T18+T19, T20+T21', entryFee: 10, payment: 'store', description: '1 v 1 or 2 v 2 on a pair of tables.' },
@@ -80,7 +88,7 @@ await wait(600);
 const sent = (await fake('GET', 'emails')).slice(emails0);
 const to = (addr) => sent.filter((e) => [].concat(e.to).includes(addr));
 const wiremuMail = to('wiremu.r11@example.com')[0];
-check('4: Wiremu\'s confirmation says who\'s playing and that each pays their own', wiremuMail && /Game: +1 v 1\n/.test(wiremuMail.text) && /Playing: +You against Aroha Hura\n/.test(wiremuMail.text) && /Each player pays their own \$10 at the counter\./.test(wiremuMail.text), wiremuMail ? wiremuMail.text.slice(0, 500) : sent.map((e) => e.to));
+check('4: Wiremu\'s confirmation says who\'s playing and that each pays their own', wiremuMail && /Game: +1 v 1\n/.test(wiremuMail.text) && /Playing: +You against Aroha Hura\n/.test(wiremuMail.text) && /Each player pays their own \$10 at the counter on the day\. The others give your name \(or show their Goblin card\) when they arrive\./.test(wiremuMail.text), wiremuMail ? wiremuMail.text.slice(0, 500) : sent.map((e) => e.to));
 const arohaMail = to('aroha.r11@example.com')[0];
 check('4: Aroha gets one email: Wiremu booked a 1 v 1 with her, when, T12 + T13, "$10 a person, paid at the counter"', to('aroha.r11@example.com').length === 1 && arohaMail.subject.startsWith(`Warhammer night r11 ${today} with Wiremu: `) && /Kia ora Aroha, Wiremu Tane has booked a 1 v 1 game with you/.test(arohaMail.text) && /Where: +Tables T12 \+ T13\n/.test(arohaMail.text) && /Fee: +\$10 a person, paid at the counter on the day\n/.test(arohaMail.text) && /Show your Goblin card from My Lair at the counter when you arrive \(or give Wiremu's name\): it finds the game\./.test(arohaMail.text), arohaMail ? arohaMail.text.slice(0, 600) : 'no email');
 const invite = to(INVITED)[0];
