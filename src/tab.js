@@ -57,11 +57,15 @@ export const TAB_MESSAGES = {
   billVoid: 'That bill was cancelled. Make a new one with Bill now.',
   noEmail: (name) => `There's no email for ${name}, so the bill can't be sent. Add one to their profile, or give them the link.`,
   emailOff: "Emails aren't set up yet, so the bill can't be sent.",
-  payAtCounter: "You pay each visit, so there's nothing to pay online. Show your member code at the counter and we'll ring it up.",
+  payAtCounter: "You pay each visit, so there's nothing to pay online. Just give your name at the counter (or show your Goblin card) and we'll ring it up.",
   nothingToPay: "There's nothing on your account to pay right now.",
   onlineDown: "Online payment isn't working right now. Pay at the counter next time you're in, or try again in a minute.",
   noLink: "Shopify didn't make the bill's payment link just now. Try again in a minute.",
   login: 'Log in to see your account.',
+  // round 15: paying for a few at once
+  pickSome: "Tick what they're paying for.",
+  notTheirs: "One of those isn't on their tab any more. Refresh their page and try again.",
+  nothingDue: 'Nothing is left to pay on what you ticked.',
 };
 
 /** "Your Lair account is at its $100 limit. Pay your bill online or at the counter, then book again." */
@@ -91,12 +95,15 @@ export const runningTabMethods = {
   /**
    * A member's running tab (contract v9-tab section 1), worked out from their bookings, seats, sign-ups and tabs every
    * time (nothing is copied):
-   *   owed      what they owe now: weekly seats owed (as round 5), what they checked in for today and haven't paid, their
-   *             tab today, and, from a monthly period of their account, what they checked in for or put on a tab then
-   *             (from tabFrom on, so old records never start nagging). A one-off no-show is never owed.
+   *   owed      what they owe now: what's over and unpaid (owedRows: weekly seats as round 5, and round 15's bookings,
+   *             seats and sign-ups, whether or not they came; owedRow: true), what they checked in for today and haven't
+   *             paid, their tab today, and, from a monthly period of their account, what they checked in for or put on a
+   *             tab then (from tabFrom on, so old records never start nagging). A one-off no-show booked before round 15
+   *             is never owed.
    *   comingUp  their bookings, seats and sign-ups still to come, not checked in yet, with what's left to pay and how
-   *             it's settled: 'day' (at the counter), 'account' (on their monthly bill), 'online' (a checkout is open)
-   *             or 'paid'.
+   *             it's settled: 'day' (at the counter), 'account' (on their monthly bill), 'online' (a checkout is open,
+   *             from before round 15) or 'paid'; round 15: until when they can cancel it themselves (cancelUntil) and
+   *             whether it's locked in now (locked: on their tab for good, only staff take it off).
    * Each item: { type, id, ref, kind ('table'|'spot'|'seat'|'event'|'tab'), title, when, end, people, amount, status,
    * settle, bill (the open bill it's on, or null), onBill, weekly, today }. No awaits.
    */
@@ -126,12 +133,14 @@ export const runningTabMethods = {
     });
     const owed = [];
     const seen = new Set();
-    // weekly seats owed (round 5): owed for everyone, whether or not they came
+    // what's over and unpaid (round 5's weekly seats, round 15's everything): owed whether or not they came
     for (const r of this.owedRows(id, rules, now)) {
-      const b = this.booking(r.id);
-      if (!b) continue;
-      seen.add(`booking:${b.id}`);
-      owed.push(item('booking', b, { status: 'owed', settle: monthly ? 'account' : 'day', weekly: true }));
+      const x = r.type === 'join' ? this.joinById(r.id) : this.booking(r.id);
+      if (!x) continue;
+      seen.add(`${r.type}:${x.id}`);
+      const weekly = r.type === 'booking' && Boolean(x.seriesId && x.kind === 'gm-seat');
+      // on their account while they're on one, or when it's from a monthly period of theirs (back on pay each visit)
+      owed.push(item(r.type, x, { status: 'owed', settle: monthly || onAccount(x.arrivedAt || x.start) ? 'account' : 'day', weekly, owedRow: true }));
     }
     // checked in and not paid: today's, and a monthly period's
     const since = Math.min(this.tabFrom, dayFrom);
@@ -156,7 +165,8 @@ export const runningTabMethods = {
       )
       .toArray().map((r) => this.rowToJoin(r));
     for (const j of joins) {
-      if (dueOf(j) <= 0 || !here(j.arrivedAt || j.start)) continue;
+      if (seen.has(`join:${j.id}`) || dueOf(j) <= 0 || !here(j.arrivedAt || j.start)) continue;
+      seen.add(`join:${j.id}`);
       owed.push(item('join', j, { status: 'owed', settle: onAccount(j.arrivedAt || j.start) ? 'account' : 'day' }));
     }
     // tabs not paid: today's, and a monthly period's
@@ -193,9 +203,10 @@ export const runningTabMethods = {
       if (x.status === 'held' || x.pay === 'now') return 'online';
       return monthly ? 'account' : 'day';
     };
+    // round 15: until when they can cancel each one, and whether it's locked in now
     const comingUp = [
-      ...upBookings.map((b) => item('booking', b, { status: b.status === 'held' ? 'held' : 'booked', settle: settleOf(b) })),
-      ...upJoins.map((j) => item('join', j, { status: j.status === 'held' ? 'held' : 'booked', settle: settleOf(j) })),
+      ...upBookings.map((b) => item('booking', b, { status: b.status === 'held' ? 'held' : 'booked', settle: settleOf(b), ...this.lockView(b, rules, now) })),
+      ...upJoins.map((j) => item('join', j, { status: j.status === 'held' ? 'held' : 'booked', settle: settleOf(j), ...this.lockView(j, rules, now) })),
     ].sort((a, b) => a.when - b.when || a.title.localeCompare(b.title)).slice(0, COMING_UP_MAX);
     const owedTotal = owed.reduce((sum, x) => sum + x.amount, 0);
     const limit = monthly ? row.credit_limit || 0 : 0;
@@ -348,6 +359,51 @@ export const runningTabMethods = {
     const weight = (x) => (x.overLimit ? 0 : x.billing === 'monthly' && x.owed >= x.creditLimit ? 1 : 2);
     list.sort((a, b) => weight(a) - weight(b) || b.owed - a.owed || a.name.localeCompare(b.name));
     return { accounts: list, now };
+  },
+
+  /**
+   * Round 15 (Mo, 12 Oct 2026: "the money will only be available to be paid on the day or if you prefer you can choose
+   * to pay for more than once at once"): POST /members/:customerId/paid { items: [{ type: 'booking'|'join', id }] }
+   * (staff: Check-in or Tables for bookings and seats, Check-in or Events for sign-ups) marks several things on a
+   * member's tab paid at once, coming up or owed: what's left on each counts as paid (taken at the counter, or settled
+   * another way), as Mark paid does for one. Each must be theirs, not cancelled, with something left to pay. Up to 40.
+   * Returns { paid: [{ type, id, ref, amount }], total, account }.
+   */
+  async markTabPaid(customerId, input, who) {
+    this.requireStaff(who, ['checkin', 'tables', 'events']);
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const id = trimmed(customerId, 40);
+    const list = Array.isArray(input?.items) ? input.items.slice(0, 40) : [];
+    if (!list.length) throw new RuleError(TAB_MESSAGES.pickSome);
+    const picked = [];
+    const seen = new Set();
+    for (const raw of list) {
+      const type = raw?.type === 'join' ? 'join' : 'booking';
+      const itemId = trimmed(raw?.id, 60);
+      if (!itemId || seen.has(`${type}:${itemId}`)) continue;
+      seen.add(`${type}:${itemId}`);
+      this.requireStaff(who, type === 'join' ? ['checkin', 'events'] : ['checkin', 'tables']);
+      const x = type === 'join' ? this.joinById(itemId) : this.booking(itemId);
+      if (!x || String(x.customerId || '') !== id || x.status === 'cancelled' || x.kind === 'gm') throw new RuleError(TAB_MESSAGES.notTheirs, 409);
+      picked.push({ type, x });
+    }
+    const due = picked.filter(({ x }) => dueOf(x) > 0);
+    if (!due.length) throw new RuleError(TAB_MESSAGES.nothingDue, 409);
+    const paid = [];
+    for (const { type, x } of due) {
+      const amount = dueOf(x);
+      if (type === 'join') {
+        this.write('UPDATE event_joins SET paid = 1, paid_amount = ?, updated_at = ? WHERE id = ?', Math.max(x.paidAmount || 0, x.amount || 0), now, x.id);
+      } else {
+        this.write('UPDATE bookings SET paid = 1, paid_amount = ?, updated_at = ? WHERE id = ?', Math.max(x.paidAmount || 0, (x.amount || 0) - (x.covered || 0)), now, x.id);
+      }
+      paid.push({ type, id: x.id, ref: x.ref, amount });
+    }
+    // a bill with any of these on it stays true
+    this.reconcileBills(rules, now);
+    return { paid, total: paid.reduce((sum, p) => sum + p.amount, 0), account: this.memberAccount(id, rules, now, { staff: true }) };
   },
 
   /* ---------------- bills ---------------- */
@@ -528,7 +584,7 @@ export const runningTabMethods = {
       details: [...items.map((i) => [this.shortDay(i.when, rules), `${i.kind === 'table' ? `Table for ${i.people || 1}` : i.title} (${i.ref}): ${dollars(i.amount)}`]), ['Total', total]],
       button: bill.invoice_url ? { label: 'Pay online', url: bill.invoice_url } : null,
       outro: [
-        "Or pay at the counter next time you're in: show your member code and we'll ring it up.",
+        "Or pay at the counter next time you're in: just give your name (or show your Goblin card) and we'll ring it up.",
         'Store credit on your account is used when you pay.',
         ...(reminder ? ['Paid it already? Thanks, friend. You can ignore this one.'] : []),
       ],
@@ -727,15 +783,16 @@ export const runningTabMethods = {
 
   /**
    * The POS's rows for what a member owes on their account from earlier days (a monthly period's check-ins and tabs),
-   * after their weekly seats: each owed: true, onAccount: true, with its cart line ("Owed: Table T3 (Thu 1 Oct)", or a
-   * tab's "Tab: Thu 1 Oct (3 things)" tagged _tab). Today's are in their day already. No awaits.
+   * after their owed rows (owedRows): each owed: true, onAccount: true, with its cart line ("Owed: Table T3 (Thu 1 Oct)",
+   * or a tab's "Tab: Thu 1 Oct (3 things)" tagged _tab). Today's are in their day already, and owedRows' are listed once.
+   * No awaits.
    */
   accountOwedRows(customerId, rules, now) {
     if (!this.accountRow(customerId)) return [];
     const { from } = this.dayWindow(rules, now);
     const rows = [];
     for (const i of this.runningTab(customerId, rules, now).owed.items) {
-      if (i.weekly || i.when >= from || i.settle !== 'account') continue;
+      if (i.owedRow || i.when >= from || i.settle !== 'account') continue;
       if (i.type === 'tab') {
         const t = this.sql.exec('SELECT * FROM tabs WHERE id = ?', i.id).toArray()[0];
         if (!t) continue;

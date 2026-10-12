@@ -18,6 +18,8 @@ import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
 import { checkMobile, mobileKey } from './core.js';
 import { eventPayment } from './core.js';
+// Round 15: everything on the tab, and the lock on cancelling (24 hours before)
+import { TAB_WORDS, cancelUntil } from './core.js';
 // Round 8: friends on event sign-ups, each by member code or by name
 import { GUEST_MESSAGES, guestList } from './core.js';
 // Round 8: barcodes match with or without leading zeros
@@ -67,8 +69,9 @@ const ONLINE_DOWN = "Online payment isn't working right now. Call us and we'll h
 /** Cancelling a sign-up or game spot that was paid online: it's locked in, so staff decide on a refund */
 const LOCKED_IN = 'Your spot is cancelled. You paid online, so have a chat with us about a refund.';
 /** Email wording: paying at the counter, being locked in after paying online, and splitting the bill */
-const COUNTER = "Pay at the counter when you arrive. Show your code and we'll ring it up.";
-const SHOW_CODE = 'Show your code at the counter when you arrive. Its QR code is in My Lair too.';
+// Round 15: no code of its own to show: it's on their tab, paid at the counter on the day (TAB_WORDS)
+const COUNTER = TAB_WORDS.onTab;
+const SHOW_CODE = TAB_WORDS.nothingToPay;
 const LOCKED_IN_EMAIL = "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.";
 const SPLIT = 'Splitting the bill? Each friend can pay their share at the counter.';
 /** A session pass sold as a product: an order line with this SKU makes `quantity` passes of N sessions each. */
@@ -191,6 +194,15 @@ const ROUND10_ADDED_INDEXES = [
  * left as they were.
  */
 const ORDERS_BACKFILL_DAYS = 7;
+
+/**
+ * Round 15 (12 Oct 2026, everything on the tab): columns made sure of on every start (added when missing), so they
+ * never wait on a step in MIGRATIONS (another round may be adding one at the same time).
+ *  - event_joins.waived: staff let someone off a sign-up on their tab (as bookings.waived), so it isn't owed.
+ *  - bookings.gob_saved: a weekly regular's seat Gobgob saved for them by itself (the next session as one ends, a seat
+ *    that came free, a session added), not one they (or staff) booked: saved inside the 24 hours, it isn't locked.
+ */
+const ROUND15_COLUMNS = [['event_joins', 'waived', 'INTEGER NOT NULL DEFAULT 0'], ['bookings', 'gob_saved', 'INTEGER NOT NULL DEFAULT 0']];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -850,6 +862,13 @@ export class Lair {
         );
       }
     }
+    for (const [table, column, type] of ROUND15_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
@@ -858,6 +877,11 @@ export class Lair {
     // never start nagging.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('tab-from', ?)", String(Date.now()));
     this.tabFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'tab-from'").toArray()[0]?.value) || 0;
+    // Round 15: what's booked or signed up for from its first start is locked in 24 hours before it starts and owed
+    // once it's over unpaid (whether or not they came). What was booked before keeps the rules it was booked under (a
+    // one-off no-show isn't owed, and it can be cancelled until it starts).
+    this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('lock-from', ?)", String(Date.now()));
+    this.lockFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'lock-from'").toArray()[0]?.value) || 0;
     // The loyalty card (round 6) starts brand new: only sessions starting from round 6's first start earn stamps.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('loyalty-from', ?)", String(Date.now()));
     this.loyaltyFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'loyalty-from'").toArray()[0]?.value) || 0;
@@ -911,6 +935,8 @@ export class Lair {
       paidAmount: r.paid_amount || 0, split: Boolean(r.split),
       // waived: staff let a weekly regular off what they owed for this seat, so nothing is due.
       waived: Boolean(r.waived), createdAt: r.created_at || null,
+      // round 15: a regular's seat Gobgob saved for them by itself (not one they booked)
+      gobSaved: Boolean(r.gob_saved),
     };
   }
 
@@ -948,6 +974,8 @@ export class Lair {
       orderId: r.order_id || null, refund: r.refund || null, paidAmount: r.paid_amount || 0,
       // round 7: the mobile they gave (sign-ups from before have none)
       phone: r.phone || '',
+      // round 15: staff let them off it (waived), and when it was made (what's locked in and owed goes by it)
+      waived: Boolean(r.waived), createdAt: r.created_at || null,
     };
   }
 
@@ -968,7 +996,20 @@ export class Lair {
       pay: j.pay, paid: j.paid, amount: j.amount, payment: j.pay === 'now' ? 'online' : 'store', refund: j.refund || null,
       paidAmount: j.paidAmount || 0, due: dueOf(j),
       guests: (guests || this.joinGuests(j.id)).map((g) => ({ name: g.name, member: Boolean(g.customer_id) })),
+      // Round 15: until when they can cancel it themselves, whether it's locked in now, and owed or waived
+      ...this.lockView(j), owed: this.joinOwed(j), waived: Boolean(j.waived),
     };
+  }
+
+  /**
+   * Round 15: a booking's or sign-up's lock as its own person sees it: cancelUntil (the last moment to cancel it online)
+   * and locked (that's passed: it stays on their tab and only staff take it off). Nothing to lock once it's cancelled,
+   * over or they're here (checked in). No awaits.
+   */
+  lockView(x, rules = this.rulesCache, now = Date.now()) {
+    if (!x || !rules || ['cancelled', 'done', 'seated', 'attended'].includes(x.status) || x.arrivedAt || x.end <= now) return { cancelUntil: null, locked: false };
+    const rule = this.cancelRule(x, rules, now);
+    return { cancelUntil: rule.cancelUntil, locked: rule.locked };
   }
 
   /**
@@ -1562,6 +1603,8 @@ export class Lair {
       if (a === 'members' && b && c === 'email') return json(await this.emailMember(decodeURIComponent(b), body, who));
       // Round 9: a member's billing (pay each visit or a monthly account) and credit limit, and their bills
       if (a === 'members' && b && c === 'account') return json(await this.setMemberAccount(decodeURIComponent(b), body, who));
+      // Round 15: several things on a member's tab paid at once
+      if (a === 'members' && b && c === 'paid') return json(await this.markTabPaid(decodeURIComponent(b), body, who));
       if (a === 'accounts' && b && c === 'bill') return json(await this.billNow(decodeURIComponent(b), who));
       if (a === 'bills' && b && c === 'void') return json(await this.voidBillRoute(decodeURIComponent(b), who));
       if (a === 'bills' && b && c === 'resend') return json(await this.resendBill(decodeURIComponent(b), who));
@@ -1875,8 +1918,9 @@ export class Lair {
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (staffView ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: staffView,
-      // payOnline: Shopify checkout works, for events paid online. Tables, seats and walk-ins are paid at the counter.
-      features: { email: emailReady(this.env), payOnline: this.shopify.configured },
+      // payOnline: round 4's checkout for events paid online. Round 15: everything is on the tab, paid at the counter,
+      // so it's always false (a page from before shows only the counter).
+      features: { email: emailReady(this.env), payOnline: false },
     };
   }
 
@@ -1949,14 +1993,13 @@ export class Lair {
   }
 
   /**
-   * How an event sells its entry or a game spot (the event's `payment`): 'store' at the counter; 'online' always
-   * through checkout, refused with a 503 when Shopify can't make one; 'either' online when they ask (pay: 'now'), at
-   * the counter otherwise. No awaits.
+   * How an event sells its entry or a game spot. Round 15 (Mo, 12 Oct 2026: "Don't create a new QR code to pay make it
+   * live inside each person's tab"): always at the counter, on their tab, whatever the event's `payment` says (round 4's
+   * 'online' and 'either' went through checkout), so nothing is held for a checkout any more. A ticket sold as a Shopify
+   * product is a shop sale, as before. No awaits.
    */
-  paymentPlan(payment, pay) {
-    const online = payment === 'online' || (payment === 'either' && pay === 'now');
-    if (payment === 'online' && !this.shopify.configured) throw new RuleError(ONLINE_DOWN, 503);
-    return { wantsPayNow: online, payNow: online && this.shopify.configured, required: payment === 'online' };
+  paymentPlan() {
+    return { wantsPayNow: false, payNow: false, required: false };
   }
 
   /**
@@ -2045,38 +2088,41 @@ export class Lair {
     if (!emailReady(this.env) || !isEmail(booking.email)) return false;
     const when = this.when(booking, rules);
     const online = Boolean(booking.paid && booking.pay === 'now');
-    const fee = !booking.amount ? 'Nothing to pay' : booking.paid ? `${dollars(booking.amount)}, paid${online ? ' online' : ''}. Thank you!` : `${dollars(booking.amount)}, pay at the counter`;
-    const pay = dueOf(booking) > 0 ? COUNTER : SHOW_CODE;
+    // Round 15: it's on their tab (a guest pays at the counter on the day), with no code of its own to show
+    const fee = !booking.amount ? 'Nothing to pay' : booking.paid ? `${dollars(booking.amount)}, paid${online ? ' online' : ''}. Thank you!`
+      : `${dollars(booking.amount)}, ${booking.customerId ? 'on your tab' : 'pay at the counter on the day'}`;
     // A game spot paid online is locked in. A table the first release took payment for online keeps its old policy.
     const lockedIn = online && Boolean(booking.occurrenceId);
     const changes = lockedIn ? LOCKED_IN_EMAIL : online
       ? `Need to cancel? Do it in My Lair or call us at least ${rules.refundHours} hours before, and you'll get your money back. After that the fee can't be refunded.`
       : null;
+    // what's to pay and how, and until when they can cancel (round 15), or a paid online booking's old words
+    const [pay, cancel] = changes ? [dueOf(booking) > 0 ? COUNTER : SHOW_CODE, changes] : this.tabLines(booking, rules, { spot: game ? 'seat' : booking.occurrenceId ? 'game table' : 'table' });
     const tables = `${booking.tables.length > 1 ? 'Tables' : 'Table'} ${booking.tables.join(', ')}`;
     const event = booking.occurrenceId ? findOccurrence(rules, booking.occurrenceId) : null;
     let subject;
     let content;
     if (game) {
-      subject = `Seat saved: ${game.title}, ${when} (${booking.ref})`;
+      subject = `Seat saved: ${game.title}, ${when}`;
       content = {
         title: 'Your seat is saved!',
         intro: `Kia ora ${booking.name}, you're in for ${game.title}${game.gm ? ` with GM ${game.gm}` : ''}. Gobgob has pulled up a chair for you.`,
         details: [
           ['Game', `${game.title}${game.system ? ` (${game.system})` : ''}`], ['When', when], ['Players', this.partyLine(booking.party)], ['Where', tables],
-          ['Fee', fee], ['Your code', booking.ref],
+          ['Fee', fee],
         ],
         outro: [
-          pay, changes || "Can't make it after all? Drop your seat in My Lair and Gobgob will let your GM know.",
-          // A seat with no account (a guest, or a player staff added): it joins their account once they make one (round 6).
-          // Round 7: a seat staff reserved at a weekly game says the account also saves their seat every week.
-          ...(booking.customerId ? [] : [invite ? this.inviteLine(invite) : 'Make an account with this email any time, and your seats will show up in My Lair.']),
+          pay, cancel,
+          // Round 7: a seat staff reserved at a weekly game for someone without an account says the account also saves
+          // their seat every week (a guest's account picking up the seat is in the line above, round 15)
+          ...(booking.customerId || !invite ? [] : [this.inviteLine(invite)]),
         ],
       };
     } else {
       const extras = { wargame: 'Wargame (double tables)', bigbox: 'Big box game (double tables)', celebrating: 'Celebrating something' };
       // Round 11: a game with named players says who's playing and that each pays their own share
       const played = event ? this.gameEmailParts(booking) : null;
-      subject = `${event ? `Game spot booked: ${event.title}` : "You're booked"}: ${when} (${booking.ref})`;
+      subject = `${event ? `Game spot booked: ${event.title}` : "You're booked"}: ${when}`;
       content = {
         title: lockedIn ? "You're locked in!" : event ? 'Your game spot is booked!' : "You're booked in!",
         intro: event
@@ -2084,9 +2130,9 @@ export class Lair {
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
           ['When', when], ['Where', tables], ['People', String(booking.people)], ...(played ? played.details : []),
-          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee], ['Your code', booking.ref],
+          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee],
         ],
-        outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), changes || 'Plans changed? Cancel in My Lair or give us a call, so someone else can have the table.'],
+        outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), cancel],
       };
       // Round 11: and every other player with an email hears about it, once
       if (played) this.tellGamePlayers(booking, rules);
@@ -2151,6 +2197,8 @@ export class Lair {
       extras: b.extras || [], occurrenceId: b.occurrenceId || null, payment: b.pay === 'now' ? 'online' : 'store', refund: b.refund || null,
       pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0, split: Boolean(b.split),
       seriesId: b.seriesId || null, ticketCode: this.ticketCode(b), owed: this.isOwed(b), waived: Boolean(b.waived),
+      // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
+      ...this.lockView(b),
     };
   }
 
@@ -2168,24 +2216,83 @@ export class Lair {
   }
 
   /**
-   * A weekly regular's seat (from "join every session") whose session has ended unpaid: owed, whether or not they
-   * came, until it's paid or staff waive it. One-off bookings are never owed (an unpaid no-show is just recorded), and
-   * neither are seats booked before round 5 went live (owedFrom), under the old rules.
+   * Round 15: whether something booked or signed up for keeps round 15's rules: made from its first start (lockFrom).
+   * One with no createdAt yet was made just now. No awaits.
    */
-  isOwed(b, now = Date.now()) {
-    return Boolean(b?.seriesId) && b.kind === 'gm-seat' && b.status !== 'cancelled' && b.end <= now && (b.createdAt || 0) >= this.owedFrom && dueOf(b) > 0;
+  tabRules(x, now = Date.now()) {
+    return (x?.createdAt ?? now) >= this.lockFrom;
   }
 
   /**
-   * A member's owed seats, oldest first, as check-in rows (owed: true) each with the cart line that pays it ("Owed:
-   * Curse of Strahd (Thu 1 Oct)"). memo: see savedPass. No awaits.
+   * Round 15: when a booking, seat or sign-up can still be cancelled online, and whether it's locked in now:
+   * { cancelUntil, locked, lockable }. Round 15's with something to pay are locked refundHours (24) before they start
+   * (lockable), even one booked inside that time (it's said before it's booked); a free one, a regular's seat saved for
+   * them inside it, or one booked before round 15, can be cancelled until it starts, as it could when it was booked (its
+   * route says whether that's still allowed). No awaits.
+   */
+  cancelRule(x, rules, now = Date.now()) {
+    // a weekly regular's seat Gobgob saved for them by itself inside the lock (one that came free, a session added late)
+    // wasn't their choice then: it can be cancelled until it starts. The seat joining the game booked them (or staff
+    // making them a regular) was.
+    const lateSeat = Boolean(x.seriesId) && Boolean(x.gobSaved) && (x.createdAt ?? now) >= cancelUntil(x, rules);
+    // an event date that isn't on the calendar any more (gone in Shopify): nothing to lock, staff are sorting it out
+    const gone = Boolean(x.occurrenceId) && this.dateGone(rules, x.occurrenceId);
+    const lockable = this.tabRules(x, now) && (x.amount || 0) > 0 && !lateSeat && !gone;
+    const until = lockable ? cancelUntil(x, rules) : x.start;
+    return { cancelUntil: until, locked: lockable && now >= until, lockable };
+  }
+
+  /**
+   * Round 15: a confirmation's last lines: what's to pay and how (on their tab, no code), then until when they can
+   * cancel it, or that it's locked in already. member: it's theirs in My Lair (a guest replies or calls instead); spot:
+   * what someone else could have if they cancel ('table', 'seat', 'spot'). No awaits.
+   */
+  tabLines(item, rules, { member = Boolean(item.customerId), spot = 'spot' } = {}) {
+    const rule = this.cancelRule(item, rules);
+    const pay = dueOf(item) > 0 ? (member ? TAB_WORDS.onTab : TAB_WORDS.onTabGuest) : TAB_WORDS.nothingToPay;
+    if (!rule.lockable) {
+      return [pay, member ? `Can't make it? Cancel in My Lair, so someone else can have your ${spot}.` : `Can't make it? Reply to this email or give us a call, so someone else can have your ${spot}.`];
+    }
+    if (rule.locked) return [pay, member ? TAB_WORDS.lockedNow(rules.refundHours) : TAB_WORDS.lockedNowGuest(rules.refundHours)];
+    const until = new LairTime(rules.tz).label(rule.cancelUntil);
+    return [pay, member ? TAB_WORDS.cancelBy(until, rules.refundHours) : TAB_WORDS.cancelByGuest(until, rules.refundHours)];
+  }
+
+  /**
+   * Owed: something on their tab that's over and still unpaid, whether or not they came, until it's paid or staff
+   * waive it (or take it off: cancelled). Round 5: a weekly regular's seat (from "join every session") made once round 5
+   * was running (owedFrom). Round 15: and any table booking, seat or game table made from round 15's first start
+   * (lockFrom), no-shows too. Older one-off bookings never are (an unpaid no-show was just recorded), and neither is a
+   * GM's own table or a walk-in (staff settle those there and then).
+   */
+  isOwed(b, now = Date.now()) {
+    if (!b || b.end > now || ['cancelled', 'held'].includes(b.status) || dueOf(b) <= 0) return false;
+    // round 15: a game table on an event date that isn't on the calendar any more (staff were told) isn't owed
+    if (b.occurrenceId && this.rulesCache && this.dateGone(this.rulesCache, b.occurrenceId)) return false;
+    if (b.seriesId && b.kind === 'gm-seat' && (b.createdAt || 0) >= this.owedFrom) return true;
+    return ['table', 'gm-seat'].includes(b.kind) && (b.createdAt || 0) >= this.lockFrom;
+  }
+
+  /**
+   * Round 15: an event sign-up that's over and unpaid is owed too (made from lockFrom on), until it's paid or waived;
+   * not one for a date that isn't on the calendar any more (staff were told)
+   */
+  joinOwed(j, now = Date.now()) {
+    if (!j || j.end > now || ['cancelled', 'held'].includes(j.status) || (j.createdAt || 0) < this.lockFrom || dueOf(j) <= 0) return false;
+    return !(this.rulesCache && this.dateGone(this.rulesCache, j.occurrenceId));
+  }
+
+  /**
+   * A member's owed bookings, seats and sign-ups, oldest first, as check-in rows (owed: true) each with the cart line
+   * that pays it ("Owed: Curse of Strahd (Thu 1 Oct)"). memo: see savedPass. No awaits.
    */
   owedRows(customerId, rules, now, memo = new Map()) {
-    return this.sql
+    const id = String(customerId);
+    const bookings = this.sql
       .exec(
-        `SELECT * FROM bookings WHERE customer_id = ? AND series_id IS NOT NULL AND kind = 'gm-seat' AND status != 'cancelled' AND ends_at <= ? AND created_at >= ?
-           AND paid = 0 AND waived = 0 ORDER BY starts_at, id`,
-        String(customerId), now, this.owedFrom,
+        `SELECT * FROM bookings WHERE customer_id = ? AND kind IN ('table', 'gm-seat') AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0
+           AND waived = 0 AND (created_at >= ? OR (series_id IS NOT NULL AND kind = 'gm-seat' AND created_at >= ?)) ORDER BY starts_at, id`,
+        id, now, this.lockFrom, this.owedFrom,
       )
       .toArray()
       .map((r) => this.rowToBooking(r))
@@ -2194,6 +2301,20 @@ export class Lair {
         const row = this.bookingRow(b, rules, { memo, now });
         return { ...row, line: this.posLine(row, rules) };
       });
+    const joins = this.sql
+      .exec(
+        `SELECT * FROM event_joins WHERE customer_id = ? AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0 AND waived = 0 AND created_at >= ?
+         ORDER BY starts_at, id`,
+        id, now, this.lockFrom,
+      )
+      .toArray()
+      .map((r) => this.rowToJoin(r))
+      .filter((j) => this.joinOwed(j, now))
+      .map((j) => {
+        const row = this.joinRow(j, { now });
+        return { ...row, line: this.posLine(row, rules) };
+      });
+    return [...bookings, ...joins].sort((x, y) => x.start - y.start || String(x.id).localeCompare(String(y.id)));
   }
 
   async updateBooking(id, patch, who) {
@@ -2218,12 +2339,18 @@ export class Lair {
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
       if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
+      // Round 15: locked in 24 hours before it starts: it stays on their tab, and only staff take it off
+      if (this.cancelRule(booking, rules, now).locked) throw new RuleError(TAB_WORDS.locked(rules.refundHours), 409);
       // An event game spot paid online is locked in: cancelling frees the spot and staff decide on a refund. Anything
       // else paid online (from before everything moved to the counter) keeps the cancellation policy it was sold with.
       const lockedIn = Boolean(booking.occurrenceId && booking.paidAmount > 0 && booking.pay === 'now');
+      // Round 15: paid at the counter ahead of time (paying for a few at once) and cancelled in time: it comes back
+      const ahead = !lockedIn && booking.pay !== 'now' && booking.paidAmount > 0
+        ? { due: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid at the counter ahead of time, cancelled in time' }
+        : null;
       const refund = lockedIn
         ? { due: false, ask: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
-        : refundFor(booking, rules, now);
+        : ahead || refundFor(booking, rules, now);
       booking.status = 'cancelled';
       booking.holdUntil = null;
       if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
@@ -2232,7 +2359,9 @@ export class Lair {
       if (refund.due) {
         this.notifyStaff(`Refund due: ${booking.ref}`, {
           title: 'Refund due',
-          intro: `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
+          intro: ahead
+            ? `${booking.name} cancelled ${booking.ref} in time, and they'd paid ${dollars(refund.amount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`
+            : `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
           details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
         });
       } else if (lockedIn) this.askAboutRefund(booking, rules, 'game spot');
@@ -2360,18 +2489,22 @@ export class Lair {
     return needs.length ? needs : [BOOKING_STAFF];
   }
 
-  /** Round 9: what a staff change to an event sign-up needs: checked in or paid (Check-in or Events), refunded (Money) */
+  /**
+   * Round 9: what a staff change to an event sign-up needs: checked in or paid (Check-in or Events), refunded or (round
+   * 15) waived (Money)
+   */
   joinPerms(patch = {}) {
     const needs = [];
     if (patch.status != null || typeof patch.paid === 'boolean') needs.push(['checkin', 'events']);
-    if (typeof patch.refunded === 'boolean') needs.push('money');
+    if (typeof patch.refunded === 'boolean' || typeof patch.waived === 'boolean') needs.push('money');
     return needs.length ? needs : [['checkin', 'events']];
   }
 
   /**
-   * Staff: an event sign-up's { paid, refunded, status }. Marked paid by hand, what was owed counts as paid (unmarked,
-   * only recorded payments count); refunded: true is 'done', false clears the flag. status (round 6): 'confirmed' undoes
-   * a check-in (and the loyalty stamps it earned), 'attended' checks them in. No awaits.
+   * Staff: an event sign-up's { paid, refunded, status, waived }. Marked paid by hand, what was owed counts as paid
+   * (unmarked, only recorded payments count); refunded: true is 'done', false clears the flag. status (round 6):
+   * 'confirmed' undoes a check-in (and the loyalty stamps it earned), 'attended' checks them in. waived (round 15): staff
+   * take it off their tab (nothing's due and it isn't owed; what was paid stays paid), false puts it back. No awaits.
    */
   updateJoin(join, patch, now) {
     if (['confirmed', 'attended'].includes(patch.status) && ['confirmed', 'attended'].includes(join.status) && patch.status !== join.status) {
@@ -2381,7 +2514,7 @@ export class Lair {
       );
       join = this.joinById(join.id);
     }
-    let { paid, refund, paidAmount } = join;
+    let { paid, refund, paidAmount, waived } = join;
     if (typeof patch.paid === 'boolean') {
       paid = patch.paid;
       paidAmount = paid ? Math.max(paidAmount || 0, join.amount || 0) : this.paidSoFar('join', join.id);
@@ -2390,7 +2523,11 @@ export class Lair {
       if (patch.refunded && !paid && !(paidAmount > 0)) throw new RuleError('Only a paid sign-up can be marked as refunded.');
       refund = patch.refunded ? 'done' : null;
     }
-    this.write('UPDATE event_joins SET paid = ?, paid_amount = ?, refund = ?, updated_at = ? WHERE id = ?', paid ? 1 : 0, paidAmount || 0, refund || null, now, join.id);
+    if (typeof patch.waived === 'boolean') waived = patch.waived;
+    this.write(
+      'UPDATE event_joins SET paid = ?, paid_amount = ?, refund = ?, waived = ?, updated_at = ? WHERE id = ?',
+      paid ? 1 : 0, paidAmount || 0, refund || null, waived ? 1 : 0, now, join.id,
+    );
     // Round 9: a bill with this sign-up on it stays true
     this.reconcileBills(this.rulesCache, now);
     return { join: this.staffJoinView(this.joinById(join.id)) };
@@ -2851,8 +2988,8 @@ export class Lair {
       this.later(this.mailMany(seats.map((seat) => this.letter(seat.email, `New time: ${fresh.title}, ${this.when(fresh, rules)}`, {
         title: 'Your game has a new time',
         intro: `Heads up, friend: ${fresh.title} has moved. Your seat moved with it.`,
-        details: [['Game', fresh.title], ['Now', this.when(fresh, rules)], ['Was', this.when(game, rules)], ['Where', `${fresh.tables.length > 1 ? 'Tables' : 'Table'} ${fresh.tables.join(', ')}`], ['Your code', seat.ref]],
-        outro: "Can't make the new time? Cancel your seat in My Lair and Gobgob will let your GM know.",
+        details: [['Game', fresh.title], ['Now', this.when(fresh, rules)], ['Was', this.when(game, rules)], ['Where', `${fresh.tables.length > 1 ? 'Tables' : 'Table'} ${fresh.tables.join(', ')}`]],
+        outro: `Can't make the new time? Cancel your seat in My Lair and Gobgob will let your GM know. Less than ${rules.refundHours} hours away? Have a chat with us and we'll take it off your tab.`,
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       }))));
     }
@@ -2976,11 +3113,12 @@ export class Lair {
       intro: `Kia ora ${seat.name}, the Dice Goblin team has saved your seat at ${game.title}${game.gm ? ` with GM ${game.gm}` : ''} every ${every}.`,
       details: [
         ['Game', game.title], ['Players', this.partyLine(seat.party)], ['Next session', this.when(game, rules)],
-        ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * seat.people)} a session, paid at the counter`], ['Your code', member?.code || ''],
+        ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * seat.people)} a session, on your tab`],
       ],
+      // Round 15: each session on their tab, no code to show; cancelled up to 24 hours before
       outro: [
-        "Your member code is your ticket every session (it's in My Lair). Show it at the counter and we'll ring up your seat.",
-        "Can't make one? Cancel that session's seat in My Lair before it starts. A seat you keep is yours to pay for, even if you don't come.",
+        "Each session goes on your tab: pay at the counter on the day, or pay for a few at once. Just give your name at the counter (or show your Goblin card from My Lair).",
+        `Can't make one? Cancel that session's seat in My Lair at least ${rules.refundHours} hours before it starts. After that it stays on your tab, even if you don't come.`,
         'To stop coming, leave the game in My Lair.',
       ],
       button: { label: 'See it in My Lair', url: this.page('myLair') },
@@ -3031,10 +3169,10 @@ export class Lair {
         title: 'New session, same seat',
         intro: `Kia ora ${member.name}, ${created.gm} added a session of ${created.title}, and Gobgob saved your seat.`,
         details: [
-          ['When', this.when(created, rules)], ['Players', this.partyLine(result.seat.party)], ['Fee', `${dollars(result.seat.amount)}, pay at the counter`],
-          ['Your code', this.ticketCode(result.seat)],
+          ['When', this.when(created, rules)], ['Players', this.partyLine(result.seat.party)], ['Fee', `${dollars(result.seat.amount)}, on your tab`],
         ],
-        outro: [COUNTER, "Can't make this one? Cancel it in My Lair before it starts, and you're still a regular. A seat you keep is yours to pay for, even if you don't come."],
+        // Round 15: on their tab, cancelled in My Lair up to 24 hours before (a seat saved later than that, until it starts)
+        outro: [...this.tabLines(result.seat, rules, { spot: 'seat' }), "Skipping one session keeps you a regular."],
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       }))));
     }
@@ -3069,7 +3207,7 @@ export class Lair {
    * regular's seat. Callers that seat every regular in join order pass 0, so one who doesn't fit never keeps a seat
    * from the next. Series members pay at the counter each session. No awaits.
    */
-  seatSeriesMember(session, member, rules, now, { ahead = null } = {}) {
+  seatSeriesMember(session, member, rules, now, { ahead = null, saved = false } = {}) {
     const existing = this.sql
       .exec("SELECT * FROM bookings WHERE game_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated') LIMIT 1", session.id, member.customer_id)
       .toArray()[0];
@@ -3083,8 +3221,11 @@ export class Lair {
       amount: (session.seatPrice || rules.prices.gmSeat) * member.people, pay: 'day', paid: false, activity: 'rpg', party: parse(member.players, []),
       // round 7: a regular's seat carries the mobile on their player profile
       customerId: member.customer_id, phone: this.memberRow(member.customer_id)?.mobile || null,
+      // round 15: saved by Gobgob by itself (rolling forward, a seat come free, a session added), not booked by them
+      gobSaved: saved,
     };
     this.saveBooking(seat, now);
+    if (saved) this.write('UPDATE bookings SET gob_saved = 1 WHERE id = ?', seatId);
     return { seat, created: true };
   }
 
@@ -3097,7 +3238,7 @@ export class Lair {
     if (session.status !== 'open' || !session.seriesId || session.start <= now) return [];
     if (this.nextSession(session.seriesId, now)?.id !== session.id) return [];
     const members = this.sql.exec("SELECT * FROM series_members WHERE series_id = ? AND status = 'active' ORDER BY created_at, customer_id", session.seriesId).toArray();
-    return members.map((member) => ({ member, result: this.seatSeriesMember(session, member, rules, now, { ahead: 0 }) })).filter((x) => x.result?.created);
+    return members.map((member) => ({ member, result: this.seatSeriesMember(session, member, rules, now, { ahead: 0, saved: true }) })).filter((x) => x.result?.created);
   }
 
   /** Whether a customer has any seat at a session, even one they cancelled (they're skipping it). No awaits. */
@@ -3133,7 +3274,7 @@ export class Lair {
       // an email.
       const alert = this.sql.exec('SELECT at FROM series_alerts WHERE game_id = ? AND customer_id = ?', next.id, member.customer_id).toArray()[0];
       // In join order, so earlier regulars pick first; one who doesn't fit doesn't keep a seat from the next.
-      const got = this.seatSeriesMember(next, member, rules, now, { ahead: 0 });
+      const got = this.seatSeriesMember(next, member, rules, now, { ahead: 0, saved: true });
       if (got?.created) {
         seated += 1;
         if (alert) freed.push({ game: next, member, seat: got.seat });
@@ -3150,10 +3291,9 @@ export class Lair {
         title: 'A seat came free!',
         intro: `Kia ora ${member.name || 'friend'}, the next session of ${game.title} was full, but a seat's come free and Gobgob saved it for you.`,
         details: [
-          ['When', this.when(game, rules)], ['Players', this.partyLine(seat.party)], ['Fee', `${dollars(seat.amount)}, pay at the counter`],
-          ['Your code', this.ticketCode(seat)],
+          ['When', this.when(game, rules)], ['Players', this.partyLine(seat.party)], ['Fee', `${dollars(seat.amount)}, on your tab`],
         ],
-        outro: "Can't make it? Cancel it in My Lair before it starts. A seat you keep is yours to pay for, even if you don't come.",
+        outro: this.tabLines(seat, rules, { spot: 'seat' }),
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       }))));
     }
@@ -3250,11 +3390,12 @@ export class Lair {
         details: [
           ['Game', game.title], ['Players', this.partyLine(players)], ['Next session', booked.length ? this.when(next, rules) : ''],
           ['Already full', full.length ? this.when(next, rules) : ''],
-          ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, paid at the counter`], ['Your code', code || ''],
+          ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, on your tab`],
         ],
+        // Round 15: each session on their tab, no code to show; cancelled up to 24 hours before
         outro: [
-          "Your member code is your ticket every session (it's in My Lair). Show it at the counter and we'll ring up your seat.",
-          "Can't make one? Cancel that session's seat in My Lair before it starts. A seat you keep is yours to pay for, even if you don't come.",
+          "Each session goes on your tab: pay at the counter on the day, or pay for a few at once. Just give your name at the counter (or show your Goblin card from My Lair).",
+          `Can't make one? Cancel that session's seat in My Lair at least ${rules.refundHours} hours before it starts. After that it stays on your tab, even if you don't come.`,
           'To stop coming, leave the game in My Lair.',
         ],
         button: { label: 'See it in My Lair', url: this.page('myLair') },
@@ -3286,25 +3427,50 @@ export class Lair {
     const member = this.seriesMember(seriesId, customerId);
     if (!member || member.status !== 'active') throw new RuleError(forThem ? "They're not a regular at that game." : "You're not signed up for every session of that game.", 404);
     this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, customerId);
-    const seats = this.sql
+    const upcoming = this.sql
       .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, customerId, now)
       .toArray().map((r) => this.rowToBooking(r));
+    // Round 15: a seat of their own that's locked in (24 hours or less away) stays on their tab; staff stopping them
+    // free them all
+    const kept = forThem ? [] : upcoming.filter((seat) => this.cancelRule(seat, rules, now).locked);
+    const seats = upcoming.filter((seat) => !kept.includes(seat));
     for (const seat of seats) {
-      const refund = refundFor(seat, rules, now);
+      // round 15: a seat paid at the counter ahead of time comes back too (staff are told, as for any refund due)
+      const ahead = seat.pay !== 'now' && seat.paidAmount > 0 && seat.refund !== 'done';
+      const refund = ahead ? { due: true, amount: seat.paidAmount } : refundFor(seat, rules, now);
       this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund.due ? 'due' : seat.refund, now, seat.id);
       this.dropDraft(seat);
+      if (ahead) {
+        this.notifyStaff(`Refund due: ${seat.ref}`, {
+          title: 'Refund due',
+          intro: `${seat.name}'s seat ${seat.ref} was freed (${forThem ? 'staff stopped them coming' : 'they left the game'}), and they'd paid ${dollars(seat.paidAmount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`,
+          details: [['Seat', seat.ref], ['Was for', this.when(seat, rules)], ['Refund', dollars(seat.paidAmount)]],
+        });
+      }
     }
-    const game = seats.length ? this.game(seats[0].gameId) : null;
+    const game = upcoming.length ? this.game(upcoming[0].gameId) : null;
     if (game && emailReady(this.env) && isEmail(game.gmEmail)) {
+      const freed = !seats.length ? ''
+        : kept.length ? ` Their ${seats.length === 1 ? 'seat after that is' : 'seats after that are'} free again.`
+          : ` Their ${seats.length === 1 ? 'seat' : 'seats'} at the next ${seats.length === 1 ? 'session is' : `${seats.length} sessions are`} free again.`;
+      const stays = kept.length ? ` Their seat on ${this.when(kept[0], rules)} stays theirs: it's less than ${rules.refundHours} hours away.` : '';
       this.later(this.mail(this.letter(game.gmEmail, `Player left: ${game.title}`, {
         title: 'A player left your game',
-        intro: `Kia ora ${game.gm}, ${member.name} has stopped coming to every session of ${game.title}. Their ${seats.length === 1 ? 'seat' : 'seats'} at the next ${seats.length === 1 ? 'session is' : `${seats.length} sessions are`} free again.`,
-        details: [['Game', game.title], ['Player', `${member.name}${member.people > 1 ? ` (${member.people} seats)` : ''}`], ['Sessions freed', seats.map((x) => this.when(x, rules)).join('\n')]],
+        intro: `Kia ora ${game.gm}, ${member.name} has stopped coming to every session of ${game.title}.${freed}${stays}`,
+        details: [
+          ['Game', game.title], ['Player', `${member.name}${member.people > 1 ? ` (${member.people} seats)` : ''}`], ['Sessions freed', seats.map((x) => this.when(x, rules)).join('\n')],
+          ['Seat kept', kept.map((x) => this.when(x, rules)).join('\n')],
+        ],
         button: { label: 'See the games board', url: this.page('gm') },
         signoff: 'Gobgob',
       })));
     }
-    return { ok: true, cancelled: seats.length };
+    return {
+      ok: true, cancelled: seats.length,
+      // Round 15: the seats that stay on their tab (locked in), and what to tell them
+      kept: kept.map((x) => ({ id: x.id, ref: x.ref, start: x.start, end: x.end })),
+      ...(kept.length ? { notice: TAB_WORDS.keptSeat(this.when(kept[0], rules), rules.refundHours) } : {}),
+    };
   }
 
   /* ---------------- messages to players ---------------- */
@@ -3398,7 +3564,7 @@ export class Lair {
                 : "You've paid already, so you'll get your money back. Pop in or reply to this email and the team will sort it."]
               : []),
           ],
-          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Your code', seat.ref], ['Refund', refund ? dollars(seat.paidAmount) : '']],
+          details: [['Game', game.title], ['Was on', this.when(game, rules)], ['Refund', refund ? dollars(seat.paidAmount) : '']],
           button: { label: 'Find another game', url: this.page('gm') },
           signoff: 'Sorry again,\nGobgob',
         }));
@@ -4383,14 +4549,15 @@ export class Lair {
   /**
    * An event sign-up as a check-in row. Its entry fee is never covered by a pass. payments: see bookingRow. Round 8: guests,
    * who's coming with them, as staff see them (staffGuest); guests: the sign-up's guest rows when a list has them (guestsIn).
+   * Round 15: owed (it's over and unpaid: joinOwed) and waived, as a booking's row has them.
    */
-  joinRow(j, { payments = null, guests = null } = {}) {
+  joinRow(j, { payments = null, guests = null, now = Date.now() } = {}) {
     return {
       id: j.id, type: 'join', kind: 'join', ref: j.ref, name: j.name || '', people: j.people, tables: [], start: j.start, end: j.end,
       status: j.status, arrivedAt: j.arrivedAt || null, paid: j.paid, amount: j.amount || 0, covered: 0, due: dueOf(j),
       paidAmount: j.paidAmount || 0, payments: payments || this.paymentsOf('join', j.id), split: false,
       customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
-      gameId: null, occurrenceId: j.occurrenceId, seriesId: null, owed: false, waived: false,
+      gameId: null, occurrenceId: j.occurrenceId, seriesId: null, owed: this.joinOwed(j, now), waived: Boolean(j.waived),
       guests: (guests || this.joinGuests(j.id)).map((g) => this.staffGuest(g)),
     };
   }
@@ -4428,15 +4595,21 @@ export class Lair {
   }
 
   /**
-   * A member at the counter or in My Lair: their rows today (memberToday, as check-in rows, sorted) and their owed seats
-   * (owedRows, each with its cart line). A seat of today's that has already ended unpaid is owed, so it's there and not
-   * in today. No awaits.
+   * A member at the counter or in My Lair: their rows today (memberToday, as check-in rows, sorted) and what they owe
+   * (owedRows, each with its cart line). Something of today's that has already ended unpaid is owed, so it's there and
+   * not in today. No awaits.
    */
   memberDay(customerId, rules, now) {
     const { member, bookings, joins } = this.memberToday(customerId, rules, now);
     const memo = new Map();
     // Round 11: and today's games they're a named player in, each with their own share to pay (playerRow)
-    const today = [...bookings.filter((b) => !this.isOwed(b, now)).map((b) => this.bookingRow(b, rules, { memo, now })), ...joins.map((j) => this.joinRow(j)), ...this.playerRowsToday(customerId, rules, now)]
+    // what's owed is in owedRows (theirs by account); one that's theirs by email alone stays in today's
+    const mine = (x) => String(x.customerId || '') === String(customerId);
+    const today = [
+      ...bookings.filter((b) => !(this.isOwed(b, now) && mine(b))).map((b) => this.bookingRow(b, rules, { memo, now })),
+      ...joins.filter((j) => !(this.joinOwed(j, now) && mine(j))).map((j) => this.joinRow(j, { now })),
+      ...this.playerRowsToday(customerId, rules, now),
+    ]
       .sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
     return { member, bookings, joins, today, owed: this.owedRows(customerId, rules, now, memo) };
   }
@@ -4609,8 +4782,9 @@ export class Lair {
       const card = this.loyaltyOf(customerId, rules);
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
-        // round 9: after their weekly seats, what a monthly account owes from earlier days (none for pay-each-visit members)
-        rows: [...today, ...owed, ...this.accountOwedRows(customerId, rules, now)], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
+        // round 9: after their owed rows, what a monthly account owes from earlier days (none for pay-each-visit members);
+        // round 15: a monthly account's owed rows are on it (onAccount)
+        rows: [...today, ...this.onAccountRows(customerId, owed), ...this.accountOwedRows(customerId, rules, now)], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
         // round 7: card is the number of the card they're on
         loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card },
         // round 9: their billing ({ billing: 'visit' }, or a monthly account's limit and what's owed)
@@ -4649,8 +4823,9 @@ export class Lair {
     const now = Date.now();
     const customerId = trimmed(input.customerId, 40);
     const { member, bookings, joins } = customerId ? this.memberToday(customerId, rules, now) : {};
-    // round 9: and what a monthly account owes from earlier days, as /pos/scan lists it
-    const owed = customerId ? [...this.owedRows(customerId, rules, now), ...this.accountOwedRows(customerId, rules, now)] : [];
+    // round 9: and what a monthly account owes from earlier days, as /pos/scan lists it (round 15: owed rows on a
+    // monthly account are on it)
+    const owed = customerId ? [...this.onAccountRows(customerId, this.owedRows(customerId, rules, now)), ...this.accountOwedRows(customerId, rules, now)] : [];
     if (!customerId || (!member && !bookings.length && !joins.length && !owed.length)) throw new RuleError('No member with that customer ID.', 404);
     const notices = [];
     const rows = [];
@@ -4658,9 +4833,11 @@ export class Lair {
       rows.push(result.row);
       if (result.notice && result.checkedIn) notices.push(result.notice);
     };
+    // what's owed (theirs by account) is with the owed rows; one that's theirs by email alone is checked in as before
+    const mine = (x) => String(x.customerId || '') === String(customerId);
     for (const b of bookings) {
-      // An owed seat (it ended today, unpaid) is paid, not checked in: it's with the owed rows.
-      if (this.isOwed(b, now)) continue;
+      // Something owed (it ended today, unpaid) is paid, not checked in: it's with the owed rows.
+      if (this.isOwed(b, now) && mine(b)) continue;
       if (b.status === 'noshow') {
         notices.push(`${b.ref} was marked as a no-show, so it wasn't checked in.`);
         rows.push(this.bookingRow(b, rules, { now }));
@@ -4668,12 +4845,21 @@ export class Lair {
         take(this.checkInBooking(b, rules, now, { by, sameDay: true }));
       }
     }
-    for (const j of joins) take(this.checkInJoin(j, rules, now, { sameDay: true }));
+    for (const j of joins) {
+      // Round 15: a sign-up that ended today unpaid is owed: it's with the owed rows
+      if (this.joinOwed(j, now) && mine(j)) continue;
+      take(this.checkInJoin(j, rules, now, { sameDay: true }));
+    }
     // Round 11: the games they're a named player in today: checked in, with their own share to pay
     for (const { player } of this.playerGamesToday(customerId, rules, now)) take(this.checkInPlayer(player.id, rules, now, { by, sameDay: true }));
     rows.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
     const lines = [...rows.filter((r) => r.due > 0 && r.status !== 'noshow').map((r) => this.posLine(r, rules)), ...owed.map((r) => r.line)];
     return { rows: [...rows, ...owed], lines, customer: { id: customerId }, notices };
+  }
+
+  /** Round 15: a member's owed rows marked onAccount: true when they're on a monthly account (the POS says so). No awaits. */
+  onAccountRows(customerId, rows) {
+    return this.accountRow(customerId)?.billing === 'monthly' ? rows.map((r) => ({ ...r, onAccount: true })) : rows;
   }
 
   /**
@@ -4781,7 +4967,7 @@ export class Lair {
     // The entry fee is paid the way the event says (paymentPlan): at the counter, online (held for 30 minutes until
     // it's paid), or either. No fee, nothing to pay.
     const fee = occurrence.entryFee || 0;
-    const plan = this.paymentPlan(fee > 0 ? occurrence.payment : 'store', input.pay);
+    const plan = this.paymentPlan();
     const { payNow } = plan;
     // Round 9: paid at the counter on a monthly account: not over its credit limit (paid online now, nothing goes on it)
     if (!payNow) this.checkAccountLimit(who.customerId, fee * people, rules, now, 'join');
@@ -4907,15 +5093,17 @@ export class Lair {
   confirmStaffJoin(join, rules, { invited = false } = {}) {
     if (!invited) return this.confirmJoin(join, rules);
     if (!emailReady(this.env) || !isEmail(join.email)) return false;
-    const fee = join.amount ? `${dollars(join.amount)}, pay at the counter` : '';
-    this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`, {
+    const fee = join.amount ? `${dollars(join.amount)}, pay at the counter on the day` : '';
+    // Round 15: no code to show; until when they can let us know (it's theirs to pay after that)
+    const [pay, cancel] = this.tabLines(join, rules, { member: false });
+    this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)}`, {
       title: "You're on the list!",
       intro: `Kia ora ${join.name}, the Dice Goblin team has signed you up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
-      details: [['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Entry', fee], ['Your code', join.ref]],
+      details: [['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Entry', fee]],
       outro: [
-        dueOf(join) > 0 ? COUNTER : SHOW_CODE,
-        `Make your Dice Goblin account with this email (${join.email}), or log in with it if you have one: this sign-up shows up in My Lair, and so does anything else the team adds for you.`,
-        "Can't make it? Reply to this email, so someone else can have your spot.",
+        dueOf(join) > 0 ? 'Pay at the counter on the day: just give your name.' : pay,
+        `Make your Dice Goblin account with this email (${join.email}), or log in with it if you have one: this sign-up goes on your tab in My Lair, and so does anything else the team adds for you.`,
+        cancel,
       ],
       button: { label: 'Make your account', url: this.page('myLair') },
     })));
@@ -5007,7 +5195,7 @@ export class Lair {
     const free = wanted ? [wanted, ...open.filter((s) => spotKey(s) !== spotKey(wanted))] : open;
     const { room } = oneRoom(free[0], rules);
     const unit = occurrence.entryFee || room.price;
-    const plan = this.paymentPlan(unit > 0 ? occurrence.payment : 'store', input.pay);
+    const plan = this.paymentPlan();
     const { payNow } = plan;
     // Round 9: paid at the counter on a monthly account: not over its credit limit
     if (!payNow) this.checkAccountLimit(who.customerId, unit * people, rules, now, 'book');
@@ -5046,18 +5234,18 @@ export class Lair {
   confirmJoin(join, rules) {
     if (!emailReady(this.env) || !isEmail(join.email)) return false;
     const online = Boolean(join.paid && join.pay === 'now');
-    const fee = !join.amount ? '' : join.paid ? `${dollars(join.amount)}, paid${online ? ' online' : ''}. Thank you!` : `${dollars(join.amount)}, pay at the counter`;
-    this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)} (${join.ref})`, {
+    const fee = !join.amount ? '' : join.paid ? `${dollars(join.amount)}, paid${online ? ' online' : ''}. Thank you!`
+      : `${dollars(join.amount)}, ${join.customerId ? 'on your tab' : 'pay at the counter on the day'}`;
+    // Round 15: on their tab, no code to show; until when they can cancel (a sign-up paid online keeps its old words)
+    const [pay, cancel] = online ? [SHOW_CODE, LOCKED_IN_EMAIL] : this.tabLines(join, rules, { spot: 'spot' });
+    this.later(this.mail(this.letter(join.email, `You're in: ${join.title}, ${this.when(join, rules)}`, {
       title: online ? "You're locked in!" : "You're on the list!",
       intro: `Kia ora ${join.name}, you're signed up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
       details: [
         ['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Coming', join.people > 1 ? this.comingLine(join) : ''],
-        ['Entry', fee], ['Your code', join.ref],
+        ['Entry', fee],
       ],
-      outro: [
-        dueOf(join) > 0 ? COUNTER : SHOW_CODE,
-        online ? LOCKED_IN_EMAIL : "Can't make it? Cancel in My Lair or reply to this email, so someone else can have your spot.",
-      ],
+      outro: [pay, cancel],
       button: { label: 'See it in My Lair', url: this.page('myLair') },
     })));
     return true;
@@ -5089,6 +5277,10 @@ export class Lair {
     if (who.staff && !staffJoin && !own) throw new RuleError(TEAM_WORDS.notYours, 403);
     if (!staffJoin && !own) throw new RuleError('Only staff can change that sign-up.', 403);
     if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
+    // Round 15: locked in 24 hours before it starts (a free one, or one from before round 15, once it's started):
+    // staff take it off
+    if (!staffJoin && this.cancelRule(join, rules, now).locked) throw new RuleError(TAB_WORDS.locked(rules.refundHours), 409);
+    if (!staffJoin && join.start <= now) throw new RuleError(TAB_WORDS.started, 409);
     const paid = join.paidAmount > 0;
     let refund;
     let flag = join.refund;
@@ -5102,6 +5294,10 @@ export class Lair {
       refund = { due: false, ask: true, amount: join.paidAmount, orderId: join.orderId || null, reason: 'paid online, so staff decide' };
       if (flag !== 'done') flag = 'ask';
       notice = LOCKED_IN;
+    } else if (paid) {
+      // Round 15: paid at the counter ahead of time (paying for a few at once) and cancelled in time: it comes back
+      refund = { due: true, amount: join.paidAmount, orderId: join.orderId || null, reason: 'paid at the counter ahead of time, cancelled in time' };
+      if (flag !== 'done') flag = 'due';
     } else {
       refund = { due: false, amount: 0, reason: 'nothing paid online' };
     }
@@ -8020,9 +8216,10 @@ export class Lair {
   }
 
   /**
-   * Every member's money at once, for GET /members: spend (all time and the last 12 months), owed seats (amount and
-   * count), open tabs (an unpaid tab from an earlier day, or today's open one) and who has had a gift this year, by
-   * customer ID. No awaits.
+   * Every member's money at once, for GET /members: spend (all time and the last 12 months), owed (amount and count:
+   * what owedRows lists for them, round 5's weekly seats and, from round 15, any booking, seat, game table or sign-up
+   * that's over unpaid), open tabs (an unpaid tab from an earlier day, or today's open one) and who has had a gift this
+   * year, by customer ID. No awaits.
    */
   membersMoney(rules, now) {
     const time = new LairTime(rules.tz);
@@ -8031,16 +8228,23 @@ export class Lair {
       .exec('SELECT customer_id, SUM(amount) AS total, SUM(CASE WHEN created_at > ? THEN amount ELSE 0 END) AS year FROM spend GROUP BY customer_id', now - YEAR)
       .toArray().map((r) => [r.customer_id, { total: r.total || 0, year: r.year || 0 }]));
     const owed = new Map();
-    const seats = this.sql
+    // the same rows owedRows reads, for everyone at once
+    const bookings = this.sql
       .exec(
-        `SELECT * FROM bookings WHERE series_id IS NOT NULL AND kind = 'gm-seat' AND status != 'cancelled' AND ends_at <= ? AND created_at >= ? AND paid = 0
-           AND waived = 0 AND customer_id IS NOT NULL`,
-        now, this.owedFrom,
+        `SELECT * FROM bookings WHERE customer_id IS NOT NULL AND kind IN ('table', 'gm-seat') AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0
+           AND waived = 0 AND (created_at >= ? OR (series_id IS NOT NULL AND kind = 'gm-seat' AND created_at >= ?))`,
+        now, this.lockFrom, this.owedFrom,
       )
-      .toArray().map((r) => this.rowToBooking(r));
-    for (const b of seats.filter((x) => this.isOwed(x, now))) {
-      const sum = owed.get(b.customerId) || { amount: 0, count: 0 };
-      owed.set(b.customerId, { amount: sum.amount + dueOf(b), count: sum.count + 1 });
+      .toArray().map((r) => this.rowToBooking(r)).filter((b) => this.isOwed(b, now));
+    const joins = this.sql
+      .exec(
+        `SELECT * FROM event_joins WHERE customer_id IS NOT NULL AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0 AND waived = 0 AND created_at >= ?`,
+        now, this.lockFrom,
+      )
+      .toArray().map((r) => this.rowToJoin(r)).filter((j) => this.joinOwed(j, now));
+    for (const x of [...bookings, ...joins]) {
+      const sum = owed.get(x.customerId) || { amount: 0, count: 0 };
+      owed.set(x.customerId, { amount: sum.amount + dueOf(x), count: sum.count + 1 });
     }
     const tabs = new Map(this.sql
       .exec("SELECT customer_id, SUM(total) AS n FROM tabs WHERE status != 'paid' AND (day < ? OR (day = ? AND status = 'open')) GROUP BY customer_id", today, today)
@@ -8782,6 +8986,8 @@ export class Lair {
       paid: b.paid, amount: b.amount, pay: b.pay, extras: b.extras, players: b.party || [], occurrenceId: b.occurrenceId || null, refund: b.refund || null,
       payment: b.pay === 'now' ? 'online' : 'store', pass: this.ownPass(b), covered: b.covered || 0, due: dueOf(b), paidAmount: b.paidAmount || 0,
       split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), owed: this.isOwed(b, now), waived: Boolean(b.waived), ...heldLink(b),
+      // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
+      ...this.lockView(b, rules, now),
     });
     // dueNow: everything they can pay at the counter now: today's bookings and seats that are confirmed or seated, and
     // sign-ups confirmed or checked in ('attended'), with something due, then their owed seats. A place held while it's
@@ -8880,9 +9086,9 @@ export class Lair {
 
   /**
    * Round 8: GET /me's sign-ups a member is a guest on (someone else signed them up), from `since` on: joinView without
-   * its money (amount, due and paidAmount 0, no refund) or the other guests' names, with their own name, guestOf (the
-   * first name of whoever signed them up), canCancel: false and their member code as the ticket (ticketCode: check-in
-   * finds the sign-up by it). No awaits.
+   * its money (amount, due and paidAmount 0, no refund, and round 15: never owed, it's on the signer's tab) or the other
+   * guests' names, with their own name, guestOf (the first name of whoever signed them up), canCancel: false and their
+   * member code as the ticket (ticketCode: check-in finds the sign-up by it). No awaits.
    */
   guestJoins(customerId, since, member) {
     return this.sql
@@ -8893,7 +9099,7 @@ export class Lair {
       )
       .toArray()
       .map((r) => ({
-        ...this.joinView(this.rowToJoin(r), []), name: r.guest_name, amount: 0, due: 0, paidAmount: 0, refund: null,
+        ...this.joinView(this.rowToJoin(r), []), name: r.guest_name, amount: 0, due: 0, paidAmount: 0, refund: null, owed: false,
         guestOf: { name: this.firstNameOf(r.name) }, canCancel: false, ...(member?.code ? { ticketCode: member.code } : {}),
       }));
   }

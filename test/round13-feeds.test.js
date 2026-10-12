@@ -138,7 +138,7 @@ test('round 13: the last fortnight stays in; a one-off with a series is one game
   const clock = await feed('blood-on-the-clocktower');
   assert.equal(header(clock.text, 'X-WR-CALNAME'), 'X-WR-CALNAME:Blood on the Clocktower at Dice Goblin');
   assert.deepEqual(vevents(clock.text).map((d) => d.UID), ['blood-on-the-clocktower-october-2026-10-18@dicegoblin.nz', 'blood-on-the-clocktower-2026-11-22@dicegoblin.nz']);
-  assert.match(vevents(clock.text)[0].DESCRIPTION, /^\$10 a person\\, paid at the counter\\n\\n/);
+  assert.match(vevents(clock.text)[0].DESCRIPTION, /^\$10 a person\\, paid at the counter on the day\\n\\n/);
 
   const alley = vevents((await feed('oddity-alley')).text);
   assert.deepEqual(alley.map((d) => [d.UID, d.DTSTART, d.DTEND]), [
@@ -150,7 +150,7 @@ test('round 13: the last fortnight stays in; a one-off with a series is one game
   assert.match(alley[0].DESCRIPTION, /^Free entry\\n\\n/);
 
   const warhammer = vevents((await feed('warhammer')).text);
-  assert.match(warhammer[0].DESCRIPTION, /^\$10 a person\\, paid at the counter\\n\\n/);
+  assert.match(warhammer[0].DESCRIPTION, /^\$10 a person\\, paid at the counter on the day\\n\\n/);
 });
 
 test('round 13: a kind\'s feed and "all"', async () => {

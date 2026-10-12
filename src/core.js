@@ -973,6 +973,34 @@ export function refundFor(booking, rules, cancelledAt) {
   return { due: false, amount: 0, orderId: booking.orderId || null, reason: `cancelled less than ${rules.refundHours} hours before the start` };
 }
 
+/**
+ * Round 15 (Mo, 12 Oct 2026: "make it all always go back to your tab"): whatever anyone books or signs up for at the
+ * Lair (a table, a TTRPG seat, an event sign-up or game table) goes on their running tab, paid at the counter on the day
+ * or a few at once, never with a code or a checkout of its own. They can cancel it themselves until `refundHours` (the
+ * theme's lair_refund_hours, 24) before it starts; after that it's locked in: it stays on their tab whether or not they
+ * come, and only staff take it off. The last moment to cancel it.
+ */
+export const cancelUntil = (item, rules) => item.start - (Number(rules?.refundHours) >= 0 ? Number(rules.refundHours) : 24) * HOUR;
+
+/** The words for the tab and its lock, word for word in the contract (v15-tab); the theme's demo says the same */
+export const TAB_WORDS = {
+  /** A cancel inside the lock (POST /bookings/:id/update, /events/joins/:id/cancel) */
+  locked: (hours) => `It's less than ${hours} hours away, so it can't be cancelled online now: it stays on your tab. Have a chat with us at the counter or give us a call, and we'll sort it out.`,
+  /** A sign-up's own cancel once it's started (a free one, or one from before round 15) */
+  started: "That one has already started, so it can't be cancelled online. Have a chat with us if something's not right.",
+  /** Leaving a weekly game with a seat inside the lock: that seat stays */
+  keptSeat: (when, hours) => `Your seat on ${when} is less than ${hours} hours away, so it stays on your tab. Have a chat with us if you can't make it.`,
+  /** Confirmations: what's to pay, and how (no code to show) */
+  onTab: "It goes on your tab: pay at the counter on the day, or pay for a few at once. Just give your name at the counter (or show your Goblin card from My Lair).",
+  onTabGuest: "Pay at the counter on the day: just give your name. Make a free Dice Goblin account with this email and it goes on your tab in My Lair.",
+  nothingToPay: 'Nothing to pay. Just give your name at the counter when you arrive.',
+  /** Confirmations: cancelling, before the lock and once it's on */
+  cancelBy: (until, hours) => `Can't make it? Cancel in My Lair by ${until} (${hours} hours before). After that it stays on your tab, even if you can't come.`,
+  cancelByGuest: (until, hours) => `Can't make it? Let us know by ${until} (${hours} hours before): reply to this email or give us a call. After that it's yours to pay, even if you can't come.`,
+  lockedNow: (hours) => `It's less than ${hours} hours away, so it's locked in: it stays on your tab, even if you can't come. Have a chat with us if something comes up.`,
+  lockedNowGuest: (hours) => `It's less than ${hours} hours away, so it's locked in: it's yours to pay, even if you can't come. Let us know if something comes up.`,
+};
+
 export function rulesFromSettings(settings = {}, rooms = [], events = [], shop = {}) {
   const prices = {
     table: Math.round(Number(settings.price_table ?? 10) * 100),

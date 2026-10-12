@@ -3,7 +3,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { Lair } from '../src/lair.js';
-import { LairTime, openWindow, rulesFromSettings, parseTableList, buildRooms } from '../src/core.js';
+import { LairTime, openWindow, rulesFromSettings, parseTableList, buildRooms, TAB_WORDS } from '../src/core.js';
 import { verifyProxySignature, verifyWebhook } from '../src/shopify.js';
 import worker from '../src/index.js';
 
@@ -184,9 +184,10 @@ test('tables, walk-ins and game seats are paid at the counter: pay is ignored an
   const walkin = await call('POST', 'bookings', { kind: 'walkin', tables: ['T8'], start: NOW, end: NOW + HOUR, people: 2, pay: 'now' }, 'staff');
   assert.deepEqual([walkin.data.booking.status, walkin.data.booking.pay], ['seated', 'day']);
   assert.equal(checkouts, 0);
-  // The old "let people pay online" theme setting doesn't matter any more; payOnline only says Shopify checkout works.
+  // The old "let people pay online" theme setting doesn't matter any more. Round 15: everything goes on the tab, paid at
+  // the counter, so payOnline is false even with Shopify's checkout working.
   lair.rulesCache = { ...lair.rulesCache, payOnline: false };
-  assert.deepEqual((await call('GET', 'floor')).data.features, { email: false, payOnline: true });
+  assert.deepEqual((await call('GET', 'floor')).data.features, { email: false, payOnline: false });
 });
 
 /** An event whose game spots are paid online: checkouts, holds and the payment webhook are tested with these. */
@@ -200,13 +201,28 @@ const useOnlineNight = (over = {}) => {
 /** A game spot at the online night (T3 first, then T4, …): 2 people at the $10 table fee */
 const spot = (body = {}, who = '') => call('POST', 'events/online-night@2026-10-01/reserve', { name: 'Sam', email: 'sam@example.com', people: 2, ...body }, who);
 
+/**
+ * Round 15: nothing new goes to checkout (paymentPlan is always the counter: everything is on the tab), but a checkout
+ * opened before round 15 can still be paid or run out, so the webhook and hold code stays. This stands in for one: what
+ * fn books or signs up for goes to checkout the way round 4 sent it (required: paying online was the only way).
+ */
+async function checkoutBeforeRound15(fn, { required = true } = {}) {
+  lair.paymentPlan = () => ({ wantsPayNow: true, payNow: true, required });
+  try {
+    return await fn();
+  } finally {
+    delete lair.paymentPlan;
+  }
+}
+
 test('orders/paid confirms a held booking; unpaid holds lapse after 30 minutes', async () => {
   useOnlineNight();
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/1', checkoutUrl: 'https://checkout.test/1' });
   lair.shopify.deleteDraftOrder = async () => {};
   lair.shopify.draftOrderOrderId = async (id) => (id === 'gid://shopify/DraftOrder/1' ? 'gid://shopify/Order/9' : null);
-  const first = await spot();
+  // Round 15: a new game spot never goes to checkout; these stand in for ones that did before round 15
+  const first = await checkoutBeforeRound15(() => spot());
   assert.equal(first.data.checkoutUrl, 'https://checkout.test/1');
   assert.equal(first.data.booking.status, 'held');
   const paid = await internal('orders-paid', { id: 9, admin_graphql_api_id: 'gid://shopify/Order/9', note_attributes: [{ name: '_booking', value: first.data.booking.ref }] });
@@ -216,7 +232,7 @@ test('orders/paid confirms a held booking; unpaid holds lapse after 30 minutes',
   assert.equal(saved.status, 'confirmed');
   assert.equal(saved.paid, true);
 
-  const second = await spot({ email: 'second@example.com' });
+  const second = await checkoutBeforeRound15(() => spot({ email: 'second@example.com' }));
   assert.equal(second.data.booking.status, 'held');
   Date.now = () => NOW + 31 * 60_000;
   const later = await call('GET', 'floor', null, 'staff');
@@ -368,7 +384,8 @@ test('only the booking\'s own checkout can pay for it: a cheap order with the re
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/2', checkoutUrl: 'https://checkout.test/2' });
   lair.shopify.draftOrderOrderId = async (id) => (id === 'gid://shopify/DraftOrder/2' ? 'gid://shopify/Order/10' : null);
   const onTheDay = await call('POST', 'bookings', tableBooking({ tables: ['T9'] }));
-  const online = await spot();
+  // a game spot sent to checkout before round 15
+  const online = await checkoutBeforeRound15(() => spot());
   const forged = { id: 99, admin_graphql_api_id: 'gid://shopify/Order/99', note: `Lair booking ${onTheDay.data.booking.ref} ${online.data.booking.ref}`, note_attributes: [{ name: '_booking', value: online.data.booking.ref }] };
   assert.deepEqual((await internal('orders-paid', forged)).data.updated, []);
   const real = { id: 10, admin_graphql_api_id: 'gid://shopify/Order/10', note: `Lair booking ${online.data.booking.ref}` };
@@ -389,8 +406,9 @@ test('paid after the hold ran out: spot kept if free, flagged if someone else to
   lair.shopify.createCheckout = async () => { n += 1; return { draftOrderId: `gid://shopify/DraftOrder/3${n}`, checkoutUrl: 'https://checkout.test/3' }; };
   lair.shopify.deleteDraftOrder = async () => {};
   lair.shopify.draftOrderOrderId = async (id) => ({ 'gid://shopify/DraftOrder/31': 'gid://shopify/Order/12', 'gid://shopify/DraftOrder/32': 'gid://shopify/Order/13' })[id] || null;
-  const a = await spot();
-  const b = await spot({ email: 'b@example.com' });
+  // two game spots sent to checkout before round 15
+  const a = await checkoutBeforeRound15(() => spot());
+  const b = await checkoutBeforeRound15(() => spot({ email: 'b@example.com' }));
   assert.deepEqual([a.data.booking.tables, b.data.booking.tables], [['T3'], ['T4']]);
   Date.now = () => NOW + 31 * 60_000;
   await call('GET', 'floor');
@@ -610,7 +628,8 @@ test('a payment that lands while staff are mid-update is kept (fresh read after 
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/7', checkoutUrl: 'https://checkout.test/7' });
   lair.shopify.draftOrderOrderId = async () => 'gid://shopify/Order/70';
-  const held = await spot();
+  // a game spot sent to checkout before round 15
+  const held = await checkoutBeforeRound15(() => spot());
   let release;
   const gate = new Promise((r) => { release = r; });
   let loads = 0;
@@ -666,7 +685,8 @@ test('a payment that lands as the hold runs out still counts, even if the checko
   let lookups = 0;
   lair.shopify.draftOrderOrderId = async () => { lookups += 1; return null; };
   lair.shopify.deleteDraftIfOpen = async () => true;
-  const held = await spot();
+  // a game spot sent to checkout before round 15
+  const held = await checkoutBeforeRound15(() => spot());
   Date.now = () => NOW + 31 * 60_000;
   await call('GET', 'floor');
   const web = { id: 81, admin_graphql_api_id: 'gid://shopify/Order/81', source_name: 'web', note_attributes: [{ name: '_booking', value: held.data.booking.ref }] };
@@ -1344,13 +1364,19 @@ test('emails: a booking confirmation goes out as HTML and text, with the shop ad
     assert.equal(mail.sent.length, 1);
     const [email] = mail.sent;
     assert.equal(email.to, 'sam@example.com');
-    assert.match(email.subject, new RegExp(data.booking.ref));
+    // Round 15: no code of its own to show any more: not in the subject, and no "Your code" row
+    assert.equal(email.subject, `You're booked: ${lair.when(lair.booking(data.booking.id), lair.rulesCache)}`);
+    assert.doesNotMatch(email.subject, new RegExp(data.booking.ref));
     assert.match(email.html, /You&#39;re booked in!/);
     assert.match(email.html, /1 Goblin Lane, Auckland 1010<br>021 159 6894 · Mon closed, Tue–Thu midday–10pm/);
     assert.match(email.text, /When: +Thursday,? 1 October/);
-    assert.match(email.text, /Fee: +\$40\.00, pay at the counter/);
-    assert.match(email.text, /Pay at the counter when you arrive\. Show your code and we'll ring it up\./);
-    assert.match(email.text, /Your code: +SA-[A-Z]{3,9}-\d{1,2}/);
+    // A guest (no account) pays at the counter on the day; the booking is 2 hours away, so it's locked in already
+    assert.match(email.text, /Fee: +\$40\.00, pay at the counter on the day\n/);
+    assert.ok(email.text.includes(TAB_WORDS.onTabGuest), email.text);
+    // a guest has no tab yet: inside the 24 hours it's theirs to pay
+    assert.ok(email.text.includes(TAB_WORDS.lockedNowGuest(24)), email.text);
+    assert.doesNotMatch(email.text, /Your code/);
+    assert.doesNotMatch(email.text + email.html, new RegExp(data.booking.ref));
     assert.doesNotMatch(email.text, /Splitting the bill/);
     await call('POST', 'bookings', tableBooking({ tables: ['T4'], split: true, email: 'split@example.com' }));
     await settle();
@@ -1757,7 +1783,8 @@ test('POS: a counter order with a _booking line pays that booking as it is; an o
     await settle();
     assert.equal(mail.sent.length, 0, 'paying at the counter sends no second confirmation');
 
-    const online = (await spot({ email: 'online@example.com' })).data.booking;
+    // a game spot sent to checkout before round 15, paid online, then rung up at the counter too
+    const online = (await checkoutBeforeRound15(() => spot({ email: 'online@example.com' }))).data.booking;
     await internal('orders-paid', { id: 700, admin_graphql_api_id: 'gid://shopify/Order/700', source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: online.ref }] });
     await internal('orders-paid', { id: 701, admin_graphql_api_id: 'gid://shopify/Order/701', source_name: 'pos', line_items: [line(online.ref)] });
     const twice = lair.booking(online.id);
@@ -2188,8 +2215,12 @@ test('weekly regulars: joining books the next session only, the seat rolls forwa
     await settle();
     const welcome = mail.sent.find((m) => m.to === 'mia@example.com');
     assert.match(welcome.subject, /^You're a regular: Weekly Mothership$/);
-    assert.match(welcome.text, new RegExp(`Your code: +${code}`));
-    assert.match(welcome.text, /A seat you keep is yours to pay for, even if you don't come\./);
+    // Round 15: each session goes on her tab (no code to show), and she can cancel one up to 24 hours before
+    assert.doesNotMatch(welcome.text, /Your code/);
+    assert.ok(!welcome.text.includes(code), 'no member code to show');
+    assert.match(welcome.text, /Fee: +\$30\.00 a session, on your tab\n/);
+    assert.ok(welcome.text.includes('Each session goes on your tab: pay at the counter on the day, or pay for a few at once. Just give your name at the counter (or show your Goblin card from My Lair).'), welcome.text);
+    assert.ok(welcome.text.includes("Can't make one? Cancel that session's seat in My Lair at least 24 hours before it starts. After that it stays on your tab, even if you don't come."), welcome.text);
     const again = await call('POST', `games/${sessions[0].id}/join-series`, join, 'mia');
     assert.deepEqual(again.data.booked.map((x) => x.ref), [seat.ref], 'joining again keeps the same seat');
     assert.equal((await call('POST', 'bookings', tableBooking({ email: 'mia@example.com' }), 'mia')).status, 200, 'series seats leave room under the per-email limit');
@@ -2311,8 +2342,12 @@ test('weekly regulars: their seats are held in every session\'s count; first to 
     const freed = mail.sent.filter((m) => m.to === 'mia@example.com');
     assert.equal(freed.length, 1);
     assert.match(freed[0].subject, /^A seat came free: Weekly Alien/);
-    assert.match(freed[0].text, /A seat you keep is yours to pay for, even if you don't come\./);
-    assert.match(freed[0].text, new RegExp(`Your code: +${lair.memberRow('mia').code}`));
+    // Round 15: it's on her tab (no code to show); a week away, so she can cancel it up to 24 hours before
+    assert.match(freed[0].text, /Fee: +\$30\.00, on your tab\n/);
+    assert.ok(freed[0].text.includes(TAB_WORDS.onTab), freed[0].text);
+    assert.ok(freed[0].text.includes(TAB_WORDS.cancelBy(time.label(at('2026-10-07', 18)), 24)), freed[0].text);
+    assert.doesNotMatch(freed[0].text, /Your code/);
+    assert.ok(!freed[0].text.includes(lair.memberRow('mia').code), 'no member code to show');
 
     // Someone joining while the next session is full is told so, and staff hear once maintenance runs.
     const late = await call('POST', `games/${sessions[1].id}/join-series`, { people: 1, name: 'Ana', email: 'ana@example.com' }, 'ana');
@@ -2364,7 +2399,13 @@ test('weekly regulars: a date the GM adds is theirs once it\'s the next session 
     await settle();
     const told = mail.sent.find((m) => m.to === 'mia@example.com');
     assert.match(told.subject, /^New session: Flexible Blades/);
-    assert.match(told.text, new RegExp(`Your code: +${lair.memberRow('mia').code}`), 'her member code is the ticket');
+    // Round 15: it's on her tab with no code to show (her name, or her member card, finds it), cancelled up to 24 hours before
+    assert.match(told.text, /Fee: +\$15\.00, on your tab\n/);
+    assert.ok(told.text.includes(TAB_WORDS.onTab), told.text);
+    assert.ok(told.text.includes(TAB_WORDS.cancelBy(time.label(at('2026-10-15', 18)), 24)), told.text);
+    assert.match(told.text, /Skipping one session keeps you a regular\./);
+    assert.doesNotMatch(told.text, /Your code/);
+    assert.ok(!told.text.includes(lair.memberRow('mia').code), 'no member code to show');
 
     const oneOff = await call('POST', 'games', { title: 'One-off', system: 'Other', gm: 'Ellie', blurb: 'x', seats: 3, tables: ['B2'], start: at('2026-10-17', 18), end: at('2026-10-17', 21) }, 'gm');
     assert.equal((await call('POST', `games/${oneOff.data.game.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com' }, 'mia')).status, 422);
@@ -2522,7 +2563,7 @@ const warhammer = (over = {}) => ({
   gameTables: 'T14+T15, T16+T17, T18+T19', ...over,
 });
 
-test('event entry fees: paid online (held for 30 minutes, confirmed by the webhook) or at the counter; no fee, nothing to pay', async () => {
+test('event entry fees: on the tab, paid at the counter (round 15: asking to pay now changes nothing); a checkout opened before round 15 is held for 30 minutes and confirmed by the webhook; no fee, nothing to pay', async () => {
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     warhammer({ payment: 'either' }), { id: 'quiz', title: 'Trivia night', start: at('2026-10-03', 18), end: at('2026-10-03', 20), tables: '', capacity: 20, payment: 'either' },
   ]);
@@ -2539,7 +2580,27 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
   const mail = captureEmails();
   try {
     const join = (body, who = '') => call('POST', 'events/warhammer@2026-10-03/join', { name: 'Aroha', email: 'aroha@example.com', people: 2, ...body }, who);
-    const online = await join({ pay: 'now' }, '1001');
+    // Round 15: asking to pay now opens no checkout: the entry goes on their tab, paid at the counter on the day
+    const tabbed = await join({ pay: 'now', name: 'Tama', email: 'tama@example.com', people: 1 }, '1002');
+    assert.equal(tabbed.status, 200, tabbed.data.error);
+    assert.deepEqual(
+      [tabbed.data.join.status, tabbed.data.join.amount, tabbed.data.join.pay, tabbed.data.join.payment, tabbed.data.checkoutUrl, tabbed.data.notice, tabbed.data.spacesLeft],
+      ['confirmed', 2000, 'day', 'store', undefined, null, 9],
+    );
+    assert.equal(checkouts.length, 0, 'no checkout');
+    await settle();
+    const onTab = mail.sent.find((m) => m.to === 'tama@example.com').text;
+    assert.match(onTab, /^YOU'RE ON THE LIST!/);
+    assert.match(onTab, /Entry: +\$20\.00, on your tab\n/);
+    assert.ok(onTab.includes(TAB_WORDS.onTab), onTab);
+    assert.ok(onTab.includes(TAB_WORDS.cancelBy(time.label(at('2026-10-02', 18)), 24)), onTab);
+    assert.doesNotMatch(onTab, /Your code/);
+    // It's more than 24 hours away, so Tama can still cancel it in My Lair (the place is free again)
+    assert.equal((await call('POST', `events/joins/${tabbed.data.join.id}/cancel`, {}, '1002')).data.join.status, 'cancelled');
+    mail.sent.length = 0;
+
+    // A checkout opened before round 15 (this stands in for one): held until it's paid, then confirmed by the webhook
+    const online = await checkoutBeforeRound15(() => join({ pay: 'now' }, '1001'), { required: false });
     assert.equal(online.status, 200, online.data.error);
     assert.deepEqual([online.data.join.status, online.data.join.amount, online.data.join.pay, online.data.checkoutUrl, online.data.spacesLeft], ['held', 4000, 'now', 'https://checkout.test/81', 8]);
     assert.deepEqual([checkouts[0].ref, checkouts[0].unitPrice, checkouts[0].quantity, checkouts[0].title], [online.data.join.ref, 2000, 2, 'Event entry: Warhammer night']);
@@ -2553,7 +2614,9 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
     const lockedIn = mail.sent.find((m) => m.to === 'aroha@example.com').text;
     assert.match(lockedIn, /^YOU'RE LOCKED IN!/);
     assert.match(lockedIn, /Entry: +\$40\.00, paid online\. Thank you!/);
-    assert.match(lockedIn, /Your code: +[A-Z]{2}-[A-Z]{3,9}-\d{1,2}/);
+    // Round 15: no code to show any more (their name finds it); paid online keeps its old "locked in" words
+    assert.doesNotMatch(lockedIn, /Your code/);
+    assert.ok(lockedIn.includes(TAB_WORDS.nothingToPay), lockedIn);
     assert.match(lockedIn, /You paid online, so you're locked in\. Can't make it after all\? Cancel in My Lair and have a chat with us about a refund\./);
 
     const counter = await join({ pay: 'day', email: 'kai@example.com', name: 'Kai', people: 1 });
@@ -2571,7 +2634,8 @@ test('event entry fees: paid online (held for 30 minutes, confirmed by the webho
     assert.deepEqual([free.data.join.amount, free.data.join.status, free.data.checkoutUrl], [0, 'confirmed', undefined]);
     assert.equal(checkouts.length, 1, 'no fee, no checkout');
 
-    const lapsing = await join({ pay: 'now', email: 'late@example.com', people: 3 });
+    // another checkout from before round 15, never paid
+    const lapsing = await checkoutBeforeRound15(() => join({ pay: 'now', email: 'late@example.com', people: 3 }), { required: false });
     assert.equal(lapsing.data.spacesLeft, 4);
     Date.now = () => NOW + 31 * 60_000;
     await call('GET', 'floor');
@@ -2613,8 +2677,9 @@ test('GET /me: a sign-up or game spot held for online payment carries its checko
   };
   lair.shopify.draftOrderOrderId = async (id) => id.replace('DraftOrder', 'Order');
   lair.shopify.deleteDraftIfOpen = async () => true;
-  const join = await call('POST', 'events/warhammer@2026-10-03/join', { name: 'Aroha', email: 'aroha@example.com', people: 1 }, '1001');
-  const spot = await call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Aroha', email: 'aroha@example.com', people: 2 }, '1001');
+  // Round 15: nothing new is held for a checkout; these stand in for a sign-up and a game spot sent to one before round 15
+  const join = await checkoutBeforeRound15(() => call('POST', 'events/warhammer@2026-10-03/join', { name: 'Aroha', email: 'aroha@example.com', people: 1 }, '1001'));
+  const spot = await checkoutBeforeRound15(() => call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Aroha', email: 'aroha@example.com', people: 2 }, '1001'));
   assert.deepEqual([join.data.join.status, join.data.checkoutUrl, spot.data.booking.status, spot.data.checkoutUrl], ['held', 'https://checkout.test/51', 'held', 'https://checkout.test/52']);
 
   const mine = (await call('GET', 'me', null, '1001')).data;
@@ -2672,52 +2737,77 @@ test('event game spots: the first free spot is booked as a wargame table for the
   assert.deepEqual([checkedIn.data.kind, checkedIn.data.checkedIn, checkedIn.data.due], ['booking', true, 4000]);
 });
 
-test('event game spots: paying online goes through checkout, and the confirmation names the event', async () => {
+test('event game spots: round 15 books one on the tab even when asked to pay now; one sent to checkout before round 15 is confirmed by the webhook; either way the confirmation names the event', async () => {
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [warhammer({ payment: 'either' })]);
   Object.defineProperty(lair.shopify, 'configured', { value: true });
-  lair.shopify.createCheckout = async (input) => ({ draftOrderId: 'gid://shopify/DraftOrder/95', checkoutUrl: `https://checkout.test/${input.ref}` });
+  let checkouts = 0;
+  lair.shopify.createCheckout = async (input) => {
+    checkouts += 1;
+    return { draftOrderId: 'gid://shopify/DraftOrder/95', checkoutUrl: `https://checkout.test/${input.ref}` };
+  };
   lair.shopify.draftOrderOrderId = async () => 'gid://shopify/Order/95';
   const mail = captureEmails();
   try {
-    const res = await call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Sam', email: 'sam@example.com', people: 1, pay: 'now' }, '1001');
+    // Round 15: confirmed at once, on their tab, paid at the counter on the day
+    const tabbed = await call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Sam', email: 'sam@example.com', people: 1, pay: 'now' }, '1001');
+    assert.equal(tabbed.status, 200, tabbed.data.error);
+    assert.deepEqual(
+      [tabbed.data.booking.status, tabbed.data.booking.pay, tabbed.data.booking.payment, tabbed.data.checkoutUrl, tabbed.data.spotsLeft, checkouts],
+      ['confirmed', 'day', 'store', undefined, 2, 0],
+    );
+    await settle();
+    const onTab = mail.sent.find((m) => m.to === 'sam@example.com');
+    assert.equal(onTab.subject, `Game spot booked: Warhammer night: ${lair.when(lair.booking(tabbed.data.booking.id), lair.rulesCache)}`);
+    assert.match(onTab.text, /^YOUR GAME SPOT IS BOOKED!/);
+    assert.match(onTab.text, /Setup: +Wargame/);
+    assert.match(onTab.text, /Fee: +\$20\.00, on your tab\n/);
+    mail.sent.length = 0;
+
+    // One sent to checkout before round 15 (this stands in for it), paid online
+    const res = await checkoutBeforeRound15(
+      () => call('POST', 'events/warhammer@2026-10-03/reserve', { name: 'Sam', email: 'sam@example.com', people: 1, pay: 'now' }, '1001'),
+      { required: false },
+    );
     assert.equal(res.status, 200, res.data.error);
     assert.equal(res.data.booking.status, 'held');
     assert.equal(res.data.checkoutUrl, `https://checkout.test/${res.data.booking.ref}`);
-    assert.equal(res.data.spotsLeft, 2);
+    assert.equal(res.data.spotsLeft, 1);
     await internal('orders-paid', { id: 95, admin_graphql_api_id: 'gid://shopify/Order/95', source_name: 'shopify_draft_order', note_attributes: [{ name: '_booking', value: res.data.booking.ref }] });
     await settle();
     const confirmation = mail.sent.find((m) => m.to === 'sam@example.com');
     assert.match(confirmation.subject, /Game spot booked: Warhammer night/);
     assert.match(confirmation.text, /Setup: +Wargame/);
-    assert.deepEqual((await call('GET', 'me', null, '1001')).data.bookings.map((b) => b.ref), [res.data.booking.ref]);
+    assert.match(confirmation.text, /Fee: +\$20\.00, paid online\. Thank you!/);
+    assert.deepEqual((await call('GET', 'me', null, '1001')).data.bookings.map((b) => b.ref).sort(), [tabbed.data.booking.ref, res.data.booking.ref].sort());
   } finally {
     mail.restore();
   }
 });
 
-test('events say how they\'re paid: in store ignores pay, either lets people choose, online always checks out and is refused (503) when it can\'t', async () => {
+test('events say how they\'re paid, but round 15 puts every sign-up and game spot on the tab whatever the event or pay says; the old checkout code still holds a place for a checkout, and refuses online-only (503) when it can\'t make one', async () => {
   const event = (id, payment, over = {}) => ({
     id, title: `${id} night`, start: at('2026-10-03', 18), end: at('2026-10-03', 22), tables: '', capacity: 10, entryFee: 1500, payment, ...over,
   });
   lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: '' }, FALLBACK, [
     event('store', 'store', { gameTables: 'T14+T15' }), event('either', 'either', { gameTables: 'T16+T17' }),
-    event('online', 'online', { gameTables: 'T18+T19, T5+T6' }), event('free', 'online', { entryFee: 0 }),
+    event('online', 'online', { gameTables: 'T18+T19, T5+T6, T7+T8, T9+T10' }), event('free', 'online', { entryFee: 0 }),
   ]);
   const DOWN = "Online payment isn't working right now. Call us and we'll hold you a spot.";
   const join = (id, body = {}) => call('POST', `events/${id}@2026-10-03/join`, { name: 'Aroha', email: 'aroha@example.com', people: 2, ...body }, '1001');
   const reserve = (id, body = {}) => call('POST', `events/${id}@2026-10-03/reserve`, { name: 'Aroha', email: 'aroha@example.com', people: 2, ...body }, '1001');
+  // [status, its status, pay, payment, amount, checkoutUrl, notice] of a sign-up ('join') or a game spot ('booking')
+  const how = (res, what = 'join') => [res.status, res.data[what]?.status, res.data[what]?.pay, res.data[what]?.payment, res.data[what]?.amount, res.data.checkoutUrl, res.data.notice];
+  const ON_THE_TAB = [200, 'confirmed', 'day', 'store', 3000, undefined, null];
 
-  // Shopify isn't connected: an online-only event is refused, "either" falls back to the counter.
-  const offline = await join('online');
-  assert.deepEqual([offline.status, offline.data.error], [503, DOWN]);
-  assert.deepEqual([(await reserve('online')).status, (await reserve('online')).data.error], [503, DOWN]);
-  const either = await join('either', { pay: 'now' });
-  assert.deepEqual([either.data.join.status, either.data.join.pay, either.data.join.payment, either.data.checkoutUrl], ['confirmed', 'day', 'store', undefined]);
-  assert.match(either.data.notice, /pay at the counter/);
+  // Round 15 (Mo, 12 Oct 2026: "Don't create a new QR code to pay make it live inside each person's tab"): Shopify isn't
+  // connected, and an online-only event isn't refused any more, nor does "either" need a notice: it's all on the tab.
+  assert.deepEqual(how(await join('online')), ON_THE_TAB);
+  assert.deepEqual(how(await reserve('online'), 'booking'), ON_THE_TAB);
+  assert.deepEqual(how(await join('either', { pay: 'now' })), ON_THE_TAB);
   let floor = (await call('GET', 'floor')).data;
-  assert.equal(floor.eventJoins['online@2026-10-03'], undefined, 'nothing is saved for a refused sign-up');
-  assert.deepEqual(floor.eventSpots['online@2026-10-03'], { total: 2, taken: 0 });
-  assert.equal(floor.features.payOnline, false, 'payOnline only says Shopify checkout works');
+  assert.equal(floor.eventJoins['online@2026-10-03'], 2);
+  assert.deepEqual(floor.eventSpots['online@2026-10-03'], { total: 4, taken: 1 });
+  assert.equal(floor.features.payOnline, false);
 
   Object.defineProperty(lair.shopify, 'configured', { value: true });
   let broken = false;
@@ -2728,35 +2818,46 @@ test('events say how they\'re paid: in store ignores pay, either lets people cho
     return { draftOrderId: `gid://shopify/DraftOrder/6${n}`, checkoutUrl: `https://checkout.test/${ref}` };
   };
   lair.shopify.deleteDraftIfOpen = async () => true;
-  // In store: confirmed straight away, paid at the counter, whatever pay says. Spots too.
-  const store = await join('store', { pay: 'now' });
-  assert.deepEqual([store.data.join.status, store.data.join.pay, store.data.join.payment, store.data.join.amount, store.data.checkoutUrl], ['confirmed', 'day', 'store', 3000, undefined]);
-  const storeSpot = await reserve('store', { pay: 'now' });
-  assert.deepEqual([storeSpot.data.booking.status, storeSpot.data.booking.payment, storeSpot.data.booking.amount, storeSpot.data.checkoutUrl], ['confirmed', 'store', 3000, undefined]);
-  // Either: at the counter unless they ask to pay now.
-  const day = await join('either', { email: 'kai@example.com' });
-  assert.deepEqual([day.data.join.status, day.data.join.payment, day.data.checkoutUrl], ['confirmed', 'store', undefined], "pay defaults to 'day'");
-  const now = await join('either', { pay: 'now', email: 'mia@example.com' });
-  assert.deepEqual([now.data.join.status, now.data.join.payment, now.data.holdMinutes, now.data.checkoutUrl], ['held', 'online', 30, `https://checkout.test/${now.data.join.ref}`]);
-  // Online: always held with a checkout, whatever pay says. Game spots follow the event too.
-  const online = await join('online', { pay: 'day', email: 'leo@example.com' });
-  assert.deepEqual([online.data.join.status, online.data.join.pay, online.data.join.payment, online.data.checkoutUrl], ['held', 'now', 'online', `https://checkout.test/${online.data.join.ref}`]);
-  const onlineSpot = await reserve('online', { pay: 'day', email: 'leo@example.com' });
-  assert.deepEqual([onlineSpot.data.booking.status, onlineSpot.data.booking.amount, onlineSpot.data.checkoutUrl], ['held', 3000, `https://checkout.test/${onlineSpot.data.booking.ref}`]);
+  // Shopify connected: in store, either or online, asking to pay now or not, sign-ups and game spots alike, the same
+  assert.deepEqual(how(await join('store', { pay: 'now' })), ON_THE_TAB);
+  assert.deepEqual(how(await reserve('store', { pay: 'now' }), 'booking'), ON_THE_TAB);
+  assert.deepEqual(how(await join('either', { email: 'kai@example.com' })), ON_THE_TAB, "pay defaults to 'day'");
+  assert.deepEqual(how(await join('either', { pay: 'now', email: 'mia@example.com' })), ON_THE_TAB);
+  assert.deepEqual(how(await join('online', { pay: 'day', email: 'leo@example.com' })), ON_THE_TAB);
+  assert.deepEqual(how(await reserve('online', { pay: 'now', email: 'leo@example.com' }), 'booking'), ON_THE_TAB);
+  assert.equal(n, 0, 'no checkout is ever made');
+  assert.equal((await call('GET', 'floor')).data.features.payOnline, false, 'never, even with Shopify connected');
 
-  // The checkout can't be made: online-only is refused and its place let go; either is confirmed for the counter.
+  // The checkout code stays for checkouts opened before round 15 (paid, or run out, later). These stand in for them: a
+  // sign-up and a game spot held for 30 minutes with a checkout.
+  const held = await checkoutBeforeRound15(() => join('online', { email: 'zoe@example.com', people: 1 }));
+  assert.deepEqual(
+    [held.data.join.status, held.data.join.pay, held.data.join.payment, held.data.holdMinutes, held.data.checkoutUrl],
+    ['held', 'now', 'online', 30, `https://checkout.test/${held.data.join.ref}`],
+  );
+  const heldSpot = await checkoutBeforeRound15(() => reserve('online', { email: 'zoe@example.com' }));
+  assert.deepEqual([heldSpot.data.booking.status, heldSpot.data.booking.amount, heldSpot.data.checkoutUrl], ['held', 3000, `https://checkout.test/${heldSpot.data.booking.ref}`]);
+  // The checkout can't be made: when online was the only way, it's refused and its place let go...
   broken = true;
-  const refused = await join('online', { email: 'zoe@example.com' });
+  const refused = await checkoutBeforeRound15(() => join('online', { email: 'ana@example.com' }));
   assert.deepEqual([refused.status, refused.data.error], [503, DOWN]);
-  const refusedSpot = await reserve('online', { email: 'zoe@example.com' });
+  const refusedSpot = await checkoutBeforeRound15(() => reserve('online', { email: 'ana@example.com' }));
   assert.deepEqual([refusedSpot.status, refusedSpot.data.error], [503, DOWN]);
   floor = (await call('GET', 'floor')).data;
-  assert.equal(floor.eventJoins['online@2026-10-03'], 2, "only Leo's held sign-up takes places");
-  assert.deepEqual(floor.eventSpots['online@2026-10-03'], { total: 2, taken: 1 });
-  assert.equal(floor.features.payOnline, true);
-  const fallback = await join('either', { pay: 'now', email: 'ana@example.com' });
+  assert.equal(floor.eventJoins['online@2026-10-03'], 2 + 2 + 1, "Zoe's held sign-up takes its place; Ana's refused one doesn't");
+  assert.deepEqual(floor.eventSpots['online@2026-10-03'], { total: 4, taken: 3 });
+  // ... otherwise it's confirmed for the counter, and says so
+  const fallback = await checkoutBeforeRound15(() => join('either', { pay: 'now', email: 'ana@example.com', people: 1 }), { required: false });
   assert.deepEqual([fallback.status, fallback.data.join.status, fallback.data.join.pay], [200, 'confirmed', 'day']);
-  assert.match(fallback.data.notice, /pay at the counter/);
+  assert.equal(fallback.data.notice, "Online payment isn't working right now, so pay at the counter. You're on the list.");
+  // A plan that wanted online with no checkout to make (round 4's "either" with Shopify not connected) said so too
+  lair.paymentPlan = () => ({ wantsPayNow: true, payNow: false, required: false });
+  const unavailable = await join('store', { pay: 'now', email: 'hemi@example.com', people: 1 });
+  delete lair.paymentPlan;
+  assert.deepEqual(
+    [unavailable.status, unavailable.data.join.status, unavailable.data.join.pay, unavailable.data.notice],
+    [200, 'confirmed', 'day', "Online payment isn't available, so pay at the counter. You're on the list."],
+  );
   // No entry fee: nothing to pay, whatever the event says.
   const free = await join('free', { email: 'free@example.com', pay: 'now' });
   assert.deepEqual([free.status, free.data.join.status, free.data.join.amount, free.data.join.payment, free.data.checkoutUrl], [200, 'confirmed', 0, 'store', undefined]);
@@ -3371,7 +3472,8 @@ async function busyDay() {
   const mia = await seat('mia', 'Mia', 2);
   const leo = await seat('leo', 'Leo', 1);
   const gone = await seat('zed', 'Zed', 1);
-  await call('POST', `bookings/${gone.id}/update`, { status: 'cancelled' }, 'zed');
+  // Round 15: it's 2 hours away, so it's locked for Zed (on his tab): staff take it off
+  await call('POST', `bookings/${gone.id}/update`, { status: 'cancelled' }, 'staff');
   const sam = (await call('POST', 'bookings', tableBooking({ tables: ['T5'], name: 'Sam', email: 'sam@example.com' }), '1001')).data.booking;
   const kai = (await call('POST', 'bookings', tableBooking({ tables: ['T6'], start: at('2026-10-01', 16), end: at('2026-10-01', 18), people: 2, name: 'Kai', email: 'kai@example.com' }))).data.booking;
   await call('POST', `bookings/${kai.id}/update`, { status: 'noshow' }, 'staff');
@@ -3611,8 +3713,11 @@ test('passes from orders: with no customer on the sale the pass is unlinked, nam
   assert.deepEqual((await ordersPasses('#1600'))[0].holder, { customerId: '2003', name: 'Aroha Ngata', email: 'tama@example.com' }, 'a name from the order stays');
 });
 
-test('owed seats: a regular\'s seat that ends unpaid is owed, whether or not they came; My Lair and the POS list it; staff waive it; a later visit pays it; one-offs never owe', async () => {
+test('owed seats: a regular\'s seat that ends unpaid is owed, whether or not they came; My Lair and the POS list it; staff waive it; a later visit pays it; one-offs booked before round 15 never owe', async () => {
   Object.defineProperty(lair.shopify, 'configured', { value: true });
+  // Round 15 started an hour after these were booked (lockFrom), so they keep the rules they were booked under: a one-off
+  // no-show isn't owed. Round 15's own are owed whether or not they came (test/round15-tab.test.js).
+  lair.lockFrom = NOW + HOUR;
   const listed = await call('POST', 'games', {
     title: 'Weekly Mothership', system: 'Mothership', gm: 'Ellie', email: 'ellie@example.com', blurb: 'Space horror.', seats: 4, tables: ['A1'],
     start: at('2026-10-01', 18), end: at('2026-10-01', 21), schedule: 'weekly',
@@ -4512,11 +4617,17 @@ test('POST /checkin with a member code (v5.1): today\'s rows as before, then the
   await call('POST', `bookings/${owedSeat.id}/update`, { paid: true }, 'staff');
   assert.deepEqual(await owedIds(), []);
 
-  // The next day she has nothing booked, and last night's seat ended unpaid: the card lists just that.
+  // The next day she has nothing booked, and last night's seat ended unpaid: the card lists it. Round 15: so does
+  // yesterday's table, booked from round 15 on and never paid (owed whether or not she came), oldest first.
   Date.now = () => at('2026-10-09', 13);
   const next = (await call('POST', 'checkin', { code }, 'staff')).data;
-  assert.deepEqual([next.rows.map((r) => [r.id, r.owed]), next.bookings, next.due], [[[todaySeat.id, true]], [], 1500]);
-  assert.equal(next.message, 'Mia has nothing booked today. They owe $15 from 1 earlier session.');
+  assert.deepEqual([next.rows.map((r) => [r.id, r.owed]), next.bookings, next.due], [[[table.id, true], [todaySeat.id, true]], [], 2000 + 1500]);
+  assert.equal(next.message, 'Mia has nothing booked today. They owe $35 from 2 earlier sessions.');
+  // Booked before round 15 (lockFrom), that table keeps the old rule: a one-off left unpaid isn't owed, so just the seat
+  lair.lockFrom = at('2026-10-08', 14);
+  const old = (await call('POST', 'checkin', { code }, 'staff')).data;
+  assert.deepEqual([old.rows.map((r) => [r.id, r.owed]), old.bookings, old.due], [[[todaySeat.id, true]], [], 1500]);
+  assert.equal(old.message, 'Mia has nothing booked today. They owe $15 from 1 earlier session.');
 });
 
 test('birthday gifts (v5.1): each problem is { part, message } with the part that failed, as the staff page reads it; a product named like another part is still the product; gifts saved with plain sentences read the same way', async () => {
@@ -4549,9 +4660,10 @@ test('GET /me dueNow (v5.1): only what they can pay at the counter now: confirme
     { id: 'paint', title: 'Painting club', start: at('2026-10-01', 16), end: at('2026-10-01', 18), tables: '', capacity: 10, entryFee: 500 },
   ]);
   const as = (body) => ({ name: 'Mia', email: 'mia@example.com', ...body });
-  // Held while they pay online: a sign-up and a game table, each with its checkout still open.
-  const heldJoin = await call('POST', 'events/quiz@2026-10-01/join', as({ people: 1 }), 'mia');
-  const heldSpot = await call('POST', 'events/kt@2026-10-01/reserve', as({ people: 2 }), 'mia');
+  // Held while they pay online: a sign-up and a game table, each with its checkout still open (round 15 opens no new
+  // checkouts: these stand in for ones opened before it).
+  const heldJoin = await checkoutBeforeRound15(() => call('POST', 'events/quiz@2026-10-01/join', as({ people: 1 }), 'mia'));
+  const heldSpot = await checkoutBeforeRound15(() => call('POST', 'events/kt@2026-10-01/reserve', as({ people: 2 }), 'mia'));
   assert.deepEqual([heldJoin.data.join.status, heldSpot.data.booking.status, Boolean(heldJoin.data.checkoutUrl && heldSpot.data.checkoutUrl)], ['held', 'held', true]);
   // At the counter: a confirmed table, one that's seated, one they've left, one they didn't come to, and a sign-up paid in store, checked in.
   const book = async (tables, hh) => (await call('POST', 'bookings', tableBooking(as({ tables, start: at('2026-10-01', hh), end: at('2026-10-01', hh + 1), people: 2 })), 'mia')).data.booking;
@@ -5212,14 +5324,17 @@ test('guest seats (round 6): anyone can join an open session without an account,
     }
     assert.equal(toGm.reply_to, 'hemi@example.com', 'the GM can reply to the player');
     const toGuest = mail.sent.find((m) => m.to === 'hemi@example.com');
-    assert.match(toGuest.text, /Make an account with this email any time, and your seats will show up in My Lair\./);
-    // A member joining: the GM hears too, and their own email has no "make an account" line
+    // Round 15: the guest pays at the counter on the day, and an account with this email puts it on their tab in My Lair
+    assert.match(toGuest.text, /Fee: +\$30\.00, pay at the counter on the day\n/);
+    assert.ok(toGuest.text.includes('Pay at the counter on the day: just give your name. Make a free Dice Goblin account with this email and it goes on your tab in My Lair.'), toGuest.text);
+    // A member joining: the GM hears too, and their own email has no "make an account" line (it's on their tab already)
     mail.sent.length = 0;
     assert.equal((await seat({ name: 'Sam Jones', email: 'sam@example.com' }, '1001')).status, 200);
     await settle();
     assert.match(mail.sent.find((m) => m.to === 'ana@example.com').subject, /: Sam Jones$/);
     assert.match(mail.sent.find((m) => m.to === 'ana@example.com').text, /Seats left: +1 of 4/);
-    assert.doesNotMatch(mail.sent.find((m) => m.to === 'sam@example.com').text, /Make an account/);
+    assert.doesNotMatch(mail.sent.find((m) => m.to === 'sam@example.com').text, /Make (an|a free Dice Goblin) account/);
+    assert.ok(mail.sent.find((m) => m.to === 'sam@example.com').text.includes(TAB_WORDS.onTab));
     // Seats: one left, so two is too many
     assert.deepEqual([(await seat({ people: 2, email: 'pair@example.com' })).status, (await seat({ people: 2, email: 'pair@example.com' })).data.error], [409, 'Only 1 seat left.']);
     // The 6-upcoming-bookings-per-email limit applies to guests too

@@ -273,7 +273,8 @@ export const reminderMethods = {
   eventPriceLine(o, ev = {}) {
     const note = String(ev.priceNote || '').trim();
     if (o.entryFee) {
-      const how = o.capacity && o.payment === 'online' ? 'paid online when you sign up' : o.capacity && o.payment === 'either' ? 'online or at the counter' : 'paid at the counter';
+      // round 15: everything is paid at the counter on the day (on the tab), whatever the event's old payment setting
+      const how = 'paid at the counter on the day';
       return `${money(o.entryFee)} a person, ${how}${note ? `\n${note}` : ''}`;
     }
     if (ev.freeEntry) return /\bfree\b/i.test(note) ? note : `Free entry${note ? `\n${note}` : ''}`;

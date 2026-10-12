@@ -389,7 +389,7 @@ test('reminders: an event date as a calendar file; one not on the calendar is a 
   assert.match(ics, /UID:clocktower-2026-10-18@dicegoblin\.nz\r\n/, 'the same UID as the events page makes');
   assert.match(ics, /DTSTART:20261017T230000Z\r\nDTEND:20261018T050000Z\r\n/);
   assert.match(ics, /SUMMARY:Blood on the Clocktower\r\n/);
-  assert.match(ics, /DESCRIPTION:\$10 a person\\, paid at the counter\\n\\nhttps:\/\/www\.dicegoblin\.nz\/pages\/events-calendar#event=clocktower%402026-10-18\r\n/);
+  assert.match(ics, /DESCRIPTION:\$10 a person\\, paid at the counter on the day\\n\\nhttps:\/\/www\.dicegoblin\.nz\/pages\/events-calendar#event=clocktower%402026-10-18\r\n/);
   assert.match(ics, /LOCATION:Dice Goblin\\, 56\/691 Manukau Road\\, Royal Oak\\, Auckland 1023\r\n/);
   const missing = await call('GET', 'internal/eventics/nope%402026-10-18', null, '', { 'X-Lair-Internal': '1' });
   assert.equal(missing.status, 404);

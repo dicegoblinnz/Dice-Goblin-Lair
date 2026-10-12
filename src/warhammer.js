@@ -219,9 +219,10 @@ export const gamePlayerMethods = {
     return {
       details: [['Game', GAME_SIZES[b.people] || ''], ['Playing', this.playingWords(b, rows)]],
       fee: unit ? `${money(unit)} a person, paid at the counter. Each player pays their own.` : 'Nothing to pay',
+      // Round 15: no booking code to show: a name finds the game
       split: unit
-        ? `Each player pays their own ${money(unit)} at the counter. The others give their member code (or this booking's code) when they arrive.`
-        : 'The others give their member code (or this booking\'s code) when they arrive.',
+        ? `Each player pays their own ${money(unit)} at the counter on the day. The others give your name (or show their Goblin card) when they arrive.`
+        : 'The others give your name (or show their Goblin card) when they arrive.',
     };
   },
 
@@ -245,17 +246,18 @@ export const gamePlayerMethods = {
       const member = Boolean(p.customer_id);
       const hello = member ? firstName(this.playerName(p)) : 'there';
       const team = p.role === 'teammate' ? ` You're on ${firstName(booker)}'s team.` : '';
-      this.later(this.mail(this.letter(p.email, `${title} with ${firstName(booker)}: ${when} (${b.ref})`, {
+      this.later(this.mail(this.letter(p.email, `${title} with ${firstName(booker)}: ${when}`, {
         title: "You've got a game!",
         intro: `Kia ora ${hello}, ${booker} has booked a ${GAME_SIZES[b.people] || ''} game with you at ${title}, at the Dice Goblin Lair.${team} Gobgob has saved your tables.`.replace(/ {2}/g, ' '),
         details: [
           ['Event', title], ['When', when], ['Where', `Tables ${spotLabel(b.tables || [])}`], ['Game', GAME_SIZES[b.people] || ''],
-          ['Playing', this.playingWords(b, rows, { forPlayer: p })], ['Fee', unit ? `${money(unit)} a person, paid at the counter` : ''], ['Booking code', b.ref],
+          ['Playing', this.playingWords(b, rows, { forPlayer: p })], ['Fee', unit ? `${money(unit)} a person, paid at the counter on the day` : ''],
         ],
+        // Round 15: no booking code to show: their name (or member card) finds the game
         outro: [
           member
-            ? 'Give your member code at the counter when you arrive: it finds the game. Your code is in My Lair, and so is this game.'
-            : `Make your free Dice Goblin account with this email (${p.email}) and the game shows up in My Lair. Until then, give the booking code above at the counter.`,
+            ? `Show your Goblin card from My Lair at the counter when you arrive (or give ${firstName(booker)}'s name): it finds the game. It's in My Lair too.`
+            : `Give ${firstName(booker)}'s name at the counter when you arrive: it finds the game. Make your free Dice Goblin account with this email (${p.email}) and the game shows up in My Lair.`,
           `Can't make it? Let ${firstName(booker)} know, so they can find someone else.`,
         ],
         button: { label: member ? 'See it in My Lair' : 'Make your free account', url: this.page('myLair') },
@@ -292,6 +294,8 @@ export const gamePlayerMethods = {
     return {
       ...row, id, bookingId: b.id, name: this.playerName(p), customerId: p.customer_id || null, amount: share.amount, covered: 0, paidAmount: share.paid,
       due: share.due, payments: [], split: false, pass: null, playerOf: { name: firstName(b.name) }, player: { id: p.id, role: p.role },
+      // round 15: their share is never owed on their own tab: once the game's over, what's left is on the booker's
+      owed: false,
     };
   },
 

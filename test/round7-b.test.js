@@ -849,7 +849,12 @@ test('staff add a customer every week (round 7): a regular from now on, as "Save
     assert.equal((await call('GET', 'floor', null, 'staff')).data.games.find((g) => g.id === second.id).held, 1, 'the next session holds their seat');
     await settle();
     const regular = mail.sent.find((m) => m.subject === "You're a regular: Curse of Strahd");
-    assert.ok(regular && regular.to === 'sam@example.com' && regular.text.includes('Kia ora Sam Jones, the Dice Goblin team has saved your seat at Curse of Strahd with GM Ana every week.') && regular.text.includes(lair.memberRow('1001').code), regular?.text);
+    assert.ok(regular && regular.to === 'sam@example.com' && regular.text.includes('Kia ora Sam Jones, the Dice Goblin team has saved your seat at Curse of Strahd with GM Ana every week.'), regular?.text);
+    // Round 15: each session goes on their tab (no member code to show), cancelled up to 24 hours before
+    assert.ok(!regular.text.includes(lair.memberRow('1001').code) && !/Your code/.test(regular.text), regular.text);
+    assert.match(regular.text, /Fee: +\$15\.00 a session, on your tab\n/);
+    assert.ok(regular.text.includes('Each session goes on your tab: pay at the counter on the day, or pay for a few at once. Just give your name at the counter (or show your Goblin card from My Lair).'), regular.text);
+    assert.ok(regular.text.includes("Can't make one? Cancel that session's seat in My Lair at least 24 hours before it starts. After that it stays on your tab, even if you don't come."), regular.text);
     assert.ok(mail.sent.some((m) => m.to === 'sam@example.com' && /^Seat saved: Curse of Strahd/.test(m.subject)), 'and the seat confirmation');
     // A one-off can't save a seat every week; a fortnightly game says fortnight
     const oneOff = await game({ title: 'One-shot', tables: ['B2'] });

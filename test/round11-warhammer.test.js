@@ -7,7 +7,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { Lair, MIGRATIONS } from '../src/lair.js';
-import { LairTime, rulesFromSettings } from '../src/core.js';
+import { LairTime, rulesFromSettings, TAB_WORDS } from '../src/core.js';
 import { GAME_PEOPLE, INVITED_NAME, PLAYER_WORDS, spotKey } from '../src/warhammer.js';
 
 const TZ = 'Pacific/Auckland';
@@ -242,21 +242,28 @@ test('warhammer (round 11): the booker\'s email says who\'s playing; every other
     assert.match(sam.text, /Game: +2 v 2\n/);
     assert.match(sam.text, /Playing: +You and Tama Rewiti against Kiri Smith and jo@example\.com\n/);
     assert.match(sam.text, /Fee: +\$10 a person, paid at the counter\. Each player pays their own\.\n/);
-    assert.match(sam.text, /Each player pays their own \$10 at the counter\. The others give their member code \(or this booking's code\) when they arrive\./);
-    const kiri = mail.sent.find((m) => m.to === 'kiri@example.com');
+    // Round 15: no booking code to show (not in the subject, no code row): the others just give their name
     const ref = res.data.booking.ref;
-    assert.equal(kiri.subject, `Warhammer night with Sam: Thursday, 15 October at 6:00 pm to 12:00 am (${ref})`);
+    assert.match(sam.text, /Each player pays their own \$10 at the counter on the day\. The others give your name \(or show their Goblin card\) when they arrive\./);
+    assert.ok(sam.text.includes(TAB_WORDS.onTab), sam.text);
+    assert.ok(sam.text.includes(TAB_WORDS.lockedNow(24)), 'tonight, so it is locked in already');
+    assert.ok(!`${sam.subject}\n${sam.text}`.includes(ref), 'no booking code');
+    const kiri = mail.sent.find((m) => m.to === 'kiri@example.com');
+    assert.equal(kiri.subject, 'Warhammer night with Sam: Thursday, 15 October at 6:00 pm to 12:00 am');
     assert.match(kiri.text, /Kia ora Kiri, Sam Jones has booked a 2 v 2 game with you at Warhammer night, at the Dice Goblin Lair\. Gobgob has saved your tables\./);
     assert.match(kiri.text, /Where: +Tables T12 \+ T13\n/);
     assert.match(kiri.text, /Playing: +Sam Jones and Tama Rewiti against you and an invited player\n/);
-    assert.match(kiri.text, /Fee: +\$10 a person, paid at the counter\n/);
-    assert.match(kiri.text, /Give your member code at the counter when you arrive: it finds the game\./);
+    assert.match(kiri.text, /Fee: +\$10 a person, paid at the counter on the day\n/);
+    assert.match(kiri.text, /Show your Goblin card from My Lair at the counter when you arrive \(or give Sam's name\): it finds the game\. It's in My Lair too\./);
+    assert.doesNotMatch(kiri.text, /Booking code|member code/);
+    assert.ok(!kiri.text.includes(ref), 'no booking code');
     assert.doesNotMatch(kiri.text, /jo@example\.com/, 'never another player\'s email');
     const tama = mail.sent.find((m) => m.to === 'tama@example.com');
     assert.match(tama.text, /You're on Sam's team\./);
     const jo = mail.sent.find((m) => m.to === 'jo@example.com');
     assert.match(jo.text, /Kia ora there, Sam Jones has booked a 2 v 2 game with you/);
-    assert.match(jo.text, /Make your free Dice Goblin account with this email \(jo@example\.com\) and the game shows up in My Lair\. Until then, give the booking code above at the counter\./);
+    assert.match(jo.text, /Give Sam's name at the counter when you arrive: it finds the game\. Make your free Dice Goblin account with this email \(jo@example\.com\) and the game shows up in My Lair\./);
+    assert.ok(!`${jo.subject}\n${jo.text}`.includes(ref), 'no booking code');
     assert.match(jo.text, /Can't make it\? Let Sam know, so they can find someone else\./);
     assert.match(jo.html, /Make your free account/);
     assert.ok(playerRows().every((p) => p.invited_at === NOW), 'each marked sent');
@@ -288,8 +295,14 @@ test('warhammer (round 11): My Lair: the booker sees the players; a named member
   assert.ok(!JSON.stringify(kiri.bookings).includes(codes[TAMA]), 'nor anyone else\'s member code');
   // It's on what she can pay at the counter today
   assert.deepEqual(kiri.dueNow.map((d) => [d.title, d.due]), [['Game table at Warhammer night', 1000]]);
-  // Sam cancels: it shows as cancelled for Kiri, with nothing to pay
-  await call('POST', `bookings/${res.data.booking.id}/update`, { status: 'cancelled' }, SAM);
+  // Round 15: tonight's game is less than 24 hours away, so Sam can't cancel it online: it stays on the tab, and Kiri's
+  // share stays hers to pay
+  const refused = await call('POST', `bookings/${res.data.booking.id}/update`, { status: 'cancelled' }, SAM);
+  assert.deepEqual([refused.status, refused.data.error], [409, TAB_WORDS.locked(24)]);
+  const still = (await me(KIRI)).bookings[0];
+  assert.deepEqual([still.status, still.due], ['confirmed', 1000]);
+  // Staff take it off: it shows as cancelled for Kiri, with nothing to pay
+  await call('POST', `bookings/${res.data.booking.id}/update`, { status: 'cancelled' }, 'staff');
   const off = (await me(KIRI)).bookings[0];
   assert.deepEqual([off.status, off.due], ['cancelled', 0]);
 });

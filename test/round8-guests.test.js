@@ -6,7 +6,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { Lair, MIGRATIONS } from '../src/lair.js';
-import { LairTime, rulesFromSettings, guestList, GUEST_LIMIT, GUEST_MESSAGES } from '../src/core.js';
+import { LairTime, rulesFromSettings, guestList, GUEST_LIMIT, GUEST_MESSAGES, TAB_WORDS } from '../src/core.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -201,13 +201,21 @@ test('guests (round 8): places count everyone, the entry fee is for everyone, an
   const fits = await join(PAINT, { guests: [{ code: codes[KIRI] }, { name: 'Jo' }] });
   assert.deepEqual([fits.status, fits.data.spacesLeft, fits.data.join.amount], [200, 0, 0]);
   assert.equal(said(await join(PAINT, { guests: [] }, '')), '409 This one is full.');
-  // Paid online: the checkout is for 3 people at the entry fee
   Object.defineProperty(lair.shopify, 'configured', { value: true, configurable: true });
   const checkouts = [];
   lair.shopify.createCheckout = async (input) => {
     checkouts.push(input);
     return { draftOrderId: 'gid://shopify/DraftOrder/81', checkoutUrl: 'https://checkout.test/81' };
   };
+  // Round 15: an event that was paid online goes on the tab like everything else: the fee for all 3, at the counter
+  const tabbed = await join(CHAMPS, { name: 'Aroha Ngata', email: 'aroha@example.com', guests: [{ name: 'Hemi' }, { name: 'Mere' }] }, '');
+  assert.equal(tabbed.status, 200, tabbed.data.error);
+  assert.deepEqual(
+    [tabbed.data.join.status, tabbed.data.join.pay, tabbed.data.join.people, tabbed.data.join.amount, tabbed.data.join.due, tabbed.data.checkoutUrl, checkouts.length],
+    ['confirmed', 'day', 3, 7500, 7500, undefined, 0],
+  );
+  // A checkout opened before round 15 (this stands in for one, online being the only way then) is for 3 people at the entry fee
+  lair.paymentPlan = () => ({ wantsPayNow: true, payNow: true, required: true });
   const online = await join(CHAMPS, { guests: [{ code: codes[KIRI] }, { name: 'Jo' }] });
   assert.equal(online.status, 200, online.data.error);
   assert.deepEqual([online.data.join.status, online.data.join.amount, checkouts[0].quantity, checkouts[0].unitPrice], ['held', 7500, 3, 2500]);
@@ -216,6 +224,7 @@ test('guests (round 8): places count everyone, the entry fee is for everyone, an
   const kept = guestRows().length;
   lair.shopify.createCheckout = async () => { throw new Error('Shopify API error 503'); };
   const down = await join(CHAMPS, { guests: [{ code: codes[TAMA] }, { name: 'Ana' }] }, KIRI);
+  delete lair.paymentPlan;
   assert.equal(down.status, 503, down.data.error);
   assert.equal(guestRows().length, kept);
   assert.equal(guestRows().filter((g) => g.customer_id === TAMA || g.name === 'Ana').length, 0);
@@ -277,6 +286,9 @@ test('guests (round 8): My Lair: the person who signed up sees who\'s coming; th
 
 test('guests (round 8): only the person who signed up (or staff) can cancel; a guest gets the contract\'s 403', async () => {
   const codes = await members();
+  // Round 15 started an hour after this sign-up (lockFrom), so it keeps the rule it was made under: cancelled online
+  // until it starts
+  lair.lockFrom = NOW + HOUR;
   const j = (await join(QUIZ, { guests: [{ code: codes[KIRI] }] })).data.join;
   assert.equal(said(await call('POST', `events/joins/${j.id}/cancel`, {}, KIRI)), '403 Only the person who signed up can change this. Ask them, or the counter.');
   assert.equal(said(await call('POST', `events/joins/${j.id}/cancel`, {}, TAMA)), '403 Only staff can change that sign-up.');
@@ -284,6 +296,15 @@ test('guests (round 8): only the person who signed up (or staff) can cancel; a g
   const cancelled = await call('POST', `events/joins/${j.id}/cancel`, {}, SAM);
   assert.deepEqual([cancelled.status, cancelled.data.join.status, cancelled.data.join.guests], [200, 'cancelled', [{ name: 'Kiri Smith', member: true }]]);
   assert.equal((await me(KIRI)).joins[0].status, 'cancelled', 'the guest sees it was cancelled');
+  // One made once round 15 is on, with $5 a person to pay, is locked 24 hours before: tonight's stays on Sam's tab. The
+  // guest still gets the 403, and staff can still take it off.
+  Date.now = () => NOW + HOUR;
+  const tonight = (await join(QUIZ, { guests: [{ code: codes[KIRI] }] })).data.join;
+  assert.equal(said(await call('POST', `events/joins/${tonight.id}/cancel`, {}, SAM)), `409 ${TAB_WORDS.locked(24)}`);
+  assert.equal(said(await call('POST', `events/joins/${tonight.id}/cancel`, {}, KIRI)), '403 Only the person who signed up can change this. Ask them, or the counter.');
+  assert.equal(lair.joinById(tonight.id).status, 'confirmed');
+  const byStaff = await call('POST', `events/joins/${tonight.id}/cancel`, {}, 'staff');
+  assert.deepEqual([byStaff.status, byStaff.data.join.status], [200, 'cancelled']);
 });
 
 /* ---------------- stamps ---------------- */
@@ -354,8 +375,8 @@ test('guests (round 8): at check-in, a guest\'s member code shows the sign-up th
   assert.deepEqual(scan.data.rows.map((r) => r.type), ['booking']);
   const posCode = await internal('pos/checkin', { code: codes[KIRI] });
   assert.ok(!posCode.data.rows.some((r) => r.guestOf), 'no guest sign-ups on the POS');
-  // A cancelled sign-up, or another day's, isn't shown
-  await call('POST', `events/joins/${j.id}/cancel`, {}, SAM);
+  // A cancelled sign-up, or another day's, isn't shown (round 15: tonight's is locked for Sam, so staff take it off)
+  assert.equal((await call('POST', `events/joins/${j.id}/cancel`, {}, 'staff')).data.join.status, 'cancelled');
   assert.ok(!(await staffCheckin({ code: codes[KIRI] })).data.rows.some((r) => r.guestOf));
   await join(PAINT, { guests: [{ code: codes[TAMA] }] });
   const tama = await staffCheckin({ code: codes[TAMA] });

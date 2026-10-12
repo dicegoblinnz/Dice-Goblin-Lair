@@ -190,8 +190,11 @@ test('tab (round 9): one migration entry, found by what it makes, with the accou
 
 /* ---------------- pay each visit: nothing changes at the counter ---------------- */
 
-test('tab (round 9): a pay-each-visit member sees today owed and what is coming up, never an earlier visit, and the counter is as before', async () => {
+test('tab (round 9): a pay-each-visit member sees today owed and what is coming up, never an earlier visit (round 15: one booked from then on and left unpaid is owed), and the counter is as before', async () => {
   await members();
+  // Round 15 started on 12 Oct (lockFrom), after these were booked, so they keep round 9's rules: an earlier visit left
+  // unpaid isn't owed later. What round 15 does with the same visits is at the end.
+  lair.lockFrom = at('2026-10-12', 15);
   const yesterday = await book('2026-09-15', 18, { checkIn: true });
   const later = await book('2026-09-20', 18, { over: { tables: ['T6'] } });
   const today = await book('2026-09-16', 18, { over: { tables: ['T7'] }, checkIn: true });
@@ -217,6 +220,20 @@ test('tab (round 9): a pay-each-visit member sees today owed and what is coming 
   // the staff check-in card says they pay each visit
   const card = (await call('POST', 'checkin', { code }, 'staff')).data;
   assert.deepEqual(card.account, { billing: 'visit' });
+
+  // Round 15: booked from round 15 on, yesterday's visit ended unpaid, so it's owed (on their tab until it's paid or
+  // waived), oldest first, and the counter lists it once, after today's row, with its "Owed:" line
+  lair.lockFrom = LIVE;
+  const tab = (await me()).account;
+  assert.deepEqual(tab.owed.items.map((i) => [i.kind, i.ref, i.amount, i.settle, Boolean(i.owedRow)]), [
+    ['table', yesterday.ref, 2000, 'day', true], ['table', today.ref, 2000, 'day', false], ['tab', tab.owed.items[2].ref, 900, 'day', false],
+  ]);
+  assert.equal(tab.owed.total, 4900);
+  const counter = (await internal('pos/scan', { code })).data;
+  assert.deepEqual(counter.rows.map((r) => [r.ref, r.owed]), [[today.ref, false], [yesterday.ref, true]]);
+  assert.deepEqual(counter.rows[1].line, { title: `Owed: Table T5 (${lair.shortDay(at('2026-09-15', 18))})`, price: '20.00', quantity: 1, taxable: true, properties: { _booking: yesterday.ref } });
+  const lines = (await internal('pos/checkin-member', { customerId: SAM })).data.lines;
+  assert.deepEqual(lines.map((l) => [l.properties._booking, l.price]), [[today.ref, '20.00'], [yesterday.ref, '20.00']]);
 });
 
 /* ---------------- monthly accounts ---------------- */
@@ -255,8 +272,11 @@ test('tab (round 9): staff switch a member to a monthly account with a limit, ch
   assert.equal((await call('GET', 'floor', null, SAM)).data.monthlyAccounts, undefined);
 });
 
-test('tab (round 9): on a monthly account visits and tabs roll over, from tabFrom and the account start only', async () => {
+test('tab (round 9): on a monthly account visits and tabs roll over, from tabFrom and the account start only (round 15: a visit booked from then on and left unpaid is owed either way)', async () => {
   await members();
+  // Round 15 started on 12 Oct (lockFrom), after these were booked, so they keep round 9's rules. What round 15 does
+  // with the same visits is at the end.
+  lair.lockFrom = at('2026-10-12', 15);
   // checked in before the account started: they paid (or not) the old way, so it's never owed later
   const before = await book('2026-09-14', 18, { checkIn: true });
   setNow(at('2026-09-14', 21));
@@ -287,6 +307,18 @@ test('tab (round 9): on a monthly account visits and tabs roll over, from tabFro
   assert.deepEqual(scan.account, { billing: 'monthly', creditLimit: 10000, owed: 2900, available: 7100, warning: null });
   const card = (await call('POST', 'checkin', { code }, 'staff')).data;
   assert.equal(card.account.billing, 'monthly');
+
+  // Round 15: booked from round 15 on, both visits ended unpaid, so both are owed (on their tab whether or not the
+  // account had started), settled on the account now it's monthly; the counter lists each once, the tab after them
+  lair.lockFrom = LIVE;
+  const tab = (await me()).account;
+  assert.deepEqual(tab.owed.items.map((i) => [i.type, i.ref, i.amount, i.settle, Boolean(i.owedRow)]), [
+    ['booking', before.ref, 2000, 'account', true], ['booking', visit.ref, 2000, 'account', true], ['tab', tab.owed.items[2].ref, 900, 'account', false],
+  ]);
+  assert.deepEqual([tab.owed.total, tab.available], [4900, 10000 - 4900]);
+  const counter = (await internal('pos/scan', { code })).data;
+  assert.deepEqual(counter.rows.map((r) => [r.type, r.ref, r.owed, r.line.price]), [['booking', before.ref, true, '20.00'], ['booking', visit.ref, true, '20.00'], ['tab', counter.rows[2].ref, true, '9.00']]);
+  assert.deepEqual(counter.account, { billing: 'monthly', creditLimit: 10000, owed: 4900, available: 5100, warning: null });
 });
 
 test('tab (round 9): a monthly account at its limit refuses new bookings, sign-ups and tab items; staff can still add them, with a warning', async () => {
@@ -598,8 +630,11 @@ test("tab (round 9): when Shopify can't make the draft order the bill waits, and
   }
 });
 
-test('tab (round 9): back to pay each visit keeps what is owed, says so, and new visits are settled each visit again', async () => {
-  await september();
+test('tab (round 9): back to pay each visit keeps what is owed, says so, and new visits are settled each visit again (round 15: one left unpaid stays owed)', async () => {
+  // Round 15 started on 12 Oct (lockFrom), after these were booked, so they keep round 9's rules. What round 15 does
+  // with the same visits is at the end.
+  lair.lockFrom = at('2026-10-12', 15);
+  const visit = await september();
   setNow(at('2026-09-18', 9));
   const back = await call('POST', `members/${SAM}/account`, { billing: 'visit' }, 'staff');
   assert.equal(back.status, 200, back.data.error);
@@ -607,15 +642,25 @@ test('tab (round 9): back to pay each visit keeps what is owed, says so, and new
   assert.equal(back.data.account.billing, 'visit');
   assert.equal(back.data.account.owed.total, 2900);
   // a visit after: owed on its day only, like anyone paying each visit
-  await book('2026-09-19', 18, { over: { tables: ['T6'] }, checkIn: true });
+  const after = await book('2026-09-19', 18, { over: { tables: ['T6'] }, checkIn: true });
   setNow(at('2026-09-19', 21));
   assert.equal((await me()).account.owed.total, 2900 + 2000);
   setNow(at('2026-09-20', 12));
   assert.equal((await me()).account.owed.total, 2900);
   // the counter still lists what's owed from the account; the Accounts tab too, while it's owed
-  const scan = (await internal('pos/scan', { code: (await me()).member.code })).data;
+  const code = (await me()).member.code;
+  const scan = (await internal('pos/scan', { code })).data;
   assert.deepEqual(scan.rows.map((r) => r.type), ['booking', 'tab']);
   assert.deepEqual((await call('GET', 'accounts', null, 'staff')).data.accounts.map((a) => [a.billing, a.owed]), [['visit', 2900]]);
+
+  // Round 15: booked from round 15 on, the visit on the 19th stays owed after its day too (it ended unpaid: on their tab
+  // until it's paid or waived), and the counter lists each visit once, then the account's tab
+  lair.lockFrom = LIVE;
+  assert.deepEqual((await me()).account.owed.items.map((i) => [i.type, i.ref || i.kind, i.amount]), [['booking', visit.ref, 2000], ['tab', (await me()).account.owed.items[1].ref, 900], ['booking', after.ref, 2000]]);
+  assert.equal((await me()).account.owed.total, 2900 + 2000);
+  assert.deepEqual((await internal('pos/scan', { code })).data.rows.map((r) => [r.type, r.ref, r.owed]), [['booking', visit.ref, true], ['booking', after.ref, true], ['tab', scan.rows[1].ref, true]]);
+  lair.lockFrom = at('2026-10-12', 15);
+
   // and no monthly bill is made for them
   setNow(at('2026-10-01', 9));
   await maintenance();
@@ -636,12 +681,25 @@ test('tab (round 9): weekly seats owed are on the running tab for everyone, as r
 });
 
 test('tab (round 9): the counter takes everything on the account at once: /pos/checkin-member lines include earlier days and tabs, tagged', async () => {
-  await september();
+  // Round 15 started on 12 Oct (lockFrom), after these were booked, so they keep round 9's rules. What round 15 does
+  // with the same visit is at the end.
+  lair.lockFrom = at('2026-10-12', 15);
+  const visit = await september();
   setNow(at('2026-09-18', 18));
   const all = (await internal('pos/checkin-member', { customerId: SAM })).data;
   const tabId = lair.sql.exec('SELECT id FROM tabs').one().id;
   assert.deepEqual(all.lines.map((l) => [l.price, l.properties._booking || null, l.properties._tab || null]), [['20.00', all.rows[0].ref, null], ['9.00', null, tabId]]);
+  assert.equal(all.rows[0].ref, visit.ref);
   assert.ok(all.rows.every((r) => r.owed && r.onAccount));
+
+  // Round 15: booked from round 15 on, the visit is owed on its own (it ended unpaid), so it comes from the owed rows:
+  // still listed once with its "Owed:" line, then the account's tab, never twice
+  lair.lockFrom = LIVE;
+  const now15 = (await internal('pos/checkin-member', { customerId: SAM })).data;
+  assert.deepEqual(now15.rows.map((r) => [r.type, r.ref, r.owed]), [['booking', visit.ref, true], ['tab', all.rows[1].ref, true]]);
+  assert.deepEqual(now15.lines.map((l) => [l.title, l.price, l.properties._booking || null, l.properties._tab || null]), [
+    [`Owed: Table T5 (${lair.shortDay(at('2026-09-16', 18))})`, '20.00', visit.ref, null], [all.lines[1].title, '9.00', null, tabId],
+  ]);
 });
 
 test('tab (round 9): a bill whose link is paid after it was replaced still records the payment, and the newer bill reconciles as paid', async () => {
@@ -686,15 +744,26 @@ test('tab (round 9): a tab a bill pays that another order already paid is flagge
   }
 });
 
-test('tab (round 9): an event paid at the counter checks the limit; one paid online now never does', async () => {
+test('tab (round 9): an event paid at the counter checks the limit; one paid online now never does (round 15: every event is on the tab, so every one is checked)', async () => {
   await members();
   await book('2026-09-15', 18, { checkIn: true });
   setNow(at('2026-09-15', 19));
   assert.equal((await monthly(1000)).status, 200);
-  // $20 owed (today's visit) of a $10 limit: an event paid online now isn't on the account, so it isn't refused
   lair.rulesCache = rulesFromSettings({ lair_hours: HOURS, lair_shop_tables: '' }, ROOMS, [...EVENTS, { id: 'champs', title: 'Championship', start: at('2026-09-20', 11), end: at('2026-09-20', 17), tables: '', capacity: 30, entryFee: 2500, payment: 'online' }]);
-  lair.shopify.createCheckout = async () => ({ draftOrderId: 'gid://shopify/DraftOrder/1', checkoutUrl: 'https://shop.test/checkout/1' });
-  const online = await call('POST', 'events/champs@2026-09-20/join', { name: 'Sam Jones', email: 'sam@example.com', phone: MOBILE, people: 1 }, SAM);
+  let checkouts = 0;
+  lair.shopify.createCheckout = async () => {
+    checkouts += 1;
+    return { draftOrderId: 'gid://shopify/DraftOrder/1', checkoutUrl: 'https://shop.test/checkout/1' };
+  };
+  const champs = () => call('POST', 'events/champs@2026-09-20/join', { name: 'Sam Jones', email: 'sam@example.com', phone: MOBILE, people: 1 }, SAM);
+  // Round 15: an event paid online before goes on the tab now, like everything else, so $20 owed (today's visit) of a $10
+  // limit refuses it too, and no checkout is made
+  assert.equal(said(await champs()), '409 Your Lair account is at its $10 limit. Pay your bill online or at the counter, then sign up again.');
+  assert.equal(checkouts, 0);
+  // A checkout opened before round 15 (this stands in for one) was never on the account, so it wasn't refused
+  lair.paymentPlan = () => ({ wantsPayNow: true, payNow: true, required: true });
+  const online = await champs();
+  delete lair.paymentPlan;
   assert.equal(online.status, 200, online.data.error);
   assert.equal(online.data.checkoutUrl, 'https://shop.test/checkout/1');
   const counter = await call('POST', 'events/quiz@2026-09-17/join', { name: 'Sam Jones', email: 'sam@example.com', phone: MOBILE, people: 1 }, SAM);
