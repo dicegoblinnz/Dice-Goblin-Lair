@@ -70,6 +70,22 @@ books keep their codes.
   Shopify). Until then its saved copy of the old code still shows on the staff page and My Lair, and current holds and
   loans keep the code they were made with.
 
+### New games and extra copies (`additions-2026-10-16/`, 16 Oct 2026)
+
+Mo photographed the new games' box fronts in piles and asked for the stickers "grouped together as per the images I
+took of the boardgames". `print-games.json` is that print, 233 stickers in the order Mo will stick them on:
+
+- Each sticker has a `group`: `Photo 1` to `Photo 13` (his photos in the order he sent them), then `Extra copies`, then
+  `RPG shelf`. Within a photo they're in the order the games were read off it.
+- Built with `--order=given`, so nothing is re-sorted, and every group starts a new page: each pile's stickers come
+  off the printer together (52 pages, a few with gaps at a group's end).
+- New games took the next free number in their section and size run (DGL7+-L008 after Kaupapa's L007). Codes are
+  never reused: the 57 sold games archived that day keep theirs, retired.
+- A second or third copy of a game has the same code and QR as the first, so the list repeats it (Forbidden Island
+  twice for its two new copies). Shopify counts the copies in the variant's stock.
+- The photographed games already in the library are in the list again, because their stickers had gone missing.
+- RPG books, magazines and comics (the RPG shelf) have numbers only, and new ones have no players, time or ages yet.
+
 ### Spine labels (`--layout=box-label`, 11 Oct 2026)
 
 Mo asked for each game's spine label to print with its sticker, two games a page. With `--layout=box-label`:
@@ -129,12 +145,16 @@ You need Python 3 with `reportlab segno fonttools brotli zxing-cpp pypdf numpy p
 `opencv-python` for the sample check), and poppler's `pdftoppm`. The fonts are the theme's own (Archivo Black and Poppins), read from the website repo's `assets` folder.
 
 ```sh
-python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|qr-stacked|band] [--layout=box|box-label|spine]
-python3 verify_stickers.py stickers.pdf games-2026-10-10.json [render_dir] [--layout=box|box-label|spine]
+python3 library_stickers.py games-2026-10-10.json stickers.pdf /path/to/Dice-Goblin-website/assets layout.json [--logo=qr|qr-stacked|band] [--layout=box|box-label|spine] [--order=shelf|given]
+python3 verify_stickers.py stickers.pdf games-2026-10-10.json [render_dir] [--layout=box|box-label|spine] [--order=shelf|given]
 ```
 
 - Stickers come out in shelf order, so each shelf's games are together: by section, then small, medium and large boxes
   (S, M, L: top shelf down), then number.
+- `--order=given` keeps the list's own order instead. With spine stickers, a game whose `group` differs from the one
+  before starts a new page. Give the check the same flag.
+- The 16 October print: `python3 library_stickers.py additions-2026-10-16/print-games.json stickers.pdf
+  /path/to/Dice-Goblin-website/assets --layout=spine --logo=qr --order=given`.
 - `layout.json` is optional. It records each sticker's choices: name lines and size, details lines, QR size and page.
 - To print new games only, give `library_stickers.py` a list with just those games.
 

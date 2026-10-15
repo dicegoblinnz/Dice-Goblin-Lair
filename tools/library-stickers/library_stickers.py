@@ -24,7 +24,9 @@ Layouts (--layout=):
              30 mm sticker per game for its spine, with everything on it, five a page (Mo picked these over 50 mm ones,
              three a page: "It looks better I feel and should be easy enough to install on all").
 
-Usage: python3 library_stickers.py games.json stickers.pdf [fonts_dir] [layout_report.json] [--logo=qr|qr-stacked|band] [--layout=box|box-label|spine]
+Usage: python3 library_stickers.py games.json stickers.pdf [fonts_dir] [layout_report.json] [--logo=qr|qr-stacked|band] [--layout=box|box-label|spine] [--order=shelf|given]
+  --order=given keeps the games in the file's order (shelf order is the default); with spine stickers a game whose
+  "group" differs from the one before starts a new page.
 games.json is a list of {title, code, qr, players, time, ages}; code is the shelf code (custom.library_code),
 qr the variant barcode (else SKU, else the shelf code).
 """
@@ -628,12 +630,16 @@ def tall_kind(game):
 
 def tall_pages(games):
     """The pages of tall stickers, games in the order given: a run of one width shares pages, three wide or five
-    narrow a page, so every page's cut lines are in the same places as others of its width."""
+    narrow a page, so every page's cut lines are in the same places as others of its width. A game whose 'group'
+    differs from the one before starts a new page, so each group's stickers come off the printer together."""
     pages = []
+    group = None
     for game in games:
         kind = tall_kind(game)
         per = round(PAGE_W / TALL[kind]['w'])
-        if pages and pages[-1][0] == kind and len(pages[-1][1]) < per:
+        same_group = game.get('group') == group
+        group = game.get('group')
+        if pages and same_group and pages[-1][0] == kind and len(pages[-1][1]) < per:
             pages[-1][1].append(game)
         else:
             pages.append((kind, [game]))
@@ -813,11 +819,13 @@ def cut_line(c, spine=False):
 LAYOUTS = ('box', 'box-label', 'spine')
 
 
-def build(games, out, fonts_dir, report=None, logo=None, layout_name='box'):
-    """The PDF: games in shelf order, laid out as layout_name (see LAYOUTS). Returns the pages' games and layout."""
+def build(games, out, fonts_dir, report=None, logo=None, layout_name='box', order='shelf'):
+    """The PDF: games in shelf order (or in the order given, with order='given'), laid out as layout_name (see
+    LAYOUTS). Returns the pages' games and layout."""
     load_fonts(fonts_dir)
     load_logos(fonts_dir)
-    games = sorted(games, key=lambda g: shelf_order(g['code']))
+    if order != 'given':
+        games = sorted(games, key=lambda g: shelf_order(g['code']))
     c = canvas.Canvas(out, pagesize=(PAGE_W, PAGE_H), pageCompression=1)
     c.setTitle('Dice Goblin library stickers')
     c.setAuthor('Dice Goblin')
@@ -871,6 +879,9 @@ if __name__ == '__main__':
     games = json.load(open(args[0], encoding='utf-8'))
     fonts = args[2] if len(args) > 2 else '/home/claude/dice-goblin-website/assets'
     report = args[3] if len(args) > 3 else None
-    done = build(games, args[1], fonts, report, logo, layout_name)
+    order = option('order', 'shelf')
+    if order not in ('shelf', 'given'):
+        sys.exit('--order is shelf or given')
+    done = build(games, args[1], fonts, report, logo, layout_name, order)
     pages = len(tall_pages(done)) if layout_name == 'spine' else (len(done) + 1) // 2
     print(f'{len(done)} stickers on {pages} pages: {args[1]}')

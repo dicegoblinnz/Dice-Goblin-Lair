@@ -9,7 +9,7 @@ belongs, by layout (see library_stickers.LAYOUTS):
              with SPINE_CLEAR to spare, and nothing else in the strip.
   spine      each tall sticker's ink inside its cut piece with TALL_CLEAR to spare, and nothing in a page's empty places.
 
-Usage: python3 verify_stickers.py stickers.pdf games.json [render_dir] [--layout=box|box-label|spine]
+Usage: python3 verify_stickers.py stickers.pdf games.json [render_dir] [--layout=box|box-label|spine] [--order=shelf|given]
 """
 import json
 import os
@@ -153,8 +153,10 @@ def check_tall_page(n, img, ink, kind, games, problems):
     return scanned
 
 
-def main(pdf, games_path, render_dir=None, layout='box'):
-    games = sorted(json.load(open(games_path, encoding='utf-8')), key=lambda g: shelf_order(g['code']))
+def main(pdf, games_path, render_dir=None, layout='box', order='shelf'):
+    games = json.load(open(games_path, encoding='utf-8'))
+    if order != 'given':
+        games = sorted(games, key=lambda g: shelf_order(g['code']))
     if layout == 'spine':
         plan = tall_pages(games)
     else:
@@ -201,4 +203,5 @@ if __name__ == '__main__':
     layout = flags[-1] if flags else 'box'
     if layout not in LAYOUTS:
         sys.exit(f"--layout is {', '.join(LAYOUTS)}")
-    main(*[a for a in sys.argv[1:] if not a.startswith('--')][:3], layout=layout)
+    orders = [a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--order=')]
+    main(*[a for a in sys.argv[1:] if not a.startswith('--')][:3], layout=layout, order=orders[-1] if orders else 'shelf')
