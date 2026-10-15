@@ -42,6 +42,8 @@ import { adminMethods } from './admin.js';
 import { GAME_PEOPLE, PLAYER_WORDS, gamePlayerMethods, spotKey, spotLabel } from './warhammer.js';
 // Round 10: library memberships (Grab, Stash and Hoard) billed by the Lair through Shopify (src/memberships.js)
 import { membershipMethods, membershipUpkeep } from './memberships.js';
+// Round 16: the wishlist, a member's products to come back to (src/wishlist.js)
+import { wishlistMethods } from './wishlist.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -203,6 +205,21 @@ const ORDERS_BACKFILL_DAYS = 7;
  *    that came free, a session added), not one they (or staff) booked: saved inside the 24 hours, it isn't locked.
  */
 const ROUND15_COLUMNS = [['event_joins', 'waived', 'INTEGER NOT NULL DEFAULT 0'], ['bookings', 'gob_saved', 'INTEGER NOT NULL DEFAULT 0']];
+
+/**
+ * Round 16, the wishlist (16 Oct 2026, src/wishlist.js): a new table and its index, made on every start when they're
+ * missing (as ROUND15_COLUMNS are), so they never wait on a step in MIGRATIONS either.
+ *  - wishlist: a member's products, one row per member per product (the primary key): customer_id (as every member
+ *    table keeps it), product_id (the Shopify product's number, digits only), the handle and title the page sent (null
+ *    when it sent none) and created_at, when it was first added (ms; adding it again never changes it).
+ *  - wishlist_customer: a member's rows, newest first (read backwards).
+ */
+const ROUND16_WISHLIST = [
+  `CREATE TABLE IF NOT EXISTS wishlist (
+    customer_id TEXT NOT NULL, product_id TEXT NOT NULL, handle TEXT, title TEXT, created_at INTEGER NOT NULL,
+    PRIMARY KEY (customer_id, product_id))`,
+  'CREATE INDEX IF NOT EXISTS wishlist_customer ON wishlist (customer_id, created_at)',
+];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -869,6 +886,8 @@ export class Lair {
         this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
     }
+    // Round 16: the wishlist's table and index (made when missing)
+    for (const statement of ROUND16_WISHLIST) this.sql.exec(statement);
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
@@ -1533,6 +1552,8 @@ export class Lair {
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
+      // Round 16: the wishlist, newest first (src/wishlist.js)
+      if (request.method === 'GET' && a === 'me' && b === 'wishlist' && !c) return json(this.memberWishlist(who));
       if (request.method === 'GET' && a === 'members' && !b) return json(await this.members(url, who));
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'spend') return json(await this.memberSpend(decodeURIComponent(b), who));
@@ -1575,6 +1596,9 @@ export class Lair {
       if (a === 'me' && b === 'membership' && c === 'resume' && !d) return json(await this.resumeMembership(body, who));
       if (a === 'me' && b === 'membership' && c === 'card' && !d) return json(await this.membershipCardEmail(body, who));
       if (a === 'me' && b === 'damage' && c && d === 'dispute') return json(await this.disputeDamageCharge(decodeURIComponent(c), body, who));
+      // Round 16: add a product to the wishlist, and take one off
+      if (a === 'me' && b === 'wishlist' && !c) return json(this.addToWishlist(body, who));
+      if (a === 'me' && b === 'wishlist' && c === 'remove' && !d) return json(this.removeFromWishlist(body, who));
       if (a === 'passes' && !b) return json(await this.createPass(body, who));
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
@@ -9383,3 +9407,5 @@ Object.assign(Lair.prototype, adminMethods);
 Object.assign(Lair.prototype, gamePlayerMethods);
 // Round 10: library memberships (src/memberships.js)
 Object.assign(Lair.prototype, membershipMethods);
+// Round 16: the wishlist (src/wishlist.js)
+Object.assign(Lair.prototype, wishlistMethods);
