@@ -4,8 +4,10 @@
 //   3. loot codes ("roll codes"): staff make ROLL-FOR-LOOT and a limited code; "Got a code?" takes loot, pass and gift codes
 //   4. the loyalty card's number
 //   5. birthday gifts in words; a product code used on an order (orders/paid with discountCodes) turns the gift "claimed"
-//   6. library holds until midnight on the third day, games at home, scanning to borrow and return (LairVariantByCode),
-//      staff check-out and check-in, and Shopify refusing the lookup (read_products not approved yet)
+//   6. library holds until midnight on the third day, games at home, scanning to borrow (LairVariantByCode), staff
+//      check-out and check-in, and Shopify refusing the lookup (read_products not approved yet). Since 16 Oct 2026
+//      members only borrow: a game at home scans as at-home and stays out, a member can't mark one back on the shelf
+//      (403), and staff check it in at the counter (contract v16-library-returns)
 //   7. the tab's barcode lookup
 import { proxy, webhook, fake, check, summary } from './client.mjs';
 import { key, addDays, at, nextDow, holdUntil, longWhen, pageWhen, sleep, TZ } from './r6-time.mjs';
@@ -142,12 +144,24 @@ check('6: the status: 1 copy, out 1, none on the shelf, and it\'s at home with h
 check('6: anyone else: "Every copy is out on loan right now"', (await proxy('POST', 'library/holds', { customer: HONE, body: { variantId: V(1), title: 'Wingspan' } })).data.error === 'Every copy is out on loan right now. Check back soon, friend.');
 // Hone borrows Azul by scanning it: the Lair asks Shopify (LairVariantByCode), then knows it
 const borrow = await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2).toLowerCase() } });
-check('6: scanning a library copy borrows it ("yours to take home")', borrow.status === 200 && borrow.data.result === 'borrowed' && borrow.data.loan?.title === 'Azul' && borrow.data.message === 'Azul is yours to take home. Scan it again when you bring it back.' && borrow.data.library?.atHome?.length === 1, borrow.data.error || borrow.data);
+check('6: scanning a library copy borrows it ("yours to take home", and the counter takes it back)', borrow.status === 200 && borrow.data.result === 'borrowed' && borrow.data.loan?.title === 'Azul' && borrow.data.message === "Azul is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf." && borrow.data.library?.atHome?.length === 1, borrow.data.error || borrow.data);
 check('6: his plan (1 game) is full now', (await proxy('POST', 'library/holds', { customer: HONE, body: { variantId: V(3), title: 'Root' } })).data.error === "Your plan has 1 game at a time, and you've got 1: 1 at home. Return one or cancel a hold first.");
 const lookups = async () => (await fake('GET', 'calls')).filter((c) => c.op === 'LairVariantByCode').length;
 const asked = await lookups();
-const back = await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2) } });
-check('6: scanning it again returns it, without asking Shopify again', back.data.result === 'returned' && back.data.message === 'Azul is checked back in. Thanks, friend!' && (await lookups()) === asked, back.data);
+// 16 Oct 2026: members only borrow. Scanning a game at home (with action 'return' too) changes nothing, and staff put it
+// back on the shelf at the counter
+const AT_HOME = 'Azul is already in your library. To return it, bring it to the counter and staff will scan it back onto the shelf.';
+const again = await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2) } });
+check('6: scanning it again doesn\'t return it: at-home, still out, with the words, without asking Shopify again', again.status === 200 && again.data.result === 'at-home' && again.data.loan?.id === borrow.data.loan?.id && again.data.loan?.status === 'out' && again.data.message === AT_HOME && again.data.library?.atHome?.length === 1 && (await lookups()) === asked, again.data.error || again.data);
+const asReturn = await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2), action: 'return' } });
+check('6: action return changes nothing either (at-home)', asReturn.status === 200 && asReturn.data.result === 'at-home' && asReturn.data.loan?.status === 'out', asReturn.data.error || asReturn.data);
+const ownShelf = await proxy('POST', `library/loans/${borrow.data.loan?.id}/return`, { customer: HONE, body: {} });
+check('6: a member can\'t mark their game back on the shelf (403 with the words)', said(ownShelf) === "403 Staff check games back in at the counter. Bring it in and we'll scan it back onto the shelf.", said(ownShelf));
+const honeHome = (await me(HONE)).library?.atHome || [];
+check('6: it\'s still at home with him, the one loan', honeHome.length === 1 && honeHome[0].id === borrow.data.loan?.id && honeHome[0].status === 'out', honeHome);
+const counter = await proxy('POST', 'library/return', { customer: STAFF, body: { code: shelf(2) } });
+check('6: staff scan it back onto the shelf at the counter', counter.status === 200 && counter.data.result === 'returned' && counter.data.loan?.id === borrow.data.loan?.id && counter.data.loan.customerId === HONE && counter.data.loan.status === 'returned', counter.data.error || counter.data);
+check('6: back on the shelf, a scan to return it is the 404', said(await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2), action: 'return' } })) === "404 That game isn't on loan to you.");
 check('6: the shop\'s products aren\'t library games (422)', said(await proxy('POST', 'library/scan', { customer: HONE, body: { code: `93${run}017` } })) === "422 That's from the shop, not the library. Borrow games from the library shelves.");
 check('6: no plan, no borrowing (403)', (await proxy('POST', 'library/scan', { customer: TAI, body: { code: shelf(2) } })).status === 403);
 // Staff: check Azul out to Tai at the counter (no plan: a notice, not a no), then in by scanning
@@ -157,8 +171,9 @@ const loans = (await proxy('GET', 'library/loans', { customer: STAFF })).data.lo
 check('6: the staff list of games at home, with days', loans.some((l) => l.id === out.data.loan?.id && l.days === 0) && loans.some((l) => l.id === collected.data.loan?.id), loans.map((l) => [l.title, l.name, l.days]));
 const checkedIn = await proxy('POST', 'library/return', { customer: STAFF, body: { code: shelf(2) } });
 check('6: staff check it in by scanning (one out: it\'s back)', checkedIn.data.result === 'returned' && checkedIn.data.loan?.customerId === TAI, checkedIn.data);
+check('6: Mereana can\'t mark her own game back on the shelf (403)', (await proxy('POST', `library/loans/${collected.data.loan?.id}/return`, { customer: MERE, body: {} })).status === 403);
 const shelfIt = await proxy('POST', `library/loans/${collected.data.loan?.id}/return`, { customer: STAFF, body: {} });
-check('6: "Back on the shelf" for any loan', shelfIt.data.loan?.status === 'returned', shelfIt.data);
+check('6: "Back on the shelf" for any loan (staff)', shelfIt.data.loan?.status === 'returned' && shelfIt.data.loan.customerId === MERE, shelfIt.data);
 
 /* 7. The tab's scanner */
 const pocky = await proxy('GET', `tab/lookup?code=93${run}017`, { customer: MERE });
@@ -175,7 +190,9 @@ const down = await proxy('POST', 'library/scan', { customer: HONE, body: { code:
 check('6: Shopify refuses the lookup: 503 with the words', said(down) === "503 Gobgob can't look that game up just now. Ask at the counter and we'll sort it.", said(down));
 const known = await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2) } });
 check('6: a game the Lair knows still scans', known.data.result === 'borrowed', known.data);
-await proxy('POST', 'library/scan', { customer: HONE, body: { code: shelf(2) } });
+// staff check it in again (members only borrow), leaving Hone with nothing at home, as the flow found him
+const tidied = await proxy('POST', 'library/return', { customer: STAFF, body: { code: shelf(2) } });
+check('6: and staff check games the Lair knows in at the counter too', tidied.data.result === 'returned' && tidied.data.loan?.customerId === HONE, tidied.data.error || tidied.data);
 await fake('POST', 'set', { failVariantCode: false });
 const resting = await lookups();
 const later = await proxy('GET', `tab/lookup?code=00${run}503`, { customer: MERE });

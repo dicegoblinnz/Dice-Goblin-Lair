@@ -1,7 +1,9 @@
-// Round 7, library: the reserve block's words and hold times, My Library (pictures, borrowing and returning with the
-// scanner), the tab scanner's order, and the staff Library tab (back on the shelf, check out, check in). Demo mode
-// through the theme mock, phone (390x844) then desktop (1280x800). Prints a PASS or FAIL line for each check and exits
-// 1 on any FAIL.
+// Round 7, library: the reserve block's words and hold times, My Library (pictures, borrowing with the scanner), the
+// tab scanner's order, and the staff Library tab (back on the shelf, check out, check in). Demo mode through the theme
+// mock, phone (390x844) then desktop (1280x800). Prints a PASS or FAIL line for each check and exits 1 on any FAIL.
+// Since 16 Oct 2026 members only borrow (contract v16-library-returns): scanning a game they have at home says to bring
+// it to the counter and it stays at home, and staff check it in on the Library tab. The theme's demo backend
+// (assets/lair-demo.js) has to follow that contract for these checks to pass.
 // Usage: DG_THEME=/path/to/theme [PORT=4832] node tools/qa/round7/library.mjs [phone|desktop]
 // The page clock is pinned to Tuesday 6 October 2026, 11am in Auckland (NZDT): a hold made then is held until midnight
 // at the end of Thursday (the app's until is 00:00 Friday 9 October), which reads "midnight, Thu 8 Oct" (Mo, 09:22).
@@ -216,7 +218,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   check(tag, (await page.locator('my-library [data-library-scan]').count()) === 1 && (await page.locator('my-library [data-library-scan]').isVisible()), 'My Library: a big "Scan a game" button');
   check(tag, (await page.locator('my-library a[href="/collections/board-game-rental"]').count()) >= 1 && (await page.locator('my-library a[href="/pages/board-game-rental#plans"]').count()) >= 1, 'My Library: links to the shelves and the plans');
 
-  /* ---------- 3. borrowing and returning through the scanner ---------- */
+  /* ---------- 3. borrowing through the scanner; staff take games back at the counter ---------- */
   const refreshes = await page.evaluate(() => {
     window.__refreshes = 0;
     document.addEventListener('lair:refresh', () => { window.__refreshes += 1; });
@@ -234,7 +236,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   check(tag, sheets === 1 && (await page.locator('dialog.lair-scan').count()) === 0, 'only one scanner sheet is ever open, and LairScan.close() closes it', `sheets ${sheets}`);
   await page.click('my-library [data-library-scan]');
   let said = await typeCode(page, GAME.baker.code);
-  check(tag, said === `${GAME.baker.title} is yours to take home. Scan it again when you bring it back.`, 'borrow a game held for them: it\'s theirs on loan', said);
+  check(tag, said === `${GAME.baker.title} is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf.`, 'borrow a game held for them: it\'s theirs on loan', said);
   check(tag, await sheetGone(page), 'the sheet closes after a borrow');
   await page.waitForTimeout(400);
   text = await lib(page);
@@ -246,7 +248,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   // a free copy (nothing held): a game off the shelf, with its picture from the game's page
   await page.click('my-library [data-library-scan]');
   said = await typeCode(page, GAME.island.code);
-  check(tag, said === 'Forbidden Island is yours to take home. Scan it again when you bring it back.', 'borrow a free copy (their plan has room)', said);
+  check(tag, said === "Forbidden Island is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf.", 'borrow a free copy (their plan has room)', said);
   await sheetGone(page);
   await page.click('my-library [data-library-scan]');
   said = await typeCode(page, GAME.dungeon.code.toLowerCase());
@@ -266,16 +268,34 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   said = await typeCode(page, 'DGL99-999');
   check(tag, said === "Gobgob can't find a library game with that code. Try the code on its label, or ask at the counter.", 'an unknown code: the 404', said);
   check(tag, (await page.locator('dialog.lair-scan[open]').count()) === 1, 'after a refusal the sheet stays open for another try');
-  // return: scan it again
+  // a game at home: scanning it again doesn't return it (16 Oct 2026). The words say to bring it to the counter, as an
+  // answer (not an error), and it stays at home
   said = await typeCode(page, GAME.island.code);
-  check(tag, said === 'Forbidden Island is checked back in. Thanks, friend!', 'return: scan it again', said);
+  check(tag, said === 'Forbidden Island is already in your library. To return it, bring it to the counter and staff will scan it back onto the shelf.', 'scan a game at home: bring it to the counter', said);
+  const tone = await page.locator('[data-scan-status]').getAttribute('data-tone', { timeout: 1000 }).catch(() => '');
+  check(tag, tone === 'ok', 'at home is an answer, not an error (the sheet\'s ok tone, as after a borrow)', tone);
   await sheetGone(page);
   await page.waitForTimeout(500);
   text = await lib(page);
   const focusBack = await page.evaluate(() => document.activeElement && document.activeElement.matches('[data-library-scan]'));
-  const atHomeNow = flat(await page.locator('my-library .mlib-item--home').allInnerTexts().then((x) => x.join(' | ')));
-  check(tag, text.includes('2 of 3 games: 2 at home') && !atHomeNow.includes('Forbidden Island'), 'My Library: Forbidden Island is back on the shelf, 2 of 3', atHomeNow);
+  let atHomeNow = flat(await page.locator('my-library .mlib-item--home').allInnerTexts().then((x) => x.join(' | ')));
+  check(tag, text.includes('3 of 3 games: 3 at home') && atHomeNow.includes('Forbidden Island'), 'My Library: Forbidden Island is still at home, 3 of 3', atHomeNow);
+  check(tag, !/scan it again when you bring it back/i.test(text), 'My Library\'s hint doesn\'t say to scan a game to bring it back', text.slice(0, 300));
   check(tag, focusBack, 'focus comes back to Scan a game when the sheet closes');
+  check(tag, (await page.locator('my-library .mlib-item--home').count()) >= 1 && !(await page.locator('my-library .mlib-item--home button').count()), 'games at home have no button to put them back on the shelf (that\'s staff\'s)');
+  // staff check it in at the counter (the Library tab), and then it's off My Library
+  await visit(page, STAFF, '/pages/lair-staff');
+  await page.click('[data-tab="library"]');
+  await page.waitForSelector('[data-lib-loans] .staff-lib-rows', { timeout: 10000 });
+  await page.fill('#lib-in-code', GAME.island.code);
+  await page.press('#lib-in-code', 'Enter');
+  await page.waitForTimeout(400);
+  const counterLine = flat(await page.locator('[data-lib-say="in"]').textContent());
+  check(tag, counterLine === 'Checked in: Forbidden Island is back on the shelf. It was with Kiri (today).', 'staff check it in at the counter', counterLine);
+  await openMyLibrary(page, STASH);
+  text = await lib(page);
+  atHomeNow = flat(await page.locator('my-library .mlib-item--home').allInnerTexts().then((x) => x.join(' | ')));
+  check(tag, text.includes('2 of 3 games: 2 at home') && !atHomeNow.includes('Forbidden Island'), 'My Library: once staff check it in, Forbidden Island is back on the shelf, 2 of 3', atHomeNow);
   await page.locator('my-library').screenshot({ path: `${OUT}${tag}-my-library.png` });
   check(tag, (await overflow(page)) === 0, 'My Library: no sideways scroll');
   // the game's page knows it's at home with them, and another member sees every copy out on loan
@@ -283,6 +303,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   const homeBlock = await block(page);
   check(tag, (await state(page)) === 'home' && homeBlock.includes("You've got this one at home") && homeBlock.includes('You borrowed it today.') && homeBlock.includes('See it in My Library'),
     'game page: "You\'ve got this one at home" (atHome)', homeBlock);
+  check(tag, !/scan it in My Library to return/i.test(homeBlock), 'game page: it goes back at the counter (no "scan it in My Library to return it")', homeBlock);
   await visit(page, GRAB, GAME.dungeon.path);
   const outBlock = await block(page);
   check(tag, (await state(page)) === 'out' && outBlock.includes('Out on loan right now') && !(await page.locator('[data-reserve]').count()), 'another member: every copy out on loan, no Reserve button', outBlock);
