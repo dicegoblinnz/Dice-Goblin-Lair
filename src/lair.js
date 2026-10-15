@@ -7737,11 +7737,16 @@ export class Lair {
   }
 
   /**
-   * POST /library/scan { code, action? } (logged in): borrow or return a library game in the Lair with the camera.
-   * action 'borrow' or 'return'; left out, it's a return when the game is at home with them, otherwise a borrow.
-   *   return: { result: 'returned', loan, library, message } (404 when that game isn't on loan to them)
-   *   borrow: a library plan is needed (403). Held for them: the hold is collected and the loan made. Otherwise the plan
-   *     needs room (holds + games at home) and a copy must be free (409). { result: 'borrowed', loan, hold, library, message }
+   * POST /library/scan { code, action? } (logged in): borrow a library game in the Lair with the camera. Members only
+   * borrow (16 Oct 2026, Mo: "user can only scan games to add to their library but needs staff to scan games to put back
+   * on the shelf"): a game goes back on the shelf when staff scan it at the counter (POST /library/return) or mark it
+   * "Back on the shelf" (POST /library/loans/:id/return).
+   *   at home with them already, whatever action says: nothing changes, and it's never borrowed a second time.
+   *     { result: 'at-home', loan (theirs, still out), library, message (bring it to the counter for staff to scan it) }
+   *   action 'return' for a game that isn't at home with them: 404.
+   *   otherwise a borrow (action 'borrow', or left out): a library plan is needed (403). Held for them: the hold is
+   *     collected and the loan made. Otherwise the plan needs room (holds + games at home) and a copy must be free (409).
+   *     { result: 'borrowed', loan, hold, library, message }
    * library is their GET /me library, fresh. Every await (Shopify: the game, its copies) comes first.
    */
   async libraryScan(input, who) {
@@ -7754,12 +7759,15 @@ export class Lair {
     const now = Date.now();
     const me = String(who.customerId);
     if (save) this.saveLibraryGame(save.game, now, save.codes);
-    const mine = this.loansOut(me).filter((l) => l.variantId === game.variantId);
-    if (action === 'return' || (!action && mine.length)) {
-      if (!mine.length) throw new RuleError("That game isn't on loan to you.", 404);
-      const loan = this.endLoan(mine[0], now, 'member');
-      return { result: 'returned', loan: this.loanView(loan), library: this.libraryFor(me, who.tags, now), message: `${game.title} is checked back in. Thanks, friend!` };
+    // 16 Oct 2026: a game at home with them stays out until staff check it in (a member could scan it "back" from home)
+    const mine = this.loansOut(me).find((l) => l.variantId === game.variantId);
+    if (mine) {
+      return {
+        result: 'at-home', loan: this.loanView(mine), library: this.libraryFor(me, who.tags, now),
+        message: `${game.title} is already in your library. To return it, bring it to the counter and staff will scan it back onto the shelf.`,
+      };
     }
+    if (action === 'return') throw new RuleError("That game isn't on loan to you.", 404);
     const plan = this.planOf(me, who.tags, now);
     if (!plan) throw new RuleError('Join the library to borrow games.', 403);
     this.checkPlanOpen(plan);
@@ -7778,27 +7786,26 @@ export class Lair {
     this.touchMember(me, {}, now);
     return {
       result: 'borrowed', loan: this.loanView(loan), hold: hold ? this.holdView(this.holdRow(hold.id), now) : null, library: this.libraryFor(me, who.tags, now),
-      message: `${game.title} is yours to take home. Scan it again when you bring it back.`,
+      message: `${game.title} is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf.`,
     };
   }
 
   /**
-   * POST /library/loans/:id/return (the member it's with, or staff: "Back on the shelf"): the game is returned. One
-   * already returned comes back as it is. The member gets { loan, library }, staff { loan: staffLoan }.
+   * POST /library/loans/:id/return (staff with the library permission: "Back on the shelf"): the game is returned. One
+   * already returned comes back as it is. Returns { loan: staffLoan }. 16 Oct 2026: members no longer return games
+   * themselves, so anyone else (a member, the one it's with too, or a helper without the library permission, who is a
+   * member here) gets a 403 that says to bring it to the counter, and nothing changes.
    */
   async returnLoan(id, who) {
-    if (!who.customerId && !who.staff) throw new RuleError('Log in to borrow games.', 401);
+    // Round 9: staff here means the library
+    if (!this.can(who, 'library')) throw new RuleError("Staff check games back in at the counter. Bring it in and we'll scan it back onto the shelf.", 403);
     await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
-    // Round 9: staff here means the library
-    const staffLibrary = this.can(who, 'library');
     const loan = this.loanRow(id);
     if (!loan) throw new RuleError('That loan could not be found.', 404);
-    if (!staffLibrary && loan.customerId !== String(who.customerId)) throw new RuleError("That game isn't on loan to you.", 403);
-    const back = this.endLoan(loan, now, staffLibrary ? (who.customerId ? `staff:${who.customerId}` : 'staff') : 'member');
-    if (staffLibrary) return { loan: this.staffLoanView(back, now) };
-    return { loan: this.loanView(back), library: this.libraryFor(who.customerId, who.tags, now) };
+    const back = this.endLoan(loan, now, who.customerId ? `staff:${who.customerId}` : 'staff');
+    return { loan: this.staffLoanView(back, now) };
   }
 
   /**
@@ -7853,6 +7860,7 @@ export class Lair {
   /**
    * POST /library/return { code } (staff): check a game in by scanning it. One copy out: it's returned ({ result:
    * 'returned', loan }). Several out: nothing changes, and staff pick one ({ result: 'pick', loans }). None: 404.
+   * Since 16 Oct 2026 this and "Back on the shelf" are how every game comes back: members only borrow.
    */
   async checkInLoan(input, who) {
     this.requireStaff(who, 'library');

@@ -699,7 +699,7 @@ test('library (6): a hold\'s picture is kept only when it\'s a Shopify address (
   }
 });
 
-test('library (6): members borrow and return in the Lair by scanning (a hold of theirs is collected); games the Lair doesn\'t know come from Shopify (read_products); shop products, unknown codes and Shopify being down each have their words', async () => {
+test('library (6): members borrow in the Lair by scanning (a hold of theirs is collected), and staff put games back on the shelf (16 Oct 2026); games the Lair doesn\'t know come from Shopify (read_products); shop products, unknown codes and Shopify being down each have their words', async () => {
   await people();
   const calls = shopify({
     variants: [libraryCopy(), libraryCopy({ variantId: '4402', productId: '9902', handle: 'azul-library', productTitle: 'Azul (Library)', sku: 'DGL34-002', barcode: '9780000000002', libraryCode: 'DGL34-002', productImage: null, image: 'https://cdn.shopify.com/s/files/1/azul-variant.jpg' }), variant()],
@@ -710,14 +710,17 @@ test('library (6): members borrow and return in the Lair by scanning (a hold of 
   // Sam borrows Wingspan: Shopify finds the copy (its library_code), and the Lair remembers it
   const borrowed = await scan('dgl34-001');
   assert.equal(borrowed.status, 200, borrowed.data.error);
-  assert.deepEqual([borrowed.data.result, borrowed.data.hold, borrowed.data.message], ['borrowed', null, 'Wingspan is yours to take home. Scan it again when you bring it back.']);
+  assert.deepEqual([borrowed.data.result, borrowed.data.hold, borrowed.data.message], ['borrowed', null, "Wingspan is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf."]);
   assert.deepEqual([borrowed.data.loan.title, borrowed.data.loan.shelfCode, borrowed.data.loan.image, borrowed.data.loan.status], ['Wingspan', 'DGL34-001', 'https://cdn.shopify.com/s/files/1/wingspan.jpg', 'out']);
   assert.deepEqual([borrowed.data.library.used, borrowed.data.library.atHome.length], [1, 1], 'their library, fresh');
   assert.deepEqual(calls.variant, ['dgl34-001']);
-  // Scanning it again brings it back (no Shopify: the Lair knows the game)
-  const returned = await scan('DGL34-001');
-  assert.deepEqual([returned.data.result, returned.data.loan.status, returned.data.loan.returnedAt, returned.data.message], ['returned', 'returned', NOW, 'Wingspan is checked back in. Thanks, friend!']);
+  // Scanning it again doesn't bring it back any more (16 Oct 2026): it's still at home with him (no Shopify: the Lair
+  // knows the game), and staff scan it back onto the shelf at the counter
+  const again = await scan('DGL34-001');
+  assert.deepEqual([again.status, again.data.result, again.data.loan.id, again.data.loan.status, again.data.message], [200, 'at-home', borrowed.data.loan.id, 'out', 'Wingspan is already in your library. To return it, bring it to the counter and staff will scan it back onto the shelf.']);
   assert.equal(calls.variant.length, 1);
+  const counter = await call('POST', 'library/return', { code: 'DGL34-001' }, 'staff');
+  assert.deepEqual([counter.data.result, counter.data.loan.id, counter.data.loan.returnedAt], ['returned', borrowed.data.loan.id, NOW]);
   assert.deepEqual([(await scan('DGL34-001', '1001', 'return')).status, (await scan('DGL34-001', '1001', 'return')).data.error], [404, "That game isn't on loan to you."]);
   // A barcode on the box finds it too (Azul's ISBN), with the variant's own picture
   const azul = await scan('9780000000002', '1002');
@@ -727,8 +730,8 @@ test('library (6): members borrow and return in the Lair by scanning (a hold of 
   assert.deepEqual((await scan('DGL34-001', '1002')).data.error, "Your plan has 1 game at a time, and you've got 1: 1 at home. Return one or cancel a hold first.");
   assert.equal((await scan('DGL34-001', '1003')).status, 200, 'Leo takes the only copy');
   assert.deepEqual([(await scan('DGL34-001', '1005')).status, (await scan('DGL34-001', '1005')).data.error], [409, 'Every copy of Wingspan is reserved or out on loan. Ask us at the counter.']);
-  // A hold of theirs is collected when they scan it
-  await scan('DGL34-001', '1003');
+  // A hold of theirs is collected when they scan it (Leo brought his copy back to the counter first)
+  assert.equal((await call('POST', 'library/return', { code: 'DGL34-001' }, 'staff')).data.loan.customerId, '1003');
   const held = (await reserve({ copies: 1 }, '1005')).data.hold;
   const collected = await scan('DGL34-001', '1005');
   assert.deepEqual([collected.data.result, collected.data.hold.id, collected.data.hold.status, collected.data.loan.holdId], ['borrowed', held.id, 'collected', held.id]);
@@ -745,14 +748,17 @@ test('library (6): members borrow and return in the Lair by scanning (a hold of 
   assert.deepEqual([down.status, down.data.error], [503, "Gobgob can't look that game up just now. Ask at the counter and we'll sort it."]);
   assert.equal((await scan('DGL7+-001')).status, 503);
   assert.equal(calls.variant.at(-1), 'DGL56-002', 'not asked again for 10 minutes');
-  assert.equal((await scan('DGL34-001', '1005')).data.result, 'returned', 'games the Lair knows still scan');
-  // Members hand a game back from My Library too
-  const loan = (await scan('DGL34-001', '1005')).data.loan;
-  assert.deepEqual([(await call('POST', `library/loans/${loan.id}/return`, {}, '1003')).status, (await call('POST', `library/loans/${loan.id}/return`, {}, '1003')).data.error], [403, "That game isn't on loan to you."]);
-  const mine = await call('POST', `library/loans/${loan.id}/return`, {}, '1005');
-  assert.deepEqual([mine.data.loan.status, mine.data.library.atHome], ['returned', []]);
-  assert.equal((await call('POST', `library/loans/${loan.id}/return`, {}, '1005')).data.loan.returnedAt, NOW, 'one already back comes back as it is');
-  assert.deepEqual([(await call('POST', 'library/loans/ln_nope/return', {}, '1005')).status, (await call('POST', 'library/loans/ln_nope/return', {}, '1005')).data.error], [404, 'That loan could not be found.']);
+  const known = await scan('DGL34-001', '1005');
+  assert.deepEqual([known.data.result, known.data.loan.id], ['at-home', collected.data.loan.id], 'games the Lair knows still scan');
+  // Members don't hand a game back from My Library any more (16 Oct 2026): the one it's with and anyone else get the
+  // counter's words, and it stays at home with them
+  const counterWords = "Staff check games back in at the counter. Bring it in and we'll scan it back onto the shelf.";
+  for (const who of ['1005', '1003']) {
+    const res = await call('POST', `library/loans/${collected.data.loan.id}/return`, {}, who);
+    assert.deepEqual([res.status, res.data.error], [403, counterWords], who);
+  }
+  assert.deepEqual([(await call('POST', 'library/loans/ln_nope/return', {}, '1005')).status, (await call('POST', 'library/loans/ln_nope/return', {}, '1005')).data.error], [403, counterWords], 'a member learns nothing about loan ids');
+  assert.deepEqual([lair.loanRow(collected.data.loan.id).status, (await me('1005')).library.atHome.map((l) => l.id)], ['out', [collected.data.loan.id]]);
 });
 
 test('library (6): staff check games out at the counter (a hold is collected; notices for a full plan, no plan, or no copy on the shelf) and in by scanning, mark any loan back on the shelf, and list games at home', async () => {
@@ -789,6 +795,60 @@ test('library (6): staff check games out at the counter (a hold is collected; no
   const everything = (await call('GET', 'library/loans?status=all', null, 'staff')).data.loans;
   assert.deepEqual([everything.length, everything.filter((l) => l.status === 'returned').length], [4, 2]);
   assert.equal((await call('GET', 'library/loans', null, '1001')).status, 403);
+});
+
+test('library (16 Oct 2026, Mo: "user can only scan games to add to their library but needs staff to scan games to put back on the shelf"): a game at home scans as at-home and stays out (never a second loan, a double tap or action return included); members can\'t mark one back on the shelf (403); staff still do, and check games in by scanning', async () => {
+  await people();
+  shopify({ variants: [libraryCopy()], copies: { 4401: 2 } });
+  const loans = () => lair.sql.exec('SELECT id, customer_id, status, returned_at, returned_by FROM library_loans ORDER BY created_at, rowid').toArray().map((r) => ({ ...r }));
+  // Sam borrows Wingspan with a double tap: two scans at once make one loan, and the other finds it at home already
+  const both = await Promise.all([scan('DGL34-001', '1001', 'borrow'), scan('DGL34-001', '1001', 'borrow')]);
+  assert.deepEqual(both.map((r) => [r.status, r.data.result]).sort(), [[200, 'at-home'], [200, 'borrowed']], both.map((r) => r.data.error).join());
+  const borrowed = both.find((r) => r.data.result === 'borrowed').data;
+  const { loan } = borrowed;
+  const out = [{ id: loan.id, customer_id: '1001', status: 'out', returned_at: null, returned_by: null }];
+  assert.deepEqual(loans(), out);
+  // Scanning it again, whatever the page sends (nothing, 'return' or 'borrow'): nothing changes, and he's told to bring it in
+  const atHome = 'Wingspan is already in your library. To return it, bring it to the counter and staff will scan it back onto the shelf.';
+  for (const action of [undefined, 'return', 'borrow', undefined]) {
+    const again = await scan('dgl34-001', '1001', action);
+    assert.equal(again.status, 200, again.data.error);
+    assert.deepEqual(again.data, { result: 'at-home', loan, library: borrowed.library, message: atHome }, `action ${action}`);
+  }
+  assert.deepEqual(loans(), out, 'still the one loan, still out: no second borrow');
+  assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: loan.id, outAt: NOW } }, 'the game\'s page still has it at home with him');
+  // My Library's "Back on the shelf" isn't for members any more: the one it's with, anyone else and nobody logged in get
+  // the counter's words; a helper without the Library permission is a member here too. It stays out.
+  const counter = "Staff check games back in at the counter. Bring it in and we'll scan it back onto the shelf.";
+  for (const who of ['1001', '1003', '']) {
+    const res = await call('POST', `library/loans/${loan.id}/return`, {}, who);
+    assert.deepEqual([res.status, res.data], [403, { error: counter }], who || 'logged out');
+  }
+  const helper = (perms) => ({ customerId: '1009', staff: true, role: 'helper', perms, tags: [] });
+  await assert.rejects(lair.returnLoan(loan.id, helper(['checkin', 'tables'])), (e) => e.status === 403 && e.message === counter);
+  assert.deepEqual(loans(), out);
+  assert.deepEqual([(await me()).library.used, (await me()).library.atHome.map((l) => l.id)], [1, [loan.id]]);
+  // Staff: "Back on the shelf" as before ({ loan } as staff see it), once; a loan nobody has is a 404
+  Date.now = () => NOW + HOUR;
+  const shelf = await call('POST', `library/loans/${loan.id}/return`, {}, 'staff');
+  assert.equal(shelf.status, 200, shelf.data.error);
+  assert.deepEqual(Object.keys(shelf.data), ['loan']);
+  assert.deepEqual([shelf.data.loan.id, shelf.data.loan.status, shelf.data.loan.returnedAt, shelf.data.loan.customerId, shelf.data.loan.name, shelf.data.loan.days], [loan.id, 'returned', NOW + HOUR, '1001', 'Sam Jones', 0]);
+  assert.equal((await call('POST', `library/loans/${loan.id}/return`, {}, 'staff')).data.loan.returnedAt, NOW + HOUR, 'one already back comes back as it is');
+  assert.deepEqual([(await call('POST', 'library/loans/ln_nope/return', {}, 'staff')).status, (await call('POST', 'library/loans/ln_nope/return', {}, 'staff')).data.error], [404, 'That loan could not be found.']);
+  assert.deepEqual(loans(), [{ ...out[0], status: 'returned', returned_at: NOW + HOUR, returned_by: 'staff:staff' }]);
+  // Back on the shelf, a scan borrows it again (a new loan), and staff check that one in by scanning it at the counter
+  const next = await scan('DGL34-001');
+  assert.deepEqual([next.data.result, next.data.loan.id !== loan.id, next.data.library.atHome.length], ['borrowed', true, 1]);
+  const checkedIn = await call('POST', 'library/return', { code: 'dgl34-001' }, 'staff');
+  assert.equal(checkedIn.status, 200, checkedIn.data.error);
+  assert.deepEqual([checkedIn.data.result, checkedIn.data.loan.id, checkedIn.data.loan.status, checkedIn.data.loan.customerId, checkedIn.data.loan.returnedAt], ['returned', next.data.loan.id, 'returned', '1001', NOW + HOUR]);
+  assert.deepEqual([(await scan('DGL34-001', '1001', 'return')).status, (await scan('DGL34-001', '1001', 'return')).data.error], [404, "That game isn't on loan to you."], 'on the shelf: return is today\'s 404');
+  assert.deepEqual([(await me()).library.atHome, loans().map((l) => [l.status, l.returned_by])], [[], [['returned', 'staff:staff'], ['returned', 'staff:staff']]]);
+  // A helper with the Library permission is staff here
+  const third = (await scan('DGL34-001')).data.loan;
+  const byHelper = await lair.returnLoan(third.id, helper(['library']));
+  assert.deepEqual([byHelper.loan.status, lair.loanRow(third.id).status, loans().at(-1).returned_by], ['returned', 'returned', 'staff:1009']);
 });
 
 test('migration 17: round 6\'s database moves to round 7 with every row kept; games collected in round 6 are at home; the games its holds named are known by their shelf codes; welcome rolls already given still count', async () => {
@@ -835,7 +895,8 @@ test('migration 17: round 6\'s database moves to round 7 with every row kept; ga
   assert.deepEqual([view.library.atHome.map((l) => l.id), view.library.holds.map((h) => [h.id, h.until]), view.library.used], [['ln_lh_collected'], [['lh_held', at('2026-10-08', 12)]], 2]);
   assert.deepEqual(view.loyalty.rolls.earned, { cards: 0, welcome: 1, birthday: 2, staff: 0, codes: 0 });
   assert.equal(lair.holdDate(view.library.holds[0].until), 'Thu 8 Oct, 12pm', 'a hold from before round 7 keeps its 12pm');
-  assert.equal((await call('POST', 'library/scan', { code: 'dgl34-001' }, '1001')).data.result, 'returned', 'a scan finds it by its shelf code');
+  const scanned = await call('POST', 'library/scan', { code: 'dgl34-001' }, '1001');
+  assert.deepEqual([scanned.data.result, scanned.data.loan.id, scanned.data.loan.status], ['at-home', 'ln_lh_collected', 'out'], 'a scan finds it by its shelf code (at home with him until staff check it in)');
   // Opening again runs nothing twice
   const after = { ...counts(), loans: sql.exec('SELECT COUNT(*) AS n FROM library_loans').one().n };
   lair = new Lair(ctx, { CURRENCY: 'NZD' });
