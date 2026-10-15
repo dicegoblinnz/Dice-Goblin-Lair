@@ -155,3 +155,21 @@ Mo (16 Oct): members only scan games to borrow them; staff scan games back onto 
   staff check it in on the Library tab, then it's off My Library; the game page doesn't say to scan it to return it.
   These checks need the theme's demo backend (`assets/lair-demo.js`) and words to follow the contract; until they do,
   they fail.
+
+## round16: the game page (round 16)
+
+Mo (16 Oct): a summary of the game under the title, markers (players, play time, age, difficulty and type), stock and
+delivery (ships within 3 working days), Order as a gift (a message, no prices), Try it first when the library has it,
+games only, and the wishlist built but switched off.
+- `round16/game-page.mjs`: the theme mock, phone and desktop. Catan (Try it first by the -library handle rule) in order:
+  title, summary, markers, price, stock and delivery, buy, gift, Try it first, About the game; Read more lands on About;
+  Order as a gift (fields off until opened, the add's Gift, Gift for and Gift message properties with the empty one left
+  out, the cart's gift line, closed and emptied once added, a plain add after it); 7 Wonders Duel's pair by metafield;
+  Only 2 left (Cascadia), sold out (Sushi Go Party!), not tracked and custom.brief (Heat), two editions that swap the box
+  (Everdell); library copies' Want your own? and markers (Paladins' age from its stats line); paint, an RPG book and the
+  membership in their plain layouts; the wishlist (demo, live against a stubbed Lair app, logged out). Axe, no sideways
+  scroll. `DG_THEME=… PORT=4975 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round16/game-page.mjs [phone|desktop]`.
+- The theme mock's round 16 data (`theme-mock/render.mjs`, `r16`): product types, descriptions laid out like the
+  shop's write-ups, custom.difficulty, type tags, and the pairs (`catan` and `catan-library`, `7-wonders-duel` with
+  `7-wonders-duel-library`); `all_products` for Liquid, `requires_shipping` on variants, and multipart cart adds with
+  their line item properties.

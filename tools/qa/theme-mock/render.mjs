@@ -18,7 +18,7 @@ const img = (seed, w, h, alt = '') => ({ __seed: seed, width: w, height: h, aspe
 function product(h, title, vendor, min, max, compare, single, inv, w, h2, extra = {}) {
   const media = img(`${h}__${w}x${h2}`, w, h2, '');
   media.preview_image = media;
-  const variant = { id: mediaId++, price: min * 100, compare_at_price: compare ? compare * 100 : null, available: inv > 0, inventory_management: 'shopify', inventory_quantity: inv, title: 'Default Title', options: ['Default Title'], featured_media: null, quantity_rule: {} };
+  const variant = { id: mediaId++, price: min * 100, compare_at_price: compare ? compare * 100 : null, available: inv > 0, inventory_management: 'shopify', inventory_quantity: inv, title: 'Default Title', options: ['Default Title'], featured_media: null, quantity_rule: {}, requires_shipping: true };
   return {
     id: mediaId++, handle: h, title, vendor, url: `/products/${h}`, price: min * 100, price_min: min * 100, price_max: max * 100,
     price_varies: min !== max, compare_at_price: compare ? compare * 100 : null, available: inv > 0, has_only_default_variant: single,
@@ -520,7 +520,7 @@ const fullCart = {
 let scope = {};
 function makeScope(extra) {
   return {
-    shop, routes, settings: globalSettings, collections, linklists, pages, metaobjects: { lair_event: { values: lairEvents() } }, cart: emptyCart, customer: mockState.customer,
+    shop, routes, settings: globalSettings, collections, all_products: allProducts, linklists, pages, metaobjects: { lair_event: { values: lairEvents() } }, cart: emptyCart, customer: mockState.customer,
     request: { locale: { iso_code: 'en' }, page_type: 'index', origin: 'http://localhost' }, template: { name: 'index', suffix: null },
     content_for_header: '<link rel="stylesheet" href="/compiled.css">', canonical_url: 'http://localhost/', page_title: 'Dice Goblin NZ',
     page_description: '', powered_by_link: '<a href="#">Powered by Shopify</a>', current_page: 1, additional_checkout_buttons: false,
@@ -792,6 +792,98 @@ const feedProducts = (() => {
 })();
 collections.all = coll('all', 'All products', [...arrivals, ...boardGames], feedProducts.length);
 const variantIndex = new Map(feedProducts.flatMap((p) => p.variants.map((v) => [Number(v.id), { product: p, variant: v }])));
+/* ---- round 16, the game page: product types as the store has them (games are Board Games or Card Games, library copies
+   included), descriptions laid out like the shop's write-ups (a hook, the "<Title> is a …" summary, Gobgob's favourite
+   bit, the 👥 ⏱ 🎂 stats line, the 🛒 or 📚 line and the 🎥 video link), custom.difficulty, type tags, and the library
+   and shop pairs: Catan by the handle rule (catan and catan-library, no metafields) and 7 Wonders Duel by
+   custom.library_copy and custom.shop_copy. Heat has a custom.brief, no stock tracking and needs no 🎂 line; Paladins
+   has only a Teens age group with "Ages 12+" on its stats line; Everdell has two editions (2 left of one, none of the
+   other); Sushi Go Party! is sold out and Cascadia has 2 left. The RPG book isn't a game. ---- */
+export const r16 = (() => {
+  const write = (title, hook, summary, fav, stats, last) => [
+    `<p><strong>${hook}</strong></p>`,
+    `<p><strong>${title}</strong> ${summary}</p>`,
+    `<p><strong>Gobgob's favourite bit:</strong> ${fav}</p>`,
+    stats ? `<p>${stats}</p>` : '',
+    last ? `<p>${last}</p>` : '',
+    `<p>🎥 <a href="https://www.youtube.com/results?search_query=${encodeURIComponent(title)}">Watch how to play ${title}</a></p>`,
+  ].join('');
+  const shopLine = '🛒 In stock at Dice Goblin: pick it up in store or have it delivered anywhere in New Zealand.';
+  const libLine = '📚 A Dice Goblin Library game: borrow it with a library membership, or play it at the Lair.';
+  const by = (h) => allProducts[h];
+  const set = (h, fields) => {
+    const p = by(h);
+    p.metafields = p.metafields || { custom: {}, shopify: {} };
+    p.metafields.custom = p.metafields.custom || {};
+    for (const [k, v] of Object.entries(fields.custom || {})) p.metafields.custom[k] = { value: v };
+    if (fields.age) p.metafields.shopify = { ...(p.metafields.shopify || {}), 'recommended-age-group': ages(fields.age) };
+    if (fields.tags) p.tags = [...new Set([...(p.tags || []), ...fields.tags])];
+    for (const k of ['type', 'description']) if (fields[k] !== undefined) p[k] = fields[k];
+    return p;
+  };
+  for (const p of [...boardGames, ...library]) p.type = 'Board Games';
+  by('d-d-bigby-library').type = 'Role-Playing Game';
+  membership.type = 'Board Games'; // as in the store: the membership never gets the game layout (the section's setting)
+
+  set('wingspan', { custom: { difficulty: 'Medium' }, tags: ['Strategy', 'Solo'],
+    description: write('Wingspan', 'Gobgob says birds are just dragons that gave up.', 'is an engine-building card game from Stonemaier Games for 1 to 5 players. You are bird lovers attracting birds to your wildlife preserve: each bird you play makes one of your habitats better at gaining food, laying eggs or drawing more birds. Four rounds, many combos, and the most points wins.', 'when a bird tucks cards under itself and your whole row goes off.', '👥 1–5 players | ⏱ 40–70 min | 🎂 Ages 10+', shopLine) });
+  set('cascadia', { custom: { difficulty: 'Easy' }, tags: ['Family Games', 'Solo'],
+    description: write('Cascadia', 'Gobgob likes a bear. Gobgob likes two bears more.', 'is a puzzly tile-laying game from Flatout Games for 1 to 4 players. Build a Pacific Northwest landscape one habitat tile at a time and place wildlife tokens so the bears, elk, salmon, hawks and foxes score their patterns.', 'drafting the tile you want and the animal you need in the same turn.', '👥 1–4 players | ⏱ 30–45 min | 🎂 Ages 10+', shopLine) });
+  set('sushi-go-party', { type: 'Card Games', custom: { difficulty: 'Easy' }, tags: ['Party', 'Card game', 'Family Games'],
+    description: write('Sushi Go Party!', 'Gobgob eats the menu.', 'is the bigger take on the card-drafting game Sushi Go!, from Gamewright, for 2 to 8 players. Pick a card from your hand, pass the rest, and build the best plate of sushi from a menu you choose before the game.', 'stealing the last pudding.', '👥 2–8 players | ⏱ 20 min | 🎂 Ages 8+', shopLine) });
+  set('heat-pedal-to-the-metal', { custom: { difficulty: 'Easy', brief: 'Heat is a fast car-racing board game from Days of Wonder for 1 to 6 drivers.\nPlay cards to change gear, push your engine into the red on the straights, and brake hard enough to make the corners.' }, tags: ['Strategy', 'Family Games'],
+    description: write('Heat: Pedal to the Metal', 'Gobgob drives like this too.', 'is a car-racing board game from Days of Wonder. Shift gears with your hand of cards and manage the heat in your engine.', 'the last-lap slipstream.', '👥 1–6 players | ⏱ 30–60 min', shopLine) });
+  by('heat-pedal-to-the-metal').variants[0].inventory_management = null; // Shopify doesn't track it
+  set('the-crew-mission-deep-sea', { type: 'Card Games', custom: { difficulty: 'Easy' }, tags: ['Co-op', 'Card game'],
+    description: write('The Crew: Mission Deep Sea', 'Gobgob cannot speak. Gobgob can still win.', 'is a co-operative trick-taking card game from KOSMOS for 2 to 5 players. Win exactly the tricks your missions need, with hardly a word between you, across 32 missions under the sea.', 'the mission where only one person may win a trick.', '👥 2–5 players | ⏱ 20 min | 🎂 Ages 10+', shopLine) });
+  set('everdell', { custom: { difficulty: 'Medium' }, tags: ['Strategy'],
+    description: write('Everdell', 'Gobgob would live in a tree if trees allowed goblins.', 'is a worker-placement and tableau-building board game from Tabletop Tycoon for 1 to 4 players. Send your critters out to gather resources and build a woodland city of constructions and characters over four seasons, beneath the great Ever Tree.', 'the squirrel that comes home with more berries than anyone needs.', '👥 1–4 players | ⏱ 40–80 min | 🎂 Ages 13+', shopLine) });
+
+  // Library copies (one of each, shelf codes as the store's)
+  set('7-wonders-duel-library', { custom: { difficulty: 'Medium' },
+    description: write('7 Wonders Duel', 'Gobgob prefers one enemy at a time.', 'is the two-player take on 7 Wonders, from Repos Production. Draft cards from a shared pyramid to build your city, raise wonders and race your rival to a science win, a military win or the most points.', 'snatching the wonder your rival was saving for.', '👥 2 players | ⏱ 30 min | 🎂 Ages 10+', libLine) });
+  set('codenames', { custom: { difficulty: 'Easy' },
+    description: write('Codenames', 'Gobgob gives one-word clues. Gobgob is bad at it.', 'is a team word game from Czech Games Edition for 2 to 8 players. Two spymasters give one-word clues so their team can find their agents on a grid of 25 words, without touching the assassin.', 'the clue that somehow links four words.', '👥 2–8 players | ⏱ 15 min | 🎂 Ages 10+', libLine) });
+  set('paladins-of-the-west-kingdom', { custom: { difficulty: 'Hard' }, age: 'Teens',
+    description: write('Paladins of the West Kingdom', 'Gobgob was a paladin once. Briefly.', 'is a heavy worker-placement game from Garphill Games for 1 to 4 players. Hire paladins and workers, fortify the town, absolve criminals and spread the faith while raiders gather on the borders.', 'the turn your whole tableau fires at once.', '👥 1–4 players | ⏱ 90–120 min | 🎂 Ages 12+', libLine) });
+  set('wyrmspan', { custom: { difficulty: 'Medium' },
+    description: write('Wyrmspan', 'Gobgob found a dragon egg. It was a rock.', 'is an engine-building game from Stonemaier Games for 1 to 5 players, in the Wingspan family. Attract dragons to your cave system by excavating caves and gathering resources, then score their abilities.', 'a dragon that lays an egg in every cave.', '👥 1–5 players | ⏱ 90 min | 🎂 Ages 12+', libLine) });
+
+  // New games: Catan in the shop and the library (paired by the handle rule), 7 Wonders Duel in the shop (paired by metafields)
+  const catan = product('catan', 'Catan', 'Catan Studio', 79, 79, null, true, 6, 1000, 1000);
+  const catanLib = product('catan-library', 'Catan (Library)', 'Catan Studio', 0, 0, null, true, 1, 1000, 1000);
+  const duel = product('7-wonders-duel', '7 Wonders Duel', 'Repos Production', 55, 55, null, true, 5, 1000, 1000);
+  for (const p of [catan, catanLib, duel]) {
+    p.type = 'Board Games';
+    allProducts[p.handle] = p;
+    feedProducts.push(p);
+    for (const v of p.variants) variantIndex.set(Number(v.id), { product: p, variant: v });
+  }
+  const catanText = write('Catan', 'Gobgob has wood for sheep.', 'is the classic trading and building board game from Catan Studio for 3 to 4 players. Settle an island, gather brick, lumber, wool, grain and ore from the dice, trade with everyone, and build roads, settlements and cities to 10 points.', 'the robber. Always the robber.', '👥 3–4 players | ⏱ 60–90 min | 🎂 Ages 10+', shopLine);
+  set('catan', { custom: { players: '3–4', play_time: '60–90 min', difficulty: 'Medium' }, age: '10 years or older', tags: ['Strategy', 'Classic'], description: catanText });
+  set('catan-library', { custom: { players: '3–4', play_time: '60–90 min', difficulty: 'Medium', library_code: 'DGL34-020' }, age: '10 years or older', tags: ['Board Game Rental', 'Strategy', 'Classic', 'Shelf 3-4 players'], description: catanText.replace(shopLine, libLine) });
+  set('7-wonders-duel', { custom: { players: '2', play_time: '30 min', difficulty: 'Medium', library_copy: by('7-wonders-duel-library') }, age: '10 years or older', tags: ['Strategy'],
+    description: by('7-wonders-duel-library').description.replace(libLine, shopLine) });
+  by('7-wonders-duel-library').metafields.custom.shop_copy = { value: duel };
+
+  // Everdell's two editions: 2 left of the standard box, the Collector's sold out (the box updates with the pick)
+  const everdell = by('everdell');
+  manyVariants(everdell, [['Edition', ['Standard', "Collector's"], false]], [['Standard'], ["Collector's"]]);
+  Object.assign(everdell, withVariant(everdell, null));
+  everdell.variants.forEach((v, i) => {
+    v.inventory_quantity = i === 0 ? 2 : 0;
+    v.available = i === 0;
+    v.requires_shipping = true;
+    v.price = 11000 + i * 9000;
+    variantIndex.set(Number(v.id), { product: everdell, variant: v });
+  });
+  everdell.price = 11000;
+  everdell.price_max = 20000;
+  everdell.price_varies = true;
+  everdell.selected_or_first_available_variant = everdell.variants[0];
+  Object.assign(everdell, withVariant(everdell, null));
+  return { catan, catanLib, duel, everdell };
+})();
 const feedJson = (p) => ({
   id: p.id, title: p.title, handle: p.handle, vendor: p.vendor, product_type: p.product_type || '', tags: p.tags || [],
   body_html: p.description || '',
@@ -875,8 +967,17 @@ async function readBody(req) {
   const type = req.headers['content-type'] || '';
   if (type.includes('application/json')) return raw ? JSON.parse(raw) : {};
   if (type.includes('multipart/form-data')) {
+    // round 16: each part to its end (a gift message can run over several lines), and properties[Name] as properties
     const out = {};
-    for (const m of raw.matchAll(/name="([^"]+)"\r\n\r\n([^\r]*)\r\n/g)) out[m[1]] = m[2];
+    const boundary = (type.match(/boundary=(?:"([^"]+)"|([^;]+))/) || []).slice(1).find(Boolean);
+    const parts = boundary ? raw.split(`--${boundary}`) : [];
+    for (const part of parts) {
+      const m = part.match(/name="([^"]+)"\r\n\r\n([\s\S]*)\r\n$/);
+      if (!m) continue;
+      const prop = m[1].match(/^properties\[(.+)\]$/);
+      if (prop) out.properties = { ...(out.properties || {}), [prop[1]]: m[2] };
+      else out[m[1]] = m[2];
+    }
     return out;
   }
   return Object.fromEntries(new URLSearchParams(raw));
