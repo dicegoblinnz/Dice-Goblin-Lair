@@ -46,6 +46,8 @@ import { membershipMethods, membershipUpkeep } from './memberships.js';
 import { wishlistMethods } from './wishlist.js';
 // Round 17: staff GMs and the GM credit, and the team's hours (src/staff-gm.js)
 import { STAFF_GM_MESSAGES, readyForCredit, staffGmMethods } from './staff-gm.js';
+// Round 18: more for GM sessions: staff GMs run their own game, seats for new players, free sessions, a new GM
+import { GM_SESSION_WORDS, gmSessionMethods, seatPriceOf } from './gm-sessions.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -258,6 +260,14 @@ const ROUND17_STAFF_HOURS = [
 ];
 /** Round 17: credits.by, who pressed "Session done" (staff:<customer id>, or staff when that isn't known) */
 const ROUND17_COLUMNS = [['credits', 'by', 'TEXT']];
+/**
+ * Round 18, more for GM sessions (src/gm-sessions.js): games.free (1: its seats cost nothing, and there's no GM credit),
+ * games.new_seats (seats kept for players new to the Lair's TTRPG sessions) and bookings.new_player (1: a seat booked by
+ * someone new, which fills the kept seats first). Made sure of on every start, as ROUND15_COLUMNS are.
+ */
+const ROUND18_COLUMNS = [
+  ['games', 'free', 'INTEGER NOT NULL DEFAULT 0'], ['games', 'new_seats', 'INTEGER NOT NULL DEFAULT 0'], ['bookings', 'new_player', 'INTEGER NOT NULL DEFAULT 0'],
+];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -917,7 +927,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1005,6 +1015,8 @@ export class Lair {
       waived: Boolean(r.waived), createdAt: r.created_at || null,
       // round 15: a regular's seat Gobgob saved for them by itself (not one they booked)
       gobSaved: Boolean(r.gob_saved),
+      // round 18: a seat booked by someone new to the Lair's TTRPG sessions
+      newPlayer: Boolean(r.new_player),
     };
   }
 
@@ -1018,6 +1030,8 @@ export class Lair {
       gmBio: r.gm_bio || '', imageId: r.image_id || null, feeApproved: Boolean(r.fee_approved),
       // Round 11: players already in the group who don't book through the Lair (counted as seats taken)
       offlinePlayers: Math.max(0, Number(r.offline_players) || 0),
+      // Round 18: free (its seats cost nothing) and the seats kept for new players
+      free: Boolean(r.free), newSeats: Math.max(0, Number(r.new_seats) || 0),
     };
   }
 
@@ -1222,7 +1236,7 @@ export class Lair {
    * doesn't fit keeps nothing from the next: the same queue maintenance seats them in (rollSeries), so someone joining
    * hears what maintenance would do. No awaits.
    */
-  seatsAhead(session, member, now = Date.now()) {
+  seatsAhead(session, member, now = Date.now(), kept = 0) {
     if (!session?.seriesId || session.start <= now || session.status === 'cancelled') return 0;
     // rollSeries's order: when they joined (a row without a time sorts first, as SQLite sorts NULLs), then customer ID.
     const joined = member.created_at ?? -1;
@@ -1234,7 +1248,8 @@ export class Lair {
        ORDER BY m.created_at, m.customer_id`,
       session.seriesId, String(member.customer_id), joined, joined, String(member.customer_id), session.id,
     ).toArray();
-    let free = session.seats - this.takenSeats(session.id);
+    // Round 18: kept, the seats kept for new players: the regulars ahead are seated in the others
+    let free = session.seats - this.takenSeats(session.id) - kept;
     let ahead = 0;
     for (const { people } of waiting) {
       if (people > free) continue;
@@ -1711,7 +1726,13 @@ export class Lair {
       if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
       if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
-      if (a === 'games' && c === 'players') return json(await this.addPlayers(b, body, who));
+      // Round 18: a seat taken off a game (staff, or the game's staff GM), before adding players
+      if (a === 'games' && c === 'players' && d && parts[4] === 'remove' && !parts[5]) return json(await this.removePlayer(b, decodeURIComponent(d), who));
+      if (a === 'games' && c === 'players' && !d) return json(await this.addPlayers(b, body, who));
+      // Round 18: seats for new players, free sessions and a new GM
+      if (a === 'games' && c === 'new-seats' && !d) return json(await this.setNewSeats(b, body, who));
+      if (a === 'games' && c === 'free' && !d) return json(await this.setGameFree(b, body, who));
+      if (a === 'games' && c === 'gm' && !d) return json(await this.changeGm(b, body, who));
       if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who, body));
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
@@ -1983,6 +2004,9 @@ export class Lair {
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info);
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
+        // Round 18: for whoever can run this game (staff with GM games, or its own GM when they're on the team), its seats
+        // one booking each, to remove one or see who's new (gameRoster)
+        if (this.canRunGame(who, g)) game.roster = this.gameRoster(st, g);
         // Round 7: for staff and the session's GM, the seats of its series reserved for someone who's still to make an
         // account (a GM never sees a player's email on the board); for staff, the GM's email and whether the game is on
         // their account ('linked'), waiting for them to make one ('invited': an email nobody has used yet) or neither ('none')
@@ -2044,12 +2068,18 @@ export class Lair {
     this.checkRate(who, client, now);
     let booking;
     let game = null;
+    let newPlayer = false;
     if (kind === 'gm-seat') {
       // A series session keeps seats for its weekly regulars who don't have theirs yet (the booker's own excepted).
       const wanted = st.games.find((g) => g.id === input.gameId);
-      const held = wanted ? this.regularsWaiting(wanted, { except: who.customerId, now }) : 0;
+      // Round 18: from the seats that aren't kept for new players (regularsHeld)
+      const held = wanted ? this.regularsHeld(wanted, { except: who.customerId, now }) : 0;
       const seat = checkSeatBooking(input, { state: st, rules, now, held });
       game = seat.game;
+      // Round 18: seats kept for new players are theirs alone online; a new player can take any seat
+      newPlayer = this.checkNewSeats(game, st, {
+        people: seat.people, open: game.seats - this.takenSeats(game.id) - held, customerId: who.customerId, email: seat.email, now,
+      });
       booking = {
         kind, gameId: game.id, tables: seat.tables, room: tableIndex(rules.rooms).get(seat.tables[0])?.roomObj.id, start: seat.start,
         end: seat.end, people: seat.people, name: seat.name, email: seat.email, amount: seat.amount, activity: 'rpg', party: seat.players,
@@ -2076,6 +2106,8 @@ export class Lair {
       split: kind === 'table' && input.split === true,
     });
     this.saveBooking(booking, now);
+    // Round 18: a seat booked by someone new fills the seats kept for new players first
+    if (kind === 'gm-seat') this.markNewPlayer(id, newPlayer);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email, mobile: booking.phone }, now);
     // --- saved: the table is ours ---
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
@@ -2480,7 +2512,7 @@ export class Lair {
       next.people = Math.max(1, Math.min(60, Math.floor(Number(patch.people)) || 1));
       const seatGame = next.kind === 'gm-seat' && next.gameId ? this.game(next.gameId) : null;
       // A game spot keeps its price a person (the event's entry fee, or the table fee).
-      const unit = next.kind === 'gm-seat' ? seatGame?.seatPrice || rules.prices.gmSeat
+      const unit = next.kind === 'gm-seat' ? seatPriceOf(seatGame, rules)
         : next.occurrenceId && booking.people ? Math.round(booking.amount / booking.people)
           : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
       next.amount = unit * next.people;
@@ -2513,7 +2545,8 @@ export class Lair {
       const game = after > before ? this.game(next.gameId) : null;
       if (game) {
         const free = Math.max(0, game.seats - this.takenSeats(game.id));
-        const kept = Math.min(this.regularsWaiting(game, { except: next.customerId, now }), free);
+        // Round 18: held from the seats that aren't kept for new players (staff can seat anyone in those)
+        const kept = Math.min(this.regularsHeld(game, { except: next.customerId, now }), free);
         if (kept > 0 && after - before > free - kept) {
           const what = before ? `No room for ${plural(after - before, 'more person', 'more people')}` : 'No room to put this seat back';
           throw new RuleError(`${what}: ${plural(kept, 'seat is', 'seats are')} kept for regulars.`, 409);
@@ -2701,6 +2734,10 @@ export class Lair {
   saveSession(base, session, now) {
     const game = { id: makeId('gm'), ...base, ...session };
     this.saveGame(game, now);
+    // Round 18: a series made free, or with seats for new players, passes them on to each new session
+    if (base.free || base.newSeats) {
+      this.write('UPDATE games SET free = ?, new_seats = ? WHERE id = ?', base.free ? 1 : 0, Math.max(0, Math.min(Number(base.newSeats) || 0, game.seats)), game.id);
+    }
     const holdId = makeId('bk');
     this.saveBooking({
       id: holdId, ref: this.newCode(game.gm, 'booking', holdId, now), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
@@ -3070,7 +3107,8 @@ export class Lair {
       const room = rules.rooms.find((r) => r.id === here.room) || tableIndex(rules.rooms).get(here.tables[0])?.roomObj;
       const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
       this.saveGame({ ...session, ...shared, ...(session.id === game.id ? place : {}), seatPrice }, now);
-      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", seatPrice, now, session.id);
+      // Round 18: a free session keeps its seats at $0 (its price is kept for when it isn't free any more)
+      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
       this.write("UPDATE bookings SET people = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", details.seats + 1, now, session.id);
     }
     if (moving) {
@@ -3110,12 +3148,13 @@ export class Lair {
    * Returns { booking, game, emailed, regular: { seriesId, customerId } | null, invite: { id, email } | null }.
    */
   async addPlayers(id, input, who) {
-    this.requireStaff(who, 'sessions');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
+    // Round 18: staff with GM games, or this game's own GM when they're on the team
+    this.requireGameStaff(who, game);
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
     // Round 9: a member code finds the member at once (their name and email come from their member record)
     const typed = String(input.code ?? '').trim();
@@ -3138,8 +3177,9 @@ export class Lair {
     if (!email && picked?.email) email = picked.email;
     if (weekly && !customerId && !email) throw new RuleError('Add their email, so Gobgob can invite them to keep the seat.');
     // Seats kept for the series' weekly regulars aren't free (unless it's a regular being added). The number kept is the
-    // board's held: never more than the seats still free.
-    const held = this.regularsWaiting(game, { except: customerId, now });
+    // board's held: never more than the seats still free. Round 18: held from the seats that aren't kept for new
+    // players; staff (and the game's staff GM) can seat anyone in those.
+    const held = this.regularsHeld(game, { except: customerId, now });
     const taken = this.takenSeats(game.id);
     const left = game.seats - taken - held;
     if (people > left) {
@@ -3153,12 +3193,16 @@ export class Lair {
     const seatId = makeId('bk');
     const seat = {
       id: seatId, ref: this.newCode(name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: game.id, tables: game.tables, room: game.room,
-      start: game.start, end: game.end, people, name, email, amount: (game.seatPrice || rules.prices.gmSeat) * people, pay: 'day', paid: false,
+      start: game.start, end: game.end, people, name, email, amount: seatPriceOf(game, rules) * people, pay: 'day', paid: false,
       activity: 'rpg', party: players, customerId, notes: 'Added by staff',
       // Round 7: an optional phone (staff-made, so not required), and a new regular's first seat carries the series
       phone: trimmed(input.phone, 40).replace(/\s+/g, ' ').slice(0, 20) || null, seriesId: regular ? game.seriesId : null,
     };
     this.saveBooking(seat, now);
+    // Round 18: someone new to the Lair's TTRPG sessions fills a seat kept for new players: staff say so (newPlayer:
+    // true), or their account or email has never had a seat at a session that started
+    const newPlayer = input.newPlayer === true || ((customerId || email) ? this.isNewPlayer(customerId, email, now) : false);
+    this.markNewPlayer(seat.id, newPlayer);
     let invite = null;
     if (regular) {
       // A regular from now on, as "Save my seat every week" makes one (joinSeries): later seats are theirs, and
@@ -3189,11 +3233,12 @@ export class Lair {
       }
       invite = { id: inviteId, email };
     }
-    this.tellGmNewPlayer(seat, game, rules);
+    // the GM hears about a new player, unless they added them to their own game themselves (round 18)
+    if (!(who.customerId && String(who.customerId) === String(game.gmCustomerId || ''))) this.tellGmNewPlayer(seat, game, rules);
     const emailed = this.confirm(seat, rules, game, { invite: invite ? game.schedule : null });
     if (regular) this.tellStaffRegular(seat, game, rules);
     return {
-      booking: { ...this.ownView(seat), players, customerId }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed,
+      booking: { ...this.ownView(seat), players, customerId, newPlayer }, game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules), emailed,
       regular, invite,
       // Round 9: staff can still add someone whose monthly account is at its limit, and see a warning
       ...this.accountWarning(customerId, rules, now),
@@ -3214,7 +3259,8 @@ export class Lair {
       intro: `Kia ora ${seat.name}, the Dice Goblin team has saved your seat at ${game.title}${game.gm ? ` with GM ${game.gm}` : ''} every ${every}.`,
       details: [
         ['Game', game.title], ['Players', this.partyLine(seat.party)], ['Next session', this.when(game, rules)],
-        ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * seat.people)} a session, on your tab`],
+        // Round 18: a free session says so
+        ['Fee', seatPriceOf(game, rules) ? `${dollars(seatPriceOf(game, rules) * seat.people)} a session, on your tab` : 'Free'],
       ],
       // Round 15: each session on their tab, no code to show; cancelled up to 24 hours before
       outro: [
@@ -3259,9 +3305,12 @@ export class Lair {
       series = this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).one();
     }
     const approved = Boolean(series?.approved) || game.status === 'open' || staffGames;
+    // Round 18: a series staff made free, or gave seats for new players, from a session on passes them to its new dates
+    const kept = parse(series?.details, {});
     const base = {
       ...details, schedule: game.seriesId ? game.schedule : 'flexible', gmCustomerId: game.gmCustomerId, gmEmail: game.gmEmail, seriesId,
       status: approved ? 'open' : 'pending', credited: null, feeApproved: true, imageId: game.imageId,
+      free: Boolean(kept.free), newSeats: Math.max(0, Number(kept.newSeats) || 0),
     };
     const created = this.saveSession(base, session, now);
     const seated = this.seatSeriesMembers(created, rules, now);
@@ -3313,13 +3362,19 @@ export class Lair {
       .exec("SELECT * FROM bookings WHERE game_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated') LIMIT 1", session.id, member.customer_id)
       .toArray()[0];
     if (existing) return { seat: this.rowToBooking(existing), created: false };
-    const earlier = ahead ?? this.seatsAhead(session, member, now);
-    if (session.seats - this.takenSeats(session.id) - earlier < member.people) return null;
+    // Round 18: a regular who isn't new leaves the seats kept for new players. New here is as of this session: their seat
+    // at an earlier session of anything (this series' own, saved ahead) means they're not new by then, so only a new
+    // regular's first seat fills a kept one. The regulars ahead of them are seated in the seats that aren't kept.
+    const newPlayer = this.isNewPlayer(member.customer_id, member.email, session.start);
+    const newKept = this.newSeatsKept(session);
+    const earlier = ahead ?? this.seatsAhead(session, member, now, newKept);
+    const kept = newPlayer ? 0 : newKept;
+    if (session.seats - this.takenSeats(session.id) - earlier - kept < member.people) return null;
     const seatId = makeId('bk');
     const seat = {
       id: seatId, ref: this.newCode(member.name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: session.id, seriesId: session.seriesId,
       tables: session.tables, room: session.room, start: session.start, end: session.end, people: member.people, name: member.name, email: member.email,
-      amount: (session.seatPrice || rules.prices.gmSeat) * member.people, pay: 'day', paid: false, activity: 'rpg', party: parse(member.players, []),
+      amount: seatPriceOf(session, rules) * member.people, pay: 'day', paid: false, activity: 'rpg', party: parse(member.players, []),
       // round 7: a regular's seat carries the mobile on their player profile
       customerId: member.customer_id, phone: this.memberRow(member.customer_id)?.mobile || null,
       // round 15: saved by Gobgob by itself (rolling forward, a seat come free, a session added), not booked by them
@@ -3327,6 +3382,7 @@ export class Lair {
     };
     this.saveBooking(seat, now);
     if (saved) this.write('UPDATE bookings SET gob_saved = 1 WHERE id = ?', seatId);
+    this.markNewPlayer(seatId, newPlayer);
     return { seat, created: true };
   }
 
@@ -3448,7 +3504,7 @@ export class Lair {
     const players = seatPlayers(input.players, people, name);
     this.checkRate(who, client, now);
     // Round 9: a weekly seat on a monthly account: not over its credit limit
-    this.checkAccountLimit(who.customerId, (game.seatPrice || rules.prices.gmSeat) * people, rules, now, 'book');
+    this.checkAccountLimit(who.customerId, seatPriceOf(game, rules) * people, rules, now, 'book');
     // created_at is when they joined, which sets their place in the queue for seats (first to join is seated first).
     // Joining again to change who's coming keeps it; someone who left and comes back joins at the back, so they never
     // take a seat held for a regular who stayed.
@@ -3491,7 +3547,7 @@ export class Lair {
         details: [
           ['Game', game.title], ['Players', this.partyLine(players)], ['Next session', booked.length ? this.when(next, rules) : ''],
           ['Already full', full.length ? this.when(next, rules) : ''],
-          ['Fee', `${dollars((game.seatPrice || rules.prices.gmSeat) * people)} a session, on your tab`],
+          ['Fee', seatPriceOf(game, rules) ? `${dollars(seatPriceOf(game, rules) * people)} a session, on your tab` : 'Free'],
         ],
         // Round 15: each session on their tab, no code to show; cancelled up to 24 hours before
         outro: [
@@ -3756,8 +3812,9 @@ export class Lair {
     const players = this.sql
       .exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 1 AND status NOT IN ('cancelled', 'noshow')", id)
       .one().n;
-    // Each game's own GM fee: $0 (the GM covers their players), $5 standard, or more with a manager's OK.
-    const amount = players * (game.gmFee ?? rules.prices.gmCredit);
+    // Each game's own GM fee: $0 (the GM covers their players), $5 standard, or more with a manager's OK. Round 18: a
+    // free session has none (nobody paid a GM fee).
+    const amount = game.free ? 0 : players * (game.gmFee ?? rules.prices.gmCredit);
     // Round 17: a staff GM's session, when the team's setting keeps the credit from them: recorded with no credit
     // (status 'staff', amount 0), so it's done and can't be credited later. The players paid as always.
     const rule = amount > 0 ? this.staffGmRule(game, gm, rules, onShift) : null;
@@ -3777,7 +3834,7 @@ export class Lair {
     }
     this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
     let status = 'none';
-    let note = game.gmFee === 0 ? "This GM covers their players' fee, so there's no store credit to add." : '';
+    let note = game.free ? GM_SESSION_WORDS.freeCredit : game.gmFee === 0 ? "This GM covers their players' fee, so there's no store credit to add." : '';
     // Round 17: a staff GM who earns it (outside their hours, or marked not working) says why
     if (rule) note = this.staffGmNote(rule, game, amount, players, markedBy);
     try {
@@ -9233,7 +9290,11 @@ export class Lair {
     const gone = (x, id = x.occurrenceId) => (id && x.end > now && this.dateGone(rules, id) ? { ...x, gone: true } : x);
     return {
       // Round 17: for someone on the team, GM credit for staff as it touches them (staffGmFor: the setting and their hours)
-      customer: { id: who.customerId, staff: who.staff, gm: who.gm, staffGmCredit: this.staffGmFor(who) },
+      // Round 18: newPlayer, whether they've never had a seat at one of the Lair's TTRPG sessions (some seats are theirs)
+      customer: {
+        id: who.customerId, staff: who.staff, gm: who.gm, staffGmCredit: this.staffGmFor(who),
+        newPlayer: this.isNewPlayer(who.customerId, memberRow?.email || null, now),
+      },
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
       // Round 11: their own game tables list their players (gamePlayers, gameSize)
       bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start).map((b) => gone(b)),
@@ -9607,3 +9668,5 @@ Object.assign(Lair.prototype, membershipMethods);
 Object.assign(Lair.prototype, wishlistMethods);
 // Round 17: staff GMs and the GM credit (src/staff-gm.js)
 Object.assign(Lair.prototype, staffGmMethods);
+// Round 18: more for GM sessions (src/gm-sessions.js)
+Object.assign(Lair.prototype, gmSessionMethods);

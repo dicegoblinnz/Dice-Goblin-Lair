@@ -158,7 +158,8 @@ export const adminMethods = {
       const room = rules.rooms.find((r) => r.id === session.room) || tableIndex(rules.rooms).get(session.tables[0])?.roomObj;
       const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
       this.saveGame({ ...session, ...shared, offlinePlayers, imageId, seatPrice }, now);
-      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", seatPrice, now, session.id);
+      // Round 18: a free session keeps its seats at $0 (its price is kept for when it isn't free any more)
+      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
       this.write("UPDATE bookings SET people = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", details.seats + 1, now, session.id);
     }
     if (series) {
