@@ -506,14 +506,15 @@ Routes (logged in; 401 `login` for guests):
 
 - `GET /pick/games?filter=check|low|auto|basic|staff-picks|all&q=&offset=&limit=` (perm `library`) → `{ games: [{
   productId, title, handle, image, shelfCode, facts, source, checked, checkedBy, checkedAt, staffPick, status }],
-  total }`. `check`: not checked yet, low confidence first, then auto, basic, seed; `q` matches title or shelf code.
+  total }` (`checkedBy`: the first name of whoever checked it, or null; the Lair keeps their customer id). `check`: not checked yet, low confidence first, then auto, basic, seed; `q` matches title or shelf code.
   `limit` ≤ 100.
 - `POST /pick/games/:productId { facts?, checked?, staffPick? }` (perm `library`) → `{ game }`. 422 `facts: <field>`.
 - `POST /pick/sync` (perm `library`) → `{ synced, added, gone, tagged }`.
 - `GET /pick/report?days=7|30|90` (perm `library` or `community`) → `{ from, to, sessions, byDoor, byMode,
   finished (sessions with picks), actions: { [action]: n }, asks: [{ players, time, brain, team, vibes, count,
   fitCount (median), gap }] (top 20 by count), gaps: [the asks with median fitCount under 5, worst first, up to 10],
-  picked: [{ productId, title, shown, acted }] (top 20 shown), acted: [top 20 by actions], neverPicked: number,
+  picked: [{ productId, title, shown, acted }] (top 20 shown), acted: [{ productId, title, shown, acted, actions }] (top
+  20 by actions), neverPicked: number,
   ratings: { up: [{ productId, title, ups, downs }], down: […] }, relaxed: { time, filters, availability, players } }`.
 - `GET /library/sends`, `POST /library/sends/:id/update`: 5.3. `GET /library/holds` gains booking holds (5.2).
 
@@ -686,8 +687,10 @@ Mo can change them; Gobgob's voice only on the results (load the gobgob-voice sk
   actions, top asks and the gaps worth buying for, most picked and acted on, ratings, how often it had to stretch),
   **Table QR codes** (one QR per table from the store's rooms, linking `/pages/help-me-pick?door=table&table=<code>`,
   printable: on A4 and on the 150 × 100 mm sticker printer).
-- The **Library** tab: booking holds in the holds list ("For a table: <name>, <day>"), and **Postal swaps**
-  (`GET /library/sends`): this Thursday's list (paid ones to pack first), Packed, Sent, Cancel.
+- The **Library** tab: booking holds in the holds list ("For a table: <name>, <day>"; a postal swap's hold says "By
+  post" with no counter buttons, as the swap is handled under Postal swaps), and **Postal swaps** (`GET
+  /library/sends`): this Thursday's list (paid ones to pack first), Packed, Sent, Cancel, a note on each, and "Paid
+  late" on one paid after its cutoff (its game went back on the shelf: check it's there, or refund).
 
 ---
 
