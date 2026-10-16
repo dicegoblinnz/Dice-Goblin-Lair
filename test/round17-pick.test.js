@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
 import {
+  PICK_LIMITS,
   PICK_DATA, PICK_MESSAGES, PICK_AI_MODEL, PICK_TABLES, basicFacts, catalogRowOf, cleanAnswers, firstVideo, blurbOf, jaccard, matchGames, parsePlayersText,
   parseTimeText, pickKey, pickNorm, playerTypeOf, shelfParts, similarity, validFacts, wildcardIndex,
 } from '../src/pick.js';
@@ -823,10 +824,11 @@ test('the card: the game, its shelf in parts, where it stands, add-ons, the vide
   assert.equal(said(await call('GET', `pick/game/${G.azul}`)), `404 ${PICK_MESSAGES.game}`);
 });
 
-test('rate limit: 60 quiz requests a connection in 10 minutes across /pick, /pick/swipes, /pick/known and /pick/game (429 busy); staff aren\'t limited', async () => {
+test('rate limit: 300 quiz requests in 10 minutes across /pick, /pick/swipes, /pick/known and /pick/game (429 busy), a logged-in customer\'s own, else the connection\'s; staff aren\'t limited', async () => {
   catalogue();
+  assert.equal(PICK_LIMITS.quizPer10Min, 300);
   const headers = { client: '198.51.100.9' };
-  for (let i = 0; i < 15; i += 1) {
+  for (let i = 0; i < PICK_LIMITS.quizPer10Min / 4; i += 1) {
     assert.equal((await call('POST', 'pick', { players: 4 }, '', headers)).status, 200);
     assert.equal((await call('POST', 'pick/swipes', { players: 4 }, '', headers)).status, 200);
     assert.equal((await call('GET', 'pick/known?q=cat', null, '', headers)).status, 200);
@@ -836,6 +838,7 @@ test('rate limit: 60 quiz requests a connection in 10 minutes across /pick, /pic
     assert.deepEqual([res.status, res.data], [429, { error: PICK_MESSAGES.busy }]);
   }
   assert.equal((await call('POST', 'pick', { players: 4 }, '', { client: '198.51.100.10' })).status, 200, 'another connection is fine');
+  assert.equal((await call('POST', 'pick', { players: 4 }, SAM, headers)).status, 200, 'a logged-in customer on the same Wi-Fi has their own allowance');
   assert.equal((await call('POST', 'pick', { players: 4 }, STAFF, headers)).status, 200, 'staff aren\'t limited');
   Date.now = () => NOW + 10 * 60_000 + 1;
   assert.equal((await call('POST', 'pick', { players: 4 }, '', headers)).status, 200, '10 minutes on');
@@ -877,7 +880,7 @@ test('save: logged in, with the edit key; 401 login, 404 gone, 403 notYours; My 
   assert.ok(mine[0].createdAt > mine[4].createdAt, 'newest first');
 });
 
-test('email: the picks to that address, 3 a session and 10 an hour a connection (429 busy); 422 email, 404 gone, 403 notYours', async () => {
+test('email: the picks to that address, 3 a session and 30 an hour a connection (429 busy); 422 email, 404 gone, 403 notYours', async () => {
   catalogue();
   const sent = [];
   globalThis.fetch = async (url, init) => {
@@ -905,13 +908,14 @@ test('email: the picks to that address, 3 a session and 10 an hour a connection 
   await send({ email: 'sam@example.com' });
   await send({ email: 'sam@example.com' });
   assert.equal(said(await send({ email: 'sam@example.com' })), `429 ${PICK_MESSAGES.busy}`, '3 a session');
-  // 10 an hour a connection, across sessions
-  for (let i = 0; i < 3; i += 1) {
+  // 30 an hour a connection, across sessions (3 sent above)
+  assert.equal(PICK_LIMITS.emailsPerHour, 30);
+  for (let i = 0; i < 9; i += 1) {
     const other = (await quiz({ players: 4 }, '', headers)).data.session;
-    for (let j = 0; j < 3; j += 1) await send({ email: 'kiri@example.com' }, other);
+    for (let j = 0; j < 3; j += 1) assert.equal((await send({ email: 'kiri@example.com' }, other)).status, 200);
   }
   const last = (await quiz({ players: 4 }, '', headers)).data.session;
-  assert.equal(said(await send({ email: 'kiri@example.com' }, last)), `429 ${PICK_MESSAGES.busy}`, '10 an hour');
+  assert.equal(said(await send({ email: 'kiri@example.com' }, last)), `429 ${PICK_MESSAGES.busy}`, '30 an hour');
   globalThis.fetch = async (url) => {
     reached.push(String(url));
     throw new Error('no');

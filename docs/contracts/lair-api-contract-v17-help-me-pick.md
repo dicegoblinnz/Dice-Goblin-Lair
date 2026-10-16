@@ -285,9 +285,10 @@ starter +4; `tried: lots` → adventure +8, supplement +4, setting +4; `gm: lair
 
 ## 3. Quiz routes (`src/pick.js`)
 
-All through the app proxy (`/apps/liar/pick…`). "Anyone" means no login needed. A rate limit of 60 quiz requests per
-connection (`X-Lair-Client`) in 10 minutes covers `POST /pick`, `/pick/swipes`, `GET /pick/known` and `/pick/game`
-(429 `busy`).
+All through the app proxy (`/apps/liar/pick…`). "Anyone" means no login needed. A rate limit of 300 quiz requests in
+10 minutes covers `POST /pick`, `/pick/swipes`, `GET /pick/known` and `/pick/game` (429 `busy`): a logged-in customer's
+own, otherwise the connection's (`X-Lair-Client`), which everyone on the Lair's Wi-Fi and the kiosk share (16 Oct
+2026: was 60 a connection, too few for a busy night on one Wi-Fi). Staff aren't limited.
 
 ### 3.1 `POST /pick` (anyone)
 
@@ -360,7 +361,7 @@ Keeps the session on their account (My Lair's saved picks). → `{ ok: true, sav
 ### 3.9 `POST /pick/:id/email { email, editKey }` (anyone)
 
 Emails the picks (title, picture, the reason line's facts, a link to each game and to the shared picks) to that
-address. At most 3 a session and 10 an hour a connection (429 `busy`); 422 `email` for an address that doesn't look
+address. At most 3 a session and 30 an hour a customer or connection (429 `busy`); 422 `email` for an address that doesn't look
 right; 404 `gone`; 403 `notYours`. → `{ ok: true }`. The newsletter tick is the theme's: it signs them up through
 Shopify's own customer form, never through the Lair.
 

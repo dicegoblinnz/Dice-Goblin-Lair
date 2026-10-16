@@ -46,9 +46,11 @@ export const PICK_DATA = { seedVersion: PICK_SEED_VERSION, seed: PICK_SEED, know
 const DAY = 24 * HOUR;
 /** The contract's numbers in one place */
 export const PICK_LIMITS = {
-  quizPer10Min: 60, emailsPerSession: 3, emailsPerHour: 10, eventsPerSession: 50, sessionDays: 180, prunePerRun: 500, autoTagPerRun: 5,
+  quizPer10Min: 300, emailsPerSession: 3, emailsPerHour: 30, eventsPerSession: 50, sessionDays: 180, prunePerRun: 500, autoTagPerRun: 5,
   aiTries: 3, fullSyncHours: 6, savedShown: 5, toRateDays: 30, toRateShown: 5, tasteKept: 50, lovesKept: 5,
 };
+/** Whose allowance a quiz request or an email uses: a logged-in customer's own, else the connection's (null: none) */
+const pickRateKey = (who, client) => (who?.customerId ? `customer:${who.customerId}` : client ? `client:${client}` : null);
 /** Workers AI's model for tagging new games, unless config PICK_AI_MODEL names another (it supports JSON mode) */
 export const PICK_AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 /** Shopify's search for library listings, and for the for-sale board games ("Buy your own copy") */
@@ -1335,18 +1337,21 @@ export const pickMethods = {
 
   /* ---------------- the quiz (section 3) ---------------- */
   /**
-   * The quiz's rate limit (3): 60 requests a connection (X-Lair-Client) in 10 minutes, across POST /pick, /pick/swipes,
-   * GET /pick/known and /pick/game, then 429 busy. Staff aren't limited. Kept in memory, like the Lair's other soft
-   * limits. No awaits.
+   * The quiz's rate limit (3): 300 requests in 10 minutes across POST /pick, /pick/swipes, GET /pick/known and
+   * /pick/game, then 429 busy: a logged-in customer's own, otherwise a connection's (X-Lair-Client), which everyone on
+   * the Lair's Wi-Fi and the kiosk share. Staff aren't limited. Kept in memory, like the Lair's other soft limits. No
+   * awaits.
    */
   pickRate(who, client, now = Date.now()) {
-    if (who?.staff || !client) return;
+    if (who?.staff) return;
+    const key = pickRateKey(who, client);
+    if (!key) return;
     this.pickHits = this.pickHits || new Map();
-    const hits = (this.pickHits.get(client) || []).filter((t) => now - t < 10 * MIN);
+    const hits = (this.pickHits.get(key) || []).filter((t) => now - t < 10 * MIN);
     if (hits.length >= PICK_LIMITS.quizPer10Min) throw new RuleError(PICK_MESSAGES.busy, 429);
     hits.push(now);
     if (this.pickHits.size > 2000) this.pickHits.clear();
-    this.pickHits.set(client, hits);
+    this.pickHits.set(key, hits);
   },
 
   /** A pick_sessions row by id (exactly 10 key characters), or null. No awaits. */
@@ -1646,12 +1651,13 @@ export const pickMethods = {
     const to = String(body?.email ?? '').trim();
     if (!isEmail(to) || to.length > 200) throw new RuleError(PICK_MESSAGES.email);
     if (row.emails >= PICK_LIMITS.emailsPerSession) throw new RuleError(PICK_MESSAGES.busy, 429);
-    if (!who?.staff && client) {
+    const mailKey = who?.staff ? null : pickRateKey(who, client);
+    if (mailKey) {
       this.pickMails = this.pickMails || new Map();
-      const sent = (this.pickMails.get(client) || []).filter((t) => now - t < HOUR);
+      const sent = (this.pickMails.get(mailKey) || []).filter((t) => now - t < HOUR);
       if (sent.length >= PICK_LIMITS.emailsPerHour) throw new RuleError(PICK_MESSAGES.busy, 429);
       if (this.pickMails.size > 2000) this.pickMails.clear();
-      this.pickMails.set(client, [...sent, now]);
+      this.pickMails.set(mailKey, [...sent, now]);
     }
     this.sql.exec('UPDATE pick_sessions SET emails = emails + 1, updated_at = ? WHERE id = ?', now, row.id);
     const shared = this.sharedPicksNow(row, who);
