@@ -4,6 +4,7 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v18-cash.md` | Cash at the counter: members tap Pay with cash, staff tick it off (checked in and paid), and Shopify gets a paid order | 17 Oct 2026 |
 | `lair-api-contract-v18-open-seats.md` | Open seats for launch (the groups' own players off every session) and taking a regular off every session | 16 Oct 2026 |
 | `lair-api-contract-v18-gm-sessions.md` | Round 18, more for GM sessions: staff GMs run their own game, seats for new players, free sessions, a new GM | 16 Oct 2026 |
 | `lair-api-contract-v17-staff-gm-credit.md` | Round 17, GM credit for staff (never, in their hours, or like any GM) and the team's hours | 16 Oct 2026 |

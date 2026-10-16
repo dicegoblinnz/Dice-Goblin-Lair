@@ -831,6 +831,41 @@ export class ShopifyAdmin {
   }
 
   /**
+   * 17 Oct 2026, cash at the counter (src/cash.js): createPaidDraft for several lines. lines: { title, cents } custom
+   * lines (bookings, seats and sign-ups, at what each paid) or { variantId, qty, cents, title } product lines (the tab's
+   * things at the tab's price, so stock comes off). Nothing is shipped: a $0 "Collected at the Lair" shipping line goes
+   * on when there are products. No booking codes in line attributes or the note (the orders/paid webhook reads them).
+   * Returns { id, ready }, or throws (error.refused when Shopify said no).
+   */
+  async createPaidLinesDraft({ customerId, lines, currency, note, tags, marker }, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const moneyOf = (cents) => ({ amount: (Math.max(0, Math.round(cents)) / 100).toFixed(2), currencyCode: currency });
+    const attrs = (list) => Object.entries(list || {}).filter(([, v]) => v != null && v !== '').map(([key, value]) => ({ key, value: String(value).slice(0, 250) }));
+    const products = (lines || []).some((l) => l.variantId);
+    const data = await madeAnyway(this.graphql(
+      'mutation LairPaidLinesDraft($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id ready } userErrors { field message } } }',
+      {
+        input: {
+          purchasingEntity: { customerId: `gid://shopify/Customer/${customerId}` },
+          tags, note, customAttributes: attrs(marker), acceptAutomaticDiscounts: false,
+          ...(products ? { shippingLine: { title: 'Collected at the Lair', priceWithCurrency: moneyOf(0) } } : {}),
+          lineItems: (lines || []).map((l) => (l.variantId
+            ? {
+              variantId: String(l.variantId).startsWith('gid://') ? String(l.variantId) : `gid://shopify/ProductVariant/${l.variantId}`,
+              quantity: Math.max(1, Math.round(Number(l.qty) || 1)), priceOverride: moneyOf(l.cents), requiresShipping: false,
+            }
+            : { title: String(l.title || 'Lair fee').slice(0, 255), quantity: 1, originalUnitPriceWithCurrency: moneyOf(l.cents), requiresShipping: false, taxable: true })),
+        },
+      },
+      { timeout },
+    ));
+    const result = data?.draftOrderCreate;
+    if (!result) throw new Error('Shopify gave no answer for the draft order.');
+    if (result.userErrors?.length) throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true });
+    if (!result.draftOrder?.id) throw new Error('Shopify gave no draft order back.');
+    return { id: result.draftOrder.id, ready: result.draftOrder.ready !== false };
+  }
+
+  /**
    * Make a draft order a paid order (draftOrderComplete with no payment terms: marked as paid). A draft only ever
    * becomes one order, so asking again can't make a second. Returns { order: { id, name, total (cents) } or null, status,
    * errors }: no order and errors when Shopify said no (one completed already says no too: draftOrderState tells).

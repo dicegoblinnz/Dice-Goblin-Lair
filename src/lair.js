@@ -52,6 +52,8 @@ import { queueMethods } from './queue.js';
 import { STAFF_GM_MESSAGES, readyForCredit, staffGmMethods } from './staff-gm.js';
 // Round 18: more for GM sessions: staff GMs run their own game, seats for new players, free sessions, a new GM
 import { GM_SESSION_WORDS, gmSessionMethods, seatPriceOf } from './gm-sessions.js';
+// 17 Oct 2026: cash at the counter (src/cash.js)
+import { CASH_STAFF, CASH_TABLES, cashMethods } from './cash.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1006,6 +1008,8 @@ export class Lair {
     for (const statement of LENDING_INDEXES) this.sql.exec(statement);
     // Round 17: the team's hours (made when missing)
     for (const statement of ROUND17_STAFF_HOURS) this.sql.exec(statement);
+    // 17 Oct 2026: cash at the counter's requests (made when missing)
+    for (const statement of CASH_TABLES) this.sql.exec(statement);
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
     if (!this.sql.exec("SELECT value FROM meta WHERE key = 'kept-seats-staff'").toArray().length) {
@@ -1746,6 +1750,9 @@ export class Lair {
       if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
       // Round 9: "Pay online now" for everything on a monthly account
       if (a === 'me' && b === 'account' && c === 'pay') return json(await this.payAccountNow(who));
+      // 17 Oct 2026: pay with cash at the counter, or not after all
+      if (a === 'me' && b === 'cash' && !c) return json(await this.payCash(who));
+      if (a === 'me' && b === 'cash' && c === 'cancel' && !d) return json(await this.cancelCash(who));
       // Round 10: a member's library membership (change plan, cancel, keep it, update the card) and disputing a damage charge
       if (a === 'me' && b === 'membership' && c === 'change' && !d) return json(await this.changeMembership(body, who));
       if (a === 'me' && b === 'membership' && c === 'cancel' && !d) return json(await this.cancelMembership(body, who));
@@ -1810,6 +1817,9 @@ export class Lair {
       if (a === 'members' && b && c === 'account') return json(await this.setMemberAccount(decodeURIComponent(b), body, who));
       // Round 15: several things on a member's tab paid at once
       if (a === 'members' && b && c === 'paid') return json(await this.markTabPaid(decodeURIComponent(b), body, who));
+      // 17 Oct 2026: cash at the counter: staff with Check-in or Money take it, or say it wasn't paid
+      if (a === 'cash' && b && c === 'paid' && !d) return json(await this.cashPaid(decodeURIComponent(b), body, who));
+      if (a === 'cash' && b && c === 'cancel' && !d) return json(this.cashNotPaid(decodeURIComponent(b), who));
       if (a === 'accounts' && b && c === 'bill') return json(await this.billNow(decodeURIComponent(b), who));
       if (a === 'bills' && b && c === 'void') return json(await this.voidBillRoute(decodeURIComponent(b), who));
       if (a === 'bills' && b && c === 'resend') return json(await this.resendBill(decodeURIComponent(b), who));
@@ -2153,6 +2163,8 @@ export class Lair {
       ...(staffView ? { joins: this.staffJoins(joinRows, paid.join, from, to) } : {}),
       // Round 9: staff see who's on a monthly account, so their fees read "On their account"
       ...(staffView ? { monthlyAccounts: this.monthlyIds() } : {}),
+      // 17 Oct 2026: today's cash payments waiting for staff who take cash (Check-in or Money)
+      ...(who.staff && this.can(who, CASH_STAFF) ? { cash: this.cashWaiting(rules, now) } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (staffView ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: staffView,
@@ -9529,6 +9541,8 @@ export class Lair {
       tab: this.tabView(this.todayTabRow(who.customerId, rules, now)),
       // What they can pay at the counter now: { id, type, ref, title, start, end, amount, covered, paidAmount, due, owed }
       dueNow,
+      // 17 Oct 2026: paying with cash at the counter today, waiting for staff ({ id, status, total, items, at }), or null
+      cash: this.cashView(this.cashWaitingFor(who.customerId, rules, now)),
       // Round 9: the running tab (owed now, coming up) and, on a monthly account, the limit and the open bill
       account: this.memberAccount(who.customerId, rules, now),
       // Round 9, play: the sessions they're interested in and the event dates they said maybe (or coming) to, still to come
@@ -9854,6 +9868,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not make monthly bills', error);
     }
+    // 17 Oct 2026: cash taken at the counter gets its Shopify order (src/cash.js), tried again until it's made
+    try {
+      const cashOrders = await this.retryCashOrders(Date.now());
+      if (cashOrders.length) result.cashOrders = { looked: cashOrders.length };
+    } catch (error) {
+      console.error('Lair: could not make the Shopify orders for cash', error);
+    }
     // Round 11: "Remind me the day before": from 9am to 9pm at the Lair, each one once (src/reminders.js)
     try {
       const reminders = this.sendReminders(rules, Date.now());
@@ -9914,3 +9935,5 @@ Object.assign(Lair.prototype, queueMethods);
 Object.assign(Lair.prototype, staffGmMethods);
 // Round 18: more for GM sessions (src/gm-sessions.js)
 Object.assign(Lair.prototype, gmSessionMethods);
+// 17 Oct 2026: cash at the counter (src/cash.js)
+Object.assign(Lair.prototype, cashMethods);
