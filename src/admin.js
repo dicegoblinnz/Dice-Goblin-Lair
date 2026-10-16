@@ -151,14 +151,18 @@ export const adminMethods = {
       }
     }
     const shared = {
-      title: details.title, system: details.system, gm: details.gm, blurb: details.blurb, seats: details.seats, level: details.level, age: details.age,
+      title: details.title, system: details.system, blurb: details.blurb, seats: details.seats, level: details.level, age: details.age,
       tags: details.tags, characters: details.characters, pregens: details.pregens, bring: details.bring, gmFee: details.gmFee,
     };
+    // Round 18: the GM's name only when the job changes it (a series can have more than one GM once staff give some of
+    // it to another, so the first session's name isn't every session's)
+    if (set.gm !== undefined) shared.gm = details.gm;
     for (const session of sessions) {
       const room = rules.rooms.find((r) => r.id === session.room) || tableIndex(rules.rooms).get(session.tables[0])?.roomObj;
       const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
       this.saveGame({ ...session, ...shared, offlinePlayers, imageId, seatPrice }, now);
-      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", seatPrice, now, session.id);
+      // Round 18: a free session keeps its seats at $0 (its price is kept for when it isn't free any more)
+      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
       this.write("UPDATE bookings SET people = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", details.seats + 1, now, session.id);
     }
     if (series) {
