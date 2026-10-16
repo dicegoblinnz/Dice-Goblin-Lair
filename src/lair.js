@@ -54,6 +54,8 @@ import { STAFF_GM_MESSAGES, readyForCredit, staffGmMethods } from './staff-gm.js
 import { GM_SESSION_WORDS, gmSessionMethods, seatPriceOf } from './gm-sessions.js';
 // 17 Oct 2026: cash at the counter (src/cash.js)
 import { CASH_STAFF, CASH_TABLES, cashMethods } from './cash.js';
+// 17 Oct 2026: private games, invite only (src/private-games.js)
+import { PRIVATE_COLUMNS, PRIVATE_INDEXES, privacyOf, privateMethods } from './private-games.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -986,7 +988,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1014,6 +1016,8 @@ export class Lair {
     for (const statement of ROUND17_STAFF_HOURS) this.sql.exec(statement);
     // 17 Oct 2026: cash at the counter's requests (made when missing)
     for (const statement of CASH_TABLES) this.sql.exec(statement);
+    // 17 Oct 2026: private games' invite links are looked up by key (the columns are made with ROUND18_COLUMNS')
+    for (const statement of PRIVATE_INDEXES) this.sql.exec(statement);
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
     if (!this.sql.exec("SELECT value FROM meta WHERE key = 'kept-seats-staff'").toArray().length) {
@@ -1112,6 +1116,8 @@ export class Lair {
       offlinePlayers: Math.max(0, Number(r.offline_players) || 0),
       // Round 18: free (its seats cost nothing) and the seats kept for new players
       free: Boolean(r.free), newSeats: Math.max(0, Number(r.new_seats) || 0),
+      // 17 Oct 2026 (contract v18-private): invite only, whether it takes "Register interest", and its invite link's key
+      private: Boolean(r.private), interestOpen: Boolean(r.private) && Boolean(r.interest_open), inviteKey: r.invite_key || null,
     };
   }
 
@@ -1696,8 +1702,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1707,6 +1713,8 @@ export class Lair {
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
+      // 17 Oct 2026 (contract v18-private): the private game an invite link is for
+      if (request.method === 'GET' && a === 'games' && b === 'invite' && c && !parts[3]) return json(await this.gameByInvite(decodeURIComponent(c), who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
       // Round 16: the wishlist, newest first (src/wishlist.js)
       if (request.method === 'GET' && a === 'me' && b === 'wishlist' && !c) return json(this.memberWishlist(who));
@@ -1864,6 +1872,9 @@ export class Lair {
       // Round 18: seats for new players, free sessions and a new GM
       if (a === 'games' && c === 'new-seats' && !d) return json(await this.setNewSeats(b, body, who));
       if (a === 'games' && c === 'free' && !d) return json(await this.setGameFree(b, body, who));
+      // 17 Oct 2026 (contract v18-private): invite only or not, Register interest, and a new invite link
+      if (a === 'games' && c === 'private' && !d) return json(await this.setGamePrivate(b, body, who));
+      if (a === 'games' && c === 'invite' && d === 'new' && !parts[4]) return json(await this.newInviteLink(b, who));
       if (a === 'games' && c === 'gm' && !d) return json(await this.changeGm(b, body, who));
       if (a === 'series' && c === 'leave') return json(await this.leaveSeries(b, who, body));
       if (a === 'games' && c === 'image') return json(await this.gameImage(b, body, who));
@@ -2156,6 +2167,9 @@ export class Lair {
           const rule = readyForCredit(g, now) && gmTeam?.has(String(g.gmCustomerId)) ? this.staffGmRule(g, gmTeam.get(String(g.gmCustomerId)), rules) : null;
           if (rule) game.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, shift: rule.shift, hours: rule.hours };
         }
+        // 17 Oct 2026 (contract v18-private): a private game's invite link, for its GM and staff
+        const invite = this.inviteFor(g, who, staffView);
+        if (invite) game.invite = invite;
         // Round 9, play: how many are interested (everyone), and who (staff and the session's GM)
         game.interested = interest.sessions[g.id] || 0;
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.interest = interest.rows.filter((r) => r.kind === 'session' && r.target_id === g.id).map((r) => this.interestPerson(r));
@@ -2205,6 +2219,8 @@ export class Lair {
     if (kind === 'gm-seat') {
       // A series session keeps seats for its weekly regulars who don't have theirs yet (the booker's own excepted).
       const wanted = st.games.find((g) => g.id === input.gameId);
+      // 17 Oct 2026 (contract v18-private): a private game takes seats through its invite link only (input.invite)
+      if (wanted) this.checkInvite(wanted, input, who);
       // Round 18: from the seats that aren't kept for new players (regularsHeld); those are staff's to fill, so online
       // they're taken (back end only, Mo 16 Oct 2026)
       const held = wanted ? this.regularsHeld(wanted, { except: who.customerId, now }) : 0;
@@ -2876,6 +2892,11 @@ export class Lair {
     if (base.free || base.newSeats) {
       this.write('UPDATE games SET free = ?, new_seats = ? WHERE id = ?', base.free ? 1 : 0, Math.max(0, Math.min(Number(base.newSeats) || 0, game.seats)), game.id);
     }
+    // 17 Oct 2026: a private game (or series) passes it on to each new session, with the same invite link
+    if (base.private) {
+      this.write('UPDATE games SET private = 1, interest_open = ?, invite_key = ? WHERE id = ?', base.interestOpen ? 1 : 0, base.inviteKey || null, game.id);
+      Object.assign(game, { private: true, interestOpen: Boolean(base.interestOpen), inviteKey: base.inviteKey || null });
+    }
     const holdId = makeId('bk');
     this.saveBooking({
       id: holdId, ref: this.newCode(game.gm, 'booking', holdId, now), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
@@ -3072,6 +3093,8 @@ export class Lair {
     const time = new LairTime(rules.tz);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = checkGameDetails(input);
+    // 17 Oct 2026 (contract v18-private): a private game (invite only, with its invite link), taking interest or not
+    const privacy = privacyOf(input);
     // Round 7: staff make sessions under the GMs' rules (hours, whole hours, lead time, horizon, locked event tables),
     // with the shop tables open to them
     const first = checkGameSession(input, details, { state: st, rules, time, now, shopTables: staffGames });
@@ -3105,11 +3128,11 @@ export class Lair {
       this.write(
         `INSERT INTO series (id, schedule, gm_customer_id, details, tables, clock, length, first_day, status, approved, image_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)`,
-        seriesId, details.schedule, gmCustomerId, JSON.stringify({ ...details, gmEmail, staffCreated: staffGames }), JSON.stringify(first.tables),
+        seriesId, details.schedule, gmCustomerId, JSON.stringify({ ...details, gmEmail, staffCreated: staffGames, ...(privacy.private ? privacy : {}) }), JSON.stringify(first.tables),
         time.minutesOf(first.start), first.end - first.start, time.key(first.start), approved ? 1 : 0, now, now,
       );
     }
-    const base = { ...details, gmCustomerId, gmEmail, status: approved ? 'open' : 'pending', credited: null, seriesId, feeApproved };
+    const base = { ...details, gmCustomerId, gmEmail, status: approved ? 'open' : 'pending', credited: null, seriesId, feeApproved, ...privacy };
     const game = this.saveSession(base, first, now);
     let skipped = [];
     let sessions = [game];
@@ -3145,7 +3168,9 @@ export class Lair {
     } else if (forGm) this.tellGmLive(game, rules, { listedForThem: true });
     const view = this.state(game.start - 1, game.end + 1);
     return {
-      game: this.gameView(game, view, rules, null, { staff: this.staffSees(who) }), sessions: sessions.map((g) => ({ id: g.id, start: g.start })), skipped, pending: !approved,
+      // 17 Oct 2026: a private game's invite link, for its GM to share
+      game: { ...this.gameView(game, view, rules, null, { staff: this.staffSees(who) }), ...(this.inviteFor(game, who) ? { invite: this.inviteFor(game, who) } : {}) },
+      sessions: sessions.map((g) => ({ id: g.id, start: g.start })), skipped, pending: !approved,
       emailed: emailReady(this.env) && Boolean(gmEmail), ...(invited ? { invited: true } : {}), ...(notice ? { notice } : {}),
     };
   }
@@ -3453,10 +3478,16 @@ export class Lair {
     const theirs = game.seriesId && series
       ? { gmCustomerId: series.gm_customer_id || null, gmEmail: kept.gmEmail ?? game.gmEmail, gm: kept.gm || details.gm, gmBio: kept.gmBio ?? details.gmBio }
       : { gmCustomerId: game.gmCustomerId, gmEmail: game.gmEmail };
+    // 17 Oct 2026: a private series' new date is private too, with its invite link (a one-off that becomes a series
+    // passes its own on, and the series keeps it for dates after)
+    const privacy = game.seriesId && kept.private !== undefined
+      ? { private: Boolean(kept.private), interestOpen: Boolean(kept.private && kept.interestOpen), inviteKey: kept.inviteKey || game.inviteKey || null }
+      : { private: game.private, interestOpen: game.interestOpen, inviteKey: game.inviteKey };
+    if (!game.seriesId && game.private) this.patchSeries(seriesId, privacy, now);
     const base = {
       ...details, schedule: game.seriesId ? game.schedule : 'flexible', ...theirs, seriesId,
       status: approved ? 'open' : 'pending', credited: null, feeApproved: true, imageId: game.imageId,
-      free: Boolean(kept.free), newSeats: Math.max(0, Number(kept.newSeats) || 0),
+      free: Boolean(kept.free), newSeats: Math.max(0, Number(kept.newSeats) || 0), ...privacy,
     };
     const created = this.saveSession(base, session, now);
     const seated = this.seatSeriesMembers(created, rules, now);
@@ -3634,6 +3665,9 @@ export class Lair {
     if (!game.seriesId) throw new RuleError("This game is a one-off, so there's only the one session. Book a seat instead.", 422);
     const series = this.sql.exec('SELECT * FROM series WHERE id = ?', game.seriesId).toArray()[0];
     if (!series || series.status !== 'active') throw new RuleError("This game isn't running any more.", 409);
+    // 17 Oct 2026 (contract v18-private): a private game's regulars join through its invite link (one already in can
+    // change who's coming without it)
+    if (game.private && this.seriesMember(game.seriesId, who.customerId)?.status !== 'active') this.checkInvite(game, input, who);
     const most = Math.min(8, game.seats);
     const people = Math.floor(Number(input.people));
     if (!(people >= 1 && people <= most)) throw new RuleError(`Join with 1 to ${most} people.`);
@@ -9562,7 +9596,8 @@ export class Lair {
           seriesId: b.seriesId || null,
         };
       }),
-      games: gameRows.map((g) => ({ ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id) })),
+      // 17 Oct 2026: a private game's invite link, for its GM to share (contract v18-private)
+      games: gameRows.map((g) => ({ ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}) })),
       joins: joinList.map((j) => gone(j)),
       credits,
       member: {
@@ -9999,3 +10034,5 @@ Object.assign(Lair.prototype, staffGmMethods);
 Object.assign(Lair.prototype, gmSessionMethods);
 // 17 Oct 2026: cash at the counter (src/cash.js)
 Object.assign(Lair.prototype, cashMethods);
+// 17 Oct 2026: private games, invite only (src/private-games.js)
+Object.assign(Lair.prototype, privateMethods);

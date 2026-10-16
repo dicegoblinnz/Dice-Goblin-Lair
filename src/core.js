@@ -967,6 +967,9 @@ export function publicGame(g, state, rules = null, held = 0, { staff = false } =
     // Round 18, for staff: free (its seats cost nothing, and there's no GM credit), and the seats kept for new players
     // (newSeats) with how many are still open (newLeft, counted in taken)
     ...(staff ? { free: Boolean(g.free), newSeats: wantNew, newLeft } : {}),
+    // 17 Oct 2026 (contract v18-private): invite only (shown as Private on the board), and whether it takes "Register
+    // interest". Its invite link is never here: only its GM and staff get that (inviteFor)
+    private: Boolean(g.private), interestOpen: Boolean(g.private && g.interestOpen),
     room: g.room || null, characters: g.characters || (g.pregens ? 'pregens' : ''), bring: g.bring || '', contentNotes: g.contentNotes || '',
     sessionZero: g.sessionZero || '', gmBio: g.gmBio || '', image: g.image || null,
     // No GM fee needs a manager's OK any more ($0, $5 and $10 are all fine).

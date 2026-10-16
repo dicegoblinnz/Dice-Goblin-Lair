@@ -13,6 +13,7 @@
  */
 import { ACTIVE, HOUR, LairTime, RuleError, checkMobile, findOccurrence, makeId } from './core.js';
 import { emailReady, safeEqual } from './shopify.js';
+import { PRIVATE_WORDS } from './private-games.js';
 
 /** Guest records join an account for this long after they end (as ADOPT_DAYS in lair.js) */
 const ADOPT_DAYS = 30;
@@ -65,6 +66,8 @@ export const interestMethods = {
       if (!game || !['open', 'full'].includes(game.status)) throw new RuleError(INTEREST_MESSAGES.session, 404);
       if (game.end <= now) throw new RuleError(INTEREST_MESSAGES.over);
       if (who.customerId && String(game.gmCustomerId || '') === String(who.customerId)) throw new RuleError(INTEREST_MESSAGES.own);
+      // 17 Oct 2026 (contract v18-private): a private game takes interest only when its GM has switched it on
+      if (game.private && !game.interestOpen && !this.can(who, 'sessions')) throw new RuleError(PRIVATE_WORDS.noInterest, 403);
       target = { title: game.title, start: game.start, end: game.end, game };
     } else {
       const occurrence = findOccurrence(rules, targetId);
@@ -257,12 +260,19 @@ export const interestMethods = {
     const left = Math.max(0, game.seats - taken);
     const day = shortDay(game.start, rules.tz || new LairTime().tz);
     const subject = `${firstName(row.name)} is interested in ${game.title} on ${day}`;
+    // 17 Oct 2026 (contract v18-private): a private game's GM gets their invite link, to send if they're a good fit
+    const invite = game.private && game.inviteKey ? this.inviteUrl(game.inviteKey) : null;
     const content = {
       title: toGm ? 'Someone wants in!' : 'Someone wants in on a game',
       intro: toGm
-        ? `Kia ora ${game.gm}, ${row.name} is interested in ${game.title} on ${day}. ${left ? `There ${left === 1 ? 'is 1 seat' : `are ${left} seats`} left.` : 'It’s full, so they’d like to hear if a seat comes up.'} Nothing is booked yet: get back to them and they can take a seat.`
+        ? invite
+          ? `Kia ora ${game.gm}, ${row.name} is interested in your private game ${game.title} on ${day}. If they’re a good fit, reply with your invite link (below) and they can take a seat.`
+          : `Kia ora ${game.gm}, ${row.name} is interested in ${game.title} on ${day}. ${left ? `There ${left === 1 ? 'is 1 seat' : `are ${left} seats`} left.` : 'It’s full, so they’d like to hear if a seat comes up.'} Nothing is booked yet: get back to them and they can take a seat.`
         : `${row.name} is interested in ${game.gm ? `${game.gm}'s game ` : ''}${game.title} on ${day}. There's no email on file for the GM, so please pass this on.`,
-      details: [['Name', row.name], ['Email', row.email], ['Mobile', row.phone || ''], ['Their note', row.note || ''], ['When', this.when(game, rules)], ['Seats left', `${left} of ${game.seats}`]],
+      details: [
+        ['Name', row.name], ['Email', row.email], ['Mobile', row.phone || ''], ['Their note', row.note || ''], ['When', this.when(game, rules)], ['Seats left', `${left} of ${game.seats}`],
+        ...(invite ? [['Your invite link', invite]] : []),
+      ],
       outro: 'Reply to this email to get back to them.',
       button: { label: 'See the games board', url: this.page('gm') },
     };
