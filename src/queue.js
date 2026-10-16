@@ -73,6 +73,9 @@ export const QUEUE_MESSAGES = {
   noBooking: 'Booking not found.',
   notYourBooking: 'Only staff can change that booking.',
   bookingOff: "That booking isn't on any more, so it can't take a game.",
+  // the contract gives "Tell me when it's back" the pick's `login` words, which are about saving picks: these say what
+  // logging in is for here, in the theme's own words for it
+  loginWatch: "Log in to hear when it's back.",
 };
 
 /* ---------- small helpers (as lair.js's) ---------- */
@@ -84,6 +87,12 @@ const parse = (text, fallback) => {
   }
 };
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
+/**
+ * Where a member's emails go: the email they gave us (a booking or their profile), else their Shopify account's
+ * verified email (GET /me keeps it as account_email), else ''. A member who has only ever borrowed has no email of
+ * their own, and still hears that a game is held for them, ready to post, or back on the shelf.
+ */
+const emailOf = (member) => (isEmail(member?.email) ? String(member.email).trim() : isEmail(member?.account_email) ? String(member.account_email).trim() : '');
 const money = (cents) => `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)}`;
 const firstOf = (member) => member?.first_name || String(member?.name || '').split(/\s+/)[0] || 'friend';
 const nameOf = (member) => member?.name || member?.first_name || member?.code || 'a member';
@@ -920,9 +929,9 @@ export const queueMethods = {
     return { send: this.staffSendView(this.sendRow(send.id)), loan: loan ? this.staffLoanView(loan, now) : null };
   },
   /* ---------------- tell me when it's back ---------------- */
-  /** POST /library/watch { productId } (logged in): watch a library game. 401 login, 422 product, 409 watchFull (50). No awaits. */
+  /** POST /library/watch { productId } (logged in): watch a library game. 401 loginWatch, 422 product, 409 watchFull (50). No awaits. */
   watchGame(input, who) {
-    const id = this.queueOwner(who);
+    const id = this.queueOwner(who, QUEUE_MESSAGES.loginWatch);
     const productId = this.queueProductId(input);
     const game = this.libraryPick(productId);
     if (!game) throw new RuleError(QUEUE_MESSAGES.product);
@@ -940,7 +949,7 @@ export const queueMethods = {
 
   /** POST /library/watch/remove { productId } (logged in): stop watching (one never watched is fine). No awaits. */
   unwatchGame(input, who) {
-    const id = this.queueOwner(who);
+    const id = this.queueOwner(who, QUEUE_MESSAGES.loginWatch);
     const productId = this.queueProductId(input);
     this.write('DELETE FROM library_watch WHERE customer_id = ? AND product_id = ?', id, productId);
     return { ok: true, watching: false };
@@ -980,11 +989,11 @@ export const queueMethods = {
       const has = this.sql.exec("SELECT 1 AS n FROM library_holds WHERE customer_id = ? AND variant_id = ? AND status = 'held' AND until > ? LIMIT 1", w.customer_id, variantId, now).toArray().length
         || this.loansOut(w.customer_id).some((l) => String(l.variantId) === variantId);
       if (has) continue;
-      const member = this.memberRow(w.customer_id);
-      if (!isEmail(member?.email)) continue;
+      const to = emailOf(this.memberRow(w.customer_id));
+      if (!to) continue;
       const title = game.title || w.title || 'A library game';
       const handle = game.handle || w.handle;
-      letters.push(this.letter(member.email, `${title} is back on the shelf`, {
+      letters.push(this.letter(to, `${title} is back on the shelf`, {
         title: "It's back!",
         intro: [`Good news, friend: ${title} is back. Reserve it before someone else does.`],
         button: { label: 'Reserve it', url: handle ? this.link(`/products/${handle}`) : `${this.page('myLair')}?view=library` },
@@ -1282,15 +1291,16 @@ export const queueMethods = {
     const name = nameOf(member);
     const library = `${this.page('myLair')}?view=library`;
     const postage = send ? (send.postage != null ? money(send.postage) : `from ${money(Math.min(...Object.values(libraryPostage(this.env))))}`) : null;
+    const to = emailOf(member);
     if (send) {
       const by = this.cutoffWords(send.confirm_by, rules);
       this.notifyStaff(`Hold this game for the post: ${game} for ${name}`, {
         title: 'A library game to hold for the post',
         intro: `Hold this game: ${game} for ${name}. It came up next in their queue, to go by post. They have until ${by} to pay the postage; if they don't, it goes back on the shelf by itself.`,
-        details: [['Game', hold.title], ['Shelf', hold.shelfCode], ['For', name], ['Member code', member?.code || ''], ['Email', member?.email || ''], ['Postage paid by', by]],
+        details: [['Game', hold.title], ['Shelf', hold.shelfCode], ['For', name], ['Member code', member?.code || ''], ['Email', to], ['Postage paid by', by]],
       });
-      if (!isEmail(member?.email)) return;
-      this.later(this.mail(this.letter(member.email, `Your next game is ready to post: ${hold.title}`, {
+      if (!to) return;
+      this.later(this.mail(this.letter(to, `Your next game is ready to post: ${hold.title}`, {
         title: 'Your next game is ready to post',
         intro: [`Kia ora ${firstOf(member)}!`, `${hold.title} came up next in your queue. Confirm and pay the postage (${postage}) by ${by} and it goes out on Thursday. Not this time? Skip it and it stays in your queue.`],
         details: [['Game', hold.title], ['Postage', postage], ['Pay by', by]],
@@ -1302,10 +1312,10 @@ export const queueMethods = {
     this.notifyStaff(`Hold this game: ${game} for ${name}, until ${when}`, {
       title: 'A library game to hold',
       intro: `Hold this game: ${game} for ${name}, until ${when}. It came up next in their queue. Pop it behind the counter; if they don't collect it by then, it goes back on the shelf by itself.`,
-      details: [['Game', hold.title], ['Shelf', hold.shelfCode], ['For', name], ['Member code', member?.code || ''], ['Email', member?.email || ''], ['Until', when]],
+      details: [['Game', hold.title], ['Shelf', hold.shelfCode], ['For', name], ['Member code', member?.code || ''], ['Email', to], ['Until', when]],
     });
-    if (!isEmail(member?.email)) return;
-    this.later(this.mail(this.letter(member.email, `${hold.title} is next in your queue and on hold for you`, {
+    if (!to) return;
+    this.later(this.mail(this.letter(to, `${hold.title} is next in your queue and on hold for you`, {
       title: "It's on hold for you!",
       intro: [`Kia ora ${firstOf(member)}! ${hold.title} came up next in your queue, so it's on hold for you until ${when}. Collect it at the counter with your member code.`],
       details: [['Game', hold.title], ['Shelf', hold.shelfCode], ['Held until', when], ['Your member code', member.code || '']],
@@ -1316,9 +1326,10 @@ export const queueMethods = {
   /** Their queue stalled on a game they didn't collect ('missed') or didn't confirm by the cutoff ('lapsed'). No awaits. */
   tellQueuePaused(hold, why) {
     const member = this.memberRow(hold?.customerId);
-    if (!emailReady(this.env) || !isEmail(member?.email)) return;
+    const to = emailOf(member);
+    if (!emailReady(this.env) || !to) return;
     const what = why === 'lapsed' ? "wasn't confirmed by the cutoff" : "wasn't collected";
-    this.later(this.mail(this.letter(member.email, 'Your queue is paused', {
+    this.later(this.mail(this.letter(to, 'Your queue is paused', {
       title: 'Your queue is paused',
       intro: [`Kia ora ${firstOf(member)}!`, `${hold.title} ${what}, so it's back on the shelf and your queue is paused. Start it again in My Lair whenever you're ready.`],
       button: { label: 'Start my queue again', url: `${this.page('myLair')}?view=library` },
@@ -1328,7 +1339,7 @@ export const queueMethods = {
   /** A table's game had no copy free when its window opened: the booker hears once, to pick another. No awaits. */
   tellBookingGameUnavailable(b) {
     const member = b.customerId ? this.memberRow(b.customerId) : null;
-    const to = isEmail(b.email) ? b.email : member?.email;
+    const to = isEmail(b.email) ? b.email : emailOf(member);
     if (!emailReady(this.env) || !isEmail(to)) return;
     const day = this.bookingDayWords(b.start);
     const title = b.game.title || 'that game';

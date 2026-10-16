@@ -877,7 +877,7 @@ test('round 17 queue: staff postal swaps: the open list (by send day, then name,
 test('round 17 queue: watches: add and remove, the errors, 50 at most; each watcher is told once when a copy is free, and a member who has it isn\'t', async () => {
   const watch = (productId, who = SAM) => call('POST', 'library/watch', { productId }, who);
   const unwatch = (productId, who = SAM) => call('POST', 'library/watch/remove', { productId }, who);
-  assert.deepEqual(said(await watch(AZUL, '')), '401 Log in to see your queue.');
+  assert.deepEqual(said(await watch(AZUL, '')), "401 Log in to hear when it's back.");
   assert.equal(said(await watch(ATTIC)), `422 ${QUEUE_MESSAGES.product}`);
   assert.equal(said(await watch('nope')), `422 ${QUEUE_MESSAGES.product}`);
   // Kiri reserves Azul's only copy; Sam, Leo and Ari watch it (Ari has no plan: anyone logged in can watch)
