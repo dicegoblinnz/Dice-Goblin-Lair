@@ -98,7 +98,8 @@ const TOKEN = /\[(games|rpg_books|library)\]/;
   };
   const missing = Object.entries(tokens).filter(([, v]) => !TOKEN.test(v)).map(([k]) => k);
   check('files: each place that said 500+ holds a live token', missing.length === 0, missing.length ? missing.join(', ') : Object.values(tokens).map((v) => flat(v).slice(0, 40)).join(' | '));
-  check('files: the hero fact reads "[games]" over "games to play or borrow"', tokens['hero fact'] === '[games]' && index.sections.hero.blocks['fact-games'].settings.small === 'games to play or borrow');
+  check('files: the hero facts read "[games]" over "games to play or borrow" and "[rpg_books]" over "RPG books"', tokens['hero fact'] === '[games]' && index.sections.hero.blocks['fact-games'].settings.small === 'games to play or borrow'
+    && index.sections.hero.blocks['fact-rpgs'].settings.big === '[rpg_books]' && index.sections.hero.blocks['fact-rpgs'].settings.small === 'RPG books');
 }
 
 /* ---------- the numbers the store gives ---------- */
@@ -149,7 +150,7 @@ for (const [tag, width, height] of SIZES) {
   }));
   check(`${tag} home: the hero fact says the live number, "${GAMES} games to play or borrow"`, home.facts.includes(`${GAMES} games to play or borrow`), home.facts.join(' | '));
   check(`${tag} home: its big number is on one line`, home.big && home.big.text === String(GAMES) && home.big.lines === 1, home.big);
-  check(`${tag} home: the RPG fact is Mo's, unchanged`, home.facts.includes('26+ role-playing games'), home.facts.join(' | '));
+  check(`${tag} home: the games at one end of the strip and "${RPG} RPG books" at the other (Mo, 16 Oct 2026)`, home.facts[0] === `${GAMES} games to play or borrow` && home.facts.at(-1) === `${RPG} RPG books`, home.facts.join(' | '));
   check(`${tag} announcement bar (on for this check): "${GAMES} games to play in store", in both copies of the marquee`, home.announce.filter((t) => t === `${GAMES} games to play in store`).length === 2, home.announce.join(' | '));
   await clean('home');
 
