@@ -4,6 +4,7 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v17-staff-gm-credit.md` | Round 17, GM credit for staff (never, in their hours, or like any GM) and the team's hours | 16 Oct 2026 |
 | `lair-api-contract-v16-library-lending.md` | Library lending: staff lend games to anyone, with no plan or no account, at no charge | 16 Oct 2026 |
 | `lair-api-contract-v16-wishlist.md` | Round 16, the wishlist (built, switched off) | 16 Oct 2026 |
 | `lair-api-contract-v16-library-returns.md` | Library returns: members only borrow, staff put games back on the shelf | 16 Oct 2026 |

@@ -44,6 +44,8 @@ import { GAME_PEOPLE, PLAYER_WORDS, gamePlayerMethods, spotKey, spotLabel } from
 import { membershipMethods, membershipUpkeep } from './memberships.js';
 // Round 16: the wishlist, a member's products to come back to (src/wishlist.js)
 import { wishlistMethods } from './wishlist.js';
+// Round 17: staff GMs and the GM credit, and the team's hours (src/staff-gm.js)
+import { STAFF_GM_MESSAGES, readyForCredit, staffGmMethods } from './staff-gm.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -242,6 +244,16 @@ const LENDING_COLUMNS = [
   ['library_loans', 'guest_mobile', 'TEXT'],
 ];
 const LENDING_INDEXES = ["CREATE INDEX IF NOT EXISTS library_loans_guest ON library_loans (guest_email) WHERE customer_id = ''"];
+
+/**
+ * Round 17, staff GMs and the GM credit (16 Oct 2026, src/staff-gm.js): a new table, made on every start when it's
+ * missing (as ROUND16_WISHLIST is). The team's setting itself is one row in meta ('staff-gm-credit').
+ *  - staff_hours: one row per person on the team with hours: customer_id, hours (a JSON list of { day: 'mon'…'sun',
+ *    from: 'HH:MM', to: 'HH:MM' } in Lair time, 24:00 for midnight), who set them last (by) and when (updated_at).
+ */
+const ROUND17_STAFF_HOURS = [
+  'CREATE TABLE IF NOT EXISTS staff_hours (customer_id TEXT PRIMARY KEY, hours TEXT NOT NULL, by TEXT, updated_at INTEGER NOT NULL)',
+];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -919,6 +931,8 @@ export class Lair {
       }
     }
     for (const statement of LENDING_INDEXES) this.sql.exec(statement);
+    // Round 17: the team's hours (made when missing)
+    for (const statement of ROUND17_STAFF_HOURS) this.sql.exec(statement);
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
@@ -1652,6 +1666,9 @@ export class Lair {
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
+      // Round 17: GM credit for staff (the team's setting), and each person's hours
+      if (a === 'team' && b === 'gm-credit' && !c) return json(this.setStaffGmMode(body, who));
+      if (a === 'team' && b && c === 'hours' && !d) return json(await this.setStaffHours(decodeURIComponent(b), body, who));
       if (a === 'team' && b && c === 'remove' && !d) return json(await this.removeHelper(decodeURIComponent(b), who));
       if (a === 'team' && b && !c) return json(await this.updateHelper(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'credit') return json(await this.changeMemberCredit(decodeURIComponent(b), body, who));
@@ -1684,7 +1701,7 @@ export class Lair {
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
       if (a === 'games' && c === 'update') return json(await this.updateGame(b, body, who));
-      if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who));
+      if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who, body));
       if (a === 'games' && c === 'sessions') return json(await this.addSession(b, body, who));
       if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
@@ -1765,6 +1782,8 @@ export class Lair {
       customerId: row.customer_id, name: m?.name || m?.first_name || '', firstName: m?.first_name || '', email: m?.email || '', code: m?.code || null,
       perms: cleanPerms(parse(row.perms, [])) || [], since: row.created_at, updatedAt: row.updated_at || row.created_at,
       madeBy: by ? { customerId: by, name: maker?.name || maker?.first_name || '' } : null,
+      // Round 17: their weekly hours (staffHoursView)
+      ...this.staffHoursView(row.customer_id),
     };
   }
 
@@ -1797,7 +1816,11 @@ export class Lair {
     const owners = new Map();
     const ownerOf = (id, fallback = {}) => {
       const m = this.memberRow(id);
-      return { customerId: String(id), name: m?.name || m?.first_name || fallback.name || '', email: m?.email || fallback.email || '', code: m?.code || null };
+      return {
+        customerId: String(id), name: m?.name || m?.first_name || fallback.name || '', email: m?.email || fallback.email || '', code: m?.code || null,
+        // Round 17: their weekly hours
+        ...this.staffHoursView(id),
+      };
     };
     if (who.customerId) owners.set(String(who.customerId), ownerOf(who.customerId));
     for (const c of tagged) if (c.customerId && !owners.has(c.customerId) && !this.helperRow(c.customerId)) owners.set(c.customerId, ownerOf(c.customerId, c));
@@ -1811,7 +1834,11 @@ export class Lair {
         by: by && by !== 'staff' ? { customerId: by, name: maker?.name || maker?.first_name || '' } : null,
       };
     });
-    return { owners: [...owners.values()], helpers, perms: STAFF_PERMS.map((key) => ({ key, words: PERM_WORDS[key] })), defaults: HELPER_DEFAULT, log };
+    return {
+      owners: [...owners.values()], helpers, perms: STAFF_PERMS.map((key) => ({ key, words: PERM_WORDS[key] })), defaults: HELPER_DEFAULT, log,
+      // Round 17: GM credit for staff (the setting, its choices, who changed it last)
+      gmCredit: this.staffGmSetting(),
+    };
   }
 
   /**
@@ -1894,6 +1921,10 @@ export class Lair {
     // Round 9: the floor's staff view (names, emails, payments, every sign-up) for the owner and helpers who run the desk,
     // the floor, GM games or events; anyone else sees the public floor
     const staffView = this.can(who, FLOOR_STAFF);
+    // Round 17: for staff, the sessions ready for their GM credit whose GM is on the team (staffGmPeople asks person()
+    // for each GM: Shopify's tags at most every 5 minutes), and what was recorded for each session credited
+    const gmTeam = staffView ? await this.staffGmPeople(st.games, now) : null;
+    const credits = staffView ? this.creditsIn(from, to) : null;
     const paid = staffView ? { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) } : null;
     const view = (bk) => {
       // Staff see everything, plus the saved pass, what passes covered, what's due, the refund state and who paid.
@@ -1954,6 +1985,14 @@ export class Lair {
         // Round 12: and the players the group already has who don't book through the Lair (they're in taken), so the staff
         // page can say why seats are taken with no players listed
         if (staffView) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g), offlinePlayers: g.offlinePlayers || 0 });
+        // Round 17: for staff, what the GM credit was (credit: { status, amount, players, note, at }), and for one not
+        // credited yet whose GM is on the team, what the team's setting says (staffGm: staffGmRule's mode, credit,
+        // onShift, shift and hours)
+        if (staffView) {
+          if (credits.has(g.id)) game.credit = credits.get(g.id);
+          const rule = readyForCredit(g, now) && gmTeam?.has(String(g.gmCustomerId)) ? this.staffGmRule(g, gmTeam.get(String(g.gmCustomerId)), rules) : null;
+          if (rule) game.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, shift: rule.shift, hours: rule.hours };
+        }
         // Round 9, play: how many are interested (everyone), and who (staff and the session's GM)
         game.interested = interest.sessions[g.id] || 0;
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.interest = interest.rows.filter((r) => r.kind === 'session' && r.target_id === g.id).map((r) => this.interestPerson(r));
@@ -2935,14 +2974,14 @@ export class Lair {
    */
   inviteGm(game, rules) {
     if (!emailReady(this.env) || !isEmail(game.gmEmail)) return false;
-    const credit = game.gmFee ?? rules.prices.gmCredit;
     this.later(this.mail(this.letter(game.gmEmail, `You're running ${game.title} at the Dice Goblin Lair`, {
       title: 'Your game is on the board!',
       intro: `Kia ora ${game.gm}, the Dice Goblin team has put ${game.title} on the games board for you.`,
       details: [
         ['Game', game.title], [game.seriesId ? 'First session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
         ['Player seats', String(game.seats)],
-        ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+        // Round 17: a staff GM's line follows the team's setting (gmCreditLine)
+        ['Your credit', this.gmCreditLine(game, rules)],
       ],
       outro: [
         `Make your Dice Goblin account with this email (${game.gmEmail}), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account after each session.`,
@@ -2963,14 +3002,14 @@ export class Lair {
   /** "Your game is on the board": when staff approve a game, or list one for a GM. */
   tellGmLive(game, rules, { listedForThem = false } = {}) {
     if (!emailReady(this.env) || !isEmail(game.gmEmail)) return;
-    const credit = game.gmFee ?? rules.prices.gmCredit;
     this.later(this.mail(this.letter(game.gmEmail, `Your game is live: ${game.title}`, {
       title: 'Your game is on the board!',
       intro: `Kia ora ${game.gm}, ${game.title} is ${listedForThem ? 'listed' : 'approved'} and on the games board.${game.seriesId && !listedForThem ? ' Every session of it is approved.' : ''} Time to start plotting, friend.`,
       details: [
         ['Game', game.title], [game.seriesId ? 'Next session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
         ['Player seats', String(game.seats)],
-        ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+        // Round 17: a staff GM's line follows the team's setting (gmCreditLine)
+        ['Your credit', this.gmCreditLine(game, rules)],
       ],
       button: { label: 'See the games board', url: this.page('gm') },
       signoff: 'Happy GMing!\nGobgob',
@@ -3682,10 +3721,17 @@ export class Lair {
     return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), affected, refunds };
   }
 
-  async creditGm(id, who) {
+  async creditGm(id, who, input = {}) {
     // Round 9: the GM's store credit is money
     this.requireStaff(who, 'money');
+    // Round 17: with the 'shifts' setting, staff can mark that a staff GM was working then (onShift: true) or wasn't
+    // (false), whatever their hours say
+    const onShift = input?.onShift ?? null;
+    if (onShift !== null && typeof onShift !== 'boolean') throw new RuleError(STAFF_GM_MESSAGES.onShift);
     const rules = await this.rules();
+    // Round 17: whether the GM is on the team (the main account or a helper), asked before the part with no awaits
+    const before = this.game(id);
+    const gm = before?.gmCustomerId ? await this.person(before.gmCustomerId) : null;
     // --- no awaits until the game is claimed, so two staff tapping "credit" at once can't pay twice ---
     const now = Date.now();
     const game = this.game(id);
@@ -3698,9 +3744,23 @@ export class Lair {
       .one().n;
     // Each game's own GM fee: $0 (the GM covers their players), $5 standard, or more with a manager's OK.
     const amount = players * (game.gmFee ?? rules.prices.gmCredit);
+    // Round 17: a staff GM's session, when the team's setting keeps the credit from them: recorded with no credit
+    // (status 'staff', amount 0), so it's done and can't be credited later. The players paid as always.
+    const rule = amount > 0 ? this.staffGmRule(game, gm, rules, onShift) : null;
+    if (rule && !rule.credit) {
+      const kept = this.staffGmNote(rule, game, amount, players);
+      this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
+      this.write(
+        'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        makeId('cr'), id, game.gmCustomerId, players, 0, 'staff', kept, now,
+      );
+      return { players, amount: 0, status: 'staff', note: kept, withheld: amount };
+    }
     this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
     let status = 'none';
     let note = game.gmFee === 0 ? "This GM covers their players' fee, so there's no store credit to add." : '';
+    // Round 17: a staff GM who earns it (outside their hours, or marked not working) says why
+    if (rule) note = this.staffGmNote(rule, game, amount, players);
     try {
       if (amount > 0 && game.gmCustomerId && this.shopify.configured) {
         await this.shopify.creditCustomer(game.gmCustomerId, amount, this.env.CURRENCY || 'NZD');
@@ -9151,7 +9211,8 @@ export class Lair {
     // so (gone: true), so My Lair doesn't show it as if nothing had changed
     const gone = (x, id = x.occurrenceId) => (id && x.end > now && this.dateGone(rules, id) ? { ...x, gone: true } : x);
     return {
-      customer: { id: who.customerId, staff: who.staff, gm: who.gm },
+      // Round 17: for someone on the team, GM credit for staff as it touches them (staffGmFor: the setting and their hours)
+      customer: { id: who.customerId, staff: who.staff, gm: who.gm, staffGmCredit: this.staffGmFor(who) },
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
       // Round 11: their own game tables list their players (gamePlayers, gameSize)
       bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start).map((b) => gone(b)),
@@ -9523,3 +9584,5 @@ Object.assign(Lair.prototype, gamePlayerMethods);
 Object.assign(Lair.prototype, membershipMethods);
 // Round 16: the wishlist (src/wishlist.js)
 Object.assign(Lair.prototype, wishlistMethods);
+// Round 17: staff GMs and the GM credit (src/staff-gm.js)
+Object.assign(Lair.prototype, staffGmMethods);
