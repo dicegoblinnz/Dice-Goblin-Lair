@@ -195,3 +195,18 @@ games only, and the wishlist built but switched off.
 - `round16/library-lending-axe.mjs`: axe on the lend form, Games at home with lent games, the no-match search and My
   Library (lent only, and a plan with a lent game), and the keyboard through Lend to someone new (Enter moves Name →
   Email → Mobile → the game). `DG_THEME=… AXE=…/axe.min.js [PORT=4988] node tools/qa/round16/library-lending-axe.mjs`.
+
+## round17: GM credit for staff (round 17)
+
+Mo (16 Oct): staff he pays to run GM games don't get the $5-a-player GM credit, with a toggle, or none during their
+hours (contract `docs/contracts/lair-api-contract-v17-staff-gm-credit.md`). Players pay the same.
+- `test/round17-staff-gm-credit.test.js` (npm test): the words, cleaning and saying hours, a session in someone's hours
+  (even partly, across midnight and daylight saving), `GET /team`'s `gmCredit` and hours, `POST /team/gm-credit` and
+  `POST /team/:id/hours` (the main account only), `POST /games/:id/credit` in each setting (Never; in and outside their
+  hours; `onShift` both ways; Always; a $0 fee; the main account as GM; a removed helper), the floor's `staffGm` and
+  `credit`, `GET /me`'s `staffGmCredit`, and the GM emails' "Your credit" line.
+- `round17/staff-gm-credit.mjs`: the theme mock in demo mode, phone and desktop. The Team tab's GM credit for staff (Never
+  ticked to start, each choice's words, saved as Not in their hours) and Ana's Hours (add, save, a bad time's words,
+  Cancel); the GM games tab's card for her session yesterday in each state and what each button records; the GM page's
+  "You get" for a staff GM; then live, the three calls against a stubbed Lair app. Axe, no sideways scroll.
+  `DG_THEME=… PORT=4985 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round17/staff-gm-credit.mjs [phone|desktop]`.
