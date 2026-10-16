@@ -103,18 +103,30 @@ Then the game's 422, 404 and 503 (v7), then the loan. Returns **200** `{ loan, l
 
 Exported from `src/lair.js` as `LENDING_WORDS`. The notice "{name} isn't on a library plan." is gone.
 
-## 5. The theme (website team)
+## 5. The theme (built 16 Oct 2026, branch dice-goblin-2-theme)
 
-- **Staff page, Library tab, check-out:** besides picking a member, staff can lend to someone new: name, email, mobile
-  (`lair-core.js`'s `checkOutLibraryGame` posts `{ guest: { name, email, mobile }, code }`). Say when it went out as a
-  lent game ("Lent to Wiremu: nothing to pay"), and when the email belonged to a member (the loan's `name` and `guest`
-  false).
-- **Games at home:** mark lent games ("Lent"), and for a guest show the email or mobile instead of a member code (there's
-  no member to open).
-- **My Library:** lent games are at home with them, with no pressure to join. Someone with no plan and lent games sees
-  the games (with how to return them) before anything about joining; a member with a plan sees lent games marked as not
-  using up their plan.
-- **The demo backend** (`assets/lair-demo.js`) does the same, so the round 7 library check runs in demo mode.
+- **Staff page, Library tab:** the desk is "Check out or lend a game". Under the member search, "Lend to someone new"
+  (and "Lend it to someone new instead" when no member matches, with what was typed in its field) opens Name, Email and
+  Mobile in the search's place, and the button says Lend; "Pick a member instead" goes back. `lair-core.js`'s
+  `checkOutLibraryGame` posts `{ guest: { name, email, mobile }, code }`. The camera lends too ("Lend to Pat"). The
+  form checks the name and an email or mobile first (the words in section 4, focused on the field); the Lair app checks
+  the email and mobile. Each person's details stay while the form is open (a second game), and go when it's opened
+  again. The line under the form:
+  - a plan member: "Checked out: {game} ({code}) to {name}." as before;
+  - a member with no plan: "Lent: {game} ({code}) to {name}. Nothing to pay, and it doesn't use a library plan.";
+  - someone without an account: "Lent: {game} ({code}) to {name}. Nothing to pay." and, with an email, "It joins their
+    account when they log in to My Lair with {email}.";
+  - an email that's a member's adds ", whose account has that email" after their name.
+- **Games at home:** lent games have a Lent badge (the potion colour, on the card too). A guest's row says "{name} (no
+  account yet)" with their email and mobile as links on a line of their own, and has no member to open or damage
+  charge. The member's sheet marks lent games "(lent)" and counts only the plan's games as used.
+- **My Library:** lent games are tagged Lent under At home. A plan member's card counts only the plan's games and adds
+  "Plus 1 game we've lent you, which doesn't use your plan." Someone with no plan whose only games are lent sees "Lent
+  to you" and how they come back, with no invite to join on top, no scanner and no Reserved list; the shelves and plans
+  are links under the lists. My Lair's Library tile says "1 game lent to you" and "Nothing to pay". The words are in
+  `locales/en.default.json` (`lair.my.library.lent_*`) and reach the script in `data-mlib-words`.
+- **The demo backend** (`assets/lair-demo.js`) does all of this, including joining a guest's games to the logged-in
+  customer by email on GET /me.
 
 ## 6. Checks
 
@@ -122,3 +134,6 @@ Exported from `src/lair.js` as `LENDING_WORDS`. The notice "{name} isn't on a li
 scanned back, "Back on the shelf", history), a mobile-only guest, an email the Lair knows, a member with no plan (lent,
 no notice) who joins later (lent games don't use the plan, and a membership ending doesn't ask for them back), and a
 plan member's check-out (not lent).
+
+On the theme mock (demo mode): `tools/qa/round16/library-lending.mjs` (36 checks, phone and desktop) and
+`tools/qa/round16/library-lending-axe.mjs` (axe and the keyboard).
