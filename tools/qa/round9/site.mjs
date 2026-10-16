@@ -1,10 +1,10 @@
 // Round 9, site: the shop pages Mo asked about on 9 Oct, on the mock store in demo mode, phone (390) and desktop (1280).
 // PASS/FAIL lines; exits 1 if anything fails.
-//   1. The hero says what's here: a short heading (the business, no Royal Oak), a strip of facts (since 16 Oct 2026 the
-//      library's games at one end and its RPG books at the other, both counted live: [games] and [rpg_books] in
-//      index.json, 544 and 136 on the mock; 30 tables, Pokémon and Warhammer between) as blocks with every word a
-//      setting, each fact whole on one line, the text under it without Royal Oak or the table price, and the three
-//      buttons kept.
+//   1. The hero says what's here: a short heading (the business, no Royal Oak), a strip of facts (since 16 Oct 2026,
+//      Mo: 30 tables and Pokémon side by side, RPG books under tables and Warhammer and wargames under Pokémon, the
+//      library's games across the bottom, on every size; the numbers counted live: [rpg_books] and [games] in
+//      index.json, 136 and 544 on the mock) as blocks with every word a setting, each fact whole on one line, the text
+//      under it without Royal Oak or the table price, and the three buttons kept.
 //   2. Meet Gobgob, right after the hero: Gobgob's picture, a line of their own, who they are (they/them) and four
 //      places people meet them, every word from the section's settings.
 //   3. The footer: much shorter on both sizes, "Made by goblins who like dice and games." (a setting), the visit
@@ -94,7 +94,7 @@ const axe = async (page, include) => {
   check('files: the hero has a "What we have" block (big, small, colour) and heading and text settings', Boolean(fact) && ['big', 'small', 'accent'].every((id) => ids.includes(id)) && hero.settings.some((s) => s.id === 'heading') && hero.settings.some((s) => s.id === 'text') && hero.max_blocks >= 10, ids.join(', '));
   const h = index.sections.hero;
   const facts = h.block_order.map((id) => h.blocks[id]).filter((b) => b.type === 'fact').map((b) => `${b.settings.big} ${b.settings.small}`);
-  check('files: index.json holds the five facts in order (games at one end, RPG books at the other, both counted live)', JSON.stringify(facts) === JSON.stringify(['[games] games to play or borrow', '30 tables', 'Pokémon and other TCGs', 'Warhammer and other wargames', '[rpg_books] RPG books']), facts.join(' | '));
+  check('files: index.json holds the five facts in order (tables, Pokémon, RPG books, Warhammer and wargames, then the games under them, both numbers counted live)', JSON.stringify(facts) === JSON.stringify(['30 tables', 'Pokémon and other TCGs', '[rpg_books] RPG books', 'Warhammer and wargames', '[games] games to play or borrow']), facts.join(' | '));
   check('files: the hero heading and text name no place and no price', !/royal oak/i.test(h.settings.heading + h.settings.text) && !/\$/.test(h.settings.text) && /game shop/i.test(h.settings.heading), `${h.settings.heading} / ${h.settings.text}`);
   const order = index.order;
   check('files: Meet Gobgob comes right after the hero', order[0] === 'hero' && index.sections[order[1]].type === 'gobgob-intro', order.join(', '));
@@ -124,7 +124,7 @@ try {
           const inner = li.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
           const range = document.createRange();
           range.selectNodeContents(big);
-          return { text: li.textContent.replace(/\s+/g, ' ').trim(), lines: range.getClientRects().length, w: range.getBoundingClientRect().width, inner, size: getComputedStyle(big).fontSize, top: li.getBoundingClientRect().top, right: li.getBoundingClientRect().right };
+          return { text: li.textContent.replace(/\s+/g, ' ').trim(), lines: range.getClientRects().length, w: range.getBoundingClientRect().width, inner, size: getComputedStyle(big).fontSize, top: li.getBoundingClientRect().top, left: li.getBoundingClientRect().left, right: li.getBoundingClientRect().right };
         });
         const strip = hero.querySelector('.hero-facts').getBoundingClientRect();
         return {
@@ -134,10 +134,18 @@ try {
         };
       });
       check(`${tag} hero: one h1, saying what the business is, no Royal Oak`, h.h1 === 1 && h.title === index.sections.hero.settings.heading && !/royal oak/i.test(h.title), h.title);
-      check(`${tag} hero: the five facts in order, from the blocks`, h.facts.map((f) => f.text).join(' | ') === `${LIBRARY_GAMES} games to play or borrow | 30 tables | Pokémon and other TCGs | Warhammer and other wargames | ${LIBRARY_RPG} RPG books`, h.facts.map((f) => f.text).join(' | '));
+      check(`${tag} hero: the five facts in order, from the blocks`, h.facts.map((f) => f.text).join(' | ') === `30 tables | Pokémon and other TCGs | ${LIBRARY_RPG} RPG books | Warhammer and wargames | ${LIBRARY_GAMES} games to play or borrow`, h.facts.map((f) => f.text).join(' | '));
       check(`${tag} hero: every fact's big words whole on one line, inside its tile, all the same size`, h.facts.every((f) => f.lines === 1 && f.w <= f.inner + 0.5) && new Set(h.facts.map((f) => f.size)).size === 1, h.facts.map((f) => `${Math.round(f.w)}/${Math.round(f.inner)} ${f.size}`).join(', '));
       const rows = [...new Set(h.facts.map((f) => Math.round(f.top)))].length;
-      check(`${tag} hero: the strip ends square (${phone ? 'two to a row, the fifth across' : 'three, then two'})`, rows === (phone ? 3 : 2) && Math.abs(Math.max(...h.facts.map((f) => f.right)) - h.stripRight) < 1, `${rows} rows`);
+      check(`${tag} hero: the strip ends square (two to a row, the fifth across, on every size since 16 Oct 2026)`, rows === 3 && Math.abs(Math.max(...h.facts.map((f) => f.right)) - h.stripRight) < 1, `${rows} rows`);
+      // Mo (16 Oct 2026): tables then Pokémon, RPG books under tables and Warhammer under Pokémon, the games under all of them
+      const at = (i) => h.facts[i] || {};
+      const games = at(4);
+      check(`${tag} hero: tables and Pokémon side by side, RPG books under tables, Warhammer under Pokémon, the games across the bottom`,
+        Math.round(at(0).top) === Math.round(at(1).top) && at(0).left < at(1).left
+        && Math.round(at(2).top) === Math.round(at(3).top) && at(2).top > at(0).top && Math.abs(at(2).left - at(0).left) < 1 && Math.abs(at(3).left - at(1).left) < 1
+        && games.top > at(2).top && Math.abs(games.left - at(0).left) < 1 && Math.abs(games.right - h.stripRight) < 1,
+        h.facts.map((f) => `${f.text.split(' ')[0]}@${Math.round(f.left)},${Math.round(f.top)}`).join(' '));
       check(`${tag} hero: the text under it has no Royal Oak and no table price`, h.lede && !/royal oak/i.test(h.lede) && !/\$/.test(h.lede), h.lede);
       check(`${tag} hero: Book a table, Shop new arrivals and Join our Discord kept, on the first screen`, h.buttons.length === 3 && /Book a table/.test(h.buttons[0]) && /Discord/.test(h.buttons[2]) && h.buttonsBottom <= height, `${h.buttons.join(' | ')}; bottom ${Math.round(h.buttonsBottom)}`);
 
