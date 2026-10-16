@@ -447,6 +447,27 @@ export function blurbOf(text) {
  * when it's tracked and at least 1 (99 at most), else null. shopCopy: the shop copy staff linked (custom.shop_copy), as
  * { productId, handle, title, price (cents), available, image }, or null.
  */
+/**
+ * 17 Oct 2026: the catalogue rows' shape. A full sync runs when the stored shape isn't this one, so a change to
+ * catalogRowOf that every row needs again only has to change this.
+ */
+export const PICK_CATALOG_SHAPE = '2026-10-17';
+/** The catalogue columns a sync sets (besides product_id, status, seen_at and synced_at), in catalogValues' order */
+const CATALOG_COLUMNS = ['variant_id', 'handle', 'raw_title', 'title', 'image', 'shelf_code', 'copies', 'in_store_only', 'missing_pieces', 'missing_note',
+  'tags', 'players_text', 'time_text', 'difficulty', 'blurb', 'video', 'vendor', 'description', 'shop_copy', 'created_at_shopify', 'updated_at_shopify'];
+const SHOP_COLUMNS = ['handle', 'title', 'norm', 'price', 'available', 'image'];
+/** A catalogue row's values as they're stored, in CATALOG_COLUMNS' order */
+function catalogValues(c) {
+  return [c.variantId, c.handle, c.rawTitle, c.title, c.image, c.shelfCode, c.copies, c.inStoreOnly, c.missingPieces, c.missingNote, JSON.stringify(c.tags),
+    c.playersText, c.timeText, c.difficulty, c.blurb, c.video, c.vendor, c.description, c.shopCopy ? JSON.stringify(c.shopCopy) : null, c.createdAt, c.updatedAt];
+}
+/** A stored value and a new one are the same (null and undefined alike; 3 and '3' alike, as SQLite keeps them) */
+function sameValue(stored, value) {
+  const a = stored ?? null;
+  const b = value ?? null;
+  return a === b || (a !== null && b !== null && String(a) === String(b));
+}
+
 export function catalogRowOf(node, now) {
   const variant = node.variants?.nodes?.[0] || null;
   const quantity = Number(variant?.inventoryQuantity);
@@ -1898,7 +1919,11 @@ export const pickMethods = {
     if (now < (this.retryAt.get('copies') || 0)) return { skipped: 'waiting' };
     const lastFull = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'pick-catalog-full'").toArray()[0]?.value) || 0;
     const lastSync = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'pick-catalog-sync'").toArray()[0]?.value) || 0;
-    const isFull = full ?? (!this.pickFullDone || !lastFull || now - lastFull >= PICK_LIMITS.fullSyncHours * HOUR);
+    // 17 Oct 2026: a full sync every 6 hours, or when the rows' shape has changed (PICK_CATALOG_SHAPE), and no longer on
+    // every restart: the Lair restarts after every quiet spell, and each full sync wrote every listing again (the free
+    // plan's daily rows written ran out on launch day)
+    const shape = this.sql.exec("SELECT value FROM meta WHERE key = 'pick-catalog-shape'").toArray()[0]?.value || '';
+    const isFull = full ?? (!lastFull || now - lastFull >= PICK_LIMITS.fullSyncHours * HOUR || shape !== PICK_CATALOG_SHAPE);
     let library;
     let shop = null;
     try {
@@ -1921,7 +1946,7 @@ export const pickMethods = {
       this.note({ catalogError: { message: 'Shopify found no library listings, so nothing was marked gone.', at: new Date(stamp).toISOString() } });
     } else if (isFull || !lastSync) {
       this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('pick-catalog-full', ?)", String(stamp));
-      this.pickFullDone = true;
+      this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('pick-catalog-shape', ?)", PICK_CATALOG_SHAPE);
     }
     return { ...result, kind: isFull || !lastSync ? 'full' : 'update' };
   },
@@ -1939,8 +1964,11 @@ export const pickMethods = {
       const c = catalogRowOf(node, now);
       if (!/^\d{1,20}$/.test(c.productId) || seen.has(c.productId)) continue;
       seen.add(c.productId);
-      const had = this.sql.exec('SELECT 1 AS here FROM pick_catalog WHERE product_id = ?', c.productId).toArray().length > 0;
-      if (!had) added += 1;
+      const old = this.sql.exec('SELECT * FROM pick_catalog WHERE product_id = ?', c.productId).toArray()[0] || null;
+      if (!old) added += 1;
+      // 17 Oct 2026: a listing that hasn't changed isn't written again (every write counts against the day's rows written)
+      const values = catalogValues(c);
+      if (old && old.status === 'active' && CATALOG_COLUMNS.every((column, i) => sameValue(old[column], values[i]))) continue;
       this.sql.exec(
         `INSERT INTO pick_catalog (product_id, variant_id, handle, raw_title, title, image, shelf_code, copies, in_store_only, missing_pieces, missing_note, tags,
            players_text, time_text, difficulty, blurb, video, vendor, description, shop_copy, created_at_shopify, updated_at_shopify, status, seen_at, synced_at)
@@ -1951,9 +1979,7 @@ export const pickMethods = {
            time_text = excluded.time_text, difficulty = excluded.difficulty, blurb = excluded.blurb, video = excluded.video, vendor = excluded.vendor,
            description = excluded.description, shop_copy = excluded.shop_copy, created_at_shopify = excluded.created_at_shopify,
            updated_at_shopify = excluded.updated_at_shopify, status = 'active', seen_at = excluded.seen_at, synced_at = excluded.synced_at`,
-        c.productId, c.variantId, c.handle, c.rawTitle, c.title, c.image, c.shelfCode, c.copies, c.inStoreOnly, c.missingPieces, c.missingNote,
-        JSON.stringify(c.tags), c.playersText, c.timeText, c.difficulty, c.blurb, c.video, c.vendor, c.description, c.shopCopy ? JSON.stringify(c.shopCopy) : null,
-        c.createdAt, c.updatedAt, now, now,
+        c.productId, ...values, now, now,
       );
     }
     let gone = 0;
@@ -1970,18 +1996,25 @@ export const pickMethods = {
     let shop = null;
     // (and an empty answer for the for-sale board games leaves the shop copies as they were)
     if (shopNodes?.length) {
-      this.sql.exec('DELETE FROM pick_shop');
+      // 17 Oct 2026: only the copies that changed are written, and the ones Shopify no longer has are deleted
+      const had = new Map(this.sql.exec('SELECT * FROM pick_shop').toArray().map((r) => [r.product_id, r]));
+      const kept = new Set();
       shop = 0;
       for (const node of shopNodes) {
         if (!node?.id) continue;
         const s = shopRowOf(node);
-        if (!/^\d{1,20}$/.test(s.productId)) continue;
+        if (!/^\d{1,20}$/.test(s.productId) || kept.has(s.productId)) continue;
+        kept.add(s.productId);
+        shop += 1;
+        const old = had.get(s.productId);
+        const values = [s.handle, s.title, s.norm, s.price, s.available, s.image];
+        if (old && SHOP_COLUMNS.every((column, i) => sameValue(old[column], values[i]))) continue;
         this.sql.exec(
           `INSERT OR REPLACE INTO pick_shop (product_id, handle, title, norm, price, available, image, seen_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           s.productId, s.handle, s.title, s.norm, s.price, s.available, s.image, now, now,
         );
-        shop += 1;
       }
+      for (const id of had.keys()) if (!kept.has(id)) this.sql.exec('DELETE FROM pick_shop WHERE product_id = ?', id);
     }
     this.pickCache = null;
     const basic = this.fillBasicFacts(now);

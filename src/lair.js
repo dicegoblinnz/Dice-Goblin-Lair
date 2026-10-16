@@ -72,6 +72,10 @@ const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
 const PERSON_TTL = 5 * MIN;
 const STATE_TTL = 60_000;
+/** 17 Oct 2026: writes that change the floor's cached state: its tables (state, seriesInfo and heldIn read them) */
+const FLOOR_WRITES = /\b(?:INTO|UPDATE|FROM)\s+(?:bookings|games|blocks|openings|series|series_members)\b/i;
+/** 17 Oct 2026: a member's last seen is kept to within this (touchMember skips the write when nothing else changes) */
+const TOUCH_EVERY = 15 * 60_000;
 /** Abuse limits for people who are not staff */
 const LIMITS = { perClientPer10Min: 20, activePerEmail: 6, messagesPerGamePerDay: 5 };
 /** What the public sees for a staff hold (staff labels can hold names or notes) */
@@ -1064,6 +1068,9 @@ export class Lair {
   /** Every write goes through here, so cached floor data is dropped the moment anything changes. */
   write(query, ...bindings) {
     this.sql.exec(query, ...bindings);
+    // 17 Oct 2026: only a write to what the floor's state is built from (state, seriesInfo, heldIn) clears its cache, so a
+    // member opening My Lair or saving their tab doesn't make every open booking and staff page read it all again
+    if (!FLOOR_WRITES.test(query)) return;
     this.version += 1;
     this.stateCache.clear();
   }
@@ -8406,6 +8413,11 @@ export class Lair {
     const full = trimmed(name, 80) || null;
     const first = full ? full.split(/\s+/)[0].slice(0, 40) : null;
     const row = this.memberRow(customerId);
+    // 17 Oct 2026: nothing to fill in, and seen in the last little while: no write. GET /me touched every member on every
+    // load, and each write counted against the day's rows written and cleared the floor's cache for everyone.
+    const fills = (full && !row?.name) || (first && !row?.first_name) || (isEmail(email) && !row?.email);
+    const newMobile = Boolean(mobile) && mobileKey(mobile) !== mobileKey(row?.mobile);
+    if (row?.code && !fills && !newMobile && now - (Number(row.last_seen) || 0) < TOUCH_EVERY) return;
     const code = row?.code || this.newCode(row?.name || full || '', 'member', customerId, now);
     this.write(
       `INSERT INTO members (customer_id, name, first_name, email, code, last_seen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)

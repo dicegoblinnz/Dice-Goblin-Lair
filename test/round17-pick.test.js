@@ -504,10 +504,14 @@ test('sync: a full sync on the first run reads every page and every shop copy; l
   await lair.syncCatalog({ full: true });
   assert.equal(lair.sql.exec('SELECT status FROM pick_catalog WHERE product_id = ?', G.codenames).one().status, 'active');
 
-  // a new Lair (a deploy) does a full sync on its first maintenance, whatever the clock says
+  // 17 Oct 2026: a new Lair (a restart after a quiet spell, or a deploy) doesn't sync it all again inside the 6 hours:
+  // the Lair restarts often, and every full sync wrote every listing again
   start(Object.fromEntries(LIBRARY.slice(0, 4).map((g) => [g.id, g.facts])), 'sync-1');
   fakeShopify(shopify);
   Date.now = () => NOW + 6 * HOUR + 2 * 60_000;
+  assert.equal((await lair.syncCatalog()).kind, 'update');
+  // but a catalogue whose rows' shape has changed (PICK_CATALOG_SHAPE) is synced in full once, then updated again
+  lair.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('pick-catalog-shape', 'older')");
   assert.equal((await lair.syncCatalog()).kind, 'full');
   assert.equal((await lair.syncCatalog()).kind, 'update');
 });
