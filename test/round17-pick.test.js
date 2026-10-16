@@ -177,7 +177,16 @@ test('pick (round 17): the words, word for word (contract section 8), and the vo
   assert.deepEqual(Object.keys(PICK_VOCAB), ['kinds', 'modes', 'vibes', 'reading', 'tables', 'confidence', 'rpgTypes', 'themes', 'styles']);
   assert.equal(PICK_VOCAB.themes.length, 28);
   assert.equal(PICK_VOCAB.styles.length, 39);
-  assert.deepEqual([PICK_SEED_VERSION, PICK_SEED, PICK_KNOWN], ['0', {}, []], 'placeholders until the tagging work is merged');
+  // The tagging work (16 Oct 2026): every library game's facts, each one valid as it stands (the seed is never clamped),
+  // and the famous games for "Games you already love". Checked one by one, so a bad entry names itself.
+  assert.equal(PICK_SEED_VERSION, '2026-10-16a');
+  const seeded = Object.entries(PICK_SEED);
+  assert.equal(seeded.length, 680, 'every active library game on 16 Oct 2026');
+  const badSeed = seeded.filter(([id, facts]) => !/^\d{1,20}$/.test(id) || !validFacts(facts).ok).map(([id, facts]) => `${id}: ${validFacts(facts).field}`);
+  assert.equal(badSeed.join('; '), '', 'every seeded game is valid');
+  assert.ok(PICK_KNOWN.length >= 100, 'about 120 famous games');
+  const badKnown = PICK_KNOWN.filter((k) => typeof k.title !== 'string' || !k.title.trim() || !Array.isArray(k.aliases)).map((k) => String(k.title));
+  assert.equal(badKnown.join('; '), '', 'every famous game has a title and aliases');
   assert.equal(PICK_AI_MODEL, '@cf/google/gemma-4-26b-a4b-it');
 });
 
