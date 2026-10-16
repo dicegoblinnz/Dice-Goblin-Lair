@@ -69,8 +69,14 @@ const card = (page) => page.evaluate(() => {
     badge: f(el.querySelector('.cluster .badge')?.textContent),
   };
 });
-const clickCredit = async (page, value = '') => {
-  await page.click(`.staff-gm-card [data-act="credit"]${value ? `[data-value="${value}"]` : ':not([data-value])'}`);
+/** A Session done button (value 'credit' or 'none'), or a marking one ('on', 'off': two taps, the first asks) */
+const clickCredit = async (page, value) => {
+  const sel = `.staff-gm-card [data-act="credit"][data-value="${value}"]`;
+  await page.click(sel);
+  if (value === 'on' || value === 'off') {
+    await settle(page, 150);
+    await page.click(sel);
+  }
   await settle(page, 500);
 };
 
@@ -121,6 +127,11 @@ for (const size of sizes) {
   await page.selectOption(`${row} select[name="day"]`, weekday);
   await page.fill(`${row} input[name="from"]`, '16:00');
   await page.fill(`${row} input[name="to"]`, '00:00');
+  // the tab loading again (as it does when it's opened after a minute) keeps what's typed
+  await page.evaluate(() => document.querySelector('staff-team').load());
+  await settle(page, 300);
+  const typed = await page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => [r.querySelector('select').value, r.querySelector('[name="from"]').value, r.querySelector('[name="to"]').value, r.querySelector('[data-hours-remove]').getAttribute('aria-label')]), row);
+  check(`${tag} Hours: the tab loading again keeps the time being typed; Remove says which time`, JSON.stringify(typed) === JSON.stringify([[weekday, '16:00', '00:00', 'Remove time 1']]), typed);
   await shot(page, `${size}-team-hours-form`, `[data-team-hours-form="${ANA}"]`);
   await axe(page, `${tag} Ana’s hours form`, `[data-team-hours-form="${ANA}"]`);
   check(`${tag} Hours form: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
@@ -140,6 +151,8 @@ for (const size of sizes) {
   check(`${tag} Hours: a time that ends before it starts says so, word for word`, bad === `A time on ${DAY} ends before it starts. Use 24:00 for midnight.`, bad);
   await page.click(`[data-team-hours-form="${ANA}"] [data-team-cancel]`);
   await settle(page);
+  const back = await page.evaluate((ana) => document.activeElement === document.querySelector(`[data-team-person="${ana}"] [data-team-hours]`), ANA);
+  check(`${tag} Hours: Cancel puts focus back on Ana’s Hours button`, back, back);
   const kept = await page.evaluate((ana) => String(document.querySelector(`[data-team-person="${ana}"] .st-person__hours`)?.textContent || '').replace(/\s+/g, ' ').trim(), ANA);
   check(`${tag} Hours: Cancel keeps what was saved`, kept === `Hours ${SHORT} 4pm–midnight`, kept);
 
@@ -163,12 +176,26 @@ for (const size of sizes) {
   await page.waitForSelector('.staff-gm-card', { timeout: 15000 });
   let c = await card(page);
   check(`${tag} GM games: in Ana’s hours: Session done: no GM credit, why, and They weren’t working: credit $5`,
-    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: no GM credit', value: '', gold: true }, { text: 'They weren’t working: credit $5', value: 'off', gold: false }])
+    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: no GM credit', value: 'none', gold: true }, { text: 'They weren’t working: credit $5', value: 'off', gold: false }])
     && c.notes[0] === `No GM credit: it’s in Ana’s hours (${SHORT} 4pm–midnight). 1 paying player × $5 stays with the shop.`, c);
   await shot(page, `${size}-gm-card-in-hours`, '.staff-gm-card:has([data-act="credit"])');
   await axe(page, `${tag} GM games tab, a staff GM’s session`, '[data-panel="games"]');
   check(`${tag} GM games tab: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
-  await clickCredit(page);
+  // a helper with Money sees no buttons to mark it (that's the main account's)
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    return be.teamAdd({ customerId: 'demo-hemi-r17', name: 'Hemi Walker', email: 'hemi@example.com', perms: ['sessions', 'money'] }).then(() => be.teamPreview('demo-hemi-r17'));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('[data-tab="games"]');
+  await page.waitForSelector('.staff-gm-card', { timeout: 15000 });
+  c = await card(page);
+  check(`${tag} GM games: a helper with Money gets Session done but nothing to mark`, c && JSON.stringify(c.buttons.map((b) => b.value)) === JSON.stringify(['none']), c);
+  await page.evaluate(() => window.Lair.store.backend.teamPreview(null));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('[data-tab="games"]');
+  await page.waitForSelector('.staff-gm-card', { timeout: 15000 });
+  await clickCredit(page, 'none');
   c = await card(page);
   const recorded = await page.evaluate(() => window.Lair.store.backend.state.gmCredits['gm-r17-ana']);
   check(`${tag} GM games: Session done records it with no credit: the toast, the card's Done, no GM credit and why`,
@@ -182,19 +209,19 @@ for (const size of sizes) {
   await settle(page);
   c = await card(page);
   check(`${tag} GM games: outside Ana’s hours: Session done: credit GM $5, why, and They were working: no credit`,
-    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: credit GM $5', value: '', gold: true }, { text: 'They were working: no credit', value: 'on', gold: false }])
+    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: credit GM $5', value: 'credit', gold: true }, { text: 'They were working: no credit', value: 'on', gold: false }])
     && c.notes[0] === `1 paying player × $5. It’s outside Ana’s hours (${SHORT} 10am–2pm), so they earn it like any GM.`, c);
   await clickCredit(page, 'on');
   c = await card(page);
-  check(`${tag} GM games: They were working records no credit, marked on the staff page`,
-    c.badge === 'Done, no GM credit' && c.notes[0] === 'No GM credit: Ana was working then, as marked on the staff page (it would have been $5.00 for 1 paying player).', c);
+  check(`${tag} GM games: They were working (two taps) records no credit, as Mo marked on the staff page`,
+    c.badge === 'Done, no GM credit' && c.notes[0] === 'No GM credit: Ana was working then, as Mo marked on the staff page (it would have been $5.00 for 1 paying player).', c);
 
   // in her hours, but she wasn't working: credited as usual
   await reset(page, 'shifts', [{ day: weekday, from: '16:00', to: '24:00' }]);
   await settle(page);
   await clickCredit(page, 'off');
   c = await card(page);
-  check(`${tag} GM games: They weren’t working credits it as usual`,
+  check(`${tag} GM games: They weren’t working (two taps) credits it as usual`,
     (await toast(page)) === 'Added $5 store credit for 1 paying player' && c.badge === 'GM credited for 1 player', { toast: await toast(page), c });
 
   // Never: no button to mark anything
@@ -202,15 +229,23 @@ for (const size of sizes) {
   await settle(page);
   c = await card(page);
   check(`${tag} GM games: Never: Session done: no GM credit, because Ana is staff, and nothing to mark`,
-    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: no GM credit', value: '', gold: true }])
+    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: no GM credit', value: 'none', gold: true }])
     && c.notes[0] === 'No GM credit: Ana is staff, and staff don’t earn GM credit. 1 paying player × $5 stays with the shop.', c);
+  // the setting changes on another device before Session done is pressed: refused, and the card catches up
+  await page.evaluate(() => window.Lair.store.backend.teamGmCredit('earn'));
+  await clickCredit(page, 'none');
+  c = await card(page);
+  check(`${tag} GM games: a setting changed since the page loaded is refused, not done, and the card catches up`,
+    (await toast(page)) === 'GM credit for staff, their hours or the team changed since this page loaded. Check the session again.'
+    && c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: credit GM $5', value: 'credit', gold: true }])
+    && (await page.evaluate(() => window.Lair.store.backend.state.games.find((g) => g.id === 'gm-r17-ana').credited)) == null, { toast: await toast(page), c });
 
   // Always: as before round 17
   await reset(page, 'earn', []);
   await settle(page);
   c = await card(page);
   check(`${tag} GM games: Always: the usual Session done: credit GM $5, nothing about staff`,
-    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: credit GM $5', value: '', gold: true }]) && c.notes.join(' ') === '1 paying player × $5', c);
+    c && JSON.stringify(c.buttons) === JSON.stringify([{ text: 'Session done: credit GM $5', value: 'credit', gold: true }]) && c.notes.join(' ') === '1 paying player × $5', c);
   check(`${tag} staff page: no script errors`, !page.errors.length, page.errors.slice(0, 5));
 
   /* ---------- the GM page's words for a staff GM ---------- */
@@ -227,7 +262,7 @@ for (const size of sizes) {
       return board.youGet(500, s);
     };
     await store.backend.teamGmCredit('never');
-    const me = await store.backend.me();
+    const me = await store.backend.gmAccount();
     const weekdayKey = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][t.weekday(key)];
     return {
       me: me.customer.staffGmCredit,
@@ -238,7 +273,7 @@ for (const size of sizes) {
       covering: board.youGet(0, s),
     };
   }, [day]);
-  check(`${tag} GM page: a staff GM's "You get" follows the setting (never, in their hours, outside them), and GET /me sends it`,
+  check(`${tag} GM page: a staff GM's "You get" follows the setting (never, in their hours, outside them), and the GM page's account sends it`,
     words.never === 'No GM credit: you’re on the Dice Goblin team. Players still pay the GM fee.'
     && words.inHours === 'No GM credit for this session: it’s in your hours. Sessions outside them earn it.'
     && words.outside === '$5 store credit per player, after each session outside your hours'
@@ -273,14 +308,14 @@ for (const size of sizes) {
     await be.teamGmCredit('shifts');
     await be.teamHours('9101', [{ day: 'sat', from: '10:00', to: '18:00' }]);
     await be.creditGm('gm_123', { onShift: true });
-    await be.creditGm('gm_456');
+    await be.creditGm('gm_456', { expect: 'none' });
   });
   check(`${tag} live: POST /team/gm-credit { mode }, /team/:id/hours { hours } and /games/:id/credit with and without onShift`,
     JSON.stringify(calls.filter((x) => /gm-credit|hours|credit/.test(x.path))) === JSON.stringify([
       { path: '/team/gm-credit', body: { mode: 'shifts' } },
       { path: '/team/9101/hours', body: { hours: [{ day: 'sat', from: '10:00', to: '18:00' }] } },
       { path: '/games/gm_123/credit', body: { onShift: true } },
-      { path: '/games/gm_456/credit', body: {} },
+      { path: '/games/gm_456/credit', body: { expect: 'none' } },
     ]), calls);
   await lctx.close();
   m.mockState.before = null;

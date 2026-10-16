@@ -64,7 +64,7 @@ const team = () => call('GET', 'team', null, OWNER);
 const setMode = (mode, who = OWNER) => call('POST', 'team/gm-credit', { mode }, who);
 const setHours = (id, hours, who = OWNER) => call('POST', `team/${id}/hours`, { hours }, who);
 const credit = (id, body = {}, who = OWNER) => call('POST', `games/${id}/credit`, body, who);
-const creditRows = () => lair.sql.exec('SELECT game_id, customer_id, players, amount, status, note FROM credits ORDER BY rowid').toArray().map((r) => ({ ...r }));
+const creditRows = () => lair.sql.exec('SELECT game_id, customer_id, players, amount, status, note, by FROM credits ORDER BY rowid').toArray().map((r) => ({ ...r }));
 
 // Shopify's store credit, as the tests see it: every credit asked for
 let credited = [];
@@ -89,24 +89,30 @@ async function session({ gm = ANA, name = 'Ana', start = at('2026-10-17', 18), e
 const realFetch = globalThis.fetch;
 let reached = [];
 let asked = [];
-// Shopify is on (for the store credit) unless a test turns it off
+// Shopify is on (for the store credit) unless a test turns it off; tagsDown: Shopify can't be asked for tags
 let shopifyOn = true;
+let tagsDown = false;
 
 beforeEach(async () => {
   reached = [];
   asked = [];
   credited = [];
   shopifyOn = true;
+  tagsDown = false;
   globalThis.fetch = async (url) => {
     reached.push(String(url));
     throw new Error(`No network in tests: ${url}`);
   };
   Date.now = () => NOW;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD' });
-  // The main account is tagged staff in Shopify; helpers are the Lair's own (person() reads them fresh)
+  // The main account is tagged staff in Shopify; helpers are the Lair's own (person() reads them fresh). Kept 5 minutes,
+  // as the real one keeps them, unless Shopify can't be asked (tagsDown)
   lair.taggedPerson = async (id) => {
     asked.push(id);
-    return { customerId: id || null, staff: id === OWNER, gm: false, tags: [] };
+    if (tagsDown) return { customerId: id || null, staff: false, gm: false, tags: [], tagsFailed: true };
+    const person = { customerId: id || null, staff: id === OWNER, gm: false, tags: [] };
+    if (id) lair.people.set(id, { at: Date.now(), person });
+    return person;
   };
   lair.shopify.orderSpend = async () => null;
   lair.shopify.orderBuyer = async () => null;
@@ -119,6 +125,7 @@ beforeEach(async () => {
   };
   lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '' }, ROOMS, []);
   lair.rulesLoadedAt = NOW + 10 * 365 * 24 * HOUR;
+  lair.makeMember({ customerId: OWNER, name: 'Mo Ashgrove', email: 'owner@example.com' }, NOW);
   // Ana and Hemi are helpers (GM games for Ana)
   for (const [id, name, perms] of [[ANA, 'Ana Ngata', ['sessions']], [HEMI, 'Hemi Walker', ['checkin', 'money']]]) {
     const made = await call('POST', 'team', { customerId: id, name, email: `${name.split(' ')[0].toLowerCase()}@example.com`, perms }, OWNER);
@@ -151,6 +158,11 @@ test('staff GM credit (round 17): the choices and words, word for word, and Neve
   assert.equal(STAFF_GM_MESSAGES.many('fri'), 'Friday has more than 3 times. Join some of them up.');
   assert.equal(STAFF_GM_MESSAGES.team, "They're not on the team. Make them a helper first.");
   assert.equal(STAFF_GM_MESSAGES.onShift, "onShift is true (they were working), false (they weren't) or left out (their hours decide).");
+  assert.equal(STAFF_GM_MESSAGES.markOwner, 'Only the main account can mark whether a staff GM was working.');
+  assert.equal(STAFF_GM_MESSAGES.expect, "expect is 'credit', 'none' or left out.");
+  assert.equal(STAFF_GM_MESSAGES.expectChanged, 'GM credit for staff, their hours or the team changed since this page loaded. Check the session again.');
+  assert.equal(STAFF_GM_MESSAGES.changed, "This session's GM changed. Check the session again.");
+  assert.equal(STAFF_GM_MESSAGES.tags, "Gobgob couldn't check whether the GM is on the team just now. Try again in a moment.");
 });
 
 test('staff hours (round 17): cleaned and sorted, Monday first; 24:00 or an end of 00:00 is midnight; day names any case', () => {
@@ -243,7 +255,7 @@ test('POST /team/gm-credit (round 17): the main account picks; a helper, even wi
   const set = await setMode('shifts');
   assert.equal(set.status, 200, set.data.error);
   assert.equal(set.data.gmCredit.mode, 'shifts');
-  assert.deepEqual(set.data.gmCredit.changedBy, { customerId: OWNER, name: '' });
+  assert.deepEqual(set.data.gmCredit.changedBy, { customerId: OWNER, name: 'Mo Ashgrove' });
   assert.equal(set.data.gmCredit.changedAt, NOW + HOUR);
   assert.equal((await team()).data.gmCredit.mode, 'shifts');
   assert.equal((await setMode('earn')).data.gmCredit.mode, 'earn');
@@ -294,8 +306,8 @@ test('GM credit (round 17), Never: a helper GM’s session is done with no credi
   assert.deepEqual([paid.data.players, paid.data.amount, paid.data.status], [3, 1500, 'credited']);
   assert.deepEqual(credited, [[RANGI, 1500]], "Shopify only added Rangi's");
   assert.deepEqual(creditRows(), [
-    { game_id: ana, customer_id: ANA, players: 2, amount: 0, status: 'staff', note: done.data.note },
-    { game_id: rangi, customer_id: RANGI, players: 3, amount: 1500, status: 'credited', note: '' },
+    { game_id: ana, customer_id: ANA, players: 2, amount: 0, status: 'staff', note: done.data.note, by: `staff:${OWNER}` },
+    { game_id: rangi, customer_id: RANGI, players: 3, amount: 1500, status: 'credited', note: '', by: `staff:${OWNER}` },
   ]);
   assert.equal(lair.game(ana).credited, 2, 'marked done');
 });
@@ -335,11 +347,11 @@ test('GM credit (round 17), Not in their hours: staff can mark that the GM was w
   Date.now = () => at('2026-10-18', 17);
   for (const bad of ['yes', 1, 'true']) assert.equal(said(await credit(inHours, { onShift: bad })), `422 ${STAFF_GM_MESSAGES.onShift}`);
   const notWorking = await credit(inHours, { onShift: false });
-  assert.deepEqual(notWorking.data, { players: 2, amount: 1000, status: 'credited', note: "Ana wasn't working then, as marked on the staff page, so they earn it like any GM." });
+  assert.deepEqual(notWorking.data, { players: 2, amount: 1000, status: 'credited', note: "Ana wasn't working then, as Mo marked on the staff page, so they earn it like any GM." });
   const working = await credit(outside, { onShift: true });
   assert.deepEqual(working.data, {
     players: 2, amount: 0, status: 'staff', withheld: 1000,
-    note: 'No GM credit: Ana was working then, as marked on the staff page (it would have been $10.00 for 2 paying players).',
+    note: 'No GM credit: Ana was working then, as Mo marked on the staff page (it would have been $10.00 for 2 paying players).',
   });
   assert.deepEqual(credited, [[ANA, 1000]]);
 });
@@ -363,6 +375,85 @@ test('GM credit (round 17): someone who stops being a helper is credited like an
   assert.equal((await call('POST', `team/${ANA}/remove`, {}, OWNER)).status, 200);
   assert.equal((await credit(ana)).data.status, 'credited');
   assert.deepEqual(credited, [[ANA, 1000]]);
+});
+
+test('GM credit (round 17): only the main account marks whether a staff GM was working; Money helpers credit as the rule says', async () => {
+  await setMode('shifts');
+  await setHours(ANA, [{ day: 'sat', from: '10:00', to: '19:00' }]);
+  const inHours = await session({ start: at('2026-10-17', 12), end: at('2026-10-17', 16) });
+  Date.now = () => at('2026-10-17', 17);
+  assert.equal(said(await credit(inHours, { onShift: false }, HEMI)), `403 ${STAFF_GM_MESSAGES.markOwner}`);
+  assert.equal(lair.game(inHours).credited, null, 'nothing done');
+  const done = await credit(inHours, {}, HEMI);
+  assert.equal(done.data.status, 'staff');
+  assert.equal(creditRows()[0].by, `staff:${HEMI}`, 'who pressed it is kept');
+  assert.deepEqual(credited, []);
+});
+
+test('GM credit (round 17): expect is what the button said; if the setting changed since, a 409 and nothing done', async () => {
+  const one = await session({ start: at('2026-10-17', 12), end: at('2026-10-17', 16) });
+  const two = await session({ start: at('2026-10-17', 18), end: at('2026-10-17', 22) });
+  Date.now = () => at('2026-10-17', 22, 30);
+  assert.equal(said(await credit(one, { expect: 'maybe' })), `422 ${STAFF_GM_MESSAGES.expect}`);
+  // the page said "Session done: no GM credit" (Never), but the main account switched to Always on another device
+  await setMode('earn');
+  assert.equal(said(await credit(one, { expect: 'none' })), `409 ${STAFF_GM_MESSAGES.expectChanged}`);
+  assert.equal(lair.game(one).credited, null);
+  assert.deepEqual(credited, []);
+  assert.equal((await credit(one, { expect: 'credit' })).data.status, 'credited');
+  // and the other way: the page said credit, the setting is Never now
+  await setMode('never');
+  assert.equal(said(await credit(two, { expect: 'credit' })), `409 ${STAFF_GM_MESSAGES.expectChanged}`);
+  assert.equal((await credit(two, { expect: 'none' })).data.status, 'staff');
+  assert.deepEqual(credited, [[ANA, 1000]]);
+});
+
+test('GM credit (round 17): Shopify can’t say whether a GM is the main account: a 503, never paid; Always doesn’t need to ask', async () => {
+  const own = await session({ gm: OWNER, name: 'Mo' });
+  const rangi = await session({ gm: RANGI, name: 'Rangi', start: at('2026-10-17', 12), end: at('2026-10-17', 16) });
+  Date.now = () => at('2026-10-17', 22, 30);
+  lair.people.clear();
+  tagsDown = true;
+  // a helper with Money presses it (the main account pressing it would need its own tags too)
+  assert.equal(said(await credit(own, {}, HEMI)), `503 ${STAFF_GM_MESSAGES.tags}`);
+  assert.equal(said(await credit(rangi, {}, HEMI)), `503 ${STAFF_GM_MESSAGES.tags}`);
+  assert.equal(lair.game(own).credited, null);
+  assert.deepEqual(credited, []);
+  // (the main account needs its own tags to change the setting)
+  tagsDown = false;
+  await setMode('earn');
+  tagsDown = true;
+  assert.equal((await credit(rangi, {}, HEMI)).data.status, 'credited');
+  tagsDown = false;
+  await setMode('never');
+  assert.equal((await credit(own, {}, HEMI)).data.status, 'staff');
+  assert.deepEqual(credited, [[RANGI, 1000]]);
+});
+
+test('GM credit (round 17): a session whose GM changed while the team was checked is a 409', async () => {
+  const ana = await session();
+  Date.now = () => at('2026-10-17', 22, 30);
+  const real = lair.person.bind(lair);
+  lair.person = async (id) => {
+    if (id === ANA) lair.sql.exec('UPDATE games SET gm_customer_id = ? WHERE id = ?', RANGI, ana);
+    return real(id);
+  };
+  assert.equal(said(await credit(ana)), `409 ${STAFF_GM_MESSAGES.changed}`);
+  assert.equal(lair.game(ana).credited, null);
+  assert.deepEqual(credited, []);
+});
+
+test('GM credit (round 17): a GM listed by email only: added by hand, with a word about staff unless the setting is Always', async () => {
+  const listed = await call('POST', 'games', {
+    title: 'Emailed GM', system: 'D&D 5e', gm: 'Tui', blurb: 'x', seats: 4, tables: ['B1'], start: at('2026-10-17', 12), end: at('2026-10-17', 16), gmEmail: 'tui@example.com',
+  }, OWNER);
+  assert.equal(listed.status, 200, listed.data.error);
+  const id = listed.data.game.id;
+  const seat = await call('POST', 'bookings', { kind: 'gm-seat', gameId: id, people: 1, name: 'Mia', email: 'mia@example.com', phone: '021 555 0100', pay: 'day' }, MIA);
+  await call('POST', `bookings/${seat.data.booking.id}/update`, { paid: true }, OWNER);
+  Date.now = () => at('2026-10-17', 17);
+  const manual = await credit(id);
+  assert.deepEqual([manual.data.status, manual.data.note], ['manual', "The GM isn't linked to a customer account, so add the store credit in Shopify admin. If they're on the team, check GM credit for staff on the Team tab first."]);
 });
 
 /* ---------------- what staff and GMs see ---------------- */
@@ -394,6 +485,21 @@ test('floor (round 17): staff see what the setting says for a staff GM’s sessi
   // the public board never has either
   const board = (await floor(MIA)).games;
   assert.ok(board.every((g) => g.staffGm === undefined && g.credit === undefined));
+  // a helper who only runs the desk (Check-in and Tables) doesn't see either
+  assert.equal((await call('POST', 'team', { customerId: '9103', name: 'Kiri Hura', email: 'kiri@example.com', perms: ['checkin', 'tables'] }, OWNER)).status, 200);
+  const desk = (await floor('9103')).games;
+  assert.ok(desk.length && desk.every((g) => g.staffGm === undefined && g.credit === undefined), 'desk helper sees no GM credit');
+  // the main account as GM: known from its tags when they're fresh; otherwise looked up after the answer, for next time
+  const own = await session({ gm: OWNER, name: 'Mo', start: at('2026-10-24', 17), end: at('2026-10-24', 20) });
+  Date.now = () => at('2026-10-24', 20) + 10 * 60_000;
+  lair.people.clear();
+  asked = [];
+  games = (await floor(HEMI)).games;
+  assert.equal(of(own).staffGm, undefined, 'not known yet: the usual card');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(asked.includes(OWNER), 'its tags were asked for after the answer');
+  games = (await floor(HEMI)).games;
+  assert.deepEqual(of(own).staffGm, { mode: 'shifts', credit: true, onShift: false, shift: null, hours: '' });
   // Always: nothing to ask Shopify about (only who's asking is looked up)
   assert.ok(of(fresh).staffGm, 'Never: fresh is waiting for its credit');
   await setMode('earn');
@@ -401,6 +507,7 @@ test('floor (round 17): staff see what the setting says for a staff GM’s sessi
   games = (await floor()).games;
   assert.equal(of(fresh).staffGm, undefined);
   assert.ok(asked.every((id) => id === OWNER), `no GM's tags asked for: ${asked}`);
+  Date.now = () => at('2026-10-17', 22, 30);
 });
 
 test('GET /me (round 17): someone on the team sees how the setting touches them; anyone else, null', async () => {

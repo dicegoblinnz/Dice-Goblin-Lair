@@ -253,7 +253,11 @@ const LENDING_INDEXES = ["CREATE INDEX IF NOT EXISTS library_loans_guest ON libr
  */
 const ROUND17_STAFF_HOURS = [
   'CREATE TABLE IF NOT EXISTS staff_hours (customer_id TEXT PRIMARY KEY, hours TEXT NOT NULL, by TEXT, updated_at INTEGER NOT NULL)',
+  // the staff floor reads each session's GM credit
+  'CREATE INDEX IF NOT EXISTS credits_game ON credits (game_id, created_at)',
 ];
+/** Round 17: credits.by, who pressed "Session done" (staff:<customer id>, or staff when that isn't known) */
+const ROUND17_COLUMNS = [['credits', 'by', 'TEXT']];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -913,7 +917,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of ROUND15_COLUMNS) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1502,8 +1506,9 @@ export class Lair {
       ok = false;
       console.error('Lair: could not read customer tags', error);
     }
-    // tags (lower case) also say their library plan (Simplee's tags, round 6)
-    const person = { customerId, staff: tags.includes('staff'), gm: tags.includes('gm'), tags };
+    // tags (lower case) also say their library plan (Simplee's tags, round 6). Round 17: tagsFailed when Shopify couldn't
+    // be asked (never kept), so the GM credit doesn't pay a main account it couldn't recognise
+    const person = { customerId, staff: tags.includes('staff'), gm: tags.includes('gm'), tags, ...(ok ? {} : { tagsFailed: true }) };
     if (ok) {
       if (this.people.size > 500) this.people.clear();
       this.people.set(customerId, { at: Date.now(), person });
@@ -1921,10 +1926,12 @@ export class Lair {
     // Round 9: the floor's staff view (names, emails, payments, every sign-up) for the owner and helpers who run the desk,
     // the floor, GM games or events; anyone else sees the public floor
     const staffView = this.can(who, FLOOR_STAFF);
-    // Round 17: for staff, the sessions ready for their GM credit whose GM is on the team (staffGmPeople asks person()
-    // for each GM: Shopify's tags at most every 5 minutes), and what was recorded for each session credited
-    const gmTeam = staffView ? await this.staffGmPeople(st.games, now) : null;
-    const credits = staffView ? this.creditsIn(from, to) : null;
+    // Round 17: for staff who run GM games or handle money, the sessions ready for their GM credit whose GM is on the
+    // team (staffGmTeam: helpers, and the main account when its tags are known; never waiting on Shopify), and what was
+    // recorded for each session credited
+    const creditView = staffView && this.can(who, ['sessions', 'money']);
+    const gmTeam = creditView ? this.staffGmTeam(st.games, now) : null;
+    const credits = creditView ? this.creditsIn(from, to) : null;
     const paid = staffView ? { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) } : null;
     const view = (bk) => {
       // Staff see everything, plus the saved pass, what passes covered, what's due, the refund state and who paid.
@@ -1988,7 +1995,7 @@ export class Lair {
         // Round 17: for staff, what the GM credit was (credit: { status, amount, players, note, at }), and for one not
         // credited yet whose GM is on the team, what the team's setting says (staffGm: staffGmRule's mode, credit,
         // onShift, shift and hours)
-        if (staffView) {
+        if (creditView) {
           if (credits.has(g.id)) game.credit = credits.get(g.id);
           const rule = readyForCredit(g, now) && gmTeam?.has(String(g.gmCustomerId)) ? this.staffGmRule(g, gmTeam.get(String(g.gmCustomerId)), rules) : null;
           if (rule) game.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, shift: rule.shift, hours: rule.hours };
@@ -3724,10 +3731,14 @@ export class Lair {
   async creditGm(id, who, input = {}) {
     // Round 9: the GM's store credit is money
     this.requireStaff(who, 'money');
-    // Round 17: with the 'shifts' setting, staff can mark that a staff GM was working then (onShift: true) or wasn't
-    // (false), whatever their hours say
+    // Round 17: with the 'shifts' setting, the main account can mark that a staff GM was working then (onShift: true) or
+    // wasn't (false), whatever their hours say. expect is what the staff page's button said would happen ('credit' or
+    // 'none'): if the setting, their hours or the team changed since, it's a 409 and nothing is done.
     const onShift = input?.onShift ?? null;
     if (onShift !== null && typeof onShift !== 'boolean') throw new RuleError(STAFF_GM_MESSAGES.onShift);
+    if (onShift !== null && !this.can(who, 'team')) throw new RuleError(STAFF_GM_MESSAGES.markOwner, 403);
+    const expect = input?.expect ?? null;
+    if (expect !== null && !['credit', 'none'].includes(expect)) throw new RuleError(STAFF_GM_MESSAGES.expect);
     const rules = await this.rules();
     // Round 17: whether the GM is on the team (the main account or a helper), asked before the part with no awaits
     const before = this.game(id);
@@ -3739,6 +3750,9 @@ export class Lair {
     if (game.status === 'cancelled') throw new RuleError('This game was cancelled.', 409);
     if (game.start > now) throw new RuleError('Credit the GM once the session has started.');
     if (game.credited != null) throw new RuleError('This GM has already been credited.', 409);
+    // Round 17: the GM the team was checked for is still this session's GM, and the main account's tags were read
+    if (String(game.gmCustomerId || '') !== String(before?.gmCustomerId || '')) throw new RuleError(STAFF_GM_MESSAGES.changed, 409);
+    if (gm?.tagsFailed && !gm.staff && this.staffGmMode() !== 'earn') throw new RuleError(STAFF_GM_MESSAGES.tags, 503);
     const players = this.sql
       .exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 1 AND status NOT IN ('cancelled', 'noshow')", id)
       .one().n;
@@ -3747,20 +3761,25 @@ export class Lair {
     // Round 17: a staff GM's session, when the team's setting keeps the credit from them: recorded with no credit
     // (status 'staff', amount 0), so it's done and can't be credited later. The players paid as always.
     const rule = amount > 0 ? this.staffGmRule(game, gm, rules, onShift) : null;
-    if (rule && !rule.credit) {
-      const kept = this.staffGmNote(rule, game, amount, players);
+    const kept = Boolean(rule && !rule.credit);
+    if ((expect === 'none' && !kept) || (expect === 'credit' && kept)) throw new RuleError(STAFF_GM_MESSAGES.expectChanged, 409);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    const marker = rule?.marked ? this.memberRow(who.customerId) : null;
+    const markedBy = marker ? marker.first_name || String(marker.name || '').split(' ')[0] || '' : '';
+    if (kept) {
+      const note = this.staffGmNote(rule, game, amount, players, markedBy);
       this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
       this.write(
-        'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        makeId('cr'), id, game.gmCustomerId, players, 0, 'staff', kept, now,
+        'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at, by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        makeId('cr'), id, game.gmCustomerId, players, 0, 'staff', note, now, by,
       );
-      return { players, amount: 0, status: 'staff', note: kept, withheld: amount };
+      return { players, amount: 0, status: 'staff', note, withheld: amount };
     }
     this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
     let status = 'none';
     let note = game.gmFee === 0 ? "This GM covers their players' fee, so there's no store credit to add." : '';
     // Round 17: a staff GM who earns it (outside their hours, or marked not working) says why
-    if (rule) note = this.staffGmNote(rule, game, amount, players);
+    if (rule) note = this.staffGmNote(rule, game, amount, players, markedBy);
     try {
       if (amount > 0 && game.gmCustomerId && this.shopify.configured) {
         await this.shopify.creditCustomer(game.gmCustomerId, amount, this.env.CURRENCY || 'NZD');
@@ -3768,6 +3787,8 @@ export class Lair {
       } else if (amount > 0) {
         status = 'manual';
         note = "The GM isn't linked to a customer account, so add the store credit in Shopify admin.";
+        // Round 17: a GM listed by email could still be on the team
+        if (this.staffGmMode() !== 'earn') note += " If they're on the team, check GM credit for staff on the Team tab first.";
       }
     } catch (error) {
       this.write('UPDATE games SET credited = NULL, updated_at = ? WHERE id = ?', Date.now(), id);
@@ -3775,8 +3796,8 @@ export class Lair {
       throw new RuleError(`Shopify didn't add the store credit (${error.message}). Try again, or add it in Shopify admin.`, 502);
     }
     this.write(
-      'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      makeId('cr'), id, game.gmCustomerId, players, amount, status, note, Date.now(),
+      'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at, by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      makeId('cr'), id, game.gmCustomerId, players, amount, status, note, Date.now(), by,
     );
     return { players, amount, status, note };
   }

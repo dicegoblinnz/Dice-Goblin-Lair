@@ -45,6 +45,11 @@ export const STAFF_GM_MESSAGES = {
   many: (day) => `${DAY_NAMES[day]} has more than ${HOURS_PER_DAY_MAX} times. Join some of them up.`,
   team: "They're not on the team. Make them a helper first.",
   onShift: "onShift is true (they were working), false (they weren't) or left out (their hours decide).",
+  markOwner: 'Only the main account can mark whether a staff GM was working.',
+  expect: "expect is 'credit', 'none' or left out.",
+  expectChanged: 'GM credit for staff, their hours or the team changed since this page loaded. Check the session again.',
+  changed: "This session's GM changed. Check the session again.",
+  tags: "Gobgob couldn't check whether the GM is on the team just now. Try again in a moment.",
 };
 
 const META_KEY = 'staff-gm-credit';
@@ -240,18 +245,22 @@ export const staffGmMethods = {
     return { mode, credit: !on, onShift: on, marked, shift: shift ? shiftText(shift) : null, hours: staffHoursText(hours) };
   },
 
-  /** The credit record's note for a staff GM (credits.note, and the answer the staff page shows). No awaits. */
-  staffGmNote(rule, game, due, count) {
+  /**
+   * The credit record's note for a staff GM (credits.note, and the answer the staff page shows). markedBy: the first name
+   * of whoever marked whether they were working (the main account), when the note is about that. No awaits.
+   */
+  staffGmNote(rule, game, due, count, markedBy = '') {
     const name = String(game.gm || '').trim() || 'The GM';
     const would = `${dollars(due)} for ${players(count)}`;
+    const marked = `as ${markedBy ? `${markedBy} marked` : 'marked'} on the staff page`;
     if (rule.mode === 'never') return `No GM credit: ${name} is staff, and staff don't earn GM credit (it would have been ${would}).`;
     if (!rule.credit) {
       return rule.marked
-        ? `No GM credit: ${name} was working then, as marked on the staff page (it would have been ${would}).`
+        ? `No GM credit: ${name} was working then, ${marked} (it would have been ${would}).`
         : `No GM credit: it was in ${name}'s hours, ${rule.shift} (it would have been ${would}).`;
     }
     return rule.marked
-      ? `${name} wasn't working then, as marked on the staff page, so they earn it like any GM.`
+      ? `${name} wasn't working then, ${marked}, so they earn it like any GM.`
       : `It was outside ${name}'s hours, so they earn it like any GM.`;
   },
 
@@ -275,14 +284,28 @@ export const staffGmMethods = {
 
   /**
    * For the floor (staff): the GMs on the team among the sessions ready for their GM credit (started, not credited, not
-   * cancelled, with a GM fee), as person() gives them, by customer ID. null when the setting is 'earn' (nothing to ask).
-   * person() keeps Shopify's tags 5 minutes and reads helpers fresh.
+   * cancelled, with a GM fee), by customer ID, as { customerId, staff: true }. The floor never waits on Shopify: a helper
+   * is read here, and the main account counts when its tags are already known (kept 5 minutes). A GM whose tags aren't
+   * known is looked up after the answer goes (at most once a minute each), for the next time; until then the card
+   * shows the usual credit, and "Session done" (which asks Shopify itself) says what it did. null for 'earn'. No awaits.
    */
-  async staffGmPeople(games, now) {
+  staffGmTeam(games, now) {
     if (this.staffGmMode() === 'earn') return null;
     const ids = [...new Set((games || []).filter((g) => readyForCredit(g, now)).map((g) => String(g.gmCustomerId)))];
-    const people = await Promise.all(ids.map((id) => this.person(id).catch(() => null)));
-    return new Map(ids.map((id, i) => [id, people[i]]).filter(([, p]) => p?.staff));
+    const team = new Map();
+    if (!this.staffGmAsked) this.staffGmAsked = new Map();
+    for (const id of ids) {
+      if (this.helperRow(id)) team.set(id, { customerId: id, staff: true });
+      const known = this.people?.get(id);
+      if (known && Date.now() - known.at < 5 * 60_000) {
+        if (known.person.staff) team.set(id, { customerId: id, staff: true });
+      } else if (!team.has(id) && Date.now() - (this.staffGmAsked.get(id) || 0) > 60_000) {
+        if (this.staffGmAsked.size > 500) this.staffGmAsked.clear();
+        this.staffGmAsked.set(id, Date.now());
+        this.later(this.taggedPerson(id));
+      }
+    }
+    return team;
   },
 
   /** For the floor (staff): the GM credit recorded for each session from..to, by game ID: { status, amount, players, note, at }. No awaits. */
