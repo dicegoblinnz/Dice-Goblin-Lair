@@ -183,3 +183,15 @@ games only, and the wishlist built but switched off.
   desktop. `DG_THEME=… [PORT=4976] [OUT=…] node tools/qa/round16/library-numbers.mjs [phone|desktop]`. The mock's
   library collection holds the store's count and its copies know their collections (`library-rpg-books` for the RPG
   shelf), which round 9's site check reads for the hero's games fact.
+- `round16/library-lending.mjs`: Mo (16 Oct) asked for staff to lend a game to anyone, with no account or plan and
+  nothing to pay (contract `docs/contracts/lair-api-contract-v16-library-lending.md`). Demo mode on the theme mock, phone
+  and desktop: the staff desk's Lend to someone new (the name, then an email or mobile, each said and focused, a
+  landline in the Lair app's words), lending by typing and with the camera, an email that's a member's, Pick a member
+  instead, a member with no plan (lent, no notice), a plan member (checked out), a search with no match offering to
+  lend, Games at home marking Lent and a guest's email and mobile, and a guest's game checked in. Then the person logs
+  in with that email: the game is theirs, My Library shows it lent and free with no invite to join on top, and My
+  Lair's Library tile says "1 game lent to you"; a plan member's lent game doesn't use the plan. `DG_THEME=…
+  [PORT=4986] node tools/qa/round16/library-lending.mjs [phone|desktop]`.
+- `round16/library-lending-axe.mjs`: axe on the lend form, Games at home with lent games, the no-match search and My
+  Library (lent only, and a plan with a lent game), and the keyboard through Lend to someone new (Enter moves Name →
+  Email → Mobile → the game). `DG_THEME=… AXE=…/axe.min.js [PORT=4988] node tools/qa/round16/library-lending-axe.mjs`.
