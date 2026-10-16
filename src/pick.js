@@ -1790,11 +1790,23 @@ export const pickMethods = {
   },
 
   /* ---------------- staff: checking games (section 6) ---------------- */
-  /** A game as the staff check page shows it */
-  staffPickView(g) {
+  /**
+   * A game as the staff check page shows it. checkedBy: who checked it, by first name, from their member record (the
+   * Lair keeps their customer ID in checked_by), or null when that isn't known; the page says "Checked by Mo". names:
+   * customer ID → name, shared across one answer's games. No awaits.
+   */
+  staffPickView(g, names = new Map()) {
+    let checkedBy = null;
+    if (g.checkedBy) {
+      if (!names.has(g.checkedBy)) {
+        const m = this.memberRow(g.checkedBy);
+        names.set(g.checkedBy, m?.first_name || String(m?.name || '').trim().split(/\s+/)[0] || null);
+      }
+      checkedBy = names.get(g.checkedBy);
+    }
     return {
       productId: g.productId, title: g.title, handle: g.handle, image: g.image, shelfCode: g.shelfCode || null, facts: g.facts, source: g.source,
-      checked: g.checked, checkedBy: g.checkedBy, checkedAt: g.checkedAt, staffPick: g.staffPick, status: g.status,
+      checked: g.checked, checkedBy, checkedAt: g.checkedAt, staffPick: g.staffPick, status: g.status,
     };
   },
 
@@ -1825,7 +1837,8 @@ export const pickMethods = {
       const source = { auto: 0, basic: 1, seed: 2, staff: 3 };
       list = [...list].sort((a, b) => low(a) - low(b) || (source[a.source] ?? 4) - (source[b.source] ?? 4) || a.title.localeCompare(b.title, 'en'));
     }
-    return { games: list.slice(offset, offset + limit).map((g) => this.staffPickView(g)), total: list.length };
+    const names = new Map();
+    return { games: list.slice(offset, offset + limit).map((g) => this.staffPickView(g, names)), total: list.length };
   },
 
   /**
@@ -2082,8 +2095,9 @@ export const pickMethods = {
    * GET /pick/report?days=7|30|90 (perm library or community): what people asked for and what they did, over sessions
    * made in the last `days` (30 otherwise). asks: the core answers grouped (players, time, brain, team, vibes), with how
    * many asked, the median fitCount and the gap (median under 5); picked: the games shown most (each session counts a
-   * game once) and how many sessions acted on each; neverPicked: active games (and RPG books) no session in the window
-   * showed; relaxed: how many sessions had to loosen each rule. No awaits.
+   * game once) and how many sessions acted on each; acted: the games acted on most (each action counts: actions), in
+   * picked's shape too (shown, acted), so the page can show either list the same way; neverPicked: active games (and
+   * RPG books) no session in the window showed; relaxed: how many sessions had to loosen each rule. No awaits.
    */
   pickReport(url, who) {
     this.requireStaff(who, ['library', 'community']);
@@ -2142,7 +2156,7 @@ export const pickMethods = {
       picked: [...shown.entries()].sort((x, y) => y[1] - x[1] || titleOf(x[0]).localeCompare(titleOf(y[0]), 'en')).slice(0, 20)
         .map(([productId, n]) => ({ productId, title: titleOf(productId), shown: n, acted: actedBy.get(productId)?.size || 0 })),
       acted: [...acted.entries()].sort((x, y) => y[1] - x[1] || titleOf(x[0]).localeCompare(titleOf(y[0]), 'en')).slice(0, 20)
-        .map(([productId, n]) => ({ productId, title: titleOf(productId), actions: n })),
+        .map(([productId, n]) => ({ productId, title: titleOf(productId), shown: shown.get(productId) || 0, acted: actedBy.get(productId)?.size || 0, actions: n })),
       neverPicked: games.filter((g) => g.status === 'active' && ['game', 'rpg'].includes(g.facts.kind) && !everShown.has(g.productId)).length,
       ratings: {
         up: ratings.filter((r) => r.ups > 0).sort((x, y) => y.ups - x.ups || x.downs - y.downs || x.title.localeCompare(y.title, 'en')).slice(0, 20),
