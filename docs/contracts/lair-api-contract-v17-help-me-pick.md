@@ -455,8 +455,9 @@ Routes (logged in; 401 `login` for guests):
   before the booking ends; they count as holds for copies (so the quiz and reserve see the copy as taken).
 - `game_state`: `waiting` (before the window), `held`, `unavailable` (no copy free when the window opened: the
   booker is emailed once to pick another, and staff see it on the booking), `played` (the booking was checked in),
-  `released` (the booking was cancelled, moved out of the window or the game changed). A cancelled or no-show booking
-  releases its hold; moving the booking moves the window.
+  `released` (the booking was cancelled or a no-show, or the game changed). A cancelled or no-show booking releases its
+  hold; moving the booking moves the window: moved later, its hold goes and it's `waiting` again until the new window
+  opens.
 - Big-box games (`table: 'double'`) are allowed on any booking; the answer's `game.double` says so for the theme to
   flag.
 - Staff see booking holds in `GET /library/holds` with `kind: 'booking'` and `booking: { id, code, start, name }`.
