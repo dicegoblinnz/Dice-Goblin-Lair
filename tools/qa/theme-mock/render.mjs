@@ -127,9 +127,16 @@ const collections = {
   'trading-card-games': coll('trading-card-games', 'Trading Card Games', tcgShelf, 139),
   painting: coll('painting', 'Painting', [arrivals[0], arrivals[1], arrivals[5]], 4),
   'toys-plush': coll('toys-plush', 'Toys/Plush', [arrivals[1], arrivals[8], arrivals[6]], 8),
-  'board-game-rental': coll('board-game-rental', 'Board Game Rental', [membership, ...library], 534),
+  // 16 Oct 2026, the store's real counts: 681 in the library collection (680 copies and the membership product), 136 of
+  // them on the RPG shelf (the smart collection Library RPG books, tagged Shelf RPG books), so the theme's live
+  // numbers come out as the store's: 544 games and 136 RPG books
+  'board-game-rental': coll('board-game-rental', 'Board Game Rental', [membership, ...library], 681),
+  'library-rpg-books': coll('library-rpg-books', 'Library RPG books', library.filter((p) => (p.tags || []).includes('Shelf RPG books')), 136),
 };
 membership.collections = [collections['board-game-rental']];
+// the library copies' own collections, like the store's: the library, and Library RPG books for the RPG shelf (a view
+// of the RPG shelf counts RPG books by its first copy's collections)
+for (const p of library) p.collections = [collections['board-game-rental'], ...((p.tags || []).includes('Shelf RPG books') ? [collections['library-rpg-books']] : [])];
 /* r7 shell: sold-out products (the store has about 130), which the shop must never show: first and fifth in New
    Additions (so the home rail and the collection have to skip them) and one more in Trading Card Games. Inventory 0. */
 const soldOut = [

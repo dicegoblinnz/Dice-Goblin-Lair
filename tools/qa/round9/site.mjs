@@ -1,8 +1,10 @@
 // Round 9, site: the shop pages Mo asked about on 9 Oct, on the mock store in demo mode, phone (390) and desktop (1280).
 // PASS/FAIL lines; exits 1 if anything fails.
-//   1. The hero says what's here: a short heading (the business, no Royal Oak), a strip of facts (30 tables, 26+
-//      role-playing games, Pokémon, Warhammer, 500+ games) as blocks with every word a setting, each fact whole on one
-//      line, the text under it without Royal Oak or the table price, and the three buttons kept.
+//   1. The hero says what's here: a short heading (the business, no Royal Oak), a strip of facts (since 16 Oct 2026 the
+//      library's games at one end and its RPG books at the other, both counted live: [games] and [rpg_books] in
+//      index.json, 544 and 136 on the mock; 30 tables, Pokémon and Warhammer between) as blocks with every word a
+//      setting, each fact whole on one line, the text under it without Royal Oak or the table price, and the three
+//      buttons kept.
 //   2. Meet Gobgob, right after the hero: Gobgob's picture, a line of their own, who they are (they/them) and four
 //      places people meet them, every word from the section's settings.
 //   3. The footer: much shorter on both sizes, "Made by goblins who like dice and games." (a setting), the visit
@@ -26,6 +28,10 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('/opt/node-tools/node_modules/playwright');
 const m = await import(new URL('../theme-mock/render.mjs', import.meta.url).href);
 m.globalSettings.lair_mode = 'demo';
+// the library's games and RPG books as the theme counts them (snippets/library-numbers.liquid): the RPG books
+// collection, and the library less the membership product and the RPG books
+const LIBRARY_RPG = m.collections['library-rpg-books'].all_products_count;
+const LIBRARY_GAMES = m.collections['board-game-rental'].all_products_count - 1 - LIBRARY_RPG;
 const THEME = process.env.DG_THEME || '/home/claude/dg-theme';
 const PORT = Number(process.env.PORT || process.env.QA_PORT || 4975);
 const BASE = `http://localhost:${PORT}`;
@@ -88,7 +94,7 @@ const axe = async (page, include) => {
   check('files: the hero has a "What we have" block (big, small, colour) and heading and text settings', Boolean(fact) && ['big', 'small', 'accent'].every((id) => ids.includes(id)) && hero.settings.some((s) => s.id === 'heading') && hero.settings.some((s) => s.id === 'text') && hero.max_blocks >= 10, ids.join(', '));
   const h = index.sections.hero;
   const facts = h.block_order.map((id) => h.blocks[id]).filter((b) => b.type === 'fact').map((b) => `${b.settings.big} ${b.settings.small}`);
-  check('files: index.json holds the five facts in order', JSON.stringify(facts) === JSON.stringify(['30 tables', '26+ role-playing games', 'Pokémon and other TCGs', 'Warhammer and other wargames', '500+ games to play or borrow']), facts.join(' | '));
+  check('files: index.json holds the five facts in order (games at one end, RPG books at the other, both counted live)', JSON.stringify(facts) === JSON.stringify(['[games] games to play or borrow', '30 tables', 'Pokémon and other TCGs', 'Warhammer and other wargames', '[rpg_books] RPG books']), facts.join(' | '));
   check('files: the hero heading and text name no place and no price', !/royal oak/i.test(h.settings.heading + h.settings.text) && !/\$/.test(h.settings.text) && /game shop/i.test(h.settings.heading), `${h.settings.heading} / ${h.settings.text}`);
   const order = index.order;
   check('files: Meet Gobgob comes right after the hero', order[0] === 'hero' && index.sections[order[1]].type === 'gobgob-intro', order.join(', '));
@@ -128,7 +134,7 @@ try {
         };
       });
       check(`${tag} hero: one h1, saying what the business is, no Royal Oak`, h.h1 === 1 && h.title === index.sections.hero.settings.heading && !/royal oak/i.test(h.title), h.title);
-      check(`${tag} hero: the five facts in order, from the blocks`, h.facts.map((f) => f.text).join(' | ') === '30 tables | 26+ role-playing games | Pokémon and other TCGs | Warhammer and other wargames | 500+ games to play or borrow', h.facts.map((f) => f.text).join(' | '));
+      check(`${tag} hero: the five facts in order, from the blocks`, h.facts.map((f) => f.text).join(' | ') === `${LIBRARY_GAMES} games to play or borrow | 30 tables | Pokémon and other TCGs | Warhammer and other wargames | ${LIBRARY_RPG} RPG books`, h.facts.map((f) => f.text).join(' | '));
       check(`${tag} hero: every fact's big words whole on one line, inside its tile, all the same size`, h.facts.every((f) => f.lines === 1 && f.w <= f.inner + 0.5) && new Set(h.facts.map((f) => f.size)).size === 1, h.facts.map((f) => `${Math.round(f.w)}/${Math.round(f.inner)} ${f.size}`).join(', '));
       const rows = [...new Set(h.facts.map((f) => Math.round(f.top)))].length;
       check(`${tag} hero: the strip ends square (${phone ? 'two to a row, the fifth across' : 'three, then two'})`, rows === (phone ? 3 : 2) && Math.abs(Math.max(...h.facts.map((f) => f.right)) - h.stripRight) < 1, `${rows} rows`);

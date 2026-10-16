@@ -173,3 +173,40 @@ games only, and the wishlist built but switched off.
   shop's write-ups, custom.difficulty, type tags, and the pairs (`catan` and `catan-library`, `7-wonders-duel` with
   `7-wonders-duel-library`); `all_products` for Liquid, `requires_shipping` on variants, and multipart cart adds with
   their line item properties.
+- `round16/library-numbers.mjs`: Mo (16 Oct) asked for the site to say exactly what the library has, not "500+ games".
+  The theme counts it live (`snippets/library-numbers.liquid`: `[games]`, `[rpg_books]` and `[library]` in copy). On
+  the theme mock with the store's counts that day (681 in the library collection with the membership, 136 in the
+  automated Library RPG books collection, so 544 games and 136 RPG books): no vague count left in the theme's copy, the
+  Library theme settings, and each place that said 500+ (hero fact, announcement bar switched on in a copy of the
+  theme, library and membership pages, the bookings page's answer and its FAQ structured data, the library
+  collection's count, See all, My Library's invite), then the numbers following a change in the store. Phone and
+  desktop. `DG_THEME=… [PORT=4976] [OUT=…] node tools/qa/round16/library-numbers.mjs [phone|desktop]`. The mock's
+  library collection holds the store's count and its copies know their collections (`library-rpg-books` for the RPG
+  shelf), which round 9's site check reads for the hero's games fact.
+- `round16/library-lending.mjs`: Mo (16 Oct) asked for staff to lend a game to anyone, with no account or plan and
+  nothing to pay (contract `docs/contracts/lair-api-contract-v16-library-lending.md`). Demo mode on the theme mock, phone
+  and desktop: the staff desk's Lend to someone new (the name, then an email or mobile, each said and focused, a
+  landline in the Lair app's words), lending by typing and with the camera, an email that's a member's, Pick a member
+  instead, a member with no plan (lent, no notice), a plan member (checked out), a search with no match offering to
+  lend, Games at home marking Lent and a guest's email and mobile, and a guest's game checked in. Then the person logs
+  in with that email: the game is theirs, My Library shows it lent and free with no invite to join on top, and My
+  Lair's Library tile says "1 game lent to you"; a plan member's lent game doesn't use the plan. `DG_THEME=…
+  [PORT=4986] node tools/qa/round16/library-lending.mjs [phone|desktop]`.
+- `round16/library-lending-axe.mjs`: axe on the lend form, Games at home with lent games, the no-match search and My
+  Library (lent only, and a plan with a lent game), and the keyboard through Lend to someone new (Enter moves Name →
+  Email → Mobile → the game). `DG_THEME=… AXE=…/axe.min.js [PORT=4988] node tools/qa/round16/library-lending-axe.mjs`.
+
+## round17: GM credit for staff (round 17)
+
+Mo (16 Oct): staff he pays to run GM games don't get the $5-a-player GM credit, with a toggle, or none during their
+hours (contract `docs/contracts/lair-api-contract-v17-staff-gm-credit.md`). Players pay the same.
+- `test/round17-staff-gm-credit.test.js` (npm test): the words, cleaning and saying hours, a session in someone's hours
+  (even partly, across midnight and daylight saving), `GET /team`'s `gmCredit` and hours, `POST /team/gm-credit` and
+  `POST /team/:id/hours` (the main account only), `POST /games/:id/credit` in each setting (Never; in and outside their
+  hours; `onShift` both ways; Always; a $0 fee; the main account as GM; a removed helper), the floor's `staffGm` and
+  `credit`, `GET /me`'s `staffGmCredit`, and the GM emails' "Your credit" line.
+- `round17/staff-gm-credit.mjs`: the theme mock in demo mode, phone and desktop. The Team tab's GM credit for staff (Never
+  ticked to start, each choice's words, saved as Not in their hours) and Ana's Hours (add, save, a bad time's words,
+  Cancel); the GM games tab's card for her session yesterday in each state and what each button records; the GM page's
+  "You get" for a staff GM; then live, the three calls against a stubbed Lair app. Axe, no sideways scroll.
+  `DG_THEME=… PORT=4985 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round17/staff-gm-credit.mjs [phone|desktop]`.

@@ -48,6 +48,8 @@ import { wishlistMethods } from './wishlist.js';
 import { PICK_TABLES, pickMethods } from './pick.js';
 // Round 17: borrowing: the queue, postal swaps, "Tell me when it's back" and a game on a table booking (src/queue.js)
 import { queueMethods } from './queue.js';
+// Round 17: staff GMs and the GM credit, and the team's hours (src/staff-gm.js)
+import { STAFF_GM_MESSAGES, readyForCredit, staffGmMethods } from './staff-gm.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -151,6 +153,13 @@ const TEAM_WORDS = {
   notHelper: "They're not a helper.",
   noPerms: 'Tick at least one thing they can do.',
 };
+/** 16 Oct 2026, library lending: what staff are told when a game can't be lent to someone without an account yet */
+export const LENDING_WORDS = {
+  who: "Pick the member, or add the name of who you're lending it to.",
+  name: "Add the name of who you're lending it to.",
+  email: "That email doesn't look right. Try one like name@example.com.",
+  reach: 'Add their email or mobile, so we can reach them about the game.',
+};
 /** Round 9: the permissions that see the floor as staff do (the desk, the floor, GM games and events all work from it) */
 const FLOOR_STAFF = ['checkin', 'tables', 'sessions', 'events'];
 /** Round 9: who changes a booking at the desk or on the floor (status, paid, people, moves); refunds and waiving are money */
@@ -241,7 +250,7 @@ const ROUND16_WISHLIST = [
  *    had; creating_at: a checkout being made) and its order; late: paid after it lapsed or was skipped.
  *  - library_watch: "Tell me when it's back", one row per member per game, deleted once they're told.
  */
-const ROUND17_COLUMNS = [
+const ROUND17_BORROW_COLUMNS = [
   ['library_holds', 'kind', "TEXT NOT NULL DEFAULT 'member'"], ['library_holds', 'booking_id', 'TEXT'],
   ['bookings', 'game_product_id', 'TEXT'], ['bookings', 'game_title', 'TEXT'], ['bookings', 'game_handle', 'TEXT'], ['bookings', 'game_image', 'TEXT'],
   ['bookings', 'game_state', 'TEXT'], ['bookings', 'game_hold_id', 'TEXT'], ['bookings', 'game_told_at', 'INTEGER'],
@@ -270,6 +279,35 @@ const ROUND17_QUEUE = [
   'CREATE INDEX IF NOT EXISTS library_holds_booking ON library_holds (kind, status, booking_id)',
   'CREATE INDEX IF NOT EXISTS bookings_library_game ON bookings (game_product_id, starts_at)',
 ];
+
+/**
+ * Library lending (16 Oct 2026, Mo: "give the staff the ability to lend out a game to anyone even if they don't have an
+ * account it still adds to their account but no charge as they will not be subscribed but it is still evident that they
+ * have the game"): library_loans' new columns, made sure of on every start (added when missing) as ROUND15_COLUMNS are.
+ *  - lent: 1 for a game staff lent outside a library plan (to someone with no plan, or no account). It never counts
+ *    towards a plan's games (planLoans), and nothing is charged for it.
+ *  - guest_name, guest_email (lower case) and guest_mobile: who staff lent it to when the Lair doesn't know them. That
+ *    loan's customer_id is '' until they log in to My Lair with that email (adoptGuestLoans); the guest columns stay.
+ */
+const LENDING_COLUMNS = [
+  ['library_loans', 'lent', 'INTEGER NOT NULL DEFAULT 0'], ['library_loans', 'guest_name', 'TEXT'], ['library_loans', 'guest_email', 'TEXT'],
+  ['library_loans', 'guest_mobile', 'TEXT'],
+];
+const LENDING_INDEXES = ["CREATE INDEX IF NOT EXISTS library_loans_guest ON library_loans (guest_email) WHERE customer_id = ''"];
+
+/**
+ * Round 17, staff GMs and the GM credit (16 Oct 2026, src/staff-gm.js): a new table, made on every start when it's
+ * missing (as ROUND16_WISHLIST is). The team's setting itself is one row in meta ('staff-gm-credit').
+ *  - staff_hours: one row per person on the team with hours: customer_id, hours (a JSON list of { day: 'mon'…'sun',
+ *    from: 'HH:MM', to: 'HH:MM' } in Lair time, 24:00 for midnight), who set them last (by) and when (updated_at).
+ */
+const ROUND17_STAFF_HOURS = [
+  'CREATE TABLE IF NOT EXISTS staff_hours (customer_id TEXT PRIMARY KEY, hours TEXT NOT NULL, by TEXT, updated_at INTEGER NOT NULL)',
+  // the staff floor reads each session's GM credit
+  'CREATE INDEX IF NOT EXISTS credits_game ON credits (game_id, created_at)',
+];
+/** Round 17: credits.by, who pressed "Session done" (staff:<customer id>, or staff when that isn't known) */
+const ROUND17_COLUMNS = [['credits', 'by', 'TEXT']];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -929,7 +967,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of ROUND15_COLUMNS) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -941,8 +979,9 @@ export class Lair {
     // Round 17: Help me pick's tables and indexes (made when missing), and the seed's facts once per version
     for (const statement of PICK_TABLES) this.sql.exec(statement);
     this.applyPickSeed();
-    // Round 17: borrowing's columns, tables and indexes (made when missing: src/queue.js)
-    for (const [table, column, type] of ROUND17_COLUMNS) {
+    // Round 17: borrowing's columns (src/queue.js), and library lending's (16 Oct 2026: library_loans' lent and guest
+    // columns), made when missing
+    for (const [table, column, type] of [...ROUND17_BORROW_COLUMNS, ...LENDING_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -950,6 +989,10 @@ export class Lair {
       }
     }
     for (const statement of ROUND17_QUEUE) this.sql.exec(statement);
+    // Library lending (16 Oct 2026): the guest index (made when missing)
+    for (const statement of LENDING_INDEXES) this.sql.exec(statement);
+    // Round 17: the team's hours (made when missing)
+    for (const statement of ROUND17_STAFF_HOURS) this.sql.exec(statement);
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
@@ -1525,8 +1568,9 @@ export class Lair {
       ok = false;
       console.error('Lair: could not read customer tags', error);
     }
-    // tags (lower case) also say their library plan (Simplee's tags, round 6)
-    const person = { customerId, staff: tags.includes('staff'), gm: tags.includes('gm'), tags };
+    // tags (lower case) also say their library plan (Simplee's tags, round 6). Round 17: tagsFailed when Shopify couldn't
+    // be asked (never kept), so the GM credit doesn't pay a main account it couldn't recognise
+    const person = { customerId, staff: tags.includes('staff'), gm: tags.includes('gm'), tags, ...(ok ? {} : { tagsFailed: true }) };
     if (ok) {
       if (this.people.size > 500) this.people.clear();
       this.people.set(customerId, { at: Date.now(), person });
@@ -1727,6 +1771,9 @@ export class Lair {
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
+      // Round 17: GM credit for staff (the team's setting), and each person's hours
+      if (a === 'team' && b === 'gm-credit' && !c) return json(this.setStaffGmMode(body, who));
+      if (a === 'team' && b && c === 'hours' && !d) return json(await this.setStaffHours(decodeURIComponent(b), body, who));
       if (a === 'team' && b && c === 'remove' && !d) return json(await this.removeHelper(decodeURIComponent(b), who));
       if (a === 'team' && b && !c) return json(await this.updateHelper(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'credit') return json(await this.changeMemberCredit(decodeURIComponent(b), body, who));
@@ -1759,7 +1806,7 @@ export class Lair {
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
       if (a === 'games' && c === 'update') return json(await this.updateGame(b, body, who));
-      if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who));
+      if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who, body));
       if (a === 'games' && c === 'sessions') return json(await this.addSession(b, body, who));
       if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
@@ -1840,6 +1887,8 @@ export class Lair {
       customerId: row.customer_id, name: m?.name || m?.first_name || '', firstName: m?.first_name || '', email: m?.email || '', code: m?.code || null,
       perms: cleanPerms(parse(row.perms, [])) || [], since: row.created_at, updatedAt: row.updated_at || row.created_at,
       madeBy: by ? { customerId: by, name: maker?.name || maker?.first_name || '' } : null,
+      // Round 17: their weekly hours (staffHoursView)
+      ...this.staffHoursView(row.customer_id),
     };
   }
 
@@ -1872,7 +1921,11 @@ export class Lair {
     const owners = new Map();
     const ownerOf = (id, fallback = {}) => {
       const m = this.memberRow(id);
-      return { customerId: String(id), name: m?.name || m?.first_name || fallback.name || '', email: m?.email || fallback.email || '', code: m?.code || null };
+      return {
+        customerId: String(id), name: m?.name || m?.first_name || fallback.name || '', email: m?.email || fallback.email || '', code: m?.code || null,
+        // Round 17: their weekly hours
+        ...this.staffHoursView(id),
+      };
     };
     if (who.customerId) owners.set(String(who.customerId), ownerOf(who.customerId));
     for (const c of tagged) if (c.customerId && !owners.has(c.customerId) && !this.helperRow(c.customerId)) owners.set(c.customerId, ownerOf(c.customerId, c));
@@ -1886,7 +1939,11 @@ export class Lair {
         by: by && by !== 'staff' ? { customerId: by, name: maker?.name || maker?.first_name || '' } : null,
       };
     });
-    return { owners: [...owners.values()], helpers, perms: STAFF_PERMS.map((key) => ({ key, words: PERM_WORDS[key] })), defaults: HELPER_DEFAULT, log };
+    return {
+      owners: [...owners.values()], helpers, perms: STAFF_PERMS.map((key) => ({ key, words: PERM_WORDS[key] })), defaults: HELPER_DEFAULT, log,
+      // Round 17: GM credit for staff (the setting, its choices, who changed it last)
+      gmCredit: this.staffGmSetting(),
+    };
   }
 
   /**
@@ -1969,6 +2026,12 @@ export class Lair {
     // Round 9: the floor's staff view (names, emails, payments, every sign-up) for the owner and helpers who run the desk,
     // the floor, GM games or events; anyone else sees the public floor
     const staffView = this.can(who, FLOOR_STAFF);
+    // Round 17: for staff who run GM games or handle money, the sessions ready for their GM credit whose GM is on the
+    // team (staffGmTeam: helpers, and the main account when its tags are known; never waiting on Shopify), and what was
+    // recorded for each session credited
+    const creditView = staffView && this.can(who, ['sessions', 'money']);
+    const gmTeam = creditView ? this.staffGmTeam(st.games, now) : null;
+    const credits = creditView ? this.creditsIn(from, to) : null;
     const paid = staffView ? { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) } : null;
     const view = (bk) => {
       // Staff see everything, plus the saved pass, what passes covered, what's due, the refund state and who paid.
@@ -2029,6 +2092,14 @@ export class Lair {
         // Round 12: and the players the group already has who don't book through the Lair (they're in taken), so the staff
         // page can say why seats are taken with no players listed
         if (staffView) Object.assign(game, { gmEmail: g.gmEmail || '', gmAccount: this.gmAccount(g), offlinePlayers: g.offlinePlayers || 0 });
+        // Round 17: for staff, what the GM credit was (credit: { status, amount, players, note, at }), and for one not
+        // credited yet whose GM is on the team, what the team's setting says (staffGm: staffGmRule's mode, credit,
+        // onShift, shift and hours)
+        if (creditView) {
+          if (credits.has(g.id)) game.credit = credits.get(g.id);
+          const rule = readyForCredit(g, now) && gmTeam?.has(String(g.gmCustomerId)) ? this.staffGmRule(g, gmTeam.get(String(g.gmCustomerId)), rules) : null;
+          if (rule) game.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, shift: rule.shift, hours: rule.hours };
+        }
         // Round 9, play: how many are interested (everyone), and who (staff and the session's GM)
         game.interested = interest.sessions[g.id] || 0;
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.interest = interest.rows.filter((r) => r.kind === 'session' && r.target_id === g.id).map((r) => this.interestPerson(r));
@@ -3019,14 +3090,14 @@ export class Lair {
    */
   inviteGm(game, rules) {
     if (!emailReady(this.env) || !isEmail(game.gmEmail)) return false;
-    const credit = game.gmFee ?? rules.prices.gmCredit;
     this.later(this.mail(this.letter(game.gmEmail, `You're running ${game.title} at the Dice Goblin Lair`, {
       title: 'Your game is on the board!',
       intro: `Kia ora ${game.gm}, the Dice Goblin team has put ${game.title} on the games board for you.`,
       details: [
         ['Game', game.title], [game.seriesId ? 'First session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
         ['Player seats', String(game.seats)],
-        ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+        // Round 17: a staff GM's line follows the team's setting (gmCreditLine)
+        ['Your credit', this.gmCreditLine(game, rules)],
       ],
       outro: [
         `Make your Dice Goblin account with this email (${game.gmEmail}), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account after each session.`,
@@ -3047,14 +3118,14 @@ export class Lair {
   /** "Your game is on the board": when staff approve a game, or list one for a GM. */
   tellGmLive(game, rules, { listedForThem = false } = {}) {
     if (!emailReady(this.env) || !isEmail(game.gmEmail)) return;
-    const credit = game.gmFee ?? rules.prices.gmCredit;
     this.later(this.mail(this.letter(game.gmEmail, `Your game is live: ${game.title}`, {
       title: 'Your game is on the board!',
       intro: `Kia ora ${game.gm}, ${game.title} is ${listedForThem ? 'listed' : 'approved'} and on the games board.${game.seriesId && !listedForThem ? ' Every session of it is approved.' : ''} Time to start plotting, friend.`,
       details: [
         ['Game', game.title], [game.seriesId ? 'Next session' : 'When', this.when(game, rules)], ['Tables', game.tables.join(', ')],
         ['Player seats', String(game.seats)],
-        ['Your credit', credit ? `${dollars(credit)} store credit for each paying player, after the session` : "None: you're covering your players' GM fee, so they pay just the table fee"],
+        // Round 17: a staff GM's line follows the team's setting (gmCreditLine)
+        ['Your credit', this.gmCreditLine(game, rules)],
       ],
       button: { label: 'See the games board', url: this.page('gm') },
       signoff: 'Happy GMing!\nGobgob',
@@ -3766,10 +3837,21 @@ export class Lair {
     return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), affected, refunds };
   }
 
-  async creditGm(id, who) {
+  async creditGm(id, who, input = {}) {
     // Round 9: the GM's store credit is money
     this.requireStaff(who, 'money');
+    // Round 17: with the 'shifts' setting, the main account can mark that a staff GM was working then (onShift: true) or
+    // wasn't (false), whatever their hours say. expect is what the staff page's button said would happen ('credit' or
+    // 'none'): if the setting, their hours or the team changed since, it's a 409 and nothing is done.
+    const onShift = input?.onShift ?? null;
+    if (onShift !== null && typeof onShift !== 'boolean') throw new RuleError(STAFF_GM_MESSAGES.onShift);
+    if (onShift !== null && !this.can(who, 'team')) throw new RuleError(STAFF_GM_MESSAGES.markOwner, 403);
+    const expect = input?.expect ?? null;
+    if (expect !== null && !['credit', 'none'].includes(expect)) throw new RuleError(STAFF_GM_MESSAGES.expect);
     const rules = await this.rules();
+    // Round 17: whether the GM is on the team (the main account or a helper), asked before the part with no awaits
+    const before = this.game(id);
+    const gm = before?.gmCustomerId ? await this.person(before.gmCustomerId) : null;
     // --- no awaits until the game is claimed, so two staff tapping "credit" at once can't pay twice ---
     const now = Date.now();
     const game = this.game(id);
@@ -3777,14 +3859,36 @@ export class Lair {
     if (game.status === 'cancelled') throw new RuleError('This game was cancelled.', 409);
     if (game.start > now) throw new RuleError('Credit the GM once the session has started.');
     if (game.credited != null) throw new RuleError('This GM has already been credited.', 409);
+    // Round 17: the GM the team was checked for is still this session's GM, and the main account's tags were read
+    if (String(game.gmCustomerId || '') !== String(before?.gmCustomerId || '')) throw new RuleError(STAFF_GM_MESSAGES.changed, 409);
+    if (gm?.tagsFailed && !gm.staff && this.staffGmMode() !== 'earn') throw new RuleError(STAFF_GM_MESSAGES.tags, 503);
     const players = this.sql
       .exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 1 AND status NOT IN ('cancelled', 'noshow')", id)
       .one().n;
     // Each game's own GM fee: $0 (the GM covers their players), $5 standard, or more with a manager's OK.
     const amount = players * (game.gmFee ?? rules.prices.gmCredit);
+    // Round 17: a staff GM's session, when the team's setting keeps the credit from them: recorded with no credit
+    // (status 'staff', amount 0), so it's done and can't be credited later. The players paid as always.
+    const rule = amount > 0 ? this.staffGmRule(game, gm, rules, onShift) : null;
+    const kept = Boolean(rule && !rule.credit);
+    if ((expect === 'none' && !kept) || (expect === 'credit' && kept)) throw new RuleError(STAFF_GM_MESSAGES.expectChanged, 409);
+    const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    const marker = rule?.marked ? this.memberRow(who.customerId) : null;
+    const markedBy = marker ? marker.first_name || String(marker.name || '').split(' ')[0] || '' : '';
+    if (kept) {
+      const note = this.staffGmNote(rule, game, amount, players, markedBy);
+      this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
+      this.write(
+        'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at, by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        makeId('cr'), id, game.gmCustomerId, players, 0, 'staff', note, now, by,
+      );
+      return { players, amount: 0, status: 'staff', note, withheld: amount };
+    }
     this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', players, now, id);
     let status = 'none';
     let note = game.gmFee === 0 ? "This GM covers their players' fee, so there's no store credit to add." : '';
+    // Round 17: a staff GM who earns it (outside their hours, or marked not working) says why
+    if (rule) note = this.staffGmNote(rule, game, amount, players, markedBy);
     try {
       if (amount > 0 && game.gmCustomerId && this.shopify.configured) {
         await this.shopify.creditCustomer(game.gmCustomerId, amount, this.env.CURRENCY || 'NZD');
@@ -3792,6 +3896,8 @@ export class Lair {
       } else if (amount > 0) {
         status = 'manual';
         note = "The GM isn't linked to a customer account, so add the store credit in Shopify admin.";
+        // Round 17: a GM listed by email could still be on the team
+        if (this.staffGmMode() !== 'earn') note += " If they're on the team, check GM credit for staff on the Team tab first.";
       }
     } catch (error) {
       this.write('UPDATE games SET credited = NULL, updated_at = ? WHERE id = ?', Date.now(), id);
@@ -3799,8 +3905,8 @@ export class Lair {
       throw new RuleError(`Shopify didn't add the store credit (${error.message}). Try again, or add it in Shopify admin.`, 502);
     }
     this.write(
-      'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      makeId('cr'), id, game.gmCustomerId, players, amount, status, note, Date.now(),
+      'INSERT INTO credits (id, game_id, customer_id, players, amount, status, note, created_at, by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      makeId('cr'), id, game.gmCustomerId, players, amount, status, note, Date.now(), by,
     );
     return { players, amount, status, note };
   }
@@ -7527,8 +7633,8 @@ export class Lair {
         ? `${named ? `${named} already has` : 'They already have'} this one on hold, until ${this.holdDate(same.until, rules)}.`
         : `You've already reserved this one, friend. It's held until ${this.holdDate(same.until, rules)}.`, 409);
     }
-    // Round 7: a plan's limit counts holds and games at home
-    const home = this.loansOut(customerId);
+    // Round 7: a plan's limit counts holds and games at home (16 Oct 2026: not those staff lent outside a plan)
+    const home = this.planLoans(customerId);
     if (plan && theirs.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, theirs.length, home.length), 409);
     const copies = fromShopify ?? fromPage ?? this.pageCopies(variantId) ?? 1;
     const holding = this.heldByVariant([variantId], now).get(variantId) || [];
@@ -7716,6 +7822,8 @@ export class Lair {
       id: r.id, variantId: r.variant_id, productId: r.product_id || null, title: r.title, shelfCode: r.shelf_code || '', handle: r.handle || '',
       image: r.image || null, status: r.status, outAt: r.out_at, returnedAt: r.returned_at || null, holdId: r.hold_id || null,
       customerId: r.customer_id, staffNote: r.staff_note || '',
+      // 16 Oct 2026: lent outside a plan, and who it was lent to when the Lair didn't know them (customerId '')
+      lent: Boolean(r.lent), guestName: r.guest_name || '', guestEmail: r.guest_email || '', guestMobile: r.guest_mobile || '',
     };
   }
 
@@ -7726,32 +7834,58 @@ export class Lair {
 
   /**
    * A game at home as its member sees it: { id, variantId, productId, title, shelfCode, handle, image, status: 'out' |
-   * 'returned', outAt, returnedAt, holdId }. image: the loan's picture, else the one the Lair knows for the game.
+   * 'returned', outAt, returnedAt, holdId, lent }. image: the loan's picture, else the one the Lair knows for the game.
+   * lent (16 Oct 2026): staff lent it outside a library plan, with nothing to pay.
    */
   loanView(l) {
     return {
       id: l.id, variantId: l.variantId, productId: l.productId, title: l.title, shelfCode: l.shelfCode, handle: l.handle,
       image: l.image || this.libraryGame(l.variantId)?.image || null, status: l.status, outAt: l.outAt, returnedAt: l.returnedAt, holdId: l.holdId,
+      lent: Boolean(l.lent),
     };
   }
 
-  /** A loan as staff see it: the member's view plus customerId, name, email, code (member code), days (whole Lair days at home) and staffNote */
+  /**
+   * A loan as staff see it: the member's view plus customerId, name, email, code (member code), days (whole Lair days at
+   * home) and staffNote. 16 Oct 2026: guest is true for a game lent to someone without an account the Lair knows
+   * (customerId null, and the name, email and mobile staff took); once they log in it's their member's.
+   */
   staffLoanView(l, now = Date.now(), memo = null) {
-    let m = memo?.get(l.customerId);
-    if (m === undefined) {
-      m = this.memberRow(l.customerId);
-      memo?.set(l.customerId, m);
+    const guest = !l.customerId;
+    let m = null;
+    if (!guest) {
+      m = memo?.get(l.customerId);
+      if (m === undefined) {
+        m = this.memberRow(l.customerId);
+        memo?.set(l.customerId, m);
+      }
     }
     const time = lairTime(this.rulesCache?.tz);
     return {
-      ...this.loanView(l), customerId: l.customerId, name: m?.name || m?.first_name || '', email: m?.email || '', code: m?.code || null,
-      days: Math.max(0, time.daysBetween(time.key(l.outAt), time.key(l.returnedAt || now))), staffNote: l.staffNote,
+      ...this.loanView(l), customerId: l.customerId || null, guest, name: m?.name || m?.first_name || l.guestName || '', email: m?.email || l.guestEmail || '',
+      mobile: guest ? l.guestMobile : '', code: m?.code || null, days: Math.max(0, time.daysBetween(time.key(l.outAt), time.key(l.returnedAt || now))),
+      staffNote: l.staffNote,
     };
   }
 
   /** A member's games at home, longest out first. No awaits. */
   loansOut(customerId) {
     return this.sql.exec("SELECT * FROM library_loans WHERE customer_id = ? AND status = 'out' ORDER BY out_at, created_at", String(customerId)).toArray().map((r) => this.rowToLoan(r));
+  }
+
+  /** A member's games at home that count towards their plan: every one but those staff lent outside a plan (16 Oct 2026). No awaits. */
+  planLoans(customerId) {
+    return this.loansOut(customerId).filter((l) => !l.lent);
+  }
+
+  /**
+   * The member an email belongs to (16 Oct 2026, lending): their email on the Lair, or their Shopify account's (ignoring
+   * case), the most recently seen first; null when nobody has it. No awaits.
+   */
+  memberForEmail(email) {
+    if (!isEmail(email)) return null;
+    const value = String(email).trim();
+    return this.sql.exec('SELECT * FROM members WHERE lower(email) = lower(?) OR lower(account_email) = lower(?) ORDER BY last_seen DESC LIMIT 1', value, value).toArray()[0] || null;
   }
 
   /** A library game the Lair knows (library_games), or null */
@@ -7817,7 +7951,9 @@ export class Lair {
     const plan = this.planOf(customerId, tags, now);
     const holds = this.activeHolds(customerId, now);
     const atHome = this.loansOut(customerId);
-    return { plan: this.planWords(plan), used: holds.length + atHome.length, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
+    // 16 Oct 2026: games staff lent outside a plan are at home with them but never use up the plan
+    const used = holds.length + atHome.filter((l) => !l.lent).length;
+    return { plan: this.planWords(plan), used, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
   }
 
   /** A scanned or typed code, cleaned: trimmed, 1 to 40 letters, numbers and . _ - +. Anything else is a 422 with `message`. */
@@ -7886,14 +8022,18 @@ export class Lair {
     return { free: Math.max(0, copies - holds.length - out.length), holds, out };
   }
 
-  /** A new loan: the game goes home with the member. hold: the hold it collected, or null. No awaits. */
-  makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null } = {}) {
+  /**
+   * A new loan: the game goes home with the member. hold: the hold it collected, or null. 16 Oct 2026: lent, when staff
+   * lend it outside a plan; guest { name, email, mobile } for someone the Lair doesn't know (customerId ''). No awaits.
+   */
+  makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null, lent = false, guest = null } = {}) {
     const id = makeId('ln');
     this.write(
       `INSERT INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at, returned_at,
-         out_by, returned_by, staff_note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, ?, ?, ?)`,
-      id, String(game.variantId), game.productId || null, game.title, game.shelfCode || null, game.handle || null, game.image || null, String(customerId),
-      holdId, now, by, note, now, now,
+         out_by, returned_by, staff_note, created_at, updated_at, lent, guest_name, guest_email, guest_mobile)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      id, String(game.variantId), game.productId || null, game.title, game.shelfCode || null, game.handle || null, game.image || null,
+      customerId ? String(customerId) : '', holdId, now, by, note, now, now, lent ? 1 : 0, guest?.name || null, guest?.email || null, guest?.mobile || null,
     );
     const loan = this.loanRow(id);
     // Round 17: it's at home with them, so it's done in their queue
@@ -7951,7 +8091,8 @@ export class Lair {
     if (hold) {
       loan = this.collectHold(hold, now, 'member');
     } else {
-      const home = this.loansOut(me);
+      // 16 Oct 2026: games staff lent outside a plan don't use up the plan
+      const home = this.planLoans(me);
       if (holds.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, holds.length, home.length), 409);
       const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
       if (this.copiesFree(game.variantId, copies, now).free < 1) throw new RuleError(`Every copy of ${game.title} is reserved or out on loan. Ask us at the counter.`, 409);
@@ -7985,15 +8126,36 @@ export class Lair {
   }
 
   /**
-   * POST /library/loans { customerId, code } (staff), or { customerId, variantId, title, shelfCode, handle } for a game
-   * typed in: check a game out to a member at the counter. Their hold on it, if any, is collected. No plan or copies
-   * check (what's in the staff member's hands goes out), but notice says when it's more than their plan or Shopify
-   * thinks every copy is out. Returns { loan, notice }.
+   * POST /library/loans (staff with Library): a game goes out at the counter. The game is { code } (scanned or typed),
+   * or { variantId, title, shelfCode, handle } for one typed in. Who it goes to:
+   *   { customerId }: someone the Lair knows (404 when it doesn't). Their hold on it, if any, is collected. With a
+   *     library plan it's one of their plan's games, as before: no plan or copies check (what's in the staff member's
+   *     hands goes out), but notice says when it's more than their plan or Shopify thinks every copy is out. With no
+   *     plan it's lent (16 Oct 2026, Mo: "lend out stuff to people without pressuring them to be subscribers"): no plan
+   *     needed, nothing charged, and it never counts towards a plan they join later.
+   *   { guest: { name, email?, mobile? } } (16 Oct 2026, Mo: "lend out a game to anyone even if they don't have an
+   *     account it still adds to their account"): lent to someone by name, with an email or a mobile to reach them. An
+   *     email the Lair knows (a member's, or their account's) lends it to that member, as with customerId. Otherwise it
+   *     waits under the email and joins their account when they log in to My Lair with it (adoptGuestLoans).
+   * Returns { loan (as staff see it), lent, notice }.
    */
   async checkOutLoan(input, who) {
     this.requireStaff(who, 'library');
-    const rules = await this.rules();
+    await this.rules();
     const customerId = trimmed(input?.customerId, 40);
+    // 16 Oct 2026: someone the Lair doesn't know yet, checked before anything is looked up
+    let guest = null;
+    if (!customerId) {
+      const given = input?.guest && typeof input.guest === 'object' ? input.guest : null;
+      if (!given) throw new RuleError(LENDING_WORDS.who);
+      const name = trimmed(given.name, 80).replace(/\s+/g, ' ');
+      if (!name) throw new RuleError(LENDING_WORDS.name);
+      const email = trimmed(given.email, 120).toLowerCase();
+      if (email && !isEmail(email)) throw new RuleError(LENDING_WORDS.email);
+      const mobile = checkMobile(given.mobile, { required: false });
+      if (!email && !mobile) throw new RuleError(LENDING_WORDS.reach);
+      guest = { name, email: email || null, mobile: mobile || null };
+    }
     let found;
     if (input?.code != null && String(input.code).trim() !== '') {
       found = await this.findLibraryGame(input.code);
@@ -8010,29 +8172,43 @@ export class Lair {
       found = { game, save: { game, codes: [] } };
     }
     const { game, save } = found;
-    const person = customerId ? await this.person(customerId) : null;
+    // the member it's for: the one picked, or the one whose email staff typed (their plan comes from their tags)
+    const knownId = customerId || (guest?.email ? this.memberForEmail(guest.email)?.customer_id : null) || null;
+    const person = knownId ? await this.person(knownId) : null;
     const fromShopify = (await this.shopifyCopies([game.variantId])).get(game.variantId);
     // --- no awaits from here on ---
     const now = Date.now();
-    const member = this.memberRow(customerId);
-    if (!member) throw new RuleError('No member with that customer ID.', 404);
+    const member = customerId ? this.memberRow(customerId) : guest.email ? this.memberForEmail(guest.email) : null;
+    if (customerId && !member) throw new RuleError('No member with that customer ID.', 404);
     if (save) this.saveLibraryGame(save.game, now, save.codes);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
-    const hold = this.activeHolds(member.customer_id, now).find((h) => h.variantId === game.variantId) || null;
     const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
-    const before = this.copiesFree(game.variantId, copies, now, { exceptHold: hold?.id });
-    const loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by });
-    const plan = this.planOf(member.customer_id, person?.tags, now);
-    const used = this.activeHolds(member.customer_id, now).length + this.loansOut(member.customer_id).length;
-    const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
     const notices = [];
-    if (!plan) notices.push(`${name === 'They' ? 'They aren\'t' : `${name} isn't`} on a library plan.`);
-    else if (plan.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
-    else if (used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
-    if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
-    // Round 17: borrowing at the counter is acting, so a stalled queue of theirs starts again
-    this.queueMemberActed(member.customer_id, person, now);
-    return { loan: this.staffLoanView(loan, now), notice: notices.length ? notices.join(' ') : null };
+    let loan;
+    if (member) {
+      const tags = person?.customerId === member.customer_id ? person.tags : undefined;
+      const plan = this.planOf(member.customer_id, tags, now);
+      const hold = this.activeHolds(member.customer_id, now).find((h) => h.variantId === game.variantId) || null;
+      const before = this.copiesFree(game.variantId, copies, now, { exceptHold: hold?.id });
+      loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by, lent: !plan });
+      // no plan: lent, with nothing to pay (a hold they had is collected as a lent game too)
+      if (!plan && !loan.lent) {
+        this.write('UPDATE library_loans SET lent = 1, updated_at = ? WHERE id = ?', now, loan.id);
+        loan = this.loanRow(loan.id);
+      }
+      const used = this.activeHolds(member.customer_id, now).length + this.planLoans(member.customer_id).length;
+      const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
+      if (plan?.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
+      else if (plan && used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
+      if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
+      // Round 17: borrowing at the counter is acting, so a stalled queue of theirs starts again
+      this.queueMemberActed(member.customer_id, person, now);
+    } else {
+      const before = this.copiesFree(game.variantId, copies, now);
+      loan = this.makeLoan(game, '', now, { by, lent: true, guest });
+      if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
+    }
+    return { loan: this.staffLoanView(loan, now), lent: Boolean(loan.lent), notice: notices.length ? notices.join(' ') : null };
   }
 
   /**
@@ -9206,7 +9382,8 @@ export class Lair {
     // so (gone: true), so My Lair doesn't show it as if nothing had changed
     const gone = (x, id = x.occurrenceId) => (id && x.end > now && this.dateGone(rules, id) ? { ...x, gone: true } : x);
     return {
-      customer: { id: who.customerId, staff: who.staff, gm: who.gm },
+      // Round 17: for someone on the team, GM credit for staff as it touches them (staffGmFor: the setting and their hours)
+      customer: { id: who.customerId, staff: who.staff, gm: who.gm, staffGmCredit: this.staffGmFor(who) },
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
       // Round 11: their own game tables list their players (gamePlayers, gameSize)
       bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start).map((b) => gone(b)),
@@ -9337,7 +9514,20 @@ export class Lair {
     this.adoptInterests(id, email, now);
     // Round 11: and the games they were named in by email
     const played = this.adoptGamePlayers(id, email, now);
-    return bookings + joins + played + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now);
+    return bookings + joins + played + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now) + this.adoptGuestLoans(id, email, now);
+  }
+
+  /**
+   * 16 Oct 2026: library games staff lent to someone without an account, under this email (ignoring case), join their
+   * account when they log in with it: at home with them in My Library, and on the staff page under their name. Games
+   * already back on the shelf come too, as their history. No awaits. Returns how many joined.
+   */
+  adoptGuestLoans(id, email, now) {
+    const key = String(email || '').trim().toLowerCase();
+    if (!isEmail(key)) return 0;
+    const n = this.sql.exec("SELECT COUNT(*) AS n FROM library_loans WHERE customer_id = '' AND guest_email = ?", key).one().n;
+    if (n) this.write("UPDATE library_loans SET customer_id = ?, updated_at = ? WHERE customer_id = '' AND guest_email = ?", String(id), now, key);
+    return n;
   }
 
   /**
@@ -9611,3 +9801,5 @@ Object.assign(Lair.prototype, wishlistMethods);
 Object.assign(Lair.prototype, pickMethods);
 // Round 17: borrowing: the queue, postal swaps, watches and games on table bookings (src/queue.js)
 Object.assign(Lair.prototype, queueMethods);
+// Round 17: staff GMs and the GM credit (src/staff-gm.js)
+Object.assign(Lair.prototype, staffGmMethods);

@@ -293,7 +293,8 @@ export const queueMethods = {
         .toArray().map((x) => this.sendView(x)),
       watching: this.sql.exec('SELECT * FROM library_watch WHERE customer_id = ? ORDER BY created_at DESC, rowid DESC', id).toArray()
         .map((w) => ({ productId: w.product_id, variantId: w.variant_id || null, title: w.title || '', handle: w.handle || '', since: w.created_at })),
-      plan: plan ? { name: plan.name, games: plan.games, holds: this.activeHolds(id, now).length, atHome: this.loansOut(id).length } : null,
+      // atHome: the games at home that use up the plan (not those staff lent outside it, 16 Oct 2026)
+      plan: plan ? { name: plan.name, games: plan.games, holds: this.activeHolds(id, now).length, atHome: this.planLoans(id).length } : null,
       postage: libraryPostage(this.env),
     };
   },
@@ -420,8 +421,9 @@ export const queueMethods = {
     const time = lairTime(rules?.tz);
     const made = [];
     for (let guard = 0; guard < QUEUE_MAX; guard += 1) {
+      // the plan's room: holds and games at home, less those staff lent outside the plan (16 Oct 2026)
       const home = this.loansOut(id);
-      if (this.activeHolds(id, now).length + home.length >= plan.games) break;
+      if (this.activeHolds(id, now).length + home.filter((l) => !l.lent).length >= plan.games) break;
       // what they have already: any hold of theirs (a table's too) and anything at home
       const mine = new Set([
         ...this.sql.exec("SELECT variant_id FROM library_holds WHERE customer_id = ? AND status = 'held' AND until > ?", id, now).toArray().map((r) => String(r.variant_id)),

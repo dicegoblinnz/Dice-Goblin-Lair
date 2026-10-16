@@ -379,6 +379,22 @@ test('round 17 queue: advancing fills free slots in order, passes over a game wi
   assert.deepEqual((await queue()).data.queue.map((x) => [x.productId, x.position]), [[AZUL, 1], [ROOT, 3], [WINGSPAN, 4]], 'done games leave the list; positions stay');
 });
 
+test('round 17 queue: a game staff lent outside a plan (16 Oct 2026 lending) never takes a queue slot, and the queue never holds a game they have at home', async () => {
+  // Sam took a copy of Catan home as a lent game before he joined (no plan then, so nothing to pay); now he's on Stash (3)
+  const g = FIXTURES[CATAN];
+  lair.sql.exec(
+    `INSERT INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at, returned_at, out_by,
+       returned_by, staff_note, created_at, updated_at, lent) VALUES ('ln-lent', ?, ?, ?, ?, ?, NULL, ?, NULL, 'out', ?, NULL, 'staff', NULL, NULL, ?, ?, 1)`,
+    g.variantId, CATAN, g.title, g.shelfCode, g.handle, SAM, NOW - DAY, NOW - DAY, NOW - DAY,
+  );
+  await settings({ paused: true });
+  for (const id of [CATAN, AZUL, ROOT, WINGSPAN]) assert.equal((await add(id)).status, 200);
+  const go = await settings({ paused: false });
+  assert.deepEqual(go.data.queue.map((x) => [x.productId, x.status]), [[CATAN, 'queued'], [AZUL, 'held'], [ROOT, 'held'], [WINGSPAN, 'held']],
+    "three held: the lent game uses no slot, and Catan (one's at home with him) is passed over though its other copy is free");
+  assert.deepEqual(go.data.plan, { name: 'Stash', games: 3, holds: 3, atHome: 0 }, 'atHome counts what uses up the plan');
+});
+
 test('round 17 queue: never the last copy twice, never a slot twice: two advances in a row, two members at once, and a reserve then an advance', async () => {
   // Kiri (Grab: 1) and Leo (Hoard) both queue Azul (1 copy) while paused
   await settings({ paused: true }, KIRI);
