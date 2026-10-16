@@ -395,6 +395,38 @@ test('round 17 queue: a game staff lent outside a plan (16 Oct 2026 lending) nev
   assert.deepEqual(go.data.plan, { name: 'Stash', games: 3, holds: 3, atHome: 0 }, 'atHome counts what uses up the plan');
 });
 
+test('round 17 queue: a member on Simplee tags (no Lair membership): their queue moves on without them, after a restart too, from the tags the Lair kept; maintenance reads them again once a day, so an ended plan stops holding games', async () => {
+  // Ari borrows on a Simplee Stash: tags only, no Lair membership. Shopify says the same.
+  const shopTags = { [ARI]: ['stash - board game rental'] };
+  TAGS[ARI] = ['stash - board game rental'];
+  lair.shopify.customerTags = async (id) => shopTags[id] || [];
+  try {
+    // Kiri has Azul's only copy and Leo Root's; Ari queues both
+    assert.equal((await reserve(AZUL, KIRI)).status, 200);
+    assert.equal((await reserve(ROOT, LEO)).status, 200);
+    for (const id of [AZUL, ROOT]) assert.equal((await add(id, ARI)).status, 200);
+    assert.deepEqual(rows(ARI).map((r) => r.status), ['queued', 'queued']);
+    assert.deepEqual(JSON.parse(lair.sql.exec('SELECT tags FROM member_tags WHERE customer_id = ?', ARI).one().tags), ['stash - board game rental'], 'kept when they used their queue');
+    // the Lair restarts (nothing in memory), then Kiri lets Azul go: Ari's queue holds it, though Ari isn't here
+    lair.people.clear();
+    await call('POST', `library/holds/${holdsOf(KIRI)[0].id}/cancel`, {}, KIRI);
+    assert.deepEqual(rows(ARI).map((r) => [r.product_id, r.status]), [[AZUL, 'held'], [ROOT, 'queued']]);
+    // a day on, Ari's Simplee plan has ended: maintenance reads Ari's tags again
+    shopTags[ARI] = [];
+    setNow(NOW + 25 * HOUR);
+    const run = await maintenance();
+    assert.equal(run.queueTags, 1);
+    assert.deepEqual(JSON.parse(lair.sql.exec('SELECT tags FROM member_tags WHERE customer_id = ?', ARI).one().tags), []);
+    // so when Leo lets Root go, Ari's queue doesn't hold it
+    await call('POST', `library/holds/${holdsOf(LEO)[0].id}/cancel`, {}, LEO);
+    assert.deepEqual(rows(ARI).map((r) => [r.product_id, r.status]), [[AZUL, 'held'], [ROOT, 'queued']]);
+    // read once a day, not every run
+    assert.equal((await maintenance()).queueTags, undefined);
+  } finally {
+    delete TAGS[ARI];
+  }
+});
+
 test('round 17 queue: never the last copy twice, never a slot twice: two advances in a row, two members at once, and a reserve then an advance', async () => {
   // Kiri (Grab: 1) and Leo (Hoard) both queue Azul (1 copy) while paused
   await settings({ paused: true }, KIRI);

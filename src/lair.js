@@ -280,6 +280,8 @@ const ROUND17_QUEUE = [
   'CREATE INDEX IF NOT EXISTS library_watch_product ON library_watch (product_id, created_at)',
   'CREATE INDEX IF NOT EXISTS library_holds_booking ON library_holds (kind, status, booking_id)',
   'CREATE INDEX IF NOT EXISTS bookings_library_game ON bookings (game_product_id, starts_at)',
+  // the Shopify tags of members who use their queue (their Simplee plan), for when it moves on without them
+  'CREATE TABLE IF NOT EXISTS member_tags (customer_id TEXT PRIMARY KEY, tags TEXT NOT NULL, at INTEGER NOT NULL)',
 ];
 
 /**
@@ -9802,7 +9804,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not expire library holds', error);
     }
-    // Round 17: borrow queues move on (at most 200 members a run)
+    // Round 17: queue members on Simplee tags have them read again once a day (20 a run), then borrow queues move on
+    // (at most 200 members a run)
+    try {
+      const tags = await this.refreshQueueTags(Date.now());
+      if (tags) result.queueTags = tags;
+    } catch (error) {
+      console.error('Lair: could not read queue members\' tags', error);
+    }
     try {
       const queues = this.queueUpkeep(Date.now());
       if (queues.held) result.queues = queues;

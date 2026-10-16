@@ -79,6 +79,7 @@ export const QUEUE_MESSAGES = {
 };
 
 /* ---------- small helpers (as lair.js's) ---------- */
+const DAY = 24 * HOUR;
 const parse = (text, fallback) => {
   try {
     return text ? JSON.parse(text) : fallback;
@@ -144,7 +145,48 @@ export const queueMethods = {
   /** The logged-in member a /me route is for (401 with `message` for a guest). No awaits. */
   queueOwner(who, message = QUEUE_MESSAGES.loginQueue) {
     if (!who?.customerId) throw new RuleError(message, 401);
+    this.rememberQueueTags(who);
     return String(who.customerId);
+  },
+
+  /**
+   * Keep the Shopify tags of a member who uses their queue (member_tags), so their Simplee plan is known when their queue
+   * moves on without them: a copy coming back, maintenance, after the Lair restarts (the in-memory people cache is empty
+   * then). Written when they change or are 6 hours old. Never for tags Shopify couldn't give. No awaits.
+   */
+  rememberQueueTags(who, now = Date.now()) {
+    if (!who?.customerId || !Array.isArray(who.tags) || who.tagsFailed) return;
+    const id = String(who.customerId);
+    const tags = JSON.stringify(who.tags.map(String).slice(0, 100));
+    const row = this.sql.exec('SELECT tags, at FROM member_tags WHERE customer_id = ?', id).toArray()[0];
+    if (row && row.tags === tags && now - row.at < 6 * HOUR) return;
+    this.sql.exec('INSERT OR REPLACE INTO member_tags (customer_id, tags, at) VALUES (?, ?, ?)', id, tags, now);
+  },
+
+  /**
+   * Maintenance, before queues move on: members with a game waiting in their queue whose plan comes from Simplee tags (no
+   * Lair membership) and whose kept tags are a day old (or none), up to 20 a run, have their tags read from Shopify
+   * again (taggedPerson), so a plan that ended stops holding games and one that started begins. Returns how many.
+   */
+  async refreshQueueTags(now = Date.now()) {
+    if (!this.shopify.configured) return 0;
+    const ids = this.sql
+      .exec(
+        `SELECT DISTINCT q.customer_id AS id FROM library_queue q LEFT JOIN member_tags t ON t.customer_id = q.customer_id
+         WHERE q.status = 'queued' AND (t.at IS NULL OR t.at < ?)
+           AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.customer_id = q.customer_id)
+         ORDER BY COALESCE(t.at, 0) LIMIT 20`,
+        now - DAY,
+      )
+      .toArray().map((r) => String(r.id));
+    let read = 0;
+    for (const id of ids) {
+      const person = await this.taggedPerson(id);
+      if (person?.tagsFailed) continue;
+      this.rememberQueueTags(person, Date.now());
+      read += 1;
+    }
+    return read;
   },
 
   /** The productId sent, as its digits (a number, digits or the product's gid), or 422 product. No awaits. */
@@ -182,10 +224,16 @@ export const queueMethods = {
     return game?.variantId ? this.copiesFree(String(game.variantId), this.queueCopies(game), now).free : 0;
   },
 
-  /** The Simplee tags planOf may need: the caller's own (a request), else the last ones the Lair saw for them */
+  /**
+   * The Simplee tags planOf may need: the caller's own (a request), else the last ones the Lair saw for them (in memory,
+   * else member_tags, kept up to 45 days)
+   */
   queueTags(customerId, who = null) {
     if (who?.customerId && String(who.customerId) === String(customerId)) return who.tags || [];
-    return this.people?.get(String(customerId))?.person?.tags || [];
+    const seen = this.people?.get(String(customerId))?.person?.tags;
+    if (seen) return seen;
+    const row = this.sql.exec('SELECT tags, at FROM member_tags WHERE customer_id = ?', String(customerId)).toArray()[0];
+    return row && Date.now() - row.at < 45 * DAY ? parse(row.tags, []) : [];
   },
 
   /* ---------------- the queue's rows and settings ---------------- */

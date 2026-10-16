@@ -347,8 +347,8 @@ no duplicate titles. `key` is the productId, or `known:<title>`.
 
 ### 3.6 `GET /pick/game/:productId` (anyone)
 
-One library game as a card (no `why`): for the booking page's game chip and the staff page. 404 `game` when it isn't
-an active library game.
+One library game as a card (no `why`), as `{ game }`: for the booking page's game chip and the staff page. 404 `game`
+when it isn't an active library game.
 
 ### 3.7 `POST /pick/:id/event { action, productId?, editKey? }` (anyone)
 
@@ -399,6 +399,11 @@ aren't saved are deleted by maintenance.
 `library_queue`: `id`, `customer_id`, `product_id`, `variant_id`, `title`, `handle`, `image`, `shelf_code`,
 `position` (1, 2, 3… within the member's queue), `status` (`queued`, `held`, `done`, `removed`), `hold_id`,
 `added_at`, `updated_at`. A product is queued once per member while `queued` or `held`.
+
+`member_tags`: `customer_id` (PK), `tags` (JSON), `at`: the Shopify tags of a member who uses their queue, kept when they
+use it and read again from Shopify by maintenance once a day (20 a run) while they have a game waiting and no Lair
+membership, so a Simplee plan is known when their queue moves on without them (after a restart too; kept up to 45
+days).
 
 `library_queue_settings`: `customer_id` (PK), `paused` (0/1), `delivery` (`store` | `post`, default `store`), `area`
 (`auckland`, `auckland-rural`, `nationwide`, `nationwide-rural`, or null), `stalled` (0/1), `stalled_reason`,
@@ -467,7 +472,8 @@ Routes (logged in; 401 `login` for guests):
 `id`, `customer_id`, `hold_id`, `queue_id`, `product_id`, `title`, `shelf_code`, `area`, `postage` (cents),
 `status` (`waiting`, `checkout`, `paid`, `packed`, `sent`, `lapsed`, `cancelled`), `confirm_by` (ms), `send_day`
 (`YYYY-MM-DD`, the Thursday), `draft_order_id`, `checkout_url`, `order_id`, `order_name`, `created_at`,
-`updated_at`.
+`updated_at`. A waiting send keeps the `area` it was made with until it's confirmed (`confirm { area }` sets it; the
+theme sends the area picked under Your queue).
 
 - **Postage** comes from config `LIBRARY_POSTAGE` (JSON, cents by area), default the website's rates on the shipping
   block: `{"auckland":1000,"auckland-rural":1500,"nationwide":2000,"nationwide-rural":3000}`. Mo can change it in the
@@ -538,6 +544,9 @@ Staff can switch a game's **staff pick** on the check page (`staffPick: true`).
 
 ## 8. Emails (Gobgob voice; money and rules plain first)
 
+Members' emails go to the email the Lair has for them, else their Shopify account's (a member who has only borrowed
+may have no booking email).
+
 - **Queue hold, in store** (member): subject "<title> is next in your queue and on hold for you"; "Kia ora <first>!
   <title> came up next in your queue, so it's on hold for you until <when>. Collect it at the counter with your member
   code." Button: See your queue (My Lair › Library).
@@ -563,6 +572,7 @@ word as below.
 | `login` (pick) | Log in to save your picks. |
 | `loginRate` | Log in to rate games. |
 | `loginQueue` | Log in to see your queue. |
+| `loginWatch` | Log in to hear when it's back. (`POST /library/watch` and its remove) |
 | `member` | Join the library to start a queue. |
 | `full` (queue) | Your queue is full (30 games). Take one off to add another. |
 | `inStoreOnly` | That one's rare, so it stays in the Lair. Book a table and play it here instead. |
@@ -592,7 +602,7 @@ Mo can change them; Gobgob's voice only on the results (load the gobgob-voice sk
 - `snippets/help-me-pick.liquid` renders `<help-me-pick>` once per page (a `<dialog>`, the words as JSON, and the
   script and stylesheet, deferred). Any element with `data-help-me-pick` opens it (`data-door`, `data-mode`). It also
   opens on `document.dispatchEvent(new CustomEvent('help-me-pick:open', { detail: { door, mode, players, date,
-  bookingId, tables } }))` (the booking page sends this).
+  bookingId, tables } }))` (the booking page sends this; `tables` is how many tables the booking has).
 - `sections/help-me-pick-page.liquid` + `templates/page.help-me-pick.json`: the page `/pages/help-me-pick` (the section
   isn't called help-me-pick: no section shares the snippet's name, as tools that look in sections too would loop). It shows the quiz
   in the page (not a dialog) and reads `?door=table&table=T14` (table QR: play here, that table known), `?kiosk=1`
