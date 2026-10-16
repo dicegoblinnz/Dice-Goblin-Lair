@@ -170,6 +170,8 @@ test('lending: an email the Lair knows lends to that member; a member with no pl
   assert.deepEqual([root.status, root.data.result, root.data.loan.lent, root.data.library.used], [200, 'borrowed', false, 1]);
   const full = await scan('DGL34-004', '1004');
   assert.deepEqual([full.status, full.data.error], [409, "Your plan has 1 game at a time, and you've got 1: 1 at home. Return one or cancel a hold first."]);
+  // if his membership ends, its emails ask for Root back, not the games he was lent
+  assert.deepEqual(lair.gamesAtHome('1004'), ['Root']);
   // Sam has Stash: a check-out is one of his plan's games, as before (not lent)
   const sams = await lend({ customerId: '1001', code: 'DGL34-004' });
   assert.deepEqual([sams.status, sams.data.lent, sams.data.loan.lent, sams.data.loan.guest, sams.data.notice], [200, false, false, false, null]);

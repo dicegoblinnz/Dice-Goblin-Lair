@@ -29,7 +29,8 @@ game. This helps us lend out stuff to people without pressuring them to be subsc
 - **Coming back:** a lent game comes back like any other, only through staff: scanned at the counter
   (`POST /library/return`) or "Back on the shelf" (`POST /library/loans/:id/return`). A member who scans a lent game at
   home with them gets v16-library-returns' `at-home` answer.
-- **Nothing is charged** for a lent game, and no email goes out.
+- **Nothing is charged** for a lent game, and no email goes out. When a library membership ends, its emails (and the
+  staff note about games still out) ask only for the plan's games back, not lent ones (`gamesAtHome`).
 
 ## 2. Data
 
@@ -119,4 +120,5 @@ Exported from `src/lair.js` as `LENDING_WORDS`. The notice "{name} isn't on a li
 
 `test/round16-lending.test.js`: staff only, the words, a guest's loan (out, counted on the game's page, adopted at login,
 scanned back, "Back on the shelf", history), a mobile-only guest, an email the Lair knows, a member with no plan (lent,
-no notice) who joins later (lent games don't use the plan), and a plan member's check-out (not lent).
+no notice) who joins later (lent games don't use the plan, and a membership ending doesn't ask for them back), and a
+plan member's check-out (not lent).

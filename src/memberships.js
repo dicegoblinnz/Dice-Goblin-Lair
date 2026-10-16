@@ -3480,9 +3480,12 @@ export const membershipMethods = {
     return { email, first, name, code: member?.code || '', member };
   },
 
-  /** Games a member still has at home: [title] */
+  /**
+   * Games a member still has at home on their plan: [title]. Not the ones staff lent outside a plan (16 Oct 2026,
+   * contract v16-library-lending): a membership ending doesn't ask for those back.
+   */
   gamesAtHome(customerId) {
-    return this.sql.exec("SELECT title FROM library_loans WHERE customer_id = ? AND status = 'out' ORDER BY out_at", String(customerId)).toArray().map((l) => l.title);
+    return this.sql.exec("SELECT title FROM library_loans WHERE customer_id = ? AND status = 'out' AND lent = 0 ORDER BY out_at", String(customerId)).toArray().map((l) => l.title);
   },
 
   /** What a member owes in damage charges staff will collect at the counter (cents) */
