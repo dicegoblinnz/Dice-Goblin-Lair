@@ -1840,7 +1840,7 @@ export class Lair {
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
       if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
       // Round 18: a seat taken off a game (staff, or the game's staff GM), before adding players
-      if (a === 'games' && c === 'players' && d && parts[4] === 'remove' && !parts[5]) return json(await this.removePlayer(b, decodeURIComponent(d), who));
+      if (a === 'games' && c === 'players' && d && parts[4] === 'remove' && !parts[5]) return json(await this.removePlayer(b, decodeURIComponent(d), who, body));
       if (a === 'games' && c === 'players' && !d) return json(await this.addPlayers(b, body, who));
       // Round 18: seats for new players, free sessions and a new GM
       if (a === 'games' && c === 'new-seats' && !d) return json(await this.setNewSeats(b, body, who));
@@ -3704,28 +3704,7 @@ export class Lair {
     const customerId = forThem ? trimmed(input.customerId, 40) : String(who.customerId);
     const member = this.seriesMember(seriesId, customerId);
     if (!member || member.status !== 'active') throw new RuleError(forThem ? "They're not a regular at that game." : "You're not signed up for every session of that game.", 404);
-    this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, customerId);
-    const upcoming = this.sql
-      .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, customerId, now)
-      .toArray().map((r) => this.rowToBooking(r));
-    // Round 15: a seat of their own that's locked in (24 hours or less away) stays on their tab; staff stopping them
-    // free them all
-    const kept = forThem ? [] : upcoming.filter((seat) => this.cancelRule(seat, rules, now).locked);
-    const seats = upcoming.filter((seat) => !kept.includes(seat));
-    for (const seat of seats) {
-      // round 15: a seat paid at the counter ahead of time comes back too (staff are told, as for any refund due)
-      const ahead = seat.pay !== 'now' && seat.paidAmount > 0 && seat.refund !== 'done';
-      const refund = ahead ? { due: true, amount: seat.paidAmount } : refundFor(seat, rules, now);
-      this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund.due ? 'due' : seat.refund, now, seat.id);
-      this.dropDraft(seat);
-      if (ahead) {
-        this.notifyStaff(`Refund due: ${seat.ref}`, {
-          title: 'Refund due',
-          intro: `${seat.name}'s seat ${seat.ref} was freed (${forThem ? 'staff stopped them coming' : 'they left the game'}), and they'd paid ${dollars(seat.paidAmount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`,
-          details: [['Seat', seat.ref], ['Was for', this.when(seat, rules)], ['Refund', dollars(seat.paidAmount)]],
-        });
-      }
-    }
+    const { upcoming, seats, kept } = this.endRegular(seriesId, customerId, { forThem, rules, now });
     const game = upcoming.length ? this.game(upcoming[0].gameId) : null;
     if (game && emailReady(this.env) && isEmail(game.gmEmail)) {
       const freed = !seats.length ? ''
@@ -3749,6 +3728,39 @@ export class Lair {
       kept: kept.map((x) => ({ id: x.id, ref: x.ref, start: x.start, end: x.end })),
       ...(kept.length ? { notice: TAB_WORDS.keptSeat(this.when(kept[0], rules), rules.refundHours) } : {}),
     };
+  }
+
+  /**
+   * A regular stops: no seat saved for them at any session from now on, and the seats it saved them in sessions still to
+   * start are freed, for anyone. forThem (staff, or a staff GM taking them off every session): every one of those seats
+   * is freed; leaving themselves, a seat locked in (24 hours or less away) stays on their tab. A seat paid at the counter
+   * ahead of time is a refund due, and the staff are told. Nobody else is emailed here. No awaits: call it after them.
+   * → { upcoming, seats (freed), kept }
+   */
+  endRegular(seriesId, customerId, { forThem, rules, now }) {
+    this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE series_id = ? AND customer_id = ?", now, seriesId, customerId);
+    const upcoming = this.sql
+      .exec("SELECT * FROM bookings WHERE series_id = ? AND customer_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND starts_at > ? ORDER BY starts_at", seriesId, customerId, now)
+      .toArray().map((r) => this.rowToBooking(r));
+    // Round 15: a seat of their own that's locked in (24 hours or less away) stays on their tab; staff stopping them
+    // free them all
+    const kept = forThem ? [] : upcoming.filter((seat) => this.cancelRule(seat, rules, now).locked);
+    const seats = upcoming.filter((seat) => !kept.includes(seat));
+    for (const seat of seats) {
+      // round 15: a seat paid at the counter ahead of time comes back too (staff are told, as for any refund due)
+      const ahead = seat.pay !== 'now' && seat.paidAmount > 0 && seat.refund !== 'done';
+      const refund = ahead ? { due: true, amount: seat.paidAmount } : refundFor(seat, rules, now);
+      this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund.due ? 'due' : seat.refund, now, seat.id);
+      this.dropDraft(seat);
+      if (ahead) {
+        this.notifyStaff(`Refund due: ${seat.ref}`, {
+          title: 'Refund due',
+          intro: `${seat.name}'s seat ${seat.ref} was freed (${forThem ? 'staff stopped them coming' : 'they left the game'}), and they'd paid ${dollars(seat.paidAmount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`,
+          details: [['Seat', seat.ref], ['Was for', this.when(seat, rules)], ['Refund', dollars(seat.paidAmount)]],
+        });
+      }
+    }
+    return { upcoming, seats, kept };
   }
 
   /* ---------------- messages to players ---------------- */

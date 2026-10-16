@@ -43,6 +43,7 @@ export const GM_SESSION_WORDS = {
   priced: (title, when, fee, until) => `Heads up: ${title} on ${when} isn't free any more, so your seat is ${fee} on your tab. Can't make it? Cancel it in My Lair by ${until}.`,
   // removing a player
   noSeat: "That player isn't in this game.",
+  stopNotYours: 'Only staff with GM games, or the GM who runs this weekly game, can take a regular off every session. Take them off just this session, or ask the staff.',
   // changing the GM
   gmWho: 'Pick the new GM from the customers, or add their email.',
   gmName: 'Add the name players see for the new GM.',
@@ -289,19 +290,30 @@ export const gmSessionMethods = {
   },
 
   /**
-   * POST /games/:id/players/:ref/remove (staff with GM games, or the session's staff GM until it ends): take a seat off
-   * the game, as the staff page's Remove does (cancelled by staff: no email to the player; the GM isn't emailed
+   * POST /games/:id/players/:ref/remove { scope? } (staff with GM games, or the session's staff GM until it ends): take a
+   * seat off the game, as the staff page's Remove does (cancelled by staff: no email to the player; the GM isn't emailed
    * either). ref: the seat booking's reference or id. Whatever they'd paid for it (at the counter ahead of time, or
    * online) or a session pass covered isn't theirs to lose: before the session starts what they paid is a refund due,
    * and once it's started (or it was a pass) staff decide ('ask', with a [Refund?] note); either way the staff are
-   * emailed. → { booking: { id, ref, status, people, name }, refund, game } (no email or phone).
+   * emailed. scope 'series' (Mo, 16 Oct 2026: "the ability to kick players out of the session after they join"): a
+   * weekly regular's seat, and they stop being a regular too, so no seat's saved for them again and their seats in
+   * sessions still to start are freed, as staff stopping a regular does (for whoever speaks for the series: staff with
+   * GM games, or the series' GM now). → { booking: { id, ref, status, people, name }, refund, regular, game } (no email
+   * or phone). regular: { stopped, freed (their other seats to come) } when they were a regular to stop; null for 'session',
+   * or a seat that isn't a regular's that's still on.
    */
-  async removePlayer(id, ref, who) {
+  async removePlayer(id, ref, who, input = {}) {
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     this.requireGameStaff(who, game, { live: true });
+    const scope = input?.scope === undefined || input?.scope === null || input?.scope === '' ? 'session' : input.scope;
+    if (!['session', 'series'].includes(scope)) throw new RuleError(GM_SESSION_WORDS.scope, 422);
     const seat = this.booking(ref);
     if (!seat || seat.gameId !== game.id || seat.kind !== 'gm-seat' || !ACTIVE.has(seat.status)) throw new RuleError(GM_SESSION_WORDS.noSeat, 404);
+    // every session: only a regular's seat has more to stop, and only for someone who speaks for the whole series
+    const regularOf = () => (seat.seriesId && seat.customerId ? this.seriesMember(seat.seriesId, seat.customerId) : null);
+    const stopping = scope === 'series' && regularOf()?.status === 'active';
+    if (stopping && !this.runsSeries(who, seat.seriesId)) throw new RuleError(GM_SESSION_WORDS.stopNotYours, 403);
     // the staff path of POST /bookings/:id/update, for someone this game lets do it
     const desk = who.role === 'owner' || this.can(who, ['checkin', 'tables'])
       ? who
@@ -334,10 +346,19 @@ export const gmSessionMethods = {
         details: [['Booking', seat.ref], ['Was for', this.when(game, rules)], ['Paid', money(paid)], ['Order', after.orderId || 'See Orders in Shopify']],
       });
     }
+    // Every session: still a regular now (nobody stopped them while the seat came off), so stop them: their seats to
+    // come are freed, every one (staff stopping a regular), and a seat paid ahead is a refund due
+    let regular = null;
+    if (stopping) {
+      const stillOn = regularOf()?.status === 'active';
+      const freed = stillOn ? this.endRegular(seat.seriesId, seat.customerId, { forThem: true, rules, now }).seats.length : 0;
+      regular = { stopped: stillOn, freed };
+    }
     const fresh = this.booking(seat.id);
     return {
       booking: { id: fresh.id, ref: fresh.ref, status: fresh.status, people: fresh.people, name: fresh.name },
       refund,
+      regular,
       game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules, null, { staff: this.staffSees(who) }),
     };
   },

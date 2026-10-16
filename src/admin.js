@@ -29,6 +29,9 @@
  *  - memberships.setup {}: round 10's Lair Memberships setup, as /setup?key=…&memberships=plans does it (the plans made
  *    once and put on MEMBERSHIPS_PRODUCT_ID, the damage charge product, the webhooks), without the setup key.
  *    → membershipSetup's answer
+ *  - games.openSeats { dryRun? } (16 Oct 2026): the players each group already had (offlinePlayers) off every session
+ *    that hasn't started and every series, silently, so everyone signs up on the website; what's booked through the
+ *    Lair stays, and is listed. dryRun changes nothing. → see adminOpenSeats
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair:
  * every await first, then synchronous reads, checks and writes.
@@ -60,7 +63,89 @@ export const adminMethods = {
       const base = String(this.env?.PUBLIC_URL || '').replace(/\/$/, '');
       return this.membershipSetup(base ? `${base}/webhooks/memberships` : null);
     }
+    if (kind === 'games.openSeats') {
+      const rules = await this.rules();
+      // --- no awaits from here on ---
+      return this.adminOpenSeats(payload, rules, Date.now());
+    }
     throw new RuleError(`Unknown job: ${kind || '(none)'}`, 422);
+  },
+
+  /**
+   * games.openSeats { dryRun? }: Mo (16 Oct 2026): "remove all the players from the games and have them be bookable so
+   * that players are able to join … I will want players to all sign up on the website for their respective games". The
+   * players each group already had (round 11's offlinePlayers, counted as seats taken but never named) come off every
+   * session that hasn't started and off every series, so sessions made later have none either: their seats are open to
+   * book. A session under way keeps its count (nobody books into it now). Seats booked through the Lair, regulars and
+   * invites are left as they are, and listed, for staff to keep or take off on the staff page. dryRun: nothing changes;
+   * the answer says what would. No awaits.
+   * → { dryRun, games: [{ id, title, gm, sessions, offlinePlayers, next }], sessions, series, players, booked: [{ ref,
+   *   title, when, name, people, regular, account, paid }], regulars: [{ title, name, people }], invites: [{ title, name }] }
+   */
+  adminOpenSeats(payload, rules, now) {
+    // a dry run however it's written (true, or "true" in the job's JSON); only false, "false", 0 or none really runs
+    const dryRun = Boolean(payload.dryRun) && !['false', '0'].includes(String(payload.dryRun).trim().toLowerCase());
+    const time = new LairTime(rules.tz);
+    const details = (text) => {
+      try {
+        return JSON.parse(text || '{}') || {};
+      } catch {
+        return {};
+      }
+    };
+    // the sessions to open: not cancelled, not started, with players the group had
+    const sessions = this.sql
+      .exec("SELECT * FROM games WHERE status != 'cancelled' AND starts_at > ? AND offline_players > 0 ORDER BY starts_at", now)
+      .toArray().map((r) => this.rowToGame(r));
+    const series = this.sql.exec("SELECT id, details FROM series WHERE status != 'cancelled'").toArray()
+      .map((s) => ({ id: s.id, details: details(s.details) }))
+      .filter((s) => Number(s.details.offlinePlayers) > 0);
+    // one line per game (a series, or a one-off session): its next session's count, and how many sessions it's in
+    const games = new Map();
+    for (const g of sessions) {
+      const key = g.seriesId || g.id;
+      const line = games.get(key) || { id: key, title: g.title, gm: g.gm, sessions: 0, offlinePlayers: g.offlinePlayers, next: g.start, when: time.label(g.start) };
+      line.sessions += 1;
+      games.set(key, line);
+    }
+    // a series with none still to come (a flexible one with no dates yet, say) is listed too: sessions made later had them
+    for (const s of series) {
+      if (!games.has(s.id)) games.set(s.id, { id: s.id, title: s.details.title || 'GM game', gm: s.details.gm || '', sessions: 0, offlinePlayers: Number(s.details.offlinePlayers), next: null, when: '' });
+    }
+    // everyone booked through the Lair in a session that hasn't started, so staff know who's there already
+    const booked = this.sql
+      .exec(`SELECT b.ref, b.name, b.people, b.series_id, b.customer_id, b.paid, b.paid_amount, b.covered, g.title, g.starts_at
+             FROM bookings b JOIN games g ON g.id = b.game_id
+             WHERE b.kind = 'gm-seat' AND b.status IN ('held', 'confirmed', 'seated') AND g.status != 'cancelled' AND g.starts_at > ?
+             ORDER BY g.starts_at, b.created_at`, now)
+      .toArray()
+      .map((b) => ({
+        ref: b.ref, title: b.title, when: time.label(b.starts_at), name: b.name, people: Number(b.people) || 1,
+        regular: Boolean(b.series_id && b.customer_id), account: Boolean(b.customer_id), paid: Number(b.paid) === 1 || Number(b.paid_amount) > 0 || Number(b.covered) > 0,
+      }));
+    const regulars = this.sql
+      .exec("SELECT m.name, m.people, s.details FROM series_members m JOIN series s ON s.id = m.series_id WHERE m.status = 'active' AND s.status != 'cancelled' ORDER BY m.created_at")
+      .toArray().map((m) => ({ title: details(m.details).title || 'GM game', name: m.name, people: Number(m.people) || 1 }));
+    const invites = this.sql
+      .exec("SELECT i.name, s.details FROM series_invites i JOIN series s ON s.id = i.series_id WHERE i.status = 'waiting' AND s.status != 'cancelled' ORDER BY i.created_at")
+      .toArray().map((i) => ({ title: details(i.details).title || 'GM game', name: i.name || 'Someone invited' }));
+    if (!dryRun) {
+      this.write("UPDATE games SET offline_players = 0, updated_at = ? WHERE status != 'cancelled' AND starts_at > ? AND offline_players > 0", now, now);
+      for (const s of series) {
+        this.write('UPDATE series SET details = ?, updated_at = ? WHERE id = ?', JSON.stringify({ ...s.details, offlinePlayers: 0 }), now, s.id);
+      }
+    }
+    const lines = [...games.values()].sort((a, b) => (a.next ?? Infinity) - (b.next ?? Infinity) || a.title.localeCompare(b.title));
+    return {
+      dryRun,
+      games: lines,
+      sessions: sessions.length,
+      series: series.length,
+      players: lines.reduce((n, line) => n + line.offlinePlayers, 0),
+      booked,
+      regulars,
+      invites,
+    };
   },
 
   /** games.reset: everything about GM games off the board, without emails. No awaits. */
