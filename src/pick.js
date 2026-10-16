@@ -1749,11 +1749,23 @@ export const pickMethods = {
   },
 
   /* ---------------- staff: checking games (section 6) ---------------- */
-  /** A game as the staff check page shows it */
-  staffPickView(g) {
+  /**
+   * A game as the staff check page shows it. checkedBy: who checked it, by first name, from their member record (the
+   * Lair keeps their customer ID in checked_by), or null when that isn't known; the page says "Checked by Mo". names:
+   * customer ID → name, shared across one answer's games. No awaits.
+   */
+  staffPickView(g, names = new Map()) {
+    let checkedBy = null;
+    if (g.checkedBy) {
+      if (!names.has(g.checkedBy)) {
+        const m = this.memberRow(g.checkedBy);
+        names.set(g.checkedBy, m?.first_name || String(m?.name || '').trim().split(/\s+/)[0] || null);
+      }
+      checkedBy = names.get(g.checkedBy);
+    }
     return {
       productId: g.productId, title: g.title, handle: g.handle, image: g.image, shelfCode: g.shelfCode || null, facts: g.facts, source: g.source,
-      checked: g.checked, checkedBy: g.checkedBy, checkedAt: g.checkedAt, staffPick: g.staffPick, status: g.status,
+      checked: g.checked, checkedBy, checkedAt: g.checkedAt, staffPick: g.staffPick, status: g.status,
     };
   },
 
@@ -1784,7 +1796,8 @@ export const pickMethods = {
       const source = { auto: 0, basic: 1, seed: 2, staff: 3 };
       list = [...list].sort((a, b) => low(a) - low(b) || (source[a.source] ?? 4) - (source[b.source] ?? 4) || a.title.localeCompare(b.title, 'en'));
     }
-    return { games: list.slice(offset, offset + limit).map((g) => this.staffPickView(g)), total: list.length };
+    const names = new Map();
+    return { games: list.slice(offset, offset + limit).map((g) => this.staffPickView(g, names)), total: list.length };
   },
 
   /**

@@ -1044,9 +1044,11 @@ test('staff routes: perm library (a helper without it gets 403); the check list,
   assert.equal((await call('GET', 'pick/games?filter=auto', null, STAFF)).data.total, 1);
   assert.equal((await call('GET', 'pick/games?limit=500', null, STAFF)).data.games.length, LIBRARY.length, 'limit 100 at most');
 
-  // "Looks right"
+  // "Looks right" (who checked it, by first name from their member record; the Lair keeps their customer ID)
+  await call('POST', 'me/profile', { name: 'Lee Hana' }, LIBRARIAN);
   const ok = await call('POST', `pick/games/${G.catan}`, { checked: true }, LIBRARIAN);
-  assert.deepEqual([ok.status, ok.data.game.checked, ok.data.game.checkedBy, ok.data.game.checkedAt, ok.data.game.source], [200, true, LIBRARIAN, NOW, 'seed']);
+  assert.deepEqual([ok.status, ok.data.game.checked, ok.data.game.checkedBy, ok.data.game.checkedAt, ok.data.game.source], [200, true, 'Lee', NOW, 'seed']);
+  assert.equal(lair.sql.exec('SELECT checked_by FROM pick_facts WHERE product_id = ?', G.catan).one().checked_by, LIBRARIAN);
   assert.equal((await call('GET', 'pick/games?filter=check', null, STAFF)).data.total, LIBRARY.length - 1);
   // new facts: 422 with the field, else staff and checked
   assert.equal(said(await call('POST', `pick/games/${G.azul}`, { facts: { ...LIBRARY[5].facts, weight: 9 } }, STAFF)), "422 That game's details don't look right: weight.");
@@ -1059,7 +1061,7 @@ test('staff routes: perm library (a helper without it gets 403); the check list,
   assert.equal((await call('GET', 'pick/games?filter=auto', null, STAFF)).data.total, 0);
   // saving the same facts marks it checked but doesn't make it staff's; checked: false with them leaves it unchecked
   const same = await call('POST', `pick/games/${G.wingspan}`, { facts: LIBRARY[6].facts }, STAFF);
-  assert.deepEqual([same.data.game.source, same.data.game.checked, same.data.game.checkedBy], ['seed', true, STAFF]);
+  assert.deepEqual([same.data.game.source, same.data.game.checked, same.data.game.checkedBy], ['seed', true, null], 'no member record for them: no name');
   const unsure = await call('POST', `pick/games/${G.dixit}`, { facts: LIBRARY[4].facts, checked: false }, STAFF);
   assert.deepEqual([unsure.data.game.source, unsure.data.game.checked], ['seed', false]);
   // a staff pick shows on the card and nudges the wildcard
