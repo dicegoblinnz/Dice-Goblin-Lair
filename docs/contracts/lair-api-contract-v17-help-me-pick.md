@@ -404,7 +404,8 @@ Rules:
 - **Library members** with a plan (`planOf`) queue up to 30 games. Not an in-store-only game (422 `inStoreOnly`),
   not one already queued (it keeps its place: `added: false`), any library game in the catalogue otherwise.
 - **Advancing** (`queueAdvance(customerId)`): unless `paused`, `stalled`, the plan's borrowing is paused
-  (`checkPlanOpen`) or there's no plan: while their plan has room (its games − their holds − their games at home > 0),
+  (`checkPlanOpen`) or there's no plan: while their plan has room (its games − their holds − their games at home > 0;
+  games staff lent outside a plan never count, as since 16 Oct 2026's library lending, `planLoans`),
   the first `queued` game, by position, that has a copy free right now (2.5) and isn't already held by them or at home
   with them, is **held for them** (a normal library hold, `created_by: 'queue'`, the usual staff and member emails with
   queue words), and its queue row is `held` with the hold's id. Games with no free copy are passed over and keep their
@@ -422,7 +423,8 @@ Rules:
 
 Routes (logged in; 401 `login` for guests):
 - `GET /me/queue` → `{ queue: [item], settings: { paused, delivery, area, stalled, stalledReason }, sends: [send],
-  watching: [watch], plan: { name, games, holds, atHome } | null, postage: { auckland: 1000, … } }`. `item` = `{
+  watching: [watch], plan: { name, games, holds, atHome } | null, postage: { auckland: 1000, … } }` (`atHome`: their
+  games at home that use up the plan, so not lent ones). `item` = `{
   productId, variantId, title, handle, image, shelfCode, position, status, holdId, hold: { until } | null, available }`
   (`available`: a copy is free right now). Items `queued` and `held` only, by position.
 - `POST /me/queue { productId }` → `{ ok, added, ...GET /me/queue }`. 403 `member` (no plan), 409 `full` (30),
@@ -584,7 +586,8 @@ Mo can change them; Gobgob's voice only on the results (load the gobgob-voice sk
   script and stylesheet, deferred). Any element with `data-help-me-pick` opens it (`data-door`, `data-mode`). It also
   opens on `document.dispatchEvent(new CustomEvent('help-me-pick:open', { detail: { door, mode, players, date,
   bookingId, tables } }))` (the booking page sends this).
-- `sections/help-me-pick.liquid` + `templates/page.help-me-pick.json`: the page `/pages/help-me-pick`. It shows the quiz
+- `sections/help-me-pick-page.liquid` + `templates/page.help-me-pick.json`: the page `/pages/help-me-pick` (the section
+  isn't called help-me-pick: no section shares the snippet's name, as tools that look in sections too would loop). It shows the quiz
   in the page (not a dialog) and reads `?door=table&table=T14` (table QR: play here, that table known), `?kiosk=1`
   (kiosk mode), `?p=<sessionId>` (shared picks, read only, with "Take the quiz yourself").
 - `sections/help-me-pick-banner.liquid`: a callout ("Not sure what to play? Help me pick", with settings) added to
@@ -634,7 +637,10 @@ Mo can change them; Gobgob's voice only on the results (load the gobgob-voice sk
   title, shelfCode, handle, image); not logged in → log in and come back; logged in without a plan → "Join the
   library" (the plans). Play mode shows it under "More".
 - **Add to my queue** (members, not in-store-only) → `POST /me/queue`. Not a member → "Join the library to start a
-  queue".
+  queue". The answer's item for the game says what happened: `held` (a copy was free and the plan had room) shows the
+  card as theirs ("…was next in your queue, so we're holding it for you", by post "…Confirm and pay the postage in My
+  Library by [when]"); `queued` says its place among the games still waiting, and the button becomes **In your queue**
+  (to My Library), also for games already waiting in their queue (GET /me/queue, once a visit).
 - **Tell me when it's back** (no copy free) → `POST /library/watch` (log in first).
 - **Book a table to play it** (play and borrow) → the booking page with `?game=<productId>&pick=<sessionId>`. In the
   booking door: **Add to my booking** → `POST /bookings/:bookingId/game { productId }`.
