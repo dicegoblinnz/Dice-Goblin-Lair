@@ -762,6 +762,27 @@ test('the wildcard: stays the same on a refresh, changes with "Show me different
   if (nudged.data.wildcard.productId === '8300000000011') assert.equal(nudged.data.wildcard.why[0].code, 'staff-pick');
 });
 
+test('the quiz\'s reads stay small: everyone\'s ratings kept until one changes (rateGame), what\'s been played kept 10 minutes, games at home read by an index', async () => {
+  catalogue();
+  await quiz({ players: 4 });
+  const kept = lair.pickRatings;
+  assert.ok(kept instanceof Map);
+  await quiz({ players: 3 });
+  assert.equal(lair.pickRatings, kept, 'the same count, not read again');
+  assert.equal((await call('POST', 'library/rate', { productId: G.azul, rating: 'up' }, SAM)).status, 200);
+  assert.equal(lair.pickRatings, null, 'a rating changed: read again next time');
+  await quiz({ players: 4 });
+  assert.deepEqual(lair.pickRatings.get(G.azul), { ups: 1, downs: 0 });
+  const busy = lair.pickBusy;
+  await quiz({ players: 4 });
+  assert.equal(lair.pickBusy, busy, 'kept');
+  Date.now = () => NOW + 10 * 60_000;
+  await quiz({ players: 4 });
+  assert.notEqual(lair.pickBusy, busy, 'read again after 10 minutes');
+  assert.equal(lair.sql.exec("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'library_loans_status'").toArray()[0]?.sql,
+    'CREATE INDEX library_loans_status ON library_loans (status, variant_id)');
+});
+
 test('why: up to 3 reasons, strongest first (best-at, time, brain, coop, vibe, like, theme, kids, rated)', async () => {
   catalogue();
   const res = await quiz({ players: 4, team: 'coop', brain: 'some', time: 'medium', vibes: ['thinky'] });
@@ -771,6 +792,7 @@ test('why: up to 3 reasons, strongest first (best-at, time, brain, coop, vibe, l
   assert.deepEqual(pandemic.why[2], { code: 'best-at', n: 4 });
   // liked a game in the swipes: "like" names it; 3 members' thumbs up: "rated"
   for (const c of ['3001', '3002', '3003']) lair.sql.exec("INSERT INTO game_ratings (customer_id, product_id, rating, source, created_at) VALUES (?, ?, 1, 'page', ?)", c, G.azul, NOW);
+  lair.pickRatings = null; // written behind rateGame's back: the quiz's kept count is read again
   const liked = await quiz({ players: 2, swipes: { [G.ticket]: 'like' }, vibes: ['chill'] });
   const azul = all(liked.data).find((c) => c.productId === G.azul);
   assert.ok(azul.why.some((w) => w.code === 'like' && w.title === 'Ticket to Ride') || azul.why.some((w) => w.code === 'rated' && w.ups === 3), JSON.stringify(azul.why));
@@ -1297,6 +1319,7 @@ test('the booking door: a booking\'s own game isn\'t another booking\'s; a booki
   assert.ok(!ids(someoneElse.data.picks).includes(G.pandemic));
   // underplayed: a game at home since long ago is being played
   loan(G.azul, SAM, 'out', { outAt: NOW - 200 * DAY });
+  lair.pickBusy = null; // what's been played is kept 10 minutes
   assert.equal((await call('GET', `pick/game/${G.azul}`)).data.game.underplayed, false);
 });
 

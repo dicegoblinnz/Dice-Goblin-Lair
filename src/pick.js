@@ -1048,6 +1048,8 @@ export const PICK_TABLES = [
     customer_id TEXT NOT NULL, product_id TEXT NOT NULL, rating INTEGER NOT NULL, source TEXT, created_at INTEGER NOT NULL, updated_at INTEGER,
     PRIMARY KEY (customer_id, product_id))`,
   'CREATE INDEX IF NOT EXISTS game_ratings_product ON game_ratings (product_id)',
+  // the quiz reads every game at home (status 'out') on each ask: indexed, so it never reads the whole loan history
+  'CREATE INDEX IF NOT EXISTS library_loans_status ON library_loans (status, variant_id)',
 ];
 
 /** Session ids and edit keys: letters and digits with no look-alikes (no 0 O o 1 I i l L) */
@@ -1183,16 +1185,21 @@ export const pickMethods = {
    * hold or loan in the last 90: none made, out, back or still at home in that time). No awaits.
    */
   pickNudges(games, now = Date.now()) {
-    const since = now - 90 * DAY;
-    const busy = new Set();
-    for (const r of this.sql.exec('SELECT DISTINCT variant_id, product_id FROM library_holds WHERE created_at >= ? OR until >= ?', since, since).toArray()) {
-      busy.add(`v:${r.variant_id}`);
-      if (r.product_id) busy.add(`p:${r.product_id}`);
+    // what's been borrowed or held in 90 days changes slowly, and reading it reads every hold and loan: kept 10 minutes
+    if (!this.pickBusy || now - this.pickBusy.at >= 10 * MIN || now < this.pickBusy.at) {
+      const since = now - 90 * DAY;
+      const set = new Set();
+      for (const r of this.sql.exec('SELECT DISTINCT variant_id, product_id FROM library_holds WHERE created_at >= ? OR until >= ?', since, since).toArray()) {
+        set.add(`v:${r.variant_id}`);
+        if (r.product_id) set.add(`p:${r.product_id}`);
+      }
+      for (const r of this.sql.exec("SELECT DISTINCT variant_id, product_id FROM library_loans WHERE out_at >= ? OR returned_at >= ? OR status = 'out'", since, since).toArray()) {
+        set.add(`v:${r.variant_id}`);
+        if (r.product_id) set.add(`p:${r.product_id}`);
+      }
+      this.pickBusy = { at: now, set };
     }
-    for (const r of this.sql.exec("SELECT DISTINCT variant_id, product_id FROM library_loans WHERE out_at >= ? OR returned_at >= ? OR status = 'out'", since, since).toArray()) {
-      busy.add(`v:${r.variant_id}`);
-      if (r.product_id) busy.add(`p:${r.product_id}`);
-    }
+    const busy = this.pickBusy.set;
     for (const g of games) {
       const age = g.createdAt ? now - g.createdAt : null;
       g.isNew = age != null && age <= 60 * DAY;
@@ -1223,7 +1230,9 @@ export const pickMethods = {
       loans.get(r.variant_id).push(this.rowToLoan(r));
     }
     const me = who?.customerId ? String(who.customerId) : null;
-    const pages = this.pickPageCopies();
+    // the copies the library pages sent, read whole only when many games' copies aren't in the catalogue yet (before the
+    // first sync); otherwise each one that needs it asks by its variant (pageCopies, indexed)
+    const pages = games.filter((g) => g.copies == null && g.variantId).length > 50 ? this.pickPageCopies() : null;
     const out = new Map();
     for (const g of games) {
       const holds = (g.variantId && held.get(g.variantId)) || [];
@@ -1372,10 +1381,14 @@ export const pickMethods = {
    */
   pickPerson(who) {
     const me = who?.customerId ? String(who.customerId) : null;
-    const ratings = new Map();
-    for (const r of this.sql.exec('SELECT product_id, SUM(rating = 1) AS ups, SUM(rating = -1) AS downs FROM game_ratings GROUP BY product_id').toArray()) {
-      ratings.set(r.product_id, { ups: Number(r.ups) || 0, downs: Number(r.downs) || 0 });
+    // every member's ratings of every game, kept until a rating changes (rateGame)
+    if (!this.pickRatings) {
+      this.pickRatings = new Map();
+      for (const r of this.sql.exec('SELECT product_id, SUM(rating = 1) AS ups, SUM(rating = -1) AS downs FROM game_ratings GROUP BY product_id').toArray()) {
+        this.pickRatings.set(r.product_id, { ups: Number(r.ups) || 0, downs: Number(r.downs) || 0 });
+      }
     }
+    const ratings = this.pickRatings;
     const mine = me ? this.sql.exec('SELECT product_id, rating FROM game_ratings WHERE customer_id = ?', me).toArray() : [];
     const had = new Set();
     if (me) {
@@ -1725,6 +1738,7 @@ export const pickMethods = {
         me, productId, value, source, now, now,
       );
     }
+    if (value !== null) this.pickRatings = null; // the quiz's kept count of everyone's ratings is read again
     const row = this.sql.exec('SELECT rating FROM game_ratings WHERE customer_id = ? AND product_id = ?', me, productId).toArray()[0];
     return { ok: true, productId, rating: row ? (row.rating === 1 ? 'up' : 'down') : null };
   },
