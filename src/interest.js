@@ -260,21 +260,22 @@ export const interestMethods = {
     const left = Math.max(0, game.seats - taken);
     const day = shortDay(game.start, rules.tz || new LairTime().tz);
     const subject = `${firstName(row.name)} is interested in ${game.title} on ${day}`;
-    // 17 Oct 2026 (contract v18-private): a private game's GM gets their invite link, to send if they're a good fit
-    const invite = game.private && game.inviteKey ? this.inviteUrl(game.inviteKey) : null;
+    // 17 Oct 2026 (contract v18-private): a private game's GM sends their invite link if they're a good fit, from their
+    // game on the board. Never the link itself here: a reply quotes this email, so a "sorry, not this time" would pass it on.
+    const isPrivate = this.privacyOfGame(game).private;
+    const gamePage = `${this.page('gm')}#game=${encodeURIComponent(game.id)}`;
     const content = {
       title: toGm ? 'Someone wants in!' : 'Someone wants in on a game',
       intro: toGm
-        ? invite
-          ? `Kia ora ${game.gm}, ${row.name} is interested in your private game ${game.title} on ${day}. If they’re a good fit, reply with your invite link (below) and they can take a seat.`
+        ? isPrivate
+          ? `Kia ora ${game.gm}, ${row.name} is interested in your private game ${game.title} on ${day}. If they’re a good fit, send them your invite link: it’s on your game on the TTRPG sessions page, under Who can join. Send it in a new email, not a reply to this one.`
           : `Kia ora ${game.gm}, ${row.name} is interested in ${game.title} on ${day}. ${left ? `There ${left === 1 ? 'is 1 seat' : `are ${left} seats`} left.` : 'It’s full, so they’d like to hear if a seat comes up.'} Nothing is booked yet: get back to them and they can take a seat.`
-        : `${row.name} is interested in ${game.gm ? `${game.gm}'s game ` : ''}${game.title} on ${day}. There's no email on file for the GM, so please pass this on.`,
+        : `${row.name} is interested in ${game.gm ? `${game.gm}'s game ` : ''}${game.title} on ${day}. There's no email on file for the GM, so please pass this on.${isPrivate ? ' It’s a private game: its invite link is on the staff page, for the GM to send.' : ''}`,
       details: [
         ['Name', row.name], ['Email', row.email], ['Mobile', row.phone || ''], ['Their note', row.note || ''], ['When', this.when(game, rules)], ['Seats left', `${left} of ${game.seats}`],
-        ...(invite ? [['Your invite link', invite]] : []),
       ],
       outro: 'Reply to this email to get back to them.',
-      button: { label: 'See the games board', url: this.page('gm') },
+      button: isPrivate && toGm ? { label: 'See your game', url: gamePage } : { label: 'See the games board', url: this.page('gm') },
     };
     const replyTo = isEmail(row.email) ? row.email : null;
     if (toGm) this.later(this.mail(this.letter(game.gmEmail, subject, { ...content, signoff: 'Gobgob' }, { replyTo })));

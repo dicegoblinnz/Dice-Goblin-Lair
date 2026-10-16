@@ -5,14 +5,19 @@
  * join; and the GM shares an invite link.
  *
  *  - games.private (1: invite only), games.interest_open (1: a private game takes "Register interest") and
- *    games.invite_key (the invite link's key, one for a whole series). A series' details keep private, interestOpen and
- *    inviteKey, so sessions made later follow them.
+ *    games.invite_key (the invite link's key: one for a whole series). Privacy belongs to the whole game: a series is
+ *    private or not in every session, and its details keep private, interestOpen and inviteKey, so sessions made later
+ *    follow them.
  *  - Booking a seat (POST /bookings, gm-seat) or saving a seat every week (join-series) in a private game needs its
- *    invite key (`invite`), except for staff with GM games and the game's own GM. A regular who's in already doesn't.
- *  - The game's GM (a series: the series' GM) and staff with GM games make it private or not and switch "Register
- *    interest" on or off (POST /games/:id/private), and make a new link (POST /games/:id/invite/new: the old one stops).
+ *    invite key (`invite`), except for staff with GM games, the game's own GM (a series: its GM now) and the game's
+ *    regulars (who are in already).
+ *  - The game's GM (a series: its GM now) and staff with GM games make it private or not and switch "Register interest"
+ *    on or off (POST /games/:id/private), and make a new link (POST /games/:id/invite/new: the old one stops).
  *  - GET /games/invite/:key: the game a link is for (its next session that hasn't ended), for anyone with the link.
- *  - Register interest on a private game only while it's on; the GM's email then carries their invite link.
+ *  - Register interest on a private game only while it's on. The GM's email about them says to send their invite link
+ *    from their game: never the link itself, so a reply (that quotes it) to someone they turn down can't pass it on.
+ *  - The link is the TTRPG sessions page with #invite=<key>: after the #, so it's never sent to a server or in a
+ *    Referer.
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair:
  * every await first, then synchronous reads, checks and writes.
@@ -30,6 +35,7 @@ export const PRIVATE_WORDS = {
   notYours: 'Only the GM of this game, or staff with GM games, can change who can join it.',
   login: 'Log in to do that.',
   notPrivate: "This game isn't private, so it has no invite link. Make it private first.",
+  notYet: "That game isn't on the board yet: a staff goblin checks new games first. Try the link again soon.",
 };
 
 /** The columns (made on start when missing, as ROUND18_COLUMNS) and the index for finding a game by its link */
@@ -70,16 +76,16 @@ const parse = (text, fallback) => {
 };
 
 export const privateMethods = {
-  /** The invite link for a key: the TTRPG sessions page with ?invite= */
+  /** The invite link for a key: the TTRPG sessions page with #invite= (never sent to a server, or in a Referer) */
   inviteUrl(key) {
-    return key ? `${this.page('gm')}?invite=${encodeURIComponent(key)}` : null;
+    return key ? `${this.page('gm')}#invite=${encodeURIComponent(key)}` : null;
   },
 
-  /** { key, url } for whoever can see a private game's link (its GM and staff), else nothing */
-  inviteFor(game, who, staffView = false) {
+  /** { key, url } for whoever can see a private game's link (its GM, and staff with GM games), else nothing */
+  inviteFor(game, who) {
     if (!game?.private || !game.inviteKey) return null;
     const own = Boolean(who?.customerId) && String(game.gmCustomerId || '') === String(who.customerId);
-    return staffView || own || this.can(who, 'sessions') ? { key: game.inviteKey, url: this.inviteUrl(game.inviteKey) } : null;
+    return own || this.can(who, 'sessions') ? { key: game.inviteKey, url: this.inviteUrl(game.inviteKey) } : null;
   },
 
   /** A series' kept details. No awaits. */
@@ -88,24 +94,43 @@ export const privateMethods = {
     return parse(row?.details, {}) || {};
   },
 
-  /** Whether who can change who can join: staff with GM games, the session's GM, or (a series) the series' GM. No awaits. */
-  canSetPrivate(who, game, scope) {
+  /**
+   * Whether a game is private, and the keys that open it: a series is private when its kept details say so or any
+   * session of it to come is (normally both, with the one key). No awaits.
+   */
+  privacyOfGame(game, now = Date.now()) {
+    if (!game) return { private: false, keys: [] };
+    if (!game.seriesId) return { private: Boolean(game.private), keys: game.private && game.inviteKey ? [game.inviteKey] : [] };
+    const kept = this.seriesKept(game.seriesId);
+    const rows = this.sql
+      .exec("SELECT invite_key FROM games WHERE series_id = ? AND private = 1 AND status != 'cancelled' AND ends_at > ?", game.seriesId, now)
+      .toArray();
+    const keys = [kept.private ? kept.inviteKey : null, game.private ? game.inviteKey : null, ...rows.map((r) => r.invite_key)].filter(Boolean);
+    return { private: Boolean(kept.private) || Boolean(game.private) || rows.length > 0, keys: [...new Set(keys)] };
+  },
+
+  /** Whether who can change who can join: staff with GM games, a series' GM now, or a one-off's GM. No awaits. */
+  canSetPrivate(who, game) {
     if (this.can(who, 'sessions')) return true;
     if (!who?.customerId) return false;
-    if (scope === 'series' && game.seriesId) return this.runsSeries(who, game.seriesId);
+    if (game.seriesId) return this.runsSeries(who, game.seriesId);
     return String(game.gmCustomerId || '') === String(who.customerId);
   },
 
   /**
-   * A seat in a private game needs its invite key (input.invite), except for staff with GM games and the game's own GM.
-   * Throws 403 invite. No awaits.
+   * A seat in a private game needs its invite key (input.invite), except for staff with GM games, the game's own GM (a
+   * series: its GM now) and its regulars (in already). Throws 403 invite. No awaits.
    */
   checkInvite(game, input, who) {
-    if (!game?.private) return;
+    const privacy = this.privacyOfGame(game);
+    if (!privacy.private) return;
     if (this.can(who, 'sessions')) return;
-    if (who?.customerId && String(game.gmCustomerId || '') === String(who.customerId)) return;
+    if (who?.customerId) {
+      if (String(game.gmCustomerId || '') === String(who.customerId)) return;
+      if (game.seriesId && (this.runsSeries(who, game.seriesId) || this.seriesMember(game.seriesId, who.customerId)?.status === 'active')) return;
+    }
     const key = String(input?.invite ?? '').trim().toLowerCase();
-    if (!KEY_SHAPE.test(key) || !game.inviteKey || !safeEqual(key, game.inviteKey)) throw new RuleError(PRIVATE_WORDS.invite, 403);
+    if (!KEY_SHAPE.test(key) || !privacy.keys.some((k) => safeEqual(key, String(k)))) throw new RuleError(PRIVATE_WORDS.invite, 403);
   },
 
   /** A game as its GM or staff see it after a change: the board's view, with invite: { key, url } */
@@ -116,12 +141,20 @@ export const privateMethods = {
     return invite ? { ...view, invite } : view;
   },
 
+  /** Every session of a game: a series' (but cancelled ones), or the one-off. No awaits. */
+  wholeGame(game) {
+    if (!game.seriesId) return [game];
+    return this.sql
+      .exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' ORDER BY starts_at", game.seriesId)
+      .toArray()
+      .map((r) => this.rowToGame(r));
+  },
+
   /**
-   * POST /games/:id/private { private, interest?, scope? }: invite only, or not; and whether a private game takes
-   * "Register interest" (left out: as it was). scope 'series' (the default for a session of a series): this session and
-   * every later one the caller runs, and sessions made later; 'session': this one. A private game gets an invite key
-   * when it has none (a series shares one), and keeps it when it's made public again, so the same link works if it's
-   * made private again. → { game (with invite), sessions }
+   * POST /games/:id/private { private, interest? }: invite only, or not; and whether a private game takes "Register
+   * interest" (left out: as it was). It's the whole game's: a series' every session, and sessions made later. A private
+   * game gets an invite key when it has none (a series: the one key for every session), and keeps it when it's made
+   * public again, so the same link works if it's made private again. → { game (with invite), sessions (to come) }
    */
   async setGamePrivate(id, input, who) {
     if (!who.customerId && !who.staff) throw new RuleError(PRIVATE_WORDS.login, 401);
@@ -133,25 +166,24 @@ export const privateMethods = {
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
-    const scope = input.scope || (game.seriesId ? 'series' : 'session');
-    const sessions = this.sessionsFor(game, scope, who);
-    if (!this.canSetPrivate(who, game, scope)) throw new RuleError(PRIVATE_WORDS.notYours, 403);
+    if (!this.canSetPrivate(who, game)) throw new RuleError(PRIVATE_WORDS.notYours, 403);
+    const sessions = this.wholeGame(game);
     const kept = game.seriesId ? this.seriesKept(game.seriesId) : {};
-    const key = game.inviteKey || kept.inviteKey || (input.private ? newInviteKey() : null);
+    const key = kept.inviteKey || game.inviteKey || sessions.map((s) => s.inviteKey).find(Boolean) || (input.private ? newInviteKey() : null);
     const interest = input.private && Boolean(input.interest ?? game.interestOpen);
-    for (const s of sessions) {
-      this.write(
-        'UPDATE games SET private = ?, interest_open = ?, invite_key = COALESCE(invite_key, ?), updated_at = ? WHERE id = ?',
-        input.private ? 1 : 0, interest ? 1 : 0, key, now, s.id,
-      );
+    if (game.seriesId) {
+      this.write('UPDATE games SET private = ?, interest_open = ?, invite_key = ?, updated_at = ? WHERE series_id = ? AND status != \'cancelled\'',
+        input.private ? 1 : 0, interest ? 1 : 0, key, now, game.seriesId);
+      this.patchSeries(game.seriesId, { private: input.private, interestOpen: interest, ...(key ? { inviteKey: key } : {}) }, now);
+    } else {
+      this.write('UPDATE games SET private = ?, interest_open = ?, invite_key = ?, updated_at = ? WHERE id = ?', input.private ? 1 : 0, interest ? 1 : 0, key, now, game.id);
     }
-    if (scope === 'series' && game.seriesId) this.patchSeries(game.seriesId, { private: input.private, interestOpen: interest, ...(key ? { inviteKey: key } : {}) }, now);
-    return { game: this.privateView(this.game(game.id), rules, who), sessions: sessions.length };
+    return { game: this.privateView(this.game(game.id), rules, who), sessions: sessions.filter((s) => s.end > now).length };
   },
 
   /**
-   * POST /games/:id/invite/new: a new invite link for a private game (a series: every session that had the old key, and
-   * sessions made later). The old link stops working; seats booked with it stay. → { game (with invite), sessions }
+   * POST /games/:id/invite/new: a new invite link for a private game (a series: every session, and sessions made
+   * later). The old link stops working; seats booked with it stay. → { game (with invite), sessions (to come) }
    */
   async newInviteLink(id, who) {
     if (!who.customerId && !who.staff) throw new RuleError(PRIVATE_WORDS.login, 401);
@@ -161,20 +193,22 @@ export const privateMethods = {
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
-    if (!this.canSetPrivate(who, game, game.seriesId ? 'series' : 'session')) throw new RuleError(PRIVATE_WORDS.notYours, 403);
-    if (!game.private) throw new RuleError(PRIVATE_WORDS.notPrivate, 409);
+    if (!this.canSetPrivate(who, game)) throw new RuleError(PRIVATE_WORDS.notYours, 403);
+    if (!this.privacyOfGame(game, now).private) throw new RuleError(PRIVATE_WORDS.notPrivate, 409);
     const key = newInviteKey();
-    const old = game.inviteKey;
-    const changed = old ? this.sql.exec('SELECT COUNT(*) AS n FROM games WHERE invite_key = ?', old).toArray()[0]?.n || 0 : 0;
-    if (old) this.write('UPDATE games SET invite_key = ?, updated_at = ? WHERE invite_key = ?', key, now, old);
-    this.write('UPDATE games SET invite_key = ?, updated_at = ? WHERE id = ?', key, now, game.id);
-    if (game.seriesId) this.patchSeries(game.seriesId, { inviteKey: key }, now);
-    return { game: this.privateView(this.game(game.id), rules, who), sessions: Math.max(1, changed) };
+    if (game.seriesId) {
+      this.write('UPDATE games SET invite_key = ?, updated_at = ? WHERE series_id = ?', key, now, game.seriesId);
+      this.patchSeries(game.seriesId, { inviteKey: key }, now);
+    } else {
+      this.write('UPDATE games SET invite_key = ?, updated_at = ? WHERE id = ?', key, now, game.id);
+    }
+    return { game: this.privateView(this.game(game.id), rules, who), sessions: this.wholeGame(game).filter((s) => s.end > now).length };
   },
 
   /**
-   * GET /games/invite/:key (anyone with the link): the private game it's for, as the board shows it, with invited: true:
-   * its next session that hasn't ended, open or full. → { game }, or 404 badInvite (an old link, or nothing to come).
+   * GET /games/invite/:key (anyone with the link): the game it's for (its next session that hasn't ended, open or
+   * full), as the board shows it: invited: true while it's private (one made public again is just the game). One still
+   * waiting for staff to check it: 409 notYet. An old link, or nothing to come: 404 badInvite.
    */
   async gameByInvite(key, who) {
     const rules = await this.rules();
@@ -183,11 +217,13 @@ export const privateMethods = {
     const k = String(key ?? '').trim().toLowerCase();
     if (!KEY_SHAPE.test(k)) throw new RuleError(PRIVATE_WORDS.badInvite, 404);
     const row = this.sql
-      .exec("SELECT * FROM games WHERE invite_key = ? AND private = 1 AND status IN ('open', 'full') AND ends_at > ? ORDER BY starts_at, id LIMIT 1", k, now)
+      .exec("SELECT * FROM games WHERE invite_key = ? AND status IN ('open', 'full', 'pending') AND ends_at > ? ORDER BY starts_at, id LIMIT 1", k, now)
       .toArray()[0];
     if (!row || !safeEqual(k, String(row.invite_key || ''))) throw new RuleError(PRIVATE_WORDS.badInvite, 404);
+    if (row.status === 'pending') throw new RuleError(PRIVATE_WORDS.notYet, 409);
     const game = this.rowToGame(row);
     const st = this.state(game.start - 1, game.end + 1);
-    return { game: { ...this.gameView(game, st, rules, null, { staff: this.staffSees(who) }), invited: true } };
+    const view = this.gameView(game, st, rules, null, { staff: this.staffSees(who) });
+    return { game: game.private ? { ...view, invited: true } : view };
   },
 };

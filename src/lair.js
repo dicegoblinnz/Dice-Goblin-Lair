@@ -2167,8 +2167,8 @@ export class Lair {
           const rule = readyForCredit(g, now) && gmTeam?.has(String(g.gmCustomerId)) ? this.staffGmRule(g, gmTeam.get(String(g.gmCustomerId)), rules) : null;
           if (rule) game.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, shift: rule.shift, hours: rule.hours };
         }
-        // 17 Oct 2026 (contract v18-private): a private game's invite link, for its GM and staff
-        const invite = this.inviteFor(g, who, staffView);
+        // 17 Oct 2026 (contract v18-private): a private game's invite link, for its GM and staff with GM games
+        const invite = this.inviteFor(g, who);
         if (invite) game.invite = invite;
         // Round 9, play: how many are interested (everyone), and who (staff and the session's GM)
         game.interested = interest.sessions[g.id] || 0;
@@ -3665,9 +3665,9 @@ export class Lair {
     if (!game.seriesId) throw new RuleError("This game is a one-off, so there's only the one session. Book a seat instead.", 422);
     const series = this.sql.exec('SELECT * FROM series WHERE id = ?', game.seriesId).toArray()[0];
     if (!series || series.status !== 'active') throw new RuleError("This game isn't running any more.", 409);
-    // 17 Oct 2026 (contract v18-private): a private game's regulars join through its invite link (one already in can
-    // change who's coming without it)
-    if (game.private && this.seriesMember(game.seriesId, who.customerId)?.status !== 'active') this.checkInvite(game, input, who);
+    // 17 Oct 2026 (contract v18-private): a private game's regulars join through its invite link, whichever of its
+    // sessions they come through (one already in can change who's coming without it)
+    this.checkInvite(game, input, who);
     const most = Math.min(8, game.seats);
     const people = Math.floor(Number(input.people));
     if (!(people >= 1 && people <= most)) throw new RuleError(`Join with 1 to ${most} people.`);

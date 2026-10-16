@@ -4,7 +4,7 @@
 shown in Lair time (Pacific/Auckland); money in cents. Backend: `src/private-games.js` (the rules and the three routes),
 `src/lair.js` (the routes, booking a seat, saving a seat every week, making sessions, `GET /floor`, `GET /me`),
 `src/core.js` (`publicGame`) and `src/interest.js`. Theme: `assets/lair-join.js` (invite keys and the join form),
-`assets/lair-games.js` (the sessions board's sheets: `?invite=`, the locked game, the GM's Who can join),
+`assets/lair-games.js` (the sessions board's sheets: `#invite=`, the locked game, the GM's Who can join),
 `assets/lair-session-form.js` (Who can join on a new game), `assets/lair-play.js` and `assets/lair-calendar.js` (the
 booking page and the events calendar), `assets/lair-staff.js` (the staff page's GM games manager), `assets/lair-core.js`
 and the demo (`assets/lair-demo.js`). Tests: `test/round18-private.test.js`; browser checks:
@@ -18,52 +18,53 @@ shows, as Private, invite only, and the GM shares an invite link.
 
 ### 1.1 A private game
 
-- A game (a one-off, or every session of a weekly, fortnightly or flexible game) is **private** or not. A private game
-  is **invite only**: it shows on the TTRPG sessions page, the booking page and the events calendar as Private, invite
-  only, with its details, but nobody can join it without its **invite link**.
-- Its invite link is the TTRPG sessions page with `?invite=<key>`: 20 letters and numbers with no look-alikes (no i, l,
-  o, 0 or 1), from `crypto.getRandomValues`. Every session of a series shares one key, and sessions made later get it
-  too.
-- The game's GM and staff with GM games never need the key. A weekly regular who's in already doesn't either (they can
-  change who's coming).
+- A game is **private** or not, as a whole: a one-off, or every session of a weekly, fortnightly or flexible game (and
+  sessions made later). A private game is **invite only**: it shows on the TTRPG sessions page, the booking page and the
+  events calendar as Private, invite only, with its details, but nobody can join it without its **invite link**.
+- Its invite link is the TTRPG sessions page with `#invite=<key>` (after the `#`, so it's never sent to a server or in a
+  Referer): 20 letters and numbers with no look-alikes (no i, l, o, 0 or 1), from `crypto.getRandomValues`. A game has
+  one key: every session of a series shares it.
+- The game's GM (a series: its GM now), staff with GM games and the game's weekly regulars never need the key (a
+  regular from before it was private can book an extra seat or change who's coming).
 - **Register interest** (off unless the GM turns it on): while it's on, anyone can say they're interested in a private
-  game (round 9's I'm interested), and the GM's email about them carries the invite link to send if they're a good fit.
-  While it's off, the game takes no interest (`403 noInterest`) and is shut to anyone without the link.
+  game (round 9's I'm interested). The GM's email about them says to send their invite link from their game on the
+  TTRPG sessions page (with a button to it): never the link itself, since a reply quotes the email, and a "sorry, not
+  this time" would pass it on. While it's off, the game takes no interest (`403 noInterest`) and is shut to anyone
+  without the link.
 - Seats booked with a link stay when the GM makes a new link or makes the game public.
 
 ### 1.2 Making a game private, and back
 
-- Who: the game's GM (a series: its GM) and staff with GM games (`sessions`). Others: `403 notYours`.
+- Who: the game's GM (a series: its GM now) and staff with GM games (`sessions`). Others: `403 notYours`.
 - A new game (`POST /games`, the GM's Run a game or staff's Make a session) is private with `private: true`, and takes
   interest with `interest: true` as well. Its reply's `game` has its `invite` (1.4).
-- `POST /games/:id/private` changes it later (2.1). For a session of a series it's that session and every later one the
-  caller runs (scope `series`, the default; `session` is just that one), and the series keeps it for sessions made later.
+- `POST /games/:id/private` changes it later (2.1), from any of its sessions: every session of the series, and the
+  series keeps it for sessions made later.
 - A game made private gets a key when it has none. One made public again keeps its key, so the same link works if it's
   made private again.
 - A cancelled game can't be changed (`409`).
 
 ### 1.3 A new link
 
-- `POST /games/:id/invite/new` (2.2): a new key for the game (a series: every session that had the old key, and the
-  series for sessions made later). The old link stops working at once; seats booked with it stay. Only a private game
-  has a link (`409 notPrivate`).
+- `POST /games/:id/invite/new` (2.2), from any of its sessions: a new key for the game (a series: every session, and
+  sessions made later). The old link stops working at once; seats booked with it stay. Only a private game has a link
+  (`409 notPrivate`).
 
 ### 1.4 Who sees the link
 
-- `game.invite: { key, url }`, on a private game only:
-  - `GET /floor`: for the game's GM, and staff who see the staff floor (Check-in, Tables, GM games or Events);
-  - `GET /me` `games` (the GM's own), the `POST /games` reply, and the replies of 2.1 and 2.2.
-- Everyone else gets `private: true` and `interestOpen` (2.4), never the key. It's not in the events feed, the players'
-  emails or any error.
+- `game.invite: { key, url }`, on a private game only, for its GM and staff with GM games: in `GET /floor`, `GET /me`
+  `games` (the GM's own), the `POST /games` reply, and the replies of 2.1 and 2.2.
+- Everyone else (other staff too) gets `private: true` and `interestOpen` (2.4), never the key. It's not in the events
+  feed, any email or any error.
 
 ## 2. Routes
 
 ### 2.1 `POST /games/:id/private`
 
-`{ private: boolean, interest?: boolean, scope?: 'series' | 'session' }` (interest left out: as it was; a public game
-never takes it) → `{ game, sessions }`, `game` as the board has it with its `invite`, `sessions` how many changed.
-Errors: `401 login`, `404` (no game), `409` (cancelled), `403 notYours`, `422 private` (not true or false), `422
-interest`.
+`{ private: boolean, interest?: boolean }` (interest left out: as it was; a public game never takes it), from any
+session of the game → `{ game, sessions }`, `game` as the board has it with its `invite`, `sessions` how many are still
+to come. Errors: `401 login`, `404` (no game), `409` (cancelled), `403 notYours`, `422 private` (not true or false),
+`422 interest`.
 
 ### 2.2 `POST /games/:id/invite/new`
 
@@ -72,17 +73,19 @@ interest`.
 
 ### 2.3 `GET /games/invite/:key` (anyone with the link)
 
-→ `{ game }`: the private game the key is for, as the board shows it, with `invited: true`: its next session that
-hasn't ended, open or full. A key that isn't one, or has nothing to come: `404 badInvite`.
+→ `{ game }`: the game the key is for, as the board shows it: its next session that hasn't ended, open or full, with
+`invited: true` while it's private (one made public again is just the game). One still waiting for staff to check it:
+`409 notYet`. A key that isn't one, or has nothing to come: `404 badInvite`.
 
 ### 2.4 Changed
 
 - `GET /floor` and every game view: `private` (boolean) and `interestOpen` (a private game taking interest), and
   `invite` as 1.4.
 - `POST /bookings` with `kind: 'gm-seat'` and `POST /games/:id/join-series`: `invite` (the key) for a private game;
-  without it, or with a wrong one: `403 invite`.
+  without it, or with a wrong one: `403 invite`, whichever of the game's sessions it's through (one that's ended too).
 - `POST /interest` for a private game's session while it isn't taking interest: `403 noInterest`.
-- The GM's "Someone wants in!" email for a private game says it's private and carries their invite link.
+- The GM's "Someone wants in!" email for a private game says it's private and to send their invite link from their
+  game (a new email, not a reply), with a "See your game" button; never the link itself.
 
 ## 3. Words (`PRIVATE_WORDS`, word for word)
 
@@ -96,6 +99,7 @@ hasn't ended, open or full. A key that isn't one, or has nothing to come: `404 b
 | notYours | Only the GM of this game, or staff with GM games, can change who can join it. |
 | login | Log in to do that. |
 | notPrivate | This game isn't private, so it has no invite link. Make it private first. |
+| notYet | That game isn't on the board yet: a staff goblin checks new games first. Try the link again soon. |
 
 ## 4. Storage
 
@@ -104,17 +108,19 @@ the index `games_invite` on `invite_key`. A series' `details` keep `private`, `i
 
 ## 5. The theme
 
-- **The key in the browser**: `lair-join.js` keeps the keys followed in `localStorage` (`dg-lair-invites`, by series or
-  one-off id, the 30 most recent), so logging in and coming back, the events calendar and a later visit know them; a
-  key the Lair app refuses (`403`) is forgotten. Logging in from a seat's form comes back with `&invite=` too.
-- **`?invite=<key>`** on the TTRPG sessions page: the game opens (on its day, on the booking page) with "You're invited!
-  Your invite link lets you join this private game.", the key is kept, and the link leaves the address. A link that
-  doesn't work says so.
+- **The key in the browser**: `window.Lair.invites` (`lair-core.js`) keeps the keys followed in `localStorage`
+  (`dg-lair-invites`, by session and series, the 30 most recent), so logging in and coming back, the booking page, the
+  events calendar and a later visit know them; a key the Lair app refuses (`403`) is forgotten. It's never put in the
+  address Shopify's log-in comes back to.
+- **`#invite=<key>`** on the TTRPG sessions page (`?invite=` too, as the first links had it): the key leaves the address
+  as the page starts, the game opens (on its day, on the booking page) with "You're invited! Your invite link lets you
+  join this private game.", and the key is kept. A game made public again opens as it is ("This game isn't private any
+  more: anyone can join."); one waiting for approval, or a link that doesn't work, says so.
 - **Without the link**: Private on the game's picture and tags; "Private: invite only" where its seats would be; no
   Join or Save my seat anywhere (the sheet, the day's list, the map, the calendar, Looking for players); the sheet's
   foot says "This game is invite only. Ask <GM> for the invite link." or, while it takes interest, "Interested? Tell
   <GM>, and they can send you the invite link." with I'm interested.
-- **The GM** (and staff with GM games) on their game: **Who can join**: Anyone (Make it private) or Private · invite
+- **The GM** (and staff with GM games; not other staff) on their game: **Who can join**: Anyone (Make it private) or Private · invite
   only, with the invite link (Copy), Let people register interest, New link (asks first) and Make it public. Share
   shares the invite link. Run a game and Make a session ask **Who can join** on the Players step (Anyone, Invite only,
   and Let people register interest), and the Game listed summary has the link to copy.

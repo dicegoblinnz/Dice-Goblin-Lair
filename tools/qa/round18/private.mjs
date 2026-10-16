@@ -5,8 +5,9 @@
 //  1. A player without the link: the day's list says Private: invite only with no Join, Looking for players leaves it
 //     out, the map's table says so, its details say to ask the GM (?join= opens them too), I'm interested only while
 //     the GM takes interest, and the demo backend says no without the key.
-//  2. The invite link (?invite=): the game opens on its day, they're invited, the key is kept, they join; a link that
-//     doesn't work says so.
+//  2. The invite link (#invite=): the game opens on its day, they're invited, the key is kept and the link leaves the
+//     address, they join; a link to a game made public again opens it as it is; a link that doesn't work (and the first
+//     links' ?invite=) says so.
 //  3. The events calendar: Private, invite only, no Join.
 //  4. The GM: Who can join with the invite link (Copy, Register interest, New link, Make it public and private again),
 //     and Run a game's Who can join (Invite only, with interest), listed with its link to copy.
@@ -201,7 +202,8 @@ for (const size of sizes) {
   await go(page, BASE, '/pages/gm-games', RUBY);
   await ready(page);
   const tomorrow = await seed(page);
-  await page.goto(`${BASE}/pages/gm-games?invite=${KEY}`, { waitUntil: 'networkidle', timeout: 60000 });
+  await page.goto('about:blank');
+  await page.goto(`${BASE}/pages/gm-games#invite=${KEY}`, { waitUntil: 'networkidle', timeout: 60000 });
   await page.waitForSelector('[data-sheet][open] .gm-detail', { timeout: 15000 });
   await settle(page, 500);
   const invited = await page.evaluate((id) => {
@@ -246,7 +248,21 @@ for (const size of sizes) {
   await closeSheet(page);
   const afterRow = await row(page, 'The Sunless Vault');
   check(`${tag} invite link: next visit, the day's list shows them in, not invite only`, afterRow && afterRow.left === '2 seats left' && /You’re in/.test(afterRow.actions), afterRow);
-  // a link that doesn't work
+  // made public again: the link opens it as anyone sees it
+  await page.evaluate(async (id) => {
+    const be = window.Lair.store.backend;
+    be.state.games.find((g) => g.id === id).private = false;
+    be.commit();
+  }, ID);
+  await openLinked(page, `/pages/gm-games#invite=${KEY}`);
+  const publicAgain = await text(page, '[data-sheet] .gm-flash');
+  check(`${tag} invite link: a game made public again opens as it is`, publicAgain === 'This game isn’t private any more: anyone can join.', publicAgain);
+  await page.evaluate(async (id) => {
+    const be = window.Lair.store.backend;
+    be.state.games.find((g) => g.id === id).private = true;
+    be.commit();
+  }, ID);
+  // a link that doesn't work (in the first links' ?invite= too)
   await page.goto(`${BASE}/pages/gm-games?invite=zzzzzzzzzzzzzzzzzzzz`, { waitUntil: 'networkidle', timeout: 60000 });
   await settle(page, 800);
   const bad = await text(page, '[data-notice]');
@@ -305,7 +321,7 @@ for (const size of sizes) {
     };
   });
   check(`${tag} GM: Who can join says Private · invite only, with the invite link to copy, Register interest off, New link and Make it public`,
-    box.head === 'Who can join Private · invite only' && box.url === `${BASE}/pages/gm-games?invite=${KEY}` && box.copy === 'Copy' && box.interest === false
+    box.head === 'Who can join Private · invite only' && box.url === `${BASE}/pages/gm-games#invite=${KEY}` && box.copy === 'Copy' && box.interest === false
     && JSON.stringify(box.buttons) === JSON.stringify(['New link', 'Make it public']) && box.fact === 'Private game: invite only. Its invite link is below, under Who can join.'
     && /Message your players/.test(box.foot), box);
   await shot(page, `${size}-4-gm-who-can-join`, '[data-sheet] .gm-own');
@@ -340,7 +356,7 @@ for (const size of sizes) {
   const newUrl = await page.evaluate(() => document.querySelector('[data-sheet] [data-invite-url]')?.value || '');
   check(`${tag} GM: New link asks first, then makes a new key: the old link is 404, and the box has the new one`,
     /^Make a new invite link\?/.test(ask) && fresh.inviteKey !== KEY && /^[a-z0-9]{20}$/.test(fresh.inviteKey) && oldLink === `404 ${WORDS.badLink}`
-    && newUrl === `${BASE}/pages/gm-games?invite=${fresh.inviteKey}` && (await text(page, '[data-sheet] .gm-flash')) === 'New invite link made. The old one doesn’t work any more: send this one to the players you want.',
+    && newUrl === `${BASE}/pages/gm-games#invite=${fresh.inviteKey}` && (await text(page, '[data-sheet] .gm-flash')) === 'New invite link made. The old one doesn’t work any more: send this one to the players you want.',
     { ask, key: fresh.inviteKey, oldLink, newUrl });
   // public, then private again (the same link)
   await page.click('[data-sheet] [data-private="off"]');
@@ -422,7 +438,7 @@ for (const size of sizes) {
   }, `Invite-only crawl (${size})`);
   check(`${tag} Run a game: listed as Private with interest, and the summary has the invite link to copy`,
     made && made.private === true && made.interestOpen === true && /^[a-z0-9]{20}$/.test(made.key)
-    && /Your game is live on the board, as Private\. Only players with your invite link can join\./.test(done.text) && done.url === `${BASE}/pages/gm-games?invite=${made && made.key}`,
+    && /Your game is live on the board, as Private\. Only players with your invite link can join\./.test(done.text) && done.url === `${BASE}/pages/gm-games#invite=${made && made.key}`,
     { made, done });
   await shot(page, `${size}-4-run-a-game-listed`, '[data-sheet]');
   // the summary with its invite row (axe can't see a top-layer dialog's own background, so Gobgob's bubble above it
@@ -458,7 +474,7 @@ for (const size of sizes) {
   const first = await part();
   check(`${tag} staff: the manager's Who can join: Invite only, the link, Take interest, New link, Make it public, and the Private badge`,
     first.h === 'Free, new players, who can join and the GM' && first.text === 'Invite only It shows on the board as Private, and only people with its invite link can join. It isn’t taking interest.'
-    && first.url === `${BASE}/pages/gm-games?invite=${KEY}` && JSON.stringify(first.buttons) === JSON.stringify(['Take interest', 'New link', 'Make it public']) && first.badge, first);
+    && first.url === `${BASE}/pages/gm-games#invite=${KEY}` && JSON.stringify(first.buttons) === JSON.stringify(['Take interest', 'New link', 'Make it public']) && first.badge, first);
   await shot(page, `${size}-5-staff-private`, '[data-gm-run-wrap]');
   await axe(page, `${tag} staff manager with Who can join`, '.staff-gm');
   check(`${tag} staff manager: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
@@ -491,7 +507,7 @@ for (const size of sizes) {
   const newKey = (await stored(page)).inviteKey;
   const newToast = await toast();
   check(`${tag} staff: New link asks first, then the key changes and the box has the new link`,
-    askNew === 'Tap again: the old link stops working' && newKey !== KEY && (await part()).url === `${BASE}/pages/gm-games?invite=${newKey}`
+    askNew === 'Tap again: the old link stops working' && newKey !== KEY && (await part()).url === `${BASE}/pages/gm-games#invite=${newKey}`
     && newToast === 'New invite link for The Sunless Vault. The old one doesn’t work any more, so send the GM this one.', { askNew, newKey, newToast });
   check(`${tag} staff: no errors`, page.errors.length === 0, page.errors);
   await ctx.close();

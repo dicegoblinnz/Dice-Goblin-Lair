@@ -125,14 +125,15 @@ test('private: a GM lists a private weekly game: the board shows it as private (
   assert.equal(game.private, true);
   assert.equal(game.interestOpen, false);
   assert.match(game.invite.key, /^[a-z0-9]{20}$/);
-  assert.equal(game.invite.url, `https://www.dicegoblin.nz/pages/gm-games?invite=${game.invite.key}`);
+  // after the #: never sent to a server, or in a Referer
+  assert.equal(game.invite.url, `https://www.dicegoblin.nz/pages/gm-games#invite=${game.invite.key}`);
   assert.ok(listed.sessions.length > 3, 'weekly sessions up to the horizon');
   const keys = lair.sql.exec('SELECT DISTINCT invite_key AS k, private AS p FROM games WHERE series_id = ?', game.seriesId).toArray().map((r) => ({ ...r }));
   assert.deepEqual(keys, [{ k: game.invite.key, p: 1 }], 'one key for every session');
-  // the public see it, as private, with no link
+  // the public see it, as private, with no link; so do staff without GM games
   for (const who of ['', MIA, HEMI]) {
     const seen = await gameOn(game.id, who);
-    assert.deepEqual([seen.private, seen.interestOpen, 'invite' in seen], [true, false, who === HEMI], who || 'logged out');
+    assert.deepEqual([seen.private, seen.interestOpen, 'invite' in seen], [true, false, false], who || 'logged out');
   }
   // its GM and staff with GM games see the link
   assert.equal((await gameOn(game.id, RANGI)).invite.key, game.invite.key);
@@ -163,7 +164,7 @@ test('private: a seat or a weekly seat needs the invite link; staff with GM game
   ok(await call('POST', `games/${game.id}/players`, { people: 1, name: 'Tia', email: 'tia@example.com' }, ANA));
 });
 
-test('private: Register interest only when its GM switches it on; the GM\'s email has the link', async () => {
+test('private: Register interest only when its GM switches it on; the GM\'s email points to their link, never has it', async () => {
   const { game } = await listGame();
   assert.equal(said(await interest(game.id, KAI)), `403 ${W.noInterest}`);
   assert.equal(said(await interest(game.id, '')), `403 ${W.noInterest}`);
@@ -183,7 +184,9 @@ test('private: Register interest only when its GM switches it on; the GM\'s emai
   assert.ok(mail, 'the GM got an email');
   assert.match(mail.subject, /Kai is interested in The Sunless Citadel/);
   assert.ok(mail.text.includes(`your private game The Sunless Citadel`), mail.text);
-  assert.ok(mail.text.includes(game.invite.url), 'with the link');
+  assert.ok(mail.text.includes('send them your invite link: it’s on your game on the TTRPG sessions page, under Who can join'), mail.text);
+  assert.ok(!mail.text.includes(game.invite.key) && !(mail.html || '').includes(game.invite.key), 'never the link itself: a reply would quote it');
+  assert.ok((mail.html || '').includes(`/pages/gm-games#game=${game.id}`), 'a button to their game');
   globalThis.fetch = async (url) => {
     reached.push(String(url));
     throw new Error(`No network in tests: ${url}`);
@@ -200,7 +203,6 @@ test('private: who can change it, and making it public (the link keeps for next 
   assert.equal(said(await setPrivate(game.id, { private: false }, '')), `401 ${W.login}`);
   assert.equal(said(await setPrivate(game.id, { private: 'no' })), `422 ${W.private}`);
   assert.equal(said(await setPrivate(game.id, { private: true, interest: 'yes' })), `422 ${W.interest}`);
-  assert.equal(said(await setPrivate(game.id, { private: true, scope: 'all' })), '422 scope is \'session\' or \'series\'.');
   assert.equal(said(await setPrivate('gm_nope', { private: true })), '404 Game not found.');
   // public: anyone books, and nothing's open to interest only for it
   const pub = ok(await setPrivate(game.id, { private: false }, ANA));
@@ -210,12 +212,14 @@ test('private: who can change it, and making it public (the link keeps for next 
   // private again: the same link
   const again = ok(await setPrivate(game.id, { private: true }));
   assert.equal(again.game.invite.key, game.invite.key);
-  // just this session public: the later ones stay private
-  const later = (await board()).games.filter((g) => g.seriesId === game.seriesId);
-  ok(await setPrivate(game.id, { private: false, scope: 'session' }));
-  const rows = lair.sql.exec('SELECT id, private FROM games WHERE series_id = ? ORDER BY starts_at', game.seriesId).toArray();
-  assert.deepEqual([rows[0].private, rows.slice(1).every((r) => r.private === 1)], [0, true]);
-  assert.ok(later.length >= 1);
+  // it's the whole game's: a change from a later session (even with scope 'session') is every session's, one key
+  const third = lair.sql.exec('SELECT id FROM games WHERE series_id = ? ORDER BY starts_at LIMIT 1 OFFSET 2', game.seriesId).one().id;
+  ok(await setPrivate(third, { private: false, scope: 'session' }, ANA));
+  let rows = lair.sql.exec('SELECT DISTINCT private AS p, invite_key AS k FROM games WHERE series_id = ?', game.seriesId).toArray().map((r) => ({ ...r }));
+  assert.deepEqual(rows, [{ p: 0, k: game.invite.key }], 'all public, the key kept');
+  ok(await setPrivate(third, { private: true }));
+  rows = lair.sql.exec('SELECT DISTINCT private AS p, invite_key AS k FROM games WHERE series_id = ?', game.seriesId).toArray().map((r) => ({ ...r }));
+  assert.deepEqual(rows, [{ p: 1, k: game.invite.key }], 'all private, one key');
 });
 
 test('private: the invite link opens the next session; a new link stops the old one; a session made later is private with the new link', async () => {
@@ -262,4 +266,44 @@ test('private: weekly sessions made later by maintenance are private with the li
   assert.equal(ok(await byInvite(one.invite.key)).game.id, one.id);
   Date.now = () => at('2026-10-18', 23);
   assert.equal(said(await byInvite(one.invite.key)), `404 ${W.badInvite}`);
+});
+
+test('private: a game made private later: nobody gets in through an old session, and its regulars from before keep their seats and can book another', async () => {
+  const { game } = await listGame({ privateGame: false });
+  const sessions = lair.sql.exec('SELECT id FROM games WHERE series_id = ? ORDER BY starts_at', game.seriesId).toArray().map((r) => r.id);
+  ok(await joinEvery(game.id, MIA, 'Mia'));
+  // the first session ends; the GM makes it private from the next one, so it's the whole game's
+  Date.now = () => at('2026-10-17', 23);
+  const made = ok(await setPrivate(sessions[1], { private: true }));
+  const key = made.game.invite.key;
+  assert.ok(made.sessions >= 3, 'every session to come');
+  assert.deepEqual(lair.sql.exec('SELECT DISTINCT private AS p FROM games WHERE series_id = ?', game.seriesId).toArray().map((r) => r.p), [1]);
+  // not through the session that's over (still the game's), and not through one to come, without the link
+  assert.equal(said(await joinEvery(sessions[0], KAI, 'Kai')), `403 ${W.invite}`);
+  assert.equal(said(await joinEvery(sessions[1], KAI, 'Kai')), `403 ${W.invite}`);
+  assert.equal(said(await seat(sessions[2], KAI, 'Kai')), `403 ${W.invite}`);
+  ok(await joinEvery(sessions[1], KAI, 'Kai', { invite: key }));
+  // Mia, a regular from before: another seat for a friend, and who's coming, with no link
+  ok(await seat(sessions[2], MIA, 'Mia', { name: 'Ria', email: 'ria@example.com' }));
+  ok(await joinEvery(sessions[1], MIA, 'Mia', { people: 2, players: [{ name: 'Mia' }, { name: 'Ria' }] }));
+});
+
+test('private: one key for every session, whatever New link is made from; the link opens a game made public again as it is, and says when one is waiting for approval', async () => {
+  const { game } = await listGame();
+  const later = lair.sql.exec('SELECT id FROM games WHERE series_id = ? ORDER BY starts_at LIMIT 1 OFFSET 2', game.seriesId).one().id;
+  const renewed = ok(await newLink(later, ANA));
+  const keys = lair.sql.exec('SELECT DISTINCT invite_key AS k FROM games WHERE series_id = ?', game.seriesId).toArray().map((r) => r.k);
+  assert.deepEqual(keys, [renewed.game.invite.key], 'every session has the new key');
+  assert.equal(said(await byInvite(game.invite.key)), `404 ${W.badInvite}`, 'the old one is gone everywhere');
+  // made public again: the link opens it, as anyone sees it
+  ok(await setPrivate(game.id, { private: false }));
+  const open = ok(await byInvite(renewed.game.invite.key)).game;
+  assert.deepEqual([open.id, open.private, 'invited' in open], [game.id, false, false]);
+  // a GM who isn't trusted yet: their private game waits for staff, and its link says so
+  const pending = ok(await call('POST', 'games', {
+    title: 'Kai’s one-shot', system: 'Daggerheart', gm: 'Kai', blurb: 'A first game.', seats: 4, tables: ['B3'], start: at('2026-10-18', 18), end: at('2026-10-18', 22),
+    schedule: 'one-shot', email: 'kai@example.com', private: true,
+  }, KAI));
+  assert.equal(pending.pending, true);
+  assert.equal(said(await byInvite(pending.game.invite.key)), `409 ${W.notYet}`);
 });
