@@ -4,6 +4,7 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v16-library-lending.md` | Library lending: staff lend games to anyone, with no plan or no account, at no charge | 16 Oct 2026 |
 | `lair-api-contract-v16-wishlist.md` | Round 16, the wishlist (built, switched off) | 16 Oct 2026 |
 | `lair-api-contract-v16-library-returns.md` | Library returns: members only borrow, staff put games back on the shelf | 16 Oct 2026 |
 | `lair-api-contract-v13-feeds.md` | Round 13, follow a game (the Our games page) | 10 Oct 2026 |

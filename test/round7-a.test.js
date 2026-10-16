@@ -675,7 +675,8 @@ test('library (6): holds last until midnight on the third day; collected games a
     assert.deepEqual([library.plan, library.used, library.holds.map((h) => h.title), library.atHome.map((l) => [l.title, l.image, l.status])], [
       { name: 'Stash', games: 3 }, 3, ['Azul', 'Cascadia'], [['Wingspan', 'https://www.dicegoblin.nz/cdn/shop/files/wingspan.jpg', 'out']],
     ]);
-    assert.deepEqual(Object.keys(library.atHome[0]), ['id', 'variantId', 'productId', 'title', 'shelfCode', 'handle', 'image', 'status', 'outAt', 'returnedAt', 'holdId']);
+    // lent (16 Oct 2026): staff lent it outside a plan
+    assert.deepEqual(Object.keys(library.atHome[0]), ['id', 'variantId', 'productId', 'title', 'shelfCode', 'handle', 'image', 'status', 'outAt', 'returnedAt', 'holdId', 'lent']);
     assert.deepEqual((await me()).holds.map((h) => [h.title, h.status]), [['Azul', 'held'], ['Cascadia', 'held'], ['Wingspan', 'collected']], 'round 6\'s holds stay as they were (active, then those that ended lately)');
     // The staff list: pictures, and the loan of a collected hold
     const all = (await call('GET', 'library/holds?status=all', null, 'staff')).data.holds;
@@ -777,7 +778,9 @@ test('library (6): staff check games out at the counter (a hold is collected; no
   assert.deepEqual(kiri.data.notice, 'Shopify thinks every copy is out. Check the copies on the product.');
   const more = await out({ customerId: '1002', variantId: 'gid://shopify/ProductVariant/4405', title: 'Catan', shelfCode: 'DGL56-001' });
   assert.deepEqual(more.data.notice, "That's more than Kiri's plan (1 game at a time).");
-  assert.deepEqual((await out({ customerId: '1004', variantId: '4406', title: 'Root' })).data.notice, "Ari isn't on a library plan.");
+  // Ari has no plan: since 16 Oct 2026 that's a lend (no notice, nothing to pay)
+  const ari = await out({ customerId: '1004', variantId: '4406', title: 'Root' });
+  assert.deepEqual([ari.data.notice, ari.data.lent, ari.data.loan.lent], [null, true, true]);
   assert.deepEqual((await out({ customerId: '1001', variantId: 'root', title: 'Root' })).data.error, 'Scan the barcode on the box, or type the code on its label.');
   // Checking in by scanning: two copies of Wingspan out, so staff pick; one copy of Catan, so it's back
   const pick = await call('POST', 'library/return', { code: 'DGL34-001' }, 'staff');
@@ -886,6 +889,8 @@ test('migration 17: round 6\'s database moves to round 7 with every row kept; ga
     id: 'ln_lh_collected', variant_id: '4401', product_id: '99', title: 'Wingspan', shelf_code: 'DGL34-001', handle: 'wingspan-library', image: null, customer_id: '1001',
     hold_id: 'lh_collected', status: 'out', out_at: NOW - DAY + HOUR, returned_at: null, out_by: 'staff', returned_by: null, staff_note: null,
     created_at: NOW - DAY + HOUR, updated_at: NOW - DAY + HOUR,
+    // library lending's columns (16 Oct 2026), made sure of on every start: not lent, no guest
+    lent: 0, guest_name: null, guest_email: null, guest_mobile: null,
   }], 'the game collected in round 6 is at home');
   assert.deepEqual(sql.exec('SELECT variant_id, title, shelf_code FROM library_games ORDER BY variant_id').toArray().map((r) => [r.variant_id, r.title, r.shelf_code]), [['4401', 'Wingspan', 'DGL34-001'], ['4402', 'Azul', 'DGL34-002'], ['4403', 'Root', null]]);
   assert.deepEqual(sql.exec('SELECT key, variant_id FROM library_codes ORDER BY key').toArray().map((r) => [r.key, r.variant_id]), [['DGL34001', '4401'], ['DGL34002', '4402']]);

@@ -147,6 +147,13 @@ const TEAM_WORDS = {
   notHelper: "They're not a helper.",
   noPerms: 'Tick at least one thing they can do.',
 };
+/** 16 Oct 2026, library lending: what staff are told when a game can't be lent to someone without an account yet */
+export const LENDING_WORDS = {
+  who: "Pick the member, or add the name of who you're lending it to.",
+  name: "Add the name of who you're lending it to.",
+  email: "That email doesn't look right. Try one like name@example.com.",
+  reach: 'Add their email or mobile, so we can reach them about the game.',
+};
 /** Round 9: the permissions that see the floor as staff do (the desk, the floor, GM games and events all work from it) */
 const FLOOR_STAFF = ['checkin', 'tables', 'sessions', 'events'];
 /** Round 9: who changes a booking at the desk or on the floor (status, paid, people, moves); refunds and waiving are money */
@@ -220,6 +227,21 @@ const ROUND16_WISHLIST = [
     PRIMARY KEY (customer_id, product_id))`,
   'CREATE INDEX IF NOT EXISTS wishlist_customer ON wishlist (customer_id, created_at)',
 ];
+
+/**
+ * Library lending (16 Oct 2026, Mo: "give the staff the ability to lend out a game to anyone even if they don't have an
+ * account it still adds to their account but no charge as they will not be subscribed but it is still evident that they
+ * have the game"): library_loans' new columns, made sure of on every start (added when missing) as ROUND15_COLUMNS are.
+ *  - lent: 1 for a game staff lent outside a library plan (to someone with no plan, or no account). It never counts
+ *    towards a plan's games (planLoans), and nothing is charged for it.
+ *  - guest_name, guest_email (lower case) and guest_mobile: who staff lent it to when the Lair doesn't know them. That
+ *    loan's customer_id is '' until they log in to My Lair with that email (adoptGuestLoans); the guest columns stay.
+ */
+const LENDING_COLUMNS = [
+  ['library_loans', 'lent', 'INTEGER NOT NULL DEFAULT 0'], ['library_loans', 'guest_name', 'TEXT'], ['library_loans', 'guest_email', 'TEXT'],
+  ['library_loans', 'guest_mobile', 'TEXT'],
+];
+const LENDING_INDEXES = ["CREATE INDEX IF NOT EXISTS library_loans_guest ON library_loans (guest_email) WHERE customer_id = ''"];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -888,6 +910,15 @@ export class Lair {
     }
     // Round 16: the wishlist's table and index (made when missing)
     for (const statement of ROUND16_WISHLIST) this.sql.exec(statement);
+    // Library lending (16 Oct 2026): library_loans' lent and guest columns, and the guest index (made when missing)
+    for (const [table, column, type] of LENDING_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of LENDING_INDEXES) this.sql.exec(statement);
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
@@ -7400,8 +7431,8 @@ export class Lair {
         ? `${named ? `${named} already has` : 'They already have'} this one on hold, until ${this.holdDate(same.until, rules)}.`
         : `You've already reserved this one, friend. It's held until ${this.holdDate(same.until, rules)}.`, 409);
     }
-    // Round 7: a plan's limit counts holds and games at home
-    const home = this.loansOut(customerId);
+    // Round 7: a plan's limit counts holds and games at home (16 Oct 2026: not those staff lent outside a plan)
+    const home = this.planLoans(customerId);
     if (plan && theirs.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, theirs.length, home.length), 409);
     const copies = fromShopify ?? fromPage ?? this.pageCopies(variantId) ?? 1;
     const holding = this.heldByVariant([variantId], now).get(variantId) || [];
@@ -7572,6 +7603,8 @@ export class Lair {
       id: r.id, variantId: r.variant_id, productId: r.product_id || null, title: r.title, shelfCode: r.shelf_code || '', handle: r.handle || '',
       image: r.image || null, status: r.status, outAt: r.out_at, returnedAt: r.returned_at || null, holdId: r.hold_id || null,
       customerId: r.customer_id, staffNote: r.staff_note || '',
+      // 16 Oct 2026: lent outside a plan, and who it was lent to when the Lair didn't know them (customerId '')
+      lent: Boolean(r.lent), guestName: r.guest_name || '', guestEmail: r.guest_email || '', guestMobile: r.guest_mobile || '',
     };
   }
 
@@ -7582,32 +7615,58 @@ export class Lair {
 
   /**
    * A game at home as its member sees it: { id, variantId, productId, title, shelfCode, handle, image, status: 'out' |
-   * 'returned', outAt, returnedAt, holdId }. image: the loan's picture, else the one the Lair knows for the game.
+   * 'returned', outAt, returnedAt, holdId, lent }. image: the loan's picture, else the one the Lair knows for the game.
+   * lent (16 Oct 2026): staff lent it outside a library plan, with nothing to pay.
    */
   loanView(l) {
     return {
       id: l.id, variantId: l.variantId, productId: l.productId, title: l.title, shelfCode: l.shelfCode, handle: l.handle,
       image: l.image || this.libraryGame(l.variantId)?.image || null, status: l.status, outAt: l.outAt, returnedAt: l.returnedAt, holdId: l.holdId,
+      lent: Boolean(l.lent),
     };
   }
 
-  /** A loan as staff see it: the member's view plus customerId, name, email, code (member code), days (whole Lair days at home) and staffNote */
+  /**
+   * A loan as staff see it: the member's view plus customerId, name, email, code (member code), days (whole Lair days at
+   * home) and staffNote. 16 Oct 2026: guest is true for a game lent to someone without an account the Lair knows
+   * (customerId null, and the name, email and mobile staff took); once they log in it's their member's.
+   */
   staffLoanView(l, now = Date.now(), memo = null) {
-    let m = memo?.get(l.customerId);
-    if (m === undefined) {
-      m = this.memberRow(l.customerId);
-      memo?.set(l.customerId, m);
+    const guest = !l.customerId;
+    let m = null;
+    if (!guest) {
+      m = memo?.get(l.customerId);
+      if (m === undefined) {
+        m = this.memberRow(l.customerId);
+        memo?.set(l.customerId, m);
+      }
     }
     const time = lairTime(this.rulesCache?.tz);
     return {
-      ...this.loanView(l), customerId: l.customerId, name: m?.name || m?.first_name || '', email: m?.email || '', code: m?.code || null,
-      days: Math.max(0, time.daysBetween(time.key(l.outAt), time.key(l.returnedAt || now))), staffNote: l.staffNote,
+      ...this.loanView(l), customerId: l.customerId || null, guest, name: m?.name || m?.first_name || l.guestName || '', email: m?.email || l.guestEmail || '',
+      mobile: guest ? l.guestMobile : '', code: m?.code || null, days: Math.max(0, time.daysBetween(time.key(l.outAt), time.key(l.returnedAt || now))),
+      staffNote: l.staffNote,
     };
   }
 
   /** A member's games at home, longest out first. No awaits. */
   loansOut(customerId) {
     return this.sql.exec("SELECT * FROM library_loans WHERE customer_id = ? AND status = 'out' ORDER BY out_at, created_at", String(customerId)).toArray().map((r) => this.rowToLoan(r));
+  }
+
+  /** A member's games at home that count towards their plan: every one but those staff lent outside a plan (16 Oct 2026). No awaits. */
+  planLoans(customerId) {
+    return this.loansOut(customerId).filter((l) => !l.lent);
+  }
+
+  /**
+   * The member an email belongs to (16 Oct 2026, lending): their email on the Lair, or their Shopify account's (ignoring
+   * case), the most recently seen first; null when nobody has it. No awaits.
+   */
+  memberForEmail(email) {
+    if (!isEmail(email)) return null;
+    const value = String(email).trim();
+    return this.sql.exec('SELECT * FROM members WHERE lower(email) = lower(?) OR lower(account_email) = lower(?) ORDER BY last_seen DESC LIMIT 1', value, value).toArray()[0] || null;
   }
 
   /** A library game the Lair knows (library_games), or null */
@@ -7673,7 +7732,9 @@ export class Lair {
     const plan = this.planOf(customerId, tags, now);
     const holds = this.activeHolds(customerId, now);
     const atHome = this.loansOut(customerId);
-    return { plan: this.planWords(plan), used: holds.length + atHome.length, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
+    // 16 Oct 2026: games staff lent outside a plan are at home with them but never use up the plan
+    const used = holds.length + atHome.filter((l) => !l.lent).length;
+    return { plan: this.planWords(plan), used, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
   }
 
   /** A scanned or typed code, cleaned: trimmed, 1 to 40 letters, numbers and . _ - +. Anything else is a 422 with `message`. */
@@ -7742,14 +7803,18 @@ export class Lair {
     return { free: Math.max(0, copies - holds.length - out.length), holds, out };
   }
 
-  /** A new loan: the game goes home with the member. hold: the hold it collected, or null. No awaits. */
-  makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null } = {}) {
+  /**
+   * A new loan: the game goes home with the member. hold: the hold it collected, or null. 16 Oct 2026: lent, when staff
+   * lend it outside a plan; guest { name, email, mobile } for someone the Lair doesn't know (customerId ''). No awaits.
+   */
+  makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null, lent = false, guest = null } = {}) {
     const id = makeId('ln');
     this.write(
       `INSERT INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at, returned_at,
-         out_by, returned_by, staff_note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, ?, ?, ?)`,
-      id, String(game.variantId), game.productId || null, game.title, game.shelfCode || null, game.handle || null, game.image || null, String(customerId),
-      holdId, now, by, note, now, now,
+         out_by, returned_by, staff_note, created_at, updated_at, lent, guest_name, guest_email, guest_mobile)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+      id, String(game.variantId), game.productId || null, game.title, game.shelfCode || null, game.handle || null, game.image || null,
+      customerId ? String(customerId) : '', holdId, now, by, note, now, now, lent ? 1 : 0, guest?.name || null, guest?.email || null, guest?.mobile || null,
     );
     return this.loanRow(id);
   }
@@ -7801,7 +7866,8 @@ export class Lair {
     if (hold) {
       loan = this.collectHold(hold, now, 'member');
     } else {
-      const home = this.loansOut(me);
+      // 16 Oct 2026: games staff lent outside a plan don't use up the plan
+      const home = this.planLoans(me);
       if (holds.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, holds.length, home.length), 409);
       const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
       if (this.copiesFree(game.variantId, copies, now).free < 1) throw new RuleError(`Every copy of ${game.title} is reserved or out on loan. Ask us at the counter.`, 409);
@@ -7833,15 +7899,36 @@ export class Lair {
   }
 
   /**
-   * POST /library/loans { customerId, code } (staff), or { customerId, variantId, title, shelfCode, handle } for a game
-   * typed in: check a game out to a member at the counter. Their hold on it, if any, is collected. No plan or copies
-   * check (what's in the staff member's hands goes out), but notice says when it's more than their plan or Shopify
-   * thinks every copy is out. Returns { loan, notice }.
+   * POST /library/loans (staff with Library): a game goes out at the counter. The game is { code } (scanned or typed),
+   * or { variantId, title, shelfCode, handle } for one typed in. Who it goes to:
+   *   { customerId }: someone the Lair knows (404 when it doesn't). Their hold on it, if any, is collected. With a
+   *     library plan it's one of their plan's games, as before: no plan or copies check (what's in the staff member's
+   *     hands goes out), but notice says when it's more than their plan or Shopify thinks every copy is out. With no
+   *     plan it's lent (16 Oct 2026, Mo: "lend out stuff to people without pressuring them to be subscribers"): no plan
+   *     needed, nothing charged, and it never counts towards a plan they join later.
+   *   { guest: { name, email?, mobile? } } (16 Oct 2026, Mo: "lend out a game to anyone even if they don't have an
+   *     account it still adds to their account"): lent to someone by name, with an email or a mobile to reach them. An
+   *     email the Lair knows (a member's, or their account's) lends it to that member, as with customerId. Otherwise it
+   *     waits under the email and joins their account when they log in to My Lair with it (adoptGuestLoans).
+   * Returns { loan (as staff see it), lent, notice }.
    */
   async checkOutLoan(input, who) {
     this.requireStaff(who, 'library');
-    const rules = await this.rules();
+    await this.rules();
     const customerId = trimmed(input?.customerId, 40);
+    // 16 Oct 2026: someone the Lair doesn't know yet, checked before anything is looked up
+    let guest = null;
+    if (!customerId) {
+      const given = input?.guest && typeof input.guest === 'object' ? input.guest : null;
+      if (!given) throw new RuleError(LENDING_WORDS.who);
+      const name = trimmed(given.name, 80).replace(/\s+/g, ' ');
+      if (!name) throw new RuleError(LENDING_WORDS.name);
+      const email = trimmed(given.email, 120).toLowerCase();
+      if (email && !isEmail(email)) throw new RuleError(LENDING_WORDS.email);
+      const mobile = checkMobile(given.mobile, { required: false });
+      if (!email && !mobile) throw new RuleError(LENDING_WORDS.reach);
+      guest = { name, email: email || null, mobile: mobile || null };
+    }
     let found;
     if (input?.code != null && String(input.code).trim() !== '') {
       found = await this.findLibraryGame(input.code);
@@ -7858,27 +7945,41 @@ export class Lair {
       found = { game, save: { game, codes: [] } };
     }
     const { game, save } = found;
-    const person = customerId ? await this.person(customerId) : null;
+    // the member it's for: the one picked, or the one whose email staff typed (their plan comes from their tags)
+    const knownId = customerId || (guest?.email ? this.memberForEmail(guest.email)?.customer_id : null) || null;
+    const person = knownId ? await this.person(knownId) : null;
     const fromShopify = (await this.shopifyCopies([game.variantId])).get(game.variantId);
     // --- no awaits from here on ---
     const now = Date.now();
-    const member = this.memberRow(customerId);
-    if (!member) throw new RuleError('No member with that customer ID.', 404);
+    const member = customerId ? this.memberRow(customerId) : guest.email ? this.memberForEmail(guest.email) : null;
+    if (customerId && !member) throw new RuleError('No member with that customer ID.', 404);
     if (save) this.saveLibraryGame(save.game, now, save.codes);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
-    const hold = this.activeHolds(member.customer_id, now).find((h) => h.variantId === game.variantId) || null;
     const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
-    const before = this.copiesFree(game.variantId, copies, now, { exceptHold: hold?.id });
-    const loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by });
-    const plan = this.planOf(member.customer_id, person?.tags, now);
-    const used = this.activeHolds(member.customer_id, now).length + this.loansOut(member.customer_id).length;
-    const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
     const notices = [];
-    if (!plan) notices.push(`${name === 'They' ? 'They aren\'t' : `${name} isn't`} on a library plan.`);
-    else if (plan.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
-    else if (used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
-    if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
-    return { loan: this.staffLoanView(loan, now), notice: notices.length ? notices.join(' ') : null };
+    let loan;
+    if (member) {
+      const tags = person?.customerId === member.customer_id ? person.tags : undefined;
+      const plan = this.planOf(member.customer_id, tags, now);
+      const hold = this.activeHolds(member.customer_id, now).find((h) => h.variantId === game.variantId) || null;
+      const before = this.copiesFree(game.variantId, copies, now, { exceptHold: hold?.id });
+      loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by, lent: !plan });
+      // no plan: lent, with nothing to pay (a hold they had is collected as a lent game too)
+      if (!plan && !loan.lent) {
+        this.write('UPDATE library_loans SET lent = 1, updated_at = ? WHERE id = ?', now, loan.id);
+        loan = this.loanRow(loan.id);
+      }
+      const used = this.activeHolds(member.customer_id, now).length + this.planLoans(member.customer_id).length;
+      const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
+      if (plan?.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
+      else if (plan && used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
+      if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
+    } else {
+      const before = this.copiesFree(game.variantId, copies, now);
+      loan = this.makeLoan(game, '', now, { by, lent: true, guest });
+      if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
+    }
+    return { loan: this.staffLoanView(loan, now), lent: Boolean(loan.lent), notice: notices.length ? notices.join(' ') : null };
   }
 
   /**
@@ -9181,7 +9282,20 @@ export class Lair {
     this.adoptInterests(id, email, now);
     // Round 11: and the games they were named in by email
     const played = this.adoptGamePlayers(id, email, now);
-    return bookings + joins + played + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now);
+    return bookings + joins + played + this.adoptGmGames(id, email, now) + this.takeUpInvites(id, email, now) + this.adoptGuestLoans(id, email, now);
+  }
+
+  /**
+   * 16 Oct 2026: library games staff lent to someone without an account, under this email (ignoring case), join their
+   * account when they log in with it: at home with them in My Library, and on the staff page under their name. Games
+   * already back on the shelf come too, as their history. No awaits. Returns how many joined.
+   */
+  adoptGuestLoans(id, email, now) {
+    const key = String(email || '').trim().toLowerCase();
+    if (!isEmail(key)) return 0;
+    const n = this.sql.exec("SELECT COUNT(*) AS n FROM library_loans WHERE customer_id = '' AND guest_email = ?", key).one().n;
+    if (n) this.write("UPDATE library_loans SET customer_id = ?, updated_at = ? WHERE customer_id = '' AND guest_email = ?", String(id), now, key);
+    return n;
   }
 
   /**
