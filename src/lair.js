@@ -1849,6 +1849,8 @@ export class Lair {
       if (a === 'memberships' && b && c === 'retry' && !d) return json(await this.staffRetryMembership(decodeURIComponent(b), who));
       if (a === 'bookings' && !b) return json(await this.createBooking(body, who, client));
       if (a === 'bookings' && c === 'update') return json(await this.updateBooking(b, body, who));
+      // 17 Oct 2026: staff write to whoever made a booking (Mo: "have the option to write an email to them")
+      if (a === 'bookings' && b && c === 'message' && !d) return json(await this.messageBooking(decodeURIComponent(b), body, who));
       if (a === 'games' && !b) return json(await this.createGame(body, who, client));
       if (a === 'games' && c === 'update') return json(await this.updateGame(b, body, who));
       if (a === 'games' && c === 'credit') return json(await this.creditGm(b, who, body));
@@ -3842,6 +3844,54 @@ export class Lair {
     // --- only this message's own row changes ---
     this.write('UPDATE messages SET sent = ? WHERE id = ?', result.sent, id);
     return { sent: result.sent };
+  }
+
+  /**
+   * POST /bookings/:id/message { subject?, text } (staff with Check-in or Tables; 17 Oct 2026, Mo: "I want to remove it
+   * manually. Even before the event. And have the option to write an email to them"): an email from the Lair team to
+   * whoever made a booking (any booking: a table, a seat, a game spot), with the booking's details. Replies go to the
+   * team (STAFF_EMAIL). 10 a booking a day. → { sent, to }
+   */
+  async messageBooking(id, input, who) {
+    this.requireStaff(who, BOOKING_STAFF);
+    const rules = await this.rules();
+    const now = Date.now();
+    const booking = this.booking(id);
+    if (!booking) throw new RuleError('Booking not found.', 404);
+    if (!isEmail(booking.email)) throw new RuleError(`This booking has no email address.${booking.phone ? ` Call or text them instead: ${booking.phone}.` : ''}`, 422);
+    const text = String(input?.text ?? '').trim().slice(0, 4000);
+    if (!text) throw new RuleError('Write a message first.');
+    if (!emailReady(this.env)) throw new RuleError("Emails aren't set up yet, so messages can't go out. Call them instead.", 503);
+    const limitKey = `bk:${booking.id}`;
+    const recent = this.sql.exec('SELECT COUNT(*) AS n FROM messages WHERE limit_key = ? AND created_at > ?', limitKey, now - 24 * HOUR).one().n;
+    if (recent >= 10) throw new RuleError("That's 10 emails about this booking today. Try again tomorrow.", 429);
+    const day = new Intl.DateTimeFormat('en-NZ', { timeZone: rules.tz, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(booking.start));
+    const subject = trimmed(input?.subject, 120) || `Your booking at Dice Goblin on ${day}`;
+    const msgId = makeId('ms');
+    this.write(
+      "INSERT INTO messages (id, game_id, limit_key, scope, text, recipients, sent, sender, created_at) VALUES (?, ?, ?, 'booking', ?, 1, NULL, ?, ?)",
+      msgId, booking.id, limitKey, text, who.customerId ? `staff:${who.customerId}` : 'staff', now,
+    );
+    const game = booking.gameId ? this.game(booking.gameId) : null;
+    const replyTo = isEmail(this.env.STAFF_EMAIL) ? this.env.STAFF_EMAIL : null;
+    const letter = this.letter(booking.email, subject, {
+      title: 'A message from the Lair team',
+      intro: `Kia ora ${booking.name || 'friend'}, the Dice Goblin team sent you this about your booking:`,
+      quote: text,
+      details: [
+        [game ? 'Game' : 'Booking', game ? game.title : `${booking.tables.length > 1 ? 'Tables' : 'Table'} ${booking.tables.join(', ')}`],
+        ['When', this.when(booking, rules)],
+        ['People', String(booking.people)],
+        ['Booking code', booking.ref || ''],
+        ...(['cancelled', 'noshow'].includes(booking.status) ? [['Status', booking.status === 'cancelled' ? 'Cancelled' : 'Marked as a no-show']] : []),
+      ],
+      outro: replyTo ? 'Reply to this email to answer the team.' : 'Questions? Call us on 021 159 6894.',
+      ...(booking.customerId ? { button: { label: 'See it in My Lair', url: this.page('myLair') } } : {}),
+    }, { replyTo });
+    const result = await this.mailMany([letter]);
+    this.write('UPDATE messages SET sent = ? WHERE id = ?', result.sent, msgId);
+    if (!result.sent) throw new RuleError("The email didn't go out. Try again in a minute, or call them instead.", 502);
+    return { sent: result.sent, to: booking.email };
   }
 
   /**
