@@ -132,6 +132,9 @@ The GM isn't emailed about a player they added to their own game themselves.
   more than the seats free) and, when free, `seatPrice` 0. `held` (regulars) never includes kept seats, and `taken` is
   booked plus held, so `seats − taken` still counts the kept seats: for someone who isn't new, the seats they can book
   are `seats − taken − newLeft`.
+- A series session's `series` adds `free` and `newSeats`: what its sessions to come are set to (staff's `scope:
+  'series'`), so a page that shows its later dates (the events calendar, "Save my seat every week") can say whether
+  they're free; the session's own `free` is only about it.
 - For whoever can run a game (1.1), `roster`: one item per seat booking still on, first booked first: `{ ref, people,
   names, characters, paid, due (cents), newPlayer, regular, member, here }`. Never an email or phone.
 - Staff bookings carry `newPlayer`.

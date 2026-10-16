@@ -224,12 +224,16 @@ off; staff make a session free; staff change a session's GM after it was set (co
   emailed about their own add; the floor's roster (who sees it, its fields, no emails); removing a player (who can, the
   refund flagged when they'd paid, before and once it's started); free (who can, the paid-seat 409, $0 seats and nothing
   owed, a staff edit keeps $0, no GM credit, the price back for sessions to come, a series from a session on and the
-  sessions made later); the GM emails' credit line for a free session; a new GM (a customer, a member's email, an
-  invite that joins their account, a series from a session on, a credited session keeps its GM, both GMs emailed).
+  sessions made later, and the board's series.free for a series' sessions to come); the GM emails' credit line for a
+  free session; a new GM (a customer, a member's email, an invite that joins their account, a series from a session on,
+  a credited session keeps its GM, both GMs emailed).
 - `round18/gm-sessions.mjs`: the theme mock in demo mode, phone and desktop. The staff page's GM games manager (Free,
   new players and the GM: Seats for new players, Make it free and Charge again with the paid-seat refusal, Change the GM
   by email, the New player badge and tick in Add players); the GM page for Tama, a helper with Library only, in his own
   session (the roster, Seats for new players, Reserve a seat with its email check, Take a player off) and no roster in a
   session he doesn't run; for Ruby, who's played before, the last seat kept for new players with no Join; for Lee, who's
-  new, a free session's card, details and join form; then live, the four calls against a stubbed Lair app. Axe, no
-  sideways scroll. `DG_THEME=… PORT=4991 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round18/gm-sessions.mjs [phone|desktop]`.
+  new, a free session's card, details and join form; then live, the four calls against a stubbed Lair app. From the
+  independent review: Make it free with Change the GM open, the new GM's name following the person picked, a seat booked
+  free that stays free when it's charged for again inside the 24 hours, a free session's Session done, focus after
+  running a session, the Reserve email's hint, a player taken off already, and no roster logged out. Axe, no sideways
+  scroll. `DG_THEME=… PORT=4991 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round18/gm-sessions.mjs [phone|desktop]`.
