@@ -1760,7 +1760,8 @@ export const pickMethods = {
   /**
    * GET /pick/games?filter=check|low|auto|basic|staff-picks|all&q=&offset=&limit= (perm library): { games, total }.
    * check: active games not checked yet, low confidence first, then auto, basic, seed. low: low confidence; auto,
-   * basic: by where the facts came from; staff-picks; all (gone games too). q: in the title or shelf code. limit 1 to
+   * basic: by where the facts came from (low, auto and basic: only those not checked yet); staff-picks; all (gone
+   * games too). q: in the title or shelf code. limit 1 to
    * 100 (50). No awaits.
    */
   staffPickGames(url, who) {
@@ -1772,8 +1773,9 @@ export const pickMethods = {
     const limit = wholeIn(url.searchParams.get('limit'), 1, 100) ?? 50;
     let list = this.pickGames().games.filter((g) => filter === 'all' || g.status === 'active');
     if (filter === 'check') list = list.filter((g) => !g.checked);
-    if (filter === 'low') list = list.filter((g) => g.facts.confidence === 'low');
-    if (filter === 'auto' || filter === 'basic') list = list.filter((g) => g.source === filter);
+    // low, auto and basic are work lists: a game staff have checked has left them (its confidence stays the tagger's)
+    if (filter === 'low') list = list.filter((g) => !g.checked && g.facts.confidence === 'low');
+    if (filter === 'auto' || filter === 'basic') list = list.filter((g) => !g.checked && g.source === filter);
     if (filter === 'staff-picks') list = list.filter((g) => g.staffPick);
     if (q || code) list = list.filter((g) => (q && pickNorm(g.title).includes(q)) || (code && g.shelfCode.toUpperCase().includes(code)));
     if (filter === 'check') {

@@ -1054,6 +1054,9 @@ test('staff routes: perm library (a helper without it gets 403); the check list,
   const edited = await call('POST', `pick/games/${G.azul}`, { facts: { ...LIBRARY[5].facts, summary: 'Draft tiles and lay them out in neat patterns on your board.' }, staffPick: true }, STAFF);
   assert.deepEqual([edited.data.game.source, edited.data.game.checked, edited.data.game.staffPick, edited.data.game.facts.summary], ['staff', true, true, 'Draft tiles and lay them out in neat patterns on your board.']);
   assert.equal((await call('GET', 'pick/games?filter=staff-picks', null, STAFF)).data.games[0].title, 'Azul');
+  // the low, auto and basic lists are work lists: Azul, checked now, has left them (Uno, low and not checked, stays)
+  assert.deepEqual((await call('GET', 'pick/games?filter=low', null, STAFF)).data.games.map((g) => g.title), ['Uno']);
+  assert.equal((await call('GET', 'pick/games?filter=auto', null, STAFF)).data.total, 0);
   // saving the same facts marks it checked but doesn't make it staff's; checked: false with them leaves it unchecked
   const same = await call('POST', `pick/games/${G.wingspan}`, { facts: LIBRARY[6].facts }, STAFF);
   assert.deepEqual([same.data.game.source, same.data.game.checked, same.data.game.checkedBy], ['seed', true, STAFF]);
