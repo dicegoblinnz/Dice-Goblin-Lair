@@ -58,7 +58,10 @@ status:active")`, paged. A **full sync** reads every page and marks rows not see
 maintenance after the Lair starts, then once every 6 hours. Between those, an **update sync** reads only
 `updated_at:>'<last sync minus 5 minutes>'` every maintenance run (10 minutes). Both are skipped while Shopify isn't
 configured or `read_products` isn't granted (the `copies` back-off applies). Never throws: errors go to `note({
-catalogError })`. Staff can run a full sync now with `POST /pick/sync`.
+catalogError })`. Staff can run a full sync now with `POST /pick/sync`. Paging waits for room in Shopify's query
+bucket (its cost extension) and asks a throttled page again, up to 5 times; a store that stays throttled is tried
+next run (`skipped: 'throttled'`) without the `copies` back-off. A full sync that finds no listings at all marks
+nothing gone and doesn't count (the next run tries again).
 
 **Shop copies** (`pick_shop`): the for-sale board games, so a pick can say "Buy your own copy". Same sync, query
 `product_type:'Board Games' AND -tag:'Board Game Rental' AND status:active`, keeping `product_id`, `handle`, `title`,

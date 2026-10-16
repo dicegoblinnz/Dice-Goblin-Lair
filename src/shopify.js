@@ -89,6 +89,19 @@ export function nothingRan(data, errors) {
 }
 
 /**
+ * Round 17 (from the review): how long until Shopify's query bucket holds another query like one whose cost extension
+ * this is (ms, at most 10 seconds), from its throttleStatus; 0 when it already does or there's no cost to go by.
+ */
+export function shopifyPaceWait(cost) {
+  const status = cost?.throttleStatus;
+  const need = Number(cost?.requestedQueryCost) || 0;
+  if (!status || !need) return 0;
+  const short = need - (Number(status.currentlyAvailable) || 0);
+  const rate = Number(status.restoreRate) || 50;
+  return short > 0 ? Math.min(10_000, Math.ceil((short / rate) * 1000) + 250) : 0;
+}
+
+/**
  * A mutation's data, or when Shopify made the change but answered with errors (a denied field: graphql's
  * error.partial), the part of the answer it did give, so the change is never taken for one that didn't happen.
  */
@@ -134,6 +147,11 @@ export class ShopifyAdmin {
 
   get configured() {
     return Boolean(this.shop && this.clientId && this.clientSecret);
+  }
+
+  /** A pause between Shopify reads (ms); tests make it instant */
+  wait(ms) {
+    return pause(ms);
   }
 
   /**
@@ -188,7 +206,17 @@ export class ShopifyAdmin {
       return this.graphql(query, variables, { retried: true, timeout });
     }
     if (!response.ok) throw new Error(`Shopify API error ${response.status}`);
-    const { data, errors } = await response.json();
+    const { data, errors, extensions } = await response.json();
+    // the query's cost and the bucket left (round 17: a long read paces itself by it)
+    this.lastCost = extensions?.cost || null;
+    if (errors?.length && errors.some((e) => e.extensions?.code === 'THROTTLED')) {
+      // Shopify's query bucket is empty: nothing ran, so it can be asked again once the bucket refills
+      const error = new Error('Shopify API: Throttled');
+      error.throttled = true;
+      error.cost = extensions?.cost || null;
+      error.nothingRan = true;
+      throw error;
+    }
     if (errors?.length) {
       const denied = errors.some((e) => e.extensions?.code === 'ACCESS_DENIED');
       // A mutation Shopify still made: it denied a field of the answer, not the change (11 Oct 2026: asking again
@@ -477,15 +505,30 @@ export class ShopifyAdmin {
     );
   }
 
-  /** Round 17: a products query read page by page (its nodes, in order), up to `pages` pages */
+  /**
+   * Round 17: a products query read page by page (its nodes, in order), up to `pages` pages. A page Shopify throttles is
+   * asked again once its bucket has room (up to 5 tries), and between pages it waits for room for the next one, so a
+   * full sync never runs the store's bucket dry (the review, 16 Oct 2026).
+   */
   async productPages(document, query, pages) {
     const nodes = [];
     let after = null;
     for (let page = 0; page < pages; page += 1) {
-      const data = await this.graphql(document, { after, query });
+      let data;
+      for (let tries = 1; ; tries += 1) {
+        try {
+          data = await this.graphql(document, { after, query });
+          break;
+        } catch (error) {
+          if (!error?.throttled || tries >= 5) throw error;
+          await this.wait(shopifyPaceWait(error.cost) || 2000);
+        }
+      }
       nodes.push(...(data.products?.nodes || []));
       if (!data.products?.pageInfo?.hasNextPage) break;
       after = data.products.pageInfo.endCursor;
+      const room = shopifyPaceWait(this.lastCost);
+      if (room) await this.wait(room);
     }
     return nodes;
   }

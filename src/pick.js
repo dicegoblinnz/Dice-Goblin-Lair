@@ -1879,9 +1879,11 @@ export const pickMethods = {
       library = await this.shopify.pickCatalogPages(isFull || !lastSync ? PICK_LIBRARY_QUERY : `${PICK_LIBRARY_QUERY} AND updated_at:>'${since}'`);
       if (isFull) shop = await this.shopify.pickShopPages(PICK_SHOP_QUERY);
     } catch (error) {
-      this.backoff('copies');
+      // a store whose query bucket stayed empty (throttled five times) is tried again next run, without pausing the
+      // library pages' live copy counts (the shared back-off is for Shopify failing)
+      if (!error?.throttled) this.backoff('copies');
       this.note({ catalogError: { message: String(error?.message || error).slice(0, 300), at: new Date().toISOString() } });
-      return { skipped: 'error' };
+      return { skipped: error?.throttled ? 'throttled' : 'error' };
     }
     // --- no awaits from here on ---
     const stamp = Date.now();

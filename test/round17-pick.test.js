@@ -12,6 +12,7 @@ import {
   parseTimeText, pickKey, pickNorm, playerTypeOf, shelfParts, similarity, validFacts, wildcardIndex,
 } from '../src/pick.js';
 import { PICK_VOCAB } from '../src/pick-vocab.js';
+import { shopifyPaceWait } from '../src/shopify.js';
 import { PICK_SEED, PICK_SEED_VERSION } from '../src/pick-seed.js';
 import { PICK_KNOWN } from '../src/pick-known.js';
 
@@ -509,6 +510,51 @@ test('sync: a full sync on the first run reads every page and every shop copy; l
   Date.now = () => NOW + 6 * HOUR + 2 * 60_000;
   assert.equal((await lair.syncCatalog()).kind, 'full');
   assert.equal((await lair.syncCatalog()).kind, 'update');
+});
+
+test('sync: Shopify\'s rate limit: a throttled page is asked again once the bucket has room, pages wait for room, and a store that stays throttled is tried next run without the copies back-off', async () => {
+  ctx = fakeCtx();
+  start(Object.fromEntries(LIBRARY.slice(0, 4).map((g) => [g.id, g.facts])), 'sync-1');
+  const shopify = fakeShopify({ library: LIBRARY.slice(0, 5).map((g) => node(g)), shop: [shopNode('9100000000001', 'Catan (5th Edition)')] });
+  const answer = lair.shopify.graphql;
+  const waits = [];
+  lair.shopify.wait = async (ms) => { waits.push(ms); };
+  let throttles = 1;
+  lair.shopify.graphql = async (query, variables) => {
+    if (throttles > 0 && variables.after === '2') {
+      throttles -= 1;
+      const error = new Error('Shopify API: Throttled');
+      Object.assign(error, { throttled: true, cost: { requestedQueryCost: 600, throttleStatus: { maximumAvailable: 1000, currentlyAvailable: 100, restoreRate: 50 } } });
+      throw error;
+    }
+    const data = await answer(query, variables);
+    // the bucket after this page: room for half a page (300 of 600), so the next page waits 6 seconds and a bit
+    lair.shopify.lastCost = { requestedQueryCost: 600, throttleStatus: { maximumAvailable: 1000, currentlyAvailable: 300, restoreRate: 50 } };
+    return data;
+  };
+  const first = await lair.syncCatalog();
+  assert.deepEqual([first.kind, first.synced], ['full', 5], 'the throttled page was asked again and the sync finished');
+  assert.deepEqual(shopify.calls.filter((c) => c.op === 'LairPickCatalog').length, 3, 'each page read once (the throttled try never reached Shopify\'s fake)');
+  assert.ok(waits.includes(10_000), 'waited for room for the throttled page (500 short at 50 a second: 10 seconds, the most)');
+  assert.ok(waits.filter((ms) => ms === 6250).length >= 2, 'between pages, waited for room for the next one');
+  // a store that stays throttled: five tries, then noted and tried next run, with no copies back-off
+  const notes = [];
+  lair.note = (entry) => notes.push(entry);
+  throttles = 99;
+  Date.now = () => NOW + 7 * HOUR;
+  assert.deepEqual(await lair.syncCatalog({ full: true }), { skipped: 'throttled' });
+  assert.match(notes[0].catalogError.message, /Throttled/);
+  assert.equal(lair.retryAt.get('copies') || 0, 0, 'the library pages\' live copy counts carry on');
+  throttles = 0;
+  assert.equal((await lair.syncCatalog({ full: true })).kind, 'full', 'the next run goes through');
+});
+
+test('sync: the Shopify client paces itself by the cost extension (shopifyPaceWait)', () => {
+  assert.equal(shopifyPaceWait(null), 0);
+  assert.equal(shopifyPaceWait({ requestedQueryCost: 200, throttleStatus: { currentlyAvailable: 900, restoreRate: 50 } }), 0, 'room already');
+  assert.equal(shopifyPaceWait({ requestedQueryCost: 600, throttleStatus: { currentlyAvailable: 300, restoreRate: 50 } }), 6250);
+  assert.equal(shopifyPaceWait({ requestedQueryCost: 1000, throttleStatus: { currentlyAvailable: 0, restoreRate: 50 } }), 10_000, 'at most 10 seconds');
+  assert.equal(shopifyPaceWait({ requestedQueryCost: 600, throttleStatus: { currentlyAvailable: 100, restoreRate: 100 } }), 5250, 'a faster store refills sooner');
 });
 
 test('sync: never throws; Shopify refusing (read_products) is noted and backed off; without Shopify it\'s skipped', async () => {
