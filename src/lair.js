@@ -9780,6 +9780,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not keep booking games held', error);
     }
+    // a postal swap at the checkout past its cutoff and grace: Shopify is asked first, so one paid whose webhook is late
+    // or lost isn't lapsed below
+    try {
+      const paid = await this.settleDueCheckouts(Date.now());
+      if (paid) result.librarySendsPaid = paid;
+    } catch (error) {
+      console.error('Lair: could not check postal swaps with Shopify', error);
+    }
     // postal swaps not paid by their cutoff lapse (before the holds below expire: a lapse says why)
     try {
       const lapsed = this.lapseSends(Date.now());

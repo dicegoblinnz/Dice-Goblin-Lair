@@ -526,7 +526,8 @@ Staff can switch a game's **staff pick** on the check page (`staffPick: true`).
 1. `syncCatalog` (1.1), then basic facts for new games and up to 5 auto-tags (1.2).
 2. Booking holds: make those whose window opened, release those whose booking ended, was cancelled or moved, mark
    `unavailable` and email once.
-3. Postal sends past their cutoff lapse (5.3).
+3. Postal sends past their cutoff lapse (5.3). One at the checkout past its grace is checked with Shopify first: a draft
+   that became an order is paid on time (a late or lost orders/paid webhook), not lapsed.
 4. Queues advance for every member with a `queued` row (5.1), at most 200 members a run.
 5. Watches: tell watchers of games with a free copy (5.4), at most 100 emails a run.
 6. Old pick sessions deleted (3.10), 500 a run.

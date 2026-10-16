@@ -138,7 +138,7 @@ function fakeShopify() {
   lair.shopify.draftOrderOrderId = async (id) => state.orders.get(id) ?? null;
   // a draft Shopify still has (null once it's deleted and never paid)
   lair.shopify.draftOrderState = async (id) => (state.drafts.has(id) && (state.orders.has(id) || !state.deleted.includes(id))
-    ? { id, status: state.orders.has(id) ? 'COMPLETED' : 'OPEN', ready: true, order: null } : null);
+    ? { id, status: state.orders.has(id) ? 'COMPLETED' : 'OPEN', ready: true, order: state.orders.has(id) ? { id: state.orders.get(id), name: `#${String(state.orders.get(id)).split('/').pop()}`, total: null } : null } : null);
   lair.shopify.deleteDraftIfOpen = async (id) => {
     state.deleted.push(id);
     return true;
@@ -700,6 +700,49 @@ test('round 17 queue: the cutoff: an unpaid send lapses (a checkout after 30 min
   assert.deepEqual((await maintenance()).librarySends, { lapsed: 1 });
   await settle();
   assert.ok(shop.deleted.includes(next.draft_order_id || sends().at(-1).draft_order_id), 'its checkout stops working');
+});
+
+test('round 17 queue: a checkout paid in time whose webhook never came isn\'t lapsed: maintenance asks Shopify first, and the copy stays theirs', async () => {
+  const send = await postalKiri();
+  await confirm(send.id);
+  const draft = sends()[0].draft_order_id;
+  // Kiri paid at 9:50pm; Shopify's orders/paid webhook never arrives
+  shop.orders.set(draft, 'gid://shopify/Order/5501');
+  setNow(at('2026-10-21', 22, 31));
+  mail.sent.length = 0;
+  const run = await maintenance();
+  assert.equal(run.librarySendsPaid, 1);
+  assert.equal(run.librarySends, undefined, 'nothing lapsed');
+  const paid = sends()[0];
+  assert.deepEqual([paid.status, paid.order_id, paid.order_name, paid.late], ['paid', 'gid://shopify/Order/5501', '#5501', 0]);
+  const hold = lair.holdRow(send.hold_id);
+  assert.equal(hold.status, 'held', 'the copy stays theirs while staff post it');
+  assert.ok(hold.until > at('2026-10-22', 0), 'held past the send day');
+  assert.equal(lair.queueSettings(KIRI).stalled, false);
+  await settle();
+  assert.ok(mail.sent.some((m) => m.to === 'staff@dicegoblin.test' && /^Post this Thursday: Azul/.test(m.subject)), 'staff told to post it');
+  assert.ok(!mail.sent.some((m) => m.to === 'kiri@example.com' && /paused/.test(m.subject)), 'Kiri isn\'t told her queue is paused');
+  // the webhook turning up after all changes nothing
+  assert.deepEqual(await lair.librarySendsPaid({ source_name: 'shopify_draft_order', name: '#5501', note_attributes: [{ name: '_libsend', value: send.id }] }, 'gid://shopify/Order/5501'), []);
+  assert.equal(sends()[0].status, 'paid');
+});
+
+test('round 17 queue: a checkout past its grace that Shopify says wasn\'t paid lapses as before; Shopify not answering lapses it too', async () => {
+  const send = await postalKiri();
+  await confirm(send.id);
+  setNow(at('2026-10-21', 22, 31));
+  assert.deepEqual((await maintenance()).librarySends, { lapsed: 1 });
+  assert.equal(sends()[0].status, 'lapsed');
+  // a second member: Shopify is down at the cutoff
+  await settings({ delivery: 'post', area: 'auckland' }, LEO);
+  setNow(at('2026-10-22', 10));
+  await add(ROOT, LEO);
+  const leo = sends().find((x) => x.customer_id === LEO);
+  await confirm(leo.id, { area: 'auckland' }, LEO);
+  lair.shopify.draftOrderState = async () => { throw new Error('Shopify API error 503'); };
+  setNow(at('2026-10-28', 22, 31));
+  assert.deepEqual((await maintenance()).librarySends, { lapsed: 1 });
+  assert.equal(sends().find((x) => x.id === leo.id).status, 'lapsed');
 });
 
 test('round 17 queue: a late payment (after the send lapsed) is still recorded and staff are told to send it next Thursday or refund', async () => {

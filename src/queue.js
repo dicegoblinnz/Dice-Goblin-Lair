@@ -654,6 +654,32 @@ export const queueMethods = {
   },
 
   /**
+   * Maintenance, just before step 3 (the review, 16 Oct 2026): a swap at the checkout whose cutoff and grace have passed
+   * is checked with Shopify before it lapses, so a payment whose orders/paid webhook is late or lost isn't lapsed: a
+   * draft that became an order is paid on time (librarySendsPaid checks it again, and the copy stays theirs). When
+   * Shopify can't say, it lapses as before (a late webhook is still recorded, and staff told). At most 10 a run.
+   * Returns how many were found paid.
+   */
+  async settleDueCheckouts(now = Date.now()) {
+    if (!this.shopify.configured) return 0;
+    const due = this.sql
+      .exec("SELECT * FROM library_sends WHERE status = 'checkout' AND draft_order_id IS NOT NULL AND confirm_by <= ? ORDER BY confirm_by LIMIT 10", now - CHECKOUT_GRACE)
+      .toArray();
+    let paid = 0;
+    for (const send of due) {
+      try {
+        const state = await this.shopify.draftOrderState(send.draft_order_id);
+        if (!state?.order?.id) continue;
+        const order = { source_name: 'shopify_draft_order', name: state.order.name || null, note_attributes: [{ name: '_libsend', value: send.id }] };
+        if ((await this.librarySendsPaid(order, state.order.id, { onTime: true })).length) paid += 1;
+      } catch (error) {
+        console.error('Lair: could not check a postal swap with Shopify before its cutoff', error);
+      }
+    }
+    return paid;
+  },
+
+  /**
    * Maintenance step 3: sends past their cutoff lapse: waiting ones at the cutoff, ones at the checkout 30 minutes
    * later (a payment in flight). Returns how many lapsed. No awaits.
    */
@@ -768,9 +794,10 @@ export const queueMethods = {
    * mark a send paid. Paid: its order and name are
    * kept, the copy stays held until staff post it, and STAFF_EMAIL hears "Post this Thursday". Paid after it lapsed or
    * was skipped: it's paid all the same, and staff are asked to send it next Thursday or refund. Paid twice: staff hear
-   * to refund one. Throws when Shopify can't answer, so the webhook comes again. Returns the sends marked paid.
+   * to refund one. Throws when Shopify can't answer, so the webhook comes again. Returns the sends marked paid. onTime:
+   * maintenance found the checkout paid before lapsing it (settleDueCheckouts), so it isn't lapsed first.
    */
-  async librarySendsPaid(order, orderId) {
+  async librarySendsPaid(order, orderId, { onTime = false } = {}) {
     const source = order?.source_name || '';
     if (source && source !== 'shopify_draft_order') return [];
     const ids = new Set();
@@ -816,8 +843,9 @@ export const queueMethods = {
         });
         continue;
       }
-      // paid after the cutoff and its 30 minutes' grace: it lapsed, whether or not maintenance has got to it yet
-      if (['waiting', 'checkout'].includes(s.status) && now >= s.confirm_by + CHECKOUT_GRACE) this.lapseSend(s, now);
+      // paid after the cutoff and its 30 minutes' grace: it lapsed, whether or not maintenance has got to it yet (unless
+      // maintenance found it paid before lapsing it: settleDueCheckouts)
+      if (!onTime && ['waiting', 'checkout'].includes(s.status) && now >= s.confirm_by + CHECKOUT_GRACE) this.lapseSend(s, now);
       const late = ['lapsed', 'cancelled'].includes(this.sendRow(id).status);
       const sendDay = late ? postalCutoff(time, now)?.sendDay || s.send_day : s.send_day;
       this.write(
