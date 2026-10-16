@@ -173,3 +173,13 @@ games only, and the wishlist built but switched off.
   shop's write-ups, custom.difficulty, type tags, and the pairs (`catan` and `catan-library`, `7-wonders-duel` with
   `7-wonders-duel-library`); `all_products` for Liquid, `requires_shipping` on variants, and multipart cart adds with
   their line item properties.
+- `round16/library-numbers.mjs`: Mo (16 Oct) asked for the site to say exactly what the library has, not "500+ games".
+  The theme counts it live (`snippets/library-numbers.liquid`: `[games]`, `[rpg_books]` and `[library]` in copy). On
+  the theme mock with the store's counts that day (681 in the library collection with the membership, 136 in the
+  automated Library RPG books collection, so 544 games and 136 RPG books): no vague count left in the theme's copy, the
+  Library theme settings, and each place that said 500+ (hero fact, announcement bar switched on in a copy of the
+  theme, library and membership pages, the bookings page's answer and its FAQ structured data, the library
+  collection's count, See all, My Library's invite), then the numbers following a change in the store. Phone and
+  desktop. `DG_THEME=… [PORT=4976] [OUT=…] node tools/qa/round16/library-numbers.mjs [phone|desktop]`. The mock's
+  library collection holds the store's count and its copies know their collections (`library-rpg-books` for the RPG
+  shelf), which round 9's site check reads for the hero's games fact.
