@@ -464,6 +464,31 @@ test('round 17 queue: in the Lair, an uncollected hold stalls the queue: the gam
   assert.deepEqual([again.data.ok, again.data.settings.stalled, again.data.queue.map((x) => [x.productId, x.status])], [true, false, [[AZUL, 'held'], [ROOT, 'queued']]]);
 });
 
+test('round 17 queue (review): a queue hold that ran out just as the game went home with her anyway (at the counter, before maintenance) doesn\'t stall the queue or say it wasn\'t collected', async () => {
+  // Kiri's queue holds Azul until midnight Sunday; staff check it out to her at the counter at 12:03am, and maintenance runs at 12:10am
+  await add(AZUL, KIRI);
+  await add(ROOT, KIRI);
+  const hold = holdsOf(KIRI)[0];
+  setNow(at('2026-10-19', 0, 3));
+  const g = FIXTURES[AZUL];
+  const out = await call('POST', 'library/loans', { customerId: KIRI, variantId: g.variantId, title: g.title, shelfCode: g.shelfCode, handle: g.handle }, 'staff');
+  assert.equal(out.status, 200, said(out));
+  setNow(at('2026-10-19', 0, 10));
+  mail.sent.length = 0;
+  await maintenance();
+  await settle();
+  assert.equal(lair.holdRow(hold.id).status, 'expired');
+  assert.deepEqual([lair.queueSettings(KIRI).stalled, rows(KIRI).map((r) => [r.product_id, r.status])], [false, [[AZUL, 'done'], [ROOT, 'queued']]]);
+  assert.deepEqual(mail.subjects('kiri@example.com'), [], 'no "Your queue is paused", no "Your hold ended"');
+  // a queue hold that really wasn't collected still stalls it (the test above has the rest)
+  setNow(at('2026-10-19', 9));
+  await call('POST', `library/loans/${out.data.loan.id}/return`, {}, 'staff');
+  assert.deepEqual(holdsOf(KIRI).map((h) => h.title), ['Root']);
+  setNow(at('2026-10-22', 9));
+  await maintenance();
+  assert.deepEqual([lair.queueSettings(KIRI).stalled, lair.queueSettings(KIRI).stalledReason], [true, 'missed']);
+});
+
 test('round 17 queue: any change to the queue, a reserve or a borrow starts a stalled queue again; pausing never holds anything', async () => {
   const stall = async (who) => {
     lair.saveQueueSettings(who, { stalled: true, stalledReason: 'missed', stalledAt: clock }, clock);
@@ -692,10 +717,25 @@ test('round 17 queue: a late payment (after the send lapsed) is still recorded a
   const staff = mail.sent.filter((m) => m.to === 'staff@dicegoblin.test');
   assert.deepEqual(staff.map((m) => m.subject), ['Postage paid after the cutoff: Azul for Kiri Smith']);
   assert.match(staff[0].text, /posted after the cutoff: send it next Thursday or refund/i);
+  // (review) while staff haven't posted or cancelled it, it's hers: starting her queue again neither holds Azul again nor
+  // asks for its postage a second time, and her plan (Grab: 1 game) is full with it
+  setNow(at('2026-10-22', 9));
+  mail.sent.length = 0;
+  const again = await restart(KIRI);
+  assert.deepEqual([again.data.settings.stalled, again.data.queue.map((x) => [x.productId, x.status]), sends().length], [false, [[AZUL, 'queued']], 1]);
+  await add(ROOT, KIRI);
+  await maintenance();
+  assert.deepEqual([holdsOf(KIRI), sends().length], [[], 1], 'nothing else held either: the paid swap takes her one game');
+  await settle();
+  assert.deepEqual(mail.subjects('kiri@example.com'), [], 'no "ready to post" email asking for the postage again');
+  // staff cancel it (and refund it): Azul is hers to queue again, and comes round again as usual
+  await call('POST', `library/sends/${send.id}/update`, { status: 'cancelled' }, 'staff');
+  await removeQ(ROOT, KIRI);
   // paid inside the grace but after it ran out (maintenance hadn't got there yet): lapsed and flagged the same way
   setNow(at('2026-10-23', 9));
   await restart(KIRI);
   const next = sends().at(-1);
+  assert.notEqual(next.id, send.id);
   await confirm(next.id);
   setNow(at('2026-10-28', 23));
   mail.sent.length = 0;
@@ -723,6 +763,27 @@ test('round 17 queue: "Not this time" skips a send: the hold ends now, the game 
   await confirm(next.id);
   await internal('orders-paid', paidSend(sends().at(-1).draft_order_id, 960));
   assert.equal(said(await skip(next.id)), `409 ${QUEUE_MESSAGES.paid}`);
+});
+
+test('round 17 queue (review): a postal swap\'s hold with its postage paid can\'t be cancelled by the member (as it can\'t be skipped); staff can let it go', async () => {
+  const send = await postalKiri();
+  await confirm(send.id);
+  await internal('orders-paid', paidSend('gid://shopify/DraftOrder/801', 905));
+  const hold = holdsOf(KIRI)[0];
+  // My Lair lists it among her holds; cancelling it there would put a paid-for copy back on the shelf with nobody told
+  const res = await call('POST', `library/holds/${hold.id}/cancel`, {}, KIRI);
+  assert.equal(said(res), `409 ${QUEUE_MESSAGES.paid}`);
+  assert.deepEqual([lair.holdRow(hold.id).status, sends()[0].status, rows(KIRI).map((r) => r.status)], ['held', 'paid', ['held']]);
+  // her other holds still cancel as before
+  assert.equal((await reserve(ROOT, LEO)).status, 200);
+  assert.equal((await call('POST', `library/holds/${holdsOf(LEO)[0].id}/cancel`, {}, LEO)).status, 200);
+  // staff with the library permission can (they sort out the postage on the postal swaps list)
+  const staff = await call('POST', `library/holds/${hold.id}/cancel`, {}, 'helper-library');
+  assert.equal(staff.status, 200, said(staff));
+  assert.equal(lair.holdRow(hold.id).status, 'cancelled');
+  // and while that paid swap is open, her queue doesn't hold Azul again or ask for its postage twice
+  await restart(KIRI);
+  assert.deepEqual([sends().length, holdsOf(KIRI)], [1, []]);
 });
 
 test('round 17 queue: staff postal swaps: the open list (by send day, then name, with the member), packed, sent collects into a loan, cancelled goes back in the queue; permissions', async () => {

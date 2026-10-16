@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
 import {
-  PICK_DATA, PICK_MESSAGES, PICK_AI_MODEL, PICK_TABLES, basicFacts, catalogRowOf, cleanAnswers, firstVideo, blurbOf, matchGames, parsePlayersText,
+  PICK_DATA, PICK_MESSAGES, PICK_AI_MODEL, PICK_TABLES, basicFacts, catalogRowOf, cleanAnswers, firstVideo, blurbOf, jaccard, matchGames, parsePlayersText,
   parseTimeText, pickKey, pickNorm, playerTypeOf, shelfParts, similarity, validFacts, wildcardIndex,
 } from '../src/pick.js';
 import { PICK_VOCAB } from '../src/pick-vocab.js';
@@ -1248,4 +1248,87 @@ test('the booking door: a booking\'s own game isn\'t another booking\'s; a booki
   // underplayed: a game at home since long ago is being played
   loan(G.azul, SAM, 'out', { outAt: NOW - 200 * DAY });
   assert.equal((await call('GET', `pick/game/${G.azul}`)).data.game.underplayed, false);
+});
+
+test('sync (review): a full sync that finds no library listings (Shopify\'s search came back empty) marks nothing gone, keeps the shop copies and tries again next run', async () => {
+  const shopify = fakeShopify({ library: LIBRARY.map((g) => node(g)), shop: [shopNode('9100000000001', 'Catan (5th Edition)')] });
+  const first = await lair.syncCatalog();
+  assert.deepEqual([first.kind, first.synced, first.gone, first.shop], ['full', LIBRARY.length, 0, 1]);
+  // 6 hours on, Shopify's search comes back empty
+  Date.now = () => NOW + 6 * HOUR + 60_000;
+  shopify.library = [];
+  shopify.shop = [];
+  const notes = [];
+  lair.note = (entry) => notes.push(entry);
+  const empty = await lair.syncCatalog();
+  assert.deepEqual([empty.kind, empty.synced, empty.gone], ['full', 0, 0]);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM pick_catalog WHERE status = 'active'").one().n, LIBRARY.length, 'every game is still in the library');
+  assert.ok(lair.pickGame(G.catan), 'the quiz, queues and table bookings still know Catan');
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM pick_shop').one().n, 1, 'the shop copies stay');
+  assert.match(notes.find((n) => n.catalogError)?.catalogError.message || '', /no library listings/);
+  // it doesn't count as the full sync: the next run tries a full one again, and a real answer marks what has really gone
+  Date.now = () => NOW + 6 * HOUR + 11 * 60_000;
+  shopify.library = LIBRARY.filter((g) => g.id !== G.codenames).map((g) => node(g));
+  const next = await lair.syncCatalog();
+  assert.deepEqual([next.kind, next.gone], ['full', 1]);
+  assert.equal(lair.sql.exec('SELECT status FROM pick_catalog WHERE product_id = ?', G.codenames).one().status, 'gone');
+});
+
+test('the card (review): a game held for my own table booking isn\'t shown as mine (one of my holds), as libraryStatus has it; it still takes the copy', async () => {
+  catalogue();
+  lair.sql.exec(
+    `INSERT INTO library_holds (id, variant_id, product_id, title, customer_id, status, until, created_by, created_at, updated_at, kind, booking_id)
+     VALUES ('lh_table', ?, ?, 'Azul', ?, 'held', ?, 'booking', ?, ?, 'booking', 'bk_x')`,
+    variantOf(G.azul), G.azul, KIRI, NOW + DAY, NOW, NOW,
+  );
+  const card = (await call('GET', `pick/game/${G.azul}`, null, KIRI)).data.game;
+  assert.deepEqual([card.availability.mine, card.availability.held, card.availability.available], [null, 1, 0]);
+  const status = (await call('GET', `library/status?ids=${variantOf(G.azul)}`, null, KIRI)).data.games[variantOf(G.azul)];
+  assert.deepEqual([status.mine, status.held, status.available], [null, 1, 0]);
+  // a hold of her own is still hers
+  hold(G.ticket, KIRI);
+  assert.equal((await call('GET', `pick/game/${G.ticket}`, null, KIRI)).data.game.availability.mine?.id, `lh_${G.ticket}_${KIRI}`);
+});
+
+test('similarity (review): Jaccard counted in place gives exactly what Sets of the words give (the seed, the famous games and odd lists)', () => {
+  const sets = (a, b) => {
+    const A = new Set(Array.isArray(a) ? a : []);
+    const B = new Set(Array.isArray(b) ? b : []);
+    if (!A.size && !B.size) return 0;
+    let both = 0;
+    for (const x of A) if (B.has(x)) both += 1;
+    return both / (A.size + B.size - both);
+  };
+  const lists = [...Object.values(PICK_SEED), ...PICK_KNOWN].flatMap((f) => [f.styles, f.themes, f.vibes]);
+  const odd = [['a', 'a', 'b'], ['a'], [], null, undefined, ['b', 'b', 'c'], ['x', 'x'], 'abc'];
+  const every = [...lists.filter((_, i) => i % 3 === 0), ...odd];
+  let checked = 0;
+  const wrong = [];
+  for (const a of every) {
+    for (const b of every) {
+      checked += 1;
+      if (jaccard(a, b) !== sets(a, b) && wrong.length < 3) wrong.push(`${JSON.stringify(a)} ~ ${JSON.stringify(b)}: ${jaccard(a, b)} not ${sets(a, b)}`);
+    }
+  }
+  assert.ok(checked > 100000);
+  assert.deepEqual(wrong, []);
+});
+
+test('auto-tag (review): a basic game staff have already checked ("Looks right") isn\'t sent to Workers AI, so it never holds up the new games', async () => {
+  ctx = fakeCtx();
+  start({ [G.catan]: LIBRARY[0].facts }, 'one');
+  // seven new games, oldest first; staff check the five oldest as they are
+  const fresh = Array.from({ length: 7 }, (_, i) => ({ id: `82000000001${i}`, title: `New Game ${i}`, code: `DGL34-M2${i}0` }));
+  catalogue([...fresh, LIBRARY[0]]);
+  fresh.forEach((g, i) => lair.sql.exec('UPDATE pick_facts SET created_at = ? WHERE product_id = ?', NOW - (10 - i) * HOUR, g.id));
+  for (const g of fresh.slice(0, 5)) assert.equal((await call('POST', `pick/games/${g.id}`, { checked: true }, STAFF)).status, 200);
+  const good = { ...facts({ confidence: 'medium', summary: 'Race your friends to build the best little town on the board.' }), expansionOfTitle: null };
+  const ai = fakeAI(Array.from({ length: 10 }, () => ({ choices: [{ message: { content: JSON.stringify(good) } }] })));
+  lair.env = { ...lair.baseEnv, AI: ai };
+  assert.deepEqual(await lair.autoTag(), { tagged: 2, failed: 0 });
+  assert.deepEqual(ai.calls.map((c) => JSON.parse(c.input.messages[1].content).title), ['New Game 5', 'New Game 6'], 'only the games nobody has checked');
+  const facts0 = (id) => ({ ...lair.sql.exec('SELECT source, checked, ai_tries FROM pick_facts WHERE product_id = ?', id).one() });
+  assert.deepEqual(facts0(fresh[0].id), { source: 'basic', checked: 1, ai_tries: 0 }, "staff's check stands");
+  assert.deepEqual(await lair.autoTag(), { tagged: 0, failed: 0 });
+  assert.equal(ai.calls.length, 2, 'and nothing is asked again on later runs');
 });

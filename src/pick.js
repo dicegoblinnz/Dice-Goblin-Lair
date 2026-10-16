@@ -644,13 +644,33 @@ export function cleanAnswers(input) {
 }
 
 /* ---------------- comparing games (section 2.3) ---------------- */
-const jaccard = (a, b) => {
-  const A = new Set(Array.isArray(a) ? a : []);
-  const B = new Set(Array.isArray(b) ? b : []);
-  if (!A.size && !B.size) return 0;
+/**
+ * Jaccard of two word lists, as Sets of their words count it (a repeated word counts once). Counted in place rather
+ * than by building Sets: a quiz scores every game against every liked game, so this runs over 100,000 times a request.
+ */
+const isFirst = (list, i) => {
+  for (let j = 0; j < i; j += 1) if (list[j] === list[i]) return false;
+  return true;
+};
+export const jaccard = (a, b) => {
+  const A = Array.isArray(a) ? a : [];
+  const B = Array.isArray(b) ? b : [];
+  let sizeA = 0;
+  let sizeB = 0;
   let both = 0;
-  for (const x of A) if (B.has(x)) both += 1;
-  return both / (A.size + B.size - both);
+  for (let i = 0; i < A.length; i += 1) {
+    if (!isFirst(A, i)) continue;
+    sizeA += 1;
+    for (let j = 0; j < B.length; j += 1) {
+      if (B[j] === A[i]) {
+        both += 1;
+        break;
+      }
+    }
+  }
+  for (let j = 0; j < B.length; j += 1) if (isFirst(B, j)) sizeB += 1;
+  if (!sizeA && !sizeB) return 0;
+  return both / (sizeA + sizeB - both);
 };
 /**
  * How alike two games are, 0 to 1: 0.35 × Jaccard(styles) + 0.25 × Jaccard(themes) + 0.2 × Jaccard(vibes) + 0.1 × (1 −
@@ -1208,7 +1228,8 @@ export const pickMethods = {
       const home = (g.variantId && loans.get(g.variantId)) || [];
       const copies = this.pickCopies(g, pages);
       const available = Math.max(0, copies - holds.length - home.length);
-      const mine = me ? holds.find((h) => h.customerId === me) : null;
+      // (a game held for their table booking isn't one of their holds, as libraryStatus has it)
+      const mine = me ? holds.find((h) => h.customerId === me && h.kind !== 'booking') : null;
       const atHome = me ? home.find((l) => l.customerId === me) : null;
       out.set(g.productId, {
         copies, available, held: holds.length, out: home.length, nextFree: !available && holds.length ? holds[0].until : null,
@@ -1860,7 +1881,10 @@ export const pickMethods = {
     const stamp = Date.now();
     const result = this.saveCatalog(library, shop, { full: isFull || !lastSync, now: stamp });
     this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('pick-catalog-sync', ?)", String(stamp));
-    if (isFull || !lastSync) {
+    // a full sync that found no library listings changed nothing (saveCatalog): it doesn't count, so the next run tries again
+    if ((isFull || !lastSync) && !result.synced) {
+      this.note({ catalogError: { message: 'Shopify found no library listings, so nothing was marked gone.', at: new Date(stamp).toISOString() } });
+    } else if (isFull || !lastSync) {
       this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('pick-catalog-full', ?)", String(stamp));
       this.pickFullDone = true;
     }
@@ -1898,7 +1922,10 @@ export const pickMethods = {
       );
     }
     let gone = 0;
-    if (full) {
+    // A full sync that saw no library listing at all marks nothing gone: Shopify's search came back empty, and the
+    // library never empties in one go (every table's game would turn "unavailable" and email its booker, and the quiz,
+    // queue and watches would have no games). The next maintenance run tries the full sync again.
+    if (full && seen.size) {
       for (const r of this.sql.exec("SELECT product_id FROM pick_catalog WHERE status = 'active'").toArray()) {
         if (seen.has(r.product_id)) continue;
         this.sql.exec("UPDATE pick_catalog SET status = 'gone', synced_at = ? WHERE product_id = ?", now, r.product_id);
@@ -1906,7 +1933,8 @@ export const pickMethods = {
       }
     }
     let shop = null;
-    if (shopNodes) {
+    // (and an empty answer for the for-sale board games leaves the shop copies as they were)
+    if (shopNodes?.length) {
       this.sql.exec('DELETE FROM pick_shop');
       shop = 0;
       for (const node of shopNodes) {
@@ -1958,7 +1986,7 @@ export const pickMethods = {
     const model = String(this.env.PICK_AI_MODEL || '').trim() || PICK_AI_MODEL;
     const rows = this.sql.exec(
       `SELECT c.*, f.facts AS facts_json FROM pick_facts f JOIN pick_catalog c ON c.product_id = f.product_id
-       WHERE f.source = 'basic' AND f.ai_tries < ? AND c.status = 'active' ORDER BY f.created_at, f.product_id LIMIT ?`,
+       WHERE f.source = 'basic' AND f.checked = 0 AND f.ai_tries < ? AND c.status = 'active' ORDER BY f.created_at, f.product_id LIMIT ?`,
       PICK_LIMITS.aiTries, limit,
     ).toArray();
     let tagged = 0;
