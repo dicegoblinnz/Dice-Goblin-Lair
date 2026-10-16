@@ -1,8 +1,9 @@
 # Lair app API: round 16, the wishlist [wishlist] (16 Oct 2026)
 
-**Changes only**, on top of v15-tab and everything before it; where they disagree, this file wins. Times in ms (UTC).
-Errors stay `{ error: "A plain sentence." }` with a 4xx. Backend branch `r16-main`. No theme branch: nothing in the
-theme shows the wishlist yet, and the Add to wishlist button stays switched off until Mo says.
+**Changes only**, on top of v16-library-returns and everything before it; where they disagree, this file wins. Times in
+ms (UTC). Errors stay `{ error: "A plain sentence." }` with a 4xx. Backend branch `r16-main`. The theme's half is Add to
+wishlist on a game's page (round 16, theme branch `dice-goblin-2-theme`, `assets/lair-wishlist.js`), built and switched
+off (Theme settings › Wishlist) until Mo says.
 
 Mo (16 Oct): "Add to wishlist should be done later for now just build the infrastructure."
 

@@ -4,6 +4,7 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v16-wishlist.md` | Round 16, the wishlist (built, switched off) | 16 Oct 2026 |
 | `lair-api-contract-v16-library-returns.md` | Library returns: members only borrow, staff put games back on the shelf | 16 Oct 2026 |
 | `lair-api-contract-v13-feeds.md` | Round 13, follow a game (the Our games page) | 10 Oct 2026 |
 | `lair-api-contract-v12-sim.md` | Round 12, the website simulation's fixes | 10 Oct 2026 |
