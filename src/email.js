@@ -60,14 +60,19 @@ export function hoursSummary(hours) {
  *   signoff    the closing line(s); Gobgob signs by default
  *   footer     { name, address, phone, hours }
  *   brand      { logo, url }: the header's logo (EMAIL_LOGO when not given) and where it links (the shop's home page)
+ *   cards      round 17: [{ title, image, url, lines }]: games, each with its picture (a Shopify CDN address), its title
+ *              (linked to its page) and short lines under it (the "Your picks" email)
  * Returns { html, text }.
  */
-export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {} }) {
+export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [] }) {
   // Round 11: small links under the button, http(s) only
   const extras = (Array.isArray(links) ? links : []).filter((l) => l && safeUrl(l.url) && String(l.label ?? '').trim()).map((l) => ({ label: String(l.label).trim(), url: safeUrl(l.url) }));
   const before = list(intro);
   const after = list(outro);
   const boxes = (codes || []).filter((c) => c && String(c.code ?? '').trim()).map((c) => ({ code: String(c.code).trim(), lines: list(c.lines) }));
+  // Round 17: game cards (a picture, the title linked to its page, and a line or two)
+  const games = (Array.isArray(cards) ? cards : []).filter((g) => g && String(g.title ?? '').trim())
+    .map((g) => ({ title: String(g.title).trim(), image: safeUrl(g.image), url: safeUrl(g.url), lines: list(g.lines) }));
   const rows = (details || []).filter((row) => row && String(row[1] ?? '').trim()).map(([label, value]) => [String(label), String(value).trim()]);
   const link = button && safeUrl(button.url) ? { label: String(button.label || 'Open'), url: safeUrl(button.url) } : null;
   const signed = list(signoff ?? 'See you at the Lair!\nGobgob, the Dice Goblin');
@@ -93,6 +98,10 @@ ${boxes.map((b) => `<div style="margin:4px 0 16px;padding:18px 16px;background:$
 <div style="font:800 30px/1.2 ${FONT};letter-spacing:0.06em;color:${C.ink};word-break:break-word;">${escapeHtml(b.code)}</div>
 ${b.lines.map((t) => `<p style="margin:8px 0 0;font:15px/1.5 ${FONT};color:${C.ink};">${lines(t)}</p>`).join('\n')}
 </div>`).join('\n')}
+${games.map((g) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;border-collapse:collapse;"><tr>
+${g.image ? `<td style="width:96px;padding:0 14px 0 0;vertical-align:top;">${g.url ? `<a href="${escapeHtml(g.url)}">` : ''}<img src="${escapeHtml(g.image)}" width="96" alt="${escapeHtml(g.title)}" style="display:block;width:96px;max-width:96px;height:auto;border:0;border-radius:8px;">${g.url ? '</a>' : ''}</td>` : ''}
+<td style="vertical-align:top;font:16px/1.45 ${FONT};color:${C.ink};"><div style="font:700 17px/1.3 ${FONT};margin:0 0 4px;">${g.url ? `<a href="${escapeHtml(g.url)}" style="color:${C.ink};text-decoration:none;">${escapeHtml(g.title)}</a>` : escapeHtml(g.title)}</div>
+${g.lines.map((t) => `<div style="font:15px/1.45 ${FONT};color:${C.muted};">${lines(t)}</div>`).join('\n')}</td></tr></table>`).join('\n')}
 ${rows.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 20px;border-collapse:collapse;">
 ${rows.map(([label, value]) => `<tr><td style="padding:10px 12px 10px 0;border-top:1px solid ${C.line};font:700 15px/1.45 ${FONT};color:${C.ink};vertical-align:top;width:36%;">${escapeHtml(label)}</td><td style="padding:10px 0;border-top:1px solid ${C.line};font:15px/1.45 ${FONT};color:${C.ink};vertical-align:top;">${lines(value)}</td></tr>`).join('\n')}
 </table>` : ''}
@@ -112,6 +121,7 @@ ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
     ...before,
     said ? said.split(/\r?\n/).map((l) => `> ${l}`).join('\n') : null,
     ...boxes.map((b) => [`    ${b.code}`, ...b.lines.map((t) => `    ${t}`)].join('\n')),
+    ...games.map((g) => [g.title, ...g.lines, g.url].filter(Boolean).join('\n')),
     rows.length ? rows.map(([label, value]) => `${`${label}:`.padEnd(width + 2)}${value.replace(/\r?\n/g, `\n${' '.repeat(width + 2)}`)}`).join('\n') : null,
     link ? `${link.label}: ${link.url}` : null,
     ...extras.map((l) => `${l.label}: ${l.url}`),

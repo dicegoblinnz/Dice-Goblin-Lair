@@ -44,6 +44,8 @@ import { GAME_PEOPLE, PLAYER_WORDS, gamePlayerMethods, spotKey, spotLabel } from
 import { membershipMethods, membershipUpkeep } from './memberships.js';
 // Round 16: the wishlist, a member's products to come back to (src/wishlist.js)
 import { wishlistMethods } from './wishlist.js';
+// Round 17: Help me pick, the game finder (src/pick.js)
+import { PICK_TABLES, pickMethods } from './pick.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -888,6 +890,9 @@ export class Lair {
     }
     // Round 16: the wishlist's table and index (made when missing)
     for (const statement of ROUND16_WISHLIST) this.sql.exec(statement);
+    // Round 17: Help me pick's tables and indexes (made when missing), and the seed's facts once per version
+    for (const statement of PICK_TABLES) this.sql.exec(statement);
+    this.applyPickSeed();
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
@@ -1540,8 +1545,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships'].includes(a));
+          || (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1583,6 +1588,14 @@ export class Lair {
       if (request.method === 'GET' && a === 'memberships' && !b) return json(await this.listMemberships(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'damage' && !c) return json(await this.listDamageCharges(url, who));
       if (request.method === 'GET' && a === 'tab' && b === 'lookup' && !c) return json(await this.tabLookup(url, who));
+      // Round 17: Help me pick (src/pick.js): "Games you already love", one game's card, the staff list and report, a
+      // shared session, and a member's saved picks, taste and games to rate
+      if (request.method === 'GET' && a === 'pick' && b === 'known' && !c) return json(await this.pickKnown(url, who, client));
+      if (request.method === 'GET' && a === 'pick' && b === 'game' && c && !parts[3]) return json(await this.pickGameCard(c, who, client));
+      if (request.method === 'GET' && a === 'pick' && b === 'games' && !c) return json(this.staffPickGames(url, who));
+      if (request.method === 'GET' && a === 'pick' && b === 'report' && !c) return json(this.pickReport(url, who));
+      if (request.method === 'GET' && a === 'pick' && b && !c) return json(await this.sharedPicks(b, who));
+      if (request.method === 'GET' && a === 'me' && b === 'picks' && !c) return json(this.myPicks(who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
@@ -1599,6 +1612,16 @@ export class Lair {
       // Round 16: add a product to the wishlist, and take one off
       if (a === 'me' && b === 'wishlist' && !c) return json(this.addToWishlist(body, who));
       if (a === 'me' && b === 'wishlist' && c === 'remove' && !d) return json(this.removeFromWishlist(body, who));
+      // Round 17: Help me pick (src/pick.js): the quiz, its swipe round, a session's events, save and email, ratings, and
+      // the staff check list and sync
+      if (a === 'pick' && !b) return json(await this.pick(body, who, client));
+      if (a === 'pick' && b === 'swipes' && !c) return json(await this.pickSwipes(body, who, client));
+      if (a === 'pick' && b === 'sync' && !c) return json(await this.staffPickSync(who));
+      if (a === 'pick' && b === 'games' && c && !d) return json(this.staffPickEdit(c, body, who));
+      if (a === 'pick' && b && c === 'event' && !d) return json(this.pickEvent(b, body));
+      if (a === 'pick' && b && c === 'save' && !d) return json(this.savePicks(b, body, who));
+      if (a === 'pick' && b && c === 'email' && !d) return json(await this.emailPicks(b, body, who, client));
+      if (a === 'library' && b === 'rate' && !c) return json(this.rateGame(body, who));
       if (a === 'passes' && !b) return json(await this.createPass(body, who));
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
@@ -9388,6 +9411,20 @@ export class Lair {
       }
     }
     result.memberships = await membershipUpkeep(this, rules, { webhookUrl: membershipsUrl, force });
+    // Round 17: Help me pick's catalogue from Shopify, basic facts for new games and up to 5 auto-tags (src/pick.js)
+    try {
+      const pick = await this.pickUpkeep();
+      if (pick) result.pick = pick;
+    } catch (error) {
+      console.error('Lair: Help me pick upkeep failed', error);
+    }
+    // Round 17: quiz sessions older than 180 days that nobody saved are deleted, 500 a run
+    try {
+      const pruned = this.prunePickSessions(Date.now());
+      if (pruned) result.pickSessions = { deleted: pruned };
+    } catch (error) {
+      console.error('Lair: could not delete old quiz sessions', error);
+    }
     this.note({ connection: result });
     return result;
   }
@@ -9409,3 +9446,5 @@ Object.assign(Lair.prototype, gamePlayerMethods);
 Object.assign(Lair.prototype, membershipMethods);
 // Round 16: the wishlist (src/wishlist.js)
 Object.assign(Lair.prototype, wishlistMethods);
+// Round 17: Help me pick (src/pick.js)
+Object.assign(Lair.prototype, pickMethods);

@@ -441,6 +441,56 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 17, Help me pick: every product Shopify's search finds for `query` (the library listings: tag 'Board Game
+   * Rental', active), 100 a page by ID, up to `pages` pages, with what the catalogue keeps: the handle, title, status,
+   * tags, vendor, dates, picture, description, the first variant's stock, the library's metafields (code, players, play
+   * time, difficulty, missing pieces), the Google blurb and the shop copy staff linked (custom.shop_copy). Needs
+   * read_products (and read_inventory for stock); until then Shopify refuses and this throws.
+   */
+  async pickCatalogPages(query, { pages = 20 } = {}) {
+    return this.productPages(
+      `query LairPickCatalog($after: String, $query: String!) { products(first: 100, after: $after, sortKey: ID, query: $query) { nodes {
+        id handle title status tags vendor createdAt updatedAt descriptionHtml featuredMedia { preview { image { url } } }
+        variants(first: 1) { nodes { id inventoryQuantity inventoryItem { tracked } } }
+        libraryCode: metafield(namespace: "custom", key: "library_code") { value } players: metafield(namespace: "custom", key: "players") { value }
+        playTime: metafield(namespace: "custom", key: "play_time") { value } difficulty: metafield(namespace: "custom", key: "difficulty") { value }
+        missingPieces: metafield(namespace: "custom", key: "missing_pieces") { value } missingNote: metafield(namespace: "custom", key: "missing_pieces_note") { value }
+        blurb: metafield(namespace: "global", key: "description_tag") { value }
+        shopCopy: metafield(namespace: "custom", key: "shop_copy") { reference { ... on Product { id handle title status totalInventory tracksInventory
+          priceRangeV2 { minVariantPrice { amount } } featuredMedia { preview { image { url } } } } } } }
+        pageInfo { hasNextPage endCursor } } }`,
+      query, pages,
+    );
+  }
+
+  /**
+   * Round 17: the for-sale board games ("Buy your own copy"), 100 a page by ID: id, handle, title, status, stock, the
+   * lowest price, whether any variant is for sale, and the picture.
+   */
+  async pickShopPages(query, { pages = 20 } = {}) {
+    return this.productPages(
+      `query LairPickShop($after: String, $query: String!) { products(first: 100, after: $after, sortKey: ID, query: $query) { nodes {
+        id handle title status totalInventory tracksInventory featuredMedia { preview { image { url } } } priceRangeV2 { minVariantPrice { amount } }
+        variants(first: 20) { nodes { availableForSale } } }
+        pageInfo { hasNextPage endCursor } } }`,
+      query, pages,
+    );
+  }
+
+  /** Round 17: a products query read page by page (its nodes, in order), up to `pages` pages */
+  async productPages(document, query, pages) {
+    const nodes = [];
+    let after = null;
+    for (let page = 0; page < pages; page += 1) {
+      const data = await this.graphql(document, { after, query });
+      nodes.push(...(data.products?.nodes || []));
+      if (!data.products?.pageInfo?.hasNextPage) break;
+      after = data.products.pageInfo.endCursor;
+    }
+    return nodes;
+  }
+
+  /**
    * Round 7: the product variants whose barcode or SKU is `code` (Shopify's search, up to 5), for scanning library games
    * and tab items. Library copies' barcodes and SKUs are their shelf codes, and a library copy's product has its shelf
    * code in custom.library_code. Needs read_products (waiting for Mo); until then Shopify refuses and this throws. Each:
