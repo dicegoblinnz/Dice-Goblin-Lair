@@ -443,6 +443,8 @@ test('round 18: not free any more, the price comes back on unpaid seats of sessi
   const freeOf = (gameId) => Boolean(lair.game(gameId).free);
   assert.deepEqual([freeOf(first.id), freeOf(second.id), freeOf(third.id)], [false, true, true]);
   assert.equal(JSON.parse(lair.sql.exec('SELECT details FROM series WHERE id = ?', seriesId).one().details).free, true);
+  // the board says so for the series' sessions to come (series.free), and a session made free alone doesn't
+  assert.deepEqual([(await gameOn(second.id, OWNER)).series.free, (await gameOn(second.id, OWNER)).free], [true, true]);
   Date.now = () => at('2026-11-20', 10);
   const extended = lair.extendSeries(lair.rulesCache, Date.now());
   const made2 = lair.sql.exec('SELECT id, free FROM games WHERE series_id = ? AND starts_at > ?', seriesId, at('2026-12-14', 0)).toArray();

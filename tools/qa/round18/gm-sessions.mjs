@@ -3,7 +3,9 @@
 // GM page for a staff GM in their own game (the roster with its badges, Reserve a seat, Seats for new players, Take a
 // player off), the GM page for a player (the seats kept for new players: someone who's played before and someone new;
 // a free session's card, details and join form), the live backend's four calls against a stubbed Lair app, no sideways
-// scroll and axe. Phone and desktop.
+// scroll and axe. Phone and desktop. From the independent review: Make it free with Change the GM open, the new GM's
+// name following the person picked, a seat booked free that stays free, a free session's Session done, focus after
+// running a session, the Reserve email's hint, a player taken off already, and no roster logged out.
 // Usage: DG_THEME=/path/to/theme [PORT=4991] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round18/gm-sessions.mjs [phone|desktop]
 import os from 'node:os';
 import path from 'node:path';
@@ -156,8 +158,52 @@ for (const size of sizes) {
   check(`${tag} staff: with seats paid already, Make it free says to refund them first, and it stays priced`,
     (await toast(page)) === '2 seats are paid for already, or on a session pass. Refund them (or undo the pass) first, then make it free.' && !(await stateOf(page, 'game', id)).free, await toast(page));
 
-  // Change the GM, to someone invited by email
+  // Make it free with Change the GM open: the Free row says so straight away (the button keeps focus), and Change the
+  // GM stays open
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    Object.assign(be.state.bookings.find((b) => b.id === 'bk-r18-kai'), { paid: false, paidAmount: 0 });
+    be.commit();
+    return window.Lair.store.refresh();
+  });
+  await settle(page);
   await page.click('.staff-gm__change summary');
+  await page.click('[data-gm-free="true"]');
+  await settle(page, 150);
+  await page.click('[data-gm-free="true"]');
+  await settle(page, 600);
+  const openFree = await page.evaluate(() => ({
+    button: document.querySelector('[data-gm-free]')?.textContent.trim(),
+    open: Boolean(document.querySelector('.staff-gm__change')?.open),
+    focus: Boolean(document.activeElement?.matches('[data-gm-free]')),
+  }));
+  check(`${tag} staff: Make it free with Change the GM open: Charge $15 a seat again shows straight away (with focus), and Change the GM stays open`,
+    openFree.button === 'Charge $15 a seat again' && openFree.open && openFree.focus, openFree);
+  // the new GM's name players see follows the person picked, until staff type their own
+  const pickGm = async (q) => {
+    await page.fill('[data-member-search="gmnew"]', q);
+    await page.waitForSelector('[data-member-results="gmnew"] [data-member-pick]', { timeout: 10000 });
+    await page.click('[data-member-results="gmnew"] [data-member-pick]');
+    await settle(page, 150);
+    return page.evaluate(() => document.querySelector('[data-gm-change] [name="gm"]').value);
+  };
+  const gmNames = [await pickGm('Mere')];
+  await page.click('[data-gm-change] [data-member-unpick]');
+  gmNames.push(await page.evaluate(() => document.querySelector('[data-gm-change] [name="gm"]').value));
+  gmNames.push(await pickGm('Oscar'));
+  await page.fill('[data-gm-change] [name="gm"]', 'Ozzy');
+  await page.click('[data-gm-change] [data-member-unpick]');
+  gmNames.push(await pickGm('Talia'));
+  await page.click('[data-gm-change] [data-member-unpick]');
+  check(`${tag} staff: Change the GM's name players see follows the person picked (Mere, cleared, Oscar), and a name typed in stays (Ozzy)`,
+    JSON.stringify(gmNames) === JSON.stringify(['Mere', '', 'Oscar', 'Ozzy']), gmNames);
+  await page.click('[data-gm-free="false"]');
+  await settle(page, 150);
+  await page.click('[data-gm-free="false"]');
+  await settle(page, 600);
+
+  // Change the GM, to someone invited by email
+  if (!(await page.evaluate(() => document.querySelector('.staff-gm__change')?.open))) await page.click('.staff-gm__change summary');
   await page.fill('[data-gm-change] [name="gmEmail"]', 'nova@example.com');
   await page.fill('[data-gm-change] [name="gm"]', 'Nova');
   await shot(page, `${size}-staff-change-gm`, '.staff-gm__change');
@@ -183,6 +229,59 @@ for (const size of sizes) {
     return { newPlayer: b && b.newPlayer, badge: Boolean(li && /New player/.test(li.textContent)) };
   });
   check(`${tag} staff: Add players with New to our TTRPG sessions ticked marks the seat new, with the badge`, sam.newPlayer === true && sam.badge, sam);
+
+  // a free session tonight, charged for again inside the 24 hours: Pip's seat (booked while it was free) stays free;
+  // and last night's free session, done with no GM credit
+  await page.evaluate(([tama]) => {
+    const { store } = window.Lair;
+    const be = store.backend;
+    const t = store.time;
+    const today = t.today();
+    const game = (id, title, day) => ({
+      id, title, system: 'D&D 5e', gm: 'Tama', gmCustomerId: tama, gmEmail: 'tama@example.com', blurb: 'A test session.', tables: ['G2'], room: 'game-room',
+      seats: 4, start: t.at(day, 18 * 60), end: t.at(day, 21 * 60), taken: 1, status: 'open', credited: null, gmFee: 500, seatPrice: 1500,
+      schedule: 'one-shot', seriesId: null, level: 'new', age: '18+', tags: [], safety: [], characters: 'pregens', bring: '', contentNotes: '',
+      sessionZero: '', image: null, gmFeeApproved: true, free: true, newSeats: 0,
+    });
+    const tonight = game('gm-r18-tonight', 'Tonight’s free one', today);
+    const done = game('gm-r18-done', 'Last night’s free one', t.addDays(today, -1));
+    const seat = (id, ref, g, name, extra = {}) => ({
+      id, ref, kind: 'gm-seat', gameId: g.id, tables: g.tables, start: g.start, end: g.end, people: 1, players: [{ name, character: '' }], name,
+      email: `${name.toLowerCase()}@example.com`, status: 'confirmed', pay: 'day', paid: false, amount: 0, paidAmount: 0, activity: 'rpg', extras: [],
+      createdAt: Date.now(), ...extra,
+    });
+    be.state.games.push(tonight, done);
+    be.state.bookings.push(seat('bk-r18-pip', 'PI-OWL-5', tonight, 'Pip'), seat('bk-r18-quinn', 'QU-OWL-6', done, 'Quinn', { status: 'done', paid: true }));
+    be.commit();
+    return store.refresh();
+  }, [String(TAMA.id)]);
+  await page.click('[data-gm-back]');
+  await page.waitForSelector('button.staff-gm-row[data-gm-manage="gm-r18-tonight"]', { timeout: 15000 });
+  await page.click('button.staff-gm-row[data-gm-manage="gm-r18-tonight"]');
+  await page.waitForSelector('[data-gm-free="false"]', { timeout: 15000 });
+  await page.click('[data-gm-free="false"]');
+  await settle(page, 150);
+  await page.click('[data-gm-free="false"]');
+  await settle(page, 600);
+  const pipRow = await page.evaluate(() => String([...document.querySelectorAll('.staff-player')].find((li) => li.textContent.includes('Pip'))?.querySelector('.small')?.textContent || '').replace(/\s+/g, ' ').trim());
+  const pipToast = await toast(page);
+  const pipSeat = await stateOf(page, 'booking', 'bk-r18-pip');
+  check(`${tag} staff: charged for again inside the 24 hours, a seat booked while it was free stays free: the toast says so, and Pip has nothing to pay`,
+    /^Tonight’s free one, .+: \$15 a seat again\. 1 seat booked while it was free stays free: it’s too close to the session to charge for it\.$/.test(pipToast)
+    && pipSeat.amount === 0 && /Nothing to pay/.test(pipRow) && !/\$\d+ to pay/.test(pipRow), { pipToast, pipRow, amount: pipSeat.amount });
+  await page.click('[data-gm-back]');
+  await page.waitForSelector('[data-act="credit"][data-id="gm-r18-done"]', { timeout: 15000 });
+  const doneButton = await page.evaluate(() => document.querySelector('[data-act="credit"][data-id="gm-r18-done"]')?.textContent.trim());
+  await page.click('[data-act="credit"][data-id="gm-r18-done"]');
+  await settle(page, 600);
+  const doneCard = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.staff-gm-card')].find((c) => c.textContent.includes('Last night’s free one'));
+    return String(card?.querySelector('.cluster')?.textContent || '').replace(/\s+/g, ' ').trim();
+  });
+  const doneToast = await toast(page);
+  check(`${tag} staff: a free session's Session done (no GM credit) says Done, no GM credit, not credited for 0 players`,
+    doneButton === 'Session done: no GM credit' && doneToast === "This session was free, so there's no GM credit to add."
+    && /^Done, no GM credit This session was free, so there's no GM credit to add\./.test(doneCard) && !/credited for/.test(doneCard), { doneButton, doneToast, doneCard });
   check(`${tag} staff page: no script errors`, !page.errors.length, page.errors.slice(0, 5));
   await ctx.close();
 
@@ -223,7 +322,9 @@ for (const size of sizes) {
   await page.click('[data-newseats-form] [type="submit"]');
   await page.waitForSelector('.gm-flash', { timeout: 10000 });
   const flash1 = await page.evaluate(() => document.querySelector('.gm-flash')?.textContent.trim());
-  check(`${tag} GM page: Seats for new players 1 saved (the flash, the game)`, flash1 === 'Saved. 1 seat is kept for new players.' && (await stateOf(page, 'game', seeded.id)).newSeats === 1, flash1);
+  const flash1Focus = await page.evaluate(() => Boolean(document.activeElement?.classList.contains('gm-flash')));
+  check(`${tag} GM page: Seats for new players 1 saved (the flash, with focus, and the game)`,
+    flash1 === 'Saved. 1 seat is kept for new players.' && flash1Focus && (await stateOf(page, 'game', seeded.id)).newSeats === 1, { flash1, flash1Focus });
 
   // Reserve a seat for someone new
   await page.click('[data-reserve]');
@@ -234,28 +335,37 @@ for (const size of sizes) {
   await page.click('[data-reserve-send]');
   await settle(page, 300);
   const badEmail = await page.evaluate(() => document.querySelector('[data-reserve-form] .field__error')?.textContent.trim());
+  const described = await page.evaluate(() => {
+    const input = document.querySelector('[data-reserve-form] [name="email"]');
+    return { by: input.getAttribute('aria-describedby') || '', error: document.querySelector('[data-reserve-form] .field__error')?.id || '' };
+  });
+  check(`${tag} GM page: Reserve a seat's email error is described along with its hint`,
+    Boolean(described.error) && described.by.split(' ').join('|') === `gm-reserve-email-hint|${described.error}`, described);
   await page.fill('[data-reserve-form] [name="email"]', 'pat@example.com');
   await page.check('[data-reserve-form] [name="newPlayer"]');
   await shot(page, `${size}-gm-reserve`, '.gm-sheet');
   await page.click('[data-reserve-send]');
   await page.waitForSelector('.gm-flash', { timeout: 10000 });
   const reserved = await page.evaluate(() => ({
+    focus: Boolean(document.activeElement?.classList.contains('gm-flash')),
     flash: document.querySelector('.gm-flash')?.textContent.trim(),
     row: [...document.querySelectorAll('.gm-roster__item')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()).find((x) => x.includes('Pat Lee')) || '',
     gmTold: (window.Lair.store.backend.state.outbox || []).some((mail) => mail.kind === 'gm-new-player' && /Pat Lee/.test(mail.subject)),
   }));
   check(`${tag} GM page: Reserve a seat checks the email, then reserves it for someone new (the flash, the roster's New player), and Tama isn't emailed about his own add`,
     badEmail === 'That email doesn’t look right.' && reserved.flash === 'Reserved a seat for Pat Lee. They’re new to our TTRPG sessions.'
-    && /New player/.test(reserved.row) && !reserved.gmTold, { badEmail, reserved });
+    && /New player/.test(reserved.row) && !reserved.gmTold && reserved.focus, { badEmail, reserved });
 
   // Take Kai off
   await page.click('[data-roster-remove="KA-OWL-3"]');
   await page.waitForSelector('[data-roster-remove-do]');
   const confirm = await page.evaluate(() => String(document.querySelector('.gm-confirm')?.textContent || '').replace(/\s+/g, ' ').trim());
+  const askFocus = await page.evaluate(() => Boolean(document.activeElement?.matches('.gm-confirm .h3')));
   await axe(page, `${tag} Take a player off`, '.gm-sheet');
   await page.click('[data-roster-remove-do]');
   await page.waitForSelector('.gm-flash', { timeout: 10000 });
   const gone = await page.evaluate(() => ({
+    focus: Boolean(document.activeElement?.classList.contains('gm-flash')),
     flash: document.querySelector('.gm-flash')?.textContent.trim(),
     rows: [...document.querySelectorAll('.gm-roster__item')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()),
   }));
@@ -263,6 +373,24 @@ for (const size of sizes) {
     /^Take Kai and Kai \+1 off .+\?/.test(confirm) && /Gobgob doesn’t email them, so let them know\./.test(confirm)
     && gone.flash === 'Took Kai and Kai +1 off. Their seat’s free for someone else.' && !gone.rows.some((x) => x.includes('Kai'))
     && (await stateOf(page, 'booking', 'bk-r18-kai')).status === 'cancelled', { confirm, gone });
+  check(`${tag} GM page: Take a player off puts focus on the question, then on what happened`, askFocus && gone.focus, { askFocus, focus: gone.focus });
+  // someone taken off already (or who cancelled) while the question was up: it says so, and the roster catches up
+  await page.click('[data-roster-remove="MI-OWL-4"]');
+  await page.waitForSelector('[data-roster-remove-do]');
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    be.state.bookings.find((b) => b.id === 'bk-r18-mia').status = 'cancelled';
+    be.commit();
+  });
+  await page.click('[data-roster-remove-do]');
+  await page.waitForSelector('.gm-flash', { timeout: 10000 });
+  const goneAlready = await page.evaluate(() => ({
+    flash: document.querySelector('.gm-flash')?.textContent.trim(),
+    rows: [...document.querySelectorAll('.gm-roster__item')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()),
+    focus: Boolean(document.activeElement?.classList.contains('gm-flash')),
+  }));
+  check(`${tag} GM page: taking off a player who's gone already says so, and the roster catches up`,
+    /^That player isn.t in this game\.$/.test(goneAlready.flash) && !goneAlready.rows.some((x) => x.includes('Mia')) && goneAlready.focus, goneAlready);
 
   // Rangi's game (not staff) on Tama's page: no roster; and a GM who isn't staff gets none in his own
   const rangi = await page.evaluate((rid) => {
@@ -271,6 +399,21 @@ for (const size of sizes) {
   }, seeded.rangi);
   check(`${tag} GM page: no roster for a game Tama doesn't run`, rangi.roster === false, rangi);
   check(`${tag} GM page (Tama): no script errors`, !page.errors.length, page.errors.slice(0, 5));
+  await ctx.close();
+
+  /* ---------- the GM page logged out: no roster (the demo's owner is only the staff page's) ---------- */
+  ctx = await context(browser, size);
+  page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/gm-games', null);
+  await page.waitForSelector('gm-board', { state: 'attached', timeout: 20000 });
+  await page.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
+  const outSeed = await seed(page);
+  const loggedOut = await page.evaluate((gid) => {
+    const g = window.Lair.store.data.games.find((x) => x.id === gid);
+    return { listed: Boolean(g), roster: g ? 'roster' in g : null };
+  }, outSeed.id);
+  check(`${tag} GM page logged out: the game's there with no roster`, loggedOut.listed && loggedOut.roster === false, loggedOut);
+  check(`${tag} GM page (logged out): no script errors`, !page.errors.length, page.errors.slice(0, 5));
   await ctx.close();
 
   /* ---------- the GM page, for players: kept seats and a free session ---------- */
