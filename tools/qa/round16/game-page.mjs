@@ -247,13 +247,14 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   w.on('pageerror', (e) => werrors.push(e.message));
   await w.goto(`${BASE}/products/catan`, { waitUntil: 'networkidle' });
   await w.waitForTimeout(300);
-  const heart = () => w.evaluate(() => { const b = document.querySelector('[data-wishlist-button]'); return b ? { pressed: b.getAttribute('aria-pressed'), label: b.getAttribute('aria-label') } : null; });
-  check(`${tag} wishlist on (demo): an empty heart beside Add to cart`, JSON.stringify(await heart()) === JSON.stringify({ pressed: 'false', label: 'Add to wishlist' }) && (await w.evaluate(() => document.querySelector('wishlist-button').parentElement.classList.contains('product__buy'))), await heart());
+  const heart = () => w.evaluate(() => { const b = document.querySelector('[data-wishlist-button]'); return b ? { pressed: b.getAttribute('aria-pressed'), label: b.textContent.trim() } : null; });
+  const place = await w.evaluate(() => { const el = document.querySelector('wishlist-button'); const r = el.getBoundingClientRect(); const g = document.querySelector('gift-option').getBoundingClientRect(); return { after: el.previousElementSibling?.tagName, full: Math.abs(r.width - g.width) < 2, below: r.top >= g.bottom }; });
+  check(`${tag} wishlist on (demo): Add to wishlist, full width under Order as a gift`, JSON.stringify(await heart()) === JSON.stringify({ pressed: 'false', label: 'Add to wishlist' }) && place.after === 'GIFT-OPTION' && place.full && place.below, { heart: await heart(), place });
   await w.click('[data-wishlist-button]');
   await w.waitForTimeout(300);
   check(`${tag} wishlist (demo): pressed, it's on the wishlist`, JSON.stringify(await heart()) === JSON.stringify({ pressed: 'true', label: 'On your wishlist' }), await heart());
   await w.screenshot({ path: path.join(OUT, `${size}-wishlist-on.png`), fullPage: false });
-  await scan(w, `${tag} buy row with the heart`, '.product__buy');
+  await scan(w, `${tag} Add to wishlist`, 'wishlist-button');
   await w.reload({ waitUntil: 'networkidle' });
   await w.waitForTimeout(400);
   check(`${tag} wishlist (demo): still on after a reload`, (await heart())?.pressed === 'true', await heart());
