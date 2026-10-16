@@ -115,7 +115,8 @@ for (const size of sizes) {
     };
   });
   check(`${tag} staff: the manager has Free, new players and the GM: $15 a seat, Make it free, Seats for new players 0, Change the GM (now Tama), and Mia's New player badge`,
-    run.h === 'Free, new players and the GM' && /^\$15 a seat /.test(run.price) && run.free === 'Make it free' && run.seats === '0'
+    // 17 Oct 2026: and who can join (contract v18-private)
+    run.h === 'Free, new players, who can join and the GM' && /^\$15 a seat /.test(run.price) && run.free === 'Make it free' && run.seats === '0'
     && run.change === 'Change the GM · now Tama, on their account' && run.mia === 'Mia as Brakka Reserved: no account yet New player', run);
   await shot(page, `${size}-staff-run`, '[data-gm-run-wrap]');
   await axe(page, `${tag} staff GM manager with round 18's section`, '.staff-gm');
