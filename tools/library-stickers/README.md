@@ -85,6 +85,9 @@ took of the boardgames". `print-games.json` is that print, 233 stickers in the o
   twice for its two new copies). Shopify counts the copies in the variant's stock.
 - The photographed games already in the library are in the list again, because their stickers had gone missing.
 - RPG books, magazines and comics (the RPG shelf) have numbers only, and new ones have no players, time or ages yet.
+- Root (DGLRPG-025) turned out to be the Travelers & Outsiders book, one copy, not a second core rulebook (Mo, 16 Oct).
+  The list now has that name; the first print's Root sticker said "Root the tabletop roleplaying game", so it got one
+  of its own.
 
 ### Spine labels (`--layout=box-label`, 11 Oct 2026)
 
