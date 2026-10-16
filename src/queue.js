@@ -73,6 +73,9 @@ export const QUEUE_MESSAGES = {
   noBooking: 'Booking not found.',
   notYourBooking: 'Only staff can change that booking.',
   bookingOff: "That booking isn't on any more, so it can't take a game.",
+  // the contract gives "Tell me when it's back" the pick's `login` words, which are about saving picks: these say what
+  // logging in is for here, in the theme's own words for it
+  loginWatch: "Log in to hear when it's back.",
 };
 
 /* ---------- small helpers (as lair.js's) ---------- */
@@ -867,9 +870,9 @@ export const queueMethods = {
     return { send: this.staffSendView(this.sendRow(send.id)), loan: loan ? this.staffLoanView(loan, now) : null };
   },
   /* ---------------- tell me when it's back ---------------- */
-  /** POST /library/watch { productId } (logged in): watch a library game. 401 login, 422 product, 409 watchFull (50). No awaits. */
+  /** POST /library/watch { productId } (logged in): watch a library game. 401 loginWatch, 422 product, 409 watchFull (50). No awaits. */
   watchGame(input, who) {
-    const id = this.queueOwner(who);
+    const id = this.queueOwner(who, QUEUE_MESSAGES.loginWatch);
     const productId = this.queueProductId(input);
     const game = this.libraryPick(productId);
     if (!game) throw new RuleError(QUEUE_MESSAGES.product);
@@ -887,7 +890,7 @@ export const queueMethods = {
 
   /** POST /library/watch/remove { productId } (logged in): stop watching (one never watched is fine). No awaits. */
   unwatchGame(input, who) {
-    const id = this.queueOwner(who);
+    const id = this.queueOwner(who, QUEUE_MESSAGES.loginWatch);
     const productId = this.queueProductId(input);
     this.write('DELETE FROM library_watch WHERE customer_id = ? AND product_id = ?', id, productId);
     return { ok: true, watching: false };

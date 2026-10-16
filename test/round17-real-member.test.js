@@ -1,13 +1,14 @@
 // Round 17, the member's side checked against the real theme (r17-real-member): what the Lair had to change so the
-// theme's flows hold. Members who have only ever borrowed have no email of their own (members.email comes from a
+// theme's flows hold. (1) Members who have only ever borrowed have no email of their own (members.email comes from a
 // booking or their profile), but GET /me keeps their Shopify account's verified email: the queue's emails and "Tell me
 // when it's back" go there, as the postal swap's checkout already did. The theme says "We'll email you when it's back".
-// Run with: npm test
+// (2) "Tell me when it's back" for a guest says what logging in is for. Run with: npm test
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
+import { QUEUE_MESSAGES } from '../src/queue.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -156,4 +157,14 @@ test('round 17 real member: with no email at all, nobody is emailed, and the wat
   await settle();
   assert.deepEqual(sent.filter((m) => /back on the shelf/.test(m.subject)), []);
   assert.deepEqual(lair.sql.exec('SELECT * FROM library_watch').toArray(), []);
+});
+
+test('round 17 real member: a guest\'s "Tell me when it\'s back" (and stop watching) says what logging in is for', async () => {
+  assert.equal(QUEUE_MESSAGES.loginWatch, "Log in to hear when it's back.");
+  for (const path of ['library/watch', 'library/watch/remove']) {
+    const res = await call('POST', path, { productId: WINGSPAN }, '');
+    assert.deepEqual([res.status, res.data.error], [401, QUEUE_MESSAGES.loginWatch], path);
+  }
+  // the queue's own routes keep theirs
+  assert.deepEqual((await call('GET', 'me/queue', null, '')).data, { error: QUEUE_MESSAGES.loginQueue });
 });
