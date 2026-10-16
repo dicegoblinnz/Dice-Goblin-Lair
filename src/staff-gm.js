@@ -137,7 +137,8 @@ export function shiftFor(hours, start, end, time) {
 }
 
 /** A session ready for its GM's credit: it has a GM account and a GM fee, has started, isn't cancelled and isn't credited */
-export const readyForCredit = (g, now) => Boolean(g?.gmCustomerId) && g.credited == null && g.start <= now && g.status !== 'cancelled' && (g.gmFee ?? 1) > 0;
+// (round 18: a free session has no GM credit to give, so nothing for staff to weigh)
+export const readyForCredit = (g, now) => Boolean(g?.gmCustomerId) && g.credited == null && g.start <= now && g.status !== 'cancelled' && (g.gmFee ?? 1) > 0 && !g.free;
 
 export const staffGmMethods = {
   /** The team's setting: 'never', 'shifts' or 'earn' (STAFF_GM_DEFAULT until the main account picks). No awaits. */

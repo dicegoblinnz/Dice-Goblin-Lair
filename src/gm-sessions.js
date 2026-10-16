@@ -19,7 +19,7 @@
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair.
  */
-import { ACTIVE, RuleError, lairTime } from './core.js';
+import { ACTIVE, RuleError, cancelUntil, lairTime } from './core.js';
 import { emailReady } from './shopify.js';
 
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
@@ -28,6 +28,7 @@ const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim())
 export const GM_SESSION_WORDS = {
   notYours: 'Only staff, or the GM of this game when they’re on the team, can do that.',
   login: 'Log in to do that.',
+  over: "That session's over, so ask the staff to change it now.",
   scope: "scope is 'session' or 'series'.",
   // seats for new players
   newSeats: (seats) => `Seats for new players is a whole number from 0 to ${seats}.`,
@@ -35,8 +36,10 @@ export const GM_SESSION_WORDS = {
   keptSome: (open, kept) => `Only ${open} ${open === 1 ? 'seat is' : 'seats are'} left for you: ${kept} ${kept === 1 ? 'is' : 'are'} kept for players new to our TTRPG sessions.`,
   // free
   free: 'free is true or false.',
-  paidAlready: (n) => `${n} ${n === 1 ? 'seat is' : 'seats are'} paid for already. Refund ${n === 1 ? 'it' : 'them'} first, then make it free.`,
+  paidAlready: (n) => `${n} ${n === 1 ? 'seat is' : 'seats are'} paid for already, or on a session pass. Refund ${n === 1 ? 'it' : 'them'} (or undo the pass) first, then make it free.`,
   freeCredit: "This session was free, so there's no GM credit to add.",
+  // not free any more (a player emailed: their seat has a price again)
+  priced: (title, when, fee, until) => `Heads up: ${title} on ${when} isn't free any more, so your seat is ${fee} on your tab. Can't make it? Cancel it in My Lair by ${until}.`,
   // removing a player
   noSeat: "That player isn't in this game.",
   // changing the GM
@@ -54,19 +57,6 @@ const money = (cents) => `$${(cents / 100).toFixed(2)}`;
 /** The seat price a session charges now: nothing when it's free, else its own price (or the usual GM seat) */
 export const seatPriceOf = (game, rules) => (game?.free ? 0 : game?.seatPrice || rules?.prices?.gmSeat || 1500);
 
-/**
- * A session's seats kept for new players that are still open, given the state's bookings: its newSeats (never more
- * than its seats) less the seats new players have, and never more than the seats still free. → { kept, newTaken }
- */
-export function newSeatHold(game, state, taken = null) {
-  const wanted = Math.max(0, Math.min(Number(game?.newSeats) || 0, Number(game?.seats) || 0));
-  if (!wanted) return { kept: 0, newTaken: 0 };
-  const seats = (state?.bookings || []).filter((b) => b.gameId === game.id && b.kind === 'gm-seat' && ACTIVE.has(b.status));
-  const newTaken = seats.filter((b) => b.newPlayer).reduce((sum, b) => sum + (b.people || 0), 0);
-  const all = taken ?? seats.reduce((sum, b) => sum + (b.people || 0), 0) + (Number(game.offlinePlayers) || 0);
-  return { kept: Math.max(0, Math.min(wanted - newTaken, game.seats - all)), newTaken };
-}
-
 export const gmSessionMethods = {
   /** Staff with GM games, or this session's own GM when they're on the team (the main account or a helper). No awaits. */
   canRunGame(who, game) {
@@ -74,9 +64,32 @@ export const gmSessionMethods = {
     return Boolean(who?.staff && who.customerId && game?.gmCustomerId && String(game.gmCustomerId) === String(who.customerId));
   },
 
-  requireGameStaff(who, game) {
+  /**
+   * live: what a staff GM does in their own game (reserving or removing seats, seats for new players) is for a session
+   * that hasn't ended: after it, only staff with GM games (or the desk, on the staff page) change what's owed for it.
+   */
+  requireGameStaff(who, game, { live = false } = {}) {
     if (!who?.customerId && !who?.staff) throw new RuleError(GM_SESSION_WORDS.login, 401);
     if (!this.canRunGame(who, game)) throw new RuleError(GM_SESSION_WORDS.notYours, 403);
+    if (live && !this.can(who, 'sessions') && game.end <= Date.now()) throw new RuleError(GM_SESSION_WORDS.over, 403);
+  },
+
+  /**
+   * Whether someone speaks for a whole series: staff with GM games, or the series' GM now (a new GM given it from a
+   * session on becomes that). Round 18: once staff give some of a series to another GM it can have more than one, so
+   * the GM of one session doesn't speak for the rest. No awaits.
+   */
+  runsSeries(who, seriesId) {
+    if (this.can(who, 'sessions')) return true;
+    if (!who?.customerId || !seriesId) return false;
+    const row = this.sql.exec('SELECT gm_customer_id FROM series WHERE id = ?', seriesId).toArray()[0];
+    return Boolean(row?.gm_customer_id) && String(row.gm_customer_id) === String(who.customerId);
+  },
+
+  /** For someone who isn't staff with GM games, only the sessions they run (a series can have more than one GM) */
+  ownSessionsOnly(who, sessions) {
+    if (this.can(who, 'sessions')) return sessions;
+    return sessions.filter((g) => Boolean(who?.customerId) && String(g.gmCustomerId || '') === String(who.customerId));
   },
 
   /**
@@ -96,8 +109,8 @@ export const gmSessionMethods = {
   },
 
   /**
-   * A session's seats kept for new players still open, read from the database (newSeatHold's count for a session the
-   * state doesn't hold): its newSeats, less the seats new players have, never more than the seats still free. No awaits.
+   * A session's seats kept for new players still open, read from the database: its newSeats, less the seats new
+   * players have, never more than the seats still free (publicGame works the board's out the same way). No awaits.
    */
   newSeatsKept(game) {
     const wanted = Math.max(0, Math.min(Number(game?.newSeats) || 0, Number(game?.seats) || 0));
@@ -160,14 +173,18 @@ export const gmSessionMethods = {
       });
   },
 
-  /** A session, and for scope 'series' every later session of its series that isn't cancelled. No awaits. */
-  sessionsFor(game, scope) {
+  /**
+   * A session, and for scope 'series' every later session of its series that isn't cancelled; with who, only the ones
+   * they run unless they're staff with GM games (ownSessionsOnly). No awaits.
+   */
+  sessionsFor(game, scope, who = null) {
     if (!['session', 'series', undefined, null, ''].includes(scope)) throw new RuleError(GM_SESSION_WORDS.scope);
     if (scope !== 'series' || !game.seriesId) return [game];
-    return this.sql
+    const all = this.sql
       .exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND (id = ? OR starts_at > ?) ORDER BY starts_at", game.seriesId, game.id, game.start)
       .toArray()
       .map((r) => this.rowToGame(r));
+    return who ? this.ownSessionsOnly(who, all) : all;
   },
 
   /** A series' kept details, with changes. No awaits. */
@@ -194,24 +211,27 @@ export const gmSessionMethods = {
     const now = Date.now();
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
-    this.requireGameStaff(who, game);
+    this.requireGameStaff(who, game, { live: true });
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
     // a number (or a number as text, from a form): null, '' and true aren't 0 or 1
     const raw = input?.seats;
     const seats = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '') ? Number(raw) : NaN;
     if (!Number.isInteger(seats) || seats < 0 || seats > game.seats) throw new RuleError(GM_SESSION_WORDS.newSeats(game.seats));
-    const sessions = this.sessionsFor(game, input?.scope);
+    // a staff GM's series: only the sessions they run, and the series' sessions to come only when it's theirs now
+    const sessions = this.sessionsFor(game, input?.scope, who);
     for (const s of sessions) this.write('UPDATE games SET new_seats = ?, updated_at = ? WHERE id = ?', Math.min(seats, s.seats), now, s.id);
-    if (input?.scope === 'series') this.patchSeries(game.seriesId, { newSeats: seats }, now);
+    if (input?.scope === 'series' && this.runsSeries(who, game.seriesId)) this.patchSeries(game.seriesId, { newSeats: seats }, now);
     const fresh = this.game(game.id);
     return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), sessions: sessions.length };
   },
 
   /**
    * POST /games/:id/free { free, scope? } (staff with GM games): a session, or ('series') it and every later one, free
-   * or not. Free: its seats cost nothing, unpaid seats on it come to $0, and there's no GM credit. Not free any more:
-   * the seat price it had comes back on its unpaid seats. A seat paid for already stops it being made free (409).
-   * → { game, sessions }
+   * or not. Free: its seats cost nothing, unpaid seats on it come to $0, and there's no GM credit. A seat paid for
+   * already, or on a session pass, stops it being made free (409): that's sorted out first. Not free any more: a seat
+   * booked while it was free gets the session's price back while it can still be cancelled online (more than
+   * refundHours before it starts), and its player is emailed; inside that, or once it's started, it stays free.
+   * → { game, sessions, priced (seats given a price), stayFree (seats left free) }
    */
   async setGameFree(id, input, who) {
     this.requireStaff(who, 'sessions');
@@ -225,49 +245,74 @@ export const gmSessionMethods = {
     const sessions = this.sessionsFor(game, input.scope);
     if (input.free) {
       const ids = sessions.map((s) => s.id);
-      const paid = ids.length
-        ? this.sql
-          .exec(
-            `SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated', 'done')
-             AND (paid_amount > 0 OR (paid = 1 AND amount > 0)) AND game_id IN (${ids.map(() => '?').join(', ')})`,
-            ...ids,
-          )
-          .one().n
-        : 0;
+      const paid = this.sql
+        .exec(
+          `SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated', 'done')
+           AND (COALESCE(paid_amount, 0) > 0 OR COALESCE(covered, 0) > 0 OR (paid = 1 AND amount > 0)) AND game_id IN (${ids.map(() => '?').join(', ')})`,
+          ...ids,
+        )
+        .one().n;
       if (paid > 0) throw new RuleError(GM_SESSION_WORDS.paidAlready(paid), 409);
     }
+    const priced = [];
+    let stayFree = 0;
     for (const s of sessions) {
       this.write('UPDATE games SET free = ?, updated_at = ? WHERE id = ?', input.free ? 1 : 0, now, s.id);
-      // Free: nothing to pay on its seats not paid for yet (a $0 seat is never owed, a no-show's included). Not free any
-      // more: the price comes back on the seats of a session still to start; anyone who's already played it free stays free.
       if (input.free) {
+        // nothing to pay on its seats (a $0 seat is never owed, a no-show's included)
         this.write(
-          "UPDATE bookings SET amount = 0, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND COALESCE(paid_amount, 0) = 0 AND status IN ('held', 'confirmed', 'seated', 'done', 'noshow')",
+          `UPDATE bookings SET amount = 0, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND COALESCE(paid_amount, 0) = 0 AND COALESCE(covered, 0) = 0
+           AND status IN ('held', 'confirmed', 'seated', 'done', 'noshow')`,
           now, s.id,
         );
-      } else if (s.start > now) {
-        this.write(
-          "UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND COALESCE(paid_amount, 0) = 0 AND status IN ('held', 'confirmed')",
-          s.seatPrice || rules.prices.gmSeat, now, s.id,
-        );
+        continue;
+      }
+      const price = s.seatPrice || rules.prices.gmSeat;
+      const seats = this.sql
+        .exec("SELECT * FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND COALESCE(paid_amount, 0) = 0 AND COALESCE(covered, 0) = 0 AND amount = 0", s.id)
+        .toArray()
+        .map((r) => this.rowToBooking(r));
+      for (const b of seats) {
+        if (cancelUntil(b, rules) <= now) {
+          stayFree += b.people;
+          continue;
+        }
+        // a $0 seat marked paid wasn't paid for: with a price, it's owed like any seat
+        this.write('UPDATE bookings SET amount = ?, paid = 0, updated_at = ? WHERE id = ?', price * b.people, now, b.id);
+        priced.push({ ...b, amount: price * b.people, session: s });
       }
     }
     if (input.scope === 'series') this.patchSeries(game.seriesId, { free: input.free }, now);
+    // a bill with any of these seats on it stays true
+    this.reconcileBills(rules, now);
+    if (priced.length && emailReady(this.env)) {
+      const time = lairTime(rules.tz);
+      this.later(this.mailMany(priced.filter((b) => isEmail(b.email)).map((b) => this.letter(b.email, `${b.session.title}: not free any more`, {
+        title: 'Your session has a price now',
+        intro: GM_SESSION_WORDS.priced(b.session.title, this.when(b.session, rules), money(b.amount), time.label(cancelUntil(b, rules))),
+        button: { label: 'See it in My Lair', url: this.page('myLair') },
+        signoff: 'Gobgob',
+      }))));
+    }
     const fresh = this.game(game.id);
-    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), sessions: sessions.length };
+    return {
+      game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), sessions: sessions.length,
+      priced: priced.reduce((n, b) => n + b.people, 0), stayFree,
+    };
   },
 
   /**
-   * POST /games/:id/players/:ref/remove (staff with GM games, or the session's staff GM): take a seat off the game, as
-   * the staff page's Remove does (cancelled by staff: no email to the player; the GM isn't emailed either). ref: the
-   * seat booking's reference or id. What they'd paid for it already (at the counter ahead of time) isn't theirs to
-   * lose: before the session starts it's a refund due, and once it's started staff decide ('ask', with a note); either
-   * way the staff are emailed. → { booking: { id, ref, status, people, name }, refund, game } (no email or phone).
+   * POST /games/:id/players/:ref/remove (staff with GM games, or the session's staff GM until it ends): take a seat off
+   * the game, as the staff page's Remove does (cancelled by staff: no email to the player; the GM isn't emailed
+   * either). ref: the seat booking's reference or id. Whatever they'd paid for it (at the counter ahead of time, or
+   * online) or a session pass covered isn't theirs to lose: before the session starts what they paid is a refund due,
+   * and once it's started (or it was a pass) staff decide ('ask', with a [Refund?] note); either way the staff are
+   * emailed. → { booking: { id, ref, status, people, name }, refund, game } (no email or phone).
    */
   async removePlayer(id, ref, who) {
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
-    this.requireGameStaff(who, game);
+    this.requireGameStaff(who, game, { live: true });
     const seat = this.booking(ref);
     if (!seat || seat.gameId !== game.id || seat.kind !== 'gm-seat' || !ACTIVE.has(seat.status)) throw new RuleError(GM_SESSION_WORDS.noSeat, 404);
     // the staff path of POST /bookings/:id/update, for someone this game lets do it
@@ -276,26 +321,30 @@ export const gmSessionMethods = {
       : { ...who, staff: true, role: 'helper', perms: [...new Set([...(who.perms || []), 'checkin', 'tables'])] };
     const done = await this.updateBooking(seat.id, { status: 'cancelled' }, desk);
     const rules = await this.rules();
-    // --- no awaits from here on ---
+    // --- no awaits from here on: what they'd paid is read from the seat as it is now ---
     const now = Date.now();
-    let refund = done.refund || { due: false, amount: 0 };
-    const paid = Math.max(0, Number(seat.paidAmount) || 0);
     const after = this.booking(seat.id);
-    if (paid > 0 && !refund.due && after.refund !== 'done') {
+    const paid = Math.max(0, Number(after.paidAmount) || 0);
+    const pass = Math.max(0, Number(after.covered) || 0);
+    let refund = done.refund || { due: false, amount: 0 };
+    if ((paid > 0 || pass > 0 || after.refund === 'due') && after.refund !== 'done') {
       const started = after.start <= now;
-      const note = started && !(after.notes || '').includes('[Refund?]')
-        ? `${after.notes ? `${after.notes} ` : ''}[Refund?] Paid, then taken off the game once it had started: refund it or keep the fee.`
+      const due = paid > 0 && !started;
+      const passWords = pass > 0 ? ` A session pass covered ${money(pass)} of it: undo that on the staff page if it should come back.` : '';
+      const note = !due && !(after.notes || '').includes('[Refund?]')
+        ? `${after.notes ? `${after.notes} ` : ''}[Refund?] Taken off the game${started ? ' once it had started' : ''}: ${paid > 0 ? 'refund it or keep the fee' : 'a session pass covered it'}.`
         : after.notes || null;
-      this.write('UPDATE bookings SET refund = ?, notes = ?, updated_at = ? WHERE id = ?', started ? 'ask' : 'due', note, now, seat.id);
-      refund = started
-        ? { due: false, ask: true, amount: paid, orderId: seat.orderId || null, reason: 'taken off the game once it had started, so staff decide' }
-        : { due: true, amount: paid, orderId: seat.orderId || null, reason: 'taken off the game, paid ahead' };
-      this.notifyStaff(`${started ? 'Refund?' : 'Refund due:'} ${seat.ref}`, {
-        title: started ? 'A refund to decide' : 'Refund due',
-        intro: started
-          ? `${seat.name} was taken off ${game.title} once it had started, and they'd paid ${money(paid)} for their seat. It's your call whether to refund it. Have a chat with them, then mark it refunded if you do.`
-          : `${seat.name} was taken off ${game.title}, and they'd paid ${money(paid)} for their seat already. Refund it (or put it on their store credit), then mark it refunded.`,
-        details: [['Booking', seat.ref], ['Was for', this.when(game, rules)], ['Paid', money(paid)], ['Order', seat.orderId || 'See Orders in Shopify']],
+      this.write('UPDATE bookings SET refund = ?, notes = ?, updated_at = ? WHERE id = ?', due ? 'due' : 'ask', note, now, seat.id);
+      refund = due
+        ? { due: true, amount: paid, orderId: after.orderId || null, reason: 'taken off the game, paid ahead' }
+        : { due: false, ask: true, amount: paid, covered: pass, orderId: after.orderId || null, reason: started ? 'taken off the game once it had started, so staff decide' : 'a session pass covered it, so staff decide' };
+      const paidWords = paid > 0 ? `they'd paid ${money(paid)} for their seat` : 'they hadn\'t paid anything';
+      this.notifyStaff(`${due ? 'Refund due:' : 'Refund?'} ${seat.ref}`, {
+        title: due ? 'Refund due' : 'A refund to decide',
+        intro: due
+          ? `${seat.name} was taken off ${game.title}, and ${paidWords} already. Refund it (or put it on their store credit), then mark it refunded.${passWords}`
+          : `${seat.name} was taken off ${game.title}${started ? ' once it had started' : ''}, and ${paidWords}. It's your call whether to refund it. Have a chat with them, then mark it refunded if you do.${passWords}`,
+        details: [['Booking', seat.ref], ['Was for', this.when(game, rules)], ['Paid', money(paid)], ['Order', after.orderId || 'See Orders in Shopify']],
       });
     }
     const fresh = this.booking(seat.id);
@@ -343,15 +392,18 @@ export const gmSessionMethods = {
     if (!gm) throw new RuleError(GM_SESSION_WORDS.gmName);
     const sameAccount = gmCustomerId ? String(game.gmCustomerId || '') === gmCustomerId : !game.gmCustomerId && String(game.gmEmail || '').toLowerCase() === String(gmEmail).toLowerCase();
     if (sameAccount && gm === game.gm) throw new RuleError(GM_SESSION_WORDS.gmSame);
-    if (picked) this.makeMember(picked, now);
+    // every check before anything's saved (a bad scope makes no member record)
     const sessions = this.sessionsFor(game, input?.scope).filter((s) => s.credited == null);
+    if (picked) this.makeMember(picked, now);
+    // the new GM's own bio from their GM profile (none yet: none), not the GM before's
+    const gmBio = sameAccount ? game.gmBio || '' : (gmCustomerId && this.sql.exec('SELECT bio FROM gm_profiles WHERE customer_id = ?', gmCustomerId).toArray()[0]?.bio) || '';
     for (const s of sessions) {
-      this.saveGame({ ...s, gm, gmCustomerId, gmEmail }, now);
+      this.saveGame({ ...s, gm, gmCustomerId, gmEmail, gmBio }, now);
       this.write("UPDATE bookings SET customer_id = ?, name = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", gmCustomerId, `GM ${gm}`, now, s.id);
     }
     if (input?.scope === 'series' && game.seriesId) {
       this.write('UPDATE series SET gm_customer_id = ?, updated_at = ? WHERE id = ?', gmCustomerId, now, game.seriesId);
-      this.patchSeries(game.seriesId, { gm, gmEmail }, now);
+      this.patchSeries(game.seriesId, { gm, gmEmail, gmBio }, now);
     }
     if (gmCustomerId) {
       this.write('INSERT INTO gm_profiles (customer_id, name, bio, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(customer_id) DO NOTHING', gmCustomerId, gm, '', now);

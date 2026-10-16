@@ -1231,32 +1231,35 @@ export class Lair {
   }
 
   /**
-   * The seats a regular has to leave at one session for the regulars who joined before them and are still waiting
-   * for a seat there. Regulars are seated first to join first, each taking their seats while there's room, and one who
+   * The seats left for a regular at one session after the regulars who joined before them and are still waiting for
+   * a seat there. Regulars are seated first to join first, each taking their seats while there's room, and one who
    * doesn't fit keeps nothing from the next: the same queue maintenance seats them in (rollSeries), so someone joining
-   * hears what maintenance would do. No awaits.
+   * hears what maintenance would do. Round 18: kept, the seats kept for new players: a regular ahead who's new (as of
+   * this session) takes those first, anyone else only the rest. → { ordinary, kept }: the seats still free for this
+   * regular that aren't kept, and the kept ones (theirs only if they're new). No awaits.
    */
-  seatsAhead(session, member, now = Date.now(), kept = 0) {
-    if (!session?.seriesId || session.start <= now || session.status === 'cancelled') return 0;
+  roomAfterAhead(session, member, now = Date.now(), kept = 0) {
+    let ordinary = Math.max(0, session.seats - this.takenSeats(session.id) - kept);
+    let keptLeft = kept;
+    if (!session?.seriesId || session.start <= now || session.status === 'cancelled') return { ordinary, kept: keptLeft };
     // rollSeries's order: when they joined (a row without a time sorts first, as SQLite sorts NULLs), then customer ID.
     const joined = member.created_at ?? -1;
     const waiting = this.sql.exec(
-      `SELECT m.people FROM series_members m JOIN series s ON s.id = m.series_id AND s.status = 'active'
+      `SELECT m.people, m.customer_id, m.email FROM series_members m JOIN series s ON s.id = m.series_id AND s.status = 'active'
        WHERE m.series_id = ? AND m.status = 'active' AND m.customer_id != ?
          AND (COALESCE(m.created_at, -1) < ? OR (COALESCE(m.created_at, -1) = ? AND m.customer_id < ?))
          AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.game_id = ? AND b.kind = 'gm-seat' AND b.customer_id = m.customer_id)
        ORDER BY m.created_at, m.customer_id`,
       session.seriesId, String(member.customer_id), joined, joined, String(member.customer_id), session.id,
     ).toArray();
-    // Round 18: kept, the seats kept for new players: the regulars ahead are seated in the others
-    let free = session.seats - this.takenSeats(session.id) - kept;
-    let ahead = 0;
-    for (const { people } of waiting) {
-      if (people > free) continue;
-      free -= people;
-      ahead += people;
+    for (const w of waiting) {
+      const isNew = keptLeft > 0 && this.isNewPlayer(w.customer_id, w.email, session.start);
+      if (w.people > ordinary + (isNew ? keptLeft : 0)) continue;
+      const fromKept = isNew ? Math.min(keptLeft, w.people) : 0;
+      keptLeft -= fromKept;
+      ordinary -= w.people - fromKept;
     }
-    return ahead;
+    return { ordinary, kept: keptLeft };
   }
 
   /**
@@ -3153,8 +3156,8 @@ export class Lair {
     const now = Date.now();
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
-    // Round 18: staff with GM games, or this game's own GM when they're on the team
-    this.requireGameStaff(who, game);
+    // Round 18: staff with GM games, or this game's own GM when they're on the team (until it ends)
+    this.requireGameStaff(who, game, { live: true });
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
     // Round 9: a member code finds the member at once (their name and email come from their member record)
     const typed = String(input.code ?? '').trim();
@@ -3280,7 +3283,8 @@ export class Lair {
     const now = Date.now();
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
-    const own = who.customerId && game.gmCustomerId === who.customerId;
+    // Round 18: a series' dates are added by its GM now (staff can give it, from a session on, to another GM)
+    const own = who.customerId && (game.seriesId ? this.runsSeries(who, game.seriesId) : game.gmCustomerId === who.customerId);
     // Round 9: staff here means GM games
     const staffGames = this.can(who, 'sessions');
     if (!staffGames && !own) throw new RuleError('Only the GM or staff can add a session.', 403);
@@ -3305,10 +3309,14 @@ export class Lair {
       series = this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).one();
     }
     const approved = Boolean(series?.approved) || game.status === 'open' || staffGames;
-    // Round 18: a series staff made free, or gave seats for new players, from a session on passes them to its new dates
+    // Round 18: a series staff made free, or gave seats for new players, from a session on passes them to its new dates,
+    // and a new date is its GM's now (a new GM from a session on is the series')
     const kept = parse(series?.details, {});
+    const theirs = game.seriesId && series
+      ? { gmCustomerId: series.gm_customer_id || null, gmEmail: kept.gmEmail ?? game.gmEmail, gm: kept.gm || details.gm, gmBio: kept.gmBio ?? details.gmBio }
+      : { gmCustomerId: game.gmCustomerId, gmEmail: game.gmEmail };
     const base = {
-      ...details, schedule: game.seriesId ? game.schedule : 'flexible', gmCustomerId: game.gmCustomerId, gmEmail: game.gmEmail, seriesId,
+      ...details, schedule: game.seriesId ? game.schedule : 'flexible', ...theirs, seriesId,
       status: approved ? 'open' : 'pending', credited: null, feeApproved: true, imageId: game.imageId,
       free: Boolean(kept.free), newSeats: Math.max(0, Number(kept.newSeats) || 0),
     };
@@ -3353,7 +3361,7 @@ export class Lair {
   /**
    * A series member's seat at one session: theirs already, a new one when there's room, or null when it's full.
    * Regulars are seated in the order they joined. ahead: seats to keep for regulars who joined earlier; left out, it's
-   * the seats those still waiting for one there would take (seatsAhead), so someone joining doesn't take an earlier
+   * the seats those still waiting for one there would take (roomAfterAhead), so someone joining doesn't take an earlier
    * regular's seat. Callers that seat every regular in join order pass 0, so one who doesn't fit never keeps a seat
    * from the next. Series members pay at the counter each session. No awaits.
    */
@@ -3367,9 +3375,14 @@ export class Lair {
     // regular's first seat fills a kept one. The regulars ahead of them are seated in the seats that aren't kept.
     const newPlayer = this.isNewPlayer(member.customer_id, member.email, session.start);
     const newKept = this.newSeatsKept(session);
-    const earlier = ahead ?? this.seatsAhead(session, member, now, newKept);
-    const kept = newPlayer ? 0 : newKept;
-    if (session.seats - this.takenSeats(session.id) - earlier - kept < member.people) return null;
+    let room;
+    if (ahead == null) {
+      const left = this.roomAfterAhead(session, member, now, newKept);
+      room = left.ordinary + (newPlayer ? left.kept : 0);
+    } else {
+      room = session.seats - this.takenSeats(session.id) - ahead - (newPlayer ? 0 : newKept);
+    }
+    if (room < member.people) return null;
     const seatId = makeId('bk');
     const seat = {
       id: seatId, ref: this.newCode(member.name, 'booking', seatId, now), kind: 'gm-seat', status: 'confirmed', gameId: session.id, seriesId: session.seriesId,
@@ -3656,10 +3669,14 @@ export class Lair {
       if (recent >= LIMITS.messagesPerGamePerDay) throw new RuleError("That's 5 messages for this game today. Try again tomorrow, or ask the team to pass it on.", 429);
     }
     const active = "status IN ('held', 'confirmed', 'seated')";
+    // Round 18: a series can have more than one GM: one who isn't its GM now messages the players of their own sessions
+    const wholeSeries = scope === 'series' && this.runsSeries(who, game.seriesId);
     const people = scope === 'series'
       ? [
-        ...this.sql.exec("SELECT name, email FROM series_members WHERE series_id = ? AND status = 'active'", game.seriesId).toArray(),
-        ...this.sql.exec(`SELECT b.name, b.email FROM bookings b JOIN games g ON g.id = b.game_id WHERE g.series_id = ? AND b.kind = 'gm-seat' AND b.${active} AND b.ends_at > ?`, game.seriesId, now).toArray(),
+        ...(wholeSeries ? this.sql.exec("SELECT name, email FROM series_members WHERE series_id = ? AND status = 'active'", game.seriesId).toArray() : []),
+        ...(wholeSeries
+          ? this.sql.exec(`SELECT b.name, b.email FROM bookings b JOIN games g ON g.id = b.game_id WHERE g.series_id = ? AND b.kind = 'gm-seat' AND b.${active} AND b.ends_at > ?`, game.seriesId, now).toArray()
+          : this.sql.exec(`SELECT b.name, b.email FROM bookings b JOIN games g ON g.id = b.game_id WHERE g.series_id = ? AND g.gm_customer_id = ? AND b.kind = 'gm-seat' AND b.${active} AND b.ends_at > ?`, game.seriesId, String(who.customerId || ''), now).toArray()),
       ]
       : this.sql.exec(`SELECT name, email FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND ${active}`, game.id).toArray();
     const recipients = new Map();
@@ -3760,12 +3777,14 @@ export class Lair {
     let affected = 0;
     let refunds = 0;
     if (patch.status === 'cancelled') {
-      // A series: every future session, and this one too while it can still be cancelled.
+      // A series: every future session, and this one too while it can still be cancelled. Round 18: a series can have
+      // more than one GM once staff give some of it to another, so a GM cancels only the sessions they run, and the
+      // series itself (no more dates, its regulars) only when it's theirs now (runsSeries).
       const targets = scope === 'series'
-        ? this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND (starts_at > ? OR (id = ? AND starts_at >= ?))", game.seriesId, now, game.id, now - HOUR)
-          .toArray().map((r) => this.rowToGame(r))
+        ? this.ownSessionsOnly(who, this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND (starts_at > ? OR (id = ? AND starts_at >= ?))", game.seriesId, now, game.id, now - HOUR)
+          .toArray().map((r) => this.rowToGame(r)))
         : before === 'cancelled' ? [] : [game];
-      if (scope === 'series') this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.seriesId);
+      if (scope === 'series' && this.runsSeries(who, game.seriesId)) this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.seriesId);
       ({ affected, refunds } = this.cancelSessions(targets, rules, now));
       game.status = 'cancelled';
     } else if (patch.status && ['open', 'pending'].includes(patch.status)) {
@@ -3809,8 +3828,9 @@ export class Lair {
     // Round 17: the GM the team was checked for is still this session's GM, and the main account's tags were read
     if (String(game.gmCustomerId || '') !== String(before?.gmCustomerId || '')) throw new RuleError(STAFF_GM_MESSAGES.changed, 409);
     if (gm?.tagsFailed && !gm.staff && this.staffGmMode() !== 'earn') throw new RuleError(STAFF_GM_MESSAGES.tags, 503);
+    // Round 18: a seat that cost nothing (a free session's) isn't a paying player's, even marked paid
     const players = this.sql
-      .exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 1 AND status NOT IN ('cancelled', 'noshow')", id)
+      .exec("SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 1 AND amount > 0 AND status NOT IN ('cancelled', 'noshow')", id)
       .one().n;
     // Each game's own GM fee: $0 (the GM covers their players), $5 standard, or more with a manager's OK. Round 18: a
     // free session has none (nobody paid a GM fee).
@@ -3819,7 +3839,8 @@ export class Lair {
     // (status 'staff', amount 0), so it's done and can't be credited later. The players paid as always.
     const rule = amount > 0 ? this.staffGmRule(game, gm, rules, onShift) : null;
     const kept = Boolean(rule && !rule.credit);
-    if ((expect === 'none' && !kept) || (expect === 'credit' && kept)) throw new RuleError(STAFF_GM_MESSAGES.expectChanged, 409);
+    // (round 18: with nothing to credit, a free session or no paying players, either button records it as done)
+    if (amount > 0 && ((expect === 'none' && !kept) || (expect === 'credit' && kept))) throw new RuleError(STAFF_GM_MESSAGES.expectChanged, 409);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
     const marker = rule?.marked ? this.memberRow(who.customerId) : null;
     const markedBy = marker ? marker.first_name || String(marker.name || '').split(' ')[0] || '' : '';
@@ -3874,9 +3895,12 @@ export class Lair {
     for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
     const imageId = `${makeId('img')}.${match[1].split('/')[1].replace('jpeg', 'jpg')}`;
     this.write('INSERT INTO images (id, mime, data, owner, created_at) VALUES (?, ?, ?, ?, ?)', imageId, match[1], bytes, who.customerId || null, now);
-    if (game.seriesId) {
+    if (game.seriesId && this.runsSeries(who, game.seriesId)) {
       this.write('UPDATE games SET image_id = ?, updated_at = ? WHERE series_id = ?', imageId, now, game.seriesId);
       this.write('UPDATE series SET image_id = ?, updated_at = ? WHERE id = ?', imageId, now, game.seriesId);
+    } else if (game.seriesId) {
+      // Round 18: the GM of some of a series that's someone else's now: the sessions they run
+      this.write('UPDATE games SET image_id = ?, updated_at = ? WHERE series_id = ? AND gm_customer_id = ?', imageId, now, game.seriesId, String(who.customerId));
     } else {
       this.write('UPDATE games SET image_id = ?, updated_at = ? WHERE id = ?', imageId, now, game.id);
     }
