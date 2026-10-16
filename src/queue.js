@@ -421,7 +421,11 @@ export const queueMethods = {
     const made = [];
     for (let guard = 0; guard < QUEUE_MAX; guard += 1) {
       const home = this.loansOut(id);
-      if (this.activeHolds(id, now).length + home.length >= plan.games) break;
+      // a postal swap they've paid for whose hold has ended (paid after the cutoff, or let go by staff) is still theirs
+      // until staff post it or cancel it: it takes a place in their plan, and its game isn't held (and its postage asked
+      // for) a second time meanwhile
+      const paid = this.paidWithoutHold(id, now);
+      if (this.activeHolds(id, now).length + home.length + paid.size >= plan.games) break;
       // what they have already: any hold of theirs (a table's too) and anything at home
       const mine = new Set([
         ...this.sql.exec("SELECT variant_id FROM library_holds WHERE customer_id = ? AND status = 'held' AND until > ?", id, now).toArray().map((r) => String(r.variant_id)),
@@ -430,7 +434,7 @@ export const queueMethods = {
       let next = null;
       for (const row of this.sql.exec("SELECT * FROM library_queue WHERE customer_id = ? AND status = 'queued' AND passed_at IS NULL ORDER BY position, added_at, rowid", id).toArray()) {
         const game = this.libraryPick(row.product_id);
-        if (!game || game.inStoreOnly || mine.has(String(game.variantId)) || this.queueFree(game, now) < 1) continue;
+        if (!game || game.inStoreOnly || mine.has(String(game.variantId)) || paid.has(String(row.product_id)) || this.queueFree(game, now) < 1) continue;
         next = { row, game };
         break;
       }
@@ -587,6 +591,30 @@ export const queueMethods = {
   /* ---------------- postal sends ---------------- */
   sendRow(id) {
     return id ? this.sql.exec('SELECT * FROM library_sends WHERE id = ?', String(id)).toArray()[0] || null : null;
+  },
+
+  /**
+   * The product ids of a member's postal swaps that are paid for (paid or packed) but whose hold isn't on any more: paid
+   * after the cutoff, or the hold let go by staff. Staff post them or cancel them; until then they're the member's. (A
+   * paid swap whose hold is on is one of their holds already.) No awaits.
+   */
+  paidWithoutHold(customerId, now = Date.now()) {
+    return new Set(this.sql
+      .exec(
+        `SELECT s.product_id FROM library_sends s LEFT JOIN library_holds h ON h.id = s.hold_id
+         WHERE s.customer_id = ? AND s.status IN ('paid', 'packed') AND NOT (COALESCE(h.status, '') = 'held' AND COALESCE(h.until, 0) > ?)`,
+        String(customerId), now,
+      )
+      .toArray().map((r) => String(r.product_id)));
+  },
+
+  /**
+   * A member can't cancel the hold of a postal swap whose postage is paid (just as "Not this time" can't skip it): 409
+   * paid. The copy is theirs until staff post it; staff can still let it go. No awaits.
+   */
+  checkHoldPaid(hold) {
+    const paid = hold?.id && this.sql.exec("SELECT 1 AS n FROM library_sends WHERE hold_id = ? AND status IN ('paid', 'packed') LIMIT 1", hold.id).toArray().length;
+    if (paid) throw new RuleError(QUEUE_MESSAGES.paid, 409);
   },
 
   /** A member's own send, or 404 (someone else's is never found). No awaits. */

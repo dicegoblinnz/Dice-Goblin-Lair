@@ -7600,6 +7600,8 @@ export class Lair {
     if (!staffLibrary && hold.customerId !== String(who.customerId)) throw new RuleError("That hold isn't yours to cancel.", 403);
     const status = this.holdStatus(hold, now);
     if (status === 'held') {
+      // Round 17: a postal swap's hold with its postage paid is staff's to let go, not the member's (as skipping it is)
+      if (!staffLibrary) this.checkHoldPaid(hold);
       this.write("UPDATE library_holds SET status = 'cancelled', ended_at = ?, updated_at = ? WHERE id = ? AND status = 'held'", now, now, hold.id);
       // Round 17: a queue's game goes back in the queue (no stall); a table's game is let go
       this.queueHoldEnded(this.holdRow(hold.id), 'cancelled', now);
