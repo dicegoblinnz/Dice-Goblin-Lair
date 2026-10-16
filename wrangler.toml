@@ -30,5 +30,9 @@ API_VERSION = "2026-07"
 CURRENCY = "NZD"
 PUBLIC_URL = "https://dice-goblin-lair.dicegoblinnz.workers.dev"
 
+# Round 17, Help me pick: Workers AI tags new library games (config PICK_AI = "off" stops it; PICK_AI_MODEL picks the model)
+[ai]
+binding = "AI"
+
 [observability]
 enabled = true
