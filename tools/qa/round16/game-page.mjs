@@ -140,6 +140,8 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     labels: [...document.querySelectorAll('.gift-order__fields .field__label')].map((l) => l.textContent.trim()),
   }));
   check(`${tag} gift: opened, its fields are on and the buttons say Add gift to cart`, opened.disabled.every((d) => !d) && opened.add === 'Add gift to cart' && opened.bar === 'Add gift to cart', opened);
+  const payHidden = await page.evaluate(() => getComputedStyle(document.querySelector('.shopify-payment-button')).display === 'none');
+  check(`${tag} gift: Buy it now steps aside while the gift is open (it would skip the gift's details)`, payHidden, payHidden);
   check(`${tag} gift: it says no prices and the message goes in the box`, /no price on it or on the packing slip/.test(opened.lede) && /your message in the box/.test(opened.lede) && JSON.stringify(opened.labels) === JSON.stringify(["Who's it for?", "Who's it from?", 'Your message']), opened);
   await page.screenshot({ path: path.join(OUT, `${size}-gift-open.png`), fullPage: false });
   await scan(page, `${tag} gift open`, 'gift-option');
@@ -168,6 +170,8 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
     disabled: [...document.querySelectorAll('[data-gift-field], [data-gift-flag]')].map((f) => f.disabled),
     add: document.querySelector('[data-add-label]').textContent.trim(),
   }));
+  const payBack = await page.evaluate(() => getComputedStyle(document.querySelector('.shopify-payment-button')).display !== 'none');
+  check(`${tag} gift: closed again, Buy it now is back`, payBack, payBack);
   check(`${tag} gift: once it's in the cart, the gift closes and empties, and Add to cart is back`, !after.open && after.values.every((x) => x === '') && after.disabled.every(Boolean) && after.add === 'Add to cart', after);
   // the next add isn't a gift
   await page.keyboard.press('Escape');
@@ -182,6 +186,21 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   check(`${tag} gift: a plain add sends no gift properties`, !/properties\[/.test(plain.postData() || '') && Object.keys(m.mockCart.lines[0]?.properties || {}).length === 0, plain.postData());
   m.mockCart.lines = [];
 
+  /* ---- Enter in a gift's name field goes to the next field and adds nothing ---- */
+  await page.goto(`${BASE}/products/catan`, { waitUntil: 'networkidle' });
+  await page.click('.gift-order__toggle');
+  await page.fill('#GiftFor-template--1__main', 'Aroha');
+  let added = 0;
+  const count = (r) => { if (r.url().includes('/cart/add') && r.method() === 'POST') added += 1; };
+  page.on('request', count);
+  await page.focus('#GiftFor-template--1__main');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(500);
+  page.off('request', count);
+  const entered = await page.evaluate(() => ({ focus: document.activeElement?.id, open: document.querySelector('[data-gift-details]').open, value: document.querySelector('#GiftFor-template--1__main').value }));
+  check(`${tag} gift: Enter in Who's it for? goes to Who's it from? and adds nothing`, added === 0 && entered.focus === 'GiftFrom-template--1__main' && entered.open && entered.value === 'Aroha', { added, entered });
+  m.mockCart.lines = [];
+
   /* ---- a shop game paired by metafield; low stock; sold out; not tracked; a custom brief; two editions ---- */
   v = await open('/products/7-wonders-duel');
   check(`${tag} 7 Wonders Duel: Try it first goes to its library copy (custom.library_copy)`, v.pair && v.pair.links[0].href === '/products/7-wonders-duel-library', v.pair);
@@ -193,6 +212,19 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   v = await open('/products/heat-pedal-to-the-metal');
   check(`${tag} Heat: the summary is custom.brief (its new line kept), About has the whole description`, v.brief.startsWith('Heat is a fast car-racing board game') && /<br>/.test(v.briefHtml) && v.about && v.about.text.includes('Heat: Pedal to the Metal is a car-racing board game'), { brief: v.briefHtml, about: v.about && v.about.text.slice(0, 120) });
   check(`${tag} Heat: not tracked, so no stock line, but it still ships within 3 working days; no 🎂 line, so its Age is the group's`, JSON.stringify(v.promise) === JSON.stringify(['Ships within 3 working days']) && v.markers.find((x) => x.label === 'Age')?.value === '10+', { promise: v.promise, markers: v.markers });
+  v = await open('/products/azul');
+  const azul = await page.evaluate(() => {
+    const brief = document.querySelector('.product__brief');
+    const about = document.querySelector('.product__about');
+    return {
+      paras: brief.querySelectorAll('p').length,
+      stray: brief.querySelectorAll('.markers, .product__price, form, .product__about').length + document.querySelectorAll('.product__summary form, .product__summary .markers').length,
+      markersOutside: Boolean(document.querySelector('.product__head > .markers')),
+      table: Boolean(about?.querySelector('table')),
+      wrapper: Boolean(about?.querySelector('.bgg article')),
+    };
+  });
+  check(`${tag} Azul (paragraphs inside wrappers, as a pasted description): a one-paragraph summary, the page laid out as usual, About keeps the rest whole`, azul.paras === 1 && azul.stray === 0 && azul.markersOutside && azul.table && azul.wrapper && v.brief.startsWith('Azul is a tile-drafting game') && JSON.stringify(v.order.slice(0, 6)) === JSON.stringify(['h1', 'rte', 'markers', 'product__price', 'promise', 'product__buy']), { azul, order: v.order });
   v = await open('/products/everdell');
   check(`${tag} Everdell (Standard): Only 2 left in the hoard`, v.promise[0] === 'Only 2 left in the hoard', v.promise);
   await page.evaluate(() => {
@@ -247,7 +279,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   w.on('pageerror', (e) => werrors.push(e.message));
   await w.goto(`${BASE}/products/catan`, { waitUntil: 'networkidle' });
   await w.waitForTimeout(300);
-  const heart = () => w.evaluate(() => { const b = document.querySelector('[data-wishlist-button]'); return b ? { pressed: b.getAttribute('aria-pressed'), label: b.textContent.trim() } : null; });
+  const heart = () => w.evaluate(() => { const b = document.querySelector('[data-wishlist-button]'); return b ? { pressed: String(b.hasAttribute('data-on')), label: b.textContent.trim() } : null; });
   const place = await w.evaluate(() => { const el = document.querySelector('wishlist-button'); const r = el.getBoundingClientRect(); const g = document.querySelector('gift-option').getBoundingClientRect(); return { after: el.previousElementSibling?.tagName, full: Math.abs(r.width - g.width) < 2, below: r.top >= g.bottom }; });
   check(`${tag} wishlist on (demo): Add to wishlist, full width under Order as a gift`, JSON.stringify(await heart()) === JSON.stringify({ pressed: 'false', label: 'Add to wishlist' }) && place.after === 'GIFT-OPTION' && place.full && place.below, { heart: await heart(), place });
   await w.click('[data-wishlist-button]');
@@ -286,7 +318,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   const lairCore = await l.evaluate(() => [...document.scripts].some((s) => /lair-core/.test(s.src)));
   await l.click('[data-wishlist-button]');
   await l.waitForTimeout(300);
-  const pressed = await l.evaluate(() => document.querySelector('[data-wishlist-button]').getAttribute('aria-pressed'));
+  const pressed = await l.evaluate(() => String(document.querySelector('[data-wishlist-button]').hasAttribute('data-on')));
   const post = calls.find((c) => c.method === 'POST');
   check(`${tag} wishlist live: asks the Lair app (GET /me/wishlist), and the press posts the product`, calls[0]?.method === 'GET' && calls[0].path === '/apps/liar/me/wishlist' && post && post.path === '/apps/liar/me/wishlist' && post.body.handle === 'catan' && post.body.title === 'Catan' && /^\d+$/.test(String(post.body.productId)) && pressed === 'true', { calls, pressed });
   check(`${tag} wishlist live: a game page doesn't load lair-core.js for it`, !lairCore, lairCore);
@@ -299,8 +331,8 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   const o = await octx.newPage();
   await o.goto(`${BASE}/products/catan`, { waitUntil: 'networkidle' });
   const asked = calls.length;
-  await Promise.all([o.waitForURL(/\/account\/login/), o.click('[data-wishlist-button]')]).catch(() => {});
-  check(`${tag} wishlist logged out: the press goes to the login page and back, without asking the Lair app`, /\/account\/login\?return_url=%2Fproducts%2Fcatan$/.test(o.url()) && calls.length === asked, o.url());
+  await Promise.all([o.waitForURL(/\/customer_authentication\/login/), o.click('[data-wishlist-button]')]).catch(() => {});
+  check(`${tag} wishlist logged out: the press goes to the login page and back, without asking the Lair app`, /\/customer_authentication\/login\?return_to=%2Fproducts%2Fcatan$/.test(o.url()) && calls.length === asked, o.url());
   await octx.close();
   m.mockState.before = null;
   m.globalSettings.wishlist_enabled = false;

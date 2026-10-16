@@ -866,6 +866,16 @@ export const r16 = (() => {
     description: by('7-wonders-duel-library').description.replace(libLine, shopLine) });
   by('7-wonders-duel-library').metafields.custom.shop_copy = { value: duel };
 
+  // A description pasted from elsewhere, its paragraphs inside wrappers (as some older listings were): the summary is
+  // one paragraph and the rest keeps the wrappers whole
+  const azul = product('azul', 'Azul', 'Next Move Games', 70, 70, null, true, 5, 1000, 1000);
+  azul.type = 'Board Games';
+  allProducts.azul = azul;
+  feedProducts.push(azul);
+  for (const v of azul.variants) variantIndex.set(Number(v.id), { product: azul, variant: v });
+  set('azul', { custom: { players: '2–4', play_time: '30–45 min', difficulty: 'Easy' }, age: '8 years or older', tags: ['Strategy', 'Family Games'],
+    description: '<div class="bgg"><article><div><p><strong>Azul</strong> is a tile-drafting game where you take turns picking coloured tiles to decorate the walls of a palace in Évora.</p><p>Score for rows, columns and sets of colours, and lose points for broken tiles.</p><table><tr><td>Players</td><td>2–4</td></tr></table></div></article></div>' });
+
   // Everdell's two editions: 2 left of the standard box, the Collector's sold out (the box updates with the pick)
   const everdell = by('everdell');
   manyVariants(everdell, [['Edition', ['Standard', "Collector's"], false]], [['Standard'], ["Collector's"]]);
