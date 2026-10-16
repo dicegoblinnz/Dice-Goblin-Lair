@@ -44,6 +44,8 @@ import { GAME_PEOPLE, PLAYER_WORDS, gamePlayerMethods, spotKey, spotLabel } from
 import { membershipMethods, membershipUpkeep } from './memberships.js';
 // Round 16: the wishlist, a member's products to come back to (src/wishlist.js)
 import { wishlistMethods } from './wishlist.js';
+// Round 17: borrowing: the queue, postal swaps, "Tell me when it's back" and a game on a table booking (src/queue.js)
+import { queueMethods } from './queue.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -219,6 +221,52 @@ const ROUND16_WISHLIST = [
     customer_id TEXT NOT NULL, product_id TEXT NOT NULL, handle TEXT, title TEXT, created_at INTEGER NOT NULL,
     PRIMARY KEY (customer_id, product_id))`,
   'CREATE INDEX IF NOT EXISTS wishlist_customer ON wishlist (customer_id, created_at)',
+];
+
+/**
+ * Round 17, borrowing (16 Oct 2026, src/queue.js): columns and tables made on every start when they're missing (as
+ * ROUND16_WISHLIST is), so they never wait on a step in MIGRATIONS (the other half of round 17 adds its own).
+ *  - library_holds.kind: 'member' (a member's hold, made by them, staff or their queue) or 'booking' (a game held for a
+ *    table booking: never counted against a plan, never in a member's holds); booking_id: that booking.
+ *  - bookings.game_*: the library game on a table booking (product, title, handle, picture), game_state ('waiting',
+ *    'held', 'unavailable', 'played' or 'released'), game_hold_id (its hold) and game_told_at (the booker was told no
+ *    copy was free, once).
+ *  - library_queue: a member's borrow queue, one row per game (position 1, 2, 3…; 'queued', 'held', 'done' or
+ *    'removed'; hold_id once it's held; passed_at: a hold of it was cancelled, so it's passed over until they next act).
+ *  - library_queue_settings: paused, delivery ('store' or 'post'), area, and whether it's stalled (and why, and when).
+ *  - library_sends: a postal swap ('waiting', 'checkout', 'paid', 'packed', 'sent', 'lapsed' or 'cancelled'), with its
+ *    cutoff (confirm_by), its Thursday (send_day), its checkout (draft_order_id, checkout_url; drafts: every draft it
+ *    had; creating_at: a checkout being made) and its order; late: paid after it lapsed or was skipped.
+ *  - library_watch: "Tell me when it's back", one row per member per game, deleted once they're told.
+ */
+const ROUND17_COLUMNS = [
+  ['library_holds', 'kind', "TEXT NOT NULL DEFAULT 'member'"], ['library_holds', 'booking_id', 'TEXT'],
+  ['bookings', 'game_product_id', 'TEXT'], ['bookings', 'game_title', 'TEXT'], ['bookings', 'game_handle', 'TEXT'], ['bookings', 'game_image', 'TEXT'],
+  ['bookings', 'game_state', 'TEXT'], ['bookings', 'game_hold_id', 'TEXT'], ['bookings', 'game_told_at', 'INTEGER'],
+];
+const ROUND17_QUEUE = [
+  `CREATE TABLE IF NOT EXISTS library_queue (
+    id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, product_id TEXT NOT NULL, variant_id TEXT, title TEXT, handle TEXT, image TEXT, shelf_code TEXT,
+    position INTEGER NOT NULL, status TEXT NOT NULL, hold_id TEXT, passed_at INTEGER, added_at INTEGER NOT NULL, updated_at INTEGER)`,
+  'CREATE INDEX IF NOT EXISTS library_queue_customer ON library_queue (customer_id, status, position)',
+  'CREATE INDEX IF NOT EXISTS library_queue_product ON library_queue (product_id, status)',
+  'CREATE INDEX IF NOT EXISTS library_queue_hold ON library_queue (hold_id)',
+  `CREATE TABLE IF NOT EXISTS library_queue_settings (
+    customer_id TEXT PRIMARY KEY, paused INTEGER NOT NULL DEFAULT 0, delivery TEXT NOT NULL DEFAULT 'store', area TEXT, stalled INTEGER NOT NULL DEFAULT 0,
+    stalled_reason TEXT, stalled_at INTEGER, updated_at INTEGER)`,
+  `CREATE TABLE IF NOT EXISTS library_sends (
+    id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, hold_id TEXT, queue_id TEXT, product_id TEXT, title TEXT, shelf_code TEXT, area TEXT, postage INTEGER,
+    status TEXT NOT NULL, confirm_by INTEGER NOT NULL, send_day TEXT, draft_order_id TEXT, checkout_url TEXT, order_id TEXT, order_name TEXT, drafts TEXT,
+    creating_at INTEGER, late INTEGER NOT NULL DEFAULT 0, paid_at INTEGER, staff_note TEXT, created_at INTEGER NOT NULL, updated_at INTEGER)`,
+  'CREATE INDEX IF NOT EXISTS library_sends_status ON library_sends (status, confirm_by)',
+  'CREATE INDEX IF NOT EXISTS library_sends_customer ON library_sends (customer_id, status)',
+  'CREATE INDEX IF NOT EXISTS library_sends_hold ON library_sends (hold_id)',
+  `CREATE TABLE IF NOT EXISTS library_watch (
+    customer_id TEXT NOT NULL, product_id TEXT NOT NULL, variant_id TEXT, title TEXT, handle TEXT, created_at INTEGER NOT NULL, told_at INTEGER,
+    PRIMARY KEY (customer_id, product_id))`,
+  'CREATE INDEX IF NOT EXISTS library_watch_product ON library_watch (product_id, created_at)',
+  'CREATE INDEX IF NOT EXISTS library_holds_booking ON library_holds (kind, status, booking_id)',
+  'CREATE INDEX IF NOT EXISTS bookings_library_game ON bookings (game_product_id, starts_at)',
 ];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
@@ -888,6 +936,15 @@ export class Lair {
     }
     // Round 16: the wishlist's table and index (made when missing)
     for (const statement of ROUND16_WISHLIST) this.sql.exec(statement);
+    // Round 17: borrowing's columns, tables and indexes (made when missing: src/queue.js)
+    for (const [table, column, type] of ROUND17_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of ROUND17_QUEUE) this.sql.exec(statement);
     // A weekly regular owes for a seat they didn't pay for (round 5), but only for seats made once round 5 is running:
     // a seat booked under the old rules is never owed. The first start of round 5 notes when that was.
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('owed-from', ?)", String(Date.now()));
@@ -956,6 +1013,10 @@ export class Lair {
       waived: Boolean(r.waived), createdAt: r.created_at || null,
       // round 15: a regular's seat Gobgob saved for them by itself (not one they booked)
       gobSaved: Boolean(r.gob_saved),
+      // Round 17: the library game on a table booking, when it has one (src/queue.js)
+      ...(r.game_product_id ? {
+        game: { productId: r.game_product_id, title: r.game_title || '', handle: r.game_handle || '', image: r.game_image || null, state: r.game_state || 'waiting', holdId: r.game_hold_id || null, toldAt: r.game_told_at || null },
+      } : {}),
     };
   }
 
@@ -1360,6 +1421,8 @@ export class Lair {
     for (const row of expired) {
       this.write("UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now, row.id);
       this.dropDraft(this.rowToBooking(row));
+      // Round 17: its library game is let go
+      if (row.game_product_id) this.bookingGameSync(row.id, now);
     }
     // Event sign-ups waiting for their entry fee lapse the same way.
     const lapsed = this.sql.exec("SELECT * FROM event_joins WHERE status = 'held' AND hold_until < ?", now).toArray();
@@ -1511,7 +1574,12 @@ export class Lair {
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
         // Round 10: Lair Memberships' webhooks (the Worker checked their signature), and its address for setup and upkeep
-        if (b === 'memberships-webhook') return json(await this.membershipWebhook(body));
+        // Round 17: and a plan that changed moves the member's borrow queue on
+        if (b === 'memberships-webhook') {
+          const handled = await this.membershipWebhook(body);
+          this.queueAfterPlanChange(handled);
+          return json(handled);
+        }
         const membershipsUrl = body.membershipsUrl || (typeof body.webhookUrl === 'string' ? body.webhookUrl.replace(/\/webhooks\/orders-paid$/, '/webhooks/memberships') : null);
         if (b === 'setup') {
           return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true, membershipsUrl, membershipsSetup: body.memberships === 'plans' }));
@@ -1540,8 +1608,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships'].includes(a));
+          || (request.method === 'GET' && ['floor', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'queue'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'queue'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1554,6 +1622,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
       // Round 16: the wishlist, newest first (src/wishlist.js)
       if (request.method === 'GET' && a === 'me' && b === 'wishlist' && !c) return json(this.memberWishlist(who));
+      // Round 17: the borrow queue, and the staff's postal swaps (src/queue.js)
+      if (request.method === 'GET' && a === 'me' && b === 'queue' && !c) return json(this.memberQueue(who));
+      if (request.method === 'GET' && a === 'library' && b === 'sends' && !c) return json(this.listSends(url, who));
       if (request.method === 'GET' && a === 'members' && !b) return json(await this.members(url, who));
       if (request.method === 'GET' && a === 'members' && b === 'birthdays') return json(await this.birthdayList(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'spend') return json(await this.memberSpend(decodeURIComponent(b), who));
@@ -1599,6 +1670,18 @@ export class Lair {
       // Round 16: add a product to the wishlist, and take one off
       if (a === 'me' && b === 'wishlist' && !c) return json(this.addToWishlist(body, who));
       if (a === 'me' && b === 'wishlist' && c === 'remove' && !d) return json(this.removeFromWishlist(body, who));
+      // Round 17: the borrow queue, its postal swaps, "Tell me when it's back", a table's game (src/queue.js)
+      if (a === 'me' && b === 'queue' && !c) return json(this.addToQueue(body, who));
+      if (a === 'me' && b === 'queue' && c === 'remove' && !d) return json(this.removeFromQueue(body, who));
+      if (a === 'me' && b === 'queue' && c === 'move' && !d) return json(this.moveInQueue(body, who));
+      if (a === 'me' && b === 'queue' && c === 'settings' && !d) return json(this.saveQueueSettingsRoute(body, who));
+      if (a === 'me' && b === 'queue' && c === 'restart' && !d) return json(this.restartQueue(who));
+      if (a === 'me' && b === 'queue' && c === 'sends' && d && parts[4] === 'confirm' && !parts[5]) return json(await this.confirmSend(decodeURIComponent(d), body, who));
+      if (a === 'me' && b === 'queue' && c === 'sends' && d && parts[4] === 'skip' && !parts[5]) return json(this.skipSend(decodeURIComponent(d), who));
+      if (a === 'library' && b === 'sends' && c && d === 'update' && !parts[4]) return json(this.updateSend(decodeURIComponent(c), body, who));
+      if (a === 'library' && b === 'watch' && !c) return json(this.watchGame(body, who));
+      if (a === 'library' && b === 'watch' && c === 'remove' && !d) return json(this.unwatchGame(body, who));
+      if (a === 'bookings' && b && c === 'game' && !d) return json(await this.bookingGame(decodeURIComponent(b), body, who));
       if (a === 'passes' && !b) return json(await this.createPass(body, who));
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
@@ -1989,6 +2072,8 @@ export class Lair {
     if (!override) this.checkAccountLimit(who.customerId, booking.amount, rules, now, 'book');
     // usePass: the member's own session pass (staff may use any active one), saved for the check-in.
     const pass = input.usePass && ['table', 'gm-seat'].includes(kind) ? this.passForBooking(input.usePass, who, now) : null;
+    // Round 17: a library game to bring to the table (src/queue.js), held from 3 days before
+    const tableGame = kind === 'table' && input.game ? this.bookingGamePick(input.game) : null;
     // Tables, walk-ins and game seats are paid at the counter on the day (show the code, we ring it up): `pay` is ignored.
     const id = makeId('bk');
     // A walk-in staff mark paid as they seat it was paid in full. split: the booker will split the bill at the counter.
@@ -2000,6 +2085,7 @@ export class Lair {
     });
     this.saveBooking(booking, now);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email, mobile: booking.phone }, now);
+    if (tableGame) booking.game = this.setBookingGame(booking.id, tableGame, now).game;
     // --- saved: the table is ours ---
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
     if (game) this.tellGmNewPlayer(booking, game, rules);
@@ -2223,6 +2309,8 @@ export class Lair {
       seriesId: b.seriesId || null, ticketCode: this.ticketCode(b), owed: this.isOwed(b), waived: Boolean(b.waived),
       // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
       ...this.lockView(b),
+      // Round 17: the library game on the table, and when it's held from
+      ...(b.game ? { game: this.bookingGameView(b) } : {}),
     };
   }
 
@@ -2380,6 +2468,8 @@ export class Lair {
       if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
       this.saveBooking(booking, now);
       this.dropDraft(booking);
+      // Round 17: its library game is let go
+      if (booking.game) this.bookingGameSync(booking.id, now);
       if (refund.due) {
         this.notifyStaff(`Refund due: ${booking.ref}`, {
           title: 'Refund due',
@@ -2495,6 +2585,8 @@ export class Lair {
       }
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
+    // Round 17: its library game follows it: let go when it's cancelled or a no-show, moved with it, played once it's checked in
+    if (next.game) this.bookingGameChanged(booking, now);
     // Round 9: a bill with this on it stays true (paid by hand, waived or changed: see reconcileBills)
     this.reconcileBills(rules, now);
     return { booking: this.staffBooking(this.booking(next.id)), refund };
@@ -4015,6 +4107,8 @@ export class Lair {
     const giver = await this.giftBuyer(orderId, spend, giftLines);
     // Round 9: a paid early access checkout marks its claim paid (its own awaits, then its own writes)
     await this.offerClaimsPaid(order, orderId);
+    // Round 17: a paid postal library swap (_libsend), checked against the send's own draft order (src/queue.js)
+    const librarySends = await this.librarySendsPaid(order, orderId);
     // --- no awaits from here on ---
     // The order's customer paid: a friend paying their share with their own member code attached is the payer.
     if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
@@ -4028,7 +4122,7 @@ export class Lair {
     if (gifts.length) this.sendGiftCodes(gifts, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules });
     // Round 7: a birthday gift's product code on this order (online or at the POS) has been used
     const giftCodes = this.markGiftCodesUsed(spend, Date.now());
-    return { updated, tabs: tabsPaid, spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid };
+    return { updated, tabs: tabsPaid, spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}) };
   }
 
   /**
@@ -4477,6 +4571,8 @@ export class Lair {
       booking.arrivedAt = now;
       booking.holdUntil = null;
       this.saveBooking(booking, now);
+      // Round 17: its library game has been played
+      if (booking.game) this.bookingGameSync(booking.id, now);
     }
     const used = this.usePassAtCheckIn(this.booking(booking.id), choice, rules, now, by);
     const fresh = this.booking(booking.id);
@@ -4521,6 +4617,8 @@ export class Lair {
       split: Boolean(b.split), payments: payments || this.paymentsOf('booking', b.id), owed: this.isOwed(b), waived: Boolean(b.waived),
       // Round 11: a game's players (names, emails and member codes)
       ...this.staffGamePlayers(b),
+      // Round 17: the library game on the table
+      ...(b.game ? { game: this.bookingGameView(b) } : {}),
     };
   }
 
@@ -7159,6 +7257,8 @@ export class Lair {
       id: r.id, variantId: r.variant_id, productId: r.product_id || null, title: r.title, shelfCode: r.shelf_code || '', handle: r.handle || '',
       copies: r.copies || null, customerId: r.customer_id, status: r.status, until: r.until, staffNote: r.staff_note || '', createdAt: r.created_at,
       endedAt: r.ended_at || null, image: r.image || null,
+      // Round 17: 'member' or 'booking' (a game held for a table booking), its booking, and who made it ('queue': the queue)
+      kind: r.kind === 'booking' ? 'booking' : 'member', bookingId: r.booking_id || null, createdBy: r.created_by || null,
     };
   }
 
@@ -7198,13 +7298,16 @@ export class Lair {
     return {
       ...this.holdView(h, now), customerId: h.customerId, name: m?.name || m?.first_name || '', email: m?.email || '', code: m?.code || null, staffNote: h.staffNote,
       ...(h.status === 'collected' ? { loanId: loan?.id || null } : {}),
+      // Round 17: a game held for a table booking says so, with the booking (src/queue.js)
+      ...(h.kind === 'booking' ? { kind: 'booking', booking: this.holdBooking(h) } : { kind: 'member', queue: h.createdBy === 'queue' }),
     };
   }
 
   /** A member's active holds, soonest end first. No awaits. */
   activeHolds(customerId, now = Date.now()) {
     return this.sql
-      .exec("SELECT * FROM library_holds WHERE customer_id = ? AND status = 'held' AND until > ? ORDER BY until, created_at", String(customerId), now)
+      // Round 17: a game held for a table booking never counts against a plan, nor shows in a member's holds
+      .exec("SELECT * FROM library_holds WHERE customer_id = ? AND status = 'held' AND until > ? AND kind != 'booking' ORDER BY until, created_at", String(customerId), now)
       .toArray().map((r) => this.rowToHold(r));
   }
 
@@ -7213,7 +7316,7 @@ export class Lair {
     const since = now - 3 * 24 * HOUR;
     const ended = this.sql
       .exec(
-        `SELECT * FROM library_holds WHERE customer_id = ? AND ((status = 'held' AND until <= ? AND until > ?) OR (status != 'held' AND COALESCE(ended_at, updated_at, created_at) > ?))
+        `SELECT * FROM library_holds WHERE customer_id = ? AND kind != 'booking' AND ((status = 'held' AND until <= ? AND until > ?) OR (status != 'held' AND COALESCE(ended_at, updated_at, created_at) > ?))
          ORDER BY COALESCE(ended_at, until) DESC, created_at DESC`,
         String(customerId), now, since, since,
       )
@@ -7351,7 +7454,8 @@ export class Lair {
       const out = loans.get(id) || [];
       const copies = fromShopify.get(id) ?? this.pageCopies(id) ?? 1;
       const available = Math.max(0, copies - holds.length - out.length);
-      const mine = who.customerId ? holds.find((h) => h.customerId === String(who.customerId)) : null;
+      // (round 17: a game held for their table booking isn't one of their holds)
+      const mine = who.customerId ? holds.find((h) => h.customerId === String(who.customerId) && h.kind !== 'booking') : null;
       const home = who.customerId ? out.find((l) => l.customerId === String(who.customerId)) : null;
       games[id] = {
         copies, held: holds.length, out: out.length, available, nextFree: !available && holds.length ? holds[0].until : null,
@@ -7429,6 +7533,8 @@ export class Lair {
     if (!forSomeone) this.touchMember(customerId, {}, now);
     // --- saved: the copy is theirs until then ---
     this.tellHold(this.holdRow(hold.id), this.memberRow(customerId), rules);
+    // Round 17: reserving is acting, so a stalled queue of theirs starts again
+    if (!forSomeone) this.queueMemberActed(customerId, who, now);
     return { hold: this.holdView(this.holdRow(hold.id), now), holds: this.activeHolds(customerId, now).map((h) => this.holdView(h, now)) };
   }
 
@@ -7472,6 +7578,8 @@ export class Lair {
     const status = this.holdStatus(hold, now);
     if (status === 'held') {
       this.write("UPDATE library_holds SET status = 'cancelled', ended_at = ?, updated_at = ? WHERE id = ? AND status = 'held'", now, now, hold.id);
+      // Round 17: a queue's game goes back in the queue (no stall); a table's game is let go
+      this.queueHoldEnded(this.holdRow(hold.id), 'cancelled', now);
     } else if (status !== 'cancelled') {
       throw new RuleError(status === 'collected' ? "That game's been collected already." : 'That hold has already ended.', 409);
     }
@@ -7516,10 +7624,17 @@ export class Lair {
     if (status === 'held') {
       this.write("UPDATE library_holds SET status = 'held', until = ?, ended_at = NULL, updated_at = ? WHERE id = ?", holdUntil(new LairTime(rules.tz), now), now, hold.id);
       this.write("DELETE FROM library_loans WHERE hold_id = ? AND status = 'out'", hold.id);
+      // Round 17: its queue row is held again; a table's game is held until the booking ends
+      this.queueHoldAgain(this.holdRow(hold.id), now);
     } else if (status === 'collected') {
-      this.collectHold(hold, now, by);
+      // Round 17: a table's game handed over is played there, never a loan
+      if (hold.kind === 'booking') this.bookingHoldPlayed(hold, now);
+      else this.collectHold(hold, now, by);
     } else if (status) {
+      const live = this.holdStatus(hold, now) === 'held';
       this.write('UPDATE library_holds SET status = ?, ended_at = ?, updated_at = ? WHERE id = ?', status, now, now, hold.id);
+      // Round 17: released early: a queue's game goes back in the queue, a table's is let go
+      if (live) this.queueHoldEnded(this.holdRow(hold.id), status, now);
     }
     if (input?.note != null) this.write('UPDATE library_holds SET staff_note = ?, updated_at = ? WHERE id = ?', trimmed(input.note, 300) || null, now, hold.id);
     const fresh = this.holdRow(hold.id);
@@ -7540,7 +7655,10 @@ export class Lair {
       makeId('ln'), hold.variantId, hold.productId || game?.product_id || null, hold.title, hold.shelfCode || game?.shelf_code || null, hold.handle || game?.handle || null,
       hold.image || game?.image || null, hold.customerId, hold.id, now, by, now, now,
     );
-    return this.rowToLoan(this.sql.exec('SELECT * FROM library_loans WHERE hold_id = ?', hold.id).one());
+    const loan = this.rowToLoan(this.sql.exec('SELECT * FROM library_loans WHERE hold_id = ?', hold.id).one());
+    // Round 17: it's at home with them, so it's done in their queue
+    this.queueLoanMade(loan, now);
+    return loan;
   }
 
   /**
@@ -7553,6 +7671,9 @@ export class Lair {
     const letters = [];
     for (const hold of due) {
       this.write("UPDATE library_holds SET status = 'expired', ended_at = until, updated_at = ? WHERE id = ? AND status = 'held'", now, hold.id);
+      // Round 17: a queue's game not collected stalls the queue, a postal one lapses, a table's ends with its booking
+      // (src/queue.js); those say so themselves
+      if (this.queueHoldEnded(this.holdRow(hold.id), 'expired', now)) continue;
       const member = this.memberRow(hold.customerId);
       if (!isEmail(member?.email)) continue;
       const first = member.first_name || String(member.name || '').split(/\s+/)[0] || 'friend';
@@ -7751,13 +7872,19 @@ export class Lair {
       id, String(game.variantId), game.productId || null, game.title, game.shelfCode || null, game.handle || null, game.image || null, String(customerId),
       holdId, now, by, note, now, now,
     );
-    return this.loanRow(id);
+    const loan = this.loanRow(id);
+    // Round 17: it's at home with them, so it's done in their queue
+    this.queueLoanMade(loan, now);
+    return loan;
   }
 
   /** A loan comes back: it's 'returned' (once; one already returned stays as it was). No awaits. */
   endLoan(loan, now, by) {
     if (loan.status === 'out') this.write("UPDATE library_loans SET status = 'returned', returned_at = ?, returned_by = ?, updated_at = ? WHERE id = ? AND status = 'out'", now, by, now, loan.id);
-    return this.loanRow(loan.id);
+    const back = this.loanRow(loan.id);
+    // Round 17: checked back in: their queue moves on, and the copy goes to whoever's waiting for it
+    if (loan.status === 'out') this.queueLoanBack(back, now);
+    return back;
   }
 
   /**
@@ -7808,6 +7935,8 @@ export class Lair {
       loan = this.makeLoan(game, me, now);
     }
     this.touchMember(me, {}, now);
+    // Round 17: borrowing is acting, so a stalled queue of theirs starts again
+    this.queueMemberActed(me, who, now);
     return {
       result: 'borrowed', loan: this.loanView(loan), hold: hold ? this.holdView(this.holdRow(hold.id), now) : null, library: this.libraryFor(me, who.tags, now),
       message: `${game.title} is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf.`,
@@ -7878,6 +8007,8 @@ export class Lair {
     else if (plan.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
     else if (used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
     if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
+    // Round 17: borrowing at the counter is acting, so a stalled queue of theirs starts again
+    this.queueMemberActed(member.customer_id, person, now);
     return { loan: this.staffLoanView(loan, now), notice: notices.length ? notices.join(' ') : null };
   }
 
@@ -9020,6 +9151,8 @@ export class Lair {
       split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), owed: this.isOwed(b, now), waived: Boolean(b.waived), ...heldLink(b),
       // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
       ...this.lockView(b, rules, now),
+      // Round 17: the library game on the table (My Lair's booking card shows it)
+      ...(b.game ? { game: this.bookingGameView(b) } : {}),
     });
     // dueNow: everything they can pay at the counter now: today's bookings and seats that are confirmed or seated, and
     // sign-ups confirmed or checked in ('attended'), with something due, then their owed seats. A place held while it's
@@ -9340,12 +9473,40 @@ export class Lair {
     } catch (error) {
       console.error('Lair: birthday summary failed', error);
     }
+    // Round 17 (src/queue.js), each step on its own: games on table bookings held from 3 days before (or let go)
+    try {
+      const tables = this.bookingHoldUpkeep(Date.now());
+      if (tables.held || tables.unavailable || tables.released) result.bookingGames = tables;
+    } catch (error) {
+      console.error('Lair: could not keep booking games held', error);
+    }
+    // postal swaps not paid by their cutoff lapse (before the holds below expire: a lapse says why)
+    try {
+      const lapsed = this.lapseSends(Date.now());
+      if (lapsed) result.librarySends = { lapsed };
+    } catch (error) {
+      console.error('Lair: could not lapse postal swaps', error);
+    }
     // Library holds (round 6) that weren't collected in time go back on the shelf, and the member hears.
     try {
       const expired = this.expireLibraryHolds(rules, Date.now());
       if (expired) result.libraryHolds = { expired };
     } catch (error) {
       console.error('Lair: could not expire library holds', error);
+    }
+    // Round 17: borrow queues move on (at most 200 members a run)
+    try {
+      const queues = this.queueUpkeep(Date.now());
+      if (queues.held) result.queues = queues;
+    } catch (error) {
+      console.error('Lair: could not move borrow queues on', error);
+    }
+    // "Tell me when it's back": watchers of games with a copy free hear (at most 100 emails a run)
+    try {
+      const told = this.watchUpkeep(Date.now());
+      if (told) result.watches = { told };
+    } catch (error) {
+      console.error('Lair: could not tell watchers', error);
     }
     // Round 9: early access: unpaid claims let go after 48 hours, offers past their closing time closed (their unpaid claims
     // let go), and the emails of offers that open later sent when they open
@@ -9409,3 +9570,5 @@ Object.assign(Lair.prototype, gamePlayerMethods);
 Object.assign(Lair.prototype, membershipMethods);
 // Round 16: the wishlist (src/wishlist.js)
 Object.assign(Lair.prototype, wishlistMethods);
+// Round 17: borrowing: the queue, postal swaps, watches and games on table bookings (src/queue.js)
+Object.assign(Lair.prototype, queueMethods);

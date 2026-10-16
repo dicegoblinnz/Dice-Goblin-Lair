@@ -17,6 +17,8 @@ export const CONFIG_KEYS = [
   // across: until then someone with no Lair membership borrows on their Simplee tags).
   'MEMBERSHIPS_CLIENT_ID', 'MEMBERSHIPS_CLIENT_SECRET', 'MEMBERSHIPS_PRODUCT_ID', 'MEMBERSHIPS_FEE_VARIANT_ID', 'MEMBERSHIPS_BILLING',
   'MEMBERSHIPS_SIMPLEE_TAGS',
+  // Round 17: postal library swaps' postage by area, in cents (JSON); the website's rates when it isn't set
+  'LIBRARY_POSTAGE',
 ];
 const TTL = 60_000;
 let cache = null;

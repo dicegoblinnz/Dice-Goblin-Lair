@@ -551,6 +551,37 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 17: a postal library swap's checkout, a draft order for that customer (purchasingEntity), so their store credit
+   * and saved cards work at checkout: one $0 line "Library swap: <title> (<shelf code>)" that requires shipping, so
+   * checkout takes their address, and a shipping line "Postage (<area words>)" at the area's price. Tagged
+   * lair-library-post, with the send's id as _libsend on the order and the line, for the paid webhook. Returns
+   * { draftOrderId, checkoutUrl }; throws when Shopify says no.
+   */
+  async createLibrarySend({ sendId, customerId, email, title, shelfCode, areaWords, postage, currency }) {
+    const moneyOf = (cents) => ({ amount: (cents / 100).toFixed(2), currencyCode: currency });
+    const data = await this.graphql(
+      'mutation LairLibrarySend($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id invoiceUrl } userErrors { field message } } }',
+      {
+        input: {
+          purchasingEntity: { customerId: `gid://shopify/Customer/${customerId}` },
+          email: email || undefined,
+          tags: ['lair-library-post'],
+          note: `Lair library swap by post: ${title}${shelfCode ? ` (${shelfCode})` : ''}`,
+          customAttributes: [{ key: '_libsend', value: sendId }],
+          shippingLine: { title: `Postage (${areaWords})`, priceWithCurrency: moneyOf(postage) },
+          lineItems: [{
+            title: `Library swap: ${title}${shelfCode ? ` (${shelfCode})` : ''}`.slice(0, 255), quantity: 1, originalUnitPriceWithCurrency: moneyOf(0),
+            requiresShipping: true, taxable: false, customAttributes: [{ key: '_libsend', value: sendId }],
+          }],
+        },
+      },
+    );
+    const result = data?.draftOrderCreate;
+    if (!result || result.userErrors?.length || !result.draftOrder?.id) throw new Error((result?.userErrors || []).map((e) => e.message).join('; ') || 'no draft order came back');
+    return { draftOrderId: result.draftOrder.id, checkoutUrl: result.draftOrder.invoiceUrl };
+  }
+
+  /**
    * Who paid for an order and its subtotal after discounts (in cents), for members' spend, and the order's name
    * ("#1550"). customerId is null when the order has no customer. Round 7: its discount codes and when it was processed
    * (a birthday gift's product code on it has been used).
