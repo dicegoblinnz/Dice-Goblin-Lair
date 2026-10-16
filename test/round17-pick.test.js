@@ -1184,10 +1184,15 @@ test('the booking door: a copy another booking has in that window isn\'t free fo
   lair.sql.exec('UPDATE pick_catalog SET copies = 2 WHERE product_id = ?', G.pandemic);
   lair.pickCache = null;
   assert.ok(ids(all((await quiz(body)).data)).includes(G.pandemic));
-  // without the other half's method, nothing is taken
+  // the queue's own method (src/queue.js, merged): with no booking holding a game, nothing is taken
   delete lair.bookedGamesOverlapping;
-  assert.equal(lair.bookedGamesOverlapping, undefined);
+  assert.equal(typeof lair.bookedGamesOverlapping, 'function');
   assert.ok(ids(all((await quiz(body)).data)).includes(G.pandemic));
+  // and without it (a Lair from before the queue's half), nothing is taken either
+  const own = Object.getPrototypeOf(lair).bookedGamesOverlapping;
+  lair.bookedGamesOverlapping = undefined;
+  assert.ok(ids(all((await quiz(body)).data)).includes(G.pandemic));
+  lair.bookedGamesOverlapping = own;
 });
 
 test('after "Show me different picks", a refresh keeps the new picks and a fine-tune (new answers) starts from the best again', async () => {

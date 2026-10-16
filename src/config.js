@@ -19,6 +19,8 @@ export const CONFIG_KEYS = [
   'MEMBERSHIPS_SIMPLEE_TAGS',
   // Round 17, Help me pick: 'off' stops Workers AI tagging new library games; PICK_AI_MODEL names another model for it
   'PICK_AI', 'PICK_AI_MODEL',
+  // Round 17: postal library swaps' postage by area, in cents (JSON); the website's rates when it isn't set
+  'LIBRARY_POSTAGE',
 ];
 const TTL = 60_000;
 let cache = null;
