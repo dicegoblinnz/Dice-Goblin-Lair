@@ -1,6 +1,6 @@
-// Round 17, Help me pick: the staff page against the real Lair (contract v17, section 6 and 9.5). Answers the staff page
-// shows that the first build gave in a shape the page couldn't use: who checked a game (a name, not a customer ID).
-// Run with: npm test
+// Round 17, Help me pick: the staff page against the real Lair (contract v17, section 6 and 9.5). Two answers the staff
+// page shows that the first build gave in a shape the page couldn't use: who checked a game (a name, not a customer ID)
+// and the report's "most acted on" rows (picked's shape, with the actions). Run with: npm test
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -118,4 +118,32 @@ test('staff check list: who checked a game is their first name, from their membe
   // taking the check off clears who
   const off = await call('POST', `pick/games/${catan.id}`, { checked: false }, MO);
   assert.deepEqual([off.data.game.checked, off.data.game.checkedBy, off.data.game.checkedAt], [false, null, null]);
+});
+
+test('the report: "most acted on" rows have picked\'s shape (shown, and acted: the sessions that acted) and the actions they\'re ranked by', async () => {
+  const quiz = async (n) => {
+    client += 1;
+    return (await call('POST', 'pick', { mode: 'play', players: 4, time: 'medium', context: { door: 'kiosk' } })).data;
+  };
+  const a = await quiz(1);
+  const b = await quiz(2);
+  const [first, second] = a.picks;
+  assert.ok(first && second && b.picks.some((p) => p.productId === second.productId), 'both sessions show the second pick');
+  // one session does three things with the first pick; two sessions reserve the second; looking and asking again don't count
+  for (const action of ['more', 'shelf', 'video']) await call('POST', `pick/${a.session.id}/event`, { action, productId: first.productId });
+  await call('POST', `pick/${a.session.id}/event`, { action: 'reserve', productId: second.productId });
+  await call('POST', `pick/${b.session.id}/event`, { action: 'reserve', productId: second.productId });
+  await call('POST', `pick/${b.session.id}/event`, { action: 'view', productId: second.productId });
+  await call('POST', `pick/${b.session.id}/event`, { action: 'again' });
+  const r = (await call('GET', 'pick/report?days=7', null, MO)).data;
+  const shownIn = (pid) => [a, b].filter((s) => [...s.picks, s.wildcard].filter(Boolean).some((p) => p.productId === pid)).length;
+  assert.deepEqual(r.acted, [
+    { productId: first.productId, title: first.title, shown: shownIn(first.productId), acted: 1, actions: 3 },
+    { productId: second.productId, title: second.title, shown: 2, acted: 2, actions: 2 },
+  ]);
+  // the same game's numbers agree across the two lists
+  const picked = r.picked.find((p) => p.productId === second.productId);
+  assert.deepEqual([picked.shown, picked.acted], [2, 2]);
+  assert.deepEqual(Object.keys(r.picked[0]), ['productId', 'title', 'shown', 'acted']);
+  assert.deepEqual(Object.keys(r.acted[0]), ['productId', 'title', 'shown', 'acted', 'actions']);
 });

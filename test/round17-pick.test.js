@@ -1112,7 +1112,7 @@ test('the report (perm library or community): sessions, doors, modes, finished, 
   assert.deepEqual(r.relaxed, { time: 1, filters: 0, availability: 0, players: 0 });
   const top = r.picked.find((p) => p.productId === a.picks[0].productId);
   assert.deepEqual([top.shown, top.acted], [2, 2]);
-  assert.deepEqual(r.acted[0], { productId: a.picks[0].productId, title: a.picks[0].title, actions: 2 });
+  assert.deepEqual(r.acted[0], { productId: a.picks[0].productId, title: a.picks[0].title, shown: 2, acted: 2, actions: 2 });
   const shownIn30 = new Set([...all(a), ...all(b), ...all(c)].map((x) => x.productId));
   assert.equal(r.neverPicked, LIBRARY.filter((g) => ['game', 'rpg'].includes(g.facts.kind) && !shownIn30.has(g.id)).length, 'none of the window\'s sessions showed them');
   assert.deepEqual(r.ratings.up, [{ productId: G.catan, title: 'Catan', ups: 1, downs: 1 }]);
