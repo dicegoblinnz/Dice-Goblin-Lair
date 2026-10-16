@@ -8,12 +8,15 @@
  *  - Staff GMs run their own game: a session's GM who's on the team (the main account or a helper) can see its seats,
  *    reserve seats (POST /games/:id/players) and remove players (POST /games/:id/players/:ref/remove) from their own game,
  *    as staff with GM games can for any game.
- *  - Seats for new players (games.new_seats): some of a session's seats are kept for players new to the Lair's TTRPG
- *    sessions (no seat before at a session that had started). Online, anyone else can't take them; a new player can
- *    take any seat, and their seats fill the kept ones first (bookings.new_player). Staff, and the session's staff GM,
- *    set or release them, and can seat anyone in them.
+ *  - Seats for new players (games.new_seats): staff with GM games keep some of a session's seats for players new to the
+ *    Lair's TTRPG sessions (no seat before at a session that had started), and fill them from the staff page: a new
+ *    player's seat they add fills a kept one first (bookings.new_player), and they can seat anyone in them. Online, and
+ *    for a staff GM reserving in their own game, the kept seats are taken; regulars never get them.
  *  - Free sessions (games.free): staff make a session, or a series from a session on, free: its seats cost nothing, so
  *    nothing's on anyone's tab and there's no GM credit. The seat price it had comes back when it isn't free any more.
+ *  - Back end only (Mo, 16 Oct 2026: "make the free sessions or new player seats only back end adds, not front end"):
+ *    only the staff page's view of a game (gameView's staff) says it's free or keeps seats. Everyone else sees a free
+ *    session at its usual price (they just aren't charged) and the kept seats as taken.
  *  - Changing the GM: staff give a session, or a series from a session on, to another GM (a customer, or an email
  *    that's invited), and the GMs are told.
  *
@@ -32,8 +35,6 @@ export const GM_SESSION_WORDS = {
   scope: "scope is 'session' or 'series'.",
   // seats for new players
   newSeats: (seats) => `Seats for new players is a whole number from 0 to ${seats}.`,
-  keptAll: 'The seats left are kept for players new to our TTRPG sessions. Bringing someone new? Have a chat with us.',
-  keptSome: (open, kept) => `Only ${open} ${open === 1 ? 'seat is' : 'seats are'} left for you: ${kept} ${kept === 1 ? 'is' : 'are'} kept for players new to our TTRPG sessions.`,
   // free
   free: 'free is true or false.',
   paidAlready: (n) => `${n} ${n === 1 ? 'seat is' : 'seats are'} paid for already, or on a session pass. Refund ${n === 1 ? 'it' : 'them'} (or undo the pass) first, then make it free.`,
@@ -65,8 +66,8 @@ export const gmSessionMethods = {
   },
 
   /**
-   * live: what a staff GM does in their own game (reserving or removing seats, seats for new players) is for a session
-   * that hasn't ended: after it, only staff with GM games (or the desk, on the staff page) change what's owed for it.
+   * live: what a staff GM does in their own game (reserving or removing seats) is for a session that hasn't ended:
+   * after it, only staff with GM games (or the desk, on the staff page) change what's owed for it.
    */
   requireGameStaff(who, game, { live = false } = {}) {
     if (!who?.customerId && !who?.staff) throw new RuleError(GM_SESSION_WORDS.login, 401);
@@ -133,28 +134,15 @@ export const gmSessionMethods = {
     return Math.min(waiting, Math.max(0, free - this.newSeatsKept(game)));
   },
 
-  /** A new seat booking's new_player mark (counted towards the seats kept for new players). No awaits. */
+  /** The new_player mark on a new player's seat staff added (it fills the seats kept for new players). No awaits. */
   markNewPlayer(bookingId, newPlayer) {
     if (newPlayer) this.write('UPDATE bookings SET new_player = 1 WHERE id = ?', bookingId);
   },
 
   /**
-   * The online seat check for the seats kept for new players: someone who isn't new can't take them. people: the
-   * seats wanted; open: the seats free for this booking (after the regulars' kept seats). → whether the booker is new.
-   * No awaits.
-   */
-  checkNewSeats(game, _state, { people, open, customerId, email, now }) {
-    const newPlayer = this.isNewPlayer(customerId, email, now);
-    const kept = this.newSeatsKept(game);
-    if (!kept || newPlayer) return newPlayer;
-    const forThem = Math.max(0, open - kept);
-    if (people > forThem) throw new RuleError(forThem > 0 ? GM_SESSION_WORDS.keptSome(forThem, Math.min(kept, open)) : GM_SESSION_WORDS.keptAll, 409);
-    return false;
-  },
-
-  /**
    * A game's seats for whoever can run it (the floor's roster): one item per seat booking still on, first booked first:
-   * { ref, people, names, characters, paid, due (cents), newPlayer, regular, member, here }. No emails. No awaits.
+   * { ref, people, names, characters, paid, due (cents), regular, member, here }. No emails. No awaits. (Who's new
+   * isn't on it: the seats kept for new players are the staff page's.)
    */
   gameRoster(st, game) {
     return st.bookings
@@ -168,7 +156,7 @@ export const gmSessionMethods = {
         return {
           ref: b.ref, people: b.people, names: party.map((p) => p.name), characters: party.map((p) => p.character || ''),
           paid: Boolean(b.paid) || ((b.amount || 0) > 0 && owing === 0),
-          due, newPlayer: Boolean(b.newPlayer), regular: Boolean(b.seriesId && b.customerId), member: Boolean(b.customerId), here: b.status === 'seated' || Boolean(b.arrivedAt),
+          due, regular: Boolean(b.seriesId && b.customerId), member: Boolean(b.customerId), here: b.status === 'seated' || Boolean(b.arrivedAt),
         };
       });
   },
@@ -201,28 +189,27 @@ export const gmSessionMethods = {
   },
 
   /**
-   * POST /games/:id/new-seats { seats, scope? } (staff with GM games, or the session's staff GM): how many of the
-   * session's seats are kept for new players (0 releases them), for this session or ('series') it and every later one.
+   * POST /games/:id/new-seats { seats, scope? } (staff with GM games: the staff page): how many of the session's seats
+   * are kept for new players (0 releases them), for this session or ('series') it and every later one.
    * → { game, sessions }
    */
   async setNewSeats(id, input, who) {
+    this.requireStaff(who, 'sessions');
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
-    this.requireGameStaff(who, game, { live: true });
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
     // a number (or a number as text, from a form): null, '' and true aren't 0 or 1
     const raw = input?.seats;
     const seats = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '') ? Number(raw) : NaN;
     if (!Number.isInteger(seats) || seats < 0 || seats > game.seats) throw new RuleError(GM_SESSION_WORDS.newSeats(game.seats));
-    // a staff GM's series: only the sessions they run, and the series' sessions to come only when it's theirs now
-    const sessions = this.sessionsFor(game, input?.scope, who);
+    const sessions = this.sessionsFor(game, input?.scope);
     for (const s of sessions) this.write('UPDATE games SET new_seats = ?, updated_at = ? WHERE id = ?', Math.min(seats, s.seats), now, s.id);
-    if (input?.scope === 'series' && this.runsSeries(who, game.seriesId)) this.patchSeries(game.seriesId, { newSeats: seats }, now);
+    if (input?.scope === 'series') this.patchSeries(game.seriesId, { newSeats: seats }, now);
     const fresh = this.game(game.id);
-    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), sessions: sessions.length };
+    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: true }), sessions: sessions.length };
   },
 
   /**
@@ -296,7 +283,7 @@ export const gmSessionMethods = {
     }
     const fresh = this.game(game.id);
     return {
-      game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), sessions: sessions.length,
+      game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: true }), sessions: sessions.length,
       priced: priced.reduce((n, b) => n + b.people, 0), stayFree,
     };
   },
@@ -351,7 +338,7 @@ export const gmSessionMethods = {
     return {
       booking: { id: fresh.id, ref: fresh.ref, status: fresh.status, people: fresh.people, name: fresh.name },
       refund,
-      game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules),
+      game: this.gameView(game, this.state(game.start - 1, game.end + 1), rules, null, { staff: this.staffSees(who) }),
     };
   },
 
@@ -422,7 +409,7 @@ export const gmSessionMethods = {
     }
     if (game.gmEmail && isEmail(game.gmEmail) && String(game.gmEmail).toLowerCase() !== String(gmEmail || '').toLowerCase()) this.tellGmReplaced(game, sessions.length, rules);
     return {
-      game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules), sessions: sessions.length,
+      game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: true }), sessions: sessions.length,
       ...(invited ? { invited: true } : {}), ...(notice ? { notice } : {}),
     };
   },

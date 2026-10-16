@@ -173,72 +173,72 @@ afterEach(() => {
 
 /* ---------------- seats for new players ---------------- */
 
-test('round 18: seats for new players are set by staff with GM games or the session\'s own GM when they\'re on the team; nobody else', async () => {
+test('round 18: seats for new players are set by staff with GM games only (the staff page); on the website they\'re taken', async () => {
   const tamas = (await list()).game.id;
   const rangis = (await list({ gm: RANGI, tables: ['B2'] })).game.id;
-  // Rangi isn't staff, so not even in his own game; Tama only in his own; logged out, log in
-  assert.equal(said(await newSeats(rangis, { seats: 2 }, RANGI)), `403 ${W.notYours}`);
-  assert.equal(said(await newSeats(rangis, { seats: 2 }, TAMA)), `403 ${W.notYours}`);
-  assert.equal(said(await newSeats(tamas, { seats: 2 }, HEMI)), `403 ${W.notYours}`);
-  assert.equal(said(await newSeats(tamas, { seats: 2 })), `401 ${W.login}`);
+  // not even a session's own GM on the team (Tama, Library only), nor a GM who isn't staff, nor Hemi (no GM games)
+  assert.equal(said(await newSeats(tamas, { seats: 2 }, TAMA)), `403 ${NOT_PERMITTED}`);
+  assert.equal(said(await newSeats(rangis, { seats: 2 }, RANGI)), '403 Staff only. Log in with your staff account.');
+  assert.equal(said(await newSeats(tamas, { seats: 2 }, HEMI)), `403 ${NOT_PERMITTED}`);
+  assert.equal(said(await newSeats(tamas, { seats: 2 })), '403 Staff only. Log in with your staff account.');
   for (const seats of [5, -1, 1.5, 'two', null, undefined]) {
-    assert.equal(said(await newSeats(tamas, seats === undefined ? {} : { seats }, TAMA)), `422 ${W.newSeats(4)}`, String(seats));
+    assert.equal(said(await newSeats(tamas, seats === undefined ? {} : { seats }, ANA)), `422 ${W.newSeats(4)}`, String(seats));
   }
   assert.equal(said(await newSeats('gm_nope', { seats: 1 }, OWNER)), '404 Game not found.');
-  const set = ok(await newSeats(tamas, { seats: 2 }, TAMA));
-  assert.deepEqual([set.game.newSeats, set.game.newLeft, set.sessions], [2, 2, 1]);
-  // Ana (GM games) can in anyone's game, and so can the main account
-  assert.equal(ok(await newSeats(rangis, { seats: 1 }, ANA)).game.newSeats, 1);
+  const set = ok(await newSeats(tamas, { seats: 2 }, ANA));
+  assert.deepEqual([set.game.newSeats, set.game.newLeft, set.game.taken, set.sessions], [2, 2, 2, 1]);
   assert.equal(ok(await newSeats(rangis, { seats: 3 }, OWNER)).game.newSeats, 3);
-  // Everyone sees them on the board, with the seats left
-  const seen = await gameOn(tamas);
-  assert.deepEqual([seen.newSeats, seen.newLeft, seen.taken, seen.status], [2, 2, 0, 'open']);
+  // The staff page sees them; everyone else sees those seats as taken, and never hears why
+  const staffSees = await gameOn(tamas, ANA);
+  assert.deepEqual([staffSees.newSeats, staffSees.newLeft, staffSees.taken, staffSees.status], [2, 2, 2, 'open']);
+  for (const who of ['', MIA, TAMA, RANGI]) {
+    const seen = await gameOn(tamas, who);
+    assert.deepEqual([seen.taken, seen.status, 'newSeats' in seen, 'newLeft' in seen, 'free' in seen], [2, 'open', false, false, false], who || 'logged out');
+  }
   // 0 lets them go
-  assert.deepEqual([ok(await newSeats(tamas, { seats: 0 }, TAMA)).game.newSeats, (await gameOn(tamas)).newLeft], [0, 0]);
+  ok(await newSeats(tamas, { seats: 0 }, ANA));
+  assert.deepEqual([(await gameOn(tamas, ANA)).newLeft, (await gameOn(tamas)).taken], [0, 0]);
   // A cancelled session can't have them
   ok(await call('POST', `games/${rangis}/update`, { status: 'cancelled' }, OWNER));
   assert.equal(said(await newSeats(rangis, { seats: 1 }, OWNER)), '409 That game was cancelled.');
 });
 
-test('round 18: online, only players new to the TTRPG sessions can take the seats kept for them; their seats fill those first', async () => {
+test('round 18: online, the seats kept for new players are taken for everyone, new or not; staff fill them', async () => {
   await playedBefore();
   const id = (await list({ start: at('2026-10-24', 18), end: at('2026-10-24', 22) })).game.id;
   ok(await newSeats(id, { seats: 2 }, OWNER));
-  // GET /me says who's new: Kai played yesterday, Mia never has
-  assert.deepEqual([(await me(KAI)).customer.newPlayer, (await me(MIA)).customer.newPlayer], [false, true]);
-  // Kai can have the 2 seats that aren't kept, not 3
-  assert.equal(said(await seat(id, KAI, 'Kai', 3)), `409 ${W.keptSome(2, 2)}`);
-  const kais = ok(await seat(id, KAI, 'Kai', 2)).booking;
-  assert.equal(lair.booking(kais.id).newPlayer, false);
-  let seen = await gameOn(id);
-  assert.deepEqual([seen.taken, seen.newLeft, seen.status], [2, 2, 'open']);
-  // Now only the kept seats are left: Ria can't, and nor can a guest with Kai's email (he's played)
-  assert.equal(said(await seat(id, RIA, 'Ria')), `409 ${W.keptAll}`);
-  assert.equal(said(await seat(id, '', 'Kai')), `409 ${W.keptAll}`);
-  // Mia's new: her seat is one of the kept ones
+  // GET /me says nothing about new players
+  assert.equal('newPlayer' in (await me(MIA)).customer, false);
+  // Kai (played before) and Mia (never has) alike have the 2 seats that aren't kept, in the usual words
+  assert.equal(said(await seat(id, KAI, 'Kai', 3)), '409 Only 2 seats left.');
+  ok(await seat(id, KAI, 'Kai'));
   const mias = ok(await seat(id, MIA, 'Mia')).booking;
-  assert.equal(lair.booking(mias.id).newPlayer, true);
-  seen = await gameOn(id);
-  assert.deepEqual([seen.taken, seen.newLeft, seen.status], [3, 1, 'open']);
-  // A guest whose email has never had a seat is new too
-  assert.equal(said(await seat(id, '', 'Lee', 2)), '409 Only 1 seat left.');
-  const lees = ok(await seat(id, '', 'Lee')).booking;
-  assert.equal(lair.booking(lees.id).newPlayer, true);
-  seen = await gameOn(id);
+  // nobody's online seat fills a kept one
+  assert.equal(lair.booking(mias.id).newPlayer, false);
+  assert.deepEqual([(await gameOn(id)).taken, (await gameOn(id)).status], [4, 'full']);
+  assert.equal(said(await seat(id, '', 'Lee')), '409 This table is full.');
+  // staff see the 2 kept seats still open, and fill them: a new player's seat (Lee's email has never had one) first
+  assert.deepEqual([(await gameOn(id, OWNER)).newLeft, (await gameOn(id, OWNER)).taken], [2, 4]);
+  const lee = ok(await addPlayer(id, { name: 'Lee', email: 'lee@example.com' }, ANA));
+  assert.equal(lee.booking.newPlayer, true);
+  let seen = await gameOn(id, OWNER);
+  assert.deepEqual([seen.taken, seen.newLeft], [4, 1]);
+  // ... and anyone they choose takes the last one (Ria's played before)
+  const ria = ok(await addPlayer(id, { customerId: RIA, name: 'Ria Moana', email: 'ria@example.com' }, ANA));
+  assert.equal(ria.booking.newPlayer, false);
+  seen = await gameOn(id, OWNER);
   assert.deepEqual([seen.taken, seen.newLeft, seen.status], [4, 0, 'full']);
-  // Seats a new player cancels go back to being kept
-  ok(await call('POST', `bookings/${mias.id}/update`, { status: 'cancelled' }, MIA));
-  assert.deepEqual([(await gameOn(id)).newLeft, said(await seat(id, RIA, 'Ria'))], [1, `409 ${W.keptAll}`]);
-  // A new player's seats at a later session are still new until they've played one
+  // a seat that comes free goes back to being kept first, so online it's still full
+  ok(await removeSeat(id, ria.booking.ref, ANA));
+  assert.deepEqual([(await gameOn(id, OWNER)).newLeft, (await gameOn(id)).taken, said(await seat(id, '', 'Sam'))], [1, 4, '409 This table is full.']);
+  // once Saturday's started, Lee has played: staff adding him to a later session aren't told he's new
   const later = (await list({ start: at('2026-10-31', 18), end: at('2026-10-31', 22) })).game.id;
   ok(await newSeats(later, { seats: 4 }, OWNER));
-  assert.equal(lair.booking(ok(await seat(later, '', 'Lee')).booking.id).newPlayer, true);
-  // ... and once Saturday's started, Lee has played, so isn't new any more
   Date.now = () => at('2026-10-24', 19);
-  assert.equal(said(await seat(later, '', 'Lee')), `409 ${W.keptAll}`);
+  assert.equal(ok(await addPlayer(later, { name: 'Lee', email: 'lee@example.com' }, ANA)).booking.newPlayer, false);
 });
 
-test('round 18: a weekly regular who isn\'t new leaves the kept seats; a new one has a kept seat at their first session only; released, a regular waiting gets it', async () => {
+test('round 18: a weekly regular, new or not, never has a kept seat; released, a regular waiting gets it', async () => {
   await playedBefore();
   const listed = await list({ gm: ANA, start: at('2026-10-24', 18), end: at('2026-10-24', 22), seats: 2, schedule: 'weekly' });
   const [first, second] = listed.sessions;
@@ -247,49 +247,47 @@ test('round 18: a weekly regular who isn\'t new leaves the kept seats; a new one
   assert.equal(ok(await newSeats(first.id, { seats: 1, scope: 'series' }, ANA)).sessions, listed.sessions.length);
   assert.deepEqual(lair.sql.exec('SELECT DISTINCT new_seats FROM games WHERE series_id = ?', seriesId).toArray().map((r) => r.new_seats), [1]);
   assert.equal(JSON.parse(lair.sql.exec('SELECT details FROM series WHERE id = ?', seriesId).one().details).newSeats, 1);
-  // each a minute after the last, so they're in this order: Kai, Ria, Mia
+  // each a minute after the last, so they're in this order: Kai, Mia, Ria
   let minute = 0;
   const join = (who, name) => {
     minute += 1;
     Date.now = () => at('2026-10-18', 10, minute);
     return call('POST', `games/${first.id}/join-series`, { people: 1, name, email: `${name.toLowerCase()}@example.com`, phone: '021 555 0100' }, who);
   };
-  // Kai (not new) has the seat that isn't kept; Ria (not new) waits; the kept seat isn't held for her
+  // Kai has the seat that isn't kept; Mia (new) and Ria wait: the kept seat is staff's
   assert.equal(ok(await join(KAI, 'Kai')).booked.length, 1);
-  const ria = ok(await join(RIA, 'Ria'));
-  assert.equal(ria.booked.length, 0);
-  let seen = await gameOn(first.id);
-  assert.deepEqual([seen.taken, seen.held, seen.newLeft, seen.status], [1, 0, 1, 'open']);
-  // Mia's new, so she can have it
-  const mia = ok(await join(MIA, 'Mia'));
-  assert.equal(mia.booked.length, 1);
-  assert.equal(lair.gameBookings(first.id).find((b) => b.customerId === MIA).newPlayer, true);
+  assert.equal(ok(await join(MIA, 'Mia')).booked.length, 0);
+  assert.equal(ok(await join(RIA, 'Ria')).booked.length, 0);
+  let seen = await gameOn(first.id, ANA);
+  assert.deepEqual([seen.taken, seen.held, seen.newLeft, seen.status], [2, 0, 1, 'full']);
   assert.equal((await gameOn(first.id)).status, 'full');
-  // The week after, nobody's new: Kai rolls forward (first to join), and the kept seat waits for someone new
+  // The week after: Kai rolls forward (first to join), and the kept seat still waits for staff
   Date.now = () => at('2026-10-25', 10);
   lair.rollSeries(lair.rulesCache, Date.now());
   const seated = () => lair.gameBookings(second.id).filter((b) => b.kind === 'gm-seat' && b.status === 'confirmed').map((b) => b.customerId).sort();
   assert.deepEqual(seated(), [KAI]);
-  seen = await gameOn(second.id);
-  assert.deepEqual([seen.taken, seen.held, seen.newLeft], [1, 0, 1]);
-  // Ana lets this session's kept seat go: the next run seats Ria, who joined before Mia
+  seen = await gameOn(second.id, ANA);
+  assert.deepEqual([seen.taken, seen.held, seen.newLeft], [2, 0, 1]);
+  // Ana lets this session's kept seat go: the next run seats Mia, who joined before Ria
   ok(await newSeats(second.id, { seats: 0 }, ANA));
   lair.rollSeries(lair.rulesCache, Date.now());
-  assert.deepEqual(seated(), [KAI, RIA].sort());
+  assert.deepEqual(seated(), [KAI, MIA].sort());
 });
 
-test('round 18: staff and the session\'s staff GM can seat anyone in the kept seats, and a seat they add says whether the player is new', async () => {
+test('round 18: staff with GM games can seat anyone in the kept seats; a staff GM reserving in their own game has the board\'s seats', async () => {
   await playedBefore();
   const id = (await list({ start: at('2026-10-24', 18), end: at('2026-10-24', 22) })).game.id;
-  ok(await newSeats(id, { seats: 3 }, TAMA));
-  // Tama (Library only) runs this session: he can reserve seats in it, kept or not; Rangi can't in his own game
+  ok(await newSeats(id, { seats: 3 }, ANA));
+  // Tama (Library only) runs this session: he can reserve the seat that isn't kept, and nobody's told who's new
   const kai = ok(await addPlayer(id, { customerId: KAI, name: 'Kai Tane', email: 'kai@example.com' }, TAMA));
-  assert.equal(kai.booking.newPlayer, false);
-  const friend = ok(await addPlayer(id, { name: 'Sam Friend', email: 'sam@example.com', newPlayer: true }, TAMA));
-  assert.equal(friend.booking.newPlayer, true);
-  // someone with no email can't be known, so isn't new unless they say so
-  assert.equal(ok(await addPlayer(id, { name: 'Walk-in' }, TAMA)).booking.newPlayer, false);
-  assert.equal(ok(await addPlayer(id, { name: 'Walk-in friend', newPlayer: true }, ANA)).booking.newPlayer, true);
+  assert.equal('newPlayer' in kai.booking, false);
+  assert.equal(lair.booking(kai.booking.id).newPlayer, false);
+  assert.equal(said(await addPlayer(id, { name: 'Sam Friend', email: 'sam@example.com', newPlayer: true }, TAMA)), '409 This table is full.');
+  // Ana (GM games) fills the kept ones: someone new (Sam's email has never had a seat), someone with no email (not
+  // known, so not new unless they say so), and someone the main account says is new
+  assert.equal(ok(await addPlayer(id, { name: 'Sam Friend', email: 'sam@example.com' }, ANA)).booking.newPlayer, true);
+  assert.equal(ok(await addPlayer(id, { name: 'Walk-in' }, ANA)).booking.newPlayer, false);
+  assert.equal(ok(await addPlayer(id, { name: 'Walk-in friend', newPlayer: true }, OWNER)).booking.newPlayer, true);
   assert.equal((await gameOn(id)).status, 'full');
   const rangis = (await list({ gm: RANGI, tables: ['B2'], start: at('2026-10-24', 18), end: at('2026-10-24', 22) })).game.id;
   assert.equal(said(await addPlayer(rangis, { name: 'Pat' }, RANGI)), `403 ${W.notYours}`);
@@ -319,7 +317,6 @@ test('round 18: the floor\'s roster, one item per seat, for staff with GM games 
   await playedBefore([[KAI, 'Kai']]);
   const id = (await list({ start: at('2026-10-24', 18), end: at('2026-10-24', 22) })).game.id;
   const rangis = (await list({ gm: RANGI, tables: ['B2'], start: at('2026-10-24', 18), end: at('2026-10-24', 22) })).game.id;
-  ok(await newSeats(id, { seats: 2 }, TAMA));
   const kais = ok(await call('POST', 'bookings', {
     kind: 'gm-seat', gameId: id, people: 2, name: 'Kai', email: 'kai@example.com', phone: '021 555 0100', pay: 'day',
     players: [{ name: 'Kai', character: 'Brakka' }, { name: 'Ari', character: '' }],
@@ -329,8 +326,8 @@ test('round 18: the floor\'s roster, one item per seat, for staff with GM games 
   const rosterOf = async (game, who) => (await gameOn(game, who))?.roster;
   const tamas = await rosterOf(id, TAMA);
   assert.deepEqual(tamas, [
-    { ref: kais.ref, people: 2, names: ['Kai', 'Ari'], characters: ['Brakka', ''], paid: false, due: 3000, newPlayer: false, regular: false, member: true, here: false },
-    { ref: mias.ref, people: 1, names: ['Mia'], characters: [''], paid: true, due: 0, newPlayer: true, regular: false, member: true, here: false },
+    { ref: kais.ref, people: 2, names: ['Kai', 'Ari'], characters: ['Brakka', ''], paid: false, due: 3000, regular: false, member: true, here: false },
+    { ref: mias.ref, people: 1, names: ['Mia'], characters: [''], paid: true, due: 0, regular: false, member: true, here: false },
   ]);
   // Ana and the main account see every game's; Tama not Rangi's; Rangi (not staff) and Hemi (no GM games) none
   assert.deepEqual(await rosterOf(id, ANA), tamas);
@@ -405,8 +402,14 @@ test('round 18: staff with GM games make a session free: $0 seats, nothing owed,
   // Kai's money goes back (staff unmark it: nothing was recorded through the shop), then it can be free
   ok(await call('POST', `bookings/${kais.id}/update`, { paid: false }, OWNER));
   const made = ok(await setFree(id, { free: true }, ANA));
-  assert.deepEqual([made.game.free, made.game.seatPrice, made.sessions], [true, 0, 1]);
+  assert.deepEqual([made.game.free, made.game.seatPrice, made.sessions], [true, 1500, 1]);
   assert.deepEqual([lair.booking(mias.id).amount, lair.booking(kais.id).amount], [0, 0]);
+  // the website shows its usual price and never says it's free (back end only)
+  for (const who of ['', MIA, RANGI]) {
+    const seen = await gameOn(id, who);
+    assert.deepEqual([seen.seatPrice, 'free' in seen], [1500, false], who || 'logged out');
+  }
+  assert.equal((await gameOn(id, ANA)).free, true);
   // Nothing on Mia's tab for it
   const mine = (await me(MIA)).seats.find((s) => s.id === mias.id);
   assert.deepEqual([mine.amount, mine.due], [0, 0]);
@@ -421,9 +424,9 @@ test('round 18: staff with GM games make a session free: $0 seats, nothing owed,
   } finally {
     mail.restore();
   }
-  // A staff edit (a new GM fee) keeps it at $0
+  // A staff edit (a new GM fee) keeps it at $0, and the website shows the new usual price
   ok(await call('POST', `games/${id}/edit`, { gmFee: 1000 }, OWNER));
-  assert.deepEqual([lair.booking(mias.id).amount, (await gameOn(id)).seatPrice], [0, 0]);
+  assert.deepEqual([lair.booking(mias.id).amount, (await gameOn(id)).seatPrice], [0, 2000]);
   // Session done: no GM credit, saying why (even with a seat marked paid)
   ok(await call('POST', `bookings/${mias.id}/update`, { paid: true }, OWNER));
   shopifyOn = true;
@@ -443,8 +446,6 @@ test('round 18: not free any more, the price comes back on unpaid seats of sessi
   const freeOf = (gameId) => Boolean(lair.game(gameId).free);
   assert.deepEqual([freeOf(first.id), freeOf(second.id), freeOf(third.id)], [false, true, true]);
   assert.equal(JSON.parse(lair.sql.exec('SELECT details FROM series WHERE id = ?', seriesId).one().details).free, true);
-  // the board says so for the series' sessions to come (series.free), and a session made free alone doesn't
-  assert.deepEqual([(await gameOn(second.id, OWNER)).series.free, (await gameOn(second.id, OWNER)).free], [true, true]);
   Date.now = () => at('2026-11-20', 10);
   const extended = lair.extendSeries(lair.rulesCache, Date.now());
   const made2 = lair.sql.exec('SELECT id, free FROM games WHERE series_id = ? AND starts_at > ?', seriesId, at('2026-12-14', 0)).toArray();
@@ -661,13 +662,12 @@ test('round 18: not free any more inside the 24 hours, seats booked free stay fr
   assert.equal(ok(await call('POST', `bookings/${mias.id}/update`, { status: 'cancelled' }, MIA)).booking.status, 'cancelled');
 });
 
-test('round 18: a staff GM can\'t remove, add or keep seats in their session once it\'s over; staff with GM games can', async () => {
+test('round 18: a staff GM can\'t remove or add seats in their session once it\'s over; staff with GM games can', async () => {
   const id = (await list()).game.id;
   const mias = ok(await seat(id, MIA, 'Mia')).booking;
   Date.now = () => at('2026-10-18', 10);
   assert.equal(said(await removeSeat(id, mias.ref, TAMA)), `403 ${W.over}`);
   assert.equal(said(await addPlayer(id, { customerId: KAI, name: 'Kai Tane' }, TAMA)), `403 ${W.over}`);
-  assert.equal(said(await newSeats(id, { seats: 1 }, TAMA)), `403 ${W.over}`);
   // the seat's still owed
   assert.equal((await me(MIA)).seats.find((s) => s.id === mias.id).owed, true);
   assert.equal(ok(await removeSeat(id, mias.ref, ANA)).booking.status, 'cancelled');
@@ -726,16 +726,6 @@ test('round 18: a new GM brings their own bio (none yet: none), for the sessions
   assert.equal(lair.game(one).gmBio, '');
 });
 
-test('round 18: a staff GM\'s seats for new players for a series change only their own sessions', async () => {
-  const listed = await list({ gm: TAMA, schedule: 'weekly' });
-  const [s1, s2, s3] = listed.sessions;
-  ok(await changeGm(s2.id, { gmCustomerId: RANGI, gmCustomerName: 'Rangi Hohaia', gm: 'Rangi' }));
-  assert.equal(said(await newSeats(s2.id, { seats: 1 }, TAMA)), `403 ${W.notYours}`);
-  const set = ok(await newSeats(s1.id, { seats: 2, scope: 'series' }, TAMA));
-  assert.equal(set.sessions, listed.sessions.length - 1);
-  assert.deepEqual([lair.game(s1.id).newSeats, lair.game(s2.id).newSeats, lair.game(s3.id).newSeats], [2, 0, 2]);
-});
-
 test('round 18: a new GM with a bad scope saves nothing, not even their member record', async () => {
   const id = (await list({ gm: RANGI })).game.id;
   assert.equal(said(await changeGm(id, { gmCustomerId: '7777', gmCustomerName: 'New Person', gmEmail: 'np@example.com', gm: 'NP', scope: 'bogus' })), `422 ${W.scope}`);
@@ -743,9 +733,9 @@ test('round 18: a new GM with a bad scope saves nothing, not even their member r
   assert.equal(lair.game(id).gmCustomerId, RANGI);
 });
 
-test('round 18: someone joining a series isn\'t kept out by a new regular ahead of them, who takes the kept seat', async () => {
+test('round 18: someone joining a series has a seat that isn\'t kept; regulars waiting ahead of them never take a kept one', async () => {
   await playedBefore([[KAI, 'Kai']]);
-  const listed = await list({ gm: ANA, start: at('2026-10-24', 18), end: at('2026-10-24', 22), seats: 2, schedule: 'weekly' });
+  const listed = await list({ gm: ANA, start: at('2026-10-24', 18), end: at('2026-10-24', 22), seats: 3, schedule: 'weekly' });
   const [first] = listed.sessions;
   ok(await newSeats(first.id, { seats: 1 }, ANA));
   // Mia (new) is a regular waiting for a seat there, ahead of Kai
@@ -757,4 +747,21 @@ test('round 18: someone joining a series isn\'t kept out by a new regular ahead 
   assert.equal(kai.booked.length, 1);
   lair.rollSeries(lair.rulesCache, Date.now());
   assert.deepEqual(lair.gameBookings(first.id).filter((b) => b.kind === 'gm-seat' && b.status === 'confirmed').map((b) => b.customerId).sort(), [KAI, MIA].sort());
+  // neither seat is a kept one: it's still there for staff
+  assert.deepEqual(lair.gameBookings(first.id).filter((b) => b.kind === 'gm-seat').map((b) => b.newPlayer), [false, false]);
+  assert.equal((await gameOn(first.id, ANA)).newLeft, 1);
+});
+
+test('round 18: a new-player mark from the first version on a seat booked online is cleared once, on start', async () => {
+  const id = (await list()).game.id;
+  const online = ok(await seat(id, MIA, 'Mia')).booking;
+  const added = ok(await addPlayer(id, { name: 'Sam Friend', email: 'sam@example.com' }, ANA)).booking;
+  lair.write('UPDATE bookings SET new_player = 1 WHERE id IN (?, ?)', online.id, added.id);
+  lair.write("DELETE FROM meta WHERE key = 'kept-seats-staff'");
+  lair.migrate();
+  assert.deepEqual([lair.booking(online.id).newPlayer, lair.booking(added.id).newPlayer], [false, true]);
+  // only once
+  lair.write('UPDATE bookings SET new_player = 1 WHERE id = ?', online.id);
+  lair.migrate();
+  assert.equal(lair.booking(online.id).newPlayer, true);
 });

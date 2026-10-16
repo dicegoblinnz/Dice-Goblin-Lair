@@ -1159,7 +1159,7 @@ test('GM games: weekly series, GM fees, seat names, approval for a whole series,
   assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'open' }, 'staff')).status, 200);
   // The public board shows the series' next session; staff see every one, all approved.
   const board = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId);
-  assert.deepEqual(board.map((g) => [g.id, g.nextOnly, g.series]), [[listed.data.game.id, true, { id: seriesId, schedule: 'weekly', regulars: 0, free: false, newSeats: 0 }]]);
+  assert.deepEqual(board.map((g) => [g.id, g.nextOnly, g.series]), [[listed.data.game.id, true, { id: seriesId, schedule: 'weekly', regulars: 0 }]]);
   assert.equal(board[0].gmBio, 'GMing since the 90s.');
   assert.equal(board[0].players, undefined);
   const open = (await call('GET', 'floor', null, 'staff')).data.games.filter((g) => g.seriesId === seriesId);
@@ -2232,7 +2232,7 @@ test('weekly regulars: joining books the next session only, the seat rolls forwa
     assert.ok((await call('POST', 'checkin', { code }, 'staff')).data.rows.some((r) => r.id === seat.id), 'her member code finds today\'s seat');
     // The public board shows the next session, and says how many regulars it has.
     const board = (await call('GET', 'floor')).data.games.filter((g) => g.seriesId === seriesId);
-    assert.deepEqual(board.map((g) => [g.id, g.nextOnly, g.series, g.taken, g.held]), [[sessions[0].id, true, { id: seriesId, schedule: 'weekly', regulars: 1, free: false, newSeats: 0 }, 2, 0]], 'one regular, with 2 seats');
+    assert.deepEqual(board.map((g) => [g.id, g.nextOnly, g.series, g.taken, g.held]), [[sessions[0].id, true, { id: seriesId, schedule: 'weekly', regulars: 1 }, 2, 0]], 'one regular, with 2 seats');
 
     // Nothing rolls forward before the session ends; once it has, maintenance books the next one, once.
     assert.equal((await maintenance()).data.regulars, undefined);

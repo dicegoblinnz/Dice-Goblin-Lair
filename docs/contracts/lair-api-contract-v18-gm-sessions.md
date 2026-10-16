@@ -3,8 +3,8 @@
 **Changes only**, on top of v17-staff-gm-credit and everything before it; where they disagree, this file wins. Money in
 cents, times in ms (UTC), days and hours in Lair time (Pacific/Auckland). Errors stay `{ error: "A plain sentence." }`
 with a 4xx or 5xx. Backend: `src/gm-sessions.js` (with small changes in `src/lair.js`, `src/core.js` and
-`src/staff-gm.js`). Theme: the GM page (`assets/lair-games.js`, `assets/lair-join.js`), the staff page's GM games tab
-(`assets/lair-staff.js`), the events calendar's price (`assets/lair-calendar.js`) and the demo (`assets/lair-demo.js`).
+`src/staff-gm.js`). Theme: the staff page's GM games tab (`assets/lair-staff.js`), the GM page's roster, Reserve a
+seat and Remove for a staff GM (`assets/lair-games.js`), and the demo (`assets/lair-demo.js`).
 
 Mo (16 Oct):
 - "I want the staff to be able to see each player inside a gm session run game and have the ability to reserve seats
@@ -15,50 +15,55 @@ Mo (16 Oct):
 - "Also have staff have the ability to make certain games free for special events or just regular events, that are
   specific gm run games."
 - "Have the ability for staff to change the gm for a game even after it was set."
+- Then, on the first version: "make the free sessions or new player seats only back end adds, not front end." He
+  picked: a free session shows **its usual price** on the website (players just aren't charged for it), and **only
+  staff** fill the seats for new players (online they're taken). So both live on the staff page alone (1.6).
 
 ## 1. Rules
 
 ### 1.1 Who can do what
 
-- **Run a game** (see its roster, reserve seats, remove players, seats for new players): staff with GM games
-  (`sessions`), in any game; and a session's own GM when they're on the team (the main account or a helper, whatever
-  their permissions), in their own game. A GM who isn't staff can't (they see their players as before).
-- **Free** and **a new GM**: staff with GM games only.
+- **Run a game** (see its roster, reserve seats, remove players): staff with GM games (`sessions`), in any game; and a
+  session's own GM when they're on the team (the main account or a helper, whatever their permissions), in their own
+  game. A GM who isn't staff can't (they see their players as before).
+- **Free**, **seats for new players** and **a new GM**: staff with GM games only (the staff page).
 - A staff GM (without GM games) changes seats in their own session only **until it ends** (`403 over`): after that,
-  removing or adding a player, or the seats for new players, is for staff with GM games (or the desk on the staff
-  page), so nobody clears or makes what's owed for their own session.
+  removing or adding a player is for staff with GM games (or the desk on the staff page), so nobody clears or makes
+  what's owed for their own session.
 - **A series with more than one GM.** Once staff give some of a series to another GM it can have more than one, so the
   GM of one session no longer speaks for all of it. For anyone without GM games: cancelling "every session" cancels the
   sessions they run (and the series itself, no more dates and its regulars, only when it's theirs now: the series' GM,
   which a new GM given it from a session on becomes); adding a date needs the series' GM now, and a new date is always
   the series' GM's (staff adding one too); messaging "every session" reaches the series' players only for its GM now,
   and otherwise the players of the sessions they run; a new picture is the whole series' only from its GM now, and
-  otherwise goes on the sessions they run. Series-wide seats for new players from a staff GM change the sessions they
-  run.
+  otherwise goes on the sessions they run.
 
 ### 1.2 Seats for new players
 
-- A session can keep some of its seats (`newSeats`, 0 to its seats) for players **new to the Lair's TTRPG sessions**:
-  nobody with a seat (theirs by account, or for someone without one by email) at a session that started before, that
-  wasn't cancelled or a no-show. Someone with neither an account nor an email isn't known, so isn't new (staff can say
-  they are).
-- Online (`POST /bookings`, join-series), someone who isn't new can't take a kept seat: when only kept seats are left,
-  or fewer than they want are, it's a 409 (words in section 3). A new player can take any seat; their seats fill the
-  kept ones first (`bookings.new_player`).
-- **Kept seats come first.** The seats held for a series' waiting regulars come from the free seats that aren't kept, so
-  a regular who isn't new never waits on a kept seat (and never blocks one). Regulars are seated in the order they
-  joined, each in a seat that isn't kept unless they're new as of that session: only a new regular's first seat fills
-  a kept one.
-- Staff, and the session's staff GM, can seat anyone in a kept seat (`POST /games/:id/players`, with `newPlayer: true`
-  for someone new they can't look up), and can let them go (0). A released seat goes to a waiting regular at the next
-  maintenance run (every 10 minutes), as a seat that comes free always has.
+- Staff with GM games can keep some of a session's seats (`newSeats`, 0 to its seats) for players **new to the Lair's
+  TTRPG sessions**: nobody with a seat (theirs by account, or for someone without one by email) at a session that
+  started before, that wasn't cancelled or a no-show. Someone with neither an account nor an email isn't known, so isn't
+  new (staff can say they are).
+- **Only staff fill them.** Online (`POST /bookings`, join-series) the kept seats still open are taken, for everyone:
+  the usual "Only N seats left" or "This table is full", never a word about new players. A staff GM reserving in their
+  own game (the GM page) has the same seats as the board. Staff with GM games (the staff page, `POST
+  /games/:id/players`) can seat anyone in them; a new player's seat they add fills a kept one first
+  (`bookings.new_player`: staff say so with `newPlayer: true`, or their account or email has never had a seat at a
+  session that started).
+- **Kept seats come first.** The seats held for a series' waiting regulars come from the free seats that aren't kept,
+  and a regular's seat (new or not) is never a kept one.
+- Staff can let them go (0). A released seat goes to a waiting regular at the next maintenance run (every 10 minutes), as
+  a seat that comes free always has.
 - For a series, `scope: 'series'` sets it for this session and every later one, and for sessions made later.
+- A seat booked online or saved for a regular before this (the first version marked new players' own seats) is
+  cleared of its mark once, on start (meta `kept-seats-staff`).
 
 ### 1.3 Free sessions
 
-- Staff make a session, or (`scope: 'series'`) it and every later one, free: its seats cost nothing (`seatPrice` 0), the
-  unpaid seats on it come to $0, nothing is on anyone's tab for it, and there's no GM credit ("Session done" records
-  none, saying why).
+- Staff make a session, or (`scope: 'series'`) it and every later one, free: its seats cost nothing, the unpaid seats on
+  it come to $0, nothing is on anyone's tab for it, and there's no GM credit ("Session done" records none, saying why).
+  The website still shows its usual seat price (`seatPrice`, 1.6): a player who joins sees what it costs them
+  afterwards, on their confirmation and tab ($0, nothing to pay).
 - Not while a seat on it is paid for already (paid at the counter ahead, marked paid with money, or covered in part by
   a session pass at check-in): 409, sort it out first (a refund, or undo the pass). A seat at $0 (or one marked paid at
   $0) doesn't count. Bills with its seats on them are worked out again (a bill with nothing left on it is void).
@@ -92,14 +97,21 @@ Mo (16 Oct):
 - The new GM is emailed "Your game is live" (or the invite), and the GM before, when they had an email, "Your game has a
   new GM".
 
+### 1.6 Back end only
+
+Only the staff page hears that a session is free or keeps seats for new players: the floor's staff view (`GET /floor`
+for staff with check-in, tables, GM games or events) and the staff calls' replies (2.6). Everyone else (the website,
+a GM's own view, the GM page, the events calendar, the GM's emails' seat counts) sees a free session at its usual seat
+price and the kept seats still open as taken. `GET /me` says nothing of new players. GM emails still say a free
+session has no GM credit (1.3), and a player whose $0 seat gets a price is still emailed.
+
 ## 2. Routes
 
-### 2.1 `POST /games/:id/new-seats { seats, scope? }` (staff with GM games, or the session's staff GM)
+### 2.1 `POST /games/:id/new-seats { seats, scope? }` (staff with GM games)
 
 `seats`: a whole number from 0 to the session's seats (a number, or a number as text). `scope`: `'session'` (the
-default) or `'series'`. → `{ game, sessions }` (the board's view of this session; how many sessions changed). Errors, in
-this order: `404` game; `401 login`; `403 notYours`; `403 over` (a staff GM, once it's ended); `409` cancelled; `422
-newSeats`; `422 scope`.
+default) or `'series'`. → `{ game, sessions }` (the staff view of this session; how many sessions changed). Errors, in
+this order: 403 (staff only, or the permission); `404` game; `409` cancelled; `422 newSeats`; `422 scope`.
 
 ### 2.2 `POST /games/:id/free { free, scope? }` (staff with GM games)
 
@@ -121,28 +133,26 @@ gmSame` (the same GM and the same name); `422 scope`.
 
 ### 2.5 `POST /games/:id/players` (add players)
 
-Now also for the session's staff GM (in their own game, until it ends: `403 over`). Takes `newPlayer: true` (someone
-new staff can't look up).
-`booking` adds `newPlayer` (staff said so, or their account or email has never had a seat at a session that started).
-The GM isn't emailed about a player they added to their own game themselves.
+Now also for the session's staff GM (in their own game, until it ends: `403 over`), with the board's seats (the kept
+ones are taken). Staff with GM games have the kept seats too, and take `newPlayer: true` (someone new they can't look
+up); for them `booking` adds `newPlayer` (staff said so, or their account or email has never had a seat at a session
+that started: it fills a kept seat). The GM isn't emailed about a player they added to their own game themselves.
 
-### 2.6 `GET /floor`
+### 2.6 `GET /floor`, and the staff calls' `game`
 
-- Each game adds `free`, `newSeats` (kept for new players, at most its seats), `newLeft` (kept seats still open: never
-  more than the seats free) and, when free, `seatPrice` 0. `held` (regulars) never includes kept seats, and `taken` is
-  booked plus held, so `seats − taken` still counts the kept seats: for someone who isn't new, the seats they can book
-  are `seats − taken − newLeft`.
-- A series session's `series` adds `free` and `newSeats`: what its sessions to come are set to (staff's `scope:
-  'series'`), so a page that shows its later dates (the events calendar, "Save my seat every week") can say whether
-  they're free; the session's own `free` is only about it.
+- Every game: `seatPrice` is its usual price, free or not, and `taken` is booked plus the kept seats still open plus
+  held (`held`: regulars, never a kept seat), so an open game whose only seats left are kept is `full`.
+- The staff view (the floor for staff with check-in, tables, GM games or events; the replies to new-seats, free, gm,
+  check-in, and to add players, remove, edit, add a session and cancel for staff) adds `free`, `newSeats` (kept for new
+  players, at most its seats) and `newLeft` (kept seats still open, counted in `taken`): the seats staff with GM games
+  can still fill are `seats − taken + newLeft`, and the seats booked or held are `taken − newLeft`.
 - For whoever can run a game (1.1), `roster`: one item per seat booking still on, first booked first: `{ ref, people,
-  names, characters, paid, due (cents), newPlayer, regular, member, here }`. Never an email or phone.
-- Staff bookings carry `newPlayer`.
+  names, characters, paid, due (cents), regular, member, here }`. Never an email or phone, and not who's new.
+- Staff bookings carry `newPlayer` (a seat staff added for someone new, in a kept seat).
 
 ### 2.7 `GET /me`
 
-`customer.newPlayer`: whether they've never had a seat at a session that started (so the kept seats are theirs to take
-too). False when logged out.
+Nothing new (`customer.newPlayer`, in the first version, is gone).
 
 ## 3. Words (word for word)
 
@@ -153,8 +163,6 @@ too). False when logged out.
 | `over` | That session's over, so ask the staff to change it now. |
 | `scope` | scope is 'session' or 'series'. |
 | `newSeats` | Seats for new players is a whole number from 0 to 4. (4: the session's seats) |
-| `keptAll` | The seats left are kept for players new to our TTRPG sessions. Bringing someone new? Have a chat with us. |
-| `keptSome` | Only 2 seats are left for you: 2 are kept for players new to our TTRPG sessions. (1 seat is, 1 is) |
 | `free` | free is true or false. |
 | `paidAlready` | 1 seat is paid for already, or on a session pass. Refund it (or undo the pass) first, then make it free. (2 seats are … Refund them …) |
 | `freeCredit` | This session was free, so there's no GM credit to add. (the credit's note) |

@@ -214,26 +214,27 @@ hours (contract `docs/contracts/lair-api-contract-v17-staff-gm-credit.md`). Play
 ## round18: more for GM sessions (round 18)
 
 Mo (16 Oct): staff GMs see each player in their own session, reserve seats (some kept for new players) and take players
-off; staff make a session free; staff change a session's GM after it was set (contract
-`docs/contracts/lair-api-contract-v18-gm-sessions.md`).
-- `test/round18-gm-sessions.test.js` (npm test): who can set seats for new players (staff with GM games, the session's GM
-  when they're on the team, nobody else) and their checks; online, only someone new takes a kept seat (by account or by
-  email; new until they've played), their seats fill the kept ones, and one cancelled goes back to being kept; a weekly
-  regular who isn't new leaves the kept seats, a new one has one at their first session only, and a released seat goes
-  to the regular waiting; staff and the session's staff GM seat anyone (newPlayer said or worked out) and the GM isn't
-  emailed about their own add; the floor's roster (who sees it, its fields, no emails); removing a player (who can, the
-  refund flagged when they'd paid, before and once it's started); free (who can, the paid-seat 409, $0 seats and nothing
-  owed, a staff edit keeps $0, no GM credit, the price back for sessions to come, a series from a session on and the
-  sessions made later, and the board's series.free for a series' sessions to come); the GM emails' credit line for a
-  free session; a new GM (a customer, a member's email, an invite that joins their account, a series from a session on,
-  a credited session keeps its GM, both GMs emailed).
+off; staff make a session free; staff change a session's GM after it was set. Then: free sessions and seats for new
+players are back end only, the staff page's (contract `docs/contracts/lair-api-contract-v18-gm-sessions.md`, 1.6).
+- `test/round18-gm-sessions.test.js` (npm test): seats for new players are set by staff with GM games only, and
+  everyone else sees them as taken, with nothing about them; online, kept seats are taken for everyone, new or not, and
+  staff fill them (a new player's seat they add fills one first; one that comes free is kept again first); a weekly
+  regular, new or not, never has a kept seat, and a released seat goes to the regular waiting; staff seat anyone in the
+  kept seats (newPlayer said or worked out), a staff GM reserving in their own game has the board's seats, and the GM
+  isn't emailed about their own add; the floor's roster (who sees it, its fields, no emails, not who's new); removing a
+  player (who can, the refund flagged when they'd paid, before and once it's started); free (who can, the paid-seat 409,
+  $0 seats and nothing owed, the website's usual price, a staff edit keeps $0, no GM credit, the price back for sessions
+  to come, a series from a session on and the sessions made later); the GM emails' credit line for a free session; a new
+  GM (a customer, a member's email, an invite that joins their account, a series from a session on, a credited session
+  keeps its GM, both GMs emailed); the first version's new-player marks on online seats cleared once.
 - `round18/gm-sessions.mjs`: the theme mock in demo mode, phone and desktop. The staff page's GM games manager (Free,
   new players and the GM: Seats for new players, Make it free and Charge again with the paid-seat refusal, Change the GM
   by email, the New player badge and tick in Add players); the GM page for Tama, a helper with Library only, in his own
-  session (the roster, Seats for new players, Reserve a seat with its email check, Take a player off) and no roster in a
-  session he doesn't run; for Ruby, who's played before, the last seat kept for new players with no Join; for Lee, who's
-  new, a free session's card, details and join form; then live, the four calls against a stubbed Lair app. From the
-  independent review: Make it free with Change the GM open, the new GM's name following the person picked, a seat booked
-  free that stays free when it's charged for again inside the 24 hours, a free session's Session done, focus after
-  running a session, the Reserve email's hint, a player taken off already, and no roster logged out. Axe, no sideways
+  session (the roster, Reserve a seat with its email check, Take a player off, kept seats taken for him too, nothing
+  about free sessions or new players) and no roster in a session he doesn't run; logged out, a free session with a
+  kept seat looks like any other; for Ruby, a session whose last seat is kept is just Full; for Lee, a free session's
+  card, details and join form at its usual price, then Nothing to pay once he's joined; then live, the four calls against
+  a stubbed Lair app. From the independent review: Make it free with Change the GM open, the new GM's name following the
+  person picked, a seat booked free that stays free when it's charged for again inside the 24 hours, a free session's
+  Session done, focus after running a session, the Reserve email's hint, and a player taken off already. Axe, no sideways
   scroll. `DG_THEME=… PORT=4991 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round18/gm-sessions.mjs [phone|desktop]`.

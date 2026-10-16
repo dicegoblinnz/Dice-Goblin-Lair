@@ -1,11 +1,12 @@
 // Round 18 (16 Oct 2026), more for GM sessions, on the theme mock: the staff page's GM games manager (Free and Charge
 // again, with the paid-seat refusal; Seats for new players; Change the GM by email; the New player badge and tick), the
-// GM page for a staff GM in their own game (the roster with its badges, Reserve a seat, Seats for new players, Take a
-// player off), the GM page for a player (the seats kept for new players: someone who's played before and someone new;
-// a free session's card, details and join form), the live backend's four calls against a stubbed Lair app, no sideways
-// scroll and axe. Phone and desktop. From the independent review: Make it free with Change the GM open, the new GM's
+// GM page for a staff GM in their own game (the roster, Reserve a seat, Take a player off, and the seats kept for new
+// players taken), the GM page for players (a seat kept for new players is just taken; a free session's card, details,
+// join form and confirmation), the live backend's four calls against a stubbed Lair app, no sideways scroll and axe. Phone and desktop. From the independent review: Make it free with Change the GM open, the new GM's
 // name following the person picked, a seat booked free that stays free, a free session's Session done, focus after
-// running a session, the Reserve email's hint, a player taken off already, and no roster logged out.
+// running a session, the Reserve email's hint, a player taken off already, and no roster logged out. Back end only
+// (Mo, 16 Oct): the GM page and the join form never say free or new players; a free session shows its usual price
+// (joined, it costs nothing), and seats kept for new players are taken, for players and a staff GM alike.
 // Usage: DG_THEME=/path/to/theme [PORT=4991] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round18/gm-sessions.mjs [phone|desktop]
 import os from 'node:os';
 import path from 'node:path';
@@ -69,6 +70,16 @@ const seed = (page, { kept = 0, free = false, kaiPaid = false } = {}) => page.ev
   await store.refresh();
   return { id: mine.id, rangi: rangis.id, tomorrow };
 }, [String(TAMA.id), RUBY, kept, free, kaiPaid]);
+
+/** Round 18 (back end only): the words for free sessions and seats for new players that a customer-facing page never
+    shows (page.evaluate'd: it returns the first one found, with what's around it, or ''). "New players welcome" (a
+    game's level) is older, and stays. */
+const R18_WORDS = String.raw`kept for|new to our TTRPG|seats? for new players|Join · free|\bFree\b|is free|nothing to pay for this session`;
+const r18Words = (page, selector) => page.evaluate(([sel, words]) => {
+  const text = String(document.querySelector(sel)?.textContent || '').replace(/\s+/g, ' ');
+  const found = new RegExp(words, 'i').exec(text);
+  return found ? text.slice(Math.max(0, found.index - 40), found.index + 40) : '';
+}, [selector, R18_WORDS]);
 
 /** The demo's state of one booking or game */
 const stateOf = (page, kind, id) => page.evaluate(([k, x]) => {
@@ -304,32 +315,25 @@ for (const size of sizes) {
     return {
       rows: [...sec.querySelectorAll('.gm-roster__item')].map((li) => ({ who: f(li.querySelector('.gm-roster__who > span').textContent), meta: f(li.querySelector('.gm-roster__meta').textContent), remove: li.querySelector('[data-roster-remove]')?.getAttribute('aria-label') || '' })),
       head: f(sec.querySelector('.gm-own__head').textContent),
-      seats: sec.querySelector('[data-newseats-form] [name="seats"]')?.value,
+      newSeats: Boolean(document.querySelector('[data-newseats-form]')),
       reserve: Boolean(sec.querySelector('[data-reserve]')),
     };
   });
-  check(`${tag} GM page: Tama (a staff GM, Library only) gets his game's roster: Kai's 2 seats ($30 to pay), Mia new, each with Remove; Seats for new players None; Reserve a seat`,
+  own.words = await r18Words(page, '.gm-sheet');
+  check(`${tag} GM page: Tama (a staff GM, Library only) gets his game's roster: Kai's 2 seats ($30 to pay) and Mia's, each with Remove, and Reserve a seat; nothing about free sessions or new players`,
     JSON.stringify(own.rows) === JSON.stringify([
       { who: 'Kai as Brakka, Kai +1', meta: '2 seats · $30 to pay', remove: 'Remove Kai' },
-      { who: 'Mia as Brakka New player', meta: '1 seat · $15 to pay', remove: 'Remove Mia' },
-    ]) && /3 of 4 seats taken$/.test(own.head) && own.seats === '0' && own.reserve, own);
+      { who: 'Mia as Brakka', meta: '1 seat · $15 to pay', remove: 'Remove Mia' },
+    ]) && /3 of 4 seats taken$/.test(own.head) && !own.newSeats && own.reserve && !own.words, own);
   await shot(page, `${size}-gm-own-roster`, '.gm-own');
   await axe(page, `${tag} GM page, a staff GM's own game`, '.gm-sheet');
   check(`${tag} GM page sheet: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
 
-  // Seats for new players: 1
-  await page.selectOption('[data-newseats-form] [name="seats"]', '1');
-  await page.click('[data-newseats-form] [type="submit"]');
-  await page.waitForSelector('.gm-flash', { timeout: 10000 });
-  const flash1 = await page.evaluate(() => document.querySelector('.gm-flash')?.textContent.trim());
-  const flash1Focus = await page.evaluate(() => Boolean(document.activeElement?.classList.contains('gm-flash')));
-  check(`${tag} GM page: Seats for new players 1 saved (the flash, with focus, and the game)`,
-    flash1 === 'Saved. 1 seat is kept for new players.' && flash1Focus && (await stateOf(page, 'game', seeded.id)).newSeats === 1, { flash1, flash1Focus });
-
-  // Reserve a seat for someone new
+  // Reserve a seat
   await page.click('[data-reserve]');
   await page.waitForSelector('[data-reserve-form]');
   await axe(page, `${tag} Reserve a seat`, '.gm-sheet');
+  const tick = await page.evaluate(() => Boolean(document.querySelector('[data-reserve-form] [name="newPlayer"]')));
   await page.fill('[data-reserve-form] [name="name"]', 'Pat Lee');
   await page.fill('[data-reserve-form] [name="email"]', 'not-an-email');
   await page.click('[data-reserve-send]');
@@ -342,7 +346,6 @@ for (const size of sizes) {
   check(`${tag} GM page: Reserve a seat's email error is described along with its hint`,
     Boolean(described.error) && described.by.split(' ').join('|') === `gm-reserve-email-hint|${described.error}`, described);
   await page.fill('[data-reserve-form] [name="email"]', 'pat@example.com');
-  await page.check('[data-reserve-form] [name="newPlayer"]');
   await shot(page, `${size}-gm-reserve`, '.gm-sheet');
   await page.click('[data-reserve-send]');
   await page.waitForSelector('.gm-flash', { timeout: 10000 });
@@ -352,9 +355,9 @@ for (const size of sizes) {
     row: [...document.querySelectorAll('.gm-roster__item')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()).find((x) => x.includes('Pat Lee')) || '',
     gmTold: (window.Lair.store.backend.state.outbox || []).some((mail) => mail.kind === 'gm-new-player' && /Pat Lee/.test(mail.subject)),
   }));
-  check(`${tag} GM page: Reserve a seat checks the email, then reserves it for someone new (the flash, the roster's New player), and Tama isn't emailed about his own add`,
-    badEmail === 'That email doesn’t look right.' && reserved.flash === 'Reserved a seat for Pat Lee. They’re new to our TTRPG sessions.'
-    && /New player/.test(reserved.row) && !reserved.gmTold && reserved.focus, { badEmail, reserved });
+  check(`${tag} GM page: Reserve a seat (no new-player tick) checks the email, then reserves it (the flash, with focus, and the roster), and Tama isn't emailed about his own add`,
+    !tick && badEmail === 'That email doesn’t look right.' && reserved.flash === 'Reserved a seat for Pat Lee.'
+    && /Pat Lee/.test(reserved.row) && !/New player/.test(reserved.row) && !reserved.gmTold && reserved.focus, { tick, badEmail, reserved });
 
   // Take Kai off
   await page.click('[data-roster-remove="KA-OWL-3"]');
@@ -392,6 +395,31 @@ for (const size of sizes) {
   check(`${tag} GM page: taking off a player who's gone already says so, and the roster catches up`,
     /^That player isn.t in this game\.$/.test(goneAlready.flash) && !goneAlready.rows.some((x) => x.includes('Mia')) && goneAlready.focus, goneAlready);
 
+  // seats staff keep for new players (on the staff page) are taken on the GM page too, and Tama can't reserve them
+  await page.evaluate(async (gid) => {
+    const { store } = window.Lair;
+    const be = store.backend;
+    be.state.games.find((g) => g.id === gid).newSeats = 3;
+    be.commit();
+    await store.refresh();
+    document.querySelector('gm-board').openGame(gid, { keepHash: true });
+  }, seeded.id);
+  await settle(page, 400);
+  const keptView = await page.evaluate(async (gid) => {
+    const f = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+    const sec = document.querySelector('.gm-own');
+    let refused = '';
+    try {
+      await window.Lair.store.backend.addGamePlayer(gid, { name: 'Jo', people: 1 });
+    } catch (error) {
+      refused = error.message;
+    }
+    const g = window.Lair.store.data.games.find((x) => x.id === gid);
+    return { head: f(sec?.querySelector('.gm-own__head')?.textContent), reserve: Boolean(sec?.querySelector('[data-reserve]')), refused, fields: ['free', 'newSeats', 'newLeft'].filter((k) => k in g) };
+  }, seeded.id);
+  check(`${tag} GM page: seats staff keep for new players are taken for Tama too (4 of 4, no Reserve, and it's full when he tries), with nothing about them on the page`,
+    /4 of 4 seats taken$/.test(keptView.head) && !keptView.reserve && keptView.refused === 'This table is full.' && keptView.fields.length === 0, keptView);
+
   // Rangi's game (not staff) on Tama's page: no roster; and a GM who isn't staff gets none in his own
   const rangi = await page.evaluate((rid) => {
     const g = window.Lair.store.data.games.find((x) => x.id === rid);
@@ -401,28 +429,32 @@ for (const size of sizes) {
   check(`${tag} GM page (Tama): no script errors`, !page.errors.length, page.errors.slice(0, 5));
   await ctx.close();
 
-  /* ---------- the GM page logged out: no roster (the demo's owner is only the staff page's) ---------- */
+  /* ---------- the GM page logged out: no roster, and a free session with a seat kept for new players looks like any other ---------- */
   ctx = await context(browser, size);
   page = watch(await ctx.newPage());
   await go(page, BASE, '/pages/gm-games', null);
   await page.waitForSelector('gm-board', { state: 'attached', timeout: 20000 });
   await page.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
-  const outSeed = await seed(page);
+  const outSeed = await seed(page, { kept: 2, free: true });
   const loggedOut = await page.evaluate((gid) => {
     const g = window.Lair.store.data.games.find((x) => x.id === gid);
-    return { listed: Boolean(g), roster: g ? 'roster' in g : null };
+    return {
+      listed: Boolean(g), roster: g ? 'roster' in g : null, fields: g ? ['free', 'newSeats', 'newLeft'].filter((k) => k in g) : null,
+      seatPrice: g && g.seatPrice, taken: g && g.taken, status: g && g.status,
+    };
   }, outSeed.id);
-  check(`${tag} GM page logged out: the game's there with no roster`, loggedOut.listed && loggedOut.roster === false, loggedOut);
+  check(`${tag} GM page logged out: the game's there with no roster, its usual price though it's free, and the seat kept for new players taken (nothing says why)`,
+    loggedOut.listed && loggedOut.roster === false && loggedOut.fields.length === 0 && loggedOut.seatPrice === 1500 && loggedOut.taken === 4 && loggedOut.status === 'full', loggedOut);
   check(`${tag} GM page (logged out): no script errors`, !page.errors.length, page.errors.slice(0, 5));
   await ctx.close();
 
-  /* ---------- the GM page, for players: kept seats and a free session ---------- */
+  /* ---------- the GM page, for players: a seat kept for new players is just taken, and a free session looks like any other ---------- */
   ctx = await context(browser, size);
   page = watch(await ctx.newPage());
   await go(page, BASE, '/pages/gm-games', RUBY);
   await page.waitForSelector('gm-board', { state: 'attached', timeout: 20000 });
   await page.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
-  // 1 seat left, kept for new players; Ruby played last week
+  // the last seat is kept for new players
   const forRuby = await seed(page, { kept: 2 });
   await page.evaluate(async (gid) => {
     const board = document.querySelector('gm-board');
@@ -433,15 +465,13 @@ for (const size of sizes) {
   const ruby = await page.evaluate(() => {
     const f = (x) => String(x || '').replace(/\s+/g, ' ').trim();
     return {
-      note: f(document.querySelector('.gm-facts .gm-facts__seats')?.parentElement?.querySelector('.gm-facts__note')?.textContent),
-      foot: f(document.querySelector('[data-sheet-foot]')?.textContent),
+      seats: f(document.querySelector('.gm-facts .gm-facts__seats')?.textContent),
       join: Boolean(document.querySelector('[data-sheet-foot] [data-join]:not([data-every])')),
-      newPlayer: document.querySelector('gm-board').newPlayer,
     };
   });
-  check(`${tag} GM page: someone who's played before sees the last seat is kept for new players, with no Join`,
-    ruby.newPlayer === false && ruby.note === 'It’s kept for players new to our TTRPG sessions.'
-    && /The seats left are kept for players new to our TTRPG sessions/.test(ruby.foot) && !ruby.join, ruby);
+  ruby.words = await r18Words(page, '.gm-sheet');
+  check(`${tag} GM page: with its last seat kept for new players, the session's Full, with no Join and nothing about new players`,
+    ruby.seats === 'Full' && !ruby.join && !ruby.words, ruby);
   await shot(page, `${size}-gm-kept-ruby`, '.gm-sheet');
   check(`${tag} GM page (Ruby): no script errors`, !page.errors.length, page.errors.slice(0, 5));
   await ctx.close();
@@ -451,8 +481,8 @@ for (const size of sizes) {
   await go(page, BASE, '/pages/gm-games', NEWBIE);
   await page.waitForSelector('gm-board', { state: 'attached', timeout: 20000 });
   await page.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
-  const forNew = await seed(page, { kept: 2, free: true });
-  // the demo gives a logged-in customer example seats on its first visit each day: Lee's are taken away, so he's new
+  const forNew = await seed(page, { free: true });
+  // the demo gives a logged-in customer example seats on its first visit each day: Lee's are taken away
   await page.evaluate(async ([gid, lee]) => {
     const { store } = window.Lair;
     const be = store.backend;
@@ -472,14 +502,14 @@ for (const size of sizes) {
     return {
       price: f(card?.querySelector('.gm-card__price')?.textContent),
       badges: [...(card?.querySelectorAll('.gm-card__tags .badge') || [])].map((b) => f(b.textContent)),
-      note: f(document.querySelector('.gm-facts .gm-facts__seats')?.parentElement?.querySelector('.gm-facts__note')?.textContent),
-      fee: f([...document.querySelectorAll('.gm-facts li')].map((li) => li.textContent).find((x) => /Free|a seat/.test(x))),
+      fee: f([...document.querySelectorAll('.gm-facts li')].map((li) => li.textContent).find((x) => /a seat/.test(x))),
       join: f(document.querySelector('[data-sheet-foot] [data-join]:not([data-every])')?.textContent),
     };
   }, forNew.id);
-  check(`${tag} GM page: a free session's card says Free (price and badge) and 1 seat for new players; someone new sees the seat is kept for them, Free, and Join · free`,
-    lee.price === 'Free' && lee.badges.slice(0, 2).join('|') === 'Free|1 seat for new players'
-    && lee.note === '1 seat is kept for players new to our TTRPG sessions, like you.' && lee.fee === 'Free (nothing to pay for this session)' && lee.join === 'Join · free', lee);
+  lee.words = await r18Words(page, '.gm-sheet');
+  lee.cardWords = await r18Words(page, `.gm-grid [data-game="${forNew.id}"]`);
+  check(`${tag} GM page: a session staff made free looks like any other: $15 a seat on its card and details, Join · $15 a seat, never Free`,
+    lee.price === '$15 a seat' && !lee.badges.includes('Free') && /^\$15 a seat/.test(lee.fee) && lee.join === 'Join · $15 a seat' && !lee.words && !lee.cardWords, lee);
   await shot(page, `${size}-gm-free-detail`, '.gm-sheet');
   await page.click('[data-sheet-foot] [data-join]:not([data-every])');
   await page.waitForSelector('[data-join-form]', { timeout: 10000 });
@@ -489,16 +519,24 @@ for (const size of sizes) {
       legend: f(document.querySelector('.gm-seatfee legend')?.textContent),
       total: f(document.querySelector('[data-join-total]')?.textContent),
       button: f(document.querySelector('[data-join-submit]')?.textContent),
-      kept: f(document.querySelector('.gm-join__kept')?.textContent),
-      pass: Boolean(document.querySelector('[data-pass-pick], [data-use-pass]')),
     };
   });
-  check(`${tag} join form: a free session's fee says Free, Nothing to pay, Join · free, and the kept seat note`,
-    form.legend === 'Seat fee Free' && /^This session is free\s*Nothing to pay$/.test(form.total) && form.button === 'Join · free'
-    && form.kept === '1 seat is kept for players new to our TTRPG sessions, like you.' && !form.pass, form);
-  await shot(page, `${size}-gm-free-join`, '.gm-sheet');
+  form.words = await r18Words(page, '[data-join-form]');
+  check(`${tag} join form: a free session's fee is the usual one ($15), never Free`,
+    /\$15/.test(form.legend) && /\$15/.test(form.total) && /\$15/.test(form.button) && !form.words, form);
   await axe(page, `${tag} join form for a free session`, '.gm-sheet');
   check(`${tag} join form: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
+  // joined: it costs them nothing, and the confirmation says so
+  await page.fill('[data-session-join] [name="phone"]', '021 555 0102');
+  await page.click('[data-join-submit]');
+  await page.waitForSelector('gm-board .gm-done', { timeout: 10000 }).catch(() => {});
+  const joined = await page.evaluate(() => ({
+    text: String(document.querySelector('gm-board [data-sheet][open]')?.textContent || '').replace(/\s+/g, ' ').trim(),
+    amount: (window.Lair.store.backend.state.bookings || []).filter((b) => b.gameId === 'gm-r18-tama' && b.name === 'Lee Brown').map((b) => b.amount),
+  }));
+  check(`${tag} join form: joined, the seat costs nothing ($0 on their tab) and the confirmation says Nothing to pay`,
+    /You’re in/.test(joined.text) && /Nothing to pay/.test(joined.text) && JSON.stringify(joined.amount) === '[0]', { amount: joined.amount, text: joined.text.slice(0, 500) });
+  await shot(page, `${size}-gm-free-joined`, '.gm-sheet');
   check(`${tag} GM page (Lee): no script errors`, !page.errors.length, page.errors.slice(0, 5));
   await ctx.close();
 
