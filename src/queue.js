@@ -508,6 +508,9 @@ export const queueMethods = {
     const row = this.sql.exec("SELECT * FROM library_queue WHERE hold_id = ? AND status = 'held'", hold.id).toArray()[0] || null;
     // an uncollected hold the queue made stalls it, even when they took the game off their queue meanwhile
     if (how === 'expired' && (row || hold.createdBy === 'queue')) {
+      // (but not one whose game went home with them anyway, borrowed with a scan or at the counter just as the hold ran
+      // out, before maintenance got to it: that was collected, so nothing stalls and they aren't told it wasn't)
+      if (!row && this.loansOut(hold.customerId).some((l) => String(l.variantId) === String(hold.variantId))) return true;
       if (row) this.write("UPDATE library_queue SET status = 'queued', updated_at = ? WHERE id = ?", now, row.id);
       this.queueStall(hold.customerId, 'missed', now);
       this.tellQueuePaused(hold, 'missed');

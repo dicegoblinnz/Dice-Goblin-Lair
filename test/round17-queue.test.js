@@ -448,6 +448,31 @@ test('round 17 queue: in the Lair, an uncollected hold stalls the queue: the gam
   assert.deepEqual([again.data.ok, again.data.settings.stalled, again.data.queue.map((x) => [x.productId, x.status])], [true, false, [[AZUL, 'held'], [ROOT, 'queued']]]);
 });
 
+test('round 17 queue (review): a queue hold that ran out just as the game went home with her anyway (at the counter, before maintenance) doesn\'t stall the queue or say it wasn\'t collected', async () => {
+  // Kiri's queue holds Azul until midnight Sunday; staff check it out to her at the counter at 12:03am, and maintenance runs at 12:10am
+  await add(AZUL, KIRI);
+  await add(ROOT, KIRI);
+  const hold = holdsOf(KIRI)[0];
+  setNow(at('2026-10-19', 0, 3));
+  const g = FIXTURES[AZUL];
+  const out = await call('POST', 'library/loans', { customerId: KIRI, variantId: g.variantId, title: g.title, shelfCode: g.shelfCode, handle: g.handle }, 'staff');
+  assert.equal(out.status, 200, said(out));
+  setNow(at('2026-10-19', 0, 10));
+  mail.sent.length = 0;
+  await maintenance();
+  await settle();
+  assert.equal(lair.holdRow(hold.id).status, 'expired');
+  assert.deepEqual([lair.queueSettings(KIRI).stalled, rows(KIRI).map((r) => [r.product_id, r.status])], [false, [[AZUL, 'done'], [ROOT, 'queued']]]);
+  assert.deepEqual(mail.subjects('kiri@example.com'), [], 'no "Your queue is paused", no "Your hold ended"');
+  // a queue hold that really wasn't collected still stalls it (the test above has the rest)
+  setNow(at('2026-10-19', 9));
+  await call('POST', `library/loans/${out.data.loan.id}/return`, {}, 'staff');
+  assert.deepEqual(holdsOf(KIRI).map((h) => h.title), ['Root']);
+  setNow(at('2026-10-22', 9));
+  await maintenance();
+  assert.deepEqual([lair.queueSettings(KIRI).stalled, lair.queueSettings(KIRI).stalledReason], [true, 'missed']);
+});
+
 test('round 17 queue: any change to the queue, a reserve or a borrow starts a stalled queue again; pausing never holds anything', async () => {
   const stall = async (who) => {
     lair.saveQueueSettings(who, { stalled: true, stalledReason: 'missed', stalledAt: clock }, clock);
