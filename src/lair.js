@@ -1308,6 +1308,54 @@ export class Lair {
   }
 
   /**
+   * 17 Oct 2026 (Mo: "make it that all gms can see their players across the site"): heldIn's regulars one by one, for
+   * each series session in a state's window that hasn't started, by game id, first to join first (rollSeries's order):
+   * { customer_id, name, email, people, players }. Worked out once per state. No awaits.
+   */
+  waitingIn(st) {
+    if (!st.waiting) {
+      const rows = this.sql.exec(
+        `SELECT g.id AS game_id, m.customer_id, m.name, m.email, m.people, m.players FROM games g
+           JOIN series s ON s.id = g.series_id AND s.status = 'active'
+           JOIN series_members m ON m.series_id = g.series_id AND m.status = 'active'
+         WHERE g.series_id IS NOT NULL AND g.status != 'cancelled' AND g.ends_at > ? AND g.starts_at < ? AND g.starts_at > ?
+           AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.game_id = g.id AND b.kind = 'gm-seat' AND b.customer_id = m.customer_id)
+         ORDER BY g.id, m.created_at, m.customer_id`,
+        st.from ?? 0, st.to ?? Number.MAX_SAFE_INTEGER, Date.now(),
+      ).toArray();
+      st.waiting = new Map();
+      for (const r of rows) {
+        if (!st.waiting.has(r.game_id)) st.waiting.set(r.game_id, []);
+        st.waiting.get(r.game_id).push(r);
+      }
+    }
+    return st.waiting;
+  }
+
+  /**
+   * The regulars a session saves seats for that aren't booked into it yet. Regulars are booked into a series' next
+   * session only, and roll forward as sessions end (rollSeries), so every session after it holds their seats (heldIn,
+   * counted in taken) with nobody booked, and its GM saw "3 of 6 seats taken" over "No players yet". These are the ones
+   * maintenance will seat there, in its order: first to join first, each while their seats fit in the seats that aren't
+   * booked or kept for new players (one who doesn't fit keeps nothing from the next). A regular skipping it (a seat
+   * there they cancelled) isn't one. game: a session in st. No awaits.
+   */
+  savedRegulars(st, game) {
+    const waiting = game ? this.waitingIn(st).get(game.id) : null;
+    if (!waiting?.length) return [];
+    // the board's taken with nothing held for regulars: the seats booked, and those kept for new players still open
+    let room = Math.max(0, game.seats - publicGame(game, st, null, 0).taken);
+    const saved = [];
+    for (const m of waiting) {
+      const people = Math.max(1, Number(m.people) || 1);
+      if (people > room) continue;
+      room -= people;
+      saved.push(m);
+    }
+    return saved;
+  }
+
+  /**
    * Seats held at one session for its series' regulars with no booking there yet (as heldIn; nothing once it has
    * started, since nobody is seated in a session under way, or once it's cancelled): what anyone who isn't a regular
    * there has to leave free. except: a customer whose own hold doesn't count (they're the one booking). No awaits.
@@ -1353,6 +1401,9 @@ export class Lair {
    * Who's in a game's seats (for its GM and for staff). Round 7: each player says whether the seat is on an account
    * (member) and whether it's a weekly regular's (regular), and the first player of a seat on an account brings that
    * account's pronouns, favourite games and about me from their player profile. Never a mobile, email or birthday.
+   * 17 Oct 2026: then the regulars whose seats it saves but hasn't booked yet (savedRegulars), saved: true (no ref, and
+   * nothing paid: their seat is booked, on their tab, once the session before ends), so a GM sees who's coming to every
+   * session, not only the next one.
    */
   gamePlayers(st, gameId) {
     const profiles = new Map();
@@ -1363,7 +1414,7 @@ export class Lair {
       }
       return profiles.get(customerId);
     };
-    return st.bookings
+    const booked = st.bookings
       .filter((b) => b.gameId === gameId && b.kind === 'gm-seat' && ACTIVE.has(b.status))
       .flatMap((b) => {
         const party = b.party?.length ? b.party : [{ name: b.name, character: '' }];
@@ -1372,6 +1423,14 @@ export class Lair {
           member: Boolean(b.customerId), regular: Boolean(b.seriesId), ...(i === 0 && b.customerId ? profileOf(b.customerId) : {}),
         }));
       });
+    const saved = this.savedRegulars(st, st.games.find((g) => g.id === gameId)).flatMap((m) => {
+      const party = parse(m.players, []);
+      return (party.length ? party : [{ name: m.name, character: '' }]).map((p, i) => ({
+        name: p.name || m.name || 'A regular', character: p.character || '', ref: null, paid: false, arrived: false, member: true, regular: true, saved: true,
+        ...(i === 0 ? profileOf(m.customer_id) : {}),
+      }));
+    });
+    return [...booked, ...saved];
   }
 
   /** Everything that touches the window [from, to) */
@@ -2138,6 +2197,12 @@ export class Lair {
     // Round 9, play: who's interested in sessions and maybe (or coming) to event dates: counts for everyone, names for
     // staff and a session's own GM only
     const interest = this.interestsIn(from, to);
+    // 17 Oct 2026: the series this customer runs now (runsSeries): the website shows them every session of it as their
+    // game, so they see its players there too, a session someone else runs included (one staff gave Dan only from the
+    // session after the series' next one said "3 of 6 seats taken" over "No players yet" on his board)
+    const mySeries = who.customerId && !staffView
+      ? new Set(this.sql.exec('SELECT id FROM series WHERE gm_customer_id = ?', String(who.customerId)).toArray().map((r) => r.id))
+      : new Set();
     return {
       now,
       bookings: st.bookings.filter((bk) => staffView || ACTIVE.has(bk.status)).map(view),
@@ -2146,7 +2211,7 @@ export class Lair {
       eventHolds: holds,
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info, { staff: staffView });
-        if (staffView || (who.customerId && g.gmCustomerId === who.customerId)) game.players = this.gamePlayers(st, g.id);
+        if (staffView || (who.customerId && g.gmCustomerId === who.customerId) || (g.seriesId && mySeries.has(g.seriesId))) game.players = this.gamePlayers(st, g.id);
         // Round 18: for whoever can run this game (staff with GM games, or its own GM when they're on the team), its seats
         // one booking each, to remove one or see who's new (gameRoster)
         if (this.canRunGame(who, g)) game.roster = this.gameRoster(st, g);
@@ -3846,14 +3911,28 @@ export class Lair {
     const active = "status IN ('held', 'confirmed', 'seated')";
     // Round 18: a series can have more than one GM: one who isn't its GM now messages the players of their own sessions
     const wholeSeries = scope === 'series' && this.runsSeries(who, game.seriesId);
+    // 17 Oct 2026: and the regulars whose seats those sessions save but haven't booked yet (savedRegulars), so a message
+    // about a session after the next one reaches everyone coming to it
+    const savedAt = (sessions) => {
+      const live = sessions.filter((s) => s.status !== 'cancelled' && s.start > now);
+      if (!live.length) return [];
+      const st = this.state(Math.min(...live.map((s) => s.start)) - 1, Math.max(...live.map((s) => s.end)) + 1);
+      return live.flatMap((s) => this.savedRegulars(st, st.games.find((g) => g.id === s.id))).map((m) => ({ name: m.name, email: m.email }));
+    };
     const people = scope === 'series'
       ? [
         ...(wholeSeries ? this.sql.exec("SELECT name, email FROM series_members WHERE series_id = ? AND status = 'active'", game.seriesId).toArray() : []),
         ...(wholeSeries
           ? this.sql.exec(`SELECT b.name, b.email FROM bookings b JOIN games g ON g.id = b.game_id WHERE g.series_id = ? AND b.kind = 'gm-seat' AND b.${active} AND b.ends_at > ?`, game.seriesId, now).toArray()
-          : this.sql.exec(`SELECT b.name, b.email FROM bookings b JOIN games g ON g.id = b.game_id WHERE g.series_id = ? AND g.gm_customer_id = ? AND b.kind = 'gm-seat' AND b.${active} AND b.ends_at > ?`, game.seriesId, String(who.customerId || ''), now).toArray()),
+          : [
+            ...this.sql.exec(`SELECT b.name, b.email FROM bookings b JOIN games g ON g.id = b.game_id WHERE g.series_id = ? AND g.gm_customer_id = ? AND b.kind = 'gm-seat' AND b.${active} AND b.ends_at > ?`, game.seriesId, String(who.customerId || ''), now).toArray(),
+            ...savedAt(this.sql.exec('SELECT * FROM games WHERE series_id = ? AND gm_customer_id = ? AND ends_at > ?', game.seriesId, String(who.customerId || ''), now).toArray().map((r) => this.rowToGame(r))),
+          ]),
       ]
-      : this.sql.exec(`SELECT name, email FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND ${active}`, game.id).toArray();
+      : [
+        ...this.sql.exec(`SELECT name, email FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND ${active}`, game.id).toArray(),
+        ...savedAt([game]),
+      ];
     const recipients = new Map();
     for (const p of people) if (isEmail(p.email) && !recipients.has(p.email.trim().toLowerCase())) recipients.set(p.email.trim().toLowerCase(), p);
     if (!recipients.size) return { sent: 0 };
