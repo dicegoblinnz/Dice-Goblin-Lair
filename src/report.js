@@ -60,7 +60,8 @@ export const REPORT_TABLES = [
   'CREATE INDEX IF NOT EXISTS bookings_paid_unstamped ON bookings (id) WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)',
   'CREATE INDEX IF NOT EXISTS event_joins_paid_unstamped ON event_joins (id) WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)',
   'CREATE INDEX IF NOT EXISTS members_seen_unstamped ON members (customer_id) WHERE first_seen IS NULL AND last_seen IS NOT NULL',
-  'CREATE INDEX IF NOT EXISTS members_first_seen ON members (first_seen)',
+  // only stamped rows (so the stamp's own lookup of unstamped rows never wanders through it)
+  'CREATE INDEX IF NOT EXISTS members_first_seen ON members (first_seen) WHERE first_seen IS NOT NULL',
 ];
 /**
  * bookings.added_by: who on the team made it for someone (staff:<customer id>, or staff); empty when it was made online.
@@ -353,12 +354,14 @@ export const reportMethods = {
    * those rows, so these are lookups in nearly empty indexes. Doesn't touch the floor's cache (nothing it reads changes).
    */
   stampWrites(query, now = Date.now()) {
-    if (/\bmembers\b/i.test(query)) {
-      this.sql.exec('UPDATE members SET first_seen = last_seen WHERE first_seen IS NULL AND last_seen IS NOT NULL');
-      return;
+    // by the table written, not any table the query happens to mention
+    if (/\b(?:INTO|UPDATE)\s+(?:bookings|event_joins)\b/i.test(query)) {
+      this.sql.exec('UPDATE bookings SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
+      this.sql.exec('UPDATE event_joins SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
     }
-    this.sql.exec('UPDATE bookings SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
-    this.sql.exec('UPDATE event_joins SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
+    if (/\b(?:INTO|UPDATE)\s+members\b/i.test(query)) {
+      this.sql.exec('UPDATE members SET first_seen = last_seen WHERE first_seen IS NULL AND last_seen IS NOT NULL');
+    }
   },
 
   /**
