@@ -56,6 +56,8 @@ import { GM_SESSION_WORDS, gmSessionMethods, seatPriceOf } from './gm-sessions.j
 import { CASH_STAFF, CASH_TABLES, cashMethods } from './cash.js';
 // 17 Oct 2026: private games, invite only (src/private-games.js)
 import { PRIVATE_COLUMNS, PRIVATE_INDEXES, privacyOf, privateMethods } from './private-games.js';
+// Round 19 (24 Oct 2026): the weekly numbers and the website's booking steps (src/report.js)
+import { REPORT_COLUMNS, REPORT_TABLES, reportMethods } from './report.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -988,7 +990,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1018,6 +1020,8 @@ export class Lair {
     for (const statement of CASH_TABLES) this.sql.exec(statement);
     // 17 Oct 2026: private games' invite links are looked up by key (the columns are made with ROUND18_COLUMNS')
     for (const statement of PRIVATE_INDEXES) this.sql.exec(statement);
+    // Round 19: the website's booking steps, and the indexes the weekly numbers read by (made when missing)
+    for (const statement of REPORT_TABLES) this.sql.exec(statement);
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
     if (!this.sql.exec("SELECT value FROM meta WHERE key = 'kept-seats-staff'").toArray().length) {
@@ -1761,13 +1765,19 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
       // Public, like the calendar page: calendar apps fetch it with nobody signed in, so nobody is looked up.
       if (['GET', 'HEAD'].includes(request.method) && a === 'feeds' && b && !c) return this.eventFeed(b);
+      // Round 19: a step of a booking flow on the website, counted anonymously (src/report.js). Before anyone is looked up,
+      // so who's logged in is never read: only the day, the flow and the step are kept.
+      if (request.method === 'POST' && a === 'steps' && !b && !c) {
+        const input = await request.json().catch(() => ({}));
+        return json(this.countStep(input, request.headers.get('X-Lair-Client') || ''));
+      }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
@@ -1798,6 +1808,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'events' && !b) return json(await this.listEvents(who));
       // Round 9 (community): turnouts by game, saved lists, early access offers and the product search for them
       if (request.method === 'GET' && a === 'community' && !b) return json(await this.communityStats(url, who));
+      // Round 19: the weekly numbers (src/report.js)
+      if (request.method === 'GET' && a === 'report' && !b) return json(await this.weeklyNumbers(url, who));
       if (request.method === 'GET' && a === 'community' && b === 'lists' && !c) return json(this.communityLists(who));
       if (request.method === 'GET' && a === 'offers' && !b) return json(this.listOffers(who));
       if (request.method === 'GET' && a === 'offers' && b && !c) return json(this.offerDetail(decodeURIComponent(b), who));
@@ -2320,6 +2332,8 @@ export class Lair {
       split: kind === 'table' && input.split === true,
     });
     this.saveBooking(booking, now);
+    // Round 19: what staff make for someone is counted apart from bookings made online (the weekly numbers)
+    if (override) this.write('UPDATE bookings SET added_by = ? WHERE id = ?', who.customerId ? `staff:${who.customerId}` : 'staff', id);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email, mobile: booking.phone }, now);
     if (tableGame) booking.game = this.setBookingGame(booking.id, tableGame, now).game;
     // --- saved: the table is ours ---
@@ -3429,6 +3443,8 @@ export class Lair {
       phone: trimmed(input.phone, 40).replace(/\s+/g, ' ').slice(0, 20) || null, seriesId: regular ? game.seriesId : null,
     };
     this.saveBooking(seat, now);
+    // Round 19: a seat staff added is counted apart from seats booked online (the weekly numbers)
+    this.write('UPDATE bookings SET added_by = ? WHERE id = ?', who.customerId ? `staff:${who.customerId}` : 'staff', seat.id);
     // Round 18: someone new to the Lair's TTRPG sessions that staff with GM games add fills a seat kept for new players:
     // staff say so (newPlayer: true), or their account or email has never had a seat at a session that started
     const newPlayer = desk && (input.newPlayer === true || ((customerId || email) ? this.isNewPlayer(customerId, email, now) : false));
@@ -9970,6 +9986,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: birthday summary failed', error);
     }
+    // Round 19: the weekly numbers, emailed to the team from Monday morning, once a week (src/report.js)
+    try {
+      const report = this.weeklyReportMail(rules, Date.now());
+      if (report) result.weeklyReport = report;
+    } catch (error) {
+      console.error('Lair: weekly numbers email failed', error);
+    }
     // Round 17 (src/queue.js), each step on its own: games on table bookings held from 3 days before (or let go)
     try {
       const tables = this.bookingHoldUpkeep(Date.now());
@@ -10115,3 +10138,5 @@ Object.assign(Lair.prototype, gmSessionMethods);
 Object.assign(Lair.prototype, cashMethods);
 // 17 Oct 2026: private games, invite only (src/private-games.js)
 Object.assign(Lair.prototype, privateMethods);
+// Round 19 (24 Oct 2026): the weekly numbers and the website's booking steps (src/report.js)
+Object.assign(Lair.prototype, reportMethods);

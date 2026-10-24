@@ -21,6 +21,8 @@ export const CONFIG_KEYS = [
   'PICK_AI', 'PICK_AI_MODEL',
   // Round 17: postal library swaps' postage by area, in cents (JSON); the website's rates when it isn't set
   'LIBRARY_POSTAGE',
+  // Round 19: where the weekly numbers go on Monday morning (an email address), 'off' for nowhere; STAFF_EMAIL when unset
+  'REPORT_EMAIL',
 ];
 const TTL = 60_000;
 let cache = null;
