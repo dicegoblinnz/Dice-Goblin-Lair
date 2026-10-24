@@ -4,7 +4,7 @@
 shown in Lair time (Pacific/Auckland). Backend: `src/report.js` (the numbers, the steps, the Monday email), `src/lair.js`
 (routes, maintenance, `bookings.added_by`) and `src/config.js` (`REPORT_EMAIL`). Theme: the step beacons in
 `assets/lair-core.js` and the booking scripts, built on the theme's `website-lab` branch first. Tests:
-`test/round19-report.test.js`.
+`test/round19-report.test.js`; browser checks: `tools/qa/round19/steps.mjs` (the theme's `website-lab` branch on the mock).
 
 From the website lab's brief ("Dice Goblin website lab: brief and handoff", 24 Oct 2026): engagement at Dice Goblin is
 people coming to the Lair and coming back, and every change to the website is judged against it. Mo picked: count a visit
