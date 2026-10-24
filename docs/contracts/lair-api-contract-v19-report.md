@@ -15,12 +15,15 @@ bookings started and finished ("Yes, build both"). Nothing goes live without his
 
 ### 1.1 A visit
 
-- A table booking, walk-in or TTRPG seat that was checked in (`seated` or `done`) or paid (in full, in part, or by a
-  session pass), or an event sign-up that was checked in (`attended`) or paid.
+- A table booking, walk-in or TTRPG seat that was checked in (`seated` or `done`), or an event sign-up that was checked
+  in (`attended`), or either of them **paid on the day**: first paid, in full or in part, between 12 hours before the
+  session starts and 12 hours after it ends.
 - Cancelled ones, no-shows and unpaid online holds never count.
 - A visit belongs to the week its session starts in. Weeks run Monday to Sunday at the Lair, across daylight saving.
-- Loyalty stamps alone would miss anyone staff took payment from without scanning, which is why "or paid" counts and the
-  check-in rate shows beside the numbers.
+- Loyalty stamps alone would miss anyone staff took payment from without scanning, which is why a payment counts and the
+  check-in rate shows beside the numbers. It has to be on the day, because a seat nobody came to becomes owed and is paid
+  at a later visit (round 15), and a sign-up paid online days ahead says nothing about who came (found in review, 24 Oct).
+- When something was first paid is `paid_at` (3).
 
 ### 1.2 Regulars (the one number)
 
@@ -37,22 +40,27 @@ bookings started and finished ("Yes, build both"). Nothing goes live without his
 | `visits` | everyone on the visits, friends without an account included |
 | `checkIns` | `checkedIn`, `paidOnly` (paid, never scanned), `notRecorded` (neither, and not a no-show) and `rate` (checked in, as a % of the three; `null` with none) |
 | `noShows` | bookings marked as a no-show |
-| `bookingsMade` | bookings and sign-ups by the week they were made: `online`, `staff` (a walk-in, a staff-page booking, a seat staff added, a sign-up staff added) or `saved` (a weekly regular's seat Gobgob saved) |
-| `newMembers` | people new to the Lair app (their first booking, sign-up or My Lair visit) |
-| `ttrpg` | sessions that weren't cancelled: `sessions`, `seats` on offer, seats `taken` (booked seats plus players the GM brought, up to the seats) |
+| `bookingsMade` | bookings and sign-ups by the week they were made: `online`, `staff` (a walk-in, a staff-page booking, a seat staff added, a sign-up staff added, an event walk-in staff checked in) or `saved` (a weekly regular's seat Gobgob saved) |
+| `newMembers` | people new to the Lair app who've used it themselves (`last_seen` set), by when they were first seen; rows staff made for someone wait until that person uses it |
+| `ttrpg` | sessions that ran (not cancelled or waiting for approval): `sessions`, `seats` on offer, seats `taken` (booked seats plus players the GM brought, up to the seats) |
 | `library` | `loansOut`: library games that went out |
-| `steps` | the website's booking steps (1.4): `table`, `ttrpg`, `event`, each `{ start, login, done }` |
+| `steps` | the website's booking steps (1.4): `table`, `ttrpg`, `event`, each `{ start, login, done, 'login-done' }` |
 
-The report's `library.memberships` is the Lair library memberships that still borrow now (`active`, `cancelling`,
-`ending`, `past_due`), not by week. Simplee members aren't in it.
+The report's `library.memberships` is the library members now, as `currentMembership` counts them (active, waiting on a
+payment, or cancelled but inside the month they paid for), each person once; not by week. Simplee members aren't in it.
 
 ### 1.4 Steps
 
-- The website sends one when someone starts a booking (`start`), is asked to log in on the way (`login`, TTRPG seats
-  only for now), and finishes it (`done`). Flows: `table`, `ttrpg` (a seat at a session), `event` (a sign-up or a game
-  table at an event).
-- Counted per day at the Lair. Nothing about who: no customer, browser or address is stored, and the route reads none of
-  them (it runs before anyone is looked up).
+- The website sends `start` when a booking form opens, `login` when it opens for someone logged out (TTRPG seats ask
+  them to log in first; tables and event sign-ups don't ask, so they never send it), `done` when the booking's made, and
+  `login-done` with a done whose try had a login. `login` minus `login-done` is who gave up after being asked to log in.
+  Flows: `table`, `ttrpg` (a seat at a session), `event` (a sign-up or a game table at an event).
+- A start or a login counts once a try. A try lasts 30 minutes in that browser tab, or until its booking's done, so
+  coming back from logging in or picking another table isn't a second start, and an abandoned try doesn't hide the next
+  one. The tab keeps only that a try is open and when it began.
+- Counted per day at the Lair. Nothing about who: no customer, browser or address is stored, the route reads none of
+  them (it runs before anyone is looked up), and the page sends steps without the shop's cookies, so the app proxy can't
+  add who's logged in to the request either.
 - Anything else sent is ignored. One browser (by address, held in memory only) counts at most 30 steps in 10 minutes;
   more are dropped. The answer is always `{ ok: true, counted }`, so a page never waits on it or shows an error.
 - Demo mode never sends them.
@@ -61,9 +69,12 @@ The report's `library.memberships` is the Lair library memberships that still bo
 
 - From Monday 8am at the Lair (or the first maintenance run after, if the app missed Monday), once a week: last week
   next to the week before, with a button to the staff page.
-- To `STAFF_EMAIL`, or to `REPORT_EMAIL` when that's an address; `REPORT_EMAIL` = `off` stops it.
-- The first run after this goes live only notes the week. The first email is the first whole week of counting, the
-  baseline every later week is compared with (staff bookings and steps are only counted from then).
+- To `STAFF_EMAIL`, or to `REPORT_EMAIL` when that's one email address; `REPORT_EMAIL` = `off` stops it. Anything else
+  there (a typo, two addresses) sends nothing and says so in the maintenance result, rather than going to `STAFF_EMAIL`.
+- The first run after this goes live only notes a week: this week, or last week when it's a Monday from 8am. So the first
+  email is the first whole week of counting, the baseline every later week is compared with (staff bookings and steps
+  are only counted from then).
+- The email is made before the week is noted as sent, so a failure leaves it to the next run.
 - Under 80% of sessions checked in, it says the count may be short and asks staff to scan everyone.
 
 ## 2. Routes
@@ -80,6 +91,11 @@ The report's `library.memberships` is the Lair library memberships that still bo
   made online. Set on walk-ins, staff-page bookings (`staffOverride`) and seats staff add. Made when the Lair starts.
   Older staff-added seats are still told apart by their "Added by staff" note; older staff-page table bookings count as
   online.
+- `bookings.paid_at` and `event_joins.paid_at`: when it was first paid, in full or in part. The Lair's one write path
+  (`write`) stamps it after every write to those tables, so every way of paying is covered (Shopify orders, the tab, cash,
+  passes, staff ticking it paid), and later changes never move it. Partial indexes hold only paid rows not yet stamped,
+  so it costs two lookups in nearly empty indexes. On every start, rows paid before this existed get their first Shopify
+  payment's time (`payments.at`), else their last change.
 - Indexes `bookings_created` and `event_joins_created`, for the weeks things were made.
 - `meta` key `weekly-report`: the Monday of the last week emailed.
 - Config `REPORT_EMAIL` (optional): an address, or `off`.
@@ -88,5 +104,7 @@ The report's `library.memberships` is the Lair library memberships that still bo
 
 1. The Lair app first (a push to `main` deploys it), with Mo's yes. The route for steps exists before any page sends them.
 2. Then the theme's step beacons: built and checked on `website-lab` (demo mode sends nothing), copied to the preview
-   (`dice-goblin-2-theme`) and checked on real data, then live (`r17-theme`), each with Mo's yes.
+   (`dice-goblin-2-theme`) and checked on real data, then live (`r17-theme`), each with Mo's yes. Copy only the step
+   files (`lair-core.js`, `lair-play.js`, `lair-booking.js`, `lair-join.js`, `lair-calendar.js`), never the lab's
+   `config/settings_data.json`. On the preview, check a step answers `counted: true` with the cookies left off.
 3. The Monday after the first whole week, the first email arrives.

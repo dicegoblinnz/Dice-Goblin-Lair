@@ -79,29 +79,32 @@ let seq = 0;
 /** A booking on a day ('YYYY-MM-DD') at an hour; made LONG_AGO unless `made` says when */
 function booking({
   customer = null, day, hour = 18, people = 1, status = 'confirmed', kind = 'table', paid = 0, paidAmount = 0, covered = 0,
-  made = LONG_AGO, gameId = null, notes = null, gobSaved = 0, addedBy = null,
+  made = LONG_AGO, gameId = null, notes = null, gobSaved = 0, addedBy = null, paidAt,
 }) {
   seq += 1;
   const id = `bk_t${seq}`;
+  // paid at the counter on the day (an hour in) unless the test says when
+  const when = paidAt !== undefined ? paidAt : paid || paidAmount ? at(day, hour + 1) : null;
   lair.sql.exec(
     `INSERT INTO bookings (id, ref, kind, status, tables, starts_at, ends_at, people, name, paid, paid_amount, covered, game_id, customer_id,
-       notes, created_at, updated_at)
-     VALUES (?, ?, ?, ?, '["T1"]', ?, ?, ?, 'Someone', ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id, `REF-${seq}`, kind, status, at(day, hour), at(day, hour + 2), people, paid, paidAmount, covered, gameId, customer, notes, made, made,
+       notes, created_at, updated_at, paid_at)
+     VALUES (?, ?, ?, ?, '["T1"]', ?, ?, ?, 'Someone', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id, `REF-${seq}`, kind, status, at(day, hour), at(day, hour + 2), people, paid, paidAmount, covered, gameId, customer, notes, made, made, when,
   );
   if (gobSaved) lair.sql.exec('UPDATE bookings SET gob_saved = 1 WHERE id = ?', id);
   if (addedBy) lair.sql.exec('UPDATE bookings SET added_by = ? WHERE id = ?', addedBy, id);
   return id;
 }
 /** An event sign-up */
-function signUp({ customer = null, day, hour = 18, people = 1, status = 'confirmed', paid = 0, made = LONG_AGO, addedBy = null }) {
+function signUp({ customer = null, day, hour = 18, people = 1, status = 'confirmed', paid = 0, made = LONG_AGO, addedBy = null, source = null, paidAt }) {
   seq += 1;
   const id = `ej_t${seq}`;
+  const when = paidAt !== undefined ? paidAt : paid ? at(day, hour + 1) : null;
   lair.sql.exec(
     `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, status, customer_id, pay, paid, amount,
-       created_at, updated_at, added_by)
-     VALUES (?, ?, ?, 'pokemon-night', 'Pokémon night', ?, ?, ?, 'Someone', ?, ?, 'day', ?, 0, ?, ?, ?)`,
-    id, `JOIN-${seq}`, `pokemon-night:${day}`, at(day, hour), at(day, hour + 3), people, status, customer, paid, made, made, addedBy,
+       created_at, updated_at, added_by, source, paid_at)
+     VALUES (?, ?, ?, 'pokemon-night', 'Pokémon night', ?, ?, ?, 'Someone', ?, ?, 'day', ?, 0, ?, ?, ?, ?, ?)`,
+    id, `JOIN-${seq}`, `pokemon-night:${day}`, at(day, hour), at(day, hour + 3), people, status, customer, paid, made, made, addedBy, source, when,
   );
   return id;
 }
@@ -180,10 +183,10 @@ test('weekly numbers (round 19): staff with Community and the main account see t
   assert.equal(ok(await call('GET', 'report?weeks=99', null, OWNER)).weeks.length, REPORT_WEEKS_MAX + 1, 'at most 26 whole weeks');
   assert.equal(ok(await call('GET', 'report?weeks=0', null, OWNER)).weeks.length, 9, 'nonsense gets the default');
   assert.equal(aroha.tz, TZ);
-  assert.match(aroha.words.visit, /checked in or paid/);
+  assert.match(aroha.words.visit, /checked in, or paid on the day/);
 });
 
-test('regulars (round 19): visits in 2 different weeks of the last 4, checked in or paid; cancellations, no-shows and same-week repeats don\'t make one', async () => {
+test('regulars (round 19): visits in 2 different weeks of the last 4, checked in or paid on the day; paid later or ahead, cancellations, no-shows and same-week repeats don\'t make one', async () => {
   // Mia: checked in on a table in W1 and W3, and an event sign-up checked in in W2 (her guest Noa has an account)
   booking({ customer: MIA, day: '2026-10-20', status: 'done', people: 3 });
   booking({ customer: MIA, day: '2026-10-08', status: 'seated' });
@@ -203,10 +206,14 @@ test('regulars (round 19): visits in 2 different weeks of the last 4, checked in
   signUp({ customer: ZOE, day: '2026-10-25', hour: 14, status: 'attended' });
   // Noa: her own table checked in in W4 (and Mia's guest in W2)
   booking({ customer: NOA, day: '2026-09-30', status: 'done' });
-  // never visits: a paid hold that lapsed, a booking nobody came to, a cancelled sign-up
+  // never visits: a paid hold that lapsed, a booking nobody came to, a cancelled sign-up, a seat nobody came to that was
+  // paid at a later visit (round 15's owed seats), and a sign-up paid online days ahead that nobody scanned. Counted,
+  // any of these would make Leo a regular in W0 and W1.
   booking({ customer: LEO, day: '2026-10-09', status: 'held', paid: 1 });
   booking({ customer: LEO, day: '2026-10-10' });
   signUp({ customer: LEO, day: '2026-10-11', status: 'cancelled', paid: 1 });
+  booking({ customer: LEO, day: '2026-10-06', kind: 'gm-seat', paid: 1, paidAt: at('2026-10-17', 15) });
+  signUp({ customer: LEO, day: '2026-10-07', paid: 1, paidAt: at('2026-10-02', 9) });
 
   const data = await report(6);
   // W0 (so far) looks back on W0–W3: Mia (W1, W2, W3), Kai (W1, W2), Zoe (W1, W2). Noa's W2 alone doesn't count.
@@ -236,8 +243,10 @@ test('check-ins (round 19): the rate is checked in out of everything that should
   booking({ day: '2026-10-24', hour: 11 });
   booking({ customer: NOA, day: '2026-10-25', hour: 12, status: 'noshow' });
   booking({ customer: NOA, day: '2026-10-19', status: 'cancelled' });
+  // nobody came; it was paid 4 days later (owed): not recorded on the day
+  booking({ customer: LEO, day: '2026-10-21', hour: 12, paid: 1, paidAt: at('2026-10-25', 18) });
   const w1 = week(await report(2), W1);
-  assert.deepEqual(w1.checkIns, { checkedIn: 3, paidOnly: 2, notRecorded: 1, rate: 50 });
+  assert.deepEqual(w1.checkIns, { checkedIn: 3, paidOnly: 2, notRecorded: 2, rate: 43 });
   assert.equal(w1.noShows, 1);
 });
 
@@ -249,11 +258,12 @@ test('bookings made (round 19): online, by staff for someone, or saved by Gobgob
   booking({ day: '2026-10-23', kind: 'gm-seat', notes: 'Added by staff', made });
   booking({ day: '2026-10-24', addedBy: `staff:${OWNER}`, made });
   signUp({ day: '2026-10-25', addedBy: `staff:${HEMI}`, made });
+  signUp({ day: '2026-10-25', hour: 11, source: 'walk-in', status: 'attended', made });
   booking({ customer: LEO, day: '2026-10-28', kind: 'gm-seat', gobSaved: 1, made });
   // made the week before: not this week's
   booking({ customer: ZOE, day: '2026-10-22', made: at('2026-10-17', 10) });
   const data = await report(2);
-  assert.deepEqual(week(data, W1).bookingsMade, { online: 2, staff: 4, saved: 1 });
+  assert.deepEqual(week(data, W1).bookingsMade, { online: 2, staff: 5, saved: 1 });
   assert.deepEqual(week(data, W2).bookingsMade, { online: 1, staff: 0, saved: 0 });
 });
 
@@ -274,9 +284,11 @@ test('bookings made (round 19): a table staff book for someone from the staff pa
 });
 
 test('new members, TTRPG seats and the library (round 19): by week', async () => {
-  for (const [id, made] of [['6101', at('2026-10-20', 12)], ['6102', at('2026-10-25', 21)], ['6103', at('2026-10-14', 9)]]) {
+  for (const [id, made] of [['6101', at('2026-10-20', 12)], ['6102', at('2026-10-25', 21)], ['6103', at('2026-10-14', 9)], ['6104', at('2026-10-21', 12)]]) {
     lair.makeMember({ customerId: id, name: `Member ${id}`, email: `m${id}@example.com` }, made);
   }
+  // 6101 to 6103 have used the app themselves; 6104 is a row staff made for someone (picked for a group), never seen
+  lair.sql.exec("UPDATE members SET last_seen = created_at WHERE customer_id IN ('6101', '6102', '6103')");
   // a session of 5 seats: 2 and 1 booked (2 more cancelled) and the GM's friend; a cancelled session; a full one of 3
   lair.sql.exec("INSERT INTO games (id, title, tables, starts_at, ends_at, seats, status, offline_players) VALUES ('g1', 'Curse of Strahd', '[\"T9\"]', ?, ?, 5, 'open', 1)", at('2026-10-21', 18), at('2026-10-21', 22));
   booking({ day: '2026-10-21', kind: 'gm-seat', gameId: 'g1', people: 2 });
@@ -284,12 +296,18 @@ test('new members, TTRPG seats and the library (round 19): by week', async () =>
   booking({ day: '2026-10-21', kind: 'gm-seat', gameId: 'g1', people: 2, status: 'cancelled' });
   lair.sql.exec("INSERT INTO games (id, title, tables, starts_at, ends_at, seats, status) VALUES ('g2', 'Called off', '[\"T9\"]', ?, ?, 5, 'cancelled')", at('2026-10-22', 18), at('2026-10-22', 22));
   lair.sql.exec("INSERT INTO games (id, title, tables, starts_at, ends_at, seats, status, offline_players) VALUES ('g3', 'One-shot', '[\"T8\"]', ?, ?, 3, 'open', 5)", at('2026-10-23', 18), at('2026-10-23', 22));
+  lair.sql.exec("INSERT INTO games (id, title, tables, starts_at, ends_at, seats, status) VALUES ('g4', 'Waiting for approval', '[\"T7\"]', ?, ?, 6, 'pending')", at('2026-10-24', 18), at('2026-10-24', 22));
   // library games out: 2 in W1, 1 in W2; memberships: 2 that still borrow, 1 ended
   for (const [n, out] of [[1, at('2026-10-20', 17)], [2, at('2026-10-24', 11)], [3, at('2026-10-15', 17)]]) {
     lair.sql.exec("INSERT INTO library_loans (id, variant_id, title, customer_id, status, out_at, created_at) VALUES (?, ?, 'Catan', ?, 'out', ?, ?)", `ln${n}`, `v${n}`, MIA, out, out);
   }
-  for (const [n, status] of [[1, 'active'], [2, 'cancelling'], [3, 'ended']]) {
-    lair.sql.exec("INSERT INTO memberships (id, contract_gid, customer_id, status, tier, billing_tier, created_at) VALUES (?, ?, ?, ?, 'grab', 'grab', ?)", `ms${n}`, `gid://shopify/SubscriptionContract/${n}`, `61${n}`, status, LONG_AGO);
+  // as currentMembership counts them: active, waiting on a payment, or cancelled but inside the month they paid for; one
+  // person once
+  for (const [n, customer, status, cancelAt] of [
+    [1, '611', 'active', null], [2, '612', 'cancelling', null], [3, '613', 'ended', null], [4, '614', 'past_due', null],
+    [5, '615', 'ending', null], [6, '616', 'cancelling', at('2026-10-20', 12)], [7, '611', 'active', null], [8, '617', 'cancelling', at('2026-11-15', 12)],
+  ]) {
+    lair.sql.exec("INSERT INTO memberships (id, contract_gid, customer_id, status, tier, billing_tier, cancel_at, created_at) VALUES (?, ?, ?, ?, 'grab', 'grab', ?, ?)", `ms${n}`, `gid://shopify/SubscriptionContract/${n}`, customer, status, cancelAt, LONG_AGO);
   }
   const data = await report(2);
   assert.equal(week(data, W1).newMembers, 2);
@@ -297,14 +315,15 @@ test('new members, TTRPG seats and the library (round 19): by week', async () =>
   assert.deepEqual(week(data, W1).ttrpg, { sessions: 2, seats: 8, taken: 7 }, 'g1: 2 + 1 + the friend = 4 of 5; g3: 3 of 3 (never more than its seats)');
   assert.equal(week(data, W1).library.loansOut, 2);
   assert.equal(week(data, W2).library.loansOut, 1);
-  assert.deepEqual(data.library, { memberships: 2 });
+  assert.deepEqual(data.library, { memberships: 4 }, '611 (twice), 612, 614 and 617');
 });
 
 test('steps (round 19): anyone\'s browser can send them, only known flows and steps count, and nothing about who is kept', async () => {
   // past weeks' counts, as the store keeps them
-  lair.sql.exec("INSERT INTO step_counts (day, flow, step, n) VALUES ('2026-10-20', 'table', 'start', 5), ('2026-10-20', 'table', 'done', 3), ('2026-10-25', 'ttrpg', 'start', 4), ('2026-10-25', 'ttrpg', 'login', 2), ('2026-10-25', 'ttrpg', 'done', 1)");
+  lair.sql.exec("INSERT INTO step_counts (day, flow, step, n) VALUES ('2026-10-20', 'table', 'start', 5), ('2026-10-20', 'table', 'done', 3), ('2026-10-25', 'ttrpg', 'start', 4), ('2026-10-25', 'ttrpg', 'login', 2), ('2026-10-25', 'ttrpg', 'done', 1), ('2026-10-25', 'ttrpg', 'login-done', 1)");
   assert.deepEqual(ok(await call('POST', 'steps', { flow: 'event', step: 'start' })), { ok: true, counted: true }, 'nobody logged in');
   assert.deepEqual(ok(await call('POST', 'steps', { flow: 'event', step: 'done' }, MIA)), { ok: true, counted: true });
+  assert.deepEqual(ok(await call('POST', 'steps', { flow: 'ttrpg', step: 'login-done' })), { ok: true, counted: true });
   for (const wrong of [{ flow: 'event', step: 'paid' }, { flow: 'shop', step: 'start' }, {}, { flow: ['event'], step: 'start' }]) {
     assert.deepEqual(ok(await call('POST', 'steps', wrong)), { ok: true, counted: false });
   }
@@ -314,9 +333,10 @@ test('steps (round 19): anyone\'s browser can send them, only known flows and st
     { day: W0, flow: 'event', step: 'done', n: 1 }, { day: W0, flow: 'event', step: 'start', n: 1 },
   ]);
   const data = await report(2);
-  assert.deepEqual(week(data, W1).steps.table, { start: 5, login: 0, done: 3 });
-  assert.deepEqual(week(data, W1).steps.ttrpg, { start: 4, login: 2, done: 1 }, 'a Sunday is still the week before');
-  assert.deepEqual(week(data, W0).steps.event, { start: 1, login: 0, done: 1 });
+  assert.deepEqual(week(data, W1).steps.table, { start: 5, login: 0, done: 3, 'login-done': 0 });
+  assert.deepEqual(week(data, W1).steps.ttrpg, { start: 4, login: 2, done: 1, 'login-done': 1 }, 'a Sunday is still the week before');
+  assert.deepEqual(week(data, W0).steps.event, { start: 1, login: 0, done: 1, 'login-done': 0 });
+  assert.deepEqual(week(data, W0).steps.ttrpg, { start: 0, login: 0, done: 0, 'login-done': 1 });
 });
 
 test('steps (round 19): one browser can\'t run the numbers up; others still count', async () => {
@@ -343,6 +363,7 @@ test('the weekly email (round 19): from Monday 8am, once a week, last week besid
   assert.equal(lair.weeklyReportMail(rules, at(W0, 9, 10)), null);
   // the next Monday: last week (26 Oct to 1 Nov) beside the week before
   booking({ customer: KAI, day: '2026-10-28', status: 'done' });
+  lair.sql.exec("INSERT INTO step_counts (day, flow, step, n) VALUES ('2026-10-28', 'ttrpg', 'start', 6), ('2026-10-28', 'ttrpg', 'login', 3), ('2026-10-29', 'ttrpg', 'done', 2), ('2026-10-29', 'ttrpg', 'login-done', 1)");
   const result = lair.weeklyReportMail(rules, at('2026-11-02', 8, 5));
   assert.deepEqual(result, { sent: 1, week: W0, to: STAFF_EMAIL });
   await Promise.all(pending);
@@ -352,7 +373,8 @@ test('the weekly email (round 19): from Monday 8am, once a week, last week besid
   assert.match(mails[0].text, /Regulars/);
   // Mia came in both weeks' windows; Kai's second visit (28 Oct) is only in the last week's
   assert.match(mails[0].text, /2 \(1 the week before\)/);
-  assert.match(mails[0].text, /checked in or paid/);
+  assert.match(mails[0].text, /paid on the day/);
+  assert.match(mails[0].text, /6 started, 2 finished; 3 started logged out and were asked to log in first, and 1 of them finished/);
   // once a week: not again that day, nor later in the week
   assert.equal(lair.weeklyReportMail(rules, at('2026-11-02', 8, 15)), null);
   assert.equal(lair.weeklyReportMail(rules, at('2026-11-04', 12)), null);
@@ -378,4 +400,51 @@ test('the weekly email (round 19): REPORT_EMAIL sends it elsewhere or turns it o
   assert.deepEqual(checked.weeklyReport, { sent: 1, week: W1, to: STAFF_EMAIL });
   await Promise.all(pending);
   assert.match(mails[1].text, /Under 80%/, 'one booking, never checked in: 0%');
+});
+
+test('the weekly email (round 19): going live mid-week, the first email is the first whole week; a REPORT_EMAIL that isn\'t one address sends nothing', async () => {
+  const rules = lair.rulesCache;
+  // live on Wednesday 28 October: this week is noted as if sent, so 2 November sends nothing and 9 November sends 2 to 8
+  // November, the first whole week counted
+  assert.deepEqual(lair.weeklyReportMail(rules, at('2026-10-28', 11)), { sent: 0, week: W0, baseline: true });
+  assert.equal(lair.weeklyReportMail(rules, at('2026-11-02', 9)), null);
+  assert.deepEqual(lair.weeklyReportMail(rules, at('2026-11-09', 9)), { sent: 1, week: '2026-11-02', to: STAFF_EMAIL });
+  await Promise.all(pending);
+  assert.equal(mails.length, 1);
+  assert.match(mails[0].subject, /^Lair numbers, 2 November to 8 November: 0 regulars$/);
+  // a typo, or two addresses, is never quietly swapped for STAFF_EMAIL
+  lair.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('weekly-report', '2026-10-05')");
+  for (const wrong of ['mo@example', 'mo@example.com, kim@example.com', 'mo@example.com;kim@example.com']) {
+    lair.env.REPORT_EMAIL = wrong;
+    assert.deepEqual(lair.weeklyReportMail(rules, at(W0, 9)), { sent: 0, error: 'REPORT_EMAIL is not one email address, so the weekly numbers were not sent.' }, wrong);
+  }
+  assert.equal(mails.length, 1);
+  assert.equal(lair.sql.exec("SELECT value FROM meta WHERE key = 'weekly-report'").one().value, '2026-10-05', 'the week isn\'t marked as sent');
+});
+
+test('paid on the day (round 19): every write to a booking or sign-up stamps when it was first paid; older payments get their first Shopify payment\'s time', async () => {
+  const made = ok(await call('POST', 'bookings', {
+    kind: 'table', tables: ['T3'], start: at(W0, 18), end: at(W0, 20), people: 2, name: 'Mia Chen', email: 'mia@example.com', phone: '021 555 0100',
+  }, MIA));
+  const paidAt = () => lair.sql.exec('SELECT paid_at FROM bookings WHERE ref = ?', made.booking.ref).one().paid_at;
+  assert.equal(paidAt(), null, 'not paid yet');
+  Date.now = () => NOW + 9 * HOUR;
+  lair.write('UPDATE bookings SET paid = 1, paid_amount = amount, updated_at = ? WHERE ref = ?', Date.now(), made.booking.ref);
+  assert.equal(paidAt(), NOW + 9 * HOUR, 'stamped when it was paid, whichever way it was paid');
+  Date.now = () => NOW + 30 * HOUR;
+  lair.write('UPDATE bookings SET notes = ?, updated_at = ? WHERE ref = ?', 'A later change', Date.now(), made.booking.ref);
+  assert.equal(paidAt(), NOW + 9 * HOUR, 'the first time stays');
+  // a sign-up paid in part
+  const joinId = signUp({ customer: KAI, day: W0 });
+  lair.write('UPDATE event_joins SET paid_amount = 500, updated_at = ? WHERE id = ?', Date.now(), joinId);
+  assert.equal(lair.sql.exec('SELECT paid_at FROM event_joins WHERE id = ?', joinId).one().paid_at, NOW + 30 * HOUR);
+  // paid before paid_at existed: the first Shopify payment, else the last change
+  const viaShopify = booking({ customer: LEO, day: '2026-10-20', paid: 1, paidAt: null, made: at('2026-10-18', 9) });
+  lair.sql.exec("INSERT INTO payments (id, booking_id, kind, order_id, line_id, amount, customer_id, at) VALUES ('pm1', ?, 'booking', 'o1', 'l1', 1000, NULL, ?), ('pm2', ?, 'booking', 'o2', 'l2', 500, NULL, ?)",
+    viaShopify, at('2026-10-20', 19), viaShopify, at('2026-10-22', 12));
+  const byStaff = booking({ customer: ZOE, day: '2026-10-21', paid: 1, paidAt: null, made: at('2026-10-21', 17) });
+  lair.backfillPaidAt();
+  const stamped = (id) => lair.sql.exec('SELECT paid_at FROM bookings WHERE id = ?', id).one().paid_at;
+  assert.equal(stamped(viaShopify), at('2026-10-20', 19));
+  assert.equal(stamped(byStaff), at('2026-10-21', 17));
 });

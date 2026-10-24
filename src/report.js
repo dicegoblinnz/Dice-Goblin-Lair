@@ -8,24 +8,30 @@
 // their own file so the feature stays in one place. Every await comes first (the rules), then synchronous reads. Nothing
 // here changes a booking, a sign-up or a member.
 //
-// - A visit is a table booking, walk-in or TTRPG seat that was checked in ('seated' or 'done') or paid (in full, in part or
-//   by a session pass), or an event sign-up that was checked in ('attended') or paid. Cancelled ones, no-shows and unpaid
-//   online holds never count. A visit belongs to the week its session starts in: Monday to Sunday at the Lair.
+// - A visit is a table booking, walk-in or TTRPG seat that was checked in ('seated' or 'done'), or an event sign-up checked
+//   in ('attended'), or either of them paid on the day: first paid (in full or in part) within PAID_WINDOW of the session.
+//   "On the day" because a seat nobody came to becomes owed and is paid at a later visit (round 15), and something paid
+//   online days ahead says nothing about who came. Cancelled ones, no-shows and unpaid online holds never count. A visit
+//   belongs to the week its session starts in: Monday to Sunday at the Lair.
+// - When something was first paid is bookings.paid_at and event_joins.paid_at: stampPaid sets it after every write to those
+//   tables (lair.js's write), so every way of paying is covered, and payments made before this went live get their first
+//   Shopify payment's time, else their last change (backfillPaidAt).
 // - Regulars in a week: people with an account who had a visit in at least 2 different weeks of the 4 that end with it.
 //   Each person counts for themselves: the booker, every named player with an account on a table or a game seat, every
 //   guest with an account on a sign-up. Friends without an account are in the visits but can't be regulars. A GM running
 //   their own session isn't a visit unless they also book.
-// - Steps (POST /steps): how many times, each day at the Lair, the website's booking flows reached a step (start, asked to
-//   log in, done). Nothing about who: no customer, browser or address is stored, and a browser sending too many in a short
-//   time is ignored.
+// - Steps (POST /steps): how many times, each day at the Lair, the website's booking flows reached a step: start, login (they
+//   started logged out, so the form asked them to log in first), done, and login-done (done, having started logged out: as
+//   a guest or after logging in). login minus login-done is who gave up after being asked to log in. Nothing about who: no
+//   customer, browser or address is stored, and a browser sending too many in a short time is ignored.
 // - The report emails the team on Monday morning (after 8am at the Lair), once a week: last week next to the week before.
 //   REPORT_EMAIL (config) sends it somewhere else, or 'off' stops it; otherwise it goes to STAFF_EMAIL.
-import { LairTime, MIN } from './core.js';
+import { HOUR, LairTime, MIN } from './core.js';
 import { emailReady } from './shopify.js';
 
 /** Booking flows on the website and the steps counted for each (anything else sent to POST /steps is ignored) */
 export const STEP_FLOWS = ['table', 'ttrpg', 'event'];
-export const STEP_NAMES = ['start', 'login', 'done'];
+export const STEP_NAMES = ['start', 'login', 'done', 'login-done'];
 /** A browser's steps counted per window; more are quietly dropped, so nobody can run the numbers up */
 export const STEP_LIMIT = 30;
 const STEP_WINDOW = 10 * MIN;
@@ -37,29 +43,41 @@ export const REGULAR_WINDOW = 4;
 export const REGULAR_MIN = 2;
 /** The weekly email goes on Monday from this hour at the Lair */
 export const REPORT_MAIL_HOUR = 8;
+/** Paid on the day: first paid from this long before the session starts to this long after it ends */
+export const PAID_WINDOW = 12 * HOUR;
+/** Writes after which stampPaid looks for bookings and sign-ups just paid (lair.js's write) */
+export const PAID_WRITES = /\b(?:INTO|UPDATE)\s+(?:bookings|event_joins)\b/i;
 
-/** Steps and the report's tables (made when missing, in lair.js's migrate) */
+/** Steps and the report's tables and indexes (made when missing, in lair.js's migrate, after REPORT_COLUMNS) */
 export const REPORT_TABLES = [
   `CREATE TABLE IF NOT EXISTS step_counts (
     day TEXT NOT NULL, flow TEXT NOT NULL, step TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, flow, step))`,
   'CREATE INDEX IF NOT EXISTS bookings_created ON bookings (created_at)',
   'CREATE INDEX IF NOT EXISTS event_joins_created ON event_joins (created_at)',
+  // only rows paid and not yet stamped are in these (normally none), so stampPaid costs next to nothing
+  'CREATE INDEX IF NOT EXISTS bookings_paid_unstamped ON bookings (id) WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)',
+  'CREATE INDEX IF NOT EXISTS event_joins_paid_unstamped ON event_joins (id) WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)',
 ];
-/** bookings.added_by: who on the team made it for someone (staff:<customer id>, or staff); empty when it was made online */
-export const REPORT_COLUMNS = [['bookings', 'added_by', 'TEXT']];
+/**
+ * bookings.added_by: who on the team made it for someone (staff:<customer id>, or staff); empty when it was made online.
+ * bookings.paid_at and event_joins.paid_at: when it was first paid, in full or in part (stampPaid).
+ */
+export const REPORT_COLUMNS = [['bookings', 'added_by', 'TEXT'], ['bookings', 'paid_at', 'INTEGER'], ['event_joins', 'paid_at', 'INTEGER']];
 
 const BOOKING_KINDS = "('table', 'walkin', 'gm-seat')";
+/** Paid on the day (alias x): first paid within PAID_WINDOW of the session */
+const paidOnTheDay = (x) => `(${x}.paid_at IS NOT NULL AND ${x}.paid_at >= ${x}.starts_at - ${PAID_WINDOW} AND ${x}.paid_at <= ${x}.ends_at + ${PAID_WINDOW})`;
 /** A booking that was a visit (alias b) */
-const BOOKING_VISIT = "(b.status IN ('seated', 'done') OR ((b.paid = 1 OR b.paid_amount > 0 OR b.covered > 0) AND b.status NOT IN ('cancelled', 'noshow', 'held')))";
+const BOOKING_VISIT = `(b.status IN ('seated', 'done') OR (${paidOnTheDay('b')} AND b.status NOT IN ('cancelled', 'noshow', 'held')))`;
 /** A sign-up that was a visit (alias j) */
-const JOIN_VISIT = "(j.status = 'attended' OR ((j.paid = 1 OR j.paid_amount > 0) AND j.status NOT IN ('cancelled', 'held')))";
+const JOIN_VISIT = `(j.status = 'attended' OR (${paidOnTheDay('j')} AND j.status NOT IN ('cancelled', 'held')))`;
 /** Made by staff for someone: a walk-in, a staff-page booking (added_by), or a seat staff added (round 7's note) */
 const BOOKING_BY_STAFF = "(b.kind = 'walkin' OR COALESCE(b.added_by, '') != '' OR COALESCE(b.notes, '') LIKE 'Added by staff%')";
-/** Memberships that still let someone borrow */
-const MEMBERSHIP_CURRENT = "('active', 'cancelling', 'ending', 'past_due')";
+/** A sign-up staff made: added for someone (added_by), or a walk-in staff checked in at an event (round 9's source) */
+const JOIN_BY_STAFF = "(COALESCE(j.added_by, '') != '' OR COALESCE(j.source, '') = 'walk-in')";
 
 export const REPORT_WORDS = {
-  visit: 'A visit is a table, walk-in or TTRPG seat that was checked in or paid, or an event sign-up that was checked in or paid. Cancellations, no-shows and unpaid holds never count.',
+  visit: 'A visit is a table, walk-in or TTRPG seat, or an event sign-up, that was checked in, or paid on the day (within 12 hours of the session). Cancellations, no-shows and unpaid holds never count, and nor does a seat paid later because nobody came.',
   regular: `A regular came in at least ${REGULAR_MIN} different weeks of the last ${REGULAR_WINDOW} (with an account, so each person counts once).`,
   week: 'Weeks run Monday to Sunday at the Lair.',
 };
@@ -149,11 +167,11 @@ export const reportMethods = {
     for (const r of this.sql.exec(
       `SELECT b.starts_at AS at, b.people AS people,
               CASE WHEN b.status IN ('seated', 'done') THEN 'in' WHEN b.status = 'noshow' THEN 'noshow'
-                   WHEN b.paid = 1 OR b.paid_amount > 0 OR b.covered > 0 THEN 'paid' ELSE 'open' END AS state
+                   WHEN ${paidOnTheDay('b')} THEN 'paid' ELSE 'open' END AS state
          FROM bookings b WHERE b.kind IN ${BOOKING_KINDS} AND b.status NOT IN ('cancelled', 'held') AND b.starts_at >= ? AND b.starts_at < ?
        UNION ALL
        SELECT j.starts_at, j.people,
-              CASE WHEN j.status = 'attended' THEN 'in' WHEN j.paid = 1 OR j.paid_amount > 0 THEN 'paid' ELSE 'open' END
+              CASE WHEN j.status = 'attended' THEN 'in' WHEN ${paidOnTheDay('j')} THEN 'paid' ELSE 'open' END
          FROM event_joins j WHERE j.status NOT IN ('cancelled', 'held') AND j.starts_at >= ? AND j.starts_at < ?`,
       start, until, start, until,
     ).toArray()) {
@@ -175,21 +193,23 @@ export const reportMethods = {
       `SELECT b.created_at AS at, CASE WHEN ${BOOKING_BY_STAFF} THEN 'staff' WHEN b.gob_saved = 1 THEN 'saved' ELSE 'online' END AS by
          FROM bookings b WHERE b.kind IN ${BOOKING_KINDS} AND b.status != 'held' AND b.created_at >= ? AND b.created_at < ?
        UNION ALL
-       SELECT j.created_at, CASE WHEN COALESCE(j.added_by, '') != '' THEN 'staff' ELSE 'online' END
+       SELECT j.created_at, CASE WHEN ${JOIN_BY_STAFF} THEN 'staff' ELSE 'online' END
          FROM event_joins j WHERE j.status != 'held' AND j.created_at >= ? AND j.created_at < ?`,
       start, until, start, until,
     ).toArray()) add(r.at, (row) => { row.bookingsMade[r.by] += 1; });
 
     // people new to the Lair app (their first booking, sign-up or visit to My Lair)
-    for (const r of this.sql.exec('SELECT created_at AS at FROM members WHERE created_at >= ? AND created_at < ?', start, until).toArray()) {
+    // (rows staff made for someone who hasn't used the app themselves have never been seen, so they wait until they are)
+    for (const r of this.sql.exec('SELECT created_at AS at FROM members WHERE last_seen IS NOT NULL AND created_at >= ? AND created_at < ?', start, until).toArray()) {
       add(r.at, (row) => { row.newMembers += 1; });
     }
 
-    // TTRPG sessions that ran: seats on offer and taken (booked seats plus players the GM brought, up to the seats)
+    // TTRPG sessions that ran (not cancelled, not waiting for approval): seats on offer and taken (booked seats plus
+    // players the GM brought, up to the seats)
     for (const r of this.sql.exec(
       `SELECT g.starts_at AS at, g.seats AS seats, COALESCE(g.offline_players, 0) +
               (SELECT COALESCE(SUM(b.people), 0) FROM bookings b WHERE b.game_id = g.id AND b.kind = 'gm-seat' AND b.status NOT IN ('cancelled', 'noshow', 'held')) AS taken
-         FROM games g WHERE g.status != 'cancelled' AND g.starts_at >= ? AND g.starts_at < ?`,
+         FROM games g WHERE g.status NOT IN ('cancelled', 'pending') AND g.starts_at >= ? AND g.starts_at < ?`,
       start, until,
     ).toArray()) {
       add(r.at, (row) => {
@@ -211,7 +231,12 @@ export const reportMethods = {
       if (row?.steps[r.flow] && r.step in row.steps[r.flow]) row.steps[r.flow][r.step] += Number(r.n) || 0;
     }
 
-    const memberships = this.sql.exec(`SELECT COUNT(*) AS n FROM memberships WHERE status IN ${MEMBERSHIP_CURRENT}`).one().n;
+    // library members now, as currentMembership (src/memberships.js) counts them: active, waiting on a payment, or cancelled
+    // but still inside the month they paid for
+    const memberships = this.sql.exec(
+      "SELECT COUNT(DISTINCT customer_id) AS n FROM memberships WHERE status IN ('active', 'past_due') OR (status = 'cancelling' AND (cancel_at IS NULL OR cancel_at > ?))",
+      now,
+    ).one().n;
     return { asOf: new Date(now).toISOString(), tz: rules.tz, words: REPORT_WORDS, weeks: rows, library: { memberships } };
   },
 
@@ -276,32 +301,66 @@ export const reportMethods = {
   /**
    * The weekly numbers by email, from the 10-minute maintenance: from Monday at REPORT_MAIL_HOUR at the Lair (or the
    * first run after, if the app missed Monday), once a week (noted in the meta table, so a restart doesn't send it twice),
-   * last week next to the week before. To REPORT_EMAIL when it's an address, nowhere when it's 'off', else STAFF_EMAIL.
-   * → { sent, week, to } or null. No awaits.
+   * last week next to the week before. To REPORT_EMAIL when it's an address, nowhere when it's 'off' (or isn't an address,
+   * which the result says), else STAFF_EMAIL. → { sent, week, to }, { sent: 0, week, baseline }, { sent: 0, error } or
+   * null. No awaits.
    */
   weeklyReportMail(rules, now) {
     const time = new LairTime(rules.tz);
     const today = time.key(now);
     if (!emailReady(this.env)) return null;
-    if (time.weekday(today) === 1 && time.parts(now).h < REPORT_MAIL_HOUR) return null;
+    const monday = time.weekday(today) === 1;
+    if (monday && time.parts(now).h < REPORT_MAIL_HOUR) return null;
     const setting = String(this.env.REPORT_EMAIL || '').trim();
     if (setting.toLowerCase() === 'off') return null;
-    const to = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(setting) ? setting : this.env.STAFF_EMAIL;
+    if (setting && !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(setting)) return { sent: 0, error: 'REPORT_EMAIL is not one email address, so the weekly numbers were not sent.' };
+    const to = setting || this.env.STAFF_EMAIL;
     if (!to) return null;
-    const week = addDays(mondayOf(time, today), -7);
+    const thisMonday = mondayOf(time, today);
+    const week = addDays(thisMonday, -7);
     const sent = this.sql.exec("SELECT value FROM meta WHERE key = 'weekly-report'").toArray()[0]?.value;
-    if (sent === week) return null;
-    this.write("INSERT OR REPLACE INTO meta (key, value) VALUES ('weekly-report', ?)", week);
-    // The first run after this went live only notes the week: the first email is the first whole week of counting (staff
-    // bookings and the website's steps are only counted from then), the baseline every later week is compared with.
-    if (!sent) return { sent: 0, week, baseline: true };
+    if (sent && sent >= week) return null;
+    // The first run after this goes live only notes a week: the first email is the first whole week of counting (staff
+    // bookings and the website's steps are only counted from now), the baseline every later week is compared with. Before
+    // 8am on a Monday this week hasn't started for this; on any later day it has, so it's noted as if sent.
+    if (!sent) {
+      const noted = monday ? week : thisMonday;
+      this.write("INSERT OR REPLACE INTO meta (key, value) VALUES ('weekly-report', ?)", noted);
+      return { sent: 0, week: noted, baseline: true };
+    }
+    // the email is made before the week is noted, so a failure here leaves it to the next run
     const report = this.reportFor(rules, now, 2);
     const [, last, before] = report.weeks;
     const content = this.weeklyReportContent(last, before, report);
-    this.later(this.mail(this.letter(to, content.subject, {
+    const letter = this.letter(to, content.subject, {
       button: { label: 'Open the staff page', url: this.page('staff') }, signoff: 'Gobgob, keeping count', ...content.body,
-    })));
+    });
+    this.write("INSERT OR REPLACE INTO meta (key, value) VALUES ('weekly-report', ?)", week);
+    this.later(this.mail(letter));
     return { sent: 1, week, to };
+  },
+
+  /**
+   * When bookings and sign-ups were first paid (paid_at), from lair.js's write after every write to those tables: the rows
+   * paid just now (in full or in part) that have no time yet get now. The partial indexes in REPORT_TABLES hold only those
+   * rows, so this is two lookups in nearly empty indexes. Doesn't touch the floor's cache (nothing it reads changes).
+   */
+  stampPaid(now = Date.now()) {
+    this.sql.exec('UPDATE bookings SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
+    this.sql.exec('UPDATE event_joins SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
+  },
+
+  /**
+   * On every start, before anything is written (lair.js's migrate): bookings and sign-ups paid before paid_at existed get
+   * their first Shopify payment's time, else their last change. Nothing is left for it after the first start.
+   */
+  backfillPaidAt() {
+    for (const table of ['bookings', 'event_joins']) {
+      this.sql.exec(
+        `UPDATE ${table} SET paid_at = COALESCE((SELECT MIN(p.at) FROM payments p WHERE p.booking_id = ${table}.id), updated_at, created_at)
+          WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)`,
+      );
+    }
   },
 
   /** The weekly email's words: { subject, body: { title, intro, details, outro } }. No awaits. */
@@ -324,7 +383,8 @@ export const reportMethods = {
     for (const flow of STEP_FLOWS) {
       const s = last.steps[flow];
       if (!s.start && !s.login && !s.done) continue;
-      details.push([`${names[flow]} on the website`, `${s.start} started, ${s.login ? `${s.login} asked to log in, ` : ''}${s.done} finished`]);
+      const wall = s.login ? `; ${s.login} started logged out and were asked to log in first, and ${s['login-done']} of them finished` : '';
+      details.push([`${names[flow]} on the website`, `${s.start} started, ${s.done} finished${wall}`]);
     }
     const sunday = addDays(last.week, 6);
     return {

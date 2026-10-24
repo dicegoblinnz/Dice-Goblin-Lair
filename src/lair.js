@@ -57,7 +57,7 @@ import { CASH_STAFF, CASH_TABLES, cashMethods } from './cash.js';
 // 17 Oct 2026: private games, invite only (src/private-games.js)
 import { PRIVATE_COLUMNS, PRIVATE_INDEXES, privacyOf, privateMethods } from './private-games.js';
 // Round 19 (24 Oct 2026): the weekly numbers and the website's booking steps (src/report.js)
-import { REPORT_COLUMNS, REPORT_TABLES, reportMethods } from './report.js';
+import { PAID_WRITES, REPORT_COLUMNS, REPORT_TABLES, reportMethods } from './report.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1020,8 +1020,10 @@ export class Lair {
     for (const statement of CASH_TABLES) this.sql.exec(statement);
     // 17 Oct 2026: private games' invite links are looked up by key (the columns are made with ROUND18_COLUMNS')
     for (const statement of PRIVATE_INDEXES) this.sql.exec(statement);
-    // Round 19: the website's booking steps, and the indexes the weekly numbers read by (made when missing)
+    // Round 19: the website's booking steps, and the indexes the weekly numbers read by (made when missing), and when
+    // bookings and sign-ups paid before then were paid
     for (const statement of REPORT_TABLES) this.sql.exec(statement);
+    this.backfillPaidAt();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
     if (!this.sql.exec("SELECT value FROM meta WHERE key = 'kept-seats-staff'").toArray().length) {
@@ -1076,6 +1078,8 @@ export class Lair {
   /** Every write goes through here, so cached floor data is dropped the moment anything changes. */
   write(query, ...bindings) {
     this.sql.exec(query, ...bindings);
+    // Round 19: when a booking or sign-up was first paid (the weekly numbers count a payment on the day as a visit)
+    if (PAID_WRITES.test(query)) this.stampPaid(Date.now());
     // 17 Oct 2026: only a write to what the floor's state is built from (state, seriesInfo, heldIn) clears its cache, so a
     // member opening My Lair or saving their tab doesn't make every open booking and staff page read it all again
     if (!FLOOR_WRITES.test(query)) return;

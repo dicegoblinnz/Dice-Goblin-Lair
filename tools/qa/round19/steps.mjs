@@ -4,8 +4,8 @@
 //     for. Each flow says start, the TTRPG seat says it asked them to log in, and each says done; a second open of the
 //     same form isn't a second start; demo mode sends nothing to the Lair app.
 //  2. Live mode against a stubbed Lair app: store.step sends POST /apps/liar/steps as JSON with only the flow and the
-//     step; a start or a log-in once a try in this tab, again after a done; unknown flows and steps send nothing; and it
-//     doesn't reload the floor.
+//     step, without the shop's cookies; a start or a log-in once a try (until a done, or 30 minutes on); a done after a
+//     log-in also says login-done; unknown flows and steps send nothing; and it doesn't reload the floor.
 // No console errors throughout.
 // Usage: DG_THEME=/path/to/theme [PORT=4995] [OUT=dir] node tools/qa/round19/steps.mjs [phone|desktop]
 import os from 'node:os';
@@ -158,7 +158,7 @@ m.mockState.before = async (req, res, url) => {
     floors += 1;
     body = { now: Date.now(), bookings: [], blocks: [], games: [], events: [], eventJoins: {}, eventSpots: {}, gameSpots: {}, eventInterest: {}, shopTables: [], openings: [], features: {} };
   } else if (route === '/steps') {
-    sent.push({ method: req.method, type: req.headers['content-type'] || '', body: raw ? JSON.parse(raw) : null });
+    sent.push({ method: req.method, type: req.headers['content-type'] || '', cookie: Boolean(req.headers.cookie), body: raw ? JSON.parse(raw) : null });
     body = { ok: true, counted: true };
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -167,6 +167,8 @@ m.mockState.before = async (req, res, url) => {
 };
 {
   const ctx = await context(browser, 'desktop');
+  // a shop cookie, as a logged-in visitor has: the steps must go without it
+  await ctx.addCookies([{ name: 'shop_session', value: 'qa', url: BASE }]);
   const page = watch(await ctx.newPage());
   await go(page, BASE, '/pages/book-a-table', null);
   await page.waitForFunction(() => window.Lair && window.Lair.store && !window.Lair.store.isDemo, null, { timeout: 15000 });
@@ -174,25 +176,31 @@ m.mockState.before = async (req, res, url) => {
   const floorsBefore = floors;
   await page.evaluate(() => {
     const { store } = window.Lair;
-    store.step('table', 'start');
-    store.step('table', 'start');
-    store.step('table', 'login');
+    store.step('ttrpg', 'start');
+    store.step('ttrpg', 'start');
+    store.step('ttrpg', 'login');
     store.step('shop', 'start');
-    store.step('table', 'paid');
-    store.step('table', 'done');
-    store.step('table', 'start');
+    store.step('ttrpg', 'paid');
+    store.step('ttrpg', 'login-done');
+    store.step('ttrpg', 'done');
+    store.step('ttrpg', 'start');
   });
   await settle(page, 800);
-  check('live: POST /apps/liar/steps as JSON, only the flow and the step; a start once a try, again after done; nothing for unknown ones',
-    JSON.stringify(sent) === JSON.stringify([
-      { method: 'POST', type: 'application/json', body: { flow: 'table', step: 'start' } },
-      { method: 'POST', type: 'application/json', body: { flow: 'table', step: 'login' } },
-      { method: 'POST', type: 'application/json', body: { flow: 'table', step: 'done' } },
-      { method: 'POST', type: 'application/json', body: { flow: 'table', step: 'start' } },
-    ]), sent);
+  const P = (step) => ({ method: 'POST', type: 'application/json', cookie: false, body: { flow: 'ttrpg', step } });
+  check('live: POST /apps/liar/steps as JSON without the shop\'s cookies, only the flow and the step; a start once a try, again after done; a done after a log-in says login-done; nothing for unknown ones',
+    JSON.stringify(sent) === JSON.stringify([P('start'), P('login'), P('done'), P('login-done'), P('start')]), sent);
   check('live: counting a step doesn\'t reload the floor', floors === floorsBefore, { floors, floorsBefore });
   const stored = await page.evaluate(() => Object.keys(window.sessionStorage).filter((k) => k.startsWith('lair-step:')).sort());
-  check('live: the tab remembers only that a try is open (no ids)', JSON.stringify(stored) === JSON.stringify(['lair-step:table:start']), stored);
+  check('live: the tab remembers only that a try is open, and when it began (no ids)', JSON.stringify(stored) === JSON.stringify(['lair-step:ttrpg:start']), stored);
+  // a try left for 30 minutes is over: the next start counts
+  sent.length = 0;
+  await page.evaluate(() => {
+    window.sessionStorage.setItem('lair-step:ttrpg:start', String(Date.now() - 31 * 60000));
+    window.Lair.store.step('ttrpg', 'start');
+    window.Lair.store.step('ttrpg', 'start');
+  });
+  await settle(page, 600);
+  check('live: a try left 30 minutes is over, so the next start counts (once)', JSON.stringify(sent) === JSON.stringify([P('start')]), sent);
   check('live: no console errors', page.errors.length === 0, page.errors);
   await ctx.close();
 }
