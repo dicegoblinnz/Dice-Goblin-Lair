@@ -9,13 +9,14 @@
 // here changes a booking, a sign-up or a member.
 //
 // - A visit is a table booking, walk-in or TTRPG seat that was checked in ('seated' or 'done'), or an event sign-up checked
-//   in ('attended'), or either of them paid on the day: first paid (in full or in part) within PAID_WINDOW of the session.
-//   "On the day" because a seat nobody came to becomes owed and is paid at a later visit (round 15), and something paid
-//   online days ahead says nothing about who came. Cancelled ones, no-shows and unpaid online holds never count. A visit
-//   belongs to the week its session starts in: Monday to Sunday at the Lair.
-// - When something was first paid is bookings.paid_at and event_joins.paid_at: stampPaid sets it after every write to those
-//   tables (lair.js's write), so every way of paying is covered, and payments made before this went live get their first
-//   Shopify payment's time, else their last change (backfillPaidAt).
+//   in ('attended'), or either of them paid around the session: still paid (in full or in part), and first paid from
+//   PAID_BEFORE before it starts to PAID_AFTER after it ends (the shop opens at 4pm on weekdays, so a Paid ticked the next
+//   afternoon still counts). Around the session because a seat nobody came to becomes owed and is paid at a later visit
+//   (round 15), and something paid online days ahead says nothing about who came. Cancelled ones, no-shows and unpaid
+//   online holds never count. A visit belongs to the week its session starts in: Monday to Sunday at the Lair.
+// - When something was first paid is bookings.paid_at and event_joins.paid_at, and when someone first used the app is
+//   members.first_seen: stampWrites sets them after every write to those tables (lair.js's write), so every way of paying
+//   or turning up is covered, and what came before this went live is filled in on start (backfillStamps).
 // - Regulars in a week: people with an account who had a visit in at least 2 different weeks of the 4 that end with it.
 //   Each person counts for themselves: the booker, every named player with an account on a table or a game seat, every
 //   guest with an account on a sign-up. Friends without an account are in the visits but can't be regulars. A GM running
@@ -43,10 +44,11 @@ export const REGULAR_WINDOW = 4;
 export const REGULAR_MIN = 2;
 /** The weekly email goes on Monday from this hour at the Lair */
 export const REPORT_MAIL_HOUR = 8;
-/** Paid on the day: first paid from this long before the session starts to this long after it ends */
-export const PAID_WINDOW = 12 * HOUR;
-/** Writes after which stampPaid looks for bookings and sign-ups just paid (lair.js's write) */
-export const PAID_WRITES = /\b(?:INTO|UPDATE)\s+(?:bookings|event_joins)\b/i;
+/** Paid around the session: first paid from PAID_BEFORE before it starts to PAID_AFTER after it ends */
+export const PAID_BEFORE = 12 * HOUR;
+export const PAID_AFTER = 24 * HOUR;
+/** Writes after which stampWrites looks for rows just paid or members just seen (lair.js's write) */
+export const STAMP_WRITES = /\b(?:INTO|UPDATE)\s+(?:bookings|event_joins|members)\b/i;
 
 /** Steps and the report's tables and indexes (made when missing, in lair.js's migrate, after REPORT_COLUMNS) */
 export const REPORT_TABLES = [
@@ -54,19 +56,24 @@ export const REPORT_TABLES = [
     day TEXT NOT NULL, flow TEXT NOT NULL, step TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, flow, step))`,
   'CREATE INDEX IF NOT EXISTS bookings_created ON bookings (created_at)',
   'CREATE INDEX IF NOT EXISTS event_joins_created ON event_joins (created_at)',
-  // only rows paid and not yet stamped are in these (normally none), so stampPaid costs next to nothing
+  // only rows paid or seen and not yet stamped are in these (normally none), so stampWrites costs next to nothing
   'CREATE INDEX IF NOT EXISTS bookings_paid_unstamped ON bookings (id) WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)',
   'CREATE INDEX IF NOT EXISTS event_joins_paid_unstamped ON event_joins (id) WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)',
+  'CREATE INDEX IF NOT EXISTS members_seen_unstamped ON members (customer_id) WHERE first_seen IS NULL AND last_seen IS NOT NULL',
+  'CREATE INDEX IF NOT EXISTS members_first_seen ON members (first_seen)',
 ];
 /**
  * bookings.added_by: who on the team made it for someone (staff:<customer id>, or staff); empty when it was made online.
- * bookings.paid_at and event_joins.paid_at: when it was first paid, in full or in part (stampPaid).
+ * bookings.paid_at and event_joins.paid_at: when it was first paid, in full or in part. members.first_seen: when they first
+ * used the app themselves (their first last_seen). Both set by stampWrites.
  */
-export const REPORT_COLUMNS = [['bookings', 'added_by', 'TEXT'], ['bookings', 'paid_at', 'INTEGER'], ['event_joins', 'paid_at', 'INTEGER']];
+export const REPORT_COLUMNS = [
+  ['bookings', 'added_by', 'TEXT'], ['bookings', 'paid_at', 'INTEGER'], ['event_joins', 'paid_at', 'INTEGER'], ['members', 'first_seen', 'INTEGER'],
+];
 
 const BOOKING_KINDS = "('table', 'walkin', 'gm-seat')";
-/** Paid on the day (alias x): first paid within PAID_WINDOW of the session */
-const paidOnTheDay = (x) => `(${x}.paid_at IS NOT NULL AND ${x}.paid_at >= ${x}.starts_at - ${PAID_WINDOW} AND ${x}.paid_at <= ${x}.ends_at + ${PAID_WINDOW})`;
+/** Paid around the session (alias x): still paid, and first paid from PAID_BEFORE before it to PAID_AFTER after it */
+const paidOnTheDay = (x) => `((${x}.paid = 1 OR ${x}.paid_amount > 0) AND ${x}.paid_at IS NOT NULL AND ${x}.paid_at >= ${x}.starts_at - ${PAID_BEFORE} AND ${x}.paid_at <= ${x}.ends_at + ${PAID_AFTER})`;
 /** A booking that was a visit (alias b) */
 const BOOKING_VISIT = `(b.status IN ('seated', 'done') OR (${paidOnTheDay('b')} AND b.status NOT IN ('cancelled', 'noshow', 'held')))`;
 /** A sign-up that was a visit (alias j) */
@@ -77,7 +84,7 @@ const BOOKING_BY_STAFF = "(b.kind = 'walkin' OR COALESCE(b.added_by, '') != '' O
 const JOIN_BY_STAFF = "(COALESCE(j.added_by, '') != '' OR COALESCE(j.source, '') = 'walk-in')";
 
 export const REPORT_WORDS = {
-  visit: 'A visit is a table, walk-in or TTRPG seat, or an event sign-up, that was checked in, or paid on the day (within 12 hours of the session). Cancellations, no-shows and unpaid holds never count, and nor does a seat paid later because nobody came.',
+  visit: 'A visit is a table, walk-in or TTRPG seat, or an event sign-up, that was checked in, or paid on the day (from 12 hours before it to a day after). Cancellations, no-shows and unpaid holds never count, and nor does a seat paid later because nobody came.',
   regular: `A regular came in at least ${REGULAR_MIN} different weeks of the last ${REGULAR_WINDOW} (with an account, so each person counts once).`,
   week: 'Weeks run Monday to Sunday at the Lair.',
 };
@@ -198,9 +205,9 @@ export const reportMethods = {
       start, until, start, until,
     ).toArray()) add(r.at, (row) => { row.bookingsMade[r.by] += 1; });
 
-    // people new to the Lair app (their first booking, sign-up or visit to My Lair)
-    // (rows staff made for someone who hasn't used the app themselves have never been seen, so they wait until they are)
-    for (const r of this.sql.exec('SELECT created_at AS at FROM members WHERE last_seen IS NOT NULL AND created_at >= ? AND created_at < ?', start, until).toArray()) {
+    // people new to the Lair app, by when they first used it themselves (a row staff made for someone counts in the week
+    // that person first turns up, never the week it was made)
+    for (const r of this.sql.exec('SELECT first_seen AS at FROM members WHERE first_seen >= ? AND first_seen < ?', start, until).toArray()) {
       add(r.at, (row) => { row.newMembers += 1; });
     }
 
@@ -341,26 +348,32 @@ export const reportMethods = {
   },
 
   /**
-   * When bookings and sign-ups were first paid (paid_at), from lair.js's write after every write to those tables: the rows
-   * paid just now (in full or in part) that have no time yet get now. The partial indexes in REPORT_TABLES hold only those
-   * rows, so this is two lookups in nearly empty indexes. Doesn't touch the floor's cache (nothing it reads changes).
+   * From lair.js's write, after a write to bookings, event_joins or members: rows paid just now (in full or in part) with no
+   * paid_at get now, and members just seen for the first time get first_seen. The partial indexes in REPORT_TABLES hold only
+   * those rows, so these are lookups in nearly empty indexes. Doesn't touch the floor's cache (nothing it reads changes).
    */
-  stampPaid(now = Date.now()) {
+  stampWrites(query, now = Date.now()) {
+    if (/\bmembers\b/i.test(query)) {
+      this.sql.exec('UPDATE members SET first_seen = last_seen WHERE first_seen IS NULL AND last_seen IS NOT NULL');
+      return;
+    }
     this.sql.exec('UPDATE bookings SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
     this.sql.exec('UPDATE event_joins SET paid_at = ? WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)', now);
   },
 
   /**
    * On every start, before anything is written (lair.js's migrate): bookings and sign-ups paid before paid_at existed get
-   * their first Shopify payment's time, else their last change. Nothing is left for it after the first start.
+   * their first Shopify payment's time, else their last change; members seen before first_seen existed get when their row
+   * was made. Nothing is left for it after the first start.
    */
-  backfillPaidAt() {
+  backfillStamps() {
     for (const table of ['bookings', 'event_joins']) {
       this.sql.exec(
         `UPDATE ${table} SET paid_at = COALESCE((SELECT MIN(p.at) FROM payments p WHERE p.booking_id = ${table}.id), updated_at, created_at)
           WHERE paid_at IS NULL AND (paid = 1 OR paid_amount > 0)`,
       );
     }
+    this.sql.exec('UPDATE members SET first_seen = COALESCE(created_at, last_seen) WHERE first_seen IS NULL AND last_seen IS NOT NULL');
   },
 
   /** The weekly email's words: { subject, body: { title, intro, details, outro } }. No awaits. */

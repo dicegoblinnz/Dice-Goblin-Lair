@@ -4,8 +4,8 @@
 //     for. Each flow says start, the TTRPG seat says it asked them to log in, and each says done; a second open of the
 //     same form isn't a second start; demo mode sends nothing to the Lair app.
 //  2. Live mode against a stubbed Lair app: store.step sends POST /apps/liar/steps as JSON with only the flow and the
-//     step, without the shop's cookies; a start or a log-in once a try (until a done, or 30 minutes on); a done after a
-//     log-in also says login-done; unknown flows and steps send nothing; and it doesn't reload the floor.
+//     step, without the shop's cookies; a start or a log-in once a try (until a done, or 30 minutes on, 2 hours once
+//     asked to log in); a done after a log-in also says login-done; unknown flows and steps send nothing; and it doesn't reload the floor.
 // No console errors throughout.
 // Usage: DG_THEME=/path/to/theme [PORT=4995] [OUT=dir] node tools/qa/round19/steps.mjs [phone|desktop]
 import os from 'node:os';
@@ -201,6 +201,18 @@ m.mockState.before = async (req, res, url) => {
   });
   await settle(page, 600);
   check('live: a try left 30 minutes is over, so the next start counts (once)', JSON.stringify(sent) === JSON.stringify([P('start')]), sent);
+  // a try that asked them to log in lasts 2 hours: back from a slow log-in 45 minutes later, no second start, and its done
+  // says login-done
+  sent.length = 0;
+  await page.evaluate(() => {
+    const ago = String(Date.now() - 45 * 60000);
+    window.sessionStorage.setItem('lair-step:ttrpg:start', ago);
+    window.sessionStorage.setItem('lair-step:ttrpg:login', ago);
+    window.Lair.store.step('ttrpg', 'start');
+    window.Lair.store.step('ttrpg', 'done');
+  });
+  await settle(page, 600);
+  check('live: back from a log-in 45 minutes later is the same try: no second start, then done and login-done', JSON.stringify(sent) === JSON.stringify([P('done'), P('login-done')]), sent);
   check('live: no console errors', page.errors.length === 0, page.errors);
   await ctx.close();
 }

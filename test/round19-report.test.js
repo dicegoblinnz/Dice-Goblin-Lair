@@ -150,7 +150,7 @@ beforeEach(async () => {
     ok(await call('POST', 'team', { customerId: id, name, email: `${name.split(' ')[0].toLowerCase()}@example.com`, perms }, OWNER));
   }
   // the team was added just now: as if long ago, so only the members each test adds are new in a week
-  lair.sql.exec('UPDATE members SET created_at = ?', LONG_AGO);
+  lair.sql.exec('UPDATE members SET created_at = ?, first_seen = CASE WHEN first_seen IS NULL THEN NULL ELSE ? END', LONG_AGO, LONG_AGO);
 });
 
 afterEach(async () => {
@@ -284,11 +284,13 @@ test('bookings made (round 19): a table staff book for someone from the staff pa
 });
 
 test('new members, TTRPG seats and the library (round 19): by week', async () => {
-  for (const [id, made] of [['6101', at('2026-10-20', 12)], ['6102', at('2026-10-25', 21)], ['6103', at('2026-10-14', 9)], ['6104', at('2026-10-21', 12)]]) {
+  for (const [id, made] of [['6101', at('2026-10-20', 12)], ['6102', at('2026-10-25', 21)], ['6103', at('2026-10-14', 9)], ['6104', at('2026-10-14', 12)], ['6105', at('2026-10-13', 12)]]) {
     lair.makeMember({ customerId: id, name: `Member ${id}`, email: `m${id}@example.com` }, made);
   }
-  // 6101 to 6103 have used the app themselves; 6104 is a row staff made for someone (picked for a group), never seen
-  lair.sql.exec("UPDATE members SET last_seen = created_at WHERE customer_id IN ('6101', '6102', '6103')");
+  // 6101 to 6103 used the app themselves when their rows were made; 6104 is a row staff made for someone (picked for a
+  // group) who never came; staff made 6105's row in W2 and they first used the app on 22 October, in W1
+  lair.sql.exec("UPDATE members SET last_seen = created_at, first_seen = created_at WHERE customer_id IN ('6101', '6102', '6103')");
+  lair.sql.exec("UPDATE members SET last_seen = ?, first_seen = ? WHERE customer_id = '6105'", at('2026-10-22', 18), at('2026-10-22', 18));
   // a session of 5 seats: 2 and 1 booked (2 more cancelled) and the GM's friend; a cancelled session; a full one of 3
   lair.sql.exec("INSERT INTO games (id, title, tables, starts_at, ends_at, seats, status, offline_players) VALUES ('g1', 'Curse of Strahd', '[\"T9\"]', ?, ?, 5, 'open', 1)", at('2026-10-21', 18), at('2026-10-21', 22));
   booking({ day: '2026-10-21', kind: 'gm-seat', gameId: 'g1', people: 2 });
@@ -310,8 +312,8 @@ test('new members, TTRPG seats and the library (round 19): by week', async () =>
     lair.sql.exec("INSERT INTO memberships (id, contract_gid, customer_id, status, tier, billing_tier, cancel_at, created_at) VALUES (?, ?, ?, ?, 'grab', 'grab', ?, ?)", `ms${n}`, `gid://shopify/SubscriptionContract/${n}`, customer, status, cancelAt, LONG_AGO);
   }
   const data = await report(2);
-  assert.equal(week(data, W1).newMembers, 2);
-  assert.equal(week(data, W2).newMembers, 1);
+  assert.equal(week(data, W1).newMembers, 3, '6101, 6102, and 6105 in the week they first came');
+  assert.equal(week(data, W2).newMembers, 1, '6103; never the rows staff made');
   assert.deepEqual(week(data, W1).ttrpg, { sessions: 2, seats: 8, taken: 7 }, 'g1: 2 + 1 + the friend = 4 of 5; g3: 3 of 3 (never more than its seats)');
   assert.equal(week(data, W1).library.loansOut, 2);
   assert.equal(week(data, W2).library.loansOut, 1);
@@ -443,8 +445,34 @@ test('paid on the day (round 19): every write to a booking or sign-up stamps whe
   lair.sql.exec("INSERT INTO payments (id, booking_id, kind, order_id, line_id, amount, customer_id, at) VALUES ('pm1', ?, 'booking', 'o1', 'l1', 1000, NULL, ?), ('pm2', ?, 'booking', 'o2', 'l2', 500, NULL, ?)",
     viaShopify, at('2026-10-20', 19), viaShopify, at('2026-10-22', 12));
   const byStaff = booking({ customer: ZOE, day: '2026-10-21', paid: 1, paidAt: null, made: at('2026-10-21', 17) });
-  lair.backfillPaidAt();
+  lair.backfillStamps();
   const stamped = (id) => lair.sql.exec('SELECT paid_at FROM bookings WHERE id = ?', id).one().paid_at;
   assert.equal(stamped(viaShopify), at('2026-10-20', 19));
   assert.equal(stamped(byStaff), at('2026-10-21', 17));
+});
+
+test('paid around the session (round 19): a Paid ticked the next afternoon counts; unticked, or paid more than a day after, doesn\'t', async () => {
+  // Thursday 9pm to 11pm, ticked Paid at 4:30pm on Friday, when the shop opens (17.5 hours after)
+  booking({ customer: NOA, day: '2026-10-22', hour: 21, paid: 1, paidAt: at('2026-10-23', 16, 30) });
+  // ticked Paid by mistake, then unticked: its paid_at stays, but it isn't paid
+  booking({ customer: ZOE, day: '2026-10-21', paidAt: at('2026-10-21', 19) });
+  // Sunday 18 October 12pm to 2pm: paid 23 hours after (counts) and 25 hours after (an owed seat paid later: doesn't)
+  booking({ customer: MIA, day: '2026-10-18', hour: 12, paid: 1, paidAt: at('2026-10-19', 13) });
+  booking({ customer: KAI, day: '2026-10-18', hour: 12, paid: 1, paidAt: at('2026-10-19', 15) });
+  const data = await report(2);
+  assert.equal(week(data, W1).visitors, 1, 'Noa');
+  assert.equal(week(data, W2).visitors, 1, 'Mia');
+  assert.deepEqual(week(data, W1).checkIns, { checkedIn: 0, paidOnly: 1, notRecorded: 1, rate: 0 });
+});
+
+test('first seen (round 19): a member\'s first use of the app is stamped once, through every write to members', () => {
+  lair.makeMember({ customerId: '6300', name: 'Picked For A Group', email: 'picked@example.com' }, NOW);
+  const firstSeen = (id) => lair.sql.exec('SELECT first_seen FROM members WHERE customer_id = ?', id).one().first_seen;
+  assert.equal(firstSeen('6300'), null, 'staff made the row; they haven\'t used the app');
+  lair.touchMember('6300', { name: 'Picked For A Group' }, NOW + HOUR);
+  assert.equal(firstSeen('6300'), NOW + HOUR);
+  lair.touchMember('6300', { name: 'Picked For A Group' }, NOW + 5 * HOUR);
+  assert.equal(firstSeen('6300'), NOW + HOUR, 'the first time stays');
+  lair.touchMember('6301', { name: 'Brand New', email: 'new@example.com' }, NOW + 2 * HOUR);
+  assert.equal(firstSeen('6301'), NOW + 2 * HOUR);
 });
