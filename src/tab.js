@@ -132,7 +132,7 @@ export const runningTabMethods = {
       people: x.people, amount: dueOf(x), weekly: Boolean(x.seriesId && x.kind === 'gm-seat'), today: x.start >= dayFrom && x.start < dayTo,
       bill: billed.has(`${type}:${x.id}`) ? bill.id : null, onBill: billed.has(`${type}:${x.id}`),
       // (round 21: a seat their GM pays for: nothing for them to pay, and locked in like any seat)
-      ...(type === 'booking' && x.coveredBy ? { coveredByGm: true } : {}), ...extra,
+      ...(type === 'booking' && x.coveredBy && !gameOf(x.gameId)?.free ? { coveredByGm: true } : {}), ...extra,
     });
     const owed = [];
     const seen = new Set();

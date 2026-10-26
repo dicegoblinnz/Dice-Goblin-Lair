@@ -431,7 +431,7 @@ export const gmSessionMethods = {
       this.write("UPDATE bookings SET customer_id = ?, name = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", gmCustomerId, `GM ${gm}`, now, s.id);
       // Round 21: the GM before's offers to pay for players end while they could still stop them; from 24 hours before,
       // they're locked in and stay theirs (src/gm-cover.js)
-      this.coversAfterGmChange(this.game(s.id), s.gm, rules, now);
+      this.coversAfterGmChange(this.game(s.id), s.gm, rules, now, s.gmCustomerId);
     }
     // a bill with any of those seats or charges on it stays true
     this.reconcileBills(rules, now);

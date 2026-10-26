@@ -961,3 +961,100 @@ test('GM pays, review 2.9: a free session shows no GM paying; Session done says 
   const tapped = ok(await call('POST', `games/${other}/credit`, {}, OWNER));
   assert.deepEqual([tapped.status, tapped.note], ['none', "The GM pays for their players' seats on this session, so there's no GM credit to add."]);
 });
+
+/* ---------------- after the third review (27 Oct 2026) ---------------- */
+
+test('GM pays, review 3.1: a cancelled session works out what\'s due back to the GM on each charge, and the email says it', async () => {
+  shopifyOn = true;
+  // fully paid; part paid; part refunded already; $20 due back on a live charge; each on its own session
+  const make = async (tables, title, people = 1) => {
+    const id = await list({ tables, title });
+    const s = await seat(id, MIA, 'Mia', { people });
+    ok(await cover(id, s.ref, RANGI));
+    return { id, seat: s, charge: coverRow(s.id) };
+  };
+  const full = await make(['B1'], 'Full');
+  ok(await update(full.charge.id, { paid: true }));
+  const part = await make(['B2'], 'Part');
+  ok(await internal('orders-paid', posOrder(5101, [{ price: '5.00', properties: { _booking: part.charge.ref } }])));
+  const done = await make(['B3'], 'Done', 3);
+  ok(await update(done.charge.id, { paid: true }));
+  ok(await update(done.seat.id, { people: 1 }));
+  ok(await update(done.charge.id, { refunded: true }));
+  const live = await make(['B4'], 'Live', 3);
+  ok(await update(live.charge.id, { paid: true }));
+  ok(await update(live.seat.id, { people: 1 }));
+  alerts = [];
+  for (const g of [full, part, done, live]) ok(await call('POST', `games/${g.id}/update`, { status: 'cancelled' }, OWNER));
+  assert.deepEqual(await backOn(full.charge.id), { refund: 'due', amount: 1000, paid: 1000, shown: 1000 });
+  assert.deepEqual(await backOn(part.charge.id), { refund: 'due', amount: 500, paid: 500, shown: 500 });
+  assert.deepEqual(await backOn(done.charge.id), { refund: 'due', amount: 1000, paid: 1000, shown: 1000 });
+  assert.deepEqual(await backOn(live.charge.id), { refund: 'due', amount: 3000, paid: 3000, shown: 3000 });
+  // the staff view says what to give back; the cancel emails list it (in all, for one that was due already)
+  const staffView = async (id) => ok(await call('GET', `floor?from=${at('2026-10-24', 0)}&to=${at('2026-11-20', 0)}`, null, OWNER)).bookings.find((b) => b.id === id);
+  assert.equal((await staffView(part.charge.id)).refundAmount, 500);
+  const lines = alerts.flatMap((a) => [a.subject]);
+  assert.deepEqual(lines, ['Refunds due: Full', 'Refunds due: Part', 'Refunds due: Done', 'Refunds due: Live']);
+  // a later payment on a charge whose session was cancelled: staff hear the new total
+  alerts = [];
+  ok(await internal('orders-paid', posOrder(5102, [{ price: '5.00', properties: { _booking: part.charge.ref } }])));
+  assert.deepEqual(await backOn(part.charge.id), { refund: 'due', amount: 1000, paid: 1000, shown: 1000 });
+  assert.match(alerts[0].intro, /is \$10\.00 now, not \$5\.00/);
+});
+
+test('GM pays, review 3.6 to 3.9: the 10-minute run flags money back when it also puts the seat right; staff told once; the words', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia', { people: 3 });
+  ok(await cover(id, mias.ref, RANGI));
+  const charge = coverRow(mias.id);
+  ok(await update(charge.id, { paid: true }));
+  // something else changes the seat to 1 person with a price on it: the run puts it right, and $20 is due back
+  lair.sql.exec('UPDATE bookings SET people = 1, amount = 1500 WHERE id = ?', mias.id);
+  alerts = [];
+  assert.equal(lair.coverUpkeep(Date.now()), 1);
+  assert.deepEqual([lair.booking(mias.id).amount, (await backOn(charge.id)).amount], [0, 2000]);
+  assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${charge.ref}`]);
+  // a staff change to the charge (waived off, marked paid) doesn't tell staff again
+  alerts = [];
+  ok(await update(charge.id, { waived: false }));
+  ok(await update(charge.id, { paid: true }));
+  assert.deepEqual([alerts.length, (await backOn(charge.id)).amount], [0, 2000]);
+  // taken off then back with fewer people than were paid for: "back on, and it costs"
+  ok(await update(charge.id, { refunded: true }));
+  ok(await update(mias.id, { people: 3 }));
+  ok(await update(charge.id, { paid: true }));
+  ok(await update(mias.id, { status: 'cancelled' }));
+  lair.sql.exec('UPDATE bookings SET people = 1 WHERE id = ?', mias.id);
+  alerts = [];
+  ok(await update(mias.id, { status: 'confirmed' }));
+  assert.match(alerts[0].intro, /is \$20\.00 now, not \$30\.00: Rangi Hohaia has paid \$30\.00 for it, and Mia's seat is back on, and it costs \$10\.00 now\. /);
+});
+
+test('GM pays, review 3: a new GM on a free session ends the offer quietly; "Still paying" once; free seats don\'t say the GM pays', async () => {
+  const letters = [];
+  lair.letter = (to, subject) => {
+    letters.push(subject);
+    return { to, subject };
+  };
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia');
+  ok(await cover(id, mias.ref, RANGI));
+  ok(await call('POST', `games/${id}/free`, { free: true }, OWNER));
+  assert.equal((await me(MIA)).account.comingUp.items.find((x) => x.id === mias.id).coveredByGm, undefined);
+  ok(await call('POST', `games/${id}/gm`, { gmCustomerId: WIREMU, gmCustomerName: 'Wiremu', gm: 'Wiremu' }, OWNER));
+  assert.deepEqual([lair.booking(mias.id).amount, lair.booking(mias.id).coveredBy], [0, undefined]);
+  assert.ok(!letters.some((l) => /your seat/.test(l)), letters.join(', '));
+  // inside the 24 hours, A to B to C: staff hear once, when it's left with the GM who made it
+  const other = await list({ tables: ['B2'], title: 'Locked' });
+  const kais = await seat(other, KAI, 'Kai');
+  ok(await cover(other, kais.ref, RANGI));
+  nowIs(at('2026-10-27', 9));
+  alerts = [];
+  ok(await call('POST', `games/${other}/gm`, { gmCustomerId: WIREMU, gmCustomerName: 'Wiremu', gm: 'Wiremu' }, OWNER));
+  ok(await call('POST', `games/${other}/gm`, { gmEmail: 'hemi.gm@example.com', gm: 'Hemi' }, OWNER));
+  assert.deepEqual(alerts.filter((a) => /^Still paying/.test(a.subject)).length, 1);
+  assert.equal(coverRow(kais.id).customerId, RANGI);
+  // staff can still stop it, even on a seat that's been taken off
+  ok(await update(kais.id, { status: 'cancelled' }));
+  ok(await uncover(other, kais.ref, OWNER));
+});

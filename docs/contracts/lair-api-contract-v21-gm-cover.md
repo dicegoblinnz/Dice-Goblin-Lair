@@ -64,8 +64,9 @@ So:
 - The session is made **free**: the charges go while it is, but the GM's offer stays (a paid charge stops it going
   free, like a paid seat: `paidAlready`). Back to a price more than 24 hours before: the charges come back. Inside the
   24 hours: like any seat booked while it was free, it stays free: the offer ends and nobody pays.
-- The session is **cancelled**: the charges go with it, and one the GM had paid is a refund due, in the staff's
-  "Refunds due" email with the players'.
+- The session is **cancelled**: the charges go with it, and what the GM has paid on each (net of anything given back,
+  as below) is due back to them, in the staff's "Refunds due" email with the players' ("$X to give back", or "$X to
+  give back in all (it was $Y)" for one that was due already).
 - The session is **re-timed or moved**: the charge's times move with it, and it never takes a table.
 - The 10-minute run does the same for every seat a GM pays for, in case something changed a seat without saying so
   (`covers: { synced }` in its record when it changed any).
@@ -84,7 +85,9 @@ it is a refund due, and staff hear why). This happens when:
   gets the session's seat price, its player is emailed, and anything the old GM had paid on it is a refund due. From 24
   hours before (or once it's started, or over), an offer is locked in like any seat, so it **stays with the GM who made
   it**: they still pay, and staff get one email ("Still paying: <session>") listing those, to stop any that shouldn't
-  stay. The board says who pays (`coverBy`), and only staff can stop it.
+  stay (once: a later change of GM doesn't send it again for the same offers). The board says who pays (`coverBy`), and
+  only staff can stop it. On a free session there's nothing to pay, so the old GM's offers just end (the seats stay free,
+  and nobody's emailed). "Locked in" is the seat's own lock, the one the player is held to.
 
 ### Money back to the GM
 
@@ -94,7 +97,8 @@ What's due back on a charge is **what the GM has paid on it, net of what's been 
 - The charge's `refund` is `'due'` while that's over $0, with `refundAmount` (stored as `refund_amount`) what to give
   back, and back to none when it isn't.
 - Staff hear each time it starts ("Refund due", with why and how much), changes ("Refund due": what to give back is
-  $X now, not $Y, in all) or stops ("No refund now": don't refund it).
+  $X now, not $Y, in all) or stops ("No refund now": don't refund it). A staff change to the charge that doesn't change
+  what's due back (marking it paid again, say) tells them nothing.
 - Money paid on a charge that's gone, at the counter or marked by hand, is always counted: a second payment raises what's
   due back, and staff hear the new total. Within one order, staff hear once, after it, whatever the order of its lines.
 - Staff **marking it refunded** records the money going back: a payment of minus what was due back (`payments` row with
@@ -138,9 +142,9 @@ Refusals, word for word:
 ### `POST /games/:id/players/:ref/uncover` (website) and `POST /pos/uncover { gameId, ref }` (the counter)
 
 The GM stops paying for the seat: it costs a seat's price on the session now (nothing if the session is free), and the
-charge goes. Who: the session's GM **until it's locked in** (24 hours before) and while they haven't paid it; staff (and
-the POS) any time, even once the GM has paid: that money is a refund due, and staff get an email. → `{ seat, cover:
-null, game }`.
+charge goes. Who: the GM paying, **until it's locked in** (24 hours before) and while they haven't paid it; staff (and
+the POS) any time, even once the GM has paid (that money is a refund due, and staff get an email), and for a seat that's
+been taken off or was a no-show too (to put things right). → `{ seat, cover: null, game }`.
 
 | Status | When | Message |
 | --- | --- | --- |
@@ -200,14 +204,15 @@ more. It's $15.00 on your tab. Can't make it? Cancel it in My Lair by <time>.`
     (`status: 'cancelled'`, `due: 0`), or on one that's on but paid over what it costs now. Once staff mark it refunded,
     one that went is gone from the list.
   - their running tab (`account`) lists a charge like any booking, with `kind: 'cover'`: coming up, then owed if it's
-    over unpaid. A player's seat their GM pays for has `coveredByGm: true` there too.
+    over unpaid. A player's seat their GM pays for has `coveredByGm: true` there too (while the session has a price).
 - **The counter**:
   - the GM's member code (`/pos/scan`, `/pos/checkin-member`): today's charge is one of their rows (`kind: 'gm-cover'`,
     never checked in), with its cart line `Paying for Mia's seat: Curse of Strahd (RA-OWL-12)`; an owed one is
     `Owed: Paying for Mia's seat: Curse of Strahd (Tue 27 Oct)`.
   - checking in the charge itself (`/pos/checkin`, `POST /checkin`, its own code): not checked in, `reason: 'cover'`,
     message `Paying for Mia's seat: Curse of Strahd: nothing to check in. Charge $10.00.`, and (`/pos/checkin`) its
-    cart line in `lines` while it's on and unpaid.
+    cart line in `lines` while it's on and unpaid. **For the POS app:** with `reason: 'cover'`, add `lines` to the cart as
+    for a check-in (nobody was checked in, but there's something to pay), and don't offer "Check in anyway".
   - the POS Today list doesn't list charges (they aren't people arriving).
   - the player's seat checks in as usual, with nothing to pay.
 

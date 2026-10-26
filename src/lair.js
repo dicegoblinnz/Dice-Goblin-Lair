@@ -2901,8 +2901,9 @@ export class Lair {
         if (!(next.notes || '').includes('[Refund?]')) next.notes = `${next.notes ? `${next.notes} ` : ''}[Refund?] Paid, then didn't come: refund it or keep the fee.`;
       }
     }
-    // Back on (staff undid a cancellation or a no-show): nothing is owed any more.
-    if (['due', 'ask'].includes(next.refund) && !['cancelled', 'noshow'].includes(next.status)) next.refund = null;
+    // Back on (staff undid a cancellation or a no-show): nothing is owed any more. (Round 21: a GM's charge's refund
+    // follows what the GM has paid on it: settleChargeRefund, below.)
+    if (['due', 'ask'].includes(next.refund) && !['cancelled', 'noshow'].includes(next.status) && next.kind !== 'gm-cover') next.refund = null;
     this.saveBooking(next, now);
     if (moveGame) {
       const { game, together, tables, end, room } = moveGame;
@@ -4153,11 +4154,16 @@ export class Lair {
           signoff: 'Sorry again,\nGobgob',
         }));
       }
-      // Round 21: a GM's charge for a player's seat went too (the bulk cancel above); one the GM had paid comes back to
-      // them, with the players' refunds
-      for (const cover of linked.filter((b) => b.kind === 'gm-cover' && b.paidAmount > 0)) {
-        this.write("UPDATE bookings SET refund = 'due', updated_at = ? WHERE id = ? AND (refund IS NULL OR refund != 'done')", now, cover.id);
-        refunds.push([cover.ref, `${cover.name}, the GM, paying for a player: ${dollars(cover.paidAmount)} for ${this.when(game, rules)}`]);
+      // Round 21: a GM's charge for a player's seat went too (the bulk cancel above): what the GM has paid on each, net
+      // of anything given back, is due back to them (src/gm-cover.js), listed here with the players' refunds
+      for (const { id } of this.sql.exec("SELECT id FROM bookings WHERE game_id = ? AND kind = 'gm-cover'", game.id).toArray()) {
+        const before = this.booking(id);
+        const told = before.refund === 'due' ? before.refundAmount || 0 : 0;
+        const back = this.settleChargeRefund(id, now, 'gone', { quiet: true });
+        if (back > 0 && back !== told) {
+          const seat = before.coverOf ? this.booking(before.coverOf) : null;
+          refunds.push([before.ref, `${before.name}, the GM, paying for ${seat?.name || 'a player'}'s seat: ${dollars(back)} to give back${told ? ` in all (it was ${dollars(told)})` : ''}`]);
+        }
       }
     }
     if (letters.length && emailReady(this.env)) this.later(this.mailMany(letters));

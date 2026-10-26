@@ -312,6 +312,83 @@ for (const size of sizes) {
   await ctx.close();
 }
 
+for (const size of sizes) {
+  const tag = `[${size}]`;
+  m.globalSettings.lair_mode = 'demo';
+
+  /* ---------- 5. the staff desk and Refunds to sort, for the GM's charge ---------- */
+  let ctx = await context(browser, size);
+  let page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/lair-staff', STAFF);
+  await page.waitForSelector('#checkin-code', { timeout: 20000 });
+  await seed(page);
+  const ref = await page.evaluate(async ([id, seatRef]) => {
+    const { store } = window.Lair;
+    await store.backend.coverGamePlayer(id, seatRef);
+    await store.refresh();
+    return store.backend.state.bookings.find((b) => b.kind === 'gm-cover' && b.gameId === id && b.status !== 'cancelled').ref;
+  }, [GAME, 'R21-MIA-7']);
+  await page.fill('#checkin-code', ref);
+  await page.press('#checkin-code', 'Enter');
+  await page.waitForSelector('[data-checkin-result] .checkin-card', { timeout: 10000 });
+  await settle(page, 400);
+  const desk = await page.evaluate(() => {
+    const card = document.querySelector('[data-checkin-result] .checkin-card');
+    const f = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    return {
+      status: f(card?.querySelector('.checkin-card__status')?.textContent), what: f(card?.querySelector('.checkin-card__what')?.textContent),
+      bill: f(card?.querySelector('.staff-bill')?.textContent), buttons: [...(card?.querySelectorAll('button') || [])].map((b) => f(b.textContent)),
+    };
+  });
+  check(`${tag} Staff desk: the GM's charge's code: To pay, "Paying for Mia's seat", The GM's part $10, Mark paid, no check-in`,
+    desk.status === 'To pay' && /^Paying for Mia's seat: The Sunless Citadel/.test(desk.what) && /The GM’s part \$10/.test(desk.bill)
+    && desk.buttons.includes('Mark paid $10') && !desk.buttons.some((b) => /Check in/.test(b)), desk);
+  await shot(page, `${size}-5-desk`, '[data-checkin-result]');
+  // the GM paid $20 for a $10 charge: $10 to give back, in Refunds to sort, with nothing there but Mark refunded (and email)
+  await page.evaluate(async (id) => {
+    const be = window.Lair.store.backend;
+    const cover = be.state.bookings.find((b) => b.kind === 'gm-cover' && b.gameId === id && b.status !== 'cancelled');
+    cover.paidAmount = 2000;
+    be.commit();
+    await window.Lair.store.refresh();
+  }, GAME);
+  await page.click('[data-checkin-clear]').catch(() => {});
+  await settle(page, 500);
+  const refundCard = await page.evaluate(() => {
+    const f = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const card = [...document.querySelectorAll('[data-refunds] .staff-card')].find((c) => /GM pays for a player/.test(c.textContent));
+    return card ? { text: f(card.textContent), buttons: [...card.querySelectorAll('button')].map((b) => f(b.textContent)) } : null;
+  });
+  check(`${tag} Staff: Refunds to sort has the GM's charge: Refund due $10, Mark refunded, and no Check in, −1, +1, +1 hour or Cancel`,
+    refundCard && /Refund due: \$10/.test(refundCard.text) && refundCard.buttons.includes('Mark refunded')
+    && !refundCard.buttons.some((b) => /^(Check in|−1|\+1|\+1 hour|Cancel booking|No-show)$/.test(b)), refundCard);
+  await shot(page, `${size}-5-refunds`, '[data-refunds]');
+  await axe(page, `${tag} staff page, Refunds to sort with a GM's charge`, '[data-refunds]');
+  check(`${tag} Staff (5): no errors`, !page.errors.length, page.errors);
+  await ctx.close();
+
+  /* ---------- 6. Dan's game when another GM still pays for Mia (locked in before the session came to him) ---------- */
+  ctx = await context(browser, size);
+  page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/gm-games', DAN);
+  await ready(page);
+  await seed(page);
+  await page.evaluate(async ([id, seatRef]) => {
+    const be = window.Lair.store.backend;
+    const seat = be.state.bookings.find((b) => b.ref === seatRef);
+    Object.assign(seat, { coveredBy: 'demo-r21-rangi', coverWas: 1500, amount: 0 });
+    be.state.bookings.push({ id: 'bk-r21p-other', ref: 'GM-PAYS-2', kind: 'gm-cover', gameId: id, coverOf: seat.id, customerId: 'demo-r21-rangi', name: 'Rangi Parata', start: seat.start, end: seat.end, tables: [], people: 1, amount: 1000, paid: false, paidAmount: 0, status: 'confirmed', pay: 'day', extras: [], players: [], createdAt: Date.now() });
+    be.commit();
+    await window.Lair.store.refresh();
+  }, [GAME, 'R21-MIA-7']);
+  await openSheet(page, GAME);
+  const rows = await own(page);
+  check(`${tag} Dan's game: Mia shows Rangi pays for it, and Dan has no Stop paying`,
+    rows && rows[0].badges.includes('Rangi pays for it') && rows[0].buttons.length === 0, rows);
+  check(`${tag} Dan (6): no errors`, !page.errors.length, page.errors);
+  await ctx.close();
+}
+
 await browser.close();
 server.close();
 const { pass, fail } = totals();
