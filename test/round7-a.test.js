@@ -288,10 +288,12 @@ test('player profile (2): a game\'s players say who\'s on an account and who\'s 
   await call('POST', `games/${weekly.id}/join-series`, { people: 2, name: 'Sam Jones', email: 'sam@example.com', phone: MOBILE, players: [{ name: 'Sam Jones', character: 'Vex' }, { name: 'Mia', character: 'Cutter' }] }, '1001');
   await call('POST', 'bookings', { kind: 'gm-seat', gameId: weekly.id, people: 1, name: 'Hemi Walker', email: 'hemi@example.com', phone: '021 555 0199' });
   const players = (await call('GET', 'floor', null, 'gm')).data.games.find((g) => g.id === weekly.id).players;
+  // (round 21: covered and coverable: whether the GM pays for a seat, or could, as nothing's been paid on these yet)
+  const cover = { covered: false, coverable: true };
   assert.deepEqual(players, [
-    { name: 'Sam Jones', character: 'Vex', ref: players[0].ref, paid: false, arrived: false, member: true, regular: true, pronouns: 'he/him', favouriteGames: ['Blades in the Dark'], about: 'Loves a heist.' },
-    { name: 'Mia', character: 'Cutter', ref: players[0].ref, paid: false, arrived: false, member: true, regular: true },
-    { name: 'Hemi Walker', character: '', ref: players[2].ref, paid: false, arrived: false, member: false, regular: false },
+    { name: 'Sam Jones', character: 'Vex', ref: players[0].ref, paid: false, arrived: false, member: true, regular: true, pronouns: 'he/him', favouriteGames: ['Blades in the Dark'], about: 'Loves a heist.', ...cover },
+    { name: 'Mia', character: 'Cutter', ref: players[0].ref, paid: false, arrived: false, member: true, regular: true, ...cover },
+    { name: 'Hemi Walker', character: '', ref: players[2].ref, paid: false, arrived: false, member: false, regular: false, ...cover },
   ]);
   assert.ok(!JSON.stringify(players).includes('021'), 'no mobile on the board');
   assert.ok(!JSON.stringify(players).includes('03-04') && !JSON.stringify(players).includes('@'), 'nor a birthday or an email');

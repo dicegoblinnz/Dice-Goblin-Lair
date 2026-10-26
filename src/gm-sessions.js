@@ -154,10 +154,13 @@ export const gmSessionMethods = {
         // as the tab works it out (dueOf, settled): a $0 seat (a free session's) is neither paid nor owed
         const owing = Math.max(0, (b.amount || 0) - (b.paidAmount || 0) - (b.covered || 0));
         const due = b.paid || b.waived ? 0 : owing;
+        // Round 21: whether its GM pays for it (covered), and whether they could (coverable)
+        const cover = this.coverState(b, game);
         return {
           ref: b.ref, people: b.people, names: party.map((p) => p.name), characters: party.map((p) => p.character || ''),
           paid: Boolean(b.paid) || ((b.amount || 0) > 0 && owing === 0),
           due, regular: Boolean(b.seriesId && b.customerId), member: Boolean(b.customerId), here: b.status === 'seated' || Boolean(b.arrivedAt),
+          covered: cover.covered, coverable: cover.coverable,
         };
       });
   },
@@ -233,10 +236,12 @@ export const gmSessionMethods = {
     const sessions = this.sessionsFor(game, input.scope);
     if (input.free) {
       const ids = sessions.map((s) => s.id);
+      // (round 21: and a GM's charge for a player's seat that the GM has paid)
       const paid = this.sql
         .exec(
-          `SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated', 'done')
-           AND (COALESCE(paid_amount, 0) > 0 OR COALESCE(covered, 0) > 0 OR (paid = 1 AND amount > 0)) AND game_id IN (${ids.map(() => '?').join(', ')})`,
+          `SELECT COALESCE(SUM(people), 0) AS n FROM bookings WHERE ((kind = 'gm-seat' AND status IN ('held', 'confirmed', 'seated', 'done')
+             AND (COALESCE(paid_amount, 0) > 0 OR COALESCE(covered, 0) > 0 OR (paid = 1 AND amount > 0)))
+             OR (kind = 'gm-cover' AND status != 'cancelled' AND COALESCE(paid_amount, 0) > 0)) AND game_id IN (${ids.map(() => '?').join(', ')})`,
           ...ids,
         )
         .one().n;
@@ -253,11 +258,14 @@ export const gmSessionMethods = {
            AND status IN ('held', 'confirmed', 'seated', 'done', 'noshow')`,
           now, s.id,
         );
+        // Round 21: nothing for a GM to pay for either: their charges go, and the seats are just free
+        this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND kind = 'gm-cover' AND status != 'cancelled'", now, s.id);
+        this.write("UPDATE bookings SET covered_by = NULL, cover_was = NULL, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND covered_by IS NOT NULL", now, s.id);
         continue;
       }
       const price = s.seatPrice || rules.prices.gmSeat;
       const seats = this.sql
-        .exec("SELECT * FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND COALESCE(paid_amount, 0) = 0 AND COALESCE(covered, 0) = 0 AND amount = 0", s.id)
+        .exec("SELECT * FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND status IN ('held', 'confirmed') AND COALESCE(paid_amount, 0) = 0 AND COALESCE(covered, 0) = 0 AND amount = 0 AND covered_by IS NULL", s.id)
         .toArray()
         .map((r) => this.rowToBooking(r));
       for (const b of seats) {

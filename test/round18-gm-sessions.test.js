@@ -325,9 +325,10 @@ test('round 18: the floor\'s roster, one item per seat, for staff with GM games 
   ok(await call('POST', `bookings/${mias.id}/update`, { paid: true }, OWNER));
   const rosterOf = async (game, who) => (await gameOn(game, who))?.roster;
   const tamas = await rosterOf(id, TAMA);
+  // (round 21: covered and coverable say whether the GM pays for a seat, or could: Kai hasn't paid, Mia has)
   assert.deepEqual(tamas, [
-    { ref: kais.ref, people: 2, names: ['Kai', 'Ari'], characters: ['Brakka', ''], paid: false, due: 3000, regular: false, member: true, here: false },
-    { ref: mias.ref, people: 1, names: ['Mia'], characters: [''], paid: true, due: 0, regular: false, member: true, here: false },
+    { ref: kais.ref, people: 2, names: ['Kai', 'Ari'], characters: ['Brakka', ''], paid: false, due: 3000, regular: false, member: true, here: false, covered: false, coverable: true },
+    { ref: mias.ref, people: 1, names: ['Mia'], characters: [''], paid: true, due: 0, regular: false, member: true, here: false, covered: false, coverable: false },
   ]);
   // Ana and the main account see every game's; Tama not Rangi's; Rangi (not staff) and Hemi (no GM games) none
   assert.deepEqual(await rosterOf(id, ANA), tamas);

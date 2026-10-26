@@ -62,6 +62,8 @@ import { REPORT_COLUMNS, REPORT_TABLES, STAMP_WRITES, reportMethods } from './re
 import { sessionsFeedMethods } from './sessions-feed.js';
 // Round 21 (26 Oct 2026): GMs' stamps, and GM credit that adds itself
 import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
+// Round 21, part 2: a GM pays for one of their players
+import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -335,6 +337,11 @@ const ROUND17_COLUMNS = [['credits', 'by', 'TEXT']];
 const ROUND18_COLUMNS = [
   ['games', 'free', 'INTEGER NOT NULL DEFAULT 0'], ['games', 'new_seats', 'INTEGER NOT NULL DEFAULT 0'], ['bookings', 'new_player', 'INTEGER NOT NULL DEFAULT 0'],
 ];
+/**
+ * Round 21, part 2 (src/gm-cover.js): a player's seat their GM pays for (covered_by: the GM; cover_was: what the seat cost
+ * before), and the GM's charge for it, a booking of kind 'gm-cover' (cover_of: the seat)
+ */
+const ROUND21_COLUMNS = [['bookings', 'covered_by', 'TEXT'], ['bookings', 'cover_was', 'INTEGER'], ['bookings', 'cover_of', 'TEXT']];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -994,7 +1001,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1029,6 +1036,8 @@ export class Lair {
     for (const statement of REPORT_TABLES) this.sql.exec(statement);
     // Round 21: whether each session's GM was on the team (GM stamps), and each seat's GM credit (made when missing)
     for (const statement of GM_CREDIT_TABLES) this.sql.exec(statement);
+    // and (part 2) a seat's GM charge is found by its seat
+    this.sql.exec("CREATE INDEX IF NOT EXISTS bookings_cover_of ON bookings (cover_of) WHERE cover_of IS NOT NULL");
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1122,6 +1131,10 @@ export class Lair {
       } : {}),
       // round 18: a seat booked by someone new to the Lair's TTRPG sessions
       newPlayer: Boolean(r.new_player),
+      // Round 21: a seat its GM pays for (coveredBy: the GM; coverWas: what it cost before), and a GM's charge for one
+      // (kind 'gm-cover'; coverOf: the seat)
+      ...(r.covered_by ? { coveredBy: String(r.covered_by), coverWas: r.cover_was ?? null } : {}),
+      ...(r.cover_of ? { coverOf: r.cover_of } : {}),
     };
   }
 
@@ -1429,6 +1442,7 @@ export class Lair {
    * session, not only the next one.
    */
   gamePlayers(st, gameId) {
+    const theGame = (st.games || []).find((g) => g.id === gameId) || null;
     const profiles = new Map();
     const profileOf = (customerId) => {
       if (!profiles.has(customerId)) {
@@ -1441,9 +1455,12 @@ export class Lair {
       .filter((b) => b.gameId === gameId && b.kind === 'gm-seat' && ACTIVE.has(b.status))
       .flatMap((b) => {
         const party = b.party?.length ? b.party : [{ name: b.name, character: '' }];
+        // Round 21: whether the GM pays for this seat (covered), and whether they could (coverable: nothing paid on it yet)
+        const cover = this.coverState(b, theGame);
         return party.map((p, i) => ({
           name: p.name, character: p.character || '', ref: b.ref, paid: b.paid, arrived: Boolean(b.arrivedAt) || b.status === 'seated',
           member: Boolean(b.customerId), regular: Boolean(b.seriesId), ...(i === 0 && b.customerId ? profileOf(b.customerId) : {}),
+          covered: cover.covered, coverable: cover.coverable,
         }));
       });
     const saved = this.savedRegulars(st, st.games.find((g) => g.id === gameId)).flatMap((m) => {
@@ -1775,6 +1792,9 @@ export class Lair {
         if (b === 'pos' && c === 'pass-undo') return json(await this.undoPassUse(String(body.useId || ''), { staff: true, customerId: null }));
         if (b === 'pos' && c === 'member') return json(await this.posMember(body));
         if (b === 'pos' && c === 'tab' && parts[3] && parts[4] === 'added') return json(this.posTabAdded(decodeURIComponent(parts[3])));
+        // Round 21, part 2: the GM pays for a player's seat, at the counter ({ gameId, ref }: src/gm-cover.js)
+        if (b === 'pos' && c === 'cover') return json(await this.coverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
+        if (b === 'pos' && c === 'uncover') return json(await this.uncoverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
         return json({ error: 'Not found' }, 404);
       }
       const origin = request.headers.get('X-Lair-Origin');
@@ -1958,6 +1978,9 @@ export class Lair {
       if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
       // Round 18: a seat taken off a game (staff, or the game's staff GM), before adding players
       if (a === 'games' && c === 'players' && d && parts[4] === 'remove' && !parts[5]) return json(await this.removePlayer(b, decodeURIComponent(d), who, body));
+      // Round 21, part 2: the session's GM (or staff) pays for a player's seat, or stops (src/gm-cover.js)
+      if (a === 'games' && c === 'players' && d && parts[4] === 'cover' && !parts[5]) return json(await this.coverSeat(b, decodeURIComponent(d), who));
+      if (a === 'games' && c === 'players' && d && parts[4] === 'uncover' && !parts[5]) return json(await this.uncoverSeat(b, decodeURIComponent(d), who));
       if (a === 'games' && c === 'players' && !d) return json(await this.addPlayers(b, body, who));
       // Round 18: seats for new players, free sessions and a new GM
       if (a === 'games' && c === 'new-seats' && !d) return json(await this.setNewSeats(b, body, who));
@@ -2238,7 +2261,8 @@ export class Lair {
       : new Set();
     return {
       now,
-      bookings: st.bookings.filter((bk) => staffView || ACTIVE.has(bk.status)).map(view),
+      // (round 21: a GM's charge for a player's seat is no place on the floor: only staff see it, to settle it)
+      bookings: st.bookings.filter((bk) => staffView || (ACTIVE.has(bk.status) && bk.kind !== 'gm-cover')).map(view),
       // Round 8: staff see a hold's series (seriesId, repeat, repeatTag, until); the public see nothing new
       blocks: staffView ? this.staffBlocks(st.blocks, rules) : st.blocks.map(({ seriesId, ...bl }) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
       eventHolds: holds,
@@ -2660,7 +2684,8 @@ export class Lair {
     // round 15: a game table on an event date that isn't on the calendar any more (staff were told) isn't owed
     if (b.occurrenceId && this.rulesCache && this.dateGone(this.rulesCache, b.occurrenceId)) return false;
     if (b.seriesId && b.kind === 'gm-seat' && (b.createdAt || 0) >= this.owedFrom) return true;
-    return ['table', 'gm-seat'].includes(b.kind) && (b.createdAt || 0) >= this.lockFrom;
+    // (round 21: and a GM's charge for a player's seat, like the seat it pays for)
+    return ['table', 'gm-seat', 'gm-cover'].includes(b.kind) && (b.createdAt || 0) >= this.lockFrom;
   }
 
   /**
@@ -2680,7 +2705,7 @@ export class Lair {
     const id = String(customerId);
     const bookings = this.sql
       .exec(
-        `SELECT * FROM bookings WHERE customer_id = ? AND kind IN ('table', 'gm-seat') AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0
+        `SELECT * FROM bookings WHERE customer_id = ? AND kind IN ('table', 'gm-seat', 'gm-cover') AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0
            AND waived = 0 AND (created_at >= ? OR (series_id IS NOT NULL AND kind = 'gm-seat' AND created_at >= ?)) ORDER BY starts_at, id`,
         id, now, this.lockFrom, this.owedFrom,
       )
@@ -2727,6 +2752,8 @@ export class Lair {
     if (!staffEdit) {
       const own = who.customerId && booking.customerId === who.customerId;
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
+      // Round 21: a GM's charge for a player's seat goes from the session ("Stop paying"), not as a booking
+      if (own && booking.kind === 'gm-cover') throw new RuleError(GM_COVER_WORDS.stopFirst, 409);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
       if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
       // Round 15: locked in 24 hours before it starts: it stays on their tab, and only staff take it off
@@ -2758,8 +2785,13 @@ export class Lair {
         });
       } else if (lockedIn) this.askAboutRefund(booking, rules, 'game spot');
       if (booking.kind === 'gm-seat') this.tellGmSeatDropped(booking, rules);
+      // Round 21: a seat its GM was paying for: the GM's charge goes with it
+      if (booking.coveredBy) this.syncCover(booking.id, now);
       return { booking: this.ownView(this.booking(booking.id)), refund, ...(lockedIn ? { notice: LOCKED_IN } : {}) };
     }
+    // Round 21: a GM's charge for a player's seat follows the seat (src/gm-cover.js): staff take it off with "Stop paying"
+    // on the session, but can mark it paid, waive it or mark it refunded here
+    if (booking.kind === 'gm-cover' && (patch.status != null || patch.people != null)) throw new RuleError(GM_COVER_WORDS.stopFirst, 409);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const next = { ...booking };
     if (patch.status && ['confirmed', 'seated', 'done', 'cancelled', 'noshow'].includes(patch.status)) next.status = patch.status;
@@ -2775,8 +2807,10 @@ export class Lair {
         : next.occurrenceId && booking.people ? Math.round(booking.amount / booking.people)
           : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
       next.amount = unit * next.people;
+      // Round 21: a seat its GM pays for still costs its players nothing (syncCover, after saving, moves the GM's charge)
+      if (next.coveredBy) next.amount = 0;
       // A bigger group owes more; a smaller one may be paid up already.
-      next.paid = settled(next);
+      next.paid = next.coveredBy ? false : settled(next);
     }
     if (typeof patch.paid === 'boolean') {
       // Marked paid by hand (cash, or sorted out another way): what was owed counts as paid. Unmarked: only the
@@ -2860,12 +2894,16 @@ export class Lair {
       this.write('UPDATE games SET tables = ?, ends_at = ?, updated_at = ? WHERE id = ?', JSON.stringify(tables), end, now, game.id);
       for (const b of together) {
         if (b.id === next.id) continue;
-        this.write('UPDATE bookings SET tables = ?, ends_at = ?, room = ?, updated_at = ? WHERE id = ?', JSON.stringify(tables), end, room, now, b.id);
+        // (round 21: a GM's charge for a player's seat has no tables: only its end moves)
+        if (b.kind === 'gm-cover') this.write('UPDATE bookings SET ends_at = ?, updated_at = ? WHERE id = ?', end, now, b.id);
+        else this.write('UPDATE bookings SET tables = ?, ends_at = ?, room = ?, updated_at = ? WHERE id = ?', JSON.stringify(tables), end, room, now, b.id);
       }
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
     // Round 21: a seat whose GM credit has gone, now not paid or taken off: staff hear, to decide whether the GM keeps it
     if (next.kind === 'gm-seat') this.gmCreditUndone(booking, next);
+    // Round 21: a seat its GM pays for: the GM's charge follows it (gone with it, back with it, its people)
+    if (next.coveredBy) this.syncCover(next.id, now);
     // Round 17: its library game follows it: let go when it's cancelled or a no-show, moved with it, played once it's checked in
     if (next.game) this.bookingGameChanged(booking, now);
     // Round 9: a bill with this on it stays true (paid by hand, waived or changed: see reconcileBills)
@@ -3380,7 +3418,8 @@ export class Lair {
       const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
       this.saveGame({ ...session, ...shared, ...(session.id === game.id ? place : {}), seatPrice }, now);
       // Round 18: a free session keeps its seats at $0 (its price is kept for when it isn't free any more)
-      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
+      // (round 21: a seat its GM pays for stays at $0 for its players)
+      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND covered_by IS NULL AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
       this.write("UPDATE bookings SET people = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", details.seats + 1, now, session.id);
     }
     if (moving) {
@@ -3918,6 +3957,8 @@ export class Lair {
       const refund = ahead ? { due: true, amount: seat.paidAmount } : refundFor(seat, rules, now);
       this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund.due ? 'due' : seat.refund, now, seat.id);
       this.dropDraft(seat);
+      // Round 21: a seat its GM was paying for: the GM's charge goes with it
+      if (seat.coveredBy) this.syncCover(seat.id, now);
       if (ahead) {
         this.notifyStaff(`Refund due: ${seat.ref}`, {
           title: 'Refund due',
@@ -4090,6 +4131,12 @@ export class Lair {
           button: { label: 'Find another game', url: this.page('gm') },
           signoff: 'Sorry again,\nGobgob',
         }));
+      }
+      // Round 21: a GM's charge for a player's seat went too (the bulk cancel above); one the GM had paid comes back to
+      // them, with the players' refunds
+      for (const cover of linked.filter((b) => b.kind === 'gm-cover' && b.paidAmount > 0)) {
+        this.write("UPDATE bookings SET refund = 'due', updated_at = ? WHERE id = ? AND (refund IS NULL OR refund != 'done')", now, cover.id);
+        refunds.push([cover.ref, `${cover.name}, the GM, paying for a player: ${dollars(cover.paidAmount)} for ${this.when(game, rules)}`]);
       }
     }
     if (letters.length && emailReady(this.env)) this.later(this.mailMany(letters));
@@ -5009,6 +5056,12 @@ export class Lair {
       return { ...base, booking: { ...this.staffBooking(item), players: item.party }, row, due: row.due, ...extra };
     };
     const who = (item) => `${item.name}${item.people ? `, ${plural(item.people, 'person', 'people')}` : ''}${item.tables.length ? ` at ${item.tables.join(', ')}` : ''}`;
+    // Round 21: a GM's charge for a player's seat is only paid, never checked in (the player checks in on their seat)
+    if (booking.kind === 'gm-cover') {
+      const title = this.rowTitle(booking, rules, game);
+      const message = booking.status === 'cancelled' ? `${title}: this was taken off, so there's nothing to pay.` : `${title}: nothing to check in.${this.payWords(booking)}`;
+      return result(booking, { checkedIn: false, reason: 'cover', message, notice: null, pass: null });
+    }
     if (['cancelled', 'noshow'].includes(booking.status) && !force) {
       const message = `This booking was ${booking.status === 'noshow' ? 'marked as a no-show' : 'cancelled'}: ${who(booking)}.`;
       return result(booking, { checkedIn: false, reason: 'cancelled', message, notice: message, pass: null });
@@ -5077,6 +5130,11 @@ export class Lair {
   /** What a booking is, in a few words: the game, the event, or the tables */
   rowTitle(b, rules, game = null) {
     if (b.kind === 'gm-seat') return game?.title || 'GM game';
+    // Round 21: a GM's charge for a player's seat: "Paying for Mia's seat: Curse of Strahd"
+    if (b.kind === 'gm-cover') {
+      const seat = b.coverOf ? this.booking(b.coverOf) : null;
+      return GM_COVER_WORDS.title(this.firstNameOf(seat?.name || 'a player'), (game || (b.gameId ? this.game(b.gameId) : null))?.title || 'a TTRPG session');
+    }
     if (b.kind === 'gm') return `Running ${game?.title || 'a game'}`;
     if (b.occurrenceId) return findOccurrence(rules, b.occurrenceId)?.title || 'Event game spot';
     return `${b.tables.length > 1 ? 'Tables' : 'Table'} ${b.tables.join(', ')}`;
@@ -5088,7 +5146,7 @@ export class Lair {
    * reads like the event's entry. A game seat is its game and a sign-up its event, as on the counter's rows. No awaits.
    */
   dueTitle(row, rules) {
-    if (row.type !== 'booking' || row.kind === 'gm-seat' || row.kind === 'gm') return row.title;
+    if (row.type !== 'booking' || row.kind === 'gm-seat' || row.kind === 'gm' || row.kind === 'gm-cover') return row.title;
     const event = row.occurrenceId ? findOccurrence(rules, row.occurrenceId)?.title : null;
     if (event) return `Game table at ${event}`;
     return this.tablesTitle(row.tables || []);
@@ -5292,7 +5350,8 @@ export class Lair {
       const tables = [...new Set([...parseTableList(o.tables, rules.rooms), ...parseSpots(o.gameTables, rules.rooms).flat()])];
       group(`event:${o.id}`, () => ({ key: `event:${o.id}`, kind: 'event', title: o.title, start: o.start, end: o.end, tables }));
     }
-    const live = st.bookings.filter((b) => b.status !== 'cancelled' && b.kind !== 'gm');
+    // (round 21: nor is a GM's charge for a player's seat someone arriving: it's paid from the GM's member code)
+    const live = st.bookings.filter((b) => b.status !== 'cancelled' && b.kind !== 'gm' && b.kind !== 'gm-cover');
     for (const b of live) {
       if (b.kind === 'gm-seat' && b.gameId) {
         const g = games.get(b.gameId) || this.game(b.gameId);
@@ -5447,6 +5506,8 @@ export class Lair {
     if (row.owed) title = `Owed: ${row.title} (${this.shortDay(row.start, rules)})`;
     else if (row.type === 'join') title = `Event entry: ${row.title} (${row.ref})`;
     else if (row.kind === 'gm-seat') title = `GM seat: ${row.title} (${row.ref})`;
+    // Round 21: a GM paying for one of their players' seats: "Paying for Mia's seat: Curse of Strahd (RA-OWL-12)"
+    else if (row.kind === 'gm-cover') title = `${row.title} (${row.ref})`;
     // Round 11: a named player pays their own share of a game
     else if (row.playerOf) title = `Game spot share: ${row.title} (${row.ref}, ${row.name})`;
     else if (row.occurrenceId) title = `Game spot: ${row.title} (${row.ref})`;
@@ -8931,7 +8992,7 @@ export class Lair {
     // the same rows owedRows reads, for everyone at once
     const bookings = this.sql
       .exec(
-        `SELECT * FROM bookings WHERE customer_id IS NOT NULL AND kind IN ('table', 'gm-seat') AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0
+        `SELECT * FROM bookings WHERE customer_id IS NOT NULL AND kind IN ('table', 'gm-seat', 'gm-cover') AND status NOT IN ('cancelled', 'held') AND ends_at <= ? AND paid = 0
            AND waived = 0 AND (created_at >= ? OR (series_id IS NOT NULL AND kind = 'gm-seat' AND created_at >= ?))`,
         now, this.lockFrom, this.owedFrom,
       )
@@ -9730,6 +9791,17 @@ export class Lair {
         return {
           ...view(b), gameId: b.gameId, gameTitle: g?.title || 'GM game', system: g?.system || '', gm: g?.gm || '', image: this.imageUrl(g?.imageId),
           seriesId: b.seriesId || null,
+          // Round 21: their GM pays for this seat, so there's nothing for them to pay
+          ...(b.coveredBy ? { coveredByGm: true } : {}),
+        };
+      }),
+      // Round 21: what they pay as a GM for their players' seats ("Paying for Mia's seat: Curse of Strahd"), not
+      // cancelled: { id, ref, gameId, title, player, start, end, people, amount, due, paid, owed, status }
+      covers: own.filter((b) => b.kind === 'gm-cover' && b.status !== 'cancelled').map((b) => {
+        const seat = b.coverOf ? this.booking(b.coverOf) : null;
+        return {
+          id: b.id, ref: b.ref, gameId: b.gameId, title: this.rowTitle(b, rules), player: this.firstNameOf(seat?.name || ''), start: b.start, end: b.end,
+          people: b.people, amount: b.amount || 0, due: dueOf(b), paid: Boolean(b.paid) || ((b.amount || 0) > 0 && dueOf(b) === 0), owed: this.isOwed(b, now), status: b.status,
         };
       }),
       // 17 Oct 2026: a private game's invite link, for its GM to share (contract v18-private)
@@ -10057,6 +10129,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: GM credit that adds itself failed', error);
     }
+    // Round 21, part 2 (src/gm-cover.js): every GM's charge for a player's seat in step with the seat, in case anything
+    // changed a seat without saying so
+    try {
+      const covers = this.coverUpkeep(Date.now());
+      if (covers) result.covers = { synced: covers };
+    } catch (error) {
+      console.error('Lair: could not keep GM charges in step with their seats', error);
+    }
     // Round 17 (src/queue.js), each step on its own: games on table bookings held from 3 days before (or let go)
     try {
       const tables = this.bookingHoldUpkeep(Date.now());
@@ -10208,3 +10288,5 @@ Object.assign(Lair.prototype, reportMethods);
 Object.assign(Lair.prototype, sessionsFeedMethods);
 // Round 21 (26 Oct 2026): GMs' stamps and GM credit that adds itself (src/gm-credit.js)
 Object.assign(Lair.prototype, gmCreditMethods);
+// Round 21, part 2: a GM pays for one of their players (src/gm-cover.js)
+Object.assign(Lair.prototype, gmCoverMethods);

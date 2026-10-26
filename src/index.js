@@ -34,8 +34,9 @@ const POS_CORS = {
   'Access-Control-Max-Age': '86400',
 };
 /** The POS routes: GET /pos/today, and POST for the rest. /pos/member is round 3's name for scanning a member code.
-    /pos/pass-undo { useId } gives a pass's sessions back, the same as the staff page's undo. */
-const POS_ROUTES = /^(?:today|scan|checkin|checkin-member|share|member|pass-undo|tab\/[A-Za-z0-9_-]{1,64}\/added)$/;
+    /pos/pass-undo { useId } gives a pass's sessions back, the same as the staff page's undo. Round 21: /pos/cover and
+    /pos/uncover { gameId, ref }: the GM pays for a player's seat, or stops. */
+const POS_ROUTES = /^(?:today|scan|checkin|checkin-member|share|member|pass-undo|cover|uncover|tab\/[A-Za-z0-9_-]{1,64}\/added)$/;
 const withCors = (response) => {
   const out = new Response(response.body, response);
   for (const [key, value] of Object.entries(POS_CORS)) out.headers.set(key, value);

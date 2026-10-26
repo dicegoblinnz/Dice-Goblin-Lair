@@ -124,7 +124,8 @@ export const runningTabMethods = {
       if (!games.has(gameId)) games.set(gameId, this.game(gameId));
       return games.get(gameId);
     };
-    const kindOf = (b) => (b.kind === 'gm-seat' ? 'seat' : b.occurrenceId ? 'spot' : 'table');
+    // (round 21: 'cover' is a GM paying for one of their players' seats)
+    const kindOf = (b) => (b.kind === 'gm-seat' ? 'seat' : b.kind === 'gm-cover' ? 'cover' : b.occurrenceId ? 'spot' : 'table');
     const bookingTitle = (b) => this.dueTitle({ type: 'booking', kind: b.kind, title: this.rowTitle(b, rules, gameOf(b.gameId)), occurrenceId: b.occurrenceId, tables: b.tables }, rules);
     const item = (type, x, extra) => ({
       type, id: x.id, ref: x.ref, kind: type === 'join' ? 'event' : kindOf(x), title: type === 'join' ? x.title || 'Event' : bookingTitle(x), when: x.start, end: x.end,

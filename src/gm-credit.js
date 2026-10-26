@@ -495,7 +495,7 @@ export const gmCreditMethods = {
    * For the floor (staff who see GM credit): round 21 sessions' GM credit so far, by game ID, from..to: { auto: true,
    * credited, staff, manual, check, failed, retry: { players, amount } (what's been decided, whatever's happened to the
    * seat since), toCome: { players } (paid seats not decided yet: the session isn't over, or the next run has them),
-   * unpaid: { players } (seats still to pay) }. A
+   * unpaid: { players } (seats still to pay), covered: { players } (part 2: seats the GM pays for, no credit) }. A
    * session someone credited with Session done before round 21 went live isn't in it (its card says what that did).
    * No awaits.
    */
@@ -528,7 +528,7 @@ export const gmCreditMethods = {
     // the seats on now that nothing's been decided for (or Shopify said no to last time: they're in retry)
     const seats = this.sql
       .exec(
-        `SELECT b.game_id AS game_id, b.people AS people, b.paid AS paid, b.amount AS amount, b.waived AS waived
+        `SELECT b.game_id AS game_id, b.people AS people, b.paid AS paid, b.amount AS amount, b.waived AS waived, b.covered_by AS covered_by
            FROM bookings b LEFT JOIN gm_credit_seats s ON s.booking_id = b.id
           WHERE b.game_id IN (${marks}) AND b.kind = 'gm-seat' AND b.status IN ('confirmed', 'seated', 'done') AND s.booking_id IS NULL`,
         ...ids,
@@ -537,7 +537,9 @@ export const gmCreditMethods = {
     for (const r of seats) {
       const g = byId.get(r.game_id);
       const view = out.get(r.game_id);
-      if (g.free || !(g.fee > 0) || !(r.amount > 0) || r.waived) continue;
+      // (round 21, part 2: a seat its GM pays for gives them no GM credit)
+      if (r.covered_by && !g.free) view.covered.players += r.people;
+      else if (g.free || !(g.fee > 0) || !(r.amount > 0) || r.waived) continue;
       else if (r.paid) view.toCome.players += r.people;
       else view.unpaid.players += r.people;
     }
@@ -547,7 +549,7 @@ export const gmCreditMethods = {
   /** A round 21 session's GM credit with nothing on it yet (gmCreditsIn's shape). No awaits. */
   gmCreditBlank() {
     const none = () => ({ players: 0, amount: 0 });
-    return { auto: true, credited: none(), staff: none(), manual: none(), check: none(), failed: none(), retry: none(), toCome: { players: 0 }, unpaid: { players: 0 } };
+    return { auto: true, credited: none(), staff: none(), manual: none(), check: none(), failed: none(), retry: none(), toCome: { players: 0 }, unpaid: { players: 0 }, covered: { players: 0 } };
   },
 };
 

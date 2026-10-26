@@ -153,10 +153,10 @@ export const adminMethods = {
     const count = (sql) => Number(this.sql.exec(sql).one().n) || 0;
     const games = count("SELECT COUNT(*) AS n FROM games WHERE status != 'cancelled'");
     const series = count("SELECT COUNT(*) AS n FROM series WHERE status != 'cancelled'");
-    const bookings = count("SELECT COUNT(*) AS n FROM bookings WHERE kind IN ('gm', 'gm-seat') AND status IN ('held', 'confirmed', 'seated')");
+    const bookings = count("SELECT COUNT(*) AS n FROM bookings WHERE kind IN ('gm', 'gm-seat', 'gm-cover') AND status IN ('held', 'confirmed', 'seated')");
     this.write("UPDATE games SET status = 'cancelled', updated_at = ? WHERE status != 'cancelled'", now);
     this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE status != 'cancelled'", now);
-    this.write("UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE kind IN ('gm', 'gm-seat') AND status IN ('held', 'confirmed', 'seated')", now);
+    this.write("UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE kind IN ('gm', 'gm-seat', 'gm-cover') AND status IN ('held', 'confirmed', 'seated')", now);
     this.write("UPDATE series_members SET status = 'left', updated_at = ? WHERE status = 'active'", now);
     this.write("UPDATE series_invites SET status = 'cancelled', updated_at = ? WHERE status = 'waiting'", now);
     this.write("UPDATE interests SET status = 'removed', updated_at = ? WHERE kind = 'session' AND status = 'active'", now);
@@ -247,7 +247,8 @@ export const adminMethods = {
       const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
       this.saveGame({ ...session, ...shared, offlinePlayers, imageId, seatPrice }, now);
       // Round 18: a free session keeps its seats at $0 (its price is kept for when it isn't free any more)
-      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
+      // (round 21: a seat its GM pays for stays at $0 for its players)
+      this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND covered_by IS NULL AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
       this.write("UPDATE bookings SET people = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", details.seats + 1, now, session.id);
     }
     if (series) {
