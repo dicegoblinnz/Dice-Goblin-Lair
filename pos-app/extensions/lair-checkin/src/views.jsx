@@ -805,11 +805,6 @@ function MemberView({ screen, ctx }) {
           {account}
         </s-banner>
       ) : null}
-      {screen.notices.length ? (
-        <s-banner tone="info" heading="Heads up">
-          {screen.notices.join(' ')}
-        </s-banner>
-      ) : null}
       {card ? <LoyaltySection card={card} /> : null}
       <s-section heading="To pay">
         <s-stack direction="block" gap="small">

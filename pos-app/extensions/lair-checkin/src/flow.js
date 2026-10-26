@@ -36,7 +36,7 @@ import { dueOf, findRow, isArrived, isOwed, isPayOnly, passSummary, passUsable, 
  *   loyalty: their loyalty card, when this screen has it (from their member code, or a ticket's scan once the Lair app
  *   sends it); filled: this screen's check-in filled their card; cover: the GM's charge this screen just set up;
  *   confirm: "GM pays" (or stop) is waiting for a yes
- * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], notices: string[], loyalty?: object | null,
+ * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], loyalty?: object | null,
  *   account?: { billing?: string, creditLimit?: number, owed?: number, available?: number | null, warning?: string | null } | null }} MemberScreen
  *   loyalty: their loyalty card from the scan (`{ stamps, cardSize, rollsAvailable, card }`, rounds 6 and 7), for show only
  *   account: their billing from the scan (round 9): `{ billing: 'visit' }`, or a monthly account's limit and what's owed
@@ -119,7 +119,6 @@ export function nextScreen(answer) {
       rows: Array.isArray(answer.rows) ? answer.rows : [],
       tab: answer.tab && typeof answer.tab === 'object' ? answer.tab : null,
       passes: Array.isArray(answer.passes) ? answer.passes : [],
-      notices: [],
       loyalty: answer.loyalty && typeof answer.loyalty === 'object' ? answer.loyalty : null,
       account: answer.account && typeof answer.account === 'object' ? answer.account : null,
     };

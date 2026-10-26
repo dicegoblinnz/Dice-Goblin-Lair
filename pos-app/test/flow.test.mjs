@@ -87,7 +87,6 @@ test('a member opens the member view with their rows, tab and passes', () => {
   assert.equal(screen.rows.length, 1);
   assert.equal(screen.tab?.id, 'tab_1');
   assert.equal(screen.passes.length, 1);
-  assert.deepEqual(screen.notices, []);
   assert.deepEqual(screen.loyalty, { stamps: 7, cardSize: 10, rollsAvailable: 1 }, 'the loyalty card, for show (round 6)');
   const bare = nextScreen({ type: 'member', member: { customerId: '1' } });
   assert.deepEqual(bare?.name === 'member' && [bare.rows, bare.tab, bare.passes, bare.loyalty], [[], null, [], null]);
@@ -103,7 +102,7 @@ test('a pass opens the pass view; anything else is not a screen', () => {
 
 test('after the cart: back to the member, else to the person’s group, else one step back', () => {
   const person = personScreen(row, { groupKey: 'tables' });
-  const member = /** @type {const} */ ({ name: 'member', member: {}, rows: [], tab: null, passes: [], notices: [] });
+  const member = /** @type {const} */ ({ name: 'member', member: {}, rows: [], tab: null, passes: [] });
   const known = () => true;
   const unknown = () => false;
   const group = (key) => ({ name: 'group', key, ticked: [], picking: false });
