@@ -1212,6 +1212,8 @@ export class Lair {
    */
   lockView(x, rules = this.rulesCache, now = Date.now()) {
     if (!x || !rules || ['cancelled', 'done', 'seated', 'attended'].includes(x.status) || x.arrivedAt || x.end <= now) return { cancelUntil: null, locked: false };
+    // Round 21: a GM's charge for a player's seat isn't theirs to cancel as a booking ("Stop paying" on the session)
+    if (x.kind === 'gm-cover') return { cancelUntil: null, locked: false };
     const rule = this.cancelRule(x, rules, now);
     return { cancelUntil: rule.cancelUntil, locked: rule.locked };
   }

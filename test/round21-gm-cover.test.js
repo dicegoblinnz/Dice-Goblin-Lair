@@ -210,9 +210,9 @@ test('GM pays (round 21): the session\'s GM pays the $10 table part for a player
   assert.deepEqual([mias2.coveredByGm, mias2.due, mias2.amount], [true, 0, 0]);
   const covers = (await me(RANGI)).covers;
   assert.deepEqual(covers.map((c) => [c.ref, c.title, c.player, c.amount, c.due, c.paid, c.owed]), [[charge.ref, "Paying for Mia's seat: Rangi's one-shot", 'Mia', 1000, 1000, false, false]]);
-  // Rangi's account says it's coming up, as a 'cover'
+  // Rangi's account says it's coming up, as a 'cover', with nothing to cancel there (Stop paying is on the session)
   const coming = (await me(RANGI)).account.comingUp.items.find((x) => x.id === charge.id);
-  assert.deepEqual([coming.kind, coming.title, coming.amount], ['cover', "Paying for Mia's seat: Rangi's one-shot", 1000]);
+  assert.deepEqual([coming.kind, coming.title, coming.amount, coming.cancelUntil, coming.locked], ['cover', "Paying for Mia's seat: Rangi's one-shot", 1000, null, false]);
   // paying for a GM fee of $10: the table part is still $10
   const dearer = await list({ tables: ['B2'], gmFee: 1000, title: 'Dearer one' });
   const rias = await seat(dearer, RIA, 'Ria', { people: 2 });
