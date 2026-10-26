@@ -421,7 +421,7 @@ export function whyNothing(row) {
  *   inCart: boolean, shareInCart?: boolean, share: import('./split.js').PendingState, justChecked: boolean }} input
  *   choice: the pass choice; inUse: the pass covering it now (passInUse); inCart: a line for its booking is in this
  *   cart; shareInCart: that line is a share (someone's part of the bill, or a named player's own share); share: where a
- *   share of its bill put in the cart from this iPad has got to; justChecked: this screen checked them in
+ *   share of its bill put in the cart from this tablet has got to; justChecked: this screen checked them in
  * @returns {PersonAction}
  */
 export function personAction({ row, plan, choice, inUse = null, inCart, shareInCart = false, share, justChecked }) {

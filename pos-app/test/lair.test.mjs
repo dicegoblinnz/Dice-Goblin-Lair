@@ -112,7 +112,7 @@ test('GM pays for a player: POST /pos/cover and /pos/uncover, and the GM’s cha
 test('banners say what went wrong in plain words, with Try again only where it can help', () => {
   assert.deepEqual(problemFor(new LairError('offline', OFFLINE)), {
     title: "Can't reach the Lair app",
-    message: "Check the iPad's internet and try again.",
+    message: "Check the tablet's internet and try again.",
     tone: 'critical',
     retry: true,
   });
@@ -134,7 +134,7 @@ test('offline, or the network failing, says so in plain words', async () => {
   await assert.rejects(getToday(), (e) => e instanceof LairError && e.kind === 'offline' && e.message === OFFLINE);
   assert.equal(requests.length, 0, "doesn't even try");
   pretend({ fail: true });
-  await assert.rejects(scanCode('SJ-OWLBEAR-17'), (e) => e instanceof LairError && e.message === "Can't reach the Lair app. Check the iPad's internet and try again.");
+  await assert.rejects(scanCode('SJ-OWLBEAR-17'), (e) => e instanceof LairError && e.message === "Can't reach the Lair app. Check the tablet's internet and try again.");
 });
 
 test("shows the Lair app's own message for 4xx answers", async () => {

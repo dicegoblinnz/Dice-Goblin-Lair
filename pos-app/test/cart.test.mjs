@@ -166,10 +166,10 @@ test('an item staff decline at the stock prompt is reported, not added, and the 
 test('the tab stays in the cart when the Lair app cannot be told', async () => {
   pretendCart();
   const result = await addTabToCart({ id: 'tab_4', items: [{ variantId: '7', title: 'Coke', qty: 1 }] }, '777', async () => {
-    throw new Error("Can't reach the Lair app. Check the iPad's internet and try again.");
+    throw new Error("Can't reach the Lair app. Check the tablet's internet and try again.");
   });
   assert.equal(result.added.length, 1);
-  assert.equal(result.markProblem, "Can't reach the Lair app. Check the iPad's internet and try again.");
+  assert.equal(result.markProblem, "Can't reach the Lair app. Check the tablet's internet and try again.");
   assert.equal(result.customer, 'added');
 });
 
@@ -231,10 +231,10 @@ test('Add everything to cart: just fees, just a tab, or nothing; the tab stays i
     tab: { id: 'tab_kai', items: [{ variantId: '7', title: 'Coke', qty: 1 }] },
     customerId: '888',
     markAdded: async () => {
-      throw new Error("Can't reach the Lair app. Check the iPad's internet and try again.");
+      throw new Error("Can't reach the Lair app. Check the tablet's internet and try again.");
     },
   });
-  assert.deepEqual([tabOnly.tab?.added.length, tabOnly.tab?.markProblem, tabOnly.customer], [1, "Can't reach the Lair app. Check the iPad's internet and try again.", 'added']);
+  assert.deepEqual([tabOnly.tab?.added.length, tabOnly.tab?.markProblem, tabOnly.customer], [1, "Can't reach the Lair app. Check the tablet's internet and try again.", 'added']);
 
   const { calls: none } = pretendCart();
   const nothing = await addEverythingToCart({ lines: [], tab: null, customerId: '888', markAdded: async () => assert.fail('no tab') });

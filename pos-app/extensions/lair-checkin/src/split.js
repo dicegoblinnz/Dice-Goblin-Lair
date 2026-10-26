@@ -8,7 +8,7 @@ import { dueOf, rowKey } from './today.js';
  * @typedef {import('./today.js').Row} Row
  * @typedef {{ customerId: string, name: string, code: string }} Payer who's paying a share (their account gets the spend)
  * @typedef {{ ref: string, amount: number, expect: number, at: number }} Pending
- *   A share this iPad put in the cart: once it's paid, the booking's paidAmount should reach `expect`.
+ *   A share this tablet put in the cart: once it's paid, the booking's paidAmount should reach `expect`.
  * @typedef {'none' | 'in-cart' | 'waiting' | 'landed' | 'expired'} PendingState
  */
 
@@ -154,7 +154,7 @@ export function pendingShare(row, amount, now) {
 }
 
 /**
- * Where a share put in the cart from this iPad has got to:
+ * Where a share put in the cart from this tablet has got to:
  *   landed   the payment has reached the Lair app (or nothing's left to pay): forget the note
  *   in-cart  its line is still in this cart: take payment on the Verifone
  *   waiting  it's left the cart, but the Lair app hasn't heard about the payment yet

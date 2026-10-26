@@ -203,7 +203,7 @@ sale isn't listed: take that payment first, or take the line off the sale.
 
 Steps 1 to 4 are done: a change under `pos-app/` that lands on `main` deploys by itself. They're kept here for
 reference, and the key needs renewing every 6 months (see the end of this section). Steps 5 and 6 are for a new
-iPad or a new staff login. Step 7 (store credit at the till) is new: check it once.
+tablet or a new staff login. Step 7 (store credit at the till) is new: check it once.
 
 Use your phone's web browser (Safari or Chrome) for GitHub, not the GitHub app: the app can't add secrets.
 
@@ -253,7 +253,7 @@ token is saved, run the first deploy by hand:
 3. After 2–3 minutes it shows a green tick. A red cross means it didn't deploy: tap the run, then the step with the
    cross, to read why. To retry a run, open it and tap **Re-run jobs**.
 
-After a deploy, close Shopify POS on the iPad completely and open it again to get the new check-in screen.
+After a deploy, close Shopify POS on the tablet completely and open it again to get the new check-in screen.
 
 ### 5. Put the tile on the POS home screen
 
@@ -264,7 +264,7 @@ After a deploy, close Shopify POS on the iPad completely and open it again to ge
 4. Put the **Pay on Verifone** tile right next to it (drag the tiles in the same layout). After **Add to cart** the
    check-in screen closes back to this home screen, so Pay on Verifone is always the next tap. (One app can't press
    another app's tile, so this is the quickest way.)
-5. On the iPad or phone, close Shopify POS completely and open it again.
+5. On the tablet or phone, close Shopify POS completely and open it again.
 
 Not in the list? Shopify admin → **Point of Sale → Settings → POS apps**: check Dice Goblin Lair is there and turned
 on for the shop.
@@ -301,7 +301,7 @@ Each problem says what to do next, and its button is the next step.
 | --- | --- |
 | In the cart (instead of closing) | Tap **Close and pay**, then Pay on Verifone. POS sometimes won't let the screen close itself. |
 | Check before they pay | The Lair app said something about the check-in, like a pass that only covered some of them, or someone it wouldn't check in. Sort it out with them, then tap **Close and pay**. |
-| Can't reach the Lair app | Check the iPad's internet and tap **Try again**. If the internet works and it always says this, the Lair app may be missing its latest update. |
+| Can't reach the Lair app | Check the tablet's internet and tap **Try again**. If the internet works and it always says this, the Lair app may be missing its latest update. |
 | This POS login has no access | Step 6 above, or log the POS in with the owner's account. |
 | The Lair app didn't accept this POS login | Close the check-in screen and open it again. If it keeps happening, the Lair app's Shopify client ID or secret doesn't match this app. |
 | We couldn't find SJ-OWLBEAR-71 | Check the code with them, or search by name. **Scan again** tries another scan. |
@@ -318,7 +318,7 @@ Each problem says what to do next, and its button is the next step.
 | Someone else's sale in the cart (yellow box) | If they're paying apart, take that payment first. Paying together? Carry on. |
 | Not everyone was checked in, or No one was checked in | Open the people it names to check them in anyway (another day, say). |
 | Waiting for the last payment… | The payment hasn't reached the Lair app yet: tap **Refresh** in a few seconds (on a member code, scan it again). Didn't go through? Tap **It wasn't paid** on the booking. |
-| No answer from the Lair app | Check the iPad's internet and tap **Try again**. Nothing is charged twice: what went through is skipped. |
+| No answer from the Lair app | Check the tablet's internet and tap **Try again**. Nothing is charged twice: what went through is skipped. |
 | That didn't work | The Lair app said no, and says why. Do what it says. |
 | Couldn't find that pass use | Undo it on the staff page, under Passes, then open them again here. |
 | The tile says "App failed to load" | Close and reopen Shopify POS, and update it from the App Store. If it continues, note the device and iOS version and ask Claude. |
@@ -364,7 +364,7 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
   filled.
 - **A group:** each ticked person still to come is checked in with `/pos/checkin` (their saved pass applies), each
   ticked person already here is asked for their lines with `pass: 'none'`, and every line goes in one sale.
-- **Split the bill:** `/pos/share` answers with the share's line. The iPad saves the share before the screen closes,
+- **Split the bill:** `/pos/share` answers with the share's line. The tablet saves the share before the screen closes,
   so the booking says "Waiting for the last payment…" until that payment reaches the Lair app. Until then a member's
   code, a group and a pass's **Use on…** leave that booking out (`waitingRefs` in `split.js`), so its share is never
   charged twice.
@@ -422,7 +422,7 @@ deploy. Times are shown in Auckland time whatever the device says.
     `today.js` (the Today list, badges, search, the tile's numbers, GM pays), `flow.js` (which screen next, each
     screen's main button, groups, pass choices, where a scan goes, what happens after the cart), `split.js` (shares of
     a bill), `lines.js` (cart lines and toasts), `cart.js` (the POS cart), `sale.js` (the cart strip),
-    `loyalty.js` (the loyalty card), `lair.js` (Worker calls and error banners), `store.js` (what the iPad remembers
+    `loyalty.js` (the loyalty card), `lair.js` (Worker calls and error banners), `store.js` (what the tablet remembers
     between visits).
   - `shopify.d.ts` is generated by the CLI (`npm run build` rewrites it).
 - `.github/workflows/pos-deploy.yml` (at the repository root) runs the tests and the type check, then

@@ -7,8 +7,8 @@ export const LAIR_URL = 'https://dice-goblin-lair.dicegoblinnz.workers.dev';
 
 const TIMEOUT_MS = 15000;
 
-/** What staff see when the iPad can't get to the Lair app at all. */
-export const OFFLINE = "Can't reach the Lair app. Check the iPad's internet and try again.";
+/** What staff see when the tablet can't get to the Lair app at all. */
+export const OFFLINE = "Can't reach the Lair app. Check the tablet's internet and try again.";
 
 /**
  * A failed call, with a message staff can act on.
@@ -163,7 +163,7 @@ async function call(method, path, body, notFound) {
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => {
         controller?.abort();
-        reject(new LairError('timeout', "The Lair app didn't answer in time. Check the iPad's internet and try again."));
+        reject(new LairError('timeout', "The Lair app didn't answer in time. Check the tablet's internet and try again."));
       }, TIMEOUT_MS);
     });
     response = /** @type {Response} */ (await Promise.race([request, timeout]));
@@ -228,7 +228,7 @@ export function problemFor(error) {
   switch (error.kind) {
     case 'offline':
       // OFFLINE, split into the banner's heading and its sentence.
-      return { title: "Can't reach the Lair app", message: "Check the iPad's internet and try again.", tone: 'critical', retry: true };
+      return { title: "Can't reach the Lair app", message: "Check the tablet's internet and try again.", tone: 'critical', retry: true };
     case 'timeout':
       return { title: 'No answer from the Lair app', message, tone: 'critical', retry: true };
     case 'login':

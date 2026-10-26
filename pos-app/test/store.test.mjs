@@ -1,4 +1,4 @@
-// What Lair check-in keeps on the iPad, with a pretend POS storage: `npm test` in pos-app.
+// What Lair check-in keeps on the tablet, with a pretend POS storage: `npm test` in pos-app.
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { loadPending, readTileEntry, savePending, saveTileEntry } from '../extensions/lair-checkin/src/store.js';

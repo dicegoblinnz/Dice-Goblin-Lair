@@ -168,7 +168,7 @@ function CheckIn() {
 
   /* ---------------- shares of a bill waiting to be paid ---------------- */
 
-  /** @param {Record<string, Pending>} next @returns {Promise<void>} saved on the iPad */
+  /** @param {Record<string, Pending>} next @returns {Promise<void>} saved on the tablet */
   function keepPending(next) {
     pendingNow.current = next;
     setPending(next);
@@ -176,7 +176,7 @@ function CheckIn() {
   }
 
   /**
-   * A share put in the cart, kept on the iPad: the next time the booking is opened, it says "Waiting for the last
+   * A share put in the cart, kept on the tablet: the next time the booking is opened, it says "Waiting for the last
    * payment…" until the payment reaches the Lair app, so the next friend isn't charged the whole remainder. Saved
    * before the screen closes (a closed screen keeps nothing).
    * @param {string} key
@@ -851,7 +851,7 @@ function CheckIn() {
           who: payer ? firstName(payer.name) : '',
           ref: String(row.ref || ''),
           replaceCustomer: Boolean(payer),
-          // Kept on the iPad before the screen closes, so the next friend sees "Waiting for the last payment…".
+          // Kept on the tablet before the screen closes, so the next friend sees "Waiting for the last payment…".
           afterAdd: async (added) => {
             if (added.added.length) await rememberShare(rowKey(row), pendingShare(before, linesTotal(added.added), Date.now()));
           },
