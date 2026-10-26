@@ -156,9 +156,10 @@ GM's charge goes on the GM's account. The GM gets no GM credit for that seat.
   Scanning the charge's own code shows "Paying for Mia's seat: Curse of Strahd" with **Add $10 to cart**. A charge is
   never checked in.
 - **Paying with her store credit** (her GM credit): put the charge in the cart as above, then in the POS cart tap
-  **Apply store credit** under Kate's name, and **Checkout**. Whatever her credit doesn't cover is paid as usual. POS
-  uses as much of her credit as the whole sale needs, so to use it only for the seat, put just the charge in that
-  sale. (This needs store credit turned on at the till: see "One-time setup".)
+  **Apply store credit** under Kate's name. If her credit covers it all, tap **Checkout** to finish; otherwise take
+  the rest with Pay on Verifone, which charges just what's left. POS uses as much of her credit as the whole sale
+  needs, so to use it only for the seat, put just the charge in that sale. (This needs store credit turned on at the
+  till: see "One-time setup".)
 - Changed your mind? Straight away, on the same screen, tap **Stop Kate paying**, then **Yes, stop Kate paying**.
   Mia's seat goes back to its full price. If Kate had paid already, staff get an email to give that money back.
   Once you've left Mia's screen, open the session on the staff page and tap **Stop the GM paying** there: the
