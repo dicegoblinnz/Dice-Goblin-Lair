@@ -414,7 +414,10 @@ export class ShopifyAdmin {
     );
     const problems = data.metafieldsSet?.userErrors || [];
     if (problems.length) throw new Error(`Shopify turned the ${namespace}.${key} metafield away: ${problems.map((e) => e.message).join('; ')}`);
-    return { metafield: data.metafieldsSet?.metafields?.[0] || null };
+    // an answer with no metafield in it isn't taken as written: the caller records nothing, and tries again next time
+    const metafield = data.metafieldsSet?.metafields?.[0] || null;
+    if (!metafield?.id) throw new Error(`Shopify didn't say the ${namespace}.${key} metafield was written`);
+    return { metafield };
   }
 
   /**

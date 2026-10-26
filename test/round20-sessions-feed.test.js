@@ -112,6 +112,7 @@ beforeEach(async () => {
     if (/metafieldsSet/.test(query)) {
       if (refuse === 'userErrors') return { metafieldsSet: { metafields: [], userErrors: [{ field: ['metafields', '0', 'value'], message: 'Value is invalid JSON', code: 'INVALID_VALUE' }] } };
       if (refuse === 'down') throw new Error('Shopify API error 503');
+      if (refuse === 'empty') return { metafieldsSet: { metafields: [], userErrors: [] } };
       return { metafieldsSet: { metafields: [{ id: 'gid://shopify/Metafield/1', updatedAt: new Date(now).toISOString() }], userErrors: [] } };
     }
     throw new Error(`Not expected in this test: ${query.slice(0, 60)}`);
@@ -248,7 +249,7 @@ test('sessions feed (round 20): a free session shows its usual price and seats k
   assert.ok(session.price > 0, 'never $0: free sessions are staff-only');
   assert.equal(session.seatsLeft, seen.seats - seen.taken);
   assert.equal(session.seatsLeft, 2);
-  assert.ok(!JSON.stringify(lastFeed()).includes('free'), 'nothing says it\'s free');
+  assert.deepEqual(Object.keys(session).sort(), ['end', 'full', 'id', 'newPlayers', 'price', 'schedule', 'seatsLeft', 'start', 'system', 'title'], 'only these fields: nothing says it\'s free');
 });
 
 test('sessions feed (round 20): when Shopify turns the write away, the health check says why, nothing is recorded, and the next run tries again', async () => {
@@ -261,6 +262,9 @@ test('sessions feed (round 20): when Shopify turns the write away, the health ch
   refuse = 'down';
   now += 10 * MIN;
   assert.match((await lair.checkConnection(undefined)).sessionsFeed.error, /503/);
+  refuse = 'empty';
+  now += 10 * MIN;
+  assert.match((await lair.checkConnection(undefined)).sessionsFeed.error, /didn't say the lair\.sessions metafield was written/);
   refuse = null;
   now += 10 * MIN;
   assert.deepEqual((await lair.checkConnection(undefined)).sessionsFeed, { count: 1, written: true });
@@ -273,4 +277,16 @@ test('sessions feed (round 20): without Shopify set up, nothing is asked and not
   await listGame({ schedule: 'weekly' });
   assert.equal(await lair.syncSessionsFeed(now), null);
   assert.deepEqual(calls, []);
+});
+
+test('sessions feed (round 20): the people booked in stay out: no names, emails or phone numbers, only the seats they take', async () => {
+  const game = await listGame({ who: TAMA, gm: 'Tama', title: 'Tomb of Horrors', day: '2026-11-07', from: 14, to: 18, tables: ['B3'] });
+  ok(await seat(game.game.id, KAI, 'Kai'));
+  ok(await seat(game.game.id, '', 'Hineraukatauri'));
+  await lair.syncSessionsFeed(now);
+  const text = JSON.stringify(lastFeed());
+  for (const word of ['Kai', 'kai@example.com', 'Hineraukatauri', 'hineraukatauri@example.com', '021 555 0100', '5550100', KAI]) {
+    assert.ok(!text.includes(word), `nothing like "${word}" in what Shopify gets`);
+  }
+  assert.equal(lastFeed().sessions[0].seatsLeft, 2);
 });

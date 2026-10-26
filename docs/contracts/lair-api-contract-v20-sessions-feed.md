@@ -71,14 +71,25 @@ players count as taken, as on the board (contract v18-gm-sessions: both are staf
 
 ## 4. The theme (website lab first)
 
-`snippets/lair-sessions-list.liquid` prints the list from `shop.metafields.lair.sessions.value`, grouped by day, each
-session linking to `#game=<id>`; the `lair-play` section shows it on the TTRPG page under its own heading. Shopify's
-page cache can keep a page a minute or two behind the metafield, so the page leaves out sessions that have started, and
-`lair-play.js` redraws the list from the board's own data once it loads (the same rules), which also keeps it right on
-the lab's demo data. With no metafield (the Lair app down, or before this round), the page shows no list and the board
+`snippets/lair-sessions-list.liquid` prints the list from `shop.metafields.lair.sessions.value`, day by day, each day
+headed with its full date ("Monday 26 October, today"), each row's times also as `<time datetime>`, and each session
+linking to `#game=<id>`. The `lair-play` section shows it on the TTRPG page under its own heading (Theme settings:
+Show the next two weeks' sessions, Sessions heading). Shopify's page cache can keep a page a minute or two behind the
+metafield, so the page leaves out sessions that have started; and since the app writes at least once a day, a list
+whose `updated` is two days old or more isn't shown at all. `lair-play.js` redraws the rows from the board's own data
+once it loads, by the same rules (a weekly game's session marked `nextOnly`, so staff and its GM, who get every
+session, see the same list), which also keeps it right on the lab's demo data; when the Lair app can't be reached, the
+printed list stays. With no metafield (the Lair app down, or before this round), the page shows no list and the board
 works as before.
+
+Shopify's own Liquid ends an output tag at a single `}`, so the script's placeholders in the words are `%PRICE%`,
+`%NUMBER%` and `%DATE%`, never braces: Shopify's GitHub sync skips a file it can't parse without saying so (Theme Check
+and the theme mock both accept it).
 
 ## 5. Tests
 
-`test/round20-sessions-feed.test.js`: who and what is in the feed, nothing about the GM, the write and when it happens
-again, a weekly game rolling on, free sessions and seats for new players, Shopify refusing, and no Shopify at all.
+`test/round20-sessions-feed.test.js`: who and what is in the feed (exactly its ten fields), nothing about the GM or the
+players booked in, the write and when it happens again, a weekly game rolling on, free sessions and seats for new
+players, Shopify refusing or answering with no metafield, and no Shopify at all. The theme: `tools/qa/round20/sessions.mjs`
+on the theme mock (the page as served and with its script, phone and computer, the app down, an empty and an old list,
+no metafield, Book a table, and demo mode).

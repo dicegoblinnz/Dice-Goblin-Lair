@@ -32,9 +32,10 @@ const clock = (ms) => {
 };
 const dayLabel = (ms) => {
   const key = lairKey(ms);
-  if (key === today) return 'Today';
-  if (key === TOMORROW) return 'Tomorrow';
-  return new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(ms)).replace(',', '');
+  const date = new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(ms)).replace(',', '');
+  if (key === today) return `${date}, today`;
+  if (key === TOMORROW) return `${date}, tomorrow`;
+  return date;
 };
 const realContext = (size, js = true) => browser.newContext({
   ...(size === 'phone' ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true } : { viewport: { width: 1280, height: 800 } }),
@@ -56,8 +57,9 @@ const SOON = Math.ceil((NOW + 2 * HOUR) / HOUR) * HOUR;
 const boardGames = [
   game('g-on-now', 'Already rolling', 'D&D 5e', NOW - HOUR, 3),
   game('g-soon', 'Tomb of Horrors', 'AD&D', SOON, 4, { taken: 4 }),
-  game('g-weekly-1', 'The Sunless Citadel', 'D&D 5e', at(addDays(today, 2), '18:30'), 3.5, { schedule: 'weekly', seriesId: 'sr_1', level: 'new' }),
-  game('g-weekly-2', 'The Sunless Citadel', 'D&D 5e', at(addDays(today, 9), '18:30'), 3.5, { schedule: 'weekly', seriesId: 'sr_1', level: 'new' }),
+  game('g-weekly-1', 'The Sunless Citadel', 'D&D 5e', at(addDays(today, 2), '18:30'), 3.5, { schedule: 'weekly', seriesId: 'sr_1', level: 'new', nextOnly: true }),
+  // its GM and staff get every session of a weekly game; only the next one is nextOnly
+  game('g-weekly-2', 'The Sunless Citadel', 'D&D 5e', at(addDays(today, 9), '18:30'), 3.5, { schedule: 'weekly', seriesId: 'sr_1', level: 'new', nextOnly: false }),
   game('g-full', 'Curse of Strahd', 'D&D 5e', at(addDays(today, 3), '14:00'), 4, { taken: 5, status: 'full', seatPrice: 2000 }),
   game('g-private', 'The Secret Keep', 'Pathfinder 2e', at(addDays(today, 3), '18:00'), 4, { private: true }),
   game('g-pending', 'Waiting for an OK', 'Mothership', at(addDays(today, 3), '18:00'), 4, { status: 'pending' }),
@@ -102,7 +104,8 @@ m.mockState.before = async (req, res, url) => {
 };
 
 const listRows = (page) => page.$$eval('[data-play-sessions] .play-row', (rows) => rows.map((r) => ({
-  time: r.querySelector('.play-row__time')?.textContent.trim(),
+  time: r.querySelector('.play-row__time')?.textContent.replace(/\s+/g, ' ').trim(),
+  stamps: [...r.querySelectorAll('.play-row__time time')].map((x) => x.getAttribute('datetime')),
   title: r.querySelector('.play-row__title')?.textContent.trim(),
   href: r.querySelector('.play-row__title')?.getAttribute('href'),
   meta: r.querySelector('.play-row__meta')?.textContent.replace(/\s+/g, ' ').trim(),
@@ -129,6 +132,7 @@ m.mockState.sessionsFeed = feed;
   check('served: a game named after its system says TTRPG', rows[3].meta === 'TTRPG · One-shot · $15 a seat', rows[3].meta);
   check('served: seats left, one seat, and full', rows[0].left === '2 seats left' && rows[2].left === 'Full' && rows[2].full && rows[3].left === '4 seats left', rows.map((r) => r.left));
   check('served: each row opens its session on the page', rows.every((r, i) => r.href === `#game=${LISTED[i]}`), rows.map((r) => r.href));
+  check('served: each row\'s times are machine-readable too', rows.every((r, i) => JSON.stringify(r.stamps) === JSON.stringify([new Date(listedGames[i].start).toISOString(), new Date(listedGames[i].end).toISOString()])), rows.map((r) => r.stamps));
   const text = await sessionsText(page);
   check('served: nothing about the GM, and no private or pending games', !/Rangi|since 1999|Secret|Waiting for an OK|T3/.test(text), text.slice(0, 300));
   await shot(page, 'served-phone', '[data-play-sessions]');
@@ -147,6 +151,8 @@ m.mockState.sessionsFeed = feed;
   check('script: a seat taken since the page was made shows', rows[0].left === '1 seat left', rows[0].left);
   check('script: a weekly game once (its next session), with the same words as the page', rows.filter((r) => r.title === 'The Sunless Citadel').length === 1 && rows[1].meta === 'D&D 5e · Weekly · $15 a seat · New players welcome', rows[1]);
   check('script: the full one at its own price', rows[2].meta === 'D&D 5e · One-shot · $20 a seat' && rows[2].full, rows[2]);
+  check('script: the same headings and times as the page', JSON.stringify(await days(page)) === JSON.stringify(DAYS) && JSON.stringify(rows.map((r) => r.time)) === JSON.stringify(TIMES), [await days(page), rows.map((r) => r.time)]);
+  check('script: machine-readable times too', rows.every((r, i) => JSON.stringify(r.stamps) === JSON.stringify([new Date(listedGames[i].start).toISOString(), new Date(listedGames[i].end).toISOString()])), rows.map((r) => r.stamps));
   const text = await sessionsText(page);
   check('script: no GM names, no private, pending or started sessions', !/Rangi|since 1999|Secret|Waiting for an OK|Already rolling/.test(text), text.slice(0, 300));
   const box = await page.$eval('[data-play-sessions] .play-row', (r) => r.getBoundingClientRect().height);
@@ -217,6 +223,20 @@ m.mockState.sessionsFeed = feed;
   check('empty: no console errors', page.errors.length === 0, page.errors);
   await ctx2.close();
   boardGames.push(...saved);
+  m.mockState.sessionsFeed = feed;
+}
+
+/* ---------- 3c. a list the Lair app hasn't refreshed for two days ---------- */
+{
+  m.mockState.sessionsFeed = { ...feed, updated: new Date(NOW - 49 * HOUR).toISOString() };
+  const ctx = await realContext('phone', false);
+  const plain = await ctx.newPage();
+  await go(plain, BASE, '/pages/gm-games', null);
+  check('out of date: a list not refreshed for two days isn\'t shown', !(await plain.$('[data-play-sessions]')));
+  m.mockState.sessionsFeed = { ...feed, updated: new Date(NOW - 47 * HOUR).toISOString() };
+  await go(plain, BASE, '/pages/gm-games', null);
+  check('out of date: one from yesterday still is', Boolean(await plain.$('[data-play-sessions] .play-row')));
+  await ctx.close();
   m.mockState.sessionsFeed = feed;
 }
 
