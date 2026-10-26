@@ -54,9 +54,10 @@ Edit session on a session of a weekly, fortnightly or flexible game asks, under 
 sessions too?" when the tables picked aren't this session's, the game's (`series.tables`) or a later session's:
 
 - "This and every later session" is picked to start with only when staff change the tables of a session that has the
-  game's usual tables: the ones the game keeps, or the ones every later session has (a game whose sessions were each
-  moved by hand before). Otherwise (a session already set apart, like one that couldn't move) it starts on "Just this
-  session". Staff's own pick always stands.
+  game's usual tables: the ones the game keeps, or, when none of its sessions to come is on those, the ones every later
+  session has (a game whose sessions were each moved by hand before). Otherwise (a session already set apart, like one
+  that couldn't move, even the first of a run of them at the end) it starts on "Just this session". Staff's own pick
+  always stands.
 - A save that never changes the tables sends none: renaming a session set apart moves nothing.
 - After saving, the message says how many later sessions moved (or that none could, or that they're on the tables
   already). Any that couldn't move are listed in a note on the game's page and the games list, each with its date, the

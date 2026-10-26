@@ -11,6 +11,8 @@
 //     it has its own table it's off the note.
 //  5. After the second check: a game whose sessions were all moved by hand (the game still keeping its old tables)
 //     starts on "This and every later session"; its note sits beside the other game's, and Done puts away its own.
+//  6. After the third check: the first of a run of sessions at the end that couldn't move, given its own table, starts
+//     on "Just this session" (the game's tables are still on its sessions to come).
 // No sideways scroll and axe at each. Phone and desktop.
 // Usage: DG_THEME=/path/to/theme [PORT=4991] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round21/tables-later.mjs [phone|desktop]
 import os from 'node:os';
@@ -96,6 +98,31 @@ const seed = (page) => page.evaluate(async (seriesId) => {
     }
   }
   be.state.seriesTables = { ...(be.state.seriesTables || {}), 'sr-r21-friday': ['G1'] };
+  // Saturday Sorcery: four Saturdays from tomorrow on, on G1, with G3 booked on the third and fourth
+  let saturday = t.addDays(t.today(), 1);
+  while (new Date(`${saturday}T12:00:00Z`).getUTCDay() !== 6) saturday = t.addDays(saturday, 1);
+  be.state.games = be.state.games.filter((g) => g.seriesId !== 'sr-r21-saturday');
+  for (let i = 0; i < 4; i += 1) {
+    const key = t.addDays(saturday, i * 7);
+    const start = t.at(key, 14 * 60);
+    const end = t.at(key, 18 * 60);
+    const id = `gm-r21s-${i + 1}`;
+    be.state.games.push({
+      id, title: 'Saturday Sorcery', system: 'D&D 5e', gm: 'Ria', gmCustomerId: 'demo-r21s-ria', gmEmail: 'ria@example.com', blurb: 'A weekly spellslinging game.', tables: ['G1'],
+      room: 'gaming-room', seats: 4, start, end, taken: 0, status: 'open', credited: null, gmFee: 500, seatPrice: 1500, schedule: 'weekly', seriesId: 'sr-r21-saturday',
+      level: 'some', age: '13+', tags: [], safety: [], characters: 'pregens', bring: '', contentNotes: '', sessionZero: '', image: null, gmFeeApproved: true,
+    });
+    be.state.bookings.push({
+      id: `bk-r21t-sgm-${i + 1}`, ref: `GM-R21S-${i + 1}`, kind: 'gm', gameId: id, tables: ['G1'], start, end, people: 5, name: 'GM Ria', status: 'confirmed', pay: 'day', paid: true,
+      activity: 'rpg', extras: [], customerId: 'demo-r21s-ria',
+    });
+    if (i >= 2) {
+      be.state.bookings.push({
+        id: `bk-r21t-sg3-${i + 1}`, ref: `R21T-SG3-${i + 1}`, kind: 'table', tables: ['G3'], start, end, people: 4, name: 'Board game club',
+        email: 'club@example.com', phone: '', notes: '', status: 'confirmed', pay: 'day', paid: false, amount: 4000, activity: 'board', extras: [],
+      });
+    }
+  }
   be.commit();
   await store.refresh();
   return ids;
@@ -274,6 +301,41 @@ for (const size of sizes) {
   await page.click(`[data-panel="games"] [data-tables-note-done="${FRIDAY}"]`);
   await settle(page, 300);
   check(`${tag} Done puts Friday's note away`, (await page.locator('.staff-tables-note').count()) === 0);
+
+  /* ---------- 6. the first of a run of sessions at the end that couldn't move ---------- */
+  const saturdays = ['gm-r21s-1', 'gm-r21s-2', 'gm-r21s-3', 'gm-r21s-4'];
+  await openEdit(page, saturdays[1]);
+  await tapTable(page, 'G1');
+  await tapTable(page, 'G3');
+  await settle(page, 250);
+  await page.click(`${E} [data-sf-save]`);
+  await settle(page, 900);
+  let satTables = await tablesOf(page, saturdays);
+  check(`${tag} Saturday Sorcery to G3 from its second: the third and fourth (G3 booked) keep G1`, JSON.stringify(satTables) === JSON.stringify(['G1', 'G3', 'G1', 'G1']), satTables);
+  await toList(page);
+  await page.click(`[data-panel="games"] .staff-tables-note [data-gm-manage="${saturdays[2]}"]`);
+  await page.waitForSelector('[data-panel="games"] .staff-gm__more summary', { timeout: 15000 });
+  await settle(page, 200);
+  await page.click('[data-panel="games"] .staff-gm__more summary');
+  await page.waitForSelector(`${E} [data-host-form]`, { timeout: 15000 });
+  await page.click(`${E} [data-sf-step="3"]`);
+  await page.waitForSelector(`${E} [data-step="when"]`, { timeout: 15000 });
+  await settle(page, 300);
+  const satSpare = await page.evaluate((id) => {
+    const { store } = window.Lair;
+    const g = store.data.games.find((x) => x.id === id);
+    return ['G4', 'G2'].find((tb) => store.isFree(tb, g.start, g.end));
+  }, saturdays[2]);
+  await tapTable(page, 'G1');
+  await tapTable(page, satSpare);
+  await settle(page, 250);
+  box = await laterBox(page);
+  check(`${tag} The first of the two that couldn't move, given ${satSpare}: the choice starts on Just this session`, box && !box.hidden && box.checked === 'session', box);
+  await page.click(`${E} [data-sf-save]`);
+  await settle(page, 900);
+  satTables = await tablesOf(page, saturdays);
+  const satKept = await page.evaluate(() => window.Lair.store.backend.seriesTablesDemo('sr-r21-saturday'));
+  check(`${tag} It moves alone; the fourth stays on G1, and the game still keeps G3`, JSON.stringify(satTables) === JSON.stringify(['G1', 'G3', satSpare, 'G1']) && JSON.stringify(satKept) === JSON.stringify(['G3']), { satTables, satKept });
   check(`${tag} Staff page: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
   check(`${tag} No errors`, !page.errors.length, page.errors);
   void first;
