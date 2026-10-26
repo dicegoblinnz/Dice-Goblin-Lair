@@ -7,10 +7,13 @@ where: "Both" (the website and the counter); until when: "Until the player has p
 After its first review (27 Oct 2026), the charge follows the seat whatever changes it, the player paying for their own
 seat ends the GM's offer, and a seat the GM pays for is locked in 24 hours before like any seat. After its second, money
 back to a GM is worked out from what they've paid, net of what's been given back (section 1, "Money back to the GM"), and
-a new GM leaves an offer that's locked in with the GM who made it. **The lock is Mo's call**
-(asked 26 Oct 2026: who pays when the player cancels late or doesn't come?). It's built as the option recommended to
-him: the GM still pays, as any seat's player would. The other options were "nobody pays" (the first version) and "the
-player pays the full price".
+a new GM leaves an offer that's locked in with the GM who made it.
+
+**Who pays when the player cancels late or doesn't come** is Mo's call, 27 Oct 2026: "The player who cancels within 24
+hours gets it on Thier own tab and the gm can always send them credit to get rid of it. But they get charged the full
+$15". So like any seat it's locked in 24 hours before, and a player who doesn't come pays the seat's full price on their
+own tab; the GM pays nothing for them (section 1). The GM can still pay it for them at the counter, as anyone can pay
+someone's tab: nothing new is needed for that.
 
 The code is `src/gm-cover.js` (methods of the Lair Durable Object), with changes in `src/lair.js`, `src/tab.js`,
 `src/gm-sessions.js`, `src/admin.js` and `src/index.js`. Tests: `test/round21-gm-cover.test.js`. It builds on
@@ -35,16 +38,21 @@ The code is `src/gm-cover.js` (methods of the Lair Durable Object), with changes
   Not the GM's own seat. After the session too: an owed seat becomes the GM's owed charge. And when the player does pay
   for their seat themselves (its own line on an order), the GM's offer ends there (below).
 - **Locked in like any seat**: from 24 hours before the session (`refundHours`), the player can't cancel the seat
-  online, the GM can't stop paying, and a no-show still costs the GM. Staff can change anything. A GM paying for a seat
-  inside the 24 hours is locked in at once.
+  online, and the GM can't stop paying. Staff can change anything. A GM paying for a seat inside the 24 hours is locked
+  in at once.
+- **A player who doesn't come pays for their own seat** (Mo, 27 Oct 2026). As with any locked-in seat, it stays on, and
+  staff mark them a no-show on the night: the seat then costs them its full price on the session ($15, or $30 for 2),
+  owed on their own tab like any no-show, and the GM's charge goes (money the GM paid on it is a refund due). The GM gets
+  no GM credit for it, as for any no-show. If the player lets staff know ahead, it's the same: staff leave it and mark
+  the no-show, or tap Stop the GM paying straight away (the seat's full price is theirs then, and the offer's over).
 
 ### The charge follows the seat
 
 The seat is what's true. After anything that changes the seat or its session, and in the 10-minute run, the charge is
 put in step with it (`syncCover`):
 
-- **On** while the seat is on (confirmed, here, played, or a no-show) on a live session with a price; **off**
-  otherwise (the seat cancelled, the session free, cancelled or not live).
+- **On** while the seat is on (confirmed, here or played) on a live session with a price; **off** otherwise (the seat
+  cancelled or a no-show, the session free, cancelled or not live).
 - Its **amount** is the session's table part now for each person on the seat. A charge with money paid on it keeps the
   price it was paid at.
 - Its **times** are the seat's.
@@ -53,7 +61,11 @@ So:
 
 - The player cancels in time, or staff take the seat off: the charge goes. Money the GM paid on it is a refund due
   (`refund: 'due'`), and staff get an email.
-- A **no-show**: the charge stays. The GM pays for it, as a player pays for their own no-show.
+- A **no-show**: the charge goes, and the seat costs its player its full price (the session's seat price for each
+  person on it), owed on their tab once it's over, until it's paid or waived. Its `covered_by` stays, so if staff put it
+  back (marked by mistake), it's $0 for them and the GM's charge comes back. Paying it (at the counter, or marked paid
+  by hand) ends the GM's offer, as the player paying always does. Taken off instead (cancelled): nobody pays, as for any
+  seat. On a free session there's nothing to pay either way.
 - The seat is **put back**: the charge comes back, with what the GM has paid on it counting. If it was a refund due and
   not refunded yet, it isn't one now (the money stays paid), and staff get a "No refund now" email. If the GM's money
   went back to them already, they owe it again.
@@ -152,7 +164,7 @@ been taken off or was a no-show too (to put things right). → `{ seat, cover: n
 | --- | --- | --- |
 | 409 | the GM isn't paying for that seat | `The GM isn't paying for that seat.` |
 | 409 | the GM, once they've paid it | `The GM has paid for that seat already, so it can't change now. Ask staff if it needs a refund.` |
-| 403 | the GM, inside the 24 hours | `It's less than 24 hours away, so it's locked in: you pay for this seat, the same as any seat. Ask staff if something's come up.` |
+| 403 | the GM, inside the 24 hours | `It's less than 24 hours away, so it's locked in: you pay for this seat if they come, and if they don't, it's on their own tab. Ask staff if something's come up.` |
 
 The other refusals are as for cover (401, 403, 404).
 
@@ -164,10 +176,11 @@ The other refusals are as for cover (401, 403, 404).
   back, above). Marking a charge that's gone paid (a page left open, say): 409 `That charge isn't on any more (the GM
   stopped paying, or the seat went), so there's nothing to pay for it.`
 - **On a seat its GM pays for**, marking it paid by hand: 409 `The GM pays for this seat, so there's nothing for the
-  player to pay. If they're paying for it themselves, stop the GM paying first.`
+  player to pay. If they're paying for it themselves, stop the GM paying first.` Not once it's a no-show: then it's the
+  player's to pay, and marking it paid ends the GM's offer.
 - **The player cancelling a seat their GM pays for, inside the 24 hours**: 409 `It's less than 24 hours away, so it
-  can't be cancelled online now: your GM is paying for your seat. Have a chat with us at the counter or give us a call,
-  and we'll sort it out.`
+  can't be cancelled online now. Your GM pays for your seat if you come. If you can't make it, the full price goes on
+  your tab, so have a chat with us at the counter or give us a call.`
 
 ### `POST /games/:id/gm` (staff with GM games)
 
@@ -189,7 +202,8 @@ more. It's $15.00 on your tab. Can't make it? Cancel it in My Lair by <time>.`
   `covered` (the GM pays for this seat), `coverLocked` (on a covered seat: it's locked in now), `coverBy` (on a covered
   seat whose payer isn't the session's GM: their first name) and `coverable` (they could: a seat on, with something to
   pay and nothing paid on it yet, not the GM's own, on a live session with a price and a GM account). While a session is
-  free, its seats show neither `covered` nor `coverable` (the offer waits, for if it has a price again).
+  free, its seats show neither `covered` nor `coverable` (the offer waits, for if it has a price again). (A no-show
+  isn't on these lists; it's never `covered`.)
 - **Staff booking views** (`GET /floor` for staff, check-in) gain `refundAmount`: what to give back. For a GM's charge,
   worked out as above; for anything else with a refund due or to decide, what was paid (a part-paid split bill's share,
   not the full price). The charge itself isn't in the public board's `bookings` (nor the GM's): only staff see it there,
@@ -198,7 +212,8 @@ more. It's $15.00 on your tab. Can't make it? Cancel it in My Lair by <time>.`
   no GM credit.
 - **My Lair** (`GET /me`):
   - a player's `seats[]` item gains `coveredByGm: true` when their GM pays for it, on a session with a price (its `due`
-    is 0). Its `cancelUntil`/`locked` are a seat's: locked in 24 hours before.
+    is 0). Its `cancelUntil`/`locked` are a seat's: locked in 24 hours before. Not on a no-show: its `amount` and `due`
+    are the seat's full price, theirs to pay.
   - a GM gets `covers`: their charges that are on, and any with money due back to them: `[{ id, ref, gameId, title,
     player, start, end, people, amount, due, paid, owed, status, locked, refund?, refundAmount? }]`. `title` is `Paying
     for Mia's seat: Curse of Strahd`; `player` is the first name; `due` is what's left to pay (part paid: less than
@@ -206,7 +221,8 @@ more. It's $15.00 on your tab. Can't make it? Cancel it in My Lair by <time>.`
     (`status: 'cancelled'`, `due: 0`), or on one that's on but paid over what it costs now. Once staff mark it refunded,
     one that went is gone from the list.
   - their running tab (`account`) lists a charge like any booking, with `kind: 'cover'`: coming up, then owed if it's
-    over unpaid. A player's seat their GM pays for has `coveredByGm: true` there too (while the session has a price).
+    over unpaid. A player's seat their GM pays for has `coveredByGm: true` there too (while the session has a price, and
+    not on a no-show).
 - **The counter**:
   - the GM's member code (`/pos/scan`, `/pos/checkin-member`): today's charge is one of their rows (`kind: 'gm-cover'`,
     never checked in), with its cart line `Paying for Mia's seat: Curse of Strahd (RA-OWL-12)`; an owed one is
@@ -222,9 +238,9 @@ more. It's $15.00 on your tab. Can't make it? Cancel it in My Lair by <time>.`
 
 | Subject | When |
 | --- | --- |
-| `Refund due: <charge code>` | money due back to a GM starts (the seat taken off, the player paid for it too, staff stopped it, another GM before the 24 hours, fewer people, paid after it had gone) or changes (more paid, or less due). It says why, what they've paid, and what to give back in all. |
+| `Refund due: <charge code>` | money due back to a GM starts (the seat taken off, the player didn't come, the player paid for it too, staff stopped it, another GM before the 24 hours, fewer people, paid after it had gone) or changes (more paid, or less due). It says why, what they've paid, and what to give back in all. |
 | `No refund now: <charge code>` | money that was due back isn't now (the seat put back, more people): don't refund it. |
-| `Still paying: <session>` | a session got a new GM inside the 24 hours (or after it started), so the GM before still pays for the seats listed. |
+| `Still paying: <session>` | a session got a new GM inside the 24 hours (or after it started), so the GM before still pays for each player who comes on the seats listed. |
 | `Refunds due: <session>` | the session was cancelled (as before), with the GM's paid charges listed with the players'. |
 | `Paid for a free seat: <code>` | a seat that costs nothing (the session is free) was paid for, from a counter line made before: refund it. |
 
@@ -237,4 +253,5 @@ is its latest `gm-cover` row (a seat the GM stopped paying for and paid for agai
 given back to a GM is a `payments` row with `order_id 'refund'` and a negative amount.
 
 Also, from GM credit (contract v21-gm-credit): Session done on a session whose GM pays for every player's seat says
-`The GM pays for their players' seats on this session, so there's no GM credit to add.`
+`The GM pays for their players' seats on this session, so there's no GM credit to add.` (A no-show's seat isn't counted
+as one the GM pays for.)

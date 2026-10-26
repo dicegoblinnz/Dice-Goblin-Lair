@@ -2655,8 +2655,9 @@ export class Lair {
     const lateSeat = Boolean(x.seriesId) && Boolean(x.gobSaved) && (x.createdAt ?? now) >= cancelUntil(x, rules);
     // an event date that isn't on the calendar any more (gone in Shopify): nothing to lock, staff are sorting it out
     const gone = Boolean(x.occurrenceId) && this.dateGone(rules, x.occurrenceId);
-    // (round 21: a seat its GM pays for costs its players nothing, but it's locked in like any seat: on the GM's charge)
-    const amount = x.kind === 'gm-seat' && x.coveredBy ? this.coverAmountOf(x) : x.amount || 0;
+    // (round 21: a seat its GM pays for costs its players nothing, but it's locked in like any seat: on the GM's charge,
+    // or a no-show's own price)
+    const amount = x.kind === 'gm-seat' && x.coveredBy ? Math.max(x.amount || 0, this.coverAmountOf(x)) : x.amount || 0;
     const lockable = this.tabRules(x, now) && amount > 0 && !lateSeat && !gone;
     const until = lockable ? cancelUntil(x, rules) : x.start;
     return { cancelUntil: until, locked: lockable && now >= until, lockable };
@@ -2805,8 +2806,9 @@ export class Lair {
       if (patch.paid === true && booking.status === 'cancelled') throw new RuleError(GM_COVER_WORDS.chargeGone, 409);
       if (typeof patch.refunded === 'boolean') return this.chargeRefunded(booking, patch.refunded, rules, now);
     }
-    // (and a seat its GM pays for has nothing for its players to pay)
-    if (booking.kind === 'gm-seat' && booking.coveredBy && patch.paid === true) throw new RuleError(GM_COVER_WORDS.coveredSeat, 409);
+    // (and a seat its GM pays for has nothing for its players to pay, unless they were a no-show: then it's theirs, and
+    // paying it ends the GM's offer, as the player paying does)
+    if (booking.kind === 'gm-seat' && booking.coveredBy && patch.paid === true && booking.status !== 'noshow') throw new RuleError(GM_COVER_WORDS.coveredSeat, 409);
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const next = { ...booking };
     if (patch.status && ['confirmed', 'seated', 'done', 'cancelled', 'noshow'].includes(patch.status)) next.status = patch.status;
@@ -9854,8 +9856,9 @@ export class Lair {
         return {
           ...view(b), gameId: b.gameId, gameTitle: g?.title || 'GM game', system: g?.system || '', gm: g?.gm || '', image: this.imageUrl(g?.imageId),
           seriesId: b.seriesId || null,
-          // Round 21: their GM pays for this seat, so there's nothing for them to pay (while the session has a price)
-          ...(b.coveredBy && !g?.free ? { coveredByGm: true } : {}),
+          // Round 21: their GM pays for this seat, so there's nothing for them to pay (while the session has a price, and
+          // not once they're a no-show: then it's theirs)
+          ...(b.coveredBy && !g?.free && b.status !== 'noshow' ? { coveredByGm: true } : {}),
         };
       }),
       // Round 21: what they pay as a GM for their players' seats ("Paying for Mia's seat: Curse of Strahd"): the ones on,

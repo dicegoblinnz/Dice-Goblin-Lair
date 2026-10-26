@@ -13,10 +13,14 @@
  * and is never checked in.
  *
  * The seat is what's true, and the charge follows it (syncCover), whatever changed the seat or its session: the charge
- * is on while the seat is (a no-show's too) on a live session with a price, at the session's price for each person on
- * the seat, and off otherwise (money the GM paid on it is a refund due, and staff hear). Like any seat, it's locked in
- * refundHours (24) before the session: the player can't cancel it online then, the GM can't stop paying, and a no-show
- * still costs the GM. Staff can change anything. The GM's offer ends (endCover) when the player pays for their seat
+ * is on while the seat is on a live session with a price, at the session's price for each person on the seat, and off
+ * otherwise (money the GM paid on it is a refund due, and staff hear). Like any seat, it's locked in refundHours (24)
+ * before the session: the player can't cancel it online then, and the GM can't stop paying. A player who doesn't come
+ * pays for their own seat (Mo, 27 Oct 2026: "The player who cancels within 24 hours gets it on Thier own tab and the gm
+ * can always send them credit to get rid of it. But they get charged the full $15"): like any locked-in seat it stays
+ * on, and once staff mark them a no-show it costs them its full price, owed on their own tab, and the GM's charge goes
+ * (put back, it's $0 for them and the GM's again). The GM can still pay it for them at the counter, as anyone can pay
+ * someone's tab. Staff can change anything. The GM's offer ends (endCover) when the player pays for their seat
  * themselves ("until the player has paid"), when the GM or staff stop it, and when the session gets another GM while it
  * could still be stopped.
  *
@@ -47,9 +51,9 @@ export const GM_COVER_WORDS = {
   notCovered: "The GM isn't paying for that seat.",
   coverPaid: "The GM has paid for that seat already, so it can't change now. Ask staff if it needs a refund.",
   /** The GM's Stop paying inside the lock */
-  locked: (hours) => `It's less than ${hours} hours away, so it's locked in: you pay for this seat, the same as any seat. Ask staff if something's come up.`,
+  locked: (hours) => `It's less than ${hours} hours away, so it's locked in: you pay for this seat if they come, and if they don't, it's on their own tab. Ask staff if something's come up.`,
   /** The player's own cancel inside the lock */
-  seatLocked: (hours) => `It's less than ${hours} hours away, so it can't be cancelled online now: your GM is paying for your seat. Have a chat with us at the counter or give us a call, and we'll sort it out.`,
+  seatLocked: (hours) => `It's less than ${hours} hours away, so it can't be cancelled online now. Your GM pays for your seat if you come. If you can't make it, the full price goes on your tab, so have a chat with us at the counter or give us a call.`,
   /** Staff marking a charge refunded with nothing due back on it */
   nothingBack: "There's nothing to give back on that one: what the GM has paid isn't more than it costs.",
   /** Staff marking a charge paid once it's gone (a page left open, say) */
@@ -65,10 +69,10 @@ export const GM_COVER_WORDS = {
 };
 
 /** Why money's due back to a GM, the one to tell staff first when an order brings more than one */
-const WHY_FIRST = ['paid', 'off', 'stopped', 'gm', 'free', 'gone', 'fewer', 'back', 'late', 'more'];
+const WHY_FIRST = ['paid', 'noshow', 'off', 'stopped', 'gm', 'free', 'gone', 'fewer', 'back', 'late', 'more'];
 
-/** A covered seat's statuses that keep the GM's charge on (a no-show still costs the GM, as any seat costs its player) */
-const COVER_ON = new Set(['confirmed', 'seated', 'done', 'noshow']);
+/** A covered seat's statuses that keep the GM's charge on (a no-show pays for their own seat: syncCover) */
+const COVER_ON = new Set(['confirmed', 'seated', 'done']);
 
 /** A seat's first name, for messages: "Mia" */
 const firstOf = (name) => String(name || '').trim().split(/\s+/)[0] || 'They';
@@ -124,8 +128,9 @@ export const gmCoverMethods = {
     if (!b || b.kind !== 'gm-seat') return { covered: false, coverable: false };
     const game = known && known.id === b.gameId ? known : b.gameId ? this.game(b.gameId) : null;
     if (b.coveredBy) {
-      // (while the session is free there's nothing to pay: the offer waits, for if it has a price again)
-      if (game?.free) return { covered: false, coverable: false };
+      // (while the session is free there's nothing to pay: the offer waits, for if it has a price again; a no-show pays
+      // for their own seat)
+      if (game?.free || b.status === 'noshow') return { covered: false, coverable: false };
       // coverBy: who pays, when it isn't the session's GM (an offer locked in before it got a new GM)
       const theirs = String(game?.gmCustomerId || '') === String(b.coveredBy);
       return { covered: true, coverable: false, coverLocked: this.coverLocked(b), ...(theirs ? {} : { coverBy: this.coverPayer(b) }) };
@@ -339,6 +344,7 @@ export const gmCoverMethods = {
     }
     const reason = {
       off: `${player}'s seat was taken off, so ${first} doesn't pay for it`,
+      noshow: `${player} didn't come, so they pay for their own seat`,
       free: "the session is free now, so there's nothing to pay for",
       paid: `${player} paid for their own seat too`,
       stopped: `staff stopped ${first} paying for it`,
@@ -407,11 +413,12 @@ export const gmCoverMethods = {
    * Keep a GM's charge in step with the seat it pays for, after anything that changes the seat or its session
    * (cancelled, a no-show, put back, its people, its times, the session's price, free or not), and in the 10-minute run.
    *  - money paid on the seat itself (its own line on an order): the player has paid, so the GM's offer ends (endCover).
-   *  - the seat costs its players nothing.
-   *  - on (the seat's on, a no-show too, on a live session with a price): the charge is too, at the session's price for
-   *    each person on the seat (a charge with money on it keeps the price it was paid at), over the seat's times. One
-   *    that went comes back, with what the GM has paid on it (net) counting.
-   *  - off: the charge goes.
+   *  - the seat costs its players nothing, except a no-show's: its full price on the session, theirs to pay (Mo, 27 Oct
+   *    2026), while the GM's offer waits in case staff put it back.
+   *  - on (the seat's on, on a live session with a price): the charge is too, at the session's price for each person on
+   *    the seat (a charge with money on it keeps the price it was paid at), over the seat's times. One that went comes
+   *    back, with what the GM has paid on it (net) counting.
+   *  - off (cancelled, a no-show, the session free or off): the charge goes.
    * Either way, what's due back to the GM follows (settleChargeRefund). Returns what changed ('ended', 'on', 'off',
    * 'amount', 'seat') or null. No awaits.
    */
@@ -423,16 +430,20 @@ export const gmCoverMethods = {
       return 'ended';
     }
     const game = seat.gameId ? this.game(seat.gameId) : null;
+    const live = Boolean(game) && ['open', 'full'].includes(game.status) && !game.free;
     let changed = null;
-    if ((seat.amount || 0) !== 0 || seat.paid) {
-      this.write('UPDATE bookings SET amount = 0, paid = 0, updated_at = ? WHERE id = ?', now, seat.id);
+    // the seat costs its players nothing, but a no-show pays for their own: its full price on the session, owed on their
+    // tab like any no-show, and kept like one's if the session's price changes after (put back, it's $0 again and the GM's)
+    const own = live && seat.status === 'noshow' ? (seat.amount || 0) || seatPriceOf(game, rules) * (seat.people || 1) : 0;
+    if ((seat.amount || 0) !== own || (own === 0 && seat.paid)) {
+      this.write('UPDATE bookings SET amount = ?, paid = 0, updated_at = ? WHERE id = ?', own, now, seat.id);
       changed = 'seat';
     }
     let cover = this.coverOf(seat.id);
-    const on = Boolean(game) && ['open', 'full'].includes(game.status) && !game.free && COVER_ON.has(seat.status);
+    const on = live && COVER_ON.has(seat.status);
     if (!on) {
       if (!cover || cover.status === 'cancelled') return changed;
-      this.chargeOff(cover, seat, game, now, game?.free ? 'free' : seat.status === 'cancelled' ? 'off' : 'gone');
+      this.chargeOff(cover, seat, game, now, game?.free ? 'free' : seat.status === 'cancelled' ? 'off' : seat.status === 'noshow' ? 'noshow' : 'gone');
       return 'off';
     }
     let was = null;
@@ -520,7 +531,7 @@ export const gmCoverMethods = {
       const old = this.firstNameOf(oldGm || 'The GM');
       this.notifyStaff(`Still paying: ${session.title}`, {
         title: 'A GM still pays for players',
-        intro: `${session.title}, ${this.when(session, rules)}, has a new GM, ${session.gm || 'someone else'}. ${old} was paying for ${kept.length === 1 ? "a player's seat" : `${kept.length} players' seats`} on it, and it's less than ${rules.refundHours} hours away (or it's started), so that's locked in: ${old} still pays. If ${old} shouldn't, tap "Stop the GM paying" on the seat: the player's seat then costs them its price (waive it if they shouldn't pay either).`,
+        intro: `${session.title}, ${this.when(session, rules)}, has a new GM, ${session.gm || 'someone else'}. ${old} was paying for ${kept.length === 1 ? "a player's seat" : `${kept.length} players' seats`} on it, and it's less than ${rules.refundHours} hours away (or it's started), so that's locked in: ${old} still pays for each player who comes. If ${old} shouldn't, tap "Stop the GM paying" on the seat: the player's seat then costs them its price (waive it if they shouldn't pay either).`,
         details: kept,
       });
     }

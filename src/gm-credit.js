@@ -465,7 +465,7 @@ export const gmCreditMethods = {
       .one().n;
     // (round 21, part 2: a session whose GM pays for every player's seat has no GM credit to come)
     const covered = !unpaid && !seats.length && this.sql
-      .exec("SELECT COUNT(*) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND covered_by IS NOT NULL AND status IN ('confirmed', 'seated', 'done', 'noshow')", game.id)
+      .exec("SELECT COUNT(*) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND covered_by IS NOT NULL AND status IN ('confirmed', 'seated', 'done')", game.id)
       .one().n;
     if (covered) return { players: 0, amount: 0, status: 'none', note: GM_CREDIT_WORDS.covered, auto: true };
     return { players: 0, amount: 0, status: 'none', note: unpaid || !seats.length ? GM_CREDIT_WORDS.nothingYet : GM_CREDIT_WORDS.allDone, auto: true };
