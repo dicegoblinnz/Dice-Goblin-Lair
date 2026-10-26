@@ -29,7 +29,7 @@ the top) opens the camera instead.
    game, any note, and **To pay**. Check it's them.
 3. Tap **Check in and add $15 to cart**. They're checked in, their fee goes in the cart with them on the sale, and the
    check-in screen closes by itself.
-4. Tap **Pay on Verifone**.
+4. You're back on the POS home screen: tap the **Pay on Verifone** tile.
 
 So a ticket is: the tile, a scan, one button, then Pay on Verifone.
 
@@ -261,7 +261,10 @@ After a deploy, close Shopify POS on the iPad completely and open it again to ge
    next to **POS app**.
 2. Under **Smart grid**, pick the layout the counter uses.
 3. Tap **⊕ Add tile → Embedded Apps → Dice Goblin Lair** (Lair check-in), then **Add** and **Save**.
-4. On the iPad or phone, close Shopify POS completely and open it again.
+4. Put the **Pay on Verifone** tile right next to it (drag the tiles in the same layout). After **Add to cart** the
+   check-in screen closes back to this home screen, so Pay on Verifone is always the next tap. (One app can't press
+   another app's tile, so this is the quickest way.)
+5. On the iPad or phone, close Shopify POS completely and open it again.
 
 Not in the list? Shopify admin → **Point of Sale → Settings → POS apps**: check Dice Goblin Lair is there and turned
 on for the shop.
