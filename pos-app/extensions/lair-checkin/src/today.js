@@ -109,6 +109,22 @@ export function canGmPay(row) {
 }
 
 /**
+ * What the player's screen offers about the GM paying (contract v21-gm-cover): 'offer' ("Kate pays for this seat"),
+ * 'stop' ("Stop Kate paying"), 'in-cart' (neither while the seat's own line is in the sale: paying it would end the
+ * GM's offer, and a GM's charge on top would take too much), or null (nothing to offer).
+ * @param {Row | null | undefined} row
+ * @param {boolean} inCart the seat's line (or a share of it) is in the cart
+ * @returns {'offer' | 'stop' | 'in-cart' | null}
+ */
+export function gmPaysChoice(row, inCart) {
+  if (row?.kind !== 'gm-seat') return null;
+  const on = gmPaysFor(row);
+  if (!on && !canGmPay(row)) return null;
+  if (inCart) return 'in-cart';
+  return on ? 'stop' : 'offer';
+}
+
+/**
  * A seat with the GM's charge this screen just set up (POST /pos/cover's `cover`), for a Lair app that doesn't send
  * gmPays on its rows yet: the seat says the GM pays, and who, and how much.
  * @param {Row} row

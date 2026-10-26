@@ -398,12 +398,13 @@ export function whyNothing(row) {
 }
 
 /**
- * @typedef {'check-in' | 'check-in-add' | 'check-in-split' | 'check-in-only' | 'add' | 'split' | 'close' | 'refresh' | 'forget' | 'done' | 'back'} PersonActionName
+ * @typedef {'check-in' | 'check-in-add' | 'check-in-split' | 'check-in-only' | 'add' | 'use-pass' | 'split' | 'close' | 'refresh' | 'forget' | 'done' | 'back'} PersonActionName
  *   check-in        check in, nothing goes in the cart (nothing to pay, or "Check in anyway")
  *   check-in-add    check in, then put what's left to pay in the cart and close the screen
  *   check-in-split  check in, then split the bill
  *   check-in-only   check in and pay later
  *   add             put what's due in the cart and close the screen
+ *   use-pass        once they're here: use the pass picked for what's left, then put anything still to pay in the cart
  *   split           split the bill
  *   close           close the screen: it's in the cart, ready to pay
  *   refresh         look for the last share's payment again; forget: it wasn't paid
@@ -415,14 +416,15 @@ export function whyNothing(row) {
 /**
  * The person view's one main button, and the quieter ones under it (Mo, 27 Oct 2026: "one obvious next step on every
  * screen", and fewer taps to payment). Before check-in, checking in and adding to the cart are one tap; "Just check
- * in" is there for anyone paying later.
- * @param {{ row: Row, plan: ReturnType<typeof personPlan>, choice: string | null, inCart: boolean,
- *   share: import('./split.js').PendingState, justChecked: boolean }} input
- *   choice: the pass choice; inCart: its line is in this cart; share: where a share of its bill put in the cart from
- *   this iPad has got to; justChecked: this screen checked them in
+ * in" is there for anyone paying later. Splitting leads when they said they'd split or part is paid already, and a
+ * pass picked for what's left leads once they're here.
+ * @param {{ row: Row, plan: ReturnType<typeof personPlan>, choice: string | null, inUse?: { code: string } | null,
+ *   inCart: boolean, share: import('./split.js').PendingState, justChecked: boolean }} input
+ *   choice: the pass choice; inUse: the pass covering it now (passInUse); inCart: its line is in this cart; share:
+ *   where a share of its bill put in the cart from this iPad has got to; justChecked: this screen checked them in
  * @returns {PersonAction}
  */
-export function personAction({ row, plan, choice, inCart, share, justChecked }) {
+export function personAction({ row, plan, choice, inUse = null, inCart, share, justChecked }) {
   const due = dueOf(row);
   /** @param {PersonActionName} action @param {string} label @param {Partial<PersonAction>} [extra] @returns {PersonAction} */
   const make = (action, label, extra = {}) => ({ action, label, force: false, hint: '', more: [], ...extra });
@@ -452,6 +454,11 @@ export function personAction({ row, plan, choice, inCart, share, justChecked }) 
     }
     case 'pay':
       if (inCart || share === 'in-cart') return close;
+      // A pass picked for what's left: it comes off first, the rest goes in the cart.
+      if (row.type !== 'join' && passChange(inUse, choice).action === 'use') {
+        return make('use-pass', 'Use the pass', { hint: "Anything the pass doesn't cover goes in the cart." });
+      }
+      if (splitFirst(row)) return make('split', 'Split the bill', { more: [{ action: 'add', label: `Add ${money(due)} to cart` }] });
       return { ...add, more: canSplit(row) ? [{ action: 'split', label: 'Split the bill' }] : [] };
     default:
       // They're in with nothing to pay: the scanner is ready for the next code.
@@ -459,37 +466,46 @@ export function personAction({ row, plan, choice, inCart, share, justChecked }) 
   }
 }
 
+/** A banner's title when the Lair app said something staff should see before taking payment (a pass that didn't cover everyone, say). */
+export const CHECK_FIRST = 'Check before they pay';
+
 /**
- * After fee lines went in the cart: close the check-in screen when they all went in cleanly (Mo, 27 Oct 2026: "the
- * check-in screen should close by itself"), else stay and say what to do.
+ * After fee lines went in the cart: close the check-in screen when they all went in cleanly and the Lair app had
+ * nothing to say (Mo, 27 Oct 2026: "the check-in screen should close by itself"), else stay and say what to do. Its
+ * notices ("Pass SJ-KIWI-4 had 2 sessions left, so it covered 2 of 3 people.") are never closed away unread.
+ *   next  'close' when the banner's button should be "Close and pay" (there's something in the cart to pay for)
  * @param {FeesResult & { customer?: string }} added addFeesToCart's answer
- * @param {{ who?: string, ref?: string }} [context] their first name, and the code paying marks paid
- * @returns {{ close: boolean, toast: string, banner: Banner | null }}
+ * @param {{ who?: string, ref?: string, notices?: string[] }} [context] their first name, the code paying marks paid,
+ *   and what the Lair app said at check-in
+ * @returns {{ close: boolean, toast: string, banner: Banner | null, next: 'close' | null }}
  */
-export function afterCart(added, { who = '', ref = '' } = {}) {
+export function afterCart(added, { who = '', ref = '', notices = [] } = {}) {
   const cents = linesTotal(added.added);
   const toast = added.added.length ? addedToast(cents, who) : '';
+  const heads = (notices || []).map((n) => String(n || '').trim()).filter(Boolean);
+  const next = added.added.length || added.skipped.length ? /** @type {const} */ ('close') : null;
+  /** @param {Banner} banner */
+  const stay = (banner) => ({ close: false, toast, banner, next });
   if (added.failed.length) {
-    return { close: false, toast, banner: { title: added.added.length ? "Some of it isn't in the cart" : "It isn't in the cart", message: failedFeesText(added.failed), tone: 'critical' } };
+    return stay({ title: added.added.length ? "Some of it isn't in the cart" : "It isn't in the cart", message: [failedFeesText(added.failed), ...heads].join(' '), tone: 'critical' });
   }
   if (!added.added.length) {
     return {
       close: false,
       toast: '',
-      banner: { title: 'Already in the cart', message: 'Take payment with Pay on Verifone, or take that line off the sale first.', tone: 'info' },
+      banner: { title: 'Already in the cart', message: [...heads, 'Take payment with Pay on Verifone, or take that line off the sale first.'].join(' '), tone: 'info' },
+      next,
     };
   }
   if (added.unlinked.length) {
-    return {
-      close: false,
-      toast,
-      banner: { title: "It's in the cart, but not linked", message: `Paying won't mark ${ref || 'the booking'} paid by itself. After they pay, mark it paid on the staff page.`, tone: 'warning' },
-    };
+    const message = `Paying won't mark ${ref || 'the booking'} paid by itself. After they pay, mark it paid on the staff page.`;
+    return stay({ title: "It's in the cart, but not linked", message: [message, ...heads].join(' '), tone: 'warning' });
   }
+  if (heads.length) return stay({ title: CHECK_FIRST, message: heads.join(' '), tone: 'warning' });
   if (added.customer === 'failed') {
-    return { close: false, toast, banner: { title: `Couldn't put ${who || 'them'} on the sale`, message: "Add them with the cart's Add customer button, so their spend counts.", tone: 'info' } };
+    return stay({ title: `Couldn't put ${who || 'them'} on the sale`, message: "Add them with the cart's Add customer button, so their spend counts.", tone: 'info' });
   }
-  return { close: true, toast, banner: null };
+  return { close: true, toast, banner: null, next: null };
 }
 
 /**
@@ -614,16 +630,19 @@ export function splitOwed(rows) {
 
 /**
  * The member view's plan for their rows today (owed seats aren't today's, so they're left out):
- *   someone still to come  check everyone in (POST /pos/checkin-member, which answers with every line)
- *   all here, money owed   each row's lines (`owing`), asked for with `pass: 'none'` like the person view, so it never
- *                          uses a pass by itself; a GM's charge for a player's seat (paid, never checked in) is one of
- *                          these too, and POST /pos/checkin answers with its line
+ *   coming   still to come: each checked in (POST /pos/checkin, their saved pass used)
+ *   owing    here already with money owed, and a GM's charges for their players' seats (paid, never checked in): each
+ *            asked for its lines with `pass: 'none'` like the person view, so a pass is never used by itself
+ *   waiting  how many are still to come; due: what today's rows come to, before any saved pass
  * @param {Row[]} rows the freshest copies
  * @param {string[]} [inCart] codes with a line in the cart already
  */
 export function memberPlan(rows, inCart = []) {
   let waiting = 0;
   let due = 0;
+  /** @type {Row[]} still to come: checked in one by one, their saved passes used (never POST /pos/checkin-member,
+   *  which would use a saved pass on rows already here that staff checked in without one) */
+  const coming = [];
   /** @type {Row[]} */
   const owing = [];
   for (const row of rows || []) {
@@ -636,13 +655,16 @@ export function memberPlan(rows, inCart = []) {
       continue;
     }
     const state = rowState(row);
-    if (state === 'waiting') waiting += 1;
+    if (state === 'waiting') {
+      waiting += 1;
+      coming.push(row);
+    }
     if ((state === 'waiting' || state === 'arrived') && dueOf(row) > 0 && !(row.ref && inCart.includes(String(row.ref)))) {
       due += dueOf(row);
       if (state === 'arrived') owing.push(row);
     }
   }
-  return { canCheckIn: waiting > 0 || due > 0, waiting, due, owing };
+  return { canCheckIn: waiting > 0 || due > 0, waiting, due, coming, owing };
 }
 
 /**
@@ -688,7 +710,7 @@ export function everythingPlan(rows, tab, { bookings = [], tabs = [] } = {}) {
   let label = 'Check in everyone';
   if (total > 0 && separate) label = coming ? `Check in and add everything · ${money(total)}` : `Add everything to cart · ${money(total)}`;
   else if (total > 0) label = coming ? `Check in and add ${money(total)} to cart` : `Add ${money(total)} to cart`;
-  else if (tabState.canAdd) label = 'Add the tab to cart';
+  else if (tabState.canAdd) label = coming ? 'Check in and add the tab' : 'Add the tab to cart';
   return {
     today,
     owed,
@@ -732,16 +754,22 @@ export function tabNotes(result) {
 /**
  * What "Add everything to cart" tells staff: a toast for what went in ("Added $30 and 3 items from the tab. Ready to
  * pay."), and a banner when something needs sorting out, worst first: something isn't in the cart; something to
- * check; it was all in the cart already; they couldn't be put on the sale.
+ * check; it was all in the cart already; what the Lair app said at check-in; they couldn't be put on the sale. The
+ * screen closes by itself only when there's no banner (close).
  * @param {{ fees: FeesResult, tab: TabResult | null, customer: string }} result addEverythingToCart's
  * @param {string} [who] their first name
- * @returns {{ toast: string, problem: Banner | null }}
+ * @param {string[]} [notices] what the Lair app said at check-in (a pass that didn't cover everyone, someone not
+ *   checked in)
+ * @returns {{ toast: string, problem: Banner | null, close: boolean, next: 'close' | null }}
+ *   next: 'close' when the banner's button should be "Close and pay"
  */
-export function everythingOutcome(result, who = '') {
+export function everythingOutcome(result, who = '', notices = []) {
   const { fees, tab } = result;
   const items = itemCount(tab?.added || []);
   const added = fees.added.length > 0 || items > 0;
+  const inCart = added || fees.skipped.length > 0 || Boolean(tab?.already);
   const toast = added ? everythingToast(linesTotal(fees.added), items) : '';
+  const heads = (notices || []).map((n) => String(n || '').trim()).filter(Boolean);
   const notes = [];
   if (fees.failed.length) notes.push(failedFeesText(fees.failed));
   if (fees.unlinked.length) {
@@ -749,15 +777,19 @@ export function everythingOutcome(result, who = '') {
     notes.push(`Paying won't mark ${what} paid by itself. After they pay, mark ${fees.unlinked.length === 1 ? 'it' : 'them'} paid on the staff page.`);
   }
   if (tab) notes.push(...tabNotes(tab));
+  const next = inCart ? /** @type {const} */ ('close') : null;
+  /** @param {Banner} problem */
+  const stay = (problem) => ({ toast, problem, close: false, next });
   if (fees.failed.length || tab?.failed.length) {
-    return { toast, problem: { title: added ? "Some of it isn't in the cart" : "It isn't in the cart", message: notes.join(' '), tone: 'critical' } };
+    return stay({ title: added ? "Some of it isn't in the cart" : "It isn't in the cart", message: [...notes, ...heads].join(' '), tone: 'critical' });
   }
-  if (notes.length) return { toast, problem: { title: 'Check the cart', message: notes.join(' '), tone: 'warning' } };
-  if (!added) return { toast, problem: { title: 'Already in the cart', message: "It's all in this sale already. Take payment on the Verifone.", tone: 'info' } };
+  if (notes.length) return stay({ title: 'Check the cart', message: [...notes, ...heads].join(' '), tone: 'warning' });
+  if (!added) return stay({ title: 'Already in the cart', message: [...heads, "It's all in this sale already. Take payment with Pay on Verifone."].join(' '), tone: 'info' });
+  if (heads.length) return stay({ title: CHECK_FIRST, message: heads.join(' '), tone: 'warning' });
   if (result.customer === 'failed') {
-    return { toast, problem: { title: `Couldn't put ${who || 'them'} on the sale`, message: "Add them with the cart's Add customer button, so their spend counts.", tone: 'info' } };
+    return stay({ title: `Couldn't put ${who || 'them'} on the sale`, message: "Add them with the cart's Add customer button, so their spend counts.", tone: 'info' });
   }
-  return { toast, problem: null };
+  return { toast, problem: null, close: true, next: null };
 }
 
 /**

@@ -25,6 +25,7 @@ import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, cartC
 import { readCode } from './codes.js';
 import {
   afterCart,
+  CHECK_FIRST,
   checkinOutcome,
   currentRow,
   everythingOutcome,
@@ -45,16 +46,15 @@ import {
   personScreen,
   recordUses,
   scanPurpose,
-  splitOwed,
   stackAfterPerson,
   tabNotes,
   undoNote,
   withGroups,
   wrongScan,
 } from './flow.js';
-import { dayKey, firstName, money } from './format.js';
-import { checkIn, checkInMember, coverSeat, getToday, LairError, problemFor, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse } from './lair.js';
-import { feeLines, itemCount, linesTotal, owedLines, shareLines, splitOwedLines, tabToast } from './lines.js';
+import { dayKey, firstName, money, plural } from './format.js';
+import { checkIn, coverSeat, getToday, LairError, problemFor, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse } from './lair.js';
+import { feeLines, itemCount, linesTotal, owedLines, shareLines, tabToast } from './lines.js';
 import { cardFilled, cardFullShort, cardFullWords } from './loyalty.js';
 import { customerNames } from './sale.js';
 import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState } from './split.js';
@@ -168,16 +168,22 @@ function CheckIn() {
 
   /* ---------------- shares of a bill waiting to be paid ---------------- */
 
-  /** @param {Record<string, Pending>} next */
+  /** @param {Record<string, Pending>} next @returns {Promise<void>} saved on the iPad */
   function keepPending(next) {
     pendingNow.current = next;
     setPending(next);
-    savePending(next);
+    return savePending(next);
   }
 
-  /** @param {string} key @param {Pending} note */
+  /**
+   * A share put in the cart, kept on the iPad: the next time the booking is opened, it says "Waiting for the last
+   * payment…" until the payment reaches the Lair app, so the next friend isn't charged the whole remainder. Saved
+   * before the screen closes (a closed screen keeps nothing).
+   * @param {string} key
+   * @param {Pending} note
+   */
   function rememberShare(key, note) {
-    keepPending({ ...pendingNow.current, [key]: note });
+    return keepPending({ ...pendingNow.current, [key]: note });
   }
 
   /** @param {string[]} keys */
@@ -291,28 +297,33 @@ function CheckIn() {
   }
 
   /**
-   * Fee lines into the cart, then close the screen when they all went in cleanly; otherwise stay and say what to do.
+   * Fee lines into the cart, then close the screen when they all went in cleanly and the Lair app had nothing to say
+   * (afterCart); otherwise stay, say what to do, and offer "Close and pay" when there's something to pay for.
    * @param {FeeLine[]} lines
    * @param {unknown} customerId who goes on the sale
-   * @param {{ who?: string, ref?: string, replaceCustomer?: boolean, stay?: boolean, toast?: string, checkedIn?: boolean, filled?: boolean }} [options]
-   *   who: their first name; ref: the code paying marks paid; stay: something else needs saying, so don't close;
-   *   toast: words instead of "Added $15 for Sam. Ready to pay."; checkedIn: they were checked in too; filled: the
-   *   check-in filled their loyalty card
+   * @param {{ who?: string, ref?: string, replaceCustomer?: boolean, stay?: boolean, prefix?: string, checkedIn?: boolean,
+   *   filled?: boolean, notices?: string[], afterAdd?: (added: CartResult) => Promise<unknown> }} [options]
+   *   who: their first name; ref: the code paying marks paid; stay: something else is on screen already, so don't
+   *   close; prefix: words before "Added $15. Ready to pay." in the toast; checkedIn: they were checked in too; filled:
+   *   the check-in filled their loyalty card; notices: what the Lair app said at check-in; afterAdd: anything to finish
+   *   (and wait for) before the screen can close
    * @returns {Promise<CartResult>}
    */
-  async function putInCart(lines, customerId, { who = '', ref = '', replaceCustomer = false, stay = false, toast: words = '', checkedIn = false, filled = false } = {}) {
+  async function putInCart(
+    lines,
+    customerId,
+    { who = '', ref = '', replaceCustomer = false, stay = false, prefix = '', checkedIn = false, filled = false, notices = [], afterAdd } = {},
+  ) {
     const added = await addFeesToCart(lines, customerId, { replaceCustomer });
-    const next = afterCart(added, { who, ref });
+    if (afterAdd) await afterAdd(added);
+    const next = afterCart(added, { who, ref, notices });
+    const said = next.toast ? `${prefix}${next.toast}` : prefix.trim();
     if (!next.close || stay) {
-      if (next.toast) toast(words || next.toast);
-      if (next.banner) {
-        const closing = next.banner.title === 'Already in the cart' ? { label: 'Close and pay', run: closeScreen } : null;
-        say(next.banner.title, next.banner.message, next.banner.tone, closing);
-      }
+      if (said) toast(said);
+      if (next.banner) say(next.banner.title, next.banner.message, next.banner.tone, next.next === 'close' ? { label: 'Close and pay', run: closeScreen } : null);
       return added;
     }
     const cents = linesTotal(added.added);
-    const said = words || next.toast;
     finish(filled ? `${said} ${cardFullShort(who)}` : said, {
       heading: `Added ${money(cents)}${who ? ` for ${who}` : ''}`,
       body: `${checkedIn ? (who ? `${who}'s checked in. ` : "They're checked in. ") : ''}Ready to pay with Pay on Verifone.`,
@@ -530,6 +541,8 @@ function CheckIn() {
         return checkInThenSplit();
       case 'add':
         return addToCart();
+      case 'use-pass':
+        return usePassAndAdd();
       case 'split':
         setProblem(null);
         updatePerson((screen) => ({ ...screen, split: { ...screen.split, open: true } }));
@@ -602,9 +615,38 @@ function CheckIn() {
           ref: String(fresh.ref || ''),
           checkedIn: true,
           filled,
+          // A pass that didn't cover everyone, or wasn't used: staff see it before they take payment.
+          notices: [outcome.notice],
         });
       },
       checkInAndAdd,
+    );
+  }
+
+  /**
+   * "Use the pass" once they're here: the pass picked covers what's left (POST /pos/checkin with its code), then
+   * anything it doesn't cover goes in the cart and the screen closes. All covered: the screen says they're in.
+   */
+  function usePassAndAdd() {
+    const screen = topPerson();
+    if (!screen) return;
+    const row = currentRow(screen, todayNow.current);
+    const change = passChange(passInUse(row, screen.uses), screen.choice);
+    if (change.action !== 'use') return;
+    run(
+      'Using the pass…',
+      async () => {
+        const { answer } = await checkInPerson(screen, row, { pass: change.pass });
+        const outcome = checkinOutcome(answer);
+        if (!outcome.arrived || !outcome.lines.length) return;
+        const fresh = answer?.row ? { ...row, ...answer.row } : row;
+        await putInCart(outcome.lines, answer?.customer?.id ?? fresh.customerId ?? null, {
+          who: firstName(fresh.name),
+          ref: String(fresh.ref || ''),
+          notices: [outcome.notice],
+        });
+      },
+      usePassAndAdd,
     );
   }
 
@@ -792,12 +834,15 @@ function CheckIn() {
           return;
         }
         const before = answer?.row ? { ...row, ...answer.row } : row;
-        const added = await putInCart(lines, payer ? payer.customerId : null, {
+        await putInCart(lines, payer ? payer.customerId : null, {
           who: payer ? firstName(payer.name) : '',
           ref: String(row.ref || ''),
           replaceCustomer: Boolean(payer),
+          // Kept on the iPad before the screen closes, so the next friend sees "Waiting for the last payment…".
+          afterAdd: async (added) => {
+            if (added.added.length) await rememberShare(rowKey(row), pendingShare(before, linesTotal(added.added), Date.now()));
+          },
         });
-        if (added.added.length) rememberShare(rowKey(row), pendingShare(before, linesTotal(added.added), Date.now()));
       },
       addShare,
     );
@@ -852,9 +897,15 @@ function CheckIn() {
     return fresh;
   }
 
-  /** The GM's first name for the person on screen: the Lair app's, else from their game's title ("… · GM Kate"). @param {PersonScreen} screen @param {Row} row */
+  /**
+   * The GM's first name for the person on screen (the Lair app's, else from their game's title, "… · GM Kate"), to
+   * start a sentence and to go in one: "The GM" and "the GM" when it isn't known.
+   * @param {PersonScreen} screen
+   * @param {Row} row
+   */
   function gmName(screen, row) {
-    return row.gmPays?.payer || gameTitle({ kind: 'game', title: screen.groupTitle }).gm || 'The GM';
+    const name = row.gmPays?.payer || gameTitle({ kind: 'game', title: screen.groupTitle }).gm;
+    return { start: name || 'The GM', mid: name || 'the GM' };
   }
 
   /** "Yes, Kate pays": POST /pos/cover. The player pays nothing; the GM's charge goes on the GM's account. */
@@ -862,10 +913,10 @@ function CheckIn() {
     const screen = topPerson();
     if (!screen) return;
     const row = currentRow(screen, todayNow.current);
-    const payer = gmName(screen, row);
+    const gm = gmName(screen, row);
     const first = firstName(row.name);
     run(
-      `Putting ${first ? `${first}'s` : 'the'} seat on ${payer}…`,
+      `Putting ${first ? `${first}'s` : 'the'} seat on ${gm.mid}…`,
       async () => {
         const answer = await coverSeat({ gameId: String(row.gameId || ''), ref: String(row.ref || '') });
         const fresh = await freshSeat(row, answer);
@@ -874,7 +925,7 @@ function CheckIn() {
             ? { ...current, row: fresh ? { ...current.row, ...fresh } : current.row, cover: answer?.cover || { amount: 0 }, result: null, confirm: null }
             : current,
         );
-        toast(`${payer} is paying for ${first ? `${first}'s` : 'the'} seat.`);
+        toast(`${gm.start} is paying for ${first ? `${first}'s` : 'the'} seat.`);
       },
       coverPlayer,
       'gm-pays',
@@ -886,10 +937,10 @@ function CheckIn() {
     const screen = topPerson();
     if (!screen) return;
     const row = currentRow(screen, todayNow.current);
-    const payer = gmName(screen, row);
+    const gm = gmName(screen, row);
     const first = firstName(row.name);
     run(
-      `Stopping ${payer} paying…`,
+      `Stopping ${gm.mid} paying…`,
       async () => {
         const answer = await uncoverSeat({ gameId: String(row.gameId || ''), ref: String(row.ref || '') });
         const fresh = await freshSeat(row, answer);
@@ -898,7 +949,7 @@ function CheckIn() {
             ? { ...current, row: fresh ? { ...current.row, ...fresh } : current.row, cover: null, result: null, confirm: null }
             : current,
         );
-        toast(`${payer} isn't paying for ${first ? `${first}'s` : 'the'} seat any more.`);
+        toast(`${gm.start} isn't paying for ${first ? `${first}'s` : 'the'} seat any more.`);
       },
       uncoverPlayer,
       'gm-stop',
@@ -925,14 +976,22 @@ function CheckIn() {
         const lines = [];
         /** @type {string[]} */
         const refused = [];
+        /** @type {string[]} what the Lair app said (a pass that didn't cover everyone, or wasn't used) */
+        const notices = [];
+        let people = 0;
         // Each answer goes on screen as it comes, so if the internet drops halfway, Try again checks in only the rest
         // (and asks the ones already in for their lines with `pass: 'none'`, so no pass is used twice).
         for (const row of plan.checkIn) {
           const answer = await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking' });
           if (answer?.row) setRows([answer.row]);
           const outcome = checkinOutcome(answer);
-          if (outcome.arrived) lines.push(...outcome.lines);
-          else refused.push(`${firstName(row.name) || 'Someone'}: ${outcome.refused}`);
+          if (outcome.arrived) {
+            lines.push(...outcome.lines);
+            people += Math.max(1, Math.round(Number(row.people) || 1));
+            if (outcome.notice) notices.push(`${firstName(row.name) || 'One booking'}: ${outcome.notice}`);
+          } else {
+            refused.push(`${firstName(row.name) || 'Someone'}: ${outcome.refused}`);
+          }
         }
         for (const row of plan.add) {
           const answer = await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: NO_PASS });
@@ -940,19 +999,16 @@ function CheckIn() {
           lines.push(...feeLines(answer));
         }
         updateGroup((current) => (current.key === screen.key ? { ...current, ticked: [], picking: false } : current));
-        const checked = plan.checkIn.length - refused.length;
-        if (refused.length) say(checked ? "Not everyone was checked in" : 'No one was checked in', `${refused.join(' ')} Open them to check them in anyway.`);
+        const checked = people ? `Checked in ${plural(people, 'person', 'people')}. ` : '';
+        // Anyone the Lair app wouldn't check in, and anything it said: on screen before anyone pays.
+        const heads = [refused.length ? `${refused.join(' ')} Open them to check them in anyway.` : '', ...notices].filter(Boolean);
         if (!lines.length) {
-          if (checked) toast(`Checked in ${checked}. Nothing to pay.`);
+          if (heads.length) say(refused.length ? (people ? 'Not everyone was checked in' : 'No one was checked in') : CHECK_FIRST, heads.join(' '));
+          if (people) toast(`${checked}Nothing to pay.`);
           return;
         }
         const who = plan.customerId ? firstName(group.rows.find((row) => String(row.customerId ?? '') === plan.customerId)?.name) : '';
-        await putInCart(lines, plan.customerId, {
-          who,
-          stay: refused.length > 0,
-          toast: `${checked ? `Checked in ${checked}. ` : ''}Added ${money(linesTotal(lines))}. Ready to pay.`,
-          checkedIn: checked > 0,
-        });
+        await putInCart(lines, plan.customerId, { who, prefix: checked, checkedIn: people > 0, notices: heads });
       },
       checkInGroup,
     );
@@ -961,35 +1017,44 @@ function CheckIn() {
   /* ---------------- a member ---------------- */
 
   /**
-   * Today's rows for the member view, before their fees go in the cart: checked in (POST /pos/checkin-member) while
-   * anyone is still to come, or else each row that's here and still owing (and each GM charge) asked for its lines with
-   * `pass: 'none'` like the person view, so the amount on the button is what goes in the cart and no pass is used by
-   * itself. The rows that come back go on the screen. POST /pos/checkin-member also answers with the owed seats, each
-   * with its line (`fromMember`).
+   * Today's rows for the member view, before their fees go in the cart (memberPlan): each one still to come checked in
+   * (POST /pos/checkin, their saved pass used), then each one here already and still owing, and each GM charge, asked
+   * for its lines with `pass: 'none'` like the person view. One by one, never POST /pos/checkin-member: that checks in
+   * every row again with its saved pass, so it would use a pass on a booking staff checked in without one ("Just check
+   * in (pay later)" with the pass turned off). Each answer goes on screen as it comes, so if the internet drops
+   * halfway, Try again does only the rest. Returns the lines, the rows, how many were checked in, and what the Lair
+   * app said (a pass that didn't cover everyone, someone it wouldn't check in).
    * @param {MemberScreen} screen
    * @param {ReturnType<typeof memberPlan>} plan
-   * @returns {Promise<{ rows: Row[], lines: FeeLine[], fromMember: boolean }>}
+   * @returns {Promise<{ rows: Row[], lines: FeeLine[], checked: number, notices: string[] }>}
    */
   async function checkInToday(screen, plan) {
-    /** @type {any} */
-    let answer;
-    if (plan.waiting) {
-      answer = await checkInMember(screen.member.customerId);
-    } else {
-      const answers = [];
-      for (const row of plan.owing) answers.push(await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: NO_PASS }));
-      answer = {
-        rows: answers.map((a) => a?.row).filter(Boolean),
-        lines: answers.flatMap((a) => (Array.isArray(a?.lines) ? a.lines : [])),
-        notices: answers.map((a) => (a?.checkedIn ? a?.notice : null)).filter(Boolean),
-      };
-    }
     /** @type {Row[]} */
-    const rows = Array.isArray(answer?.rows) ? answer.rows : [];
-    setRows(rows);
-    const notices = Array.isArray(answer?.notices) ? answer.notices.map(String) : [];
-    updateMember((current) => ({ ...current, rows: mergeRows(current.rows, rows), notices }));
-    return { rows, lines: feeLines(answer), fromMember: plan.waiting > 0 };
+    const rows = [];
+    /** @type {FeeLine[]} */
+    const lines = [];
+    /** @type {string[]} */
+    const notices = [];
+    let checked = 0;
+    /** @param {Row} row @param {any} answer */
+    const take = (row, answer) => {
+      if (answer?.row) {
+        rows.push(answer.row);
+        setRows([answer.row]);
+        updateMember((current) => ({ ...current, rows: mergeRows(current.rows, [answer.row]) }));
+      }
+      const outcome = checkinOutcome(answer);
+      lines.push(...outcome.lines);
+      if (outcome.notice) notices.push(outcome.notice);
+      return outcome;
+    };
+    for (const row of plan.coming) {
+      const outcome = take(row, await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking' }));
+      if (outcome.arrived) checked += 1;
+      else notices.push(`${row.ref || firstName(row.name) || 'One booking'} wasn't checked in: ${outcome.refused}`);
+    }
+    for (const row of plan.owing) take(row, await checkIn({ id: row.id, type: row.type === 'join' ? 'join' : 'booking', pass: NO_PASS }));
+    return { rows, lines, checked, notices };
   }
 
   /**
@@ -1038,27 +1103,27 @@ function CheckIn() {
         const inCart = { bookings: bookingsInCart(shopify.cart.current.value), tabs: tabsInCart(shopify.cart.current.value) };
         const plan = everythingPlan(rows, current.tab, inCart);
         if (!plan.show) {
-          say('Nothing to add', 'Everything of theirs is paid, or in this sale already.', 'info', { label: 'Close and pay', run: closeScreen });
+          const something = (shopify.cart.current.value?.lineItems || []).length > 0;
+          say('Nothing to add', 'Everything of theirs is paid, or in this sale already.', 'info', something ? { label: 'Close and pay', run: closeScreen } : null);
           return;
         }
-        const day = plan.today.canCheckIn ? await checkInToday(current, plan.today) : { rows: [], lines: [], fromMember: false };
+        const day = plan.today.canCheckIn ? await checkInToday(current, plan.today) : { rows: [], lines: [], checked: 0, notices: [] };
         // A check-in can fill their card: look again while the cart fills.
-        const card = day.fromMember && before ? withTimeout(lookAgain(current), CARD_WAIT_MS).catch(() => null) : Promise.resolve(null);
+        const card = day.checked && before ? withTimeout(lookAgain(current), CARD_WAIT_MS).catch(() => null) : Promise.resolve(null);
         /** The card after check-in, on screen; true when it filled. */
         const cardNow = async () => {
           const after = await card;
           if (after) updateMember((shown) => ({ ...shown, loyalty: after.loyalty }));
           return Boolean(after && cardFilled(before, after.loyalty));
         };
-        const todayLines = splitOwedLines(day.lines, mergeRows(rows, day.rows)).today;
-        // POST /pos/checkin-member answers with every owed seat as it is now; otherwise the fresh scan's.
-        const owedRows = day.fromMember ? splitOwed(day.rows).owed : plan.owed;
-        const lines = [...todayLines, ...owedLines(owedRows)];
+        // Today's lines, then their owed sessions' (the fresh look's, each with the Lair app's own line).
+        const lines = [...day.lines, ...owedLines(plan.owed)];
         const tab = plan.tab ? current.tab : null;
         if (!lines.length && !tab) {
           const filled = await cardNow();
-          if (filled) say('Card full!', `${cardFullWords(name)} Let them know.`, 'success');
-          toast(day.fromMember ? `Checked in. Nothing to pay.` : 'Nothing to pay.');
+          const said = [...day.notices, filled ? cardFullWords(name) : ''].filter(Boolean).join(' ');
+          if (said) say(filled ? 'Card full!' : CHECK_FIRST, said, filled && !day.notices.length ? 'success' : 'warning');
+          toast(day.checked ? 'Checked in. Nothing to pay.' : 'Nothing to pay.');
           return;
         }
         /** @type {any} */
@@ -1072,21 +1137,19 @@ function CheckIn() {
           },
         });
         if (marked?.tab) updateMember((shown) => ({ ...shown, tab: marked.tab }));
-        const outcome = everythingOutcome(result, name);
+        const outcome = everythingOutcome(result, name, day.notices);
         const filled = await cardNow();
-        if (outcome.problem || !outcome.toast) {
-          if (outcome.toast) toast(outcome.toast);
+        if (!outcome.close) {
+          if (outcome.toast) toast(filled ? `${outcome.toast} ${cardFullShort(name)}` : outcome.toast);
           if (outcome.problem) {
-            const closing = outcome.problem.title === 'Already in the cart' ? { label: 'Close and pay', run: closeScreen } : null;
-            say(outcome.problem.title, outcome.problem.message, outcome.problem.tone, closing);
-          } else if (filled) {
-            say('Card full!', `${cardFullWords(name)} Let them know.`, 'success');
+            const message = filled ? `${outcome.problem.message} ${cardFullWords(name)}` : outcome.problem.message;
+            say(outcome.problem.title, message, outcome.problem.tone, outcome.next === 'close' ? { label: 'Close and pay', run: closeScreen } : null);
           }
           return;
         }
         finish(filled ? `${outcome.toast} ${cardFullShort(name)}` : outcome.toast, {
           heading: `Added everything for ${name || 'them'}`,
-          body: `${day.fromMember ? (name ? `${name}'s checked in. ` : "They're checked in. ") : ''}Ready to pay with Pay on Verifone.`,
+          body: `${day.checked ? (name ? `${name}'s checked in. ` : "They're checked in. ") : ''}Ready to pay with Pay on Verifone.`,
           who: String(screen.member.name || ''),
           extra: filled ? cardFullWords(name) : '',
         });
@@ -1106,11 +1169,14 @@ function CheckIn() {
       async () => {
         const plan = memberPlan(withGroups(screen.rows, todayNow.current).map((x) => x.row), cart.bookings);
         if (!plan.waiting) return;
-        await checkInToday(screen, plan);
-        const after = screen.loyalty ? await withTimeout(lookAgain(screen), CARD_WAIT_MS).catch(() => null) : null;
+        // Only the ones still to come: nothing to pay now, so nothing is asked for lines.
+        const day = await checkInToday(screen, { ...plan, owing: [] });
+        const after = day.checked && screen.loyalty ? await withTimeout(lookAgain(screen), CARD_WAIT_MS).catch(() => null) : null;
         if (after) updateMember((shown) => ({ ...shown, loyalty: after.loyalty }));
-        const full = after && cardFilled(screen.loyalty, after.loyalty) ? ` ${cardFullWords(name)}` : '';
-        say(`${name ? `${name}'s` : "They're"} checked in`, `Today's fees go on their account.${full}`, 'info', { label: 'Done', run: closeScreen });
+        const full = after && cardFilled(screen.loyalty, after.loyalty) ? cardFullWords(name) : '';
+        const words = [day.checked ? "Today's fees go on their account." : '', ...day.notices, full].filter(Boolean).join(' ');
+        const title = day.checked ? `${name ? `${name}'s` : "They're"} checked in` : 'No one was checked in';
+        say(title, words, day.notices.length ? 'warning' : full ? 'success' : 'info', { label: 'Done', run: closeScreen });
       },
       checkInMemberOnly,
     );

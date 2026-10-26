@@ -9,6 +9,7 @@ import {
   findRow,
   finishedLine,
   gameTitle,
+  gmPaysChoice,
   gmPaysFor,
   groupBadges,
   groupDetails,
@@ -337,6 +338,19 @@ test('“Kate pays for this seat” is offered on a GM game seat with something 
   assert.equal(withCover(seat, null, 'Kate'), seat);
   const told = { ...seat, gmPays: { on: true, payer: 'Kate', amount: 1000 } };
   assert.equal(withCover(told, { amount: 1000 }, 'Someone'), told, 'the Lair app’s word wins');
+});
+
+test('the GM-pays choice hides while the seat’s own fee is in the sale', () => {
+  const seat = { id: 'bk_mia', type: 'booking', kind: 'gm-seat', ref: 'MB-OTTER-9', name: 'Mia Brown', gameId: 'gm_1', status: 'confirmed', amount: 1500, due: 1500, paidAmount: 0 };
+  assert.equal(gmPaysChoice(seat, false), 'offer');
+  assert.equal(gmPaysChoice(seat, true), 'in-cart', 'paying the line would end the offer; the GM’s charge on top would take too much');
+  const paying = withCover({ ...seat, amount: 0, due: 0 }, { amount: 1000 }, 'Kate');
+  assert.equal(gmPaysChoice(paying, false), 'stop');
+  assert.equal(gmPaysChoice(paying, true), 'in-cart');
+  assert.equal(gmPaysChoice({ ...seat, paidAmount: 500, due: 1000 }, false), null, 'part paid: nothing to offer');
+  assert.equal(gmPaysChoice({ ...seat, paidAmount: 500, due: 1000 }, true), null);
+  assert.equal(gmPaysChoice({ ...seat, kind: 'table' }, false), null);
+  assert.equal(gmPaysChoice(null, false), null);
 });
 
 // 1 and 2 Oct 2026 are NZDT too. (Dates in October only: some ICU versions shorten September to "Sept".)

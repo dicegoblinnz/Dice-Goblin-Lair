@@ -295,12 +295,12 @@ test('a scanned code goes where staff expect', () => {
 
 test('the member view: check in everyone while anyone is still to come, else add what they owe', () => {
   const here = { ...row, status: 'seated', arrivedAt: 1, due: 1500 };
-  assert.deepEqual(memberPlan([row]), { canCheckIn: true, waiting: 1, due: 4500, owing: [] });
-  assert.deepEqual(memberPlan([{ ...here, due: 0 }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
-  assert.deepEqual(memberPlan([here]), { canCheckIn: true, waiting: 0, due: 1500, owing: [here] });
-  assert.deepEqual(memberPlan([here], ['SJ-OWLBEAR-17']), { canCheckIn: false, waiting: 0, due: 0, owing: [] }, 'already in the cart');
-  assert.deepEqual(memberPlan([{ ...row, status: 'noshow' }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
-  assert.deepEqual(memberPlan([]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  assert.deepEqual(memberPlan([row]), { canCheckIn: true, waiting: 1, due: 4500, coming: [row], owing: [] });
+  assert.deepEqual(memberPlan([{ ...here, due: 0 }]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
+  assert.deepEqual(memberPlan([here]), { canCheckIn: true, waiting: 0, due: 1500, coming: [], owing: [here] });
+  assert.deepEqual(memberPlan([here], ['SJ-OWLBEAR-17']), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] }, 'already in the cart');
+  assert.deepEqual(memberPlan([{ ...row, status: 'noshow' }]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
+  assert.deepEqual(memberPlan([]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
   const today = { groups: [{ key: 'tables', title: 'Table bookings', rows: [here] }] };
   assert.deepEqual(withGroups([row, { id: 'x', type: 'join' }], today).map((x) => [x.row.status, x.group?.key ?? null]), [
     ['seated', 'tables'],
@@ -328,11 +328,11 @@ const kaiTab = { id: 'tab_kai', status: 'open', items: [{ variantId: '1', title:
 
 test('owed sessions are kept apart from today\'s rows, and the Today button leaves them out', () => {
   assert.deepEqual(splitOwed([tonight, lastWeek]), { today: [tonight], owed: [lastWeek] });
-  assert.deepEqual(memberPlan([tonight, lastWeek]), { canCheckIn: true, waiting: 1, due: 1500, owing: [] });
-  assert.deepEqual(memberPlan([lastWeek]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  assert.deepEqual(memberPlan([tonight, lastWeek]), { canCheckIn: true, waiting: 1, due: 1500, coming: [tonight], owing: [] });
+  assert.deepEqual(memberPlan([lastWeek]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
   // Owed whether or not they came, and whether or not anyone marked them: never one to check in or ask lines for.
-  assert.deepEqual(memberPlan([{ ...lastWeek, status: 'confirmed' }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
-  assert.deepEqual(memberPlan([{ ...lastWeek, status: 'seated', arrivedAt: 1 }]), { canCheckIn: false, waiting: 0, due: 0, owing: [] });
+  assert.deepEqual(memberPlan([{ ...lastWeek, status: 'confirmed' }]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
+  assert.deepEqual(memberPlan([{ ...lastWeek, status: 'seated', arrivedAt: 1 }]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
 });
 
 test('an owed session on the person view is paid, never checked in, whatever its day', () => {
@@ -349,7 +349,7 @@ test('Add everything to cart: today\'s fees, owed sessions and the tab in one bu
     [true, 'Check in and add everything · $37', 3700, true, 'Today $15 · Owed $15 · Tab $7', '', true, 700, 1500],
   );
   assert.deepEqual(plan.owed, [lastWeek]);
-  assert.deepEqual(plan.today, { canCheckIn: true, waiting: 1, due: 1500, owing: [] });
+  assert.deepEqual(plan.today, { canCheckIn: true, waiting: 1, due: 1500, coming: [tonight], owing: [] });
   // What's in the cart already doesn't count again.
   const inCart = everythingPlan([tonight, lastWeek], kaiTab, { bookings: ['KT-KRAKEN-7'], tabs: ['tab_kai'] });
   assert.deepEqual([inCart.label, inCart.separate, inCart.parts, inCart.owed], ['Check in and add $15 to cart', false, '', []]);
@@ -358,6 +358,9 @@ test('Add everything to cart: today\'s fees, owed sessions and the tab in one bu
   assert.deepEqual([everythingPlan([], kaiTab).label, everythingPlan([], kaiTab).separate], ['Add $7 to cart', false]);
   // Nobody to check in, more than one part.
   assert.equal(everythingPlan([lastWeek], kaiTab).label, 'Add everything to cart · $22');
+  // A tab with no prices: say whether they're checked in too.
+  const unpriced = { id: 'tab_3', items: [{ variantId: '1', title: 'Coke', qty: 1 }] };
+  assert.equal(everythingPlan([{ ...tonight, due: 0, amount: 0 }], unpriced).label, 'Check in and add the tab');
   // A saved pass comes off at check-in, so the cart may come to less.
   assert.equal(everythingPlan([{ ...row, pass: kiwi }, lastWeek], null).note, 'A saved pass comes off when they check in, so it may come to less.');
   assert.equal(everythingPlan([{ ...row, pass: { ...kiwi, left: 0 } }], null).note, '', 'a used-up pass takes nothing off');
@@ -374,9 +377,12 @@ test('what staff are told after Add everything to cart', () => {
   const coke = { variantId: 1, qty: 2, title: 'Coke', price: 350 };
   const fees = (over = {}) => ({ added: [], skipped: [], unlinked: [], failed: [], ...over });
   const tab = (over = {}) => ({ already: false, added: [], declined: [], untagged: [], failed: [], bad: [], markProblem: '', ...over });
+  // Everything went in and the Lair app had nothing to say: the screen closes by itself.
   assert.deepEqual(everythingOutcome({ fees: fees({ added: [fee, owedLine] }), tab: tab({ added: [coke] }), customer: 'added' }, 'Kai'), {
     toast: 'Added $30 and 2 items from the tab. Ready to pay.',
     problem: null,
+    close: true,
+    next: null,
   });
   assert.deepEqual(everythingOutcome({ fees: fees({ added: [fee], failed: [{ line: owedLine, message: 'POS refused addCustomSale.' }] }), tab: null, customer: 'added' }, 'Kai'), {
     toast: 'Added $15. Ready to pay.',
@@ -385,7 +391,22 @@ test('what staff are told after Add everything to cart', () => {
       message: 'POS said: POS refused addCustomSale. Add it by hand as a custom sale: Owed: Curse of Strahd (Thu 1 Oct), $15.00.',
       tone: 'critical',
     },
+    close: false,
+    next: 'close',
   });
+  // What the Lair app said at check-in keeps the screen open, with Close and pay.
+  const notice = 'Pass SJ-KIWI-4 had 2 sessions left, so it covered 2 of 3 people.';
+  assert.deepEqual(everythingOutcome({ fees: fees({ added: [fee] }), tab: null, customer: 'added' }, 'Kai', [notice, '']), {
+    toast: 'Added $15. Ready to pay.',
+    problem: { title: 'Check before they pay', message: notice, tone: 'warning' },
+    close: false,
+    next: 'close',
+  });
+  assert.equal(
+    everythingOutcome({ fees: fees({ added: [fee], unlinked: [fee] }), tab: null, customer: 'added' }, 'Kai', [notice]).problem?.message,
+    `Paying won't mark KT-OGRE-2 paid by itself. After they pay, mark it paid on the staff page. ${notice}`,
+    'notices join any other banner',
+  );
   assert.deepEqual(everythingOutcome({ fees: fees({ added: [fee], unlinked: [fee] }), tab: tab({ added: [coke], markProblem: "Can't reach the Lair app." }), customer: 'added' }).problem, {
     title: 'Check the cart',
     message:
@@ -394,14 +415,17 @@ test('what staff are told after Add everything to cart', () => {
   });
   assert.deepEqual(everythingOutcome({ fees: fees({ skipped: [fee] }), tab: tab({ already: true }), customer: 'already' }), {
     toast: '',
-    problem: { title: 'Already in the cart', message: "It's all in this sale already. Take payment on the Verifone.", tone: 'info' },
+    problem: { title: 'Already in the cart', message: "It's all in this sale already. Take payment with Pay on Verifone.", tone: 'info' },
+    close: false,
+    next: 'close',
   });
   assert.deepEqual(everythingOutcome({ fees: fees({ added: [fee] }), tab: null, customer: 'failed' }, 'Kai').problem, {
     title: "Couldn't put Kai on the sale",
     message: "Add them with the cart's Add customer button, so their spend counts.",
     tone: 'info',
   });
-  assert.equal(everythingOutcome({ fees: fees(), tab: tab({ failed: [{ item: coke, message: 'Out of stock' }] }), customer: 'none' }).problem?.title, "It isn't in the cart");
+  const nothing = everythingOutcome({ fees: fees(), tab: tab({ failed: [{ item: coke, message: 'Out of stock' }] }), customer: 'none' });
+  assert.deepEqual([nothing.problem?.title, nothing.close, nothing.next], ["It isn't in the cart", false, null], 'nothing in the cart: no Close and pay');
 });
 
 test('the words for a tab that didn\'t all go in, and for fees POS refused', () => {
@@ -478,27 +502,73 @@ test('once they’re here: add to cart, close and pay once it’s in the cart, o
   assert.deepEqual([act(charge).action, act(charge).label], ['add', 'Add $10 to cart']);
 });
 
+test('once they’re here: a pass picked for what’s left leads, and so does splitting when they’re splitting', () => {
+  const here = { ...row, people: 1, status: 'seated', arrivedAt: 1, due: 1500 };
+  /** @param {any} r @param {any} [extra] */
+  const act = (r, extra = {}) => personAction({ row: r, plan: personPlan(r, null, TODAY), choice: null, inUse: null, inCart: false, share: 'none', justChecked: false, ...extra });
+  // Staff picked a pass under "Use a pass for what's left?": using it is the main button, never "Add $15 to cart".
+  assert.deepEqual(act(here, { choice: 'SJ-KIWI-4' }), {
+    action: 'use-pass',
+    label: 'Use the pass',
+    force: false,
+    hint: "Anything the pass doesn't cover goes in the cart.",
+    more: [],
+  });
+  assert.equal(act(here, { choice: NO_PASS }).action, 'add', '"Don\'t use a pass" picked');
+  assert.equal(act(here, { choice: 'SJ-KIWI-4', inUse: { code: 'SJ-KIWI-4' } }).action, 'add', 'that pass is in use already');
+  assert.equal(act(here, { choice: 'SJ-KIWI-4', inCart: true }).action, 'close', 'its fee is in the cart: take that payment, or the line off');
+  // They said they'd split, or part is paid: splitting leads, and the whole remainder is the quieter button.
+  const splitting = act({ ...here, people: 4, amount: 4000, paidAmount: 1000, due: 3000 });
+  assert.deepEqual([splitting.action, splitting.label, splitting.more], ['split', 'Split the bill', [{ action: 'add', label: 'Add $30 to cart' }]]);
+  assert.equal(act({ ...here, people: 4, split: true, due: 4000 }).action, 'split');
+  assert.equal(act({ ...here, people: 4, due: 4000 }).action, 'add', 'nobody said they would split');
+});
+
 test('after Add to cart: the screen closes when it all went in, else it stays and says what to do', () => {
   const fee = { title: 'GM seat: Curse of Strahd (KT-OGRE-2)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-OGRE-2' } };
   /** @param {any} [over] */
   const result = (over = {}) => ({ added: [], skipped: [], unlinked: [], failed: [], customer: 'added', ...over });
-  assert.deepEqual(afterCart(result({ added: [fee] }), { who: 'Kai', ref: 'KT-OGRE-2' }), { close: true, toast: 'Added $15 for Kai. Ready to pay.', banner: null });
-  assert.deepEqual(afterCart(result({ added: [fee], customer: 'other' })), { close: true, toast: 'Added $15. Ready to pay.', banner: null }, 'someone else on the sale: the strip showed it');
+  assert.deepEqual(afterCart(result({ added: [fee] }), { who: 'Kai', ref: 'KT-OGRE-2' }), { close: true, toast: 'Added $15 for Kai. Ready to pay.', banner: null, next: null });
+  assert.deepEqual(
+    afterCart(result({ added: [fee], customer: 'other' })),
+    { close: true, toast: 'Added $15. Ready to pay.', banner: null, next: null },
+    'someone else on the sale: the strip showed it',
+  );
   assert.deepEqual(afterCart(result({ skipped: [fee] })), {
     close: false,
     toast: '',
     banner: { title: 'Already in the cart', message: 'Take payment with Pay on Verifone, or take that line off the sale first.', tone: 'info' },
+    next: 'close',
   });
   const failed = afterCart(result({ failed: [{ line: fee, message: 'Nope' }] }));
-  assert.deepEqual([failed.close, failed.toast, failed.banner?.title, failed.banner?.tone], [false, '', "It isn't in the cart", 'critical']);
-  assert.equal(afterCart(result({ added: [fee], failed: [{ line: fee, message: 'Nope' }] })).banner?.title, "Some of it isn't in the cart");
+  assert.deepEqual([failed.close, failed.toast, failed.banner?.title, failed.banner?.tone, failed.next], [false, '', "It isn't in the cart", 'critical', null]);
+  assert.deepEqual(
+    [afterCart(result({ added: [fee], failed: [{ line: fee, message: 'Nope' }] })).banner?.title, afterCart(result({ added: [fee], failed: [{ line: fee, message: 'Nope' }] })).next],
+    ["Some of it isn't in the cart", 'close'],
+  );
   assert.deepEqual(afterCart(result({ added: [fee], unlinked: [fee] }), { ref: 'KT-OGRE-2' }).banner, {
     title: "It's in the cart, but not linked",
     message: "Paying won't mark KT-OGRE-2 paid by itself. After they pay, mark it paid on the staff page.",
     tone: 'warning',
   });
   const noCustomer = afterCart(result({ added: [fee], customer: 'failed' }), { who: 'Kai' });
-  assert.deepEqual([noCustomer.close, noCustomer.banner?.title], [false, "Couldn't put Kai on the sale"]);
+  assert.deepEqual([noCustomer.close, noCustomer.banner?.title, noCustomer.next], [false, "Couldn't put Kai on the sale", 'close']);
+});
+
+test('what the Lair app said at check-in is never closed away unread', () => {
+  const fee = { title: 'Table fee: SJ-OWLBEAR-17 (T4, 3 people)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'SJ-OWLBEAR-17' } };
+  const result = { added: [fee], skipped: [], unlinked: [], failed: [], customer: 'added' };
+  const partly = 'Pass SJ-KIWI-4 had 2 sessions left, so it covered 2 of 3 people.';
+  assert.deepEqual(afterCart(result, { who: 'Sam', notices: [partly] }), {
+    close: false,
+    toast: 'Added $15 for Sam. Ready to pay.',
+    banner: { title: 'Check before they pay', message: partly, tone: 'warning' },
+    next: 'close',
+  });
+  const expired = 'Pass SJ-KIWI-4 expired on 30 Sept 2026, so it wasn\'t used.';
+  assert.equal(afterCart(result, { notices: [expired, partly] }).banner?.message, `${expired} ${partly}`);
+  assert.equal(afterCart(result, { notices: ['', '  '] }).close, true, 'nothing said: it closes');
+  assert.equal(afterCart(result, { notices: [] }).close, true);
 });
 
 test('a group paying together: tick them, then one button checks them in and puts their fees in one sale', () => {
@@ -564,8 +634,8 @@ test('a GM’s member code: their charges for their players’ seats are paid wi
     end: at(3, 22),
     customerId: '555',
   };
-  assert.deepEqual(memberPlan([charge]), { canCheckIn: true, waiting: 0, due: 1000, owing: [charge] });
-  assert.deepEqual(memberPlan([charge], ['KA-OWL-12']), { canCheckIn: false, waiting: 0, due: 0, owing: [] }, 'in the cart already');
+  assert.deepEqual(memberPlan([charge]), { canCheckIn: true, waiting: 0, due: 1000, coming: [], owing: [charge] });
+  assert.deepEqual(memberPlan([charge], ['KA-OWL-12']), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] }, 'in the cart already');
   const kate = { ...tonight, id: 'bk_kate', ref: 'KM-WETA-5', name: 'Kate Moana', customerId: '555', seriesId: null };
   const plan = everythingPlan([kate, charge, lastWeek], kaiTab);
   assert.deepEqual([plan.label, plan.parts, plan.total], ['Check in and add everything · $47', "Today $15 · Players' seats $10 · Owed $15 · Tab $7", 4700]);

@@ -81,7 +81,9 @@ export function uncoverSeat({ gameId, ref }) {
 }
 
 /**
- * Checks in everything a member has booked today. Answers `{ rows, lines, customer, notices }`.
+ * Checks in everything a member has booked today. Answers `{ rows, lines, customer, notices }`. The check-in screen no
+ * longer uses it (27 Oct 2026): it checks in again every row already here with its saved pass, so it would use a pass
+ * on a booking staff checked in without one. The member view checks rows in one by one instead (Modal.jsx).
  * @param {unknown} customerId
  * @returns {Promise<any>}
  */

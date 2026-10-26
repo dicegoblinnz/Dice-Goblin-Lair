@@ -28,13 +28,13 @@ import { saleStrip } from './sale.js';
 import { amountProblem, bookerPayer, paidSummary, parseDollars, paymentsLine, pendingState, personShare, shareSummary, WAITING } from './split.js';
 import {
   areYou,
-  canGmPay,
   countRows,
   dayBuckets,
   dayCounts,
   dueOf,
   finishedLine,
   gameTitle,
+  gmPaysChoice,
   gmPaysFor,
   groupBadges,
   groupDetails,
@@ -389,8 +389,8 @@ function PersonView({ screen, ctx }) {
   const share = ctx.pending[rowKey(row)] || null;
   const pending = pendingState(share, row, cart.shares, ctx.now);
   const justChecked = Boolean(outcome?.arrived);
-  const main = personAction({ row, plan, choice: screen.choice, inCart, share: pending, justChecked });
   const inUse = passInUse(row, screen.uses);
+  const main = personAction({ row, plan, choice: screen.choice, inUse, inCart, share: pending, justChecked });
   const choices = passOptions(row, screen.passes, inUse);
   const card = loyaltyCard(screen.loyalty);
   const busyNow = Boolean(busy);
@@ -473,7 +473,7 @@ function PersonView({ screen, ctx }) {
       {splitting ? <SplitPanel row={row} split={screen.split} ctx={ctx} /> : null}
       {asking ? null : <CartStrip ctx={ctx} person={row} />}
       {splitting || asking ? null : <MainButtons main={main} label={label} ctx={ctx} />}
-      {splitting ? null : <GmPaysPanel row={row} screen={screen} payer={payer} ctx={ctx} />}
+      {splitting ? null : <GmPaysPanel row={row} screen={screen} payer={payer} inCart={inCart} holding={holding} ctx={ctx} />}
       {plan.stage === 'check-in' && row.type !== 'join' && dueOf(row) > 0 && !choices.options.length && !asking ? (
         <s-button variant="secondary" disabled={busyNow} onClick={() => act.scan('pass')}>
           Use a session pass
@@ -539,7 +539,7 @@ function MoneySection({ row, plan }) {
   if (row.split) lines.push('They said they would split the bill.');
   if (gmPaysFor(row)) {
     const gm = row.gmPays || {};
-    lines.push(`${gm.payer || 'The GM'} pays ${gm.amount ? money(gm.amount) : 'the table part'} for this seat, on their account.`);
+    lines.push(`${gm.payer || 'The GM'} pays ${gm.amount ? money(gm.amount) : 'the table fee'} for this seat, on their account.`);
   }
   if (plan.stage === 'owed' && row.owed) lines.push("A weekly regular's seat is theirs to pay for, even if they didn't come. To let them off, waive it on the staff page.");
   return (
@@ -579,27 +579,35 @@ function LoyaltySection({ card }) {
 
 /**
  * "GM pays for a player" (contract v21-gm-cover), on a GM game's player: "Kate pays for this seat", then a yes or no
- * on the screen; once Kate pays, "Stop Kate paying" (with its own yes or no). Kate pays her charge from her own member
- * code ("Add everything") or her tab, like any booking.
- * @param {{ row: Row, screen: PersonScreen, payer: string, ctx: Ctx }} props
+ * on the screen; once Kate pays, "Stop Kate paying" (with its own yes or no). Neither while the seat's own line is in
+ * the sale: paying it ends the GM's offer, and Kate's charge on top would take too much. Kate pays her charge from her
+ * own member code ("Add everything") or her tab, like any booking.
+ * @param {{ row: Row, screen: PersonScreen, payer: string, inCart: boolean, holding: boolean, ctx: Ctx }} props
+ *   inCart: the seat's line is in the cart; holding: a share of it is in the cart or its payment is on its way
  */
-function GmPaysPanel({ row, screen, payer, ctx }) {
+function GmPaysPanel({ row, screen, payer, inCart, holding, ctx }) {
   const { act, busy } = ctx;
-  if (row.kind !== 'gm-seat') return null;
-  const on = gmPaysFor(row);
-  if (!on && !canGmPay(row)) return null;
-  const gm = row.gmPays?.payer || payer || 'The GM';
+  const choice = gmPaysChoice(row, inCart || holding);
+  // A share paid a moment ago: the player is paying, so there's nothing for the GM to pay.
+  if (!choice || (choice === 'in-cart' && !inCart)) return null;
+  const name = row.gmPays?.payer || payer;
+  // "The GM" to start a sentence, "the GM" inside one, when the GM's name isn't known.
+  const gm = name || 'The GM';
+  const gmIn = name || 'the GM';
   const first = firstName(row.name) || 'them';
   const busyNow = Boolean(busy);
-  if (screen.confirm === 'cover' && !on) {
+  if (choice === 'in-cart') {
+    return <s-text color="subdued">{`For ${gmIn} to pay for this seat, take ${first}'s fee off the sale first.`}</s-text>;
+  }
+  if (screen.confirm === 'cover' && choice === 'offer') {
     return (
       <s-section heading={`${gm} pays for ${first}'s seat?`}>
         <s-stack direction="block" gap="small">
           <s-text>
-            {`${row.gmPays?.amount ? money(row.gmPays.amount) : 'The table part of the seat'} goes on ${gm}'s account. ${first} pays nothing, and ${gm} gets no GM credit for this seat.`}
+            {`${row.gmPays?.amount ? money(row.gmPays.amount) : "The seat's table fee"} goes on ${gmIn}'s account. ${first} pays nothing, and ${gmIn} gets no GM credit for this seat.`}
           </s-text>
           <s-button variant="primary" loading={ctx.busyKey === 'gm-pays'} disabled={busyNow} onClick={act.cover}>
-            {`Yes, ${gm} pays`}
+            {`Yes, ${gmIn} pays`}
           </s-button>
           <s-button variant="secondary" disabled={busyNow} onClick={() => act.askGm(null)}>
             Cancel
@@ -608,13 +616,13 @@ function GmPaysPanel({ row, screen, payer, ctx }) {
       </s-section>
     );
   }
-  if (screen.confirm === 'uncover' && on) {
+  if (screen.confirm === 'uncover' && choice === 'stop') {
     return (
-      <s-section heading={`Stop ${gm} paying for ${first}'s seat?`}>
+      <s-section heading={`Stop ${gmIn} paying for ${first}'s seat?`}>
         <s-stack direction="block" gap="small">
-          <s-text>{`${first}'s seat goes back to its full price. If ${gm} has paid it already, staff get an email to give that money back.`}</s-text>
+          <s-text>{`${first}'s seat goes back to its full price. If ${gmIn} has paid it already, staff get an email to give that money back.`}</s-text>
           <s-button variant="primary" tone="critical" loading={ctx.busyKey === 'gm-stop'} disabled={busyNow} onClick={act.uncover}>
-            {`Yes, stop ${gm} paying`}
+            {`Yes, stop ${gmIn} paying`}
           </s-button>
           <s-button variant="secondary" disabled={busyNow} onClick={() => act.askGm(null)}>
             Cancel
@@ -623,9 +631,9 @@ function GmPaysPanel({ row, screen, payer, ctx }) {
       </s-section>
     );
   }
-  return on ? (
+  return choice === 'stop' ? (
     <s-button variant="secondary" tone="critical" disabled={busyNow} onClick={() => act.askGm('uncover')}>
-      {`Stop ${gm} paying`}
+      {`Stop ${gmIn} paying`}
     </s-button>
   ) : (
     <s-button variant="secondary" disabled={busyNow} onClick={() => act.askGm('cover')}>
@@ -654,7 +662,7 @@ function PassChoice({ row, screen, options, inUse, stage, ctx }) {
         <s-stack direction="block" gap="small">
           <s-switch
             label={only.label}
-            details="Covers one person's table fee. Turn it off to pay instead."
+            details="Each session covers one person's table fee. Turn it off to pay instead."
             checked={screen.choice === only.value}
             disabled={Boolean(busy)}
             onChange={(event) => act.setChoice(event.currentTarget.checked ? only.value : 'none')}
@@ -679,7 +687,8 @@ function PassChoice({ row, screen, options, inUse, stage, ctx }) {
             ))}
           </s-choice-list>
         ) : null}
-        {change && change.action !== 'none' ? (
+        {change && change.action === 'switch' ? (
+          // ("Use the pass" for what's left is the screen's main button.)
           <s-button disabled={Boolean(busy)} onClick={act.changePass}>
             {change.label}
           </s-button>
