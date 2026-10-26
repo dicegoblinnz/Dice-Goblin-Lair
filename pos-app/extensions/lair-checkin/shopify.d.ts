@@ -13,6 +13,14 @@ declare module './src/Modal.jsx' {
 }
 
 //@ts-ignore
+declare module './src/cart.js' {
+  const shopify:
+    | import('@shopify/ui-extensions/pos.home.tile.render').Api
+    | import('@shopify/ui-extensions/pos.home.modal.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}
+
+//@ts-ignore
 declare module './src/format.js' {
   const shopify:
     | import('@shopify/ui-extensions/pos.home.tile.render').Api
@@ -45,7 +53,7 @@ declare module './src/today.js' {
 }
 
 //@ts-ignore
-declare module './src/split.js' {
+declare module './src/lines.js' {
   const shopify:
     | import('@shopify/ui-extensions/pos.home.tile.render').Api
     | import('@shopify/ui-extensions/pos.home.modal.render').Api;
@@ -53,8 +61,10 @@ declare module './src/split.js' {
 }
 
 //@ts-ignore
-declare module './src/cart.js' {
-  const shopify: import('@shopify/ui-extensions/pos.home.modal.render').Api;
+declare module './src/split.js' {
+  const shopify:
+    | import('@shopify/ui-extensions/pos.home.tile.render').Api
+    | import('@shopify/ui-extensions/pos.home.modal.render').Api;
   const globalThis: { shopify: typeof shopify };
 }
 
@@ -71,7 +81,13 @@ declare module './src/flow.js' {
 }
 
 //@ts-ignore
-declare module './src/lines.js' {
+declare module './src/loyalty.js' {
+  const shopify: import('@shopify/ui-extensions/pos.home.modal.render').Api;
+  const globalThis: { shopify: typeof shopify };
+}
+
+//@ts-ignore
+declare module './src/sale.js' {
   const shopify: import('@shopify/ui-extensions/pos.home.modal.render').Api;
   const globalThis: { shopify: typeof shopify };
 }

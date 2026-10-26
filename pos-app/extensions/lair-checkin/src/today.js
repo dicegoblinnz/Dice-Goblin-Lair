@@ -1,20 +1,27 @@
 // The "Today" roster from GET /pos/today: groups in time order, who's here, what's still due, badges and search.
 // No `shopify` global here, so `npm test` can check it without a POS.
-import { firstName, fold, money, peopleLabel, plural, shortDay, tablesLabel, timeRange } from './format.js';
+import { firstName, fold, money, peopleLabel, plural, shortDay, tablesLabel, timeLabel, timeRange } from './format.js';
 
 /**
  * @typedef {{ code?: string, label?: string, left?: number, sessionsLeft?: number, sessionsTotal?: number,
  *   status?: string, cover?: number, expiresAt?: number | null, note?: string,
  *   holder?: { customerId?: unknown, name?: string, email?: string } | null }} PassLike
  * @typedef {{ amount?: number, customerId?: unknown, name?: string, at?: number }} Payment
+ * @typedef {{ on?: boolean, can?: boolean, amount?: number, payer?: string }} GmPays
+ *   A GM game seat's "GM pays" state, when the Lair app sends it (contract v21-gm-cover; the counter's ask, 27 Oct
+ *   2026): on (the GM pays for it), can (the GM could), amount (cents the GM pays or would pay), payer (that GM's
+ *   first name).
  * @typedef {{ id: string | number, type?: string, kind?: string, ref?: string, name?: string, people?: number,
  *   tables?: string[], start?: number, end?: number, status?: string, arrivedAt?: number | null, paid?: boolean,
  *   amount?: number, covered?: number, due?: number, paidAmount?: number, payments?: Payment[], split?: boolean,
  *   customerId?: unknown, pass?: PassLike | null, refund?: string | null, note?: string, title?: string,
  *   players?: unknown[], party?: unknown[], gameId?: string | null, occurrenceId?: string | null,
- *   seriesId?: string | null, owed?: boolean, waived?: boolean, line?: unknown, onAccount?: boolean }} Row
+ *   seriesId?: string | null, owed?: boolean, waived?: boolean, line?: unknown, onAccount?: boolean,
+ *   gmPays?: GmPays | null }} Row
  *   seriesId: a weekly regular's seat. owed: a regular's seat whose session ended unpaid (paid like any fee, never
  *   checked in); the Lair app sends its cart line as `line` with a member's rows. waived: staff let them off.
+ *   kind 'gm-cover': a GM's charge for one of their player's seats (round 21), on the GM's member code: paid, never
+ *   checked in. covered: cents a session pass took off (never the GM paying: that's gmPays).
  * @typedef {{ key: string, kind?: string, title?: string, start?: number, end?: number, tables?: string[], rows: Row[] }} Group
  * @typedef {{ day?: string, now?: number, groups: Group[] }} Today
  * @typedef {'waiting' | 'arrived' | 'noshow' | 'refund' | 'cancelled'} RowState
@@ -68,15 +75,64 @@ export function isOwed(row) {
 }
 
 /**
+ * A row that's only ever paid, never checked in: a regular's owed seat, or a GM's charge for one of their players'
+ * seats (kind 'gm-cover', contract v21-gm-cover: "It's paid, never checked in").
+ * @param {Row | null | undefined} row
+ */
+export function isPayOnly(row) {
+  return Boolean(row?.owed) || row?.kind === 'gm-cover';
+}
+
+/** The GM pays for this seat (the Lair app's gmPays, contract v21-gm-cover). @param {Row | null | undefined} row */
+export function gmPaysFor(row) {
+  return row?.kind === 'gm-seat' && row?.gmPays?.on === true;
+}
+
+/**
+ * Whether to offer "Kate pays for this seat" (contract v21-gm-cover): the Lair app's gmPays.can once it sends it.
+ * Until then, a GM game seat that's on, with something to pay and nothing paid or taken off it yet; if the GM can't
+ * pay for it after all (no account, a free session), the Lair app says why in plain words.
+ * @param {Row | null | undefined} row
+ */
+export function canGmPay(row) {
+  if (row?.kind !== 'gm-seat') return false;
+  if (row.gmPays) return row.gmPays.can === true && row.gmPays.on !== true;
+  const state = rowState(row);
+  return (
+    (state === 'waiting' || state === 'arrived') &&
+    !row.owed &&
+    !row.waived &&
+    dueOf(row) > 0 &&
+    !(Number(row.paidAmount) > 0) &&
+    !(Number(row.covered) > 0)
+  );
+}
+
+/**
+ * A seat with the GM's charge this screen just set up (POST /pos/cover's `cover`), for a Lair app that doesn't send
+ * gmPays on its rows yet: the seat says the GM pays, and who, and how much.
+ * @param {Row} row
+ * @param {{ amount?: number } | null | undefined} cover
+ * @param {string} payer the GM's first name
+ * @returns {Row}
+ */
+export function withCover(row, cover, payer) {
+  if (!cover || row?.kind !== 'gm-seat' || row.gmPays?.on) return row;
+  const amount = Math.max(0, Math.round(Number(cover.amount) || 0));
+  return { ...row, gmPays: { ...(row.gmPays || {}), on: true, can: false, payer: row.gmPays?.payer || payer, ...(amount ? { amount } : {}) } };
+}
+
+/**
  * The badges for a row in a list: Here, Paid, Due $X (Owed $X for a regular's unpaid session), No-show or Refund?,
- * plus "In cart" when its line is already in this POS cart, "Pass" when a saved pass will be used at check-in, and
- * "Weekly" for a weekly regular's seat.
+ * plus "In cart" when its line is already in this POS cart, "Pass" when a saved pass will be used at check-in,
+ * "GM pays" when the GM pays for the seat (instead of "Free"), and "Weekly" for a weekly regular's seat.
  * @param {Row} row
  * @param {boolean} [inCart] a line for it is in this POS cart already
  * @returns {Badge[]}
  */
 export function rowBadges(row, inCart = false) {
-  const badges = stateBadges(row, inCart);
+  let badges = stateBadges(row, inCart);
+  if (gmPaysFor(row)) badges = [...badges.filter((b) => b.text !== 'Free'), { tone: 'info', text: 'GM pays' }];
   if (row?.seriesId) badges.push({ tone: 'info', text: 'Weekly' });
   return badges;
 }
@@ -162,11 +218,76 @@ export function countRows(rows) {
   return { people, arrived, due };
 }
 
-/** "3/5 here · $30 due" (people, not bookings). @param {Group} group */
+/** "3 of 5 here · $30 to pay" (people, not bookings). @param {Group} group */
 export function groupSummary(group) {
   const { people, arrived, due } = countRows(group?.rows);
   if (!people) return 'No one booked yet';
-  return `${arrived}/${people} here${due ? ` · ${money(due)} due` : ''}`;
+  return `${arrived} of ${people} here${due ? ` · ${money(due)} to pay` : ''}`;
+}
+
+/** Before this, a group is "later today" on the home screen; within it, "now and next". */
+export const NEXT_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Today's groups for the home screen, each list in time order: now and next (started, or starting within two hours),
+ * later today, and finished (ended).
+ * @param {Group[]} groups
+ * @param {number} now
+ */
+export function dayBuckets(groups, now) {
+  /** @type {{ now: Group[], later: Group[], finished: Group[] }} */
+  const buckets = { now: [], later: [], finished: [] };
+  for (const group of sortGroups(groups)) {
+    const end = Number(group.end) || 0;
+    const start = Number(group.start) || 0;
+    if (end && end <= now) buckets.finished.push(group);
+    else if (start > now + NEXT_MS) buckets.later.push(group);
+    else buckets.now.push(group);
+  }
+  return buckets;
+}
+
+/**
+ * A group's badges on the home screen: "3 of 5 here" and "$30 to pay", or before it starts with no one here,
+ * "Starts at 7pm" and "4 booked".
+ * @param {Group} group
+ * @param {number} now
+ * @returns {Badge[]}
+ */
+export function groupBadges(group, now) {
+  const { people, arrived, due } = countRows(group?.rows);
+  if (!people) return [{ tone: 'neutral', text: 'No one booked yet' }];
+  const start = Number(group?.start) || 0;
+  /** @type {Badge[]} */
+  const badges =
+    !arrived && start > now
+      ? [
+          { tone: 'info', text: `Starts at ${timeLabel(start)}` },
+          { tone: 'neutral', text: `${people} booked` },
+        ]
+      : [{ tone: arrived === people ? 'success' : 'neutral', text: `${arrived} of ${people} here` }];
+  if (due) badges.push({ tone: 'warning', text: `${money(due)} to pay` });
+  return badges;
+}
+
+/** A finished group in one line: "Learn to play · 3 people · all paid", or "· $15 to pay". @param {Group} group */
+export function finishedLine(group) {
+  const { people, due } = countRows(group?.rows);
+  const title = gameTitle(group).name || 'Bookings';
+  if (!people) return `${title} · no one booked`;
+  return `${title} · ${peopleLabel(people)} · ${due ? `${money(due)} to pay` : 'all paid'}`;
+}
+
+/**
+ * A game's title split from its GM: "Curse of Strahd · GM Kate" (the Lair app's Today title) → { name: "Curse of
+ * Strahd", gm: "Kate" }. Anything else is all name.
+ * @param {Pick<Group, 'title' | 'kind'> | null | undefined} group
+ */
+export function gameTitle(group) {
+  const title = String(group?.title || '').trim();
+  const at = title.lastIndexOf(' · GM ');
+  if (group?.kind !== 'game' || at < 0) return { name: title, gm: '' };
+  return { name: title.slice(0, at).trim(), gm: title.slice(at + 6).trim() };
 }
 
 /** "6pm–10pm · T7, T8" for a game or event, "5 bookings" for table bookings. @param {Group} group */
@@ -180,21 +301,16 @@ export function dayCounts(today) {
   return countRows((today?.groups || []).flatMap((g) => g.rows || []));
 }
 
-/** The tile's subtitle: "14 today · 5 here". @param {Today | null | undefined} today */
-export function tileSubheading(today) {
-  const { people, arrived } = dayCounts(today);
-  return people ? `${people} today · ${arrived} here` : 'Nothing booked today';
-}
-
 /**
  * What they booked, in a few words: "GM seat: Curse of Strahd", "Game spot: Warhammer night", "Event entry: Pokémon
- * TCG league", "Walk-in" or "Table booking".
+ * TCG league", "Walk-in" or "Table booking". A GM's charge says what it is: "Paying for Mia's seat: Curse of Strahd".
  * @param {Row} row
  */
 export function whatLabel(row) {
   // round 9: a monthly account's tab from an earlier day
   if (row?.type === 'tab') return 'Tab';
   const title = String(row?.title || '').trim();
+  if (row?.kind === 'gm-cover') return title || "Paying for a player's seat";
   if (row?.type === 'join') return title ? `Event entry: ${title}` : 'Event entry';
   if (row?.kind === 'gm-seat') return title ? `GM seat: ${title}` : 'GM seat';
   if (row?.occurrenceId) return title ? `Game spot: ${title}` : 'Game spot';
@@ -359,26 +475,64 @@ export function areYou(row) {
 }
 
 /** Where the check-in screen leaves today's numbers for the tile, so the tile needn't ask the Lair app again. */
-export const TILE_KEY = 'tile-counts';
+export const TILE_KEY = 'tile-numbers';
 
 /**
- * What the check-in screen saves for the tile: when, which Lair day, and the words.
+ * @typedef {{ at: number, day: string, people: number, arrived: number, owing: string[] }} TileEntry
+ *   today's numbers for the tile: when they were made, which Lair day, people booked and here, and the codes of
+ *   bookings that are here with something still to pay
+ */
+
+/**
+ * Today's numbers for the tile, from the Today list (the check-in screen saves them; the tile makes them too).
  * @param {Today | null | undefined} today
  * @param {number} now
+ * @returns {TileEntry}
  */
 export function tileEntry(today, now) {
-  return { at: now, day: String(today?.day || ''), text: tileSubheading(today) };
+  const { people, arrived } = dayCounts(today);
+  /** @type {string[]} */
+  const owing = [];
+  for (const group of today?.groups || []) {
+    for (const row of group.rows || []) if (row?.ref && rowState(row) === 'arrived' && dueOf(row) > 0) owing.push(String(row.ref));
+  }
+  return { at: now, day: String(today?.day || ''), people, arrived, owing };
 }
 
 /**
- * The tile's saved subtitle when it's for today and newer than the one the tile shows, otherwise null.
- * @param {unknown} entry what `shopify.storage.get(TILE_KEY)` gave back
- * @param {number} shownAt when the tile's own subtitle was made
- * @param {string} day the Lair day now, "2026-10-03"
+ * The tile's words and its badge: "9 of 27 here · 2 to pay", and 2: bookings that are here with something still to
+ * pay that isn't in the cart (Shopify: a tile's count is for things to act on).
+ * @param {TileEntry | null | undefined} entry
+ * @param {string[]} [inCart] codes with a line in the cart
+ * @returns {{ subheading: string, count: number }}
  */
-export function newerTileText(entry, shownAt, day) {
-  const saved = /** @type {{ at?: unknown, day?: unknown, text?: unknown } | null} */ (entry && typeof entry === 'object' ? entry : null);
-  if (!saved || typeof saved.text !== 'string' || !saved.text || saved.day !== day) return null;
-  const at = Number(saved.at);
-  return Number.isFinite(at) && at > shownAt ? saved.text : null;
+export function tileWords(entry, inCart = []) {
+  const people = Math.max(0, Math.round(Number(entry?.people) || 0));
+  if (!people) return { subheading: 'Nothing booked today', count: 0 };
+  const arrived = Math.max(0, Math.round(Number(entry?.arrived) || 0));
+  const count = (entry?.owing || []).filter((ref) => !inCart.includes(ref)).length;
+  return { subheading: `${arrived} of ${people} here${count ? ` · ${count} to pay` : ''}`, count };
 }
+
+/**
+ * The tile's saved numbers when they're for today and newer than the ones the tile shows, otherwise null.
+ * @param {unknown} entry what `shopify.storage.get(TILE_KEY)` gave back
+ * @param {number} shownAt when the tile's own numbers were made
+ * @param {string} day the Lair day now, "2026-10-03"
+ * @returns {TileEntry | null}
+ */
+export function newerTileEntry(entry, shownAt, day) {
+  const saved = /** @type {Partial<TileEntry> | null} */ (entry && typeof entry === 'object' ? entry : null);
+  if (!saved || saved.day !== day || !Array.isArray(saved.owing)) return null;
+  const at = Number(saved.at);
+  const people = Number(saved.people);
+  const arrived = Number(saved.arrived);
+  if (!Number.isFinite(at) || at <= shownAt || !Number.isFinite(people) || !Number.isFinite(arrived)) return null;
+  return { at, day, people, arrived, owing: saved.owing.filter((ref) => typeof ref === 'string') };
+}
+
+/** After a sale with Lair lines leaves the cart, the tile asks for fresh numbers this much later (the payment lands). */
+export const AFTER_SALE_MS = 8000;
+
+/** And numbers older than this are asked for again when the cart next changes. */
+export const STALE_MS = 15 * 60 * 1000;

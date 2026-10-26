@@ -45,16 +45,39 @@ export function scanCode(code) {
 
 /**
  * Checks one person in. `pass` is a pass code, 'none' (don't use the booking's pass) or left out (use the
- * booking's saved pass, if any). Answers `{ row, lines, customer, pass, notice }`.
- * @param {{ id: string | number, type: string, pass?: string | null, force?: boolean }} input
+ * booking's saved pass, if any). Answers `{ row, lines, customer, pass, notice }`. A GM's charge for a player's seat
+ * (round 21) is never checked in: it answers `reason: 'cover'` with its line. `code` instead of `id` finds a booking
+ * by its code (the charge the GM just took on).
+ * @param {{ id?: string | number, code?: string, type?: string, pass?: string | null, force?: boolean }} input
  * @returns {Promise<any>}
  */
-export function checkIn({ id, type, pass, force }) {
+export function checkIn({ id, code, type, pass, force }) {
   /** @type {Record<string, unknown>} */
-  const body = { id, type };
+  const body = id != null && id !== '' ? { id, type: type || 'booking' } : { code };
   if (pass) body.pass = pass;
   if (force) body.force = true;
   return call('POST', '/pos/checkin', body, "That booking isn't in the Lair app any more. Refresh the list.");
+}
+
+/**
+ * The GM pays the table part of one of their players' seats (contract v21-gm-cover): the seat costs the player nothing
+ * and the GM's charge goes on the GM's account. Answers `{ seat, cover, game }` (`cover`: `{ ref, amount, people,
+ * paid, due, status, locked }`), plus the seat's `row` when the Lair app sends it.
+ * @param {{ gameId: string, ref: string }} input the seat's game and code
+ * @returns {Promise<any>}
+ */
+export function coverSeat({ gameId, ref }) {
+  return call('POST', '/pos/cover', { gameId, ref }, "That seat isn't on this session any more. Refresh the list.");
+}
+
+/**
+ * The GM stops paying for a player's seat: it costs the seat's price again, and the GM's charge goes (money the GM
+ * paid on it is a refund due, and staff get an email). Answers `{ seat, cover: null, game }`.
+ * @param {{ gameId: string, ref: string }} input
+ * @returns {Promise<any>}
+ */
+export function uncoverSeat({ gameId, ref }) {
+  return call('POST', '/pos/uncover', { gameId, ref }, "That seat isn't on this session any more. Refresh the list.");
 }
 
 /**

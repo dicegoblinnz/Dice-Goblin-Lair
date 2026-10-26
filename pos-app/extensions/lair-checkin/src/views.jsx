@@ -1,39 +1,42 @@
-// The check-in screens, drawn from what Modal.jsx hands them. They don't call the POS or the Lair app themselves:
+// The check-in screens, drawn from what Modal.jsx hands them. The 27 Oct 2026 rework (Mo: "one obvious next step on
+// every screen", and "always clear who's here, what they owe and what's in the cart"): each screen has one main button,
+// with who it's about, what's to pay and the cart strip above it. They don't call the POS or the Lair app themselves:
 // every button calls back into Modal.jsx (`ctx.act`).
 import '@shopify/ui-extensions/preact';
 import { useState } from 'preact/hooks';
 import {
+  CLOSES,
   checkinOutcome,
   codeInQuery,
   currentRow,
   everythingPlan,
+  groupPlan,
   passChange,
   passInUse,
   passOptions,
   passProblem,
+  personAction,
   personPlan,
   tabPlan,
+  whyNothing,
   withGroups,
 } from './flow.js';
-import { customerIdNumber, dateLabel, firstName, longDay, loyaltyLine, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
+import { customerIdNumber, dateLabel, firstName, longDay, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
 import { accountLine, tabItems } from './lines.js';
-import {
-  amountProblem,
-  bookerPayer,
-  canSplit,
-  paidSummary,
-  parseDollars,
-  paymentsLine,
-  pendingState,
-  personShare,
-  shareSummary,
-  splitFirst,
-  WAITING,
-} from './split.js';
+import { cardFullWords, cardHeading, loyaltyCard, rollWords, stampMarks, stampWords } from './loyalty.js';
+import { saleStrip } from './sale.js';
+import { amountProblem, bookerPayer, paidSummary, parseDollars, paymentsLine, pendingState, personShare, shareSummary, WAITING } from './split.js';
 import {
   areYou,
+  canGmPay,
+  countRows,
+  dayBuckets,
   dayCounts,
   dueOf,
+  finishedLine,
+  gameTitle,
+  gmPaysFor,
+  groupBadges,
   groupDetails,
   groupSummary,
   owedWhen,
@@ -46,10 +49,11 @@ import {
   rowBadges,
   rowDetails,
   rowKey,
+  rowState,
   searchToday,
-  sortGroups,
   sortRows,
   whatLabel,
+  withCover,
 } from './today.js';
 
 /**
@@ -59,35 +63,44 @@ import {
  * @typedef {import('./today.js').PassLike} PassLike
  * @typedef {import('./today.js').Badge} Badge
  * @typedef {import('./flow.js').Screen} Screen
+ * @typedef {import('./flow.js').GroupScreen} GroupScreen
  * @typedef {import('./flow.js').PersonScreen} PersonScreen
  * @typedef {import('./flow.js').MemberScreen} MemberScreen
  * @typedef {import('./flow.js').PassScreen} PassScreen
+ * @typedef {import('./flow.js').ReadyScreen} ReadyScreen
  * @typedef {import('./flow.js').SplitState} SplitState
+ * @typedef {import('./flow.js').PersonActionName} PersonActionName
  * @typedef {import('./split.js').Pending} Pending
- * @typedef {{ title: string, message: string, tone: 'critical' | 'warning' | 'info', retry?: (() => void) | null }} Shown
- *   a banner on screen, maybe with Try again
- * @typedef {{ bookings: string[], shares: string[], tabs: string[], customerId: number | null }} CartState
+ * @typedef {{ title: string, message: string, tone: 'critical' | 'warning' | 'info' | 'success', retry?: (() => void) | null,
+ *   action?: { label: string, run: () => void } | null }} Shown
+ *   a banner on screen, with Try again, or another next step (Scan again, Close and pay) as a button under it
+ * @typedef {{ bookings: string[], shares: string[], tabs: string[], customerId: number | null, value: import('./cart.js').CartLike }} CartState
  * @typedef {'any' | 'payer' | 'pass'} Want
  * @typedef {{
  *   back: () => void,
+ *   home: () => void,
+ *   close: () => void,
  *   scan: (want: Want) => void,
  *   lookUp: (text: string, want: Want) => void,
  *   setQuery: (query: string) => void,
  *   refresh: () => void,
  *   openGroup: (key: string) => void,
- *   openRow: (row: Row, group: { key?: string, title?: string } | null, passes?: PassLike[]) => void,
- *   checkIn: (force: boolean) => void,
+ *   startPicking: (keys: string[]) => void,
+ *   setTicks: (keys: string[]) => void,
+ *   stopPicking: () => void,
+ *   checkInGroup: () => void,
+ *   openRow: (row: Row, group: { key?: string, title?: string } | null, passes?: PassLike[], loyalty?: object | null) => void,
+ *   person: (action: PersonActionName, force?: boolean) => void,
  *   setChoice: (choice: string | null) => void,
  *   changePass: () => void,
  *   undoPass: () => void,
- *   addToCart: () => void,
- *   done: () => void,
  *   setSplit: (patch: Partial<SplitState>) => void,
  *   addShare: () => void,
- *   refreshRow: () => void,
- *   forgetShare: () => void,
- *   checkInEveryone: () => void,
+ *   askGm: (confirm: 'cover' | 'uncover' | null) => void,
+ *   cover: () => void,
+ *   uncover: () => void,
  *   addEverything: () => void,
+ *   checkInMemberOnly: () => void,
  *   addTab: () => void,
  *   putMemberOnSale: () => void,
  *   openPass: (pass: PassLike) => void,
@@ -101,9 +114,11 @@ import {
  *   todayKey: string,
  *   now: number,
  *   busy: string,
+ *   busyKey: string,
  *   problem: Shown | null,
  *   query: string,
  *   cart: CartState,
+ *   names: Map<number, string>,
  *   pending: Record<string, Pending>,
  *   backLabel: string,
  *   act: Actions,
@@ -114,13 +129,15 @@ import {
 export function CurrentScreen({ screen, ctx }) {
   switch (screen.name) {
     case 'group':
-      return <GroupView groupKey={screen.key} ctx={ctx} />;
+      return <GroupView screen={screen} ctx={ctx} />;
     case 'person':
       return <PersonView screen={screen} ctx={ctx} />;
     case 'member':
       return <MemberView screen={screen} ctx={ctx} />;
     case 'pass':
       return <PassView screen={screen} ctx={ctx} />;
+    case 'ready':
+      return <ReadyView screen={screen} ctx={ctx} />;
     default:
       return <HomeView ctx={ctx} />;
   }
@@ -132,7 +149,7 @@ export function CurrentScreen({ screen, ctx }) {
 function HomeView({ ctx }) {
   const { today, query, busy, act } = ctx;
   const { people, arrived } = dayCounts(today);
-  const subheading = [longDay(today?.now || ctx.now), people ? `${people} booked · ${arrived} here` : ''].filter(Boolean).join(' · ');
+  const subheading = [longDay(today?.now || ctx.now), people ? `${arrived} of ${people} here` : ''].filter(Boolean).join(' · ');
   return (
     <Page
       heading="Lair check-in"
@@ -144,11 +161,13 @@ function HomeView({ ctx }) {
       }
     >
       <Status ctx={ctx} />
+      <CartStrip ctx={ctx} />
       <s-button variant="primary" disabled={Boolean(busy)} onClick={() => act.scan('any')}>
         Scan a code
       </s-button>
+      <s-text color="subdued">Or use the scanner.</s-text>
       <s-search-field
-        placeholder="Search by name, or type a code"
+        placeholder="Search by name, or type their code"
         value={query}
         onInput={(event) => act.setQuery(event.currentTarget.value ?? '')}
       />
@@ -163,9 +182,9 @@ function SearchResults({ ctx }) {
   const code = codeInQuery(query);
   const found = searchToday(today, query);
   return (
-    <s-stack direction="block" gap="small">
+    <s-stack direction="block" gap="base">
       {code ? (
-        <s-button disabled={Boolean(busy)} onClick={() => act.lookUp(code, 'any')}>
+        <s-button variant="secondary" disabled={Boolean(busy)} onClick={() => act.lookUp(code, 'any')}>
           {`Look up ${code}`}
         </s-button>
       ) : null}
@@ -174,38 +193,74 @@ function SearchResults({ ctx }) {
       ) : found.length ? (
         <s-section heading={plural(found.length, 'match', 'matches')}>
           <RowList
-            items={found.map(({ row, group }) => ({ row, group, details: [group.title, rowDetails(row)].filter(Boolean).join(' · ') }))}
+            items={found.map(({ row, group }) => ({ row, group, details: [gameTitle(group).name, rowDetails(row)].filter(Boolean).join(' · ') }))}
             cart={cart}
             busy={busy}
             onOpen={(row, group) => act.openRow(row, group)}
           />
         </s-section>
       ) : code ? null : (
-        <s-text color="subdued">{`No one called "${query.trim()}" today. Check the spelling, or scan their code.`}</s-text>
+        <s-empty-state heading={`No one called "${query.trim()}" today`} subheading="Check the spelling, or scan their code.">
+          <s-icon slot="graphic" type="search" />
+        </s-empty-state>
       )}
     </s-stack>
   );
 }
 
-/** @param {{ ctx: Ctx }} props */
+/**
+ * Today's games, events and table bookings: now and next, later today, and finished (shown when someone there still
+ * has something to pay, else behind a button).
+ * @param {{ ctx: Ctx }} props
+ */
 function TodayList({ ctx }) {
   const { today, loading, listProblem, busy, act } = ctx;
+  const [showFinished, setShowFinished] = useState(false);
   if (!today) {
     if (listProblem) return <ProblemBanner problem={listProblem} busy={Boolean(busy) || loading} />;
     return <BusyLine label="Loading today…" />;
   }
-  const groups = sortGroups(today.groups);
+  const buckets = dayBuckets(today.groups, ctx.now);
+  const owing = buckets.finished.some((group) => countRows(group.rows).due > 0);
   return (
-    <s-section heading="Today">
+    <s-stack direction="block" gap="base">
+      {listProblem ? <ProblemBanner problem={listProblem} busy={Boolean(busy) || loading} /> : null}
+      {loading ? <BusyLine label="Refreshing…" /> : null}
+      {today.groups.length ? null : (
+        <s-empty-state heading="Nothing booked today yet" subheading="If someone shows you a code, scan it.">
+          <s-icon slot="graphic" type="info" />
+        </s-empty-state>
+      )}
+      <GroupSection heading="Now and next" groups={buckets.now} ctx={ctx} />
+      <GroupSection heading="Later today" groups={buckets.later} ctx={ctx} />
+      {buckets.finished.length ? (
+        owing || showFinished ? (
+          <GroupSection heading="Finished" groups={buckets.finished} ctx={ctx} finished />
+        ) : (
+          <s-button variant="secondary" disabled={Boolean(busy)} onClick={() => setShowFinished(true)}>
+            {`Show finished (${buckets.finished.length})`}
+          </s-button>
+        )
+      ) : null}
+    </s-stack>
+  );
+}
+
+/** @param {{ heading: string, groups: Group[], ctx: Ctx, finished?: boolean }} props */
+function GroupSection({ heading, groups, ctx, finished = false }) {
+  if (!groups.length) return null;
+  return (
+    <s-section heading={heading}>
       <s-stack direction="block" gap="small">
-        {listProblem ? <ProblemBanner problem={listProblem} busy={Boolean(busy) || loading} /> : null}
-        {loading ? <BusyLine label="Refreshing…" /> : null}
-        {groups.length ? null : <s-text color="subdued">Nothing booked today yet.</s-text>}
         {groups.map((group, i) => (
           <s-stack key={group.key} direction="block" gap="small">
             {i ? <s-divider /> : null}
-            <s-clickable disabled={Boolean(busy)} onClick={() => act.openGroup(group.key)}>
-              <Item title={group.title || 'Bookings'} lines={[groupDetails(group)]} badges={[{ tone: 'neutral', text: groupSummary(group) }]} />
+            <s-clickable disabled={Boolean(ctx.busy)} onClick={() => ctx.act.openGroup(group.key)}>
+              {finished ? (
+                <Item title={finishedLine(group)} lines={[]} badges={[]} />
+              ) : (
+                <Item title={gameTitle(group).name || 'Bookings'} lines={[groupLine(group)]} badges={groupBadges(group, ctx.now)} />
+              )}
             </s-clickable>
           </s-stack>
         ))}
@@ -214,38 +269,110 @@ function TodayList({ ctx }) {
   );
 }
 
+/** "GM Kate · 6pm–10pm · T7, T8", "7pm–11pm · T9, T10" or "6 bookings". @param {Group} group */
+function groupLine(group) {
+  const { gm } = gameTitle(group);
+  return [gm ? `GM ${gm}` : '', groupDetails(group)].filter(Boolean).join(' · ');
+}
+
 /* ---------------- a group: a GM game, an event, or the table bookings ---------------- */
 
-/** @param {{ groupKey: string, ctx: Ctx }} props */
-function GroupView({ groupKey, ctx }) {
+/** @param {{ screen: GroupScreen, ctx: Ctx }} props */
+function GroupView({ screen, ctx }) {
   const { today, busy, act, cart } = ctx;
-  const group = today?.groups.find((g) => g.key === groupKey) || null;
+  const group = today?.groups.find((g) => g.key === screen.key) || null;
   if (!group) {
     return (
       <Page heading="Not on today's list" subheading="">
         <BackButton ctx={ctx} />
         <Status ctx={ctx} />
-        <s-text>This one isn't on today's list any more. Go back and refresh.</s-text>
+        <s-banner tone="warning" heading="This one isn't on today's list any more">
+          Go back to Today and tap Refresh.
+        </s-banner>
       </Page>
     );
   }
+  const { name, gm } = gameTitle(group);
+  const subheading = [gm ? `GM ${gm}` : '', groupDetails(group)].filter(Boolean).join(' · ');
+  const plan = groupPlan(group.rows, screen.ticked, cart.bookings);
+  const busyNow = Boolean(busy);
+  const rows = sortRows(group.rows);
+
+  if (screen.picking) {
+    // "Check in several at once": tick who's paying together, then one button.
+    const byKey = new Map(rows.map((row) => [rowKey(row), row]));
+    const tickable = plan.tickable.map((key) => byKey.get(key)).filter((row) => Boolean(row));
+    return (
+      <Page heading={name || 'Bookings'} subheading={subheading} action={<ScanAction ctx={ctx} />}>
+        <Status ctx={ctx} />
+        <CartStrip ctx={ctx} />
+        <s-section heading="Who's paying together?">
+          <s-choice-list multiple values={screen.ticked} onChange={(event) => act.setTicks([...(event.currentTarget.values || [])])}>
+            {tickable.map((row) => (
+              <s-choice key={rowKey(row)} value={rowKey(row)}>
+                {tickLabel(row, cart)}
+              </s-choice>
+            ))}
+          </s-choice-list>
+        </s-section>
+        <s-stack direction="block" gap="small">
+          <s-button variant="primary" loading={ctx.busyKey === 'main'} disabled={busyNow || !plan.label} onClick={act.checkInGroup}>
+            {plan.label || "Tick who's paying together"}
+          </s-button>
+          {plan.label ? (
+            <s-text color="subdued">
+              {plan.passNote ? 'A saved pass comes off when they check in, so it may come to less.' : plan.due ? CLOSES : 'Nothing to pay, so nothing goes in the cart.'}
+            </s-text>
+          ) : null}
+          <s-button variant="secondary" disabled={busyNow} onClick={act.stopPicking}>
+            Cancel
+          </s-button>
+        </s-stack>
+      </Page>
+    );
+  }
+
+  const toCome = rows.filter((row) => rowState(row) === 'waiting');
+  const here = rows.filter((row) => rowState(row) === 'arrived');
+  const others = rows.filter((row) => !['waiting', 'arrived'].includes(rowState(row)));
+  /** @param {string} heading @param {Row[]} list */
+  const section = (heading, list) =>
+    list.length ? (
+      <s-section heading={heading}>
+        <RowList items={list.map((row) => ({ row, group, details: rowDetails(row) }))} cart={cart} busy={busy} onOpen={(row) => act.openRow(row, group)} />
+      </s-section>
+    ) : null;
+  const several = plan.toCome.length > 1 || (!plan.toCome.length && plan.tickable.length > 1);
   return (
-    <Page heading={group.title || 'Bookings'} subheading={groupDetails(group)} action={<ScanAction ctx={ctx} />}>
+    <Page heading={name || 'Bookings'} subheading={subheading} action={<ScanAction ctx={ctx} />}>
       <BackButton ctx={ctx} />
       <Status ctx={ctx} />
       <s-text type="strong">{groupSummary(group)}</s-text>
-      {group.rows.length ? (
-        <RowList
-          items={sortRows(group.rows).map((row) => ({ row, group, details: rowDetails(row) }))}
-          cart={cart}
-          busy={busy}
-          onOpen={(row) => act.openRow(row, group)}
-        />
-      ) : (
-        <s-text color="subdued">No one has booked yet.</s-text>
+      <CartStrip ctx={ctx} />
+      {several ? (
+        <s-stack direction="block" gap="small">
+          <s-button variant="primary" disabled={busyNow} onClick={() => act.startPicking(plan.toCome.length ? plan.toCome : plan.tickable)}>
+            Check in several at once
+          </s-button>
+          <s-text color="subdued">For people paying together. Paying on their own? Tap their name, or scan their code.</s-text>
+        </s-stack>
+      ) : null}
+      {section('Still to come', toCome)}
+      {section('Here', here)}
+      {section('Not coming', others)}
+      {group.rows.length ? null : (
+        <s-empty-state heading="No one has booked this yet" subheading="People who book show up here.">
+          <s-icon slot="graphic" type="info" />
+        </s-empty-state>
       )}
     </Page>
   );
+}
+
+/** "Sam Jones · Due $15 · Weekly": one person to tick. @param {Row} row @param {CartState} cart */
+function tickLabel(row, cart) {
+  const badges = rowBadges(row, Boolean(row.ref) && cart.bookings.includes(String(row.ref))).map((badge) => badge.text);
+  return [row.name || 'Guest', peopleLabel(row.people) && Number(row.people) > 1 ? peopleLabel(row.people) : '', ...badges].filter(Boolean).join(' · ');
 }
 
 /* ---------------- a person: "Are you Sam?" ---------------- */
@@ -253,105 +380,103 @@ function GroupView({ groupKey, ctx }) {
 /** @param {{ screen: PersonScreen, ctx: Ctx }} props */
 function PersonView({ screen, ctx }) {
   const { today, busy, act, cart } = ctx;
-  const row = currentRow(screen, today);
+  const payer = gameTitle({ kind: 'game', title: screen.groupTitle }).gm;
+  const row = withCover(currentRow(screen, today), screen.cover, payer);
   const plan = personPlan(row, screen.result, ctx.todayKey);
   const outcome = screen.result ? checkinOutcome(screen.result) : null;
   const ref = String(row.ref || '');
   const inCart = Boolean(ref) && cart.bookings.includes(ref);
   const share = ctx.pending[rowKey(row)] || null;
   const pending = pendingState(share, row, cart.shares, ctx.now);
-  const holding = pending === 'in-cart' || pending === 'waiting';
-  const due = dueOf(row);
+  const justChecked = Boolean(outcome?.arrived);
+  const main = personAction({ row, plan, choice: screen.choice, inCart, share: pending, justChecked });
   const inUse = passInUse(row, screen.uses);
   const choices = passOptions(row, screen.passes, inUse);
-  const showPasses =
-    row.type !== 'join' &&
-    !screen.split.open &&
-    !holding &&
-    !inCart &&
-    (plan.stage === 'check-in' || plan.stage === 'pay' || (plan.stage === 'done' && Boolean(inUse)));
-  const paying = plan.stage === 'pay' && !inCart && !holding;
+  const card = loyaltyCard(screen.loyalty);
   const busyNow = Boolean(busy);
+  const first = firstName(row.name);
+  const holding = pending === 'in-cart' || pending === 'waiting';
+  const splitting = screen.split.open && plan.stage === 'pay' && !holding && !inCart;
+  const asking = Boolean(screen.confirm);
+  const showPasses =
+    row.type !== 'join' && !splitting && !asking && !holding && !inCart && (plan.stage === 'check-in' || plan.stage === 'pay' || (plan.stage === 'done' && Boolean(inUse)));
+  const cardShown = screen.filled ? (
+    <s-banner tone="success" heading="Card full!">
+      {`${cardFullWords(first)} Let them know.`}
+    </s-banner>
+  ) : card ? (
+    <LoyaltySection card={card} />
+  ) : null;
+  /** @param {{ action: PersonActionName, label: string }} button */
+  const label = (button) => (button.action === 'back' && button.label === 'Back' ? `‹ ${ctx.backLabel}` : button.label);
+
+  if (plan.stage === 'done' && justChecked && !asking) {
+    // They're in, with nothing to pay: ready for the next scan.
+    return (
+      <Page heading="Checked in" subheading={ref} action={<ScanAction ctx={ctx} />}>
+        <Status ctx={ctx} />
+        <s-banner tone="success" heading={first ? `${first}'s in` : "They're in"}>
+          {[whyNothing(row), outcome?.notice || ''].filter(Boolean).join(' ')}
+        </s-banner>
+        {cardShown}
+        {showPasses ? <PassChoice row={row} screen={screen} options={choices.options} inUse={inUse} stage={plan.stage} ctx={ctx} /> : null}
+        <MainButtons main={main} label={label} ctx={ctx} />
+      </Page>
+    );
+  }
+
   return (
     <Page heading={areYou(row)} subheading={ref} action={<ScanAction ctx={ctx} />}>
       <BackButton ctx={ctx} />
       <Status ctx={ctx} />
-      <s-section heading={row.name || 'Guest'}>
-        <s-stack direction="block" gap="small">
-          <Badges list={rowBadges(row, inCart)} />
-          {personFacts(row, screen.groupTitle).map((line) => (
-            <s-text key={line}>{line}</s-text>
-          ))}
-        </s-stack>
-      </s-section>
-
       {plan.warning ? (
         <s-banner tone="warning" heading="Check before you let them in">
           {plan.warning}
         </s-banner>
       ) : null}
-      {outcome?.arrived ? (
-        <s-banner tone="success" heading={outcome.text}>
-          {[outcome.passText ? `${outcome.passText}.` : '', outcome.notice].filter(Boolean).join(' ') ||
-            (outcome.total ? 'Add it to the cart, then take payment on the Verifone.' : 'All done.')}
+      {refundPending(row) ? (
+        <s-banner tone="critical" heading="Refund to sort out">
+          They paid online and this was cancelled or missed. Sort out the refund on the staff page.
         </s-banner>
       ) : null}
+      <s-section heading={row.name || 'Guest'}>
+        <s-stack direction="block" gap="small">
+          {personFacts(row, screen.groupTitle).map((line) => (
+            <s-text key={line}>{line}</s-text>
+          ))}
+          <Badges list={rowBadges(row, inCart)} />
+        </s-stack>
+      </s-section>
+      <MoneySection row={row} plan={plan} />
+      {cardShown}
       {screen.note ? (
         <s-banner tone="success" heading={screen.note.heading}>
           {screen.note.body}
         </s-banner>
       ) : null}
+      {outcome?.arrived && plan.stage === 'pay' && (outcome.passText || outcome.notice) ? (
+        <s-banner tone="info" heading={outcome.text}>
+          {[outcome.passText ? `${outcome.passText}.` : '', outcome.notice].filter(Boolean).join(' ')}
+        </s-banner>
+      ) : null}
       {pending === 'in-cart' && share ? (
         <s-banner tone="info" heading={`A ${money(share.amount)} share is in the cart`}>
-          Take payment on the Verifone. Their share shows here once it's paid.
+          Take payment with Pay on Verifone. Their share shows here once it's paid.
         </s-banner>
       ) : null}
       {pending === 'waiting' && share ? (
-        <s-stack direction="block" gap="small">
-          <s-banner tone="info" heading={WAITING}>
-            {`The ${money(share.amount)} share left the cart. It shows here as paid once the payment reaches the Lair app, usually within a minute.`}
-          </s-banner>
-          <s-stack direction="inline" gap="small">
-            <s-button disabled={busyNow} onClick={act.refreshRow}>
-              Refresh
-            </s-button>
-            <s-button variant="secondary" disabled={busyNow} onClick={act.forgetShare}>
-              It wasn't paid
-            </s-button>
-          </s-stack>
-        </s-stack>
-      ) : null}
-      {inCart && plan.stage === 'pay' && pending !== 'in-cart' ? (
-        <s-banner tone="info" heading="It's in the cart">
-          Take payment on the Verifone. To change the pass or pay another way, take that line off the sale first.
+        <s-banner tone="info" heading={WAITING}>
+          {`The ${money(share.amount)} share left the cart. It shows here as paid once the payment reaches the Lair app, usually within a minute.`}
         </s-banner>
       ) : null}
-      {plan.stage === 'owed' ? (
-        <s-banner tone={inCart ? 'info' : 'warning'} heading={inCart ? "It's in the cart" : `Owed from ${owedWhen(row)}`}>
-          {inCart
-            ? 'Take payment on the Verifone.'
-            : "A weekly regular's seat is theirs to pay for, even if they didn't come. Add it to the cart, or waive it on the staff page."}
-        </s-banner>
-      ) : null}
-
       {showPasses ? <PassChoice row={row} screen={screen} options={choices.options} inUse={inUse} stage={plan.stage} ctx={ctx} /> : null}
-
-      {screen.split.open && plan.stage === 'pay' && !holding && !inCart ? <SplitPanel row={row} split={screen.split} ctx={ctx} /> : null}
-
-      {plan.stage === 'check-in' ? (
-        <s-button variant="primary" disabled={busyNow} onClick={() => act.checkIn(plan.force)}>
-          {plan.force ? 'Check in anyway' : 'Check in'}
-        </s-button>
-      ) : null}
-      {paying && !screen.split.open ? <PayButtons row={row} due={due} busy={busyNow} act={act} /> : null}
-      {plan.stage === 'owed' && !inCart ? (
-        <s-button variant="primary" disabled={busyNow} onClick={act.addToCart}>
-          {`Add ${money(due)} to cart`}
-        </s-button>
-      ) : null}
-      {plan.stage === 'done' || ((plan.stage === 'pay' || plan.stage === 'owed') && (inCart || holding)) ? (
-        <s-button variant={plan.stage === 'done' ? 'primary' : 'secondary'} disabled={busyNow} onClick={act.done}>
-          Done
+      {splitting ? <SplitPanel row={row} split={screen.split} ctx={ctx} /> : null}
+      {asking ? null : <CartStrip ctx={ctx} person={row} />}
+      {splitting || asking ? null : <MainButtons main={main} label={label} ctx={ctx} />}
+      {splitting ? null : <GmPaysPanel row={row} screen={screen} payer={payer} ctx={ctx} />}
+      {plan.stage === 'check-in' && row.type !== 'join' && dueOf(row) > 0 && !choices.options.length && !asking ? (
+        <s-button variant="secondary" disabled={busyNow} onClick={() => act.scan('pass')}>
+          Use a session pass
         </s-button>
       ) : null}
     </Page>
@@ -359,7 +484,28 @@ function PersonView({ screen, ctx }) {
 }
 
 /**
- * The lines under the person's name: what, when and where, players, notes, pass and payments.
+ * The person view's main button, what happens next under it, and the quieter ones.
+ * @param {{ main: import('./flow.js').PersonAction, label: (button: { action: PersonActionName, label: string }) => string, ctx: Ctx }} props
+ */
+function MainButtons({ main, label, ctx }) {
+  const busyNow = Boolean(ctx.busy);
+  return (
+    <s-stack direction="block" gap="small">
+      <s-button variant="primary" loading={ctx.busyKey === 'main'} disabled={busyNow} onClick={() => ctx.act.person(main.action, main.force)}>
+        {label(main)}
+      </s-button>
+      {main.hint ? <s-text color="subdued">{main.hint}</s-text> : null}
+      {main.more.map((more) => (
+        <s-button key={more.action} variant="secondary" loading={ctx.busyKey === more.action} disabled={busyNow} onClick={() => ctx.act.person(more.action)}>
+          {label(more)}
+        </s-button>
+      ))}
+    </s-stack>
+  );
+}
+
+/**
+ * The lines under the person's name: what, when and where, players and notes.
  * @param {Row} row
  * @param {string} groupTitle
  */
@@ -368,50 +514,130 @@ function personFacts(row, groupTitle) {
     // A seat's group says who's running the game: "GM seat: Curse of Strahd · GM Kate".
     row.kind === 'gm-seat' && groupTitle ? `GM seat: ${groupTitle}` : whatLabel(row),
     [peopleLabel(row.people), tablesLabel(row.tables)].filter(Boolean).join(' at '),
-    whenLabel(row.start, row.end),
+    row.owed ? owedWhen(row) : whenLabel(row.start, row.end),
   ];
   const players = playerNames(row);
   if (players.length) lines.push(`Players: ${players.join(', ')}`);
   if (row.note) lines.push(`Note: ${row.note}`);
-  // An owed seat is paid, never checked in, so its saved pass isn't used.
-  if (!row.owed && (row.pass?.code || row.pass?.label)) lines.push(`Saved pass: ${passSummary(row.pass)}`);
-  if (Number(row.covered) > 0) lines.push(`A pass covered ${money(row.covered)}`);
-  if (row.split) lines.push('Splitting the bill');
-  const paid = paidSummary(row);
-  if (paid) lines.push(paid);
-  const who = paymentsLine(row);
-  if (who) lines.push(`Paid so far: ${who}`);
-  if (refundPending(row)) lines.push('They paid online and this was cancelled or missed. Sort out the refund on the staff page.');
   return lines.filter(Boolean);
 }
 
 /**
- * "Add $X to cart" and "Split the bill": splitting leads when they said they'd split or part is paid already.
- * @param {{ row: Row, due: number, busy: boolean, act: Actions }} props
+ * What's to pay, big, with how it's made up: a pass, what's paid so far, the GM paying.
+ * @param {{ row: Row, plan: ReturnType<typeof personPlan> }} props
  */
-function PayButtons({ row, due, busy, act }) {
-  const add = (
-    <s-button key="add" variant={splitFirst(row) ? 'secondary' : 'primary'} disabled={busy} onClick={act.addToCart}>
-      {`Add ${money(due)} to cart`}
-    </s-button>
-  );
-  if (!canSplit(row)) return add;
-  const split = (
-    <s-button key="split" variant={splitFirst(row) ? 'primary' : 'secondary'} disabled={busy} onClick={() => act.setSplit({ open: true })}>
-      Split the bill
-    </s-button>
-  );
+function MoneySection({ row, plan }) {
+  const due = dueOf(row);
+  /** @type {string[]} */
+  const lines = [];
+  if (Number(row.covered) > 0 && !row.owed) lines.push(`A pass covered ${money(row.covered)}.`);
+  if (!row.owed && plan.stage === 'check-in' && (row.pass?.code || row.pass?.label)) lines.push(`Saved pass: ${passSummary(row.pass)}.`);
+  const paid = paidSummary(row);
+  if (paid) lines.push(paid);
+  const who = paymentsLine(row);
+  if (who) lines.push(`Paid so far: ${who}`);
+  if (row.split) lines.push('They said they would split the bill.');
+  if (gmPaysFor(row)) {
+    const gm = row.gmPays || {};
+    lines.push(`${gm.payer || 'The GM'} pays ${gm.amount ? money(gm.amount) : 'the table part'} for this seat, on their account.`);
+  }
+  if (plan.stage === 'owed' && row.owed) lines.push("A weekly regular's seat is theirs to pay for, even if they didn't come. To let them off, waive it on the staff page.");
   return (
-    <s-stack direction="block" gap="small">
-      {splitFirst(row) ? [split, add] : [add, split]}
-    </s-stack>
+    <s-section heading={row.owed ? `Owed from ${owedWhen(row)}` : 'To pay'}>
+      <s-stack direction="block" gap="small">
+        <s-heading>{due ? money(due) : 'Nothing to pay'}</s-heading>
+        {lines.map((line) => (
+          <s-text key={line} color="subdued">
+            {line}
+          </s-text>
+        ))}
+      </s-stack>
+    </s-section>
   );
 }
 
 /**
- * The session pass. Before check-in: pick the saved one, another of theirs, or none. Once they're here: the pass in
- * use with "Undo pass", or another one to switch to ("Switch to this pass", "Check in again without a pass"), or a
- * pass to cover what's left ("Use this pass").
+ * The loyalty card: a star for each stamp, then what's left and any rolls waiting.
+ * @param {{ card: import('./loyalty.js').Card }} props
+ */
+function LoyaltySection({ card }) {
+  const words = rollWords(card);
+  return (
+    <s-section heading={cardHeading(card)}>
+      <s-stack direction="block" gap="small">
+        <s-stack direction="inline" gap="small-300">
+          {stampMarks(card).map((stamped, i) => (
+            <s-icon key={i} type={stamped ? 'star-filled' : 'circle'} tone={stamped ? 'caution' : 'neutral'} />
+          ))}
+        </s-stack>
+        <s-text>{stampWords(card)}</s-text>
+        {words ? <s-text color="subdued">{words}</s-text> : null}
+      </s-stack>
+    </s-section>
+  );
+}
+
+/**
+ * "GM pays for a player" (contract v21-gm-cover), on a GM game's player: "Kate pays for this seat", then a yes or no
+ * on the screen; once Kate pays, "Stop Kate paying" (with its own yes or no). Kate pays her charge from her own member
+ * code ("Add everything") or her tab, like any booking.
+ * @param {{ row: Row, screen: PersonScreen, payer: string, ctx: Ctx }} props
+ */
+function GmPaysPanel({ row, screen, payer, ctx }) {
+  const { act, busy } = ctx;
+  if (row.kind !== 'gm-seat') return null;
+  const on = gmPaysFor(row);
+  if (!on && !canGmPay(row)) return null;
+  const gm = row.gmPays?.payer || payer || 'The GM';
+  const first = firstName(row.name) || 'them';
+  const busyNow = Boolean(busy);
+  if (screen.confirm === 'cover' && !on) {
+    return (
+      <s-section heading={`${gm} pays for ${first}'s seat?`}>
+        <s-stack direction="block" gap="small">
+          <s-text>
+            {`${row.gmPays?.amount ? money(row.gmPays.amount) : 'The table part of the seat'} goes on ${gm}'s account. ${first} pays nothing, and ${gm} gets no GM credit for this seat.`}
+          </s-text>
+          <s-button variant="primary" loading={ctx.busyKey === 'gm-pays'} disabled={busyNow} onClick={act.cover}>
+            {`Yes, ${gm} pays`}
+          </s-button>
+          <s-button variant="secondary" disabled={busyNow} onClick={() => act.askGm(null)}>
+            Cancel
+          </s-button>
+        </s-stack>
+      </s-section>
+    );
+  }
+  if (screen.confirm === 'uncover' && on) {
+    return (
+      <s-section heading={`Stop ${gm} paying for ${first}'s seat?`}>
+        <s-stack direction="block" gap="small">
+          <s-text>{`${first}'s seat goes back to its full price. If ${gm} has paid it already, staff get an email to give that money back.`}</s-text>
+          <s-button variant="primary" tone="critical" loading={ctx.busyKey === 'gm-stop'} disabled={busyNow} onClick={act.uncover}>
+            {`Yes, stop ${gm} paying`}
+          </s-button>
+          <s-button variant="secondary" disabled={busyNow} onClick={() => act.askGm(null)}>
+            Cancel
+          </s-button>
+        </s-stack>
+      </s-section>
+    );
+  }
+  return on ? (
+    <s-button variant="secondary" tone="critical" disabled={busyNow} onClick={() => act.askGm('uncover')}>
+      {`Stop ${gm} paying`}
+    </s-button>
+  ) : (
+    <s-button variant="secondary" disabled={busyNow} onClick={() => act.askGm('cover')}>
+      {`${gm} pays for this seat`}
+    </s-button>
+  );
+}
+
+/**
+ * The session pass. Before check-in: their one pass is a switch (on when it's saved on the booking), or a choice of
+ * theirs. Once they're here: the pass in use with "Undo pass", or another one to switch to, or a pass to cover what's
+ * left.
  * @param {{ row: Row, screen: PersonScreen, options: { value: string, label: string }[],
  *   inUse: { code: string, label: string } | null, stage: string, ctx: Ctx }} props
  */
@@ -419,14 +645,25 @@ function PassChoice({ row, screen, options, inUse, stage, ctx }) {
   const { act, busy } = ctx;
   const here = stage !== 'check-in';
   const change = here ? passChange(inUse, screen.choice) : null;
-  if (!options.length && !inUse) {
+  const passes = options.filter((option) => option.value !== 'none');
+  if (!options.length && !inUse) return null;
+  if (!here && passes.length === 1) {
+    const only = passes[0];
     return (
-      <s-stack direction="inline" gap="small" alignItems="center">
-        <s-text color="subdued">Got a session pass?</s-text>
-        <s-button variant="secondary" disabled={Boolean(busy)} onClick={() => act.scan('pass')}>
-          Scan a pass
-        </s-button>
-      </s-stack>
+      <s-section heading="Session pass">
+        <s-stack direction="block" gap="small">
+          <s-switch
+            label={only.label}
+            details="Covers one person's table fee. Turn it off to pay instead."
+            checked={screen.choice === only.value}
+            disabled={Boolean(busy)}
+            onChange={(event) => act.setChoice(event.currentTarget.checked ? only.value : 'none')}
+          />
+          <s-button variant="secondary" disabled={Boolean(busy)} onClick={() => act.scan('pass')}>
+            Scan a different pass
+          </s-button>
+        </s-stack>
+      </s-section>
     );
   }
   return (
@@ -506,17 +743,19 @@ function SplitPanel({ row, split, ctx }) {
                 {`${firstName(booker.name) || 'The booker'} (booked it)`}
               </s-button>
             ) : null}
+            <s-text color="subdued">Or scan their member code with the scanner.</s-text>
             <s-button variant="secondary" disabled={Boolean(busy)} onClick={() => act.scan('payer')}>
-              Scan their member code
+              Scan with the camera
             </s-button>
             <CodeEntry label="Or type their member code" placeholder="AK-KIWI-3" busy={Boolean(busy)} onFind={(text) => act.lookUp(text, 'payer')} />
             <s-text color="subdued">No member code? Go ahead anyway: it just won't count toward anyone's spend.</s-text>
           </s-stack>
         )}
 
-        <s-button variant="primary" disabled={Boolean(busy) || !amount} onClick={act.addShare}>
+        <s-button variant="primary" loading={ctx.busyKey === 'main'} disabled={Boolean(busy) || !amount} onClick={act.addShare}>
           {amount ? `Add ${money(amount)} to cart` : 'Add to cart'}
         </s-button>
+        <s-text color="subdued">{CLOSES}</s-text>
         <s-button variant="secondary" disabled={Boolean(busy)} onClick={() => act.setSplit({ open: false })}>
           Don't split
         </s-button>
@@ -532,72 +771,95 @@ function MemberView({ screen, ctx }) {
   const { today, busy, act, cart } = ctx;
   const member = screen.member;
   const name = String(member.name || '').trim() || 'Member';
+  const first = firstName(name);
   const onSale = cart.customerId !== null && cart.customerId === customerIdNumber(member.customerId);
-  // Rows from the Today list where it has them (they're updated as people check in). Owed sessions are listed apart.
+  // Rows from the Today list where it has them (they're updated as people check in). Owed sessions and a GM's charges
+  // for their players' seats are listed apart.
   const rows = withGroups(screen.rows, today);
-  const todayRows = rows.filter(({ row }) => !row.owed);
+  const todayRows = rows.filter(({ row }) => !row.owed && row.kind !== 'gm-cover');
+  const charges = rows.filter(({ row }) => !row.owed && row.kind === 'gm-cover');
   const owedRows = rows.filter(({ row }) => row.owed);
   const everything = everythingPlan(rows.map((x) => x.row), screen.tab, cart);
-  const plan = everything.today;
   const tab = tabPlan(screen.tab, cart.tabs);
   const { items, bad } = tabItems(screen.tab);
-  const card = loyaltyLine(screen.loyalty);
+  const card = loyaltyCard(screen.loyalty);
+  const monthly = screen.account?.billing === 'monthly';
+  const account = accountLine(screen.account);
+  const busyNow = Boolean(busy);
+  const openRow = (/** @type {Row} */ row, /** @type {Group | null} */ group) => act.openRow(row, group, screen.passes, screen.loyalty || null);
   return (
     <Page heading={name} subheading={member.code ? `Member ${member.code}` : 'Member'} action={<ScanAction ctx={ctx} />}>
       <BackButton ctx={ctx} />
       <Status ctx={ctx} />
-      <s-stack direction="inline" gap="small" alignItems="center">
-        <Badges list={[onSale ? { tone: 'success', text: 'On this sale' } : { tone: 'neutral', text: 'Not on this sale' }]} />
-        {onSale ? null : (
-          <s-button variant="secondary" disabled={Boolean(busy)} onClick={act.putMemberOnSale}>
-            {`Put ${firstName(name)} on this sale`}
-          </s-button>
-        )}
-      </s-stack>
-      {card ? <s-text color="subdued">{card}</s-text> : null}
-      {accountLine(screen.account) ? (
+      {account ? (
         <s-banner tone="info" heading="Monthly account">
-          {accountLine(screen.account)}
+          {account}
         </s-banner>
       ) : null}
-
-      {everything.show ? (
-        <s-stack direction="block" gap="small">
-          <s-button variant="primary" disabled={Boolean(busy)} onClick={act.addEverything}>
-            {everything.label}
-          </s-button>
-          {[everything.parts, everything.note].filter(Boolean).map((line) => (
-            <s-text key={line} color="subdued">
-              {line}
-            </s-text>
-          ))}
-        </s-stack>
+      {screen.notices.length ? (
+        <s-banner tone="info" heading="Heads up">
+          {screen.notices.join(' ')}
+        </s-banner>
       ) : null}
-
-      <s-section heading="Today">
+      {card ? <LoyaltySection card={card} /> : null}
+      <s-section heading="To pay">
         <s-stack direction="block" gap="small">
-          {screen.notices.length ? (
-            <s-banner tone="info" heading="Heads up">
-              {screen.notices.join(' ')}
-            </s-banner>
+          <s-heading>{everything.total ? money(everything.total) : 'Nothing to pay'}</s-heading>
+          {everything.parts ? <s-text color="subdued">{everything.parts}</s-text> : null}
+          {everything.note ? <s-text color="subdued">{everything.note}</s-text> : null}
+        </s-stack>
+      </s-section>
+      <CartStrip ctx={ctx} person={{ customerId: member.customerId, name }} />
+      {!everything.show ? (
+        <s-text color="subdued">{`Nothing to check in or pay for ${first || 'them'} today.`}</s-text>
+      ) : monthly ? (
+        <s-stack direction="block" gap="small">
+          {everything.today.waiting ? (
+            <s-button variant="primary" loading={ctx.busyKey === 'main'} disabled={busyNow} onClick={act.checkInMemberOnly}>
+              Check in
+            </s-button>
           ) : null}
-          {todayRows.length ? (
-            <RowList
-              items={todayRows.map(({ row, group }) => ({ row, group, details: [whatLabel(row), rowDetails(row)].filter(Boolean).join(' · ') }))}
-              cart={cart}
-              busy={busy}
-              onOpen={(row, group) => act.openRow(row, group, screen.passes)}
-            />
-          ) : (
-            <s-text color="subdued">Nothing booked today.</s-text>
-          )}
-          {plan.canCheckIn ? (
-            <s-button variant="secondary" disabled={Boolean(busy)} onClick={act.checkInEveryone}>
-              {plan.waiting ? 'Check in everyone and add to cart' : `Add ${money(plan.due)} to cart`}
+          {everything.total || everything.tab ? (
+            <s-button variant={everything.today.waiting ? 'secondary' : 'primary'} loading={ctx.busyKey === 'everything'} disabled={busyNow} onClick={act.addEverything}>
+              {`Pay now: ${everything.label}`}
             </s-button>
           ) : null}
         </s-stack>
-      </s-section>
+      ) : (
+        <s-stack direction="block" gap="small">
+          <s-button variant="primary" loading={ctx.busyKey === 'everything'} disabled={busyNow} onClick={act.addEverything}>
+            {everything.label}
+          </s-button>
+          <s-text color="subdued">
+            {everything.total || everything.tab
+              ? `${everything.today.waiting ? `Checks ${first || 'them'} in, adds` : 'Adds'} what they owe and puts ${first || 'them'} on the sale. ${CLOSES}`
+              : `Checks ${first || 'them'} in. Nothing goes in the cart.`}
+          </s-text>
+        </s-stack>
+      )}
+
+      {todayRows.length ? (
+        <s-section heading="Today">
+          <RowList
+            items={todayRows.map(({ row, group }) => ({ row, group, details: [whatLabel(row), rowDetails(row)].filter(Boolean).join(' · ') }))}
+            cart={cart}
+            busy={busy}
+            onOpen={openRow}
+          />
+        </s-section>
+      ) : null}
+
+      {charges.length ? (
+        <s-section heading="Paying for players">
+          <RowList
+            items={charges.map(({ row, group }) => ({ row, group, details: whenLabel(row.start, row.end) }))}
+            cart={cart}
+            busy={busy}
+            onOpen={openRow}
+            titleOf={(row) => whatLabel(row)}
+          />
+        </s-section>
+      ) : null}
 
       {owedRows.length ? (
         <s-section heading="Owed">
@@ -611,7 +873,7 @@ function MemberView({ screen, ctx }) {
               items={owedRows.map(({ row, group }) => ({ row, group, details: [whatLabel(row), owedWhen(row)].filter(Boolean).join(' · ') }))}
               cart={cart}
               busy={busy}
-              onOpen={(row, group) => act.openRow(row, group, screen.passes)}
+              onOpen={openRow}
             />
           </s-stack>
         </s-section>
@@ -630,9 +892,9 @@ function MemberView({ screen, ctx }) {
               <s-text color="subdued">{`About ${money(screen.tab?.total ?? items.reduce((sum, i) => sum + i.price * i.qty, 0))}. The till charges the shop's own prices.`}</s-text>
             ) : null}
             {tab.note ? <s-text>{tab.note}</s-text> : null}
-            {tab.canAdd ? (
-              <s-button variant="secondary" disabled={Boolean(busy)} onClick={act.addTab}>
-                Add tab to cart
+            {tab.canAdd && everything.separate ? (
+              <s-button variant="secondary" loading={ctx.busyKey === 'tab'} disabled={busyNow} onClick={act.addTab}>
+                Add just the tab
               </s-button>
             ) : null}
           </s-stack>
@@ -645,7 +907,7 @@ function MemberView({ screen, ctx }) {
             {screen.passes.map((pass, i) => (
               <s-stack key={pass.code || i} direction="block" gap="small">
                 {i ? <s-divider /> : null}
-                <s-clickable disabled={Boolean(busy)} onClick={() => act.openPass(pass)}>
+                <s-clickable disabled={busyNow} onClick={() => act.openPass(pass)}>
                   <Item title={pass.label || 'Session pass'} lines={[passLine(pass)]} badges={[]} />
                 </s-clickable>
               </s-stack>
@@ -653,6 +915,12 @@ function MemberView({ screen, ctx }) {
           </s-stack>
         </s-section>
       ) : null}
+
+      {onSale ? null : (
+        <s-button variant="secondary" loading={ctx.busyKey === 'on-sale'} disabled={busyNow} onClick={act.putMemberOnSale}>
+          {`Put ${first || 'them'} on this sale`}
+        </s-button>
+      )}
     </Page>
   );
 }
@@ -702,7 +970,7 @@ function PassView({ screen, ctx }) {
         <s-section heading="Use on…">
           {candidates.length ? (
             <RowList
-              items={candidates.map(({ row, group }) => ({ row, group, details: [group.title, rowDetails(row)].filter(Boolean).join(' · ') }))}
+              items={candidates.map(({ row, group }) => ({ row, group, details: [gameTitle(group).name, rowDetails(row)].filter(Boolean).join(' · ') }))}
               cart={cart}
               busy={busy}
               onOpen={(row, group) => (group ? act.usePassOn(row, group) : undefined)}
@@ -712,6 +980,32 @@ function PassView({ screen, ctx }) {
           )}
         </s-section>
       ) : null}
+    </Page>
+  );
+}
+
+/* ---------------- in the cart: only if the screen didn't close by itself ---------------- */
+
+/** @param {{ screen: ReadyScreen, ctx: Ctx }} props */
+function ReadyView({ screen, ctx }) {
+  const { act, busy } = ctx;
+  return (
+    <Page heading="In the cart" subheading={screen.who}>
+      <Status ctx={ctx} />
+      <s-banner tone="success" heading={screen.heading}>
+        {screen.body}
+      </s-banner>
+      {screen.extra ? (
+        <s-banner tone="success" heading="Card full!">
+          {screen.extra}
+        </s-banner>
+      ) : null}
+      <s-button variant="primary" disabled={Boolean(busy)} onClick={act.close}>
+        Close and pay
+      </s-button>
+      <s-button variant="secondary" disabled={Boolean(busy)} onClick={act.home}>
+        Add someone else to this sale
+      </s-button>
     </Page>
   );
 }
@@ -736,7 +1030,7 @@ function Page({ heading, subheading, action, children }) {
   );
 }
 
-/** "Scan" in the action bar: open whatever code they show. @param {{ ctx: Ctx }} props */
+/** "Scan" in the action bar: the camera, for whatever code they show. @param {{ ctx: Ctx }} props */
 function ScanAction({ ctx }) {
   return (
     <s-button slot="secondary-actions" disabled={Boolean(ctx.busy)} onClick={() => ctx.act.scan('any')}>
@@ -751,6 +1045,28 @@ function BackButton({ ctx }) {
     <s-button variant="secondary" disabled={Boolean(ctx.busy)} onClick={ctx.act.back}>
       {`‹ ${ctx.backLabel}`}
     </s-button>
+  );
+}
+
+/**
+ * What's in the cart and who's on the sale. When someone else is on a sale with something in it, a warning: this
+ * person's fee would join it.
+ * @param {{ ctx: Ctx, person?: { customerId?: unknown, name?: string } | null }} props
+ */
+function CartStrip({ ctx, person = null }) {
+  const strip = saleStrip(ctx.cart.value, ctx.names, person);
+  if (strip.tone === 'warning') {
+    return (
+      <s-banner tone="warning" heading={strip.text}>
+        {strip.detail}
+      </s-banner>
+    );
+  }
+  return (
+    <s-stack direction="inline" gap="small" alignItems="center">
+      <s-icon type="cart" tone="neutral" />
+      <s-text color="subdued">{strip.text}</s-text>
+    </s-stack>
   );
 }
 
@@ -774,9 +1090,10 @@ function BusyLine({ label }) {
   );
 }
 
-/** @param {{ problem: Shown, busy: boolean }} props */
+/** A problem and its next step as a button under it: Try again, or what the problem says to do. @param {{ problem: Shown, busy: boolean }} props */
 function ProblemBanner({ problem, busy }) {
   const retry = problem.retry;
+  const next = problem.action;
   return (
     <s-stack direction="block" gap="small">
       <s-banner tone={problem.tone} heading={problem.title}>
@@ -785,6 +1102,10 @@ function ProblemBanner({ problem, busy }) {
       {retry ? (
         <s-button disabled={busy} onClick={() => retry()}>
           Try again
+        </s-button>
+      ) : next ? (
+        <s-button disabled={busy} onClick={() => next.run()}>
+          {next.label}
         </s-button>
       ) : null}
     </s-stack>
@@ -824,9 +1145,10 @@ function Item({ title, lines, badges }) {
 
 /**
  * People in a list, each opening their person view.
- * @param {{ items: { row: Row, group: Group | null, details: string }[], cart: CartState, busy: string, onOpen: (row: Row, group: Group | null) => void }} props
+ * @param {{ items: { row: Row, group: Group | null, details: string }[], cart: CartState, busy: string,
+ *   onOpen: (row: Row, group: Group | null) => void, titleOf?: (row: Row) => string }} props
  */
-function RowList({ items, cart, busy, onOpen }) {
+function RowList({ items, cart, busy, onOpen, titleOf }) {
   return (
     <s-stack direction="block" gap="small">
       {items.map(({ row, group, details }, i) => (
@@ -834,7 +1156,7 @@ function RowList({ items, cart, busy, onOpen }) {
           {i ? <s-divider /> : null}
           <s-clickable disabled={Boolean(busy)} onClick={() => onOpen(row, group)}>
             <Item
-              title={row.name || 'Guest'}
+              title={titleOf ? titleOf(row) : row.name || 'Guest'}
               lines={[details]}
               badges={rowBadges(row, Boolean(row.ref) && cart.bookings.includes(String(row.ref)))}
             />

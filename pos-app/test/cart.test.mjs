@@ -1,7 +1,7 @@
 // Putting fees, shares, tabs and members in the POS cart, with a pretend POS cart: `npm test` in pos-app.
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, putOnSale, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
+import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, hasLairLines, putOnSale, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
 
 /**
  * A pretend POS cart that records every call.
@@ -171,6 +171,14 @@ test('the tab stays in the cart when the Lair app cannot be told', async () => {
   assert.equal(result.added.length, 1);
   assert.equal(result.markProblem, "Can't reach the Lair app. Check the iPad's internet and try again.");
   assert.equal(result.customer, 'added');
+});
+
+test('the tile can tell a Lair fee or tab in the cart from anything else', () => {
+  assert.equal(hasLairLines({ lineItems: [{ properties: { _booking: 'SJ-OWLBEAR-17' } }] }), true);
+  assert.equal(hasLairLines({ lineItems: [{ properties: { _tab: 'tab_1' } }] }), true);
+  assert.equal(hasLairLines({ lineItems: [{ properties: {} }, { properties: { _booking: '' } }] }), false, 'dice, or an empty tag');
+  assert.equal(hasLairLines({ lineItems: [] }), false);
+  assert.equal(hasLairLines(null), false);
 });
 
 test('puts a member on the sale, and only replaces someone else when asked', async () => {

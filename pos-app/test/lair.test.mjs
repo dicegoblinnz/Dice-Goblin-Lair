@@ -5,6 +5,7 @@ import { afterEach, test } from 'node:test';
 import {
   checkIn,
   checkInMember,
+  coverSeat,
   getToday,
   LAIR_URL,
   LairError,
@@ -13,6 +14,7 @@ import {
   scanCode,
   shareBill,
   tabAdded,
+  uncoverSeat,
   undoPassUse,
 } from '../extensions/lair-checkin/src/lair.js';
 
@@ -88,6 +90,23 @@ test('POST /pos/scan, /pos/checkin, /pos/checkin-member, /pos/share, /pos/pass-u
     ],
   );
   assert.equal(/** @type {any} */ (requests[0].init.headers)['Content-Type'], 'application/json');
+});
+
+test('GM pays for a player: POST /pos/cover and /pos/uncover, and the GM’s charge by its code (contract v21-gm-cover)', async () => {
+  pretend({ body: { ok: true } });
+  await coverSeat({ gameId: 'gm_1', ref: 'MB-OTTER-9' });
+  await uncoverSeat({ gameId: 'gm_1', ref: 'MB-OTTER-9' });
+  await checkIn({ code: 'KA-OWL-12', pass: 'none' });
+  assert.deepEqual(
+    requests.map((r) => [r.init.method, r.url.slice(LAIR_URL.length), JSON.parse(String(r.init.body))]),
+    [
+      ['POST', '/pos/cover', { gameId: 'gm_1', ref: 'MB-OTTER-9' }],
+      ['POST', '/pos/uncover', { gameId: 'gm_1', ref: 'MB-OTTER-9' }],
+      ['POST', '/pos/checkin', { code: 'KA-OWL-12', pass: 'none' }],
+    ],
+  );
+  pretend({ status: 409, body: { error: 'Mia has paid for their seat already, so there\'s nothing to pay for.' } });
+  await assert.rejects(coverSeat({ gameId: 'gm_1', ref: 'MB-OTTER-9' }), { kind: 'refused', message: "Mia has paid for their seat already, so there's nothing to pay for." });
 });
 
 test('banners say what went wrong in plain words, with Try again only where it can help', () => {

@@ -44,6 +44,11 @@ export function cartCustomerId(cart) {
   return customerIdNumber(cart?.customer?.id);
 }
 
+/** The cart has a Lair fee or a tab in it (so when they're gone, a sale was probably paid). @param {CartLike} cart */
+export function hasLairLines(cart) {
+  return bookingsInCart(cart).length > 0 || tabsInCart(cart).length > 0;
+}
+
 /** A plain sentence for a cart error. @param {unknown} error */
 export function cartProblem(error) {
   const text = error instanceof Error ? error.message : String(error ?? '');

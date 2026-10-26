@@ -3,13 +3,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   areYou,
+  canGmPay,
   countRows,
+  dayBuckets,
   findRow,
+  finishedLine,
+  gameTitle,
+  gmPaysFor,
+  groupBadges,
   groupDetails,
   groupSummary,
   isOwed,
+  isPayOnly,
   mergeRows,
-  newerTileText,
+  newerTileEntry,
   owedWhen,
   passCandidates,
   passSummary,
@@ -24,8 +31,9 @@ import {
   sortGroups,
   sortRows,
   tileEntry,
-  tileSubheading,
+  tileWords,
   whatLabel,
+  withCover,
 } from '../extensions/lair-checkin/src/today.js';
 
 // 3 Oct 2026 is NZDT (UTC+13): 05:00 UTC is 6pm in Auckland.
@@ -106,16 +114,55 @@ test('groups come in time order, games before events before tables at the same t
 test('each group shows people here out of people booked, and money still due', () => {
   const [game, tables, event] = fixture().groups;
   // Ana 2 + Ben 1 + Cleo 1 booked; Ben is here; Cleo is a no-show, so her $15 isn't counted as due.
-  assert.equal(groupSummary(game), '1/4 here · $30 due');
-  assert.equal(groupSummary(tables), '2/5 here · $45 due');
+  assert.equal(groupSummary(game), '1 of 4 here · $30 to pay');
+  assert.equal(groupSummary(tables), '2 of 5 here · $45 to pay');
   // Zoë is here but hasn't paid yet; Rae paid and didn't come (a refund to sort out, not money due).
-  assert.equal(groupSummary(event), '2/4 here · $40 due');
+  assert.equal(groupSummary(event), '2 of 4 here · $40 to pay');
   assert.equal(groupSummary({ key: 'x', rows: [] }), 'No one booked yet');
   assert.deepEqual(countRows(tables.rows), { people: 5, arrived: 2, due: 4500 });
   assert.equal(groupDetails(game), '6pm–10pm · T7, T8');
   assert.equal(groupDetails(tables), '2 bookings');
-  assert.equal(tileSubheading(fixture()), '13 today · 5 here');
-  assert.equal(tileSubheading({ groups: [] }), 'Nothing booked today');
+});
+
+test('the home screen: now and next, later today, and finished', () => {
+  const [game, tables, event] = fixture().groups;
+  const later = { key: 'event:ev_9', kind: 'event', title: 'Board game night', start: at(21), end: at(23), rows: [] };
+  const done = { key: 'event:ev_0', kind: 'event', title: 'Learn to play', start: at(10), end: at(12), rows: [] };
+  // At 5pm: the Pokémon league (5pm), the table bookings (all day) and Strahd (6pm) are now and next; 9pm is later.
+  const buckets = dayBuckets([game, tables, event, later, done], at(17));
+  assert.deepEqual(buckets.now.map((g) => g.key), ['tables', 'event:ev_1@2026-10-03', 'game:gm_1']);
+  assert.deepEqual(buckets.later.map((g) => g.key), ['event:ev_9']);
+  assert.deepEqual(buckets.finished.map((g) => g.key), ['event:ev_0']);
+  // At 7pm the 9pm one is within two hours: now and next.
+  assert.deepEqual(dayBuckets([later], at(19)).now.map((g) => g.key), ['event:ev_9']);
+  assert.deepEqual(dayBuckets([], at(19)), { now: [], later: [], finished: [] });
+});
+
+test('a group on the home screen: who’s here and what’s to pay, or when it starts', () => {
+  const [game, tables, event] = fixture().groups;
+  assert.deepEqual(groupBadges(game, at(17)), [{ tone: 'neutral', text: '1 of 4 here' }, { tone: 'warning', text: '$30 to pay' }], 'Ben came early');
+  assert.deepEqual(groupBadges({ ...game, rows: game.rows.filter((r) => r.id !== 'bk_ben') }, at(17)), [
+    { tone: 'info', text: 'Starts at 6pm' },
+    { tone: 'neutral', text: '3 booked' },
+    { tone: 'warning', text: '$30 to pay' },
+  ]);
+  assert.deepEqual(groupBadges(tables, at(17)), [{ tone: 'neutral', text: '2 of 5 here' }, { tone: 'warning', text: '$45 to pay' }]);
+  const everyone = { ...event, rows: [{ id: 'x', people: 2, status: 'seated', arrivedAt: at(17), due: 0, paid: true }] };
+  assert.deepEqual(groupBadges(everyone, at(18)), [{ tone: 'success', text: '2 of 2 here' }]);
+  assert.deepEqual(groupBadges({ key: 'x', rows: [] }, at(18)), [{ tone: 'neutral', text: 'No one booked yet' }]);
+  assert.equal(finishedLine({ ...everyone, title: 'Learn to play' }), 'Learn to play · 2 people · all paid');
+  assert.equal(finishedLine(tables), 'Table bookings · 5 people · $45 to pay');
+  assert.equal(finishedLine(game), 'Curse of Strahd · 4 people · $30 to pay', 'a game by its own name');
+  assert.equal(finishedLine({ key: 'x', title: 'Quiet', rows: [] }), 'Quiet · no one booked');
+});
+
+test('a game’s title and its GM', () => {
+  const [game, tables] = fixture().groups;
+  assert.deepEqual(gameTitle(game), { name: 'Curse of Strahd', gm: 'Kate' });
+  assert.deepEqual(gameTitle({ kind: 'game', title: 'Blades · in the Dark · GM Ana Silva' }), { name: 'Blades · in the Dark', gm: 'Ana Silva' });
+  assert.deepEqual(gameTitle(tables), { name: 'Table bookings', gm: '' });
+  assert.deepEqual(gameTitle({ kind: 'event', title: 'Meet the GM · GM night' }), { name: 'Meet the GM · GM night', gm: '' }, 'only a game has a GM');
+  assert.deepEqual(gameTitle(null), { name: '', gm: '' });
 });
 
 test('every row gets a clear status badge: Here, Paid, Due $X, No-show or Refund?', () => {
@@ -225,15 +272,71 @@ test('a pass can be used on table bookings, seats and game spots with something 
   assert.deepEqual(passCandidates(null, pass), []);
 });
 
+test('the tile: people here of people booked, and a badge for those here with something to pay', () => {
+  const entry = tileEntry(fixture(), 5000);
+  // Zoë is the only one here who hasn't paid (Ben and the walk-in have).
+  assert.deepEqual(entry, { at: 5000, day: '2026-10-03', people: 13, arrived: 5, owing: ['ZB-KEA-20'] });
+  assert.deepEqual(tileWords(entry), { subheading: '5 of 13 here · 1 to pay', count: 1 });
+  assert.deepEqual(tileWords(entry, ['ZB-KEA-20']), { subheading: '5 of 13 here', count: 0 }, 'her fee is in the cart');
+  assert.deepEqual(tileWords(tileEntry({ groups: [] }, 1)), { subheading: 'Nothing booked today', count: 0 });
+  assert.deepEqual(tileWords(null), { subheading: 'Nothing booked today', count: 0 });
+});
+
 test('the tile picks up newer numbers the check-in screen saved today', () => {
   const entry = tileEntry(fixture(), 5000);
-  assert.deepEqual(entry, { at: 5000, day: '2026-10-03', text: '13 today · 5 here' });
-  assert.equal(newerTileText(entry, 1000, '2026-10-03'), '13 today · 5 here');
-  assert.equal(newerTileText(entry, 5000, '2026-10-03'), null, 'not newer than what the tile shows');
-  assert.equal(newerTileText(entry, 1000, '2026-10-04'), null, "yesterday's numbers");
-  assert.equal(newerTileText(undefined, 0, '2026-10-03'), null);
-  assert.equal(newerTileText({ at: 9000, day: '2026-10-03' }, 0, '2026-10-03'), null);
-  assert.equal(newerTileText({ at: 'soon', day: '2026-10-03', text: 'x' }, 0, '2026-10-03'), null);
+  assert.deepEqual(newerTileEntry(entry, 1000, '2026-10-03'), entry);
+  assert.equal(newerTileEntry(entry, 5000, '2026-10-03'), null, 'not newer than what the tile shows');
+  assert.equal(newerTileEntry(entry, 1000, '2026-10-04'), null, "yesterday's numbers");
+  assert.equal(newerTileEntry(undefined, 0, '2026-10-03'), null);
+  assert.equal(newerTileEntry({ at: 9000, day: '2026-10-03', people: 3, arrived: 1 }, 0, '2026-10-03'), null, 'no owing list');
+  assert.equal(newerTileEntry({ at: 'soon', day: '2026-10-03', people: 3, arrived: 1, owing: [] }, 0, '2026-10-03'), null);
+  assert.equal(newerTileEntry({ at: 9000, day: '2026-10-03', text: '13 today · 5 here' }, 0, '2026-10-03'), null, 'the old tile words');
+  assert.deepEqual(newerTileEntry({ at: 9000, day: '2026-10-03', people: 3, arrived: 1, owing: ['A', 7] }, 0, '2026-10-03')?.owing, ['A']);
+});
+
+test('a GM’s charge and an owed seat are only ever paid; a seat the GM pays for says so', () => {
+  const charge = { id: 'bk_cv', type: 'booking', kind: 'gm-cover', ref: 'KA-OWL-12', name: 'Kate Moana', title: "Paying for Mia's seat: Curse of Strahd", status: 'confirmed', due: 1000 };
+  assert.equal(isPayOnly(charge), true);
+  assert.equal(isPayOnly({ id: 1, owed: true }), true);
+  assert.equal(isPayOnly({ id: 1, kind: 'gm-seat' }), false);
+  assert.equal(whatLabel(charge), "Paying for Mia's seat: Curse of Strahd");
+  assert.equal(whatLabel({ ...charge, title: '' }), "Paying for a player's seat");
+  const mia = { id: 'bk_mia', type: 'booking', kind: 'gm-seat', ref: 'MB-OTTER-9', name: 'Mia Brown', status: 'confirmed', amount: 0, due: 0, gmPays: { on: true, payer: 'Kate', amount: 1000 } };
+  assert.equal(gmPaysFor(mia), true);
+  assert.equal(gmPaysFor({ ...mia, gmPays: { can: true } }), false);
+  assert.equal(gmPaysFor({ ...mia, kind: 'table' }), false);
+  assert.deepEqual(rowBadges(mia), [{ tone: 'info', text: 'GM pays' }], 'not "Free"');
+  assert.deepEqual(rowBadges({ ...mia, status: 'seated', arrivedAt: at(18) }), [
+    { tone: 'success', text: 'Here' },
+    { tone: 'info', text: 'GM pays' },
+  ]);
+  assert.deepEqual(rowBadges({ ...mia, gmPays: { can: true }, amount: 1500, due: 1500 }), [{ tone: 'warning', text: 'Due $15' }]);
+});
+
+test('“Kate pays for this seat” is offered on a GM game seat with something to pay and nothing paid on it', () => {
+  const seat = { id: 'bk_mia', type: 'booking', kind: 'gm-seat', ref: 'MB-OTTER-9', name: 'Mia Brown', gameId: 'gm_1', status: 'confirmed', amount: 1500, due: 1500, paidAmount: 0 };
+  // Before the Lair app sends gmPays: worked out from the seat; the Lair app says no, in words, if the GM can't.
+  assert.equal(canGmPay(seat), true);
+  assert.equal(canGmPay({ ...seat, status: 'seated', arrivedAt: at(18) }), true, 'here, not paid yet');
+  assert.equal(canGmPay({ ...seat, paidAmount: 500, due: 1000 }), false, 'part paid');
+  assert.equal(canGmPay({ ...seat, covered: 1500, due: 0 }), false, 'a pass took it off');
+  assert.equal(canGmPay({ ...seat, due: 0, amount: 0 }), false, 'nothing to pay (a free session, or the GM pays already)');
+  assert.equal(canGmPay({ ...seat, status: 'noshow' }), false);
+  assert.equal(canGmPay({ ...seat, owed: true }), false, 'owed seats are the player’s');
+  assert.equal(canGmPay({ ...seat, waived: true }), false);
+  assert.equal(canGmPay({ ...seat, kind: 'table' }), false, 'only a GM game’s seat');
+  // Once it sends gmPays, the Lair app decides.
+  assert.equal(canGmPay({ ...seat, gmPays: { can: false } }), false);
+  assert.equal(canGmPay({ ...seat, due: 0, gmPays: { can: true } }), true);
+  assert.equal(canGmPay({ ...seat, gmPays: { can: true, on: true } }), false);
+  // The charge this screen just set up, for a Lair app without gmPays.
+  const covered = withCover({ ...seat, amount: 0, due: 0 }, { amount: 1000 }, 'Kate');
+  assert.deepEqual(covered.gmPays, { on: true, can: false, payer: 'Kate', amount: 1000 });
+  assert.equal(gmPaysFor(covered), true);
+  assert.deepEqual(rowBadges(covered), [{ tone: 'info', text: 'GM pays' }]);
+  assert.equal(withCover(seat, null, 'Kate'), seat);
+  const told = { ...seat, gmPays: { on: true, payer: 'Kate', amount: 1000 } };
+  assert.equal(withCover(told, { amount: 1000 }, 'Someone'), told, 'the Lair app’s word wins');
 });
 
 // 1 and 2 Oct 2026 are NZDT too. (Dates in October only: some ICU versions shorten September to "Sept".)

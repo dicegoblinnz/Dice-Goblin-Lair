@@ -115,6 +115,7 @@ test('a share of a bill is one line, tagged with its booking and as a share', ()
 test('says what happened in plain words', () => {
   assert.equal(addedToast(1500), 'Added $15. Ready to pay.');
   assert.equal(addedToast(1250), 'Added $12.50. Ready to pay.');
+  assert.equal(addedToast(1500, 'Sam'), 'Added $15 for Sam. Ready to pay.');
   assert.equal(tabToast(3), 'Added 3 items from the tab. Ready to pay.');
   assert.equal(tabToast(1), 'Added 1 item from the tab. Ready to pay.');
   assert.equal(itemCount([{ variantId: 1, qty: 2, title: 'Coke', price: 350 }, { variantId: 2, qty: 1, title: 'Ice cream', price: 400 }]), 3);

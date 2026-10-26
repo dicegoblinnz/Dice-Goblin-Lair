@@ -167,9 +167,9 @@ export function tabSummary(tab) {
   return `${plural(count, 'item')} · ${money(tabCents(tab))}`;
 }
 
-/** The toast after fees go in the cart: "Added $15. Ready to pay." @param {number} cents */
-export function addedToast(cents) {
-  return `Added ${money(cents)}. Ready to pay.`;
+/** The toast after fees go in the cart: "Added $15 for Sam. Ready to pay." @param {number} cents @param {string} [who] a first name */
+export function addedToast(cents, who = '') {
+  return `Added ${money(cents)}${who ? ` for ${who}` : ''}. Ready to pay.`;
 }
 
 export const NOTHING_TO_PAY = 'Checked in. Nothing to pay.';
