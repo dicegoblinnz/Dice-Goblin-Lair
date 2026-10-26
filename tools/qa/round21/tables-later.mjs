@@ -6,6 +6,9 @@
 //  2. Save: the session and every later one move (seats with them), except the one whose new table is taken that day,
 //     which keeps its own; the toast says how many moved, and a note names the one that couldn't (Done puts it away).
 //  3. "Just this session": the session moves alone (the second again: later ones are past Coming up's two weeks).
+//  4. After the review: a save that never touches the tables moves nothing (the session set apart stays apart, later
+//     ones stay); the note's Manage opens the one that couldn't move, its choice starts on "Just this session", and once
+//     it has its own table it's off the note.
 // No sideways scroll and axe at each. Phone and desktop.
 // Usage: DG_THEME=/path/to/theme [PORT=4991] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round21/tables-later.mjs [phone|desktop]
 import os from 'node:os';
@@ -77,9 +80,19 @@ const laterBox = (page) => page.evaluate((scope) => {
   return { hidden: box.hidden, text: f(box.textContent), checked: (box.querySelector('input:checked') || {}).value || null };
 }, E);
 
+/** The staff page's list of GM games (back from a game's own page, if that's open) */
+async function toList(page) {
+  await page.click('[data-tab="games"]');
+  await settle(page, 200);
+  if (await page.locator('[data-panel="games"] [data-gm-back]').count()) {
+    await page.click('[data-panel="games"] [data-gm-back]');
+    await settle(page, 250);
+  }
+}
+
 /** The staff page on a session's Edit this session, at When and where */
 async function openEdit(page, id) {
-  await page.click('[data-tab="games"]');
+  await toList(page);
   await page.waitForSelector(`.staff-gm-row[data-gm-manage="${id}"]`, { timeout: 15000 });
   await page.click(`.staff-gm-row[data-gm-manage="${id}"]`);
   await page.waitForSelector('[data-panel="games"] .staff-gm__more summary', { timeout: 15000 });
@@ -130,17 +143,16 @@ for (const size of sizes) {
     /^Saved\. The GM and every player moved with it\. 2 later sessions moved to G3 too, and the game keeps it from now on\. 1 session couldn’t move: see the note\./.test(toast), toast);
   // (on the game's own page, where the edit was; and on the list of games)
   const note = flat(await page.locator('[data-gm-head] .staff-card--decide').first().innerText().catch(() => ''));
-  check(`${tag} The note: Thursday Tables, 1 session couldn't move to G3, the fourth's date, kept G1, and why`,
-    /Thursday Tables: 1 session couldn’t move to G3/.test(note) && /kept G1/.test(note) && /Table G3 is already taken at that time/.test(note) && !/Pick another/.test(note), note);
+  check(`${tag} The note: Thursday Tables, 1 session couldn't move to G3, the fourth's date and time, kept G1, why, and Manage`,
+    /Thursday Tables: 1 session couldn’t move to G3/.test(note) && /at 6/.test(note) && /kept G1/.test(note) && /Table G3 is already taken at that time/.test(note) && !/Pick another/.test(note)
+    && (await page.locator(`[data-gm-head] .staff-tables-note [data-gm-manage="${fourth}"]`).count()) === 1, note);
   await shot(page, `${size}-2-note`, '[data-gm-head] .staff-card--decide');
   await axe(page, `${tag} the game's page with the note`, '[data-panel="games"]');
   await page.click('[data-gm-back]');
   await settle(page, 300);
   const listNote = flat(await page.locator('[data-panel="games"] .staff-card--decide').first().innerText().catch(() => ''));
   check(`${tag} The note is on the list of games too`, /Thursday Tables: 1 session couldn’t move to G3/.test(listNote), listNote);
-  await page.click('[data-tables-note-done]');
-  await settle(page, 300);
-  check(`${tag} Done puts the note away`, (await page.locator('[data-tables-note-done]').count()) === 0);
+  // (Done comes last: the note's Manage is checked first, in part 4)
 
   /* ---------- 3. just this session ---------- */
   await openEdit(page, second);
@@ -157,6 +169,60 @@ for (const size of sizes) {
   tables = await tablesOf(page, ids);
   check(`${tag} Just this session: only the second moves (to G4); the later ones stay on G3`, JSON.stringify(tables) === JSON.stringify(['G1', 'G4', 'G3', 'G1', 'G3']), tables);
   check(`${tag} Just this session: the toast says nothing of later sessions`, /^Saved\. The GM and every player moved with it\.$/.test(toast2), toast2);
+
+  /* ---------- 4. after the review ---------- */
+  // the second is set apart now (G4, the game keeps G3): a save that never opens When and where moves nothing
+  const sent = [];
+  await page.exposeFunction('r21tSent', (body) => sent.push(body)).catch(() => {});
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    const real = be.editGame.bind(be);
+    be.editGame = (id, input) => {
+      window.r21tSent(JSON.parse(JSON.stringify(input)));
+      return real(id, input);
+    };
+  });
+  await toList(page);
+  await page.waitForSelector(`.staff-gm-row[data-gm-manage="${second}"]`, { timeout: 15000 });
+  await page.click(`.staff-gm-row[data-gm-manage="${second}"]`);
+  await page.waitForSelector('[data-panel="games"] .staff-gm__more summary', { timeout: 15000 });
+  await settle(page, 200);
+  await page.click('[data-panel="games"] .staff-gm__more summary');
+  await page.waitForSelector(`${E} [data-host-form]`, { timeout: 15000 });
+  await page.fill(`${E} #gm-edit-title`, 'Thursday Tables (new name)');
+  await page.click(`${E} [data-sf-save]`);
+  await settle(page, 900);
+  tables = await tablesOf(page, ids);
+  check(`${tag} A save that only renames moves no tables, and sends none`, JSON.stringify(tables) === JSON.stringify(['G1', 'G4', 'G3', 'G1', 'G3']) && sent.length === 1 && !('tables' in sent[0]) && !('tablesScope' in sent[0]), { tables, sent });
+  // the note's Manage opens the fourth (past Coming up's two weeks); its choice starts on Just this session (it's set apart)
+  await toList(page);
+  await page.waitForSelector(`[data-panel="games"] .staff-tables-note [data-gm-manage="${fourth}"]`, { timeout: 15000 });
+  await page.click(`[data-panel="games"] .staff-tables-note [data-gm-manage="${fourth}"]`);
+  await page.waitForSelector('[data-panel="games"] .staff-gm__more summary', { timeout: 15000 });
+  await settle(page, 200);
+  await page.click('[data-panel="games"] .staff-gm__more summary');
+  await page.waitForSelector(`${E} [data-host-form]`, { timeout: 15000 });
+  await page.click(`${E} [data-sf-step="3"]`);
+  await page.waitForSelector(`${E} [data-step="when"]`, { timeout: 15000 });
+  await settle(page, 300);
+  // (a gaming room table free then, other than G1 and G3)
+  const spare = await page.evaluate((id) => {
+    const { store } = window.Lair;
+    const g = store.data.games.find((x) => x.id === id);
+    const map = [...document.querySelectorAll('[data-gm-edit-wrap] lair-session-form gm-floor [data-table]')].map((b) => [b.dataset.table, b.dataset.status || b.className]);
+    const free = ['G2', 'G4'].find((t) => store.isFree(t, g.start, g.end));
+    return { free, map: map.filter(([t]) => /^G/.test(t)) };
+  }, fourth);
+  await tapTable(page, 'G1');
+  await tapTable(page, spare.free);
+  await settle(page, 250);
+  box = await laterBox(page);
+  check(`${tag} The one that couldn't move, given ${spare.free}: the choice shows, starting on Just this session`, box && !box.hidden && box.checked === 'session', { box, spare });
+  await page.click(`${E} [data-sf-save]`);
+  await settle(page, 900);
+  tables = await tablesOf(page, ids);
+  check(`${tag} It moves alone to ${spare.free}; the later ones stay on G3`, JSON.stringify(tables) === JSON.stringify(['G1', 'G4', 'G3', spare.free, 'G3']), tables);
+  check(`${tag} And it's off the note (the note's gone: it was the only one)`, (await page.locator('.staff-tables-note').count()) === 0);
   check(`${tag} Staff page: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
   check(`${tag} No errors`, !page.errors.length, page.errors);
   void first;

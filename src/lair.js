@@ -175,6 +175,8 @@ const TEAM_WORDS = {
 /** 27 Oct 2026: a session's new tables for its later sessions too (POST /games/:id/edit, tablesScope) */
 export const GAME_TABLE_WORDS = {
   scope: 'Choose whether the new tables are for this session only or for every later session too.',
+  /** a later session that would overlap the session just moved, on the same tables */
+  clash: 'The session you moved is on those tables then.',
 };
 
 export const LENDING_WORDS = {
@@ -1293,7 +1295,11 @@ export class Lair {
     const held = g.seriesId ? this.heldIn(st).get(g.id) || 0 : 0;
     return {
       ...publicGame(g, st, rules, held, { staff }), image: this.imageUrl(g.imageId),
-      series: series ? { id: g.seriesId, schedule: SERIES_SCHEDULES.includes(g.schedule) ? g.schedule : 'flexible', regulars: series.regulars.get(g.seriesId) || 0 } : null,
+      series: series ? {
+        id: g.seriesId, schedule: SERIES_SCHEDULES.includes(g.schedule) ? g.schedule : 'flexible', regulars: series.regulars.get(g.seriesId) || 0,
+        // 27 Oct 2026 (contract v21-tables), for staff: the tables the series gives the sessions it adds later
+        ...(staff && series.tables ? { tables: series.tables.get(g.seriesId) || null } : {}),
+      } : null,
       nextOnly: Boolean(series && series.next.get(g.seriesId) === g.id),
     };
   }
@@ -1313,7 +1319,12 @@ export class Lair {
       .exec("SELECT series_id, id, MIN(starts_at) AS first FROM games WHERE series_id IS NOT NULL AND status != 'cancelled' AND ends_at > ? GROUP BY series_id", now)
       .toArray();
     const regulars = this.sql.exec("SELECT series_id, COUNT(*) AS n FROM series_members WHERE status = 'active' GROUP BY series_id").toArray();
-    return { next: new Map(next.map((r) => [r.series_id, r.id])), regulars: new Map(regulars.map((r) => [r.series_id, r.n])) };
+    // (27 Oct 2026: each series' own tables, for the staff page's Edit session)
+    const tables = this.sql.exec('SELECT id, tables FROM series').toArray();
+    return {
+      next: new Map(next.map((r) => [r.series_id, r.id])), regulars: new Map(regulars.map((r) => [r.series_id, r.n])),
+      tables: new Map(tables.map((r) => [r.id, parse(r.tables, [])])),
+    };
   }
 
   /** A series' next session that hasn't ended (cancelled ones don't count), or null. No awaits. */
@@ -2817,6 +2828,12 @@ export class Lair {
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const next = { ...booking };
     if (patch.status && ['confirmed', 'seated', 'done', 'cancelled', 'noshow'].includes(patch.status)) next.status = patch.status;
+    // A game seat put back (cancelled or a no-show, on again) sits where its session is now: the session may have moved
+    // tables, or times, while the seat was off (27 Oct 2026: a seat put back held the old table)
+    if (next.kind === 'gm-seat' && next.gameId && ACTIVE.has(next.status) && !ACTIVE.has(booking.status)) {
+      const session = this.game(next.gameId);
+      if (session) Object.assign(next, { tables: session.tables, room: session.room, start: session.start, end: session.end });
+    }
     // Back to 'confirmed' from seated or done undoes the check-in (and its loyalty stamps, round 6): checking in again works.
     if (next.status === 'confirmed' && ['seated', 'done'].includes(booking.status)) next.arrivedAt = null;
     if (next.status !== 'held') next.holdUntil = null;
@@ -3102,8 +3119,9 @@ export class Lair {
       if (start <= now || start > horizon) continue;
       const end = start + row.length;
       try {
-        // A staff-made series' dates follow the GM rules plus the shop tables, like its first session (round 7)
-        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, shopTables: Boolean(details.staffCreated), anyMinute: Boolean(details.anyMinute) });
+        // A staff-made series' dates follow the GM rules plus the shop tables, like its first session (round 7), and so
+        // do the tables staff gave a series for its later sessions (staffTables, 27 Oct 2026)
+        const session = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, shopTables: Boolean(details.staffCreated || details.staffTables), anyMinute: Boolean(details.anyMinute) });
         const base = {
           ...details, gmCustomerId: row.gm_customer_id, gmEmail: details.gmEmail || null, seriesId: row.id, credited: null,
           status: row.approved ? 'open' : 'pending', feeApproved: true,
@@ -3435,7 +3453,10 @@ export class Lair {
       const st = this.state(Math.min(start, game.start) - 24 * HOUR, Math.max(end, game.end) + 24 * HOUR);
       // Round 7: a move follows the GM rules too, skipping only the lead time and the horizon (tonight's session can
       // still move); locked event tables, bookings and holds block it, and the shop tables are open to staff.
-      const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, ignore: own, shopTables: true, editing: true });
+      // (27 Oct 2026: a time that isn't changing isn't checked against the whole hours again, so a game the owner loaded
+      // at 6:30pm can still change tables)
+      const sameTime = start === game.start && end === game.end;
+      const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, ignore: own, shopTables: true, editing: true, anyMinute: sameTime });
       place = { tables: moved.tables, start: moved.start, end: moved.end, room: moved.room };
     }
     // Where each session goes: this one, and (tablesScope 'series') every later one of its series that can take the new
@@ -3446,17 +3467,28 @@ export class Lair {
     if (forLater) {
       const later = sessions.filter((s) => s.id !== game.id && s.start > now);
       if (later.length) {
+        // (the state is read before anything moves, so what this call places is checked here too: this session's new
+        // place, and each later session as it takes the tables)
         const span = this.state(Math.min(...later.map((s) => s.start)) - 24 * HOUR, Math.max(...later.map((s) => s.end)) + 24 * HOUR);
+        const placed = [place];
         for (const s of later) {
           if (s.tables.join() === place.tables.join()) continue;
+          const keep = (reason) => kept.push({ id: s.id, start: s.start, when: time.label(s.start), tables: s.tables, reason });
+          if (placed.some((p) => p.start < s.end && s.start < p.end && p.tables.some((t) => place.tables.includes(t)))) {
+            keep(GAME_TABLE_WORDS.clash);
+            continue;
+          }
           try {
+            // (its own time, already accepted, so a start between the hours stays fine)
             const moved = checkGameSession({ tables: place.tables, start: s.start, end: s.end }, details, {
-              state: span, rules, time, now, ignore: new Set(this.gameBookings(s.id).map((b) => b.id)), shopTables: true, editing: true,
+              state: span, rules, time, now, ignore: new Set(this.gameBookings(s.id).map((b) => b.id)), shopTables: true, editing: true, anyMinute: true,
             });
-            placeOf.set(s.id, { tables: moved.tables, start: s.start, end: s.end, room: moved.room });
+            const p = { tables: moved.tables, start: s.start, end: s.end, room: moved.room };
+            placeOf.set(s.id, p);
+            placed.push(p);
           } catch (error) {
             if (!(error instanceof RuleError)) throw error;
-            kept.push({ id: s.id, start: s.start, when: time.label(s.start), tables: s.tables, reason: error.message });
+            keep(error.message);
           }
         }
       }
@@ -3492,8 +3524,14 @@ export class Lair {
         JSON.stringify(p.tables), p.room, now, sessionId,
       );
     }
-    // and the sessions its series adds later take them too
-    if (forLater) this.write('UPDATE series SET tables = ?, updated_at = ? WHERE id = ?', JSON.stringify(place.tables), now, game.seriesId);
+    // and the sessions its series adds later take them too: staff picked them, so they may be shop tables (staffTables,
+    // as for a series staff made: planSessions)
+    if (forLater) {
+      const row = this.sql.exec('SELECT details FROM series WHERE id = ?', game.seriesId).toArray()[0];
+      if (row) {
+        this.write('UPDATE series SET tables = ?, details = ?, updated_at = ? WHERE id = ?', JSON.stringify(place.tables), JSON.stringify({ ...parse(row.details, {}), staffTables: true }), now, game.seriesId);
+      }
+    }
     // Round 21: a GM's charge for a player's seat follows the session's price and times (src/gm-cover.js)
     for (const session of sessions) this.syncCoversOn(session.id, now, rules);
     if (game.seriesId) {

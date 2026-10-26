@@ -267,3 +267,76 @@ test('tables for later sessions: staff with GM games only, as any edit', async (
   ok(await edit(sessions[1], { tables: ['B3'], tablesScope: 'series' }, ANA));
   assert.deepEqual(tablesOf(sessions[2]), ['B3']);
 });
+
+/* ---------------- after the review (27 Oct 2026): each finding, fixed ---------------- */
+
+test('tables for later sessions, review: a later session at the time this session moves to keeps its tables (no double booking)', async () => {
+  const { sessions } = await weekly();
+  const [, second, third] = sessions;
+  // the second moves to the third's day and time, on B3, for every later session: the third can't share B3 with it
+  const done = ok(await edit(second, { start: at('2026-10-31', 18), end: at('2026-10-31', 22), tables: ['B3'], tablesScope: 'series' }));
+  assert.deepEqual([tablesOf(second), tablesOf(third), tablesOf(sessions[3])], [['B3'], ['B1'], ['B3']]);
+  assert.deepEqual(done.tables.kept.map((k) => [k.id, k.reason]), [[third, W.clash]]);
+  const onB3 = lair.sql.exec("SELECT COUNT(*) AS n FROM bookings WHERE tables LIKE '%B3%' AND kind = 'gm' AND status IN ('held', 'confirmed', 'seated') AND starts_at < ? AND ends_at > ?", at('2026-10-31', 22), at('2026-10-31', 18)).one().n;
+  assert.equal(onB3, 1);
+});
+
+test('tables for later sessions, review: a GM\'s own weekly game moved by staff to a shop table keeps getting its sessions', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: 'B4' }, ROOMS, []);
+  const listed = ok(await call('POST', 'games', {
+    title: "Rangi's campaign", system: 'D&D 5e', gm: 'Rangi', blurb: 'A long campaign.', seats: 4, tables: ['B1'], start: at('2026-10-24', 18), end: at('2026-10-24', 22), schedule: 'weekly',
+  }, RANGI));
+  ok(await call('POST', `games/${listed.game.id}/update`, { status: 'open' }, OWNER));
+  const ids = listed.sessions.map((s) => s.id);
+  const seriesId = listed.game.seriesId;
+  ok(await edit(ids[1], { tables: ['B4'], tablesScope: 'series' }));
+  assert.deepEqual([tablesOf(ids[1]), tablesOf(ids[ids.length - 1]), seriesTables(seriesId)], [['B4'], ['B4'], ['B4']]);
+  // two weeks on, the series adds its next sessions on B4 (staff picked it), not skipping them as a shop table
+  Date.now = () => NOW + 14 * 24 * HOUR;
+  const report = lair.extendSeries(lair.rulesCache, Date.now());
+  const mine = report.find((r) => r.series === seriesId);
+  assert.ok(mine && mine.created > 0 && mine.skipped === 0, JSON.stringify(report));
+  const newest = lair.sql.exec("SELECT tables FROM games WHERE series_id = ? AND status != 'cancelled' ORDER BY starts_at DESC LIMIT 1", seriesId).one();
+  assert.deepEqual(JSON.parse(newest.tables), ['B4']);
+});
+
+test('tables for later sessions, review: a game loaded at 6:30pm can change tables (its time isn\'t changing)', async () => {
+  // (the owner's games.add job, as the Worker's cron runs it)
+  const added = await lair.adminJob({ kind: 'games.add', payload: { games: [{
+    title: 'Half Past', system: 'D&D 5e', gm: 'Ari', blurb: "Ari's weekly game.", seats: 4, offlinePlayers: 0, gmFee: 500, schedule: 'weekly',
+    start: at('2026-10-21', 18, 30), end: at('2026-10-21', 22, 30), tables: ['B1'], level: 'some', age: '13+',
+  }] } });
+  assert.deepEqual(added.failed, []);
+  const seriesId = added.added[0].seriesId;
+  const ids = lair.sql.exec("SELECT id FROM games WHERE series_id = ? ORDER BY starts_at", seriesId).toArray().map((r) => r.id);
+  ok(await edit(ids[0], { tables: ['B2'], tablesScope: 'series' }));
+  assert.deepEqual([tablesOf(ids[0]), tablesOf(ids[1]), lair.game(ids[1]).start], [['B2'], ['B2'], at('2026-10-28', 18, 30)]);
+  // a new time between the hours is still refused, as before
+  assert.match(said(await edit(ids[0], { start: at('2026-10-21', 19, 15), end: at('2026-10-21', 23, 15), tables: ['B2'] })), /^422 /);
+});
+
+test('tables for later sessions, review: a seat put back sits where its session is now', async () => {
+  const { sessions } = await weekly();
+  const [, second, third] = sessions;
+  const kais = ok(await seat(third, KAI, 'Kai')).booking;
+  ok(await call('POST', `bookings/${kais.id}/update`, { status: 'cancelled' }, KAI));
+  ok(await edit(second, { tables: ['B3'], tablesScope: 'series' }));
+  // staff put Kai back: his seat is on B3 with the session, not holding B1
+  ok(await call('POST', `bookings/${kais.id}/update`, { status: 'confirmed' }, OWNER));
+  const back = lair.booking(kais.id);
+  assert.deepEqual([back.status, back.tables], ['confirmed', ['B3']]);
+  const b1 = await call('POST', 'bookings', {
+    kind: 'table', tables: ['B1'], start: at('2026-10-31', 18), end: at('2026-10-31', 20), people: 2, name: 'Ria Moana', email: 'ria@example.com', phone: '021 555 0100', pay: 'day',
+  }, RIA);
+  assert.equal(b1.status, 200, b1.data.error);
+});
+
+test('tables for later sessions, review: staff see the tables a weekly game keeps (series.tables); nobody else does', async () => {
+  const { sessions, seriesId } = await weekly();
+  const staffView = async () => (await board(OWNER)).games.find((g) => g.id === sessions[1]).series;
+  assert.deepEqual((await staffView()).tables, ['B1']);
+  ok(await edit(sessions[1], { tables: ['B3'], tablesScope: 'series' }));
+  assert.deepEqual((await staffView()).tables, ['B3']);
+  const publicSeries = (await board('')).games.find((g) => g.seriesId === seriesId).series;
+  assert.equal('tables' in publicSeries, false);
+});
