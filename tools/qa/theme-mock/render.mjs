@@ -265,10 +265,13 @@ const schemaOf = (file) => {
   const m = read(file).match(/\{% schema %\}([\s\S]*?)\{% endschema %\}/);
   return m ? JSON.parse(m[1]) : { settings: [], blocks: [] };
 };
-const resolveSettings = (defs, values = {}) => {
+const resolveSettings = (defs, values = {}, { asShopify = false } = {}) => {
   const out = {};
   for (const def of defs || []) {
     if (!def.id) continue;
+    // 26 Oct 2026: Shopify gives a section setting its template doesn't list as blank, not the schema's default
+    // (mockState.templateGaps: true renders templates that way)
+    if (asShopify && values[def.id] === undefined) continue;
     const v = values[def.id] !== undefined ? values[def.id] : def.default;
     out[def.id] = resolveValue(def.type, v);
   }
@@ -281,7 +284,8 @@ export { globalSettings };
 export { collections, allProducts };
 /** Test hooks: a logged-in customer and a request interceptor (used by live.mjs). */
 // sessionsFeed (round 20): the shop metafield lair.sessions the Lair app keeps, as its value; none unless a check sets it
-export const mockState = { customer: null, before: null, sessionsFeed: null };
+// templateGaps (26 Oct 2026): a section setting a template doesn't list stays blank, as Shopify renders it
+export const mockState = { customer: null, before: null, sessionsFeed: null, templateGaps: false };
 
 /* ---------------- engine ---------------- */
 const compiledCss = [];
@@ -385,7 +389,7 @@ const sectionWrapper = (id, schema, html, group) => {
 async function renderSection(type, id, data = {}, group = '') {
   const file = `sections/${type}.liquid`;
   const schema = schemaOf(file);
-  const settings = resolveSettings(schema.settings, data.settings || {});
+  const settings = resolveSettings(schema.settings, data.settings || {}, { asShopify: Boolean(mockState.templateGaps) });
   const blockDefs = Object.fromEntries((schema.blocks || []).map((b) => [b.type, b]));
   const order = data.block_order || Object.keys(data.blocks || {});
   const blocks = order.map((bid) => {

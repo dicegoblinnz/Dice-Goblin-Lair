@@ -178,6 +178,40 @@ m.mockState.sessionsFeed = feed;
   await ctx.close();
 }
 
+/* ---------- 2c. Join from the list (26 Oct 2026, Mo: "have it so people can use it") ---------- */
+{
+  const ctx = await realContext('phone');
+  const page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/gm-games', null);
+  await page.waitForFunction(() => document.querySelector('[data-play-sessions-body]')?.dataset.html, null, { timeout: 15000 });
+  const buttons = await page.$$eval('[data-play-sessions] .play-row', (rows) => rows.map((r) => [...r.querySelectorAll('.play-row__actions button')].map((b) => b.textContent.replace(/\s+/g, ' ').trim())));
+  check('join: a session with seats has Join and its price, a full one I\'m interested', JSON.stringify(buttons[0]) === JSON.stringify(['Join · $15']) && JSON.stringify(buttons[1]) === JSON.stringify(['Join · $15']) && JSON.stringify(buttons[2]) === JSON.stringify(['I’m interested']), buttons);
+  const join = page.locator('[data-play-sessions] .play-row').nth(1).locator('.play-row__actions button');
+  await join.scrollIntoViewIfNeeded();
+  const jb = await join.boundingBox();
+  check('join: the button is a full tap target (44px or more)', jb && jb.height >= 44, jb);
+  await join.click();
+  await settle(page, 900);
+  const opened = await page.evaluate(() => ({ hash: window.location.hash, open: [...document.querySelectorAll('dialog[open]')].map((d) => d.textContent.replace(/\s+/g, ' ').trim().slice(0, 300)) }));
+  check('join: Join opens that session\'s join form', opened.open.some((t) => t.includes('The Sunless Citadel') && /seat|log in|Join/i.test(t)), opened);
+  await shot(page, 'join-phone');
+  check('join: no console errors', page.errors.length === 0, page.errors);
+  await ctx.close();
+}
+
+/* ---------- 2d. the live template, as Shopify renders it: settings it doesn't list are blank ---------- */
+{
+  m.mockState.templateGaps = true;
+  const ctx = await realContext('phone', false);
+  const plain = await ctx.newPage();
+  await go(plain, BASE, '/pages/gm-games', null);
+  const rows = await listRows(plain);
+  const heading = await plain.$eval('#play-sessions-title', (h) => h.textContent.trim()).catch(() => '');
+  check('template gaps: the list still shows, with its heading, when the template doesn\'t list its settings', rows.length === TITLES.length && heading === 'TTRPG sessions in the next two weeks', { rows: rows.length, heading });
+  await ctx.close();
+  m.mockState.templateGaps = false;
+}
+
 /* ---------- 2b. a computer ---------- */
 {
   const ctx = await realContext('desktop');
@@ -277,10 +311,10 @@ m.mockState.sessionsFeed = feed;
     const first = page.locator('[data-play-sessions] .play-row').first();
     await first.scrollIntoViewIfNeeded();
     await shot(page, 'demo-phone', '[data-play-sessions]');
+    await first.scrollIntoViewIfNeeded();
     const fb = await first.boundingBox();
     await page.mouse.click(fb.x + fb.width - 12, fb.y + fb.height - 8);
-    await settle(page, 900);
-    const opened = await page.evaluate((title) => [...document.querySelectorAll('dialog[open]')].some((d) => d.textContent.includes(title)), rows[0].title);
+    const opened = await page.waitForFunction((title) => [...document.querySelectorAll('dialog[open]')].some((d) => d.textContent.includes(title)), rows[0].title, { timeout: 5000 }).then(() => true, () => false);
     check('demo: a row opens its demo session', opened, rows[0]);
   }
   check('demo: no console errors', page.errors.length === 0, page.errors);
