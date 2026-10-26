@@ -130,7 +130,9 @@ export const runningTabMethods = {
     const item = (type, x, extra) => ({
       type, id: x.id, ref: x.ref, kind: type === 'join' ? 'event' : kindOf(x), title: type === 'join' ? x.title || 'Event' : bookingTitle(x), when: x.start, end: x.end,
       people: x.people, amount: dueOf(x), weekly: Boolean(x.seriesId && x.kind === 'gm-seat'), today: x.start >= dayFrom && x.start < dayTo,
-      bill: billed.has(`${type}:${x.id}`) ? bill.id : null, onBill: billed.has(`${type}:${x.id}`), ...extra,
+      bill: billed.has(`${type}:${x.id}`) ? bill.id : null, onBill: billed.has(`${type}:${x.id}`),
+      // (round 21: a seat their GM pays for: nothing for them to pay, and locked in like any seat)
+      ...(type === 'booking' && x.coveredBy ? { coveredByGm: true } : {}), ...extra,
     });
     const owed = [];
     const seen = new Set();

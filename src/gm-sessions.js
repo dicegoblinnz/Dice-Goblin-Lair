@@ -160,7 +160,7 @@ export const gmSessionMethods = {
           ref: b.ref, people: b.people, names: party.map((p) => p.name), characters: party.map((p) => p.character || ''),
           paid: Boolean(b.paid) || ((b.amount || 0) > 0 && owing === 0),
           due, regular: Boolean(b.seriesId && b.customerId), member: Boolean(b.customerId), here: b.status === 'seated' || Boolean(b.arrivedAt),
-          covered: cover.covered, coverable: cover.coverable,
+          covered: cover.covered, coverable: cover.coverable, ...(cover.covered ? { coverLocked: cover.coverLocked } : {}),
         };
       });
   },
@@ -258,9 +258,9 @@ export const gmSessionMethods = {
            AND status IN ('held', 'confirmed', 'seated', 'done', 'noshow')`,
           now, s.id,
         );
-        // Round 21: nothing for a GM to pay for either: their charges go, and the seats are just free
-        this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND kind = 'gm-cover' AND status != 'cancelled'", now, s.id);
-        this.write("UPDATE bookings SET covered_by = NULL, cover_was = NULL, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND covered_by IS NOT NULL", now, s.id);
+        // Round 21: nothing for a GM to pay for either: their charges go while it's free, but their offer stays, for if
+        // it has a price again (src/gm-cover.js)
+        this.syncCoversOn(s.id, now, rules);
         continue;
       }
       const price = s.seatPrice || rules.prices.gmSeat;
@@ -276,6 +276,18 @@ export const gmSessionMethods = {
         // a $0 seat marked paid wasn't paid for: with a price, it's owed like any seat
         this.write('UPDATE bookings SET amount = ?, paid = 0, updated_at = ? WHERE id = ?', price * b.people, now, b.id);
         priced.push({ ...b, amount: price * b.people, session: s });
+      }
+      // Round 21: a seat its GM pays for gets their charge back while it can still be cancelled online, like a seat's
+      // price; inside that it stays free (src/gm-cover.js)
+      const covered = this.sql
+        .exec("SELECT * FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND covered_by IS NOT NULL", s.id)
+        .toArray()
+        .map((r) => this.rowToBooking(r));
+      for (const b of covered) {
+        if (['confirmed', 'seated', 'done', 'noshow'].includes(b.status) && cancelUntil(b, rules) <= now) {
+          this.endCover(b, now, { why: 'free', rules, amount: 0 });
+          stayFree += b.people;
+        } else this.syncCover(b.id, now, rules);
       }
     }
     if (input.scope === 'series') this.patchSeries(game.seriesId, { free: input.free }, now);
@@ -411,13 +423,19 @@ export const gmSessionMethods = {
     if (sameAccount && gm === game.gm) throw new RuleError(GM_SESSION_WORDS.gmSame);
     // every check before anything's saved (a bad scope makes no member record)
     const sessions = this.sessionsFor(game, input?.scope).filter((s) => s.credited == null && !this.gmCreditStarted(s.id));
+    // Round 21: a seat the GM before has paid for stops it (staff stop that first, which flags their refund)
+    this.coversBeforeGmChange(sessions, gmCustomerId);
     if (picked) this.makeMember(picked, now);
     // the new GM's own bio from their GM profile (none yet: none), not the GM before's
     const gmBio = sameAccount ? game.gmBio || '' : (gmCustomerId && this.sql.exec('SELECT bio FROM gm_profiles WHERE customer_id = ?', gmCustomerId).toArray()[0]?.bio) || '';
     for (const s of sessions) {
       this.saveGame({ ...s, gm, gmCustomerId, gmEmail, gmBio }, now);
       this.write("UPDATE bookings SET customer_id = ?, name = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", gmCustomerId, `GM ${gm}`, now, s.id);
+      // Round 21: the GM before's offers to pay for players go with them (src/gm-cover.js)
+      this.coversAfterGmChange(this.game(s.id), s.gm, rules, now);
     }
+    // a bill with any of those seats or charges on it stays true
+    this.reconcileBills(rules, now);
     if (input?.scope === 'series' && game.seriesId) {
       this.write('UPDATE series SET gm_customer_id = ?, updated_at = ? WHERE id = ?', gmCustomerId, now, game.seriesId);
       this.patchSeries(game.seriesId, { gm, gmEmail, gmBio }, now);

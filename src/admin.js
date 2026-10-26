@@ -250,6 +250,8 @@ export const adminMethods = {
       // (round 21: a seat its GM pays for stays at $0 for its players)
       this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND covered_by IS NULL AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
       this.write("UPDATE bookings SET people = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", details.seats + 1, now, session.id);
+      // (round 21: and the GM's charge for a seat they pay for follows the price: src/gm-cover.js)
+      this.syncCoversOn(session.id, now, rules);
     }
     if (series) {
       const kept = JSON.parse(series.details || '{}');

@@ -2,10 +2,13 @@
 // mode). Mo: "have the option for the gm to pay for someone else if they wish from one of their players. Paying the full
 // $10 for Thier time and they don't get store credit for them playing." Website and counter, until the player has paid.
 //  1. The TTRPG sessions page, Dan's own game: Pay for them on Mia (unpaid), not on Kai (paid); the question and its
-//     words; Pay $10; You're paying with Stop paying; stopping puts it back.
-//  2. My Lair as Dan: Mia's seat is one he pays for, and Players you're paying for lists it, $10, Pay at the counter.
-//  3. My Lair as Mia: her seat says Your GM pays for it.
-//  4. The staff page's session: The GM pays (two taps), then the GM's $10 on their account, Mark it paid, Stop.
+//     words (locked in 24 hours before, like any seat); Pay $10; You're paying with Stop paying; stopping puts it back.
+//     Then the session moved to 3 hours away: You're paying: locked in, and no Stop paying.
+//  2. My Lair as Dan: Mia's seat is one he pays for, and Players you're paying for lists it, $10, Pay at the counter;
+//     locked in once it's 3 hours away.
+//  3. My Lair as Mia: her seat says Your GM pays for it; 3 hours away, Locked in: your GM pays for it.
+//  4. The staff page's session: The GM pays (two taps), then the GM's $10 on their account, Mark it paid, Stop (even
+//     once it's paid: two taps, and the GM's $10 is a refund due).
 // No sideways scroll and axe at each. Phone and desktop.
 // Usage: DG_THEME=/path/to/theme [PORT=4987] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round21/gm-pays.mjs [phone|desktop]
 import os from 'node:os';
@@ -75,6 +78,17 @@ const openSheet = async (page, id) => {
   await settle(page, 450);
 };
 const flash = (page) => page.evaluate(() => String(document.querySelector('[data-sheet][open] .gm-flash')?.textContent || '').replace(/\s+/g, ' ').trim());
+/** The demo's session (and its seats and charges) moved to 3 hours from now, inside the 24 hours */
+const soon = (page) => page.evaluate(async (id) => {
+  const { store } = window.Lair;
+  const be = store.backend;
+  const start = Date.now() + 3 * 3_600_000;
+  const end = start + 4 * 3_600_000;
+  for (const g of be.state.games.filter((x) => x.id === id)) Object.assign(g, { start, end });
+  for (const b of be.state.bookings.filter((x) => x.gameId === id)) Object.assign(b, { start, end });
+  be.commit();
+  await store.refresh();
+}, GAME);
 
 for (const size of sizes) {
   const tag = `[${size}]`;
@@ -104,9 +118,9 @@ for (const size of sizes) {
       focus: document.activeElement === document.querySelector('[data-sheet][open] .gm-confirm .h3'),
     };
   });
-  check(`${tag} Pay for them asks first: "Pay for Mia’s seat?", what it means ($10 at the counter, Mia pays nothing, no GM credit, nothing if they don't come), Pay $10, focus on the question`,
+  check(`${tag} Pay for them asks first: "Pay for Mia’s seat?", what it means ($10 at the counter, Mia pays nothing, no GM credit, locked in 24 hours before), Pay $10, focus on the question`,
     ask.q === 'Pay for Mia’s seat?' && /^You pay the table fee, \$10, at the counter \(it goes on your account\), and Mia pays nothing for The Sunless Citadel, /.test(ask.lines[0] || '')
-    && ask.lines[1] === 'There’s no GM credit for a seat you pay for. If they cancel or don’t come, you pay nothing.' && ask.go === 'Pay $10' && ask.focus, ask);
+    && ask.lines[1] === 'There’s no GM credit for a seat you pay for. Like any seat, it’s locked in 24 hours before: after that you pay even if they don’t come.' && ask.go === 'Pay $10' && ask.focus, ask);
   await shot(page, `${size}-1-ask`, '[data-sheet][open]');
   await axe(page, `${tag} Pay for them, the question`, '[data-sheet]');
   await page.click('[data-sheet][open] [data-gm-pays-do]');
@@ -131,6 +145,23 @@ for (const size of sizes) {
   await page.waitForSelector('[data-sheet][open] [data-gm-pays-do]', { timeout: 10000 });
   await page.click('[data-sheet][open] [data-gm-pays-do]');
   await page.waitForSelector('[data-sheet][open] .gm-flash', { timeout: 10000 });
+  // the session moved to 3 hours from now: Dan's offer is locked in, so he can't stop paying (staff can)
+  await soon(page);
+  await openSheet(page, GAME);
+  rows = await own(page);
+  check(`${tag} 3 hours to go: Mia shows You’re paying: locked in, and no Stop paying`,
+    rows && rows[0].badges.includes('You’re paying: locked in') && rows[0].buttons.length === 0, rows);
+  await shot(page, `${size}-1-locked`, '[data-sheet][open] .gm-own');
+  await axe(page, `${tag} Your game, locked in`, '[data-sheet]');
+  const tried = await page.evaluate(async ([id, ref]) => {
+    try {
+      await window.Lair.store.backend.uncoverGamePlayer(id, ref);
+      return 'stopped';
+    } catch (error) {
+      return `${error.status} ${error.message}`;
+    }
+  }, [GAME, 'R21-MIA-7']);
+  check(`${tag} 3 hours to go: the demo won't let Dan stop paying`, tried === "403 It's less than 24 hours away, so it's locked in: you pay for this seat, the same as any seat. Ask staff if something's come up.", tried);
 
   /* ---------- 2. My Lair as Dan ---------- */
   await go(page, BASE, '/pages/my-lair#bookings', DAN);
@@ -144,8 +175,9 @@ for (const size of sizes) {
       covers: f(panel.querySelector('.ml-covers')?.innerText),
     };
   });
-  check(`${tag} My Lair (Dan): Mia's seat is one he pays for, and Players you’re paying for lists it at $10, Pay at the counter`,
-    mine.roster.some((r) => /^Mia You pay for this seat$/.test(r)) && /Players you’re paying for\./.test(mine.covers) && /Paying for Mia's seat: The Sunless Citadel \$10 Pay at the counter/.test(mine.covers), mine);
+  check(`${tag} My Lair (Dan): Mia's seat is one he pays for, and Players you’re paying for lists it at $10, locked in 3 hours before, Pay at the counter`,
+    mine.roster.some((r) => /^Mia You pay for this seat$/.test(r)) && /Players you’re paying for\. They pay nothing, and there’s no GM credit for their seats\. Like any seat, each is locked in 24 hours before/.test(mine.covers)
+    && /Paying for Mia's seat: The Sunless Citadel \$10 Locked in: pay at the counter/.test(mine.covers), mine);
   await shot(page, `${size}-2-my-lair-dan`, 'my-lair [data-panel="games"]');
   await axe(page, `${tag} My Lair, a GM paying for a player`, 'my-lair [data-panel="games"]');
   check(`${tag} My Lair (Dan): no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
@@ -174,6 +206,13 @@ for (const size of sizes) {
   const hers = await page.evaluate(() => [...document.querySelectorAll('my-lair .ml-ticket')].map((x) => String(x.textContent || '').replace(/\s+/g, ' ').trim()).find((x) => /The Sunless Citadel/.test(x)) || '');
   check(`${tag} My Lair (Mia): her seat says Your GM pays for it`, /Your GM pays for it/.test(hers) && !/\$15/.test(hers), hers);
   await shot(page, `${size}-3-my-lair-mia`, 'my-lair');
+  // 3 hours to go: locked in, with nothing on her tab
+  await soon(page);
+  await go(page, BASE, '/pages/my-lair#bookings', MIA);
+  await page.waitForSelector('my-lair .ml-ticket', { timeout: 20000 });
+  await settle(page, 500);
+  const locked = await page.evaluate(() => [...document.querySelectorAll('my-lair .ml-ticket')].map((x) => String(x.textContent || '').replace(/\s+/g, ' ').trim()).find((x) => /The Sunless Citadel/.test(x)) || '');
+  check(`${tag} My Lair (Mia), 3 hours to go: Locked in: your GM pays for it, not on her tab`, /Locked in: your GM pays for it/.test(locked) && !/Locked in: on your tab/.test(locked), locked);
   check(`${tag} Mia: no errors`, !page.errors.length, page.errors);
   await ctx.close();
 
@@ -204,6 +243,27 @@ for (const size of sizes) {
     row && /The GM pays: \$10 on their account/.test(row.text) && row.buttons.includes('Mark the GM’s $10 paid') && row.buttons.includes('Stop the GM paying') && !row.buttons.includes('Mark paid'), row);
   await shot(page, `${size}-4-staff`, '.staff-players');
   await axe(page, `${tag} staff page, a seat the GM pays for`, '.staff-players');
+  // the GM pays at the counter; staff can still stop it, and it's a refund due to him
+  await page.click('.staff-players [data-act="paid"]');
+  await settle(page, 700);
+  row = await playerRow('Mia');
+  check(`${tag} Staff: the GM paid: The GM paid for it, and Stop the GM paying is still there`, row && /The GM paid for it/.test(row.text) && row.buttons.includes('Stop the GM paying'), row);
+  const stopIt = '.staff-players [data-act="gm-uncover"]';
+  await page.click(stopIt);
+  await settle(page, 150);
+  const armedText = await page.evaluate((sel) => String(document.querySelector(sel)?.textContent || '').trim(), stopIt);
+  check(`${tag} Staff: the first tap says the GM gets a refund`, armedText === 'Tap again: Mia pays again, and the GM gets a refund', armedText);
+  await page.click(stopIt);
+  await settle(page, 700);
+  const after = await page.evaluate((id) => {
+    const be = window.Lair.store.backend;
+    const cover = be.state.bookings.find((b) => b.kind === 'gm-cover' && b.gameId === id);
+    const toast = [...document.querySelectorAll('.staff-toast, [data-toast], .toast')].map((x) => x.textContent.replace(/\s+/g, ' ').trim()).join(' | ');
+    return { status: cover && cover.status, refund: cover && cover.refund, toast };
+  }, GAME);
+  row = await playerRow('Mia');
+  check(`${tag} Staff: stopped: the GM's charge is a refund due, and Mia's seat is $15 to pay again`,
+    after.status === 'cancelled' && after.refund === 'due' && row && /Unpaid, \$15 to pay/.test(row.text) && /refund due/.test(after.toast), { after, row });
   check(`${tag} Staff: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
   check(`${tag} Staff: no errors`, !page.errors.length, page.errors);
   await ctx.close();
