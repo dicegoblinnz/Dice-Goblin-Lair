@@ -172,6 +172,11 @@ const TEAM_WORDS = {
   noPerms: 'Tick at least one thing they can do.',
 };
 /** 16 Oct 2026, library lending: what staff are told when a game can't be lent to someone without an account yet */
+/** 27 Oct 2026: a session's new tables for its later sessions too (POST /games/:id/edit, tablesScope) */
+export const GAME_TABLE_WORDS = {
+  scope: 'Choose whether the new tables are for this session only or for every later session too.',
+};
+
 export const LENDING_WORDS = {
   who: "Pick the member, or add the name of who you're lending it to.",
   name: "Add the name of who you're lending it to.",
@@ -3393,8 +3398,13 @@ export class Lair {
   /**
    * POST /games/:id/edit (staff). The details (title, system, blurb, seats, level, age, tags, safety, characters,
    * bring, contentNotes, sessionZero, gmFee) change for this session and every later session of its series. start,
-   * end and tables move this session only: its GM hold and every seat move with it, onto tables that are free.
-   * Unpaid seats follow a new price; paid ones keep what they paid. Players hear if the time changes.
+   * end and tables move this session: its GM hold and every seat move with it, onto tables that are free. Unpaid seats
+   * follow a new price; paid ones keep what they paid. Players hear if the time changes.
+   * 27 Oct 2026 (Mo: "when they change their table location they keep that location for the future sessions"):
+   * tablesScope 'series', with tables, gives every later session of its series that hasn't started those tables too,
+   * each at its own time, wherever they're free then (one that can't move keeps its tables, and is listed), and the
+   * series keeps them for the sessions it adds later. 'session' (or none): this session only, as before. → { game,
+   * sessions, tables?: { scope, moved, kept: [{ id, start, when, tables, reason }] } }
    */
   async editGame(id, input, who) {
     this.requireStaff(who, 'sessions');
@@ -3415,6 +3425,7 @@ export class Lair {
       if (details.seats < taken) throw new RuleError(`${time.label(session.start)} already has ${taken} players. Remove some first, or keep ${taken} seats.`, 409);
     }
     const moving = input.start != null || input.end != null || (Array.isArray(input.tables) && input.tables.length > 0);
+    if (input.tablesScope != null && !['series', 'session'].includes(input.tablesScope)) throw new RuleError(GAME_TABLE_WORDS.scope, 422);
     let place = { tables: game.tables, start: game.start, end: game.end, room: game.room };
     if (moving) {
       const tables = Array.isArray(input.tables) && input.tables.length ? input.tables.map(String) : game.tables;
@@ -3427,16 +3438,39 @@ export class Lair {
       const moved = checkGameSession({ tables, start, end }, details, { state: st, rules, time, now, ignore: own, shopTables: true, editing: true });
       place = { tables: moved.tables, start: moved.start, end: moved.end, room: moved.room };
     }
+    // Where each session goes: this one, and (tablesScope 'series') every later one of its series that can take the new
+    // tables at its own time; one that can't keeps its tables and is listed (kept)
+    const placeOf = new Map([[game.id, place]]);
+    const kept = [];
+    const forLater = Boolean(game.seriesId) && input.tablesScope === 'series' && Array.isArray(input.tables) && input.tables.length > 0;
+    if (forLater) {
+      const later = sessions.filter((s) => s.id !== game.id && s.start > now);
+      if (later.length) {
+        const span = this.state(Math.min(...later.map((s) => s.start)) - 24 * HOUR, Math.max(...later.map((s) => s.end)) + 24 * HOUR);
+        for (const s of later) {
+          if (s.tables.join() === place.tables.join()) continue;
+          try {
+            const moved = checkGameSession({ tables: place.tables, start: s.start, end: s.end }, details, {
+              state: span, rules, time, now, ignore: new Set(this.gameBookings(s.id).map((b) => b.id)), shopTables: true, editing: true,
+            });
+            placeOf.set(s.id, { tables: moved.tables, start: s.start, end: s.end, room: moved.room });
+          } catch (error) {
+            if (!(error instanceof RuleError)) throw error;
+            kept.push({ id: s.id, start: s.start, when: time.label(s.start), tables: s.tables, reason: error.message });
+          }
+        }
+      }
+    }
     const shared = {
       title: details.title, system: details.system, blurb: details.blurb, seats: details.seats, level: details.level, age: details.age, tags: details.tags,
       safety: details.safety, characters: details.characters, pregens: details.pregens, bring: details.bring, contentNotes: details.contentNotes,
       sessionZero: details.sessionZero, gmFee: details.gmFee,
     };
     for (const session of sessions) {
-      const here = session.id === game.id ? place : session;
+      const here = placeOf.get(session.id) || session;
       const room = rules.rooms.find((r) => r.id === here.room) || tableIndex(rules.rooms).get(here.tables[0])?.roomObj;
       const seatPrice = (room?.price ?? rules.prices.table) + details.gmFee;
-      this.saveGame({ ...session, ...shared, ...(session.id === game.id ? place : {}), seatPrice }, now);
+      this.saveGame({ ...session, ...shared, ...(placeOf.get(session.id) || {}), seatPrice }, now);
       // Round 18: a free session keeps its seats at $0 (its price is kept for when it isn't free any more)
       // (round 21: a seat its GM pays for stays at $0 for its players)
       this.write("UPDATE bookings SET amount = ? * people, updated_at = ? WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND covered_by IS NULL AND status IN ('held', 'confirmed', 'seated')", session.free ? 0 : seatPrice, now, session.id);
@@ -3450,6 +3484,16 @@ export class Lair {
       // (round 21: a GM's charge for a player's seat takes no table: only its times move)
       this.write("UPDATE bookings SET starts_at = ?, ends_at = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm-cover' AND status != 'cancelled'", place.start, place.end, now, game.id);
     }
+    // each later session that takes the new tables: its GM hold and every seat go with it (at its own time)
+    for (const [sessionId, p] of placeOf) {
+      if (sessionId === game.id) continue;
+      this.write(
+        "UPDATE bookings SET tables = ?, room = ?, updated_at = ? WHERE game_id = ? AND kind != 'gm-cover' AND status IN ('held', 'confirmed', 'seated')",
+        JSON.stringify(p.tables), p.room, now, sessionId,
+      );
+    }
+    // and the sessions its series adds later take them too
+    if (forLater) this.write('UPDATE series SET tables = ?, updated_at = ? WHERE id = ?', JSON.stringify(place.tables), now, game.seriesId);
     // Round 21: a GM's charge for a player's seat follows the session's price and times (src/gm-cover.js)
     for (const session of sessions) this.syncCoversOn(session.id, now, rules);
     if (game.seriesId) {
@@ -3467,7 +3511,10 @@ export class Lair {
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       }))));
     }
-    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: this.staffSees(who) }), sessions: sessions.length };
+    return {
+      game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: this.staffSees(who) }), sessions: sessions.length,
+      ...(Array.isArray(input.tables) && input.tables.length && game.seriesId ? { tables: { scope: forLater ? 'series' : 'session', moved: placeOf.size - 1, kept } } : {}),
+    };
   }
 
   /**
