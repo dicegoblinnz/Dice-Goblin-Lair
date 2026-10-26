@@ -33,17 +33,17 @@ As before (contract v7, section 11), plus:
   the whole-hour rule is for a new time.
 - Nobody's emailed about new tables (as before: players hear about a new time only).
 
+The answer gains `tables` when the request had `tables` on a session of a series:
+`{ scope: 'series' | 'session', moved, kept: [{ id, start, when, tables, reason }] }`. `moved`: how many later
+sessions took the new tables; `kept`: the ones that couldn't (`tables`: what they kept, `reason`: why, for example
+`Table B3 is already taken at that time. Pick another.`).
+
 ## Elsewhere
 
 - **A seat put back** (`POST /bookings/:id/update`, status from cancelled or a no-show to on) takes its session's tables,
   room and times as they are now, so it never holds the table the session left.
 - **The staff view of a session** (the floor for staff, and the edit's answer) has `series.tables`: the tables the series
   gives the sessions it adds later. The public board doesn't.
-
-The answer gains `tables` when the request had `tables` on a session of a series:
-`{ scope: 'series' | 'session', moved, kept: [{ id, start, when, tables, reason }] }`. `moved`: how many later
-sessions took the new tables; `kept`: the ones that couldn't (`tables`: what they kept, `reason`: why, for example
-`Table B3 is already taken at that time. Pick another.`).
 
 ## The staff page
 
