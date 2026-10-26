@@ -9,6 +9,8 @@
 //  4. After the review: a save that never touches the tables moves nothing (the session set apart stays apart, later
 //     ones stay); the note's Manage opens the one that couldn't move, its choice starts on "Just this session", and once
 //     it has its own table it's off the note.
+//  5. After the second check: a game whose sessions were all moved by hand (the game still keeping its old tables)
+//     starts on "This and every later session"; its note sits beside the other game's, and Done puts away its own.
 // No sideways scroll and axe at each. Phone and desktop.
 // Usage: DG_THEME=/path/to/theme [PORT=4991] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round21/tables-later.mjs [phone|desktop]
 import os from 'node:os';
@@ -21,6 +23,7 @@ const PORT = Number(process.env.PORT || 4991);
 const BASE = `http://localhost:${PORT}`;
 const sizes = process.argv[2] ? [process.argv[2]] : ['phone', 'desktop'];
 const SERIES = 'sr-r21-tables';
+const FRIDAY = 'sr-r21-friday';
 const E = '[data-gm-edit-wrap] lair-session-form';
 
 const server = await m.serve(PORT);
@@ -66,6 +69,33 @@ const seed = (page) => page.evaluate(async (seriesId) => {
       });
     }
   }
+  // Friday Quest: five Fridays from tomorrow on, every one moved by hand to G2 while the game still keeps G1 (from
+  // before Edit session could carry tables on), and G4 booked on the fourth
+  let friday = t.addDays(t.today(), 1);
+  while (new Date(`${friday}T12:00:00Z`).getUTCDay() !== 5) friday = t.addDays(friday, 1);
+  be.state.games = be.state.games.filter((g) => g.seriesId !== 'sr-r21-friday');
+  for (let i = 0; i < 5; i += 1) {
+    const key = t.addDays(friday, i * 7);
+    const start = t.at(key, 18 * 60);
+    const end = t.at(key, 22 * 60);
+    const id = `gm-r21f-${i + 1}`;
+    be.state.games.push({
+      id, title: 'Friday Quest', system: 'Pathfinder 2E', gm: 'Ana', gmCustomerId: 'demo-r21f-ana', gmEmail: 'ana@example.com', blurb: 'A weekly quest.', tables: ['G2'],
+      room: 'gaming-room', seats: 4, start, end, taken: 0, status: 'open', credited: null, gmFee: 500, seatPrice: 1500, schedule: 'weekly', seriesId: 'sr-r21-friday',
+      level: 'some', age: '13+', tags: [], safety: [], characters: 'pregens', bring: '', contentNotes: '', sessionZero: '', image: null, gmFeeApproved: true,
+    });
+    be.state.bookings.push({
+      id: `bk-r21t-fgm-${i + 1}`, ref: `GM-R21F-${i + 1}`, kind: 'gm', gameId: id, tables: ['G2'], start, end, people: 5, name: 'GM Ana', status: 'confirmed', pay: 'day', paid: true,
+      activity: 'rpg', extras: [], customerId: 'demo-r21f-ana',
+    });
+    if (i === 3) {
+      be.state.bookings.push({
+        id: 'bk-r21t-g4', ref: 'R21T-G4', kind: 'table', tables: ['G4'], start, end, people: 4, name: 'Warhammer night',
+        email: 'war@example.com', phone: '', notes: '', status: 'confirmed', pay: 'day', paid: false, amount: 4000, activity: 'wargame', extras: [],
+      });
+    }
+  }
+  be.state.seriesTables = { ...(be.state.seriesTables || {}), 'sr-r21-friday': ['G1'] };
   be.commit();
   await store.refresh();
   return ids;
@@ -194,6 +224,22 @@ for (const size of sizes) {
   await settle(page, 900);
   tables = await tablesOf(page, ids);
   check(`${tag} A save that only renames moves no tables, and sends none`, JSON.stringify(tables) === JSON.stringify(['G1', 'G4', 'G3', 'G1', 'G3']) && sent.length === 1 && !('tables' in sent[0]) && !('tablesScope' in sent[0]), { tables, sent });
+  /* ---------- 5. a game whose sessions were all moved by hand ---------- */
+  const fridays = ['gm-r21f-1', 'gm-r21f-2', 'gm-r21f-3', 'gm-r21f-4', 'gm-r21f-5'];
+  await openEdit(page, fridays[1]);
+  await tapTable(page, 'G2');
+  await tapTable(page, 'G4');
+  await settle(page, 250);
+  box = await laterBox(page);
+  check(`${tag} Friday Quest (every session on G2 by hand, the game keeping G1), given G4: the choice starts on This and every later session`, box && !box.hidden && box.checked === 'series', box);
+  await page.click(`${E} [data-sf-save]`);
+  await settle(page, 900);
+  const fridayTables = await tablesOf(page, fridays);
+  check(`${tag} Friday Quest: the second and later ones on G4, except the fourth (G4 booked); the first stays on G2`, JSON.stringify(fridayTables) === JSON.stringify(['G2', 'G4', 'G4', 'G2', 'G4']), fridayTables);
+  await toList(page);
+  const notes = await page.evaluate(() => [...document.querySelectorAll('[data-panel="games"] .staff-tables-note')].map((n) => String(n.textContent || '').replace(/\s+/g, ' ').trim()));
+  check(`${tag} Both games' notes on the list: Thursday's still there beside Friday's`, notes.length === 2 && notes.some((n) => /^Thursday Tables/.test(n)) && notes.some((n) => /^Friday Quest/.test(n)), notes);
+
   // the note's Manage opens the fourth (past Coming up's two weeks); its choice starts on Just this session (it's set apart)
   await toList(page);
   await page.waitForSelector(`[data-panel="games"] .staff-tables-note [data-gm-manage="${fourth}"]`, { timeout: 15000 });
@@ -222,7 +268,12 @@ for (const size of sizes) {
   await settle(page, 900);
   tables = await tablesOf(page, ids);
   check(`${tag} It moves alone to ${spare.free}; the later ones stay on G3`, JSON.stringify(tables) === JSON.stringify(['G1', 'G4', 'G3', spare.free, 'G3']), tables);
-  check(`${tag} And it's off the note (the note's gone: it was the only one)`, (await page.locator('.staff-tables-note').count()) === 0);
+  check(`${tag} And it's off its note (Thursday's is gone: it was the only one)`, (await page.locator('.staff-tables-note').filter({ hasText: 'Thursday Tables' }).count()) === 0);
+  await toList(page);
+  check(`${tag} Friday's note is still on the list`, (await page.locator('[data-panel="games"] .staff-tables-note').filter({ hasText: 'Friday Quest' }).count()) === 1);
+  await page.click(`[data-panel="games"] [data-tables-note-done="${FRIDAY}"]`);
+  await settle(page, 300);
+  check(`${tag} Done puts Friday's note away`, (await page.locator('.staff-tables-note').count()) === 0);
   check(`${tag} Staff page: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
   check(`${tag} No errors`, !page.errors.length, page.errors);
   void first;

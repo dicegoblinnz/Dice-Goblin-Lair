@@ -340,3 +340,35 @@ test('tables for later sessions, review: staff see the tables a weekly game keep
   const publicSeries = (await board('')).games.find((g) => g.seriesId === seriesId).series;
   assert.equal('tables' in publicSeries, false);
 });
+
+test('tables for later sessions, second check: a GM\'s flexible game moved by staff to a shop table: its GM can add dates there', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: 'B3, B4' }, ROOMS, []);
+  const listed = ok(await call('POST', 'games', {
+    title: "Rangi's flexible game", system: 'D&D 5e', gm: 'Rangi', blurb: 'Whenever we can.', seats: 4, tables: ['B1'], start: at('2026-10-24', 18), end: at('2026-10-24', 22), schedule: 'flexible',
+  }, RANGI));
+  ok(await call('POST', `games/${listed.game.id}/update`, { status: 'open' }, OWNER));
+  const second = ok(await call('POST', `games/${listed.game.id}/sessions`, { start: at('2026-10-31', 18), end: at('2026-10-31', 22), tables: ['B1'] }, RANGI)).game.id;
+  // staff give the game B4 (a shop table) for this and every later session
+  ok(await edit(listed.game.id, { tables: ['B4'], tablesScope: 'series' }));
+  assert.deepEqual([tablesOf(listed.game.id), tablesOf(second)], [['B4'], ['B4']]);
+  // Rangi adds a date on B4 (staff gave it to the game), but not on B3, a shop table nobody gave it
+  const added = await call('POST', `games/${second}/sessions`, { start: at('2026-11-07', 18), end: at('2026-11-07', 22), tables: ['B4'] }, RANGI);
+  assert.equal(added.status, 200, added.data.error);
+  assert.deepEqual(tablesOf(added.data.game.id), ['B4']);
+  assert.match(said(await call('POST', `games/${second}/sessions`, { start: at('2026-11-14', 18), end: at('2026-11-14', 22), tables: ['B3'] }, RANGI)), /^422 B3 is a shop table/);
+});
+
+test('tables for later sessions, second check: a seat put back after its session moved room pays the session\'s price now', async () => {
+  // the side room costs more: $12 a person (the main room $10), plus the GM's $5
+  lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '' }, [ROOMS[0], { ...ROOMS[1], price: 12 }], []);
+  const listed = await list({ gm: ANA, start: at('2026-10-17', 18), end: at('2026-10-17', 22), schedule: 'weekly', tables: ['T5'], title: 'Main room campaign' });
+  const ids = listed.sessions.map((s) => s.id);
+  const kais = ok(await seat(ids[2], KAI, 'Kai')).booking;
+  assert.equal(lair.booking(kais.id).amount, 1500);
+  ok(await call('POST', `bookings/${kais.id}/update`, { status: 'cancelled' }, KAI));
+  ok(await edit(ids[1], { tables: ['B2'], tablesScope: 'series' }));
+  assert.deepEqual(tablesOf(ids[2]), ['B2']);
+  ok(await call('POST', `bookings/${kais.id}/update`, { status: 'confirmed' }, OWNER));
+  const back = lair.booking(kais.id);
+  assert.deepEqual([back.tables, back.amount], [['B2'], 1700]);
+});

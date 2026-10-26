@@ -2832,7 +2832,14 @@ export class Lair {
     // tables, or times, while the seat was off (27 Oct 2026: a seat put back held the old table)
     if (next.kind === 'gm-seat' && next.gameId && ACTIVE.has(next.status) && !ACTIVE.has(booking.status)) {
       const session = this.game(next.gameId);
-      if (session) Object.assign(next, { tables: session.tables, room: session.room, start: session.start, end: session.end });
+      if (session) {
+        Object.assign(next, { tables: session.tables, room: session.room, start: session.start, end: session.end });
+        // and the session's price now, for a seat nothing's been paid on, passed or waived (a $0 seat, booked while the
+        // session was free, and one its GM pays for, keep theirs)
+        if ((next.amount || 0) > 0 && !(next.paidAmount > 0) && !(next.covered > 0) && !next.waived && !next.coveredBy) {
+          next.amount = session.free ? 0 : seatPriceOf(session, rules) * (next.people || 1);
+        }
+      }
     }
     // Back to 'confirmed' from seated or done undoes the check-in (and its loyalty stamps, round 6): checking in again works.
     if (next.status === 'confirmed' && ['seated', 'done'].includes(booking.status)) next.arrivedAt = null;
@@ -3715,10 +3722,13 @@ export class Lair {
     const st = this.state(now - 24 * HOUR, now + (rules.horizonDays + 2) * 24 * HOUR);
     const details = this.gameDetails(game);
     const tables = Array.isArray(input.tables) && input.tables.length ? input.tables : game.tables;
-    // Round 7: staff adding a date follow the GM rules too, with the shop tables open to them
-    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, shopTables: staffGames });
     let seriesId = game.seriesId;
     let series = seriesId ? this.sql.exec('SELECT * FROM series WHERE id = ?', seriesId).toArray()[0] : null;
+    // Round 7: staff adding a date follow the GM rules too, with the shop tables open to them. 27 Oct 2026: and the
+    // tables staff gave the series for its later sessions (staffTables) are open to its GM too, shop tables or not
+    const given = series && parse(series.details, {}).staffTables ? parse(series.tables, []) : null;
+    const staffPicked = Boolean(given) && [...new Set(tables.map(String))].sort().join() === [...given].sort().join();
+    const session = checkGameSession({ tables, start: input.start, end: input.end }, details, { state: st, rules, time, now, shopTables: staffGames || staffPicked });
     if (!seriesId) {
       seriesId = makeId('sr');
       this.write(

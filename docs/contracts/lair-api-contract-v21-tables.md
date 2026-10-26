@@ -41,7 +41,10 @@ sessions took the new tables; `kept`: the ones that couldn't (`tables`: what the
 ## Elsewhere
 
 - **A seat put back** (`POST /bookings/:id/update`, status from cancelled or a no-show to on) takes its session's tables,
-  room and times as they are now, so it never holds the table the session left.
+  room and times as they are now, so it never holds the table the session left. A priced seat nothing's been paid,
+  passed, waived or covered on takes the session's price now too (a $0 seat booked while it was free keeps $0).
+- **A GM adding a date** (`POST /games/:id/sessions`) may use the tables staff gave the series for its later sessions,
+  shop tables included; other shop tables stay staff's, as before.
 - **The staff view of a session** (the floor for staff, and the edit's answer) has `series.tables`: the tables the series
   gives the sessions it adds later. The public board doesn't.
 
@@ -51,10 +54,11 @@ Edit session on a session of a weekly, fortnightly or flexible game asks, under 
 sessions too?" when the tables picked aren't this session's, the game's (`series.tables`) or a later session's:
 
 - "This and every later session" is picked to start with only when staff change the tables of a session that has the
-  game's usual tables. Otherwise (a session already set apart, like one that couldn't move) it starts on "Just this
+  game's usual tables: the ones the game keeps, or the ones every later session has (a game whose sessions were each
+  moved by hand before). Otherwise (a session already set apart, like one that couldn't move) it starts on "Just this
   session". Staff's own pick always stands.
 - A save that never changes the tables sends none: renaming a session set apart moves nothing.
 - After saving, the message says how many later sessions moved (or that none could, or that they're on the tables
   already). Any that couldn't move are listed in a note on the game's page and the games list, each with its date, the
-  tables it kept, why, and Manage (which opens it, even past Coming up's two weeks). Giving one its own table takes it
-  off the note; Done puts the note away.
+  tables it kept, why, and Manage (which opens it, even past Coming up's two weeks). Each game has its own note: a save
+  for another game leaves it be. Giving one its own table takes it off the note; Done puts that game's note away.
