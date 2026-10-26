@@ -39,6 +39,7 @@ import {
   groupBadges,
   groupDetails,
   groupSummary,
+  isHeld,
   owedWhen,
   passCandidates,
   passLeft,
@@ -74,7 +75,9 @@ import {
  * @typedef {{ title: string, message: string, tone: 'critical' | 'warning' | 'info' | 'success', retry?: (() => void) | null,
  *   action?: { label: string, run: () => void } | null }} Shown
  *   a banner on screen, with Try again, or another next step (Scan again, Close and pay) as a button under it
- * @typedef {{ bookings: string[], shares: string[], tabs: string[], customerId: number | null, value: import('./cart.js').CartLike }} CartState
+ * @typedef {{ bookings: string[], shares: string[], tabs: string[], customerId: number | null, value: import('./cart.js').CartLike,
+ *   held: string[] }} CartState
+ *   held: codes whose last share left the cart but hasn't reached the Lair app yet (split.js waitingRefs)
  * @typedef {'any' | 'payer' | 'pass'} Want
  * @typedef {{
  *   back: () => void,
@@ -294,7 +297,7 @@ function GroupView({ screen, ctx }) {
   }
   const { name, gm } = gameTitle(group);
   const subheading = [gm ? `GM ${gm}` : '', groupDetails(group)].filter(Boolean).join(' · ');
-  const plan = groupPlan(group.rows, screen.ticked, cart.bookings);
+  const plan = groupPlan(group.rows, screen.ticked, cart.bookings, cart.held);
   const busyNow = Boolean(busy);
   const rows = sortRows(group.rows);
 
@@ -371,7 +374,7 @@ function GroupView({ screen, ctx }) {
 
 /** "Sam Jones · Due $15 · Weekly": one person to tick. @param {Row} row @param {CartState} cart */
 function tickLabel(row, cart) {
-  const badges = rowBadges(row, Boolean(row.ref) && cart.bookings.includes(String(row.ref))).map((badge) => badge.text);
+  const badges = rowBadges(row, Boolean(row.ref) && cart.bookings.includes(String(row.ref)), isHeld(row, cart.held)).map((badge) => badge.text);
   return [row.name || 'Guest', peopleLabel(row.people) && Number(row.people) > 1 ? peopleLabel(row.people) : '', ...badges].filter(Boolean).join(' · ');
 }
 
@@ -386,11 +389,13 @@ function PersonView({ screen, ctx }) {
   const outcome = screen.result ? checkinOutcome(screen.result) : null;
   const ref = String(row.ref || '');
   const inCart = Boolean(ref) && cart.bookings.includes(ref);
+  // Someone's share of this booking is in the sale (a friend's part of the bill, or another named player's share).
+  const shareInCart = Boolean(ref) && cart.shares.includes(ref);
   const share = ctx.pending[rowKey(row)] || null;
   const pending = pendingState(share, row, cart.shares, ctx.now);
   const justChecked = Boolean(outcome?.arrived);
   const inUse = passInUse(row, screen.uses);
-  const main = personAction({ row, plan, choice: screen.choice, inUse, inCart, share: pending, justChecked });
+  const main = personAction({ row, plan, choice: screen.choice, inUse, inCart, shareInCart, share: pending, justChecked });
   const choices = passOptions(row, screen.passes, inUse);
   const card = loyaltyCard(screen.loyalty);
   const busyNow = Boolean(busy);
@@ -444,7 +449,7 @@ function PersonView({ screen, ctx }) {
           {personFacts(row, screen.groupTitle).map((line) => (
             <s-text key={line}>{line}</s-text>
           ))}
-          <Badges list={rowBadges(row, inCart)} />
+          <Badges list={rowBadges(row, inCart, isHeld(row, cart.held))} />
         </s-stack>
       </s-section>
       <MoneySection row={row} plan={plan} />
@@ -789,6 +794,10 @@ function MemberView({ screen, ctx }) {
   const charges = rows.filter(({ row }) => !row.owed && row.kind === 'gm-cover');
   const owedRows = rows.filter(({ row }) => row.owed);
   const everything = everythingPlan(rows.map((x) => x.row), screen.tab, cart);
+  // Left out of the total for now: a booking with a share in this sale (that payment comes first, as the cart takes one
+  // line a booking and the sale's customer is who the Lair app counts as paying), or whose last share was just paid.
+  const sharing = todayRows.filter(({ row }) => Boolean(row.ref) && dueOf(row) > 0 && cart.shares.includes(String(row.ref)));
+  const waiting = todayRows.filter(({ row }) => dueOf(row) > 0 && isHeld(row, cart.held) && !cart.bookings.includes(String(row.ref)));
   const tab = tabPlan(screen.tab, cart.tabs);
   const { items, bad } = tabItems(screen.tab);
   const card = loyaltyCard(screen.loyalty);
@@ -808,14 +817,24 @@ function MemberView({ screen, ctx }) {
       {card ? <LoyaltySection card={card} /> : null}
       <s-section heading="To pay">
         <s-stack direction="block" gap="small">
-          <s-heading>{everything.total ? money(everything.total) : 'Nothing to pay'}</s-heading>
+          <s-heading>{everything.total ? money(everything.total) : sharing.length || waiting.length ? 'Nothing to add yet' : 'Nothing to pay'}</s-heading>
           {everything.parts ? <s-text color="subdued">{everything.parts}</s-text> : null}
           {everything.note ? <s-text color="subdued">{everything.note}</s-text> : null}
         </s-stack>
       </s-section>
       <CartStrip ctx={ctx} person={{ customerId: member.customerId, name }} />
+      {sharing.length ? (
+        <s-banner tone="warning" heading="Take the payment in the cart first">
+          {`A share of ${refList(sharing)} is in this sale, so it isn't in ${first ? `${first}'s` : 'their'} total. Take that payment, then scan ${first ? `${first}'s` : 'their'} code again.`}
+        </s-banner>
+      ) : null}
+      {waiting.length ? (
+        <s-banner tone="info" heading={WAITING}>
+          {`A share of ${refList(waiting)} was paid a moment ago and hasn't reached the Lair app yet, so it isn't in ${first ? `${first}'s` : 'their'} total. Scan ${first ? `${first}'s` : 'their'} code again in a few seconds.`}
+        </s-banner>
+      ) : null}
       {!everything.show ? (
-        <s-text color="subdued">{`Nothing to check in or pay for ${first || 'them'} today.`}</s-text>
+        sharing.length || waiting.length ? null : <s-text color="subdued">{`Nothing to check in or pay for ${first || 'them'} today.`}</s-text>
       ) : monthly ? (
         <s-stack direction="block" gap="small">
           {everything.today.waiting ? (
@@ -920,13 +939,20 @@ function MemberView({ screen, ctx }) {
         </s-section>
       ) : null}
 
-      {onSale ? null : (
+      {/* Not over someone's share in the sale: the Lair app counts a payment as the sale customer's. */}
+      {onSale || cart.shares.length ? null : (
         <s-button variant="secondary" loading={ctx.busyKey === 'on-sale'} disabled={busyNow} onClick={act.putMemberOnSale}>
           {`Put ${first || 'them'} on this sale`}
         </s-button>
       )}
     </Page>
   );
+}
+
+/** "SJ-OWLBEAR-17" or "SJ-OWLBEAR-17 and KT-OGRE-2": the codes of some rows. @param {{ row: Row }[]} items */
+function refList(items) {
+  const refs = [...new Set(items.map(({ row }) => String(row.ref || '')).filter(Boolean))];
+  return refs.length > 1 ? `${refs.slice(0, -1).join(', ')} and ${refs[refs.length - 1]}` : refs[0] || 'a booking';
 }
 
 /** "7 of 10 sessions left · expires 31 Dec 2026" @param {PassLike} pass */
@@ -948,7 +974,9 @@ function PassView({ screen, ctx }) {
   const pass = screen.pass;
   const usable = passUsable(pass);
   const holder = String(pass.holder?.name || '').trim();
-  const candidates = screen.picking ? passCandidates(today, pass) : [];
+  const candidates = screen.picking ? passCandidates(today, pass, cart.bookings, cart.held) : [];
+  // Someone has a table fee left, but it's in this sale (or a share of it was just paid): say why they're not listed.
+  const kept = screen.picking && !candidates.length ? passCandidates(today, pass).length : 0;
   return (
     <Page heading={pass.label || 'Session pass'} subheading={pass.code ? `Pass ${pass.code}` : ''} action={<ScanAction ctx={ctx} />}>
       <BackButton ctx={ctx} />
@@ -980,7 +1008,11 @@ function PassView({ screen, ctx }) {
               onOpen={(row, group) => (group ? act.usePassOn(row, group) : undefined)}
             />
           ) : (
-            <s-text color="subdued">No one today has a table fee left to pay.</s-text>
+            <s-text color="subdued">
+              {kept
+                ? "No one to use it on right now: the table fees left are in this sale, or a share of them was just paid. Take that payment first, or take the line off the sale."
+                : 'No one today has a table fee left to pay.'}
+            </s-text>
           )}
         </s-section>
       ) : null}
@@ -1162,7 +1194,7 @@ function RowList({ items, cart, busy, onOpen, titleOf }) {
             <Item
               title={titleOf ? titleOf(row) : row.name || 'Guest'}
               lines={[details]}
-              badges={rowBadges(row, Boolean(row.ref) && cart.bookings.includes(String(row.ref)))}
+              badges={rowBadges(row, Boolean(row.ref) && cart.bookings.includes(String(row.ref)), isHeld(row, cart.held))}
             />
           </s-clickable>
         </s-stack>

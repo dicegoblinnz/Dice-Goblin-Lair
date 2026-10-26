@@ -298,6 +298,12 @@ test('the member view: check in everyone while anyone is still to come, else add
   assert.deepEqual(memberPlan([{ ...here, due: 0 }]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
   assert.deepEqual(memberPlan([here]), { canCheckIn: true, waiting: 0, due: 1500, coming: [], owing: [here] });
   assert.deepEqual(memberPlan([here], ['SJ-OWLBEAR-17']), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] }, 'already in the cart');
+  // A share of it was just paid and hasn't reached the Lair app: left out, so that share is never charged again.
+  assert.deepEqual(memberPlan([here], [], ['SJ-OWLBEAR-17']), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] }, 'a share on its way');
+  const player = { ...here, id: 'bp_tama', name: 'Tama Rua', playerOf: { name: 'Sam' } };
+  assert.deepEqual(memberPlan([player], [], ['SJ-OWLBEAR-17']).owing, [player], 'a named player’s own share is theirs to pay');
+  assert.deepEqual(memberPlan([player], ['SJ-OWLBEAR-17']).owing, [], 'but not in a sale with another share of the game: that payment comes first');
+  assert.deepEqual([everythingPlan([here], null, { held: ['SJ-OWLBEAR-17'] }).show, everythingPlan([here], null, { held: ['SJ-OWLBEAR-17'] }).total], [false, 0]);
   assert.deepEqual(memberPlan([{ ...row, status: 'noshow' }]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
   assert.deepEqual(memberPlan([]), { canCheckIn: false, waiting: 0, due: 0, coming: [], owing: [] });
   const today = { groups: [{ key: 'tables', title: 'Table bookings', rows: [here] }] };
@@ -481,6 +487,15 @@ test('once they’re here: add to cart, close and pay once it’s in the cart, o
   assert.deepEqual(act({ ...here, people: 3 }).more, [{ action: 'split', label: 'Split the bill' }]);
   assert.deepEqual([act(here, { inCart: true }).action, act(here, { inCart: true }).label], ['close', 'Close and pay']);
   assert.equal(act(here, { share: 'in-cart' }).action, 'close', 'a share of it is in the cart');
+  // Someone else's share of the booking is in the sale (a friend's, or another named player's): that payment first.
+  assert.deepEqual(act(here, { inCart: true, shareInCart: true }), {
+    action: 'close',
+    label: 'Close and pay',
+    force: false,
+    hint: 'A share of this booking is in the cart. Take that payment first, then open them again.',
+    more: [],
+  });
+  assert.equal(act(here, { inCart: true, shareInCart: true, share: 'in-cart' }).hint, "It's in the cart. Take payment with Pay on Verifone.", 'this screen’s own share');
   // A share left the cart and its payment hasn't reached the Lair app yet: look again, or say it wasn't paid.
   assert.deepEqual(act(here, { share: 'waiting' }), {
     action: 'refresh',
@@ -598,6 +613,10 @@ test('a group paying together: tick them, then one button checks them in and put
   assert.equal(groupPlan(rows, ['booking:bk_rangi', 'booking:bk_cleo']).label, '');
   assert.equal(groupPlan(rows, ['booking:bk_zoe'], ['ZB-KEA-20']).tickable.includes('booking:bk_zoe'), false);
   assert.equal(groupPlan(rows, ['booking:bk_sam'], [String(sam.ref)]).label, 'Check in 1 person', 'its fee is in the cart already');
+  // A share of Zoë's bill was just paid and hasn't reached the Lair app: she can't be ticked until it lands.
+  const held = groupPlan(rows, ['booking:bk_zoe'], [], ['ZB-KEA-20']);
+  assert.deepEqual([held.tickable.includes('booking:bk_zoe'), held.label], [false, '']);
+  assert.equal(groupPlan(rows, ['booking:bk_sam'], [], [String(sam.ref)]).label, 'Check in 1 person and add $15 to cart', 'still to come: no share yet');
   // Owed seats are paid, never ticked to check in.
   assert.deepEqual(groupPlan([lastWeek], []).tickable, []);
   assert.deepEqual(groupScreen('game:1'), { name: 'group', key: 'game:1', ticked: [], picking: false });

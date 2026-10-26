@@ -2,7 +2,7 @@
 // one cart line from POST /pos/share, paid on its own; the friend paying can be put on the sale so the spend is theirs.
 // No `shopify` global here, so `npm test` can check it without a POS.
 import { firstName, money } from './format.js';
-import { dueOf } from './today.js';
+import { dueOf, rowKey } from './today.js';
 
 /**
  * @typedef {import('./today.js').Row} Row
@@ -172,6 +172,30 @@ export function pendingState(pending, row, shareRefs, now) {
   if (pending.ref && (shareRefs || []).includes(pending.ref)) return 'in-cart';
   if (!(now - pending.at < PENDING_MS)) return 'expired';
   return 'waiting';
+}
+
+/**
+ * Codes of the bookings whose last share left the cart but hasn't reached the Lair app yet ("Waiting for the last
+ * payment…" on the booking). Until it lands, or staff tap "It wasn't paid", nothing more of theirs goes in the cart
+ * from a member's code, a group or a pass's "Use on…", so the same part is never paid twice. A note is checked against
+ * every copy of its row the screen has (the Today list, a member's fresh look): one that shows the payment landed wins.
+ * A note whose row isn't on screen holds its booking until it expires.
+ * @param {Record<string, Pending>} pending the share notes, by rowKey
+ * @param {Row[]} rows the rows on screen
+ * @param {string[]} shareRefs codes with a share in the cart
+ * @param {number} now
+ * @returns {string[]}
+ */
+export function waitingRefs(pending, rows, shareRefs, now) {
+  /** @type {Set<string>} */
+  const refs = new Set();
+  for (const [key, note] of Object.entries(pending || {})) {
+    if (!note?.ref) continue;
+    const copies = (rows || []).filter((row) => row && rowKey(row) === key);
+    const states = (copies.length ? copies : [null]).map((row) => pendingState(note, row, shareRefs, now));
+    if (states.every((state) => state === 'waiting')) refs.add(note.ref);
+  }
+  return [...refs];
 }
 
 /**

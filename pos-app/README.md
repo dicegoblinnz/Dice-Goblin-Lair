@@ -34,9 +34,10 @@ the top) opens the camera instead.
 So a ticket is: the tile, a scan, one button, then Pay on Verifone.
 
 - **Paying later?** Tap **Just check in (pay later)**. They're in, nothing goes in the cart, and it stays on their
-  booking (their member code shows it next time).
-- **Nothing to pay** (paid online, a pass covers it, or the GM pays): the button just says **Check in**. The screen
-  then says "Sam's in" and why there's nothing to pay. Tap **Done**, or scan the next code.
+  booking (their member code shows it next time). If the Lair app said something about their pass, it's on the
+  screen you go back to.
+- **Nothing to pay** (paid online, or the GM pays): the button just says **Check in**. The screen then says "Sam's
+  in" and why there's nothing to pay. Tap **Done**, or scan the next code.
 - **Another day, cancelled or a no-show:** a yellow box says so and the button reads **Check in anyway**. Only tap it
   if that's OK. Then tap **Add $15 to cart**.
 - **Check before they pay:** if the Lair app has something to say about the check-in (a pass that only covered some
@@ -80,9 +81,12 @@ quieter button under the main one.
 2. **Who's paying this share?** Tap the booker's name, or scan their member code (the code in their My Lair), or type
    it and tap **Find**. They go on the sale, so their spend counts for *them*. No member code? Go ahead anyway.
 3. Tap **Add $10 to cart**. The screen closes: take payment with Pay on Verifone.
-4. For the next friend, scan the booker's code again (or find them in the list). It shows what's been paid and
+4. For the next friend, scan the booking's code again (or find them in the list). It shows what's been paid and
    what's left. Right after a payment the button says **Refresh** ("Waiting for the last payment…"): tap it after a
    few seconds. If that payment didn't go through after all, tap **It wasn't paid**.
+
+Until the last payment reaches the Lair app (usually within a minute), the booking says **Payment on its way** and
+is left out of a member code's total, a group's ticks and a pass's **Use on…**, so nobody pays the same share twice.
 
 ### A group paying together
 
@@ -110,7 +114,8 @@ Scanning someone's member code (from My Lair) shows their loyalty card, **To pay
   - If the Lair app has something to say (a pass that only covered some of them, someone it wouldn't check in), the
     screen stays open under **Check before they pay**. Sort it out, then tap **Close and pay**.
 - **Only paying for part?** Tap that row under Today, Paying for players or Owed, or **Add just the tab**.
-- **Put Sam on this sale** (at the bottom) puts them on the sale without adding anything.
+- **Put Sam on this sale** (at the bottom) puts them on the sale without adding anything. It's hidden while someone's
+  share is in the sale, as the Lair app counts a payment as the sale customer's: take that payment first.
 - **A monthly account:** the button is **Check in**, and today's fees go on their account. **Pay now: …** is there
   if they'd rather pay now.
 - A weekly regular's ticket *is* their member code.
@@ -120,8 +125,8 @@ Scanning someone's member code (from My Lair) shows their loyalty card, **To pay
 A member code shows their card: a star for each stamp, like "9 of 10 stamps. One more fills it.", and any rolls
 waiting in My Lair. Stamps come from check-ins, and they roll in My Lair: it's for show here.
 
-When a check-in fills their card, the screen says **"Sam's loyalty card is full! A roll for store credit is waiting in
-My Lair."** (and the message at the bottom of POS says the card is full). Let them know.
+When a check-in fills their card, the message at the bottom of POS says **"Sam's loyalty card is full!"**. Let them
+know: a roll for store credit is waiting in My Lair. (If the screen stays open, it says so too.)
 
 (A ticket shows the card too once the Lair app sends it with tickets: see "What we've asked the Lair app for" below.)
 
@@ -146,11 +151,14 @@ GM's charge goes on the GM's account. The GM gets no GM credit for that seat.
 2. Tap **Kate pays for this seat**. The screen asks **"Kate pays for Mia's seat?"**. Tap **Yes, Kate pays**.
 3. Mia now has nothing to pay: tap **Check in**.
 
-- Kate pays her charge like any booking: scan her member code and **Check in and add everything** (it shows as
-  "Players' seats $10"), or it waits on her tab. Scanning the charge's own code shows "Paying for Mia's seat: Curse
-  of Strahd" with **Add $10 to cart**. A charge is never checked in.
-- To undo it, open Mia and tap **Stop Kate paying**, then **Yes, stop Kate paying**. Mia's seat goes back to its full
-  price. If Kate had paid already, staff get an email to give that money back.
+- Kate pays her charge like any booking: scan her member code. The charge is under **Paying for players**, and her
+  main button includes it ("Players' seats $10" under **To pay** when there's more to pay). Or it waits on her tab.
+  Scanning the charge's own code shows "Paying for Mia's seat: Curse of Strahd" with **Add $10 to cart**. A charge is
+  never checked in.
+- Changed your mind? Straight away, on the same screen, tap **Stop Kate paying**, then **Yes, stop Kate paying**.
+  Mia's seat goes back to its full price. If Kate had paid already, staff get an email to give that money back.
+  Once you've left Mia's screen, open the session on the staff page and tap **Stop the GM paying** there: the
+  check-in screen can only show who's paying once the Lair app sends it (see "What we've asked the Lair app for").
 - The button only shows on a seat with something to pay and nothing paid on it yet. While Mia's own fee is in the
   sale, the screen says to take it off first. If the Lair app says no (the GM has no Dice Goblin account, say), the
   screen says why.
@@ -159,7 +167,8 @@ GM's charge goes on the GM's account. The GM gets no GM credit for that seat.
 ### A session pass code
 
 Scanning a pass shows who has it and how many sessions are left. Tap **Use on…**, then the booking it's for: that
-person is checked in with the pass and the screen shows what's left to pay.
+person is checked in with the pass and the screen shows what's left to pay. A booking whose fee is already in the
+sale isn't listed: take that payment first, or take the line off the sale.
 
 ### Today's list
 
@@ -179,7 +188,8 @@ person is checked in with the pass and the screen shows what's left to pay.
 | Owed $X | A weekly regular's session that has ended unpaid: still theirs to pay |
 | Weekly | A weekly regular's seat: saved for them every week |
 | GM pays | The GM is paying for this player's seat |
-| In cart | Its fee is in this sale, waiting for payment |
+| In cart | Its fee (or a share of it) is in this sale, waiting for payment |
+| Payment on its way | A share of it was just paid and hasn't reached the Lair app yet: it's left out of totals for now |
 | Pass | They'll use their saved session pass |
 | No-show | Marked as not coming |
 | Refund? | They paid online, then cancelled or didn't come: sort out a refund on the staff page |
@@ -280,13 +290,20 @@ Each problem says what to do next, and its button is the next step.
 | The Lair app didn't accept this POS login | Close the check-in screen and open it again. If it keeps happening, the Lair app's Shopify client ID or secret doesn't match this app. |
 | We couldn't find SJ-OWLBEAR-71 | Check the code with them, or search by name. **Scan again** tries another scan. |
 | That's not a Lair code | The scanner read something else, like a product barcode. **Scan again**. |
-| It isn't in the cart | Add it by hand as a custom sale, with the title and price shown. |
+| It isn't in the cart, or Some of it isn't in the cart | Add what's missing by hand as a custom sale, with the title and price shown. |
+| Check the cart | Something went in, but not quite right: a tab item to ring up by hand, or a line to mark paid on the staff page after they pay. It says which. |
+| Couldn't put Sam on the sale | Add them with the cart's **Add customer** button, so their spend counts. |
+| Take the payment in the cart first | A share of their booking is in this sale (a friend's, or another player's in the same game). Take that payment, then scan their code again. |
+| Sam's fee is in the cart (using a pass) | The pass would cover what the sale already charges. Take that payment first, or take the line off the sale. |
+| About Sam's pass | What the Lair app said at a pay-later check-in, like a pass that only covered some of them. What's left stays on their booking. |
 | It's in the cart, but not linked | After they pay, mark the booking paid on the staff page. |
 | Already in the cart | That booking already has a line in this sale: take that payment first (**Close and pay**), or take the line off the sale. |
 | Nothing to add | Everything of theirs is paid, or in this sale already. Something waiting in the sale? Tap **Close and pay**. |
 | Someone else's sale in the cart (yellow box) | If they're paying apart, take that payment first. Paying together? Carry on. |
 | Not everyone was checked in, or No one was checked in | Open the people it names to check them in anyway (another day, say). |
-| Waiting for the last payment… | The payment hasn't reached the Lair app yet: tap **Refresh** in a few seconds. Didn't go through? Tap **It wasn't paid**. |
+| Waiting for the last payment… | The payment hasn't reached the Lair app yet: tap **Refresh** in a few seconds (on a member code, scan it again). Didn't go through? Tap **It wasn't paid** on the booking. |
+| No answer from the Lair app | Check the iPad's internet and tap **Try again**. Nothing is charged twice: what went through is skipped. |
+| That didn't work | The Lair app said no, and says why. Do what it says. |
 | Couldn't find that pass use | Undo it on the staff page, under Passes, then open them again here. |
 | The tile says "App failed to load" | Close and reopen Shopify POS, and update it from the App Store. If it continues, note the device and iOS version and ask Claude. |
 
@@ -332,7 +349,13 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
 - **A group:** each ticked person still to come is checked in with `/pos/checkin` (their saved pass applies), each
   ticked person already here is asked for their lines with `pass: 'none'`, and every line goes in one sale.
 - **Split the bill:** `/pos/share` answers with the share's line. The iPad saves the share before the screen closes,
-  so the booking says "Waiting for the last payment…" until that payment reaches the Lair app.
+  so the booking says "Waiting for the last payment…" until that payment reaches the Lair app. Until then a member's
+  code, a group and a pass's **Use on…** leave that booking out (`waitingRefs` in `split.js`), so its share is never
+  charged twice.
+- **Named players** (round 11): a player's row has the game's code as its `ref`, `playerOf`, and their own share as
+  what's due; its cart line carries `_booking` and `_share`. The Lair app counts a payment as the sale customer's, and
+  the cart takes one line a booking, so with any share of a game in the sale the screen says to take that payment
+  first. A player's own share is never held back by someone else's payment on its way.
 - **GM pays:** the player's screen offers it on a GM game seat with something to pay and nothing paid or taken off
   it, and not while the seat's own fee is in the sale; the Lair app refuses, in words, a seat the GM can't pay for.
   After `/pos/cover` the screen looks the seat up again (`/pos/scan`) for its $0 row.

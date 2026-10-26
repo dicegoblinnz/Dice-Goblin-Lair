@@ -17,9 +17,11 @@ import { firstName, fold, money, peopleLabel, plural, shortDay, tablesLabel, tim
  *   customerId?: unknown, pass?: PassLike | null, refund?: string | null, note?: string, title?: string,
  *   players?: unknown[], party?: unknown[], gameId?: string | null, occurrenceId?: string | null,
  *   seriesId?: string | null, owed?: boolean, waived?: boolean, line?: unknown, onAccount?: boolean,
- *   gmPays?: GmPays | null }} Row
+ *   gmPays?: GmPays | null, playerOf?: { name?: string } | null }} Row
  *   seriesId: a weekly regular's seat. owed: a regular's seat whose session ended unpaid (paid like any fee, never
  *   checked in); the Lair app sends its cart line as `line` with a member's rows. waived: staff let them off.
+ *   playerOf: a named player in someone else's game (round 11): the row's due is their own share, and its cart line
+ *   carries the game's code with `_share`.
  *   kind 'gm-cover': a GM's charge for one of their player's seats (round 21), on the GM's member code: paid, never
  *   checked in. covered: cents a session pass took off (never the GM paying: that's gmPays).
  * @typedef {{ key: string, kind?: string, title?: string, start?: number, end?: number, tables?: string[], rows: Row[] }} Group
@@ -139,26 +141,46 @@ export function withCover(row, cover, payer) {
 }
 
 /**
+ * Whether a row is held back from the cart because the last share of its bill left the cart a moment ago and hasn't
+ * reached the Lair app yet (split.js waitingRefs): until it lands, adding what's left would charge that share again. A
+ * named player's own share of a game (playerOf) is theirs alone, so it's never held.
+ * @param {Row | null | undefined} row
+ * @param {string[]} [held] codes with a share payment on its way
+ */
+export function isHeld(row, held = []) {
+  return Boolean(row?.ref) && !row?.playerOf && (held || []).includes(String(row?.ref));
+}
+
+/**
  * The badges for a row in a list: Here, Paid, Due $X (Owed $X for a regular's unpaid session), No-show or Refund?,
- * plus "In cart" when its line is already in this POS cart, "Pass" when a saved pass will be used at check-in,
- * "GM pays" when the GM pays for the seat (instead of "Free"), and "Weekly" for a weekly regular's seat.
+ * plus "In cart" when its line is already in this POS cart, "Payment on its way" when the last share of it was just
+ * paid (isHeld), "Pass" when a saved pass will be used at check-in, "GM pays" when the GM pays for the seat (instead of
+ * "Free"), and "Weekly" for a weekly regular's seat.
  * @param {Row} row
  * @param {boolean} [inCart] a line for it is in this POS cart already
+ * @param {boolean} [held] the last share of it was just paid and hasn't reached the Lair app yet
  * @returns {Badge[]}
  */
-export function rowBadges(row, inCart = false) {
-  let badges = stateBadges(row, inCart);
+export function rowBadges(row, inCart = false, held = false) {
+  let badges = stateBadges(row, inCart, held);
   if (gmPaysFor(row)) badges = [...badges.filter((b) => b.text !== 'Free'), { tone: 'info', text: 'GM pays' }];
   if (row?.seriesId) badges.push({ tone: 'info', text: 'Weekly' });
   return badges;
 }
 
-/** @param {Row} row @param {boolean} inCart @returns {Badge[]} */
-function stateBadges(row, inCart) {
+/** @param {Row} row @param {boolean} inCart @param {boolean} held @returns {Badge[]} */
+function stateBadges(row, inCart, held) {
   const due = dueOf(row);
   const owed = isOwed(row);
   /** @type {Badge | null} */
-  const moneyBadge = due > 0 ? (inCart ? { tone: 'info', text: 'In cart' } : { tone: 'warning', text: `${owed ? 'Owed' : 'Due'} ${money(due)}` }) : null;
+  const moneyBadge =
+    due > 0
+      ? inCart
+        ? { tone: 'info', text: 'In cart' }
+        : held
+          ? { tone: 'info', text: 'Payment on its way' }
+          : { tone: 'warning', text: `${owed ? 'Owed' : 'Due'} ${money(due)}` }
+      : null;
   switch (rowState(row)) {
     case 'refund':
       return [{ tone: 'critical', text: 'Refund?' }];
@@ -464,12 +486,15 @@ export function passUsable(pass) {
 /**
  * Who a pass could be used on today: table bookings, seats and game spots (not event entries) with something still to
  * pay, whether they're here yet or not. Not an owed seat: passes are used at check-in, and those aren't checked in.
- * The holder's own bookings come first.
+ * Not one with a line in this cart (whole or a share): the pass would cover what the sale already charges. Not one
+ * whose last share is on its way to the Lair app (isHeld). The holder's own bookings come first.
  * @param {Today | null | undefined} today
  * @param {PassLike | null | undefined} pass
+ * @param {string[]} [inCart] codes with a line in the cart
+ * @param {string[]} [held] codes with a share payment on its way
  * @returns {{ row: Row, group: Group }[]}
  */
-export function passCandidates(today, pass) {
+export function passCandidates(today, pass, inCart = [], held = []) {
   const holder = String(pass?.holder?.customerId ?? '');
   /** @type {{ row: Row, group: Group }[]} */
   const list = [];
@@ -477,6 +502,7 @@ export function passCandidates(today, pass) {
     for (const row of group.rows) {
       const state = rowState(row);
       if (row.type === 'join' || (state !== 'waiting' && state !== 'arrived') || !dueOf(row) || isOwed(row)) continue;
+      if ((row.ref && inCart.includes(String(row.ref))) || isHeld(row, held)) continue;
       list.push({ row, group });
     }
   }

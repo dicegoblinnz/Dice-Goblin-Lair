@@ -14,6 +14,7 @@ import {
   groupBadges,
   groupDetails,
   groupSummary,
+  isHeld,
   isOwed,
   isPayOnly,
   mergeRows,
@@ -271,6 +272,24 @@ test('a pass can be used on table bookings, seats and game spots with something 
     ['bk_ana', 'bk_sam', 'bk_zoe'],
   );
   assert.deepEqual(passCandidates(null, pass), []);
+  // Never one whose fee (or a share of it) is in this sale: the pass would cover what the sale already charges.
+  assert.deepEqual(passCandidates(today, { code: 'P' }, ['ZB-KEA-20']).map((x) => x.row.id), ['bk_ana', 'bk_sam']);
+  // Nor one whose last share was just paid and hasn't reached the Lair app.
+  assert.deepEqual(passCandidates(today, { code: 'P' }, [], ['AN-GOLEM-12']).map((x) => x.row.id), ['bk_sam', 'bk_zoe']);
+});
+
+test('a booking whose last share is on its way says so, and a named player’s own share is never held', () => {
+  const zoe = { id: 'bk_zoe', type: 'booking', ref: 'ZB-KEA-20', name: 'Zoë van der Berg', people: 2, status: 'seated', arrivedAt: at(17), amount: 3000, paidAmount: 1500, due: 1500 };
+  assert.equal(isHeld(zoe, ['ZB-KEA-20']), true);
+  assert.equal(isHeld(zoe, []), false);
+  assert.equal(isHeld({ ...zoe, id: 'bp_tama', playerOf: { name: 'Zoë' } }, ['ZB-KEA-20']), false, 'Tama’s own share: his to pay');
+  assert.equal(isHeld({ ...zoe, ref: '' }, ['']), false);
+  assert.deepEqual(rowBadges(zoe, false, true), [
+    { tone: 'success', text: 'Here' },
+    { tone: 'info', text: 'Payment on its way' },
+  ]);
+  assert.deepEqual(rowBadges(zoe, true, true)[1], { tone: 'info', text: 'In cart' }, 'in the cart wins');
+  assert.deepEqual(rowBadges({ ...zoe, paidAmount: 3000, due: 0, paid: true }, false, true), [{ tone: 'success', text: 'Here' }], 'nothing left: no money badge');
 });
 
 test('the tile: people here of people booked, and a badge for those here with something to pay', () => {

@@ -18,6 +18,7 @@ import {
   sharesLeft,
   splitFirst,
   WAITING,
+  waitingRefs,
 } from '../extensions/lair-checkin/src/split.js';
 
 // Sam booked T4 for 4 people at $10 each and is splitting the bill.
@@ -104,6 +105,25 @@ test('a share put in the cart is in the cart, then waiting, until its payment la
   const second = pendingShare({ ...sam, paidAmount: 1000, due: 3000 }, 1000, now);
   assert.equal(second.expect, 2000);
   assert.equal(pendingState(second, { ...sam, paidAmount: 1000, due: 3000 }, [], now + 5000), 'waiting');
+});
+
+test('a booking whose last share was just paid is held back from the cart until the payment lands', () => {
+  const now = 1_000_000;
+  const notes = { 'booking:bk_sam': pendingShare(sam, 1000, now) };
+  // Paid on the Verifone a moment ago; the Lair app hasn't heard yet.
+  assert.deepEqual(waitingRefs(notes, [sam], [], now + 30_000), ['SJ-OWLBEAR-17']);
+  // Still in the cart: the cart itself holds it (one line a booking).
+  assert.deepEqual(waitingRefs(notes, [sam], ['SJ-OWLBEAR-17'], now + 30_000), []);
+  // Landed: any copy on screen that shows the payment wins (a member's fresh look, say).
+  assert.deepEqual(waitingRefs(notes, [sam, { ...sam, paidAmount: 1000, due: 3000 }], [], now + 30_000), []);
+  // Not on screen at all: held until the note runs out.
+  assert.deepEqual(waitingRefs(notes, [], [], now + 30_000), ['SJ-OWLBEAR-17']);
+  assert.deepEqual(waitingRefs(notes, [], [], now + PENDING_MS), []);
+  // Matched by the row it was made for, never by a row that only shares its code (a named player in the same game).
+  const kiri = { ...sam, id: 'bp_kiri', name: 'Kiri Tane', paidAmount: 1000, due: 0, playerOf: { name: 'Sam' } };
+  assert.deepEqual(waitingRefs(notes, [kiri], [], now + 30_000), ['SJ-OWLBEAR-17']);
+  assert.deepEqual(waitingRefs({}, [sam], [], now), []);
+  assert.deepEqual(waitingRefs(undefined, [sam], [], now), []);
 });
 
 test('saved notes are checked when they are read back', () => {

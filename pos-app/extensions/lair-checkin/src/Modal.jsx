@@ -57,9 +57,9 @@ import { checkIn, coverSeat, getToday, LairError, problemFor, scanCode, shareBil
 import { feeLines, itemCount, linesTotal, owedLines, shareLines, tabToast } from './lines.js';
 import { cardFilled, cardFullShort, cardFullWords } from './loyalty.js';
 import { customerNames } from './sale.js';
-import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState } from './split.js';
+import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState, WAITING, waitingRefs } from './split.js';
 import { loadPending, savePending, saveTileEntry } from './store.js';
-import { dueOf, findRow, gameTitle, isOwed, mergeRows, replaceRows, rowKey, tileEntry } from './today.js';
+import { dueOf, findRow, gameTitle, isHeld, isOwed, mergeRows, replaceRows, rowKey, tileEntry } from './today.js';
 import { CurrentScreen } from './views.jsx';
 
 export default async () => {
@@ -206,6 +206,16 @@ function CheckIn() {
     });
     if (done.length) forgetShares(done);
   }, [today, pending, cart.shares]);
+
+  /**
+   * Codes whose last share left the cart but hasn't reached the Lair app yet, from the notes as they are now
+   * (split.js waitingRefs): a member's code, a group and a pass's "Use on…" leave them out until the payment lands.
+   * @param {Row[]} [more] fresher copies than the Today list's (a member's fresh look)
+   */
+  function heldNow(more = []) {
+    const rows = [...more, ...(todayNow.current?.groups || []).flatMap((group) => group.rows || [])];
+    return waitingRefs(pendingNow.current, rows, sharesInCart(shopify.cart.current.value), Date.now());
+  }
 
   /* ---------------- doing one thing at a time ---------------- */
 
@@ -587,6 +597,9 @@ function CheckIn() {
         const due = dueOf(fresh);
         toast(`${first ? `${first}'s` : "They're"} checked in.${due ? ` ${money(due)} to pay later.` : ''}`);
         navigate(stackAfterPerson(stackNow.current, screen.groupKey, (key) => Boolean(todayNow.current?.groups.some((g) => g.key === key))));
+        // What the Lair app said about the pass ("covered 1 of 2 people"), on the screen staff go back to.
+        const notice = checkinOutcome(answer).notice;
+        if (notice) say(`About ${first ? `${first}'s` : 'the'} pass`, notice, 'warning');
       },
       checkInOnly,
       'check-in-only',
@@ -967,7 +980,7 @@ function CheckIn() {
     const screen = topGroup();
     const group = screen ? todayNow.current?.groups.find((g) => g.key === screen.key) : null;
     if (!screen || !group) return;
-    const plan = groupPlan(group.rows, screen.ticked, cart.bookings);
+    const plan = groupPlan(group.rows, screen.ticked, bookingsInCart(shopify.cart.current.value), heldNow());
     if (!plan.label) return;
     run(
       plan.checkIn.length ? 'Checking them in…' : 'Adding to the cart…',
@@ -1100,7 +1113,7 @@ function CheckIn() {
           updateMember((shown) => ({ ...shown, rows: fresh.rows, tab: fresh.tab, passes: fresh.passes }));
         }
         const before = fresh?.loyalty || screen.loyalty || null;
-        const inCart = { bookings: bookingsInCart(shopify.cart.current.value), tabs: tabsInCart(shopify.cart.current.value) };
+        const inCart = { bookings: bookingsInCart(shopify.cart.current.value), tabs: tabsInCart(shopify.cart.current.value), held: heldNow(rows) };
         const plan = everythingPlan(rows, current.tab, inCart);
         if (!plan.show) {
           const something = (shopify.cart.current.value?.lineItems || []).length > 0;
@@ -1247,6 +1260,16 @@ function CheckIn() {
     const screen = topPass();
     if (!screen) return;
     const pass = screen.pass;
+    // The pass would cover what the sale already charges (or a share that's just been paid): never both.
+    const first = firstName(row.name) || 'them';
+    if (row.ref && bookingsInCart(shopify.cart.current.value).includes(String(row.ref))) {
+      say(`${first === 'them' ? 'Their' : `${first}'s`} fee is in the cart`, `Take that payment first, or take the line off the sale, then use the pass on ${first}.`);
+      return;
+    }
+    if (isHeld(row, heldNow())) {
+      say(WAITING, `A share of ${row.ref} was paid a moment ago and hasn't reached the Lair app yet. Try again in a few seconds.`, 'info');
+      return;
+    }
     run(
       `Checking ${firstName(row.name) || 'them'} in with ${pass.label || 'the pass'}…`,
       async () => {
@@ -1266,18 +1289,21 @@ function CheckIn() {
   /* ---------------- drawing ---------------- */
 
   const top = stack[stack.length - 1];
+  const now = Date.now();
+  // Shares on their way to the Lair app: checked against the Today list and the member on screen (their fresh look).
+  const onScreen = [...(top.name === 'member' ? top.rows : []), ...(today?.groups || []).flatMap((group) => group.rows || [])];
   /** @type {Ctx} */
   const ctx = {
     today,
     loading,
     listProblem,
-    todayKey: today?.day || dayKey(Date.now()),
-    now: Date.now(),
+    todayKey: today?.day || dayKey(now),
+    now,
     busy,
     busyKey,
     problem,
     query,
-    cart,
+    cart: { ...cart, held: waitingRefs(pending, onScreen, cart.shares, now) },
     names: customerNames(today, seen.current),
     pending,
     backLabel: backLabel(stack, today),

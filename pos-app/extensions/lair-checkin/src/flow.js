@@ -4,7 +4,7 @@ import { readCode } from './codes.js';
 import { dateLabel, dayKey, money, plural, shortDay, timeRange } from './format.js';
 import { addedToast, everythingToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabCents, tabItems } from './lines.js';
 import { canSplit, splitFirst } from './split.js';
-import { dueOf, findRow, isArrived, isOwed, isPayOnly, passSummary, passUsable, rowKey, rowState } from './today.js';
+import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, passUsable, rowKey, rowState } from './today.js';
 
 /**
  * @typedef {import('./today.js').Row} Row
@@ -418,16 +418,22 @@ export function whyNothing(row) {
  * in" is there for anyone paying later. Splitting leads when they said they'd split or part is paid already, and a
  * pass picked for what's left leads once they're here.
  * @param {{ row: Row, plan: ReturnType<typeof personPlan>, choice: string | null, inUse?: { code: string } | null,
- *   inCart: boolean, share: import('./split.js').PendingState, justChecked: boolean }} input
- *   choice: the pass choice; inUse: the pass covering it now (passInUse); inCart: its line is in this cart; share:
- *   where a share of its bill put in the cart from this iPad has got to; justChecked: this screen checked them in
+ *   inCart: boolean, shareInCart?: boolean, share: import('./split.js').PendingState, justChecked: boolean }} input
+ *   choice: the pass choice; inUse: the pass covering it now (passInUse); inCart: a line for its booking is in this
+ *   cart; shareInCart: that line is a share (someone's part of the bill, or a named player's own share); share: where a
+ *   share of its bill put in the cart from this iPad has got to; justChecked: this screen checked them in
  * @returns {PersonAction}
  */
-export function personAction({ row, plan, choice, inUse = null, inCart, share, justChecked }) {
+export function personAction({ row, plan, choice, inUse = null, inCart, shareInCart = false, share, justChecked }) {
   const due = dueOf(row);
   /** @param {PersonActionName} action @param {string} label @param {Partial<PersonAction>} [extra] @returns {PersonAction} */
   const make = (action, label, extra = {}) => ({ action, label, force: false, hint: '', more: [], ...extra });
-  const close = make('close', 'Close and pay', { hint: "It's in the cart. Take payment with Pay on Verifone." });
+  // Someone's share of this booking is in the sale (not one this screen is waiting on): that payment comes first, as
+  // the cart takes one line a booking, and the sale's customer is who the Lair app counts as paying.
+  const close =
+    inCart && shareInCart && share !== 'in-cart'
+      ? make('close', 'Close and pay', { hint: 'A share of this booking is in the cart. Take that payment first, then open them again.' })
+      : make('close', 'Close and pay', { hint: "It's in the cart. Take payment with Pay on Verifone." });
   const add = make('add', `Add ${money(due)} to cart`, { hint: CLOSES });
   if (plan.stage === 'pay' && share === 'waiting' && !inCart) {
     return make('refresh', 'Refresh', { hint: 'Tap Refresh in a few seconds to see the last payment.', more: [{ action: 'forget', label: "It wasn't paid" }] });
@@ -510,7 +516,8 @@ export function afterCart(added, { who = '', ref = '', notices = [] } = {}) {
 /**
  * The group view's ticks, for people paying together (Mo, 27 Oct 2026: "a whole group" in fewer taps).
  *   tickable  rowKeys of rows that can be ticked: still to come, or here with something to pay that isn't in the cart
- *             (never a no-show, a refund to sort out, a cancellation, or a seat that's paid, never checked in)
+ *             and isn't waiting on a share's payment (never a no-show, a refund to sort out, a cancellation, or a seat
+ *             that's paid, never checked in)
  *   toCome    rowKeys of the rows still to come ("Tick everyone still to come")
  *   checkIn   the ticked rows to check in; add: the ticked rows already here, whose fees go in the cart
  *   due       what the ticked rows come to, before any saved pass
@@ -520,8 +527,9 @@ export function afterCart(added, { who = '', ref = '', notices = [] } = {}) {
  * @param {Row[]} rows
  * @param {string[]} ticked rowKeys
  * @param {string[]} [inCart] codes with a line in the cart already
+ * @param {string[]} [held] codes whose last share is on its way to the Lair app (isHeld)
  */
-export function groupPlan(rows, ticked, inCart = []) {
+export function groupPlan(rows, ticked, inCart = [], held = []) {
   const picked = new Set(ticked || []);
   /** @type {string[]} */
   const tickable = [];
@@ -540,7 +548,7 @@ export function groupPlan(rows, ticked, inCart = []) {
     const state = rowState(row);
     const cartHas = Boolean(row.ref) && inCart.includes(String(row.ref));
     const waiting = state === 'waiting';
-    if (!waiting && !(state === 'arrived' && dueOf(row) > 0 && !cartHas)) continue;
+    if (!waiting && !(state === 'arrived' && dueOf(row) > 0 && !cartHas && !isHeld(row, held))) continue;
     const key = rowKey(row);
     tickable.push(key);
     if (waiting) toCome.push(key);
@@ -635,8 +643,9 @@ export function splitOwed(rows) {
  *   waiting  how many are still to come; due: what today's rows come to, before any saved pass
  * @param {Row[]} rows the freshest copies
  * @param {string[]} [inCart] codes with a line in the cart already
+ * @param {string[]} [held] codes whose last share is on its way to the Lair app (isHeld): left out until it lands
  */
-export function memberPlan(rows, inCart = []) {
+export function memberPlan(rows, inCart = [], held = []) {
   let waiting = 0;
   let due = 0;
   /** @type {Row[]} still to come: checked in one by one, their saved passes used (never POST /pos/checkin-member,
@@ -658,7 +667,7 @@ export function memberPlan(rows, inCart = []) {
       waiting += 1;
       coming.push(row);
     }
-    if ((state === 'waiting' || state === 'arrived') && dueOf(row) > 0 && !(row.ref && inCart.includes(String(row.ref)))) {
+    if ((state === 'waiting' || state === 'arrived') && dueOf(row) > 0 && !(row.ref && inCart.includes(String(row.ref))) && !isHeld(row, held)) {
       due += dueOf(row);
       if (state === 'arrived') owing.push(row);
     }
@@ -682,11 +691,12 @@ export function memberPlan(rows, inCart = []) {
  *   note      a word when a saved pass will come off at check-in, so the cart may come to less
  * @param {Row[]} rows the freshest copies, today's and owed
  * @param {Tab | null | undefined} tab
- * @param {{ bookings?: string[], tabs?: string[] }} [cart] codes and tabs with lines in the cart already
+ * @param {{ bookings?: string[], tabs?: string[], held?: string[] }} [cart] codes and tabs with lines in the cart already,
+ *   and codes whose last share is on its way to the Lair app (isHeld)
  */
-export function everythingPlan(rows, tab, { bookings = [], tabs = [] } = {}) {
+export function everythingPlan(rows, tab, { bookings = [], tabs = [], held = [] } = {}) {
   const split = splitOwed(rows);
-  const today = memberPlan(split.today, bookings);
+  const today = memberPlan(split.today, bookings, held);
   const owed = split.owed.filter((row) => isOwed(row) && !(row.ref && bookings.includes(String(row.ref))));
   const owedDue = owed.reduce((sum, row) => sum + dueOf(row), 0);
   const tabState = tabPlan(tab, tabs);
