@@ -155,6 +155,10 @@ GM's charge goes on the GM's account. The GM gets no GM credit for that seat.
   main button includes it ("Players' seats $10" under **To pay** when there's more to pay). Or it waits on her tab.
   Scanning the charge's own code shows "Paying for Mia's seat: Curse of Strahd" with **Add $10 to cart**. A charge is
   never checked in.
+- **Paying with her store credit** (her GM credit): put the charge in the cart as above, then in the POS cart tap
+  **Apply store credit** under Kate's name, and **Checkout**. Whatever her credit doesn't cover is paid as usual. POS
+  uses as much of her credit as the whole sale needs, so to use it only for the seat, put just the charge in that
+  sale. (This needs store credit turned on at the till: see "One-time setup".)
 - Changed your mind? Straight away, on the same screen, tap **Stop Kate paying**, then **Yes, stop Kate paying**.
   Mia's seat goes back to its full price. If Kate had paid already, staff get an email to give that money back.
   Once you've left Mia's screen, open the session on the staff page and tap **Stop the GM paying** there: the
@@ -198,7 +202,7 @@ sale isn't listed: take that payment first, or take the line off the sale.
 
 Steps 1 to 4 are done: a change under `pos-app/` that lands on `main` deploys by itself. They're kept here for
 reference, and the key needs renewing every 6 months (see the end of this section). Steps 5 and 6 are for a new
-iPad or a new staff login.
+iPad or a new staff login. Step 7 (store credit at the till) is new: check it once.
 
 Use your phone's web browser (Safari or Chrome) for GitHub, not the GitHub app: the app can't add secrets.
 
@@ -266,6 +270,14 @@ on for the shop.
 The tile works for the Shopify account the POS is logged in with (not the PIN of whoever is serving). The owner's
 account always can. For a staff account: Shopify admin → **Settings → Users** → that person → give them access to
 the **Dice Goblin Lair** app → **Save**. Without that, the check-in screen says "This POS login has no access".
+
+### 7. Let customers pay with store credit at the till
+
+So a GM can pay for a player's seat with their store credit (and anyone can spend theirs): Shopify admin →
+**Sales channels → Point of Sale** → under **Customize the in-store experience**, **Edit** next to **POS app** →
+**Checkout** → tap the eye next to **Store credit** → **Save**. Staff who take payments need the **Redeem store credit**
+permission in their POS role. Shopify POS 10.2 or later. In the cart, a customer with store credit then shows
+**Apply store credit**.
 
 ### Every 6 months: renew the deploy key
 

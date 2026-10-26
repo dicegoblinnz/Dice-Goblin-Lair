@@ -1,7 +1,7 @@
 // Which screen comes next, and what each screen offers: after a scan, at check-in, with passes and tabs, and after the
 // cart. No `shopify` global here, so `npm test` can check it without a POS.
 import { readCode } from './codes.js';
-import { dateLabel, dayKey, money, plural, shortDay, timeRange } from './format.js';
+import { dateLabel, dayKey, firstName, money, plural, shortDay, timeRange } from './format.js';
 import { addedToast, everythingToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabCents, tabItems } from './lines.js';
 import { canSplit, splitFirst } from './split.js';
 import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, passUsable, rowKey, rowState } from './today.js';
@@ -440,7 +440,9 @@ export function personAction({ row, plan, choice, inUse = null, inCart, shareInC
   }
   switch (plan.stage) {
     case 'owed':
-      return inCart ? close : add;
+      if (inCart) return close;
+      // A GM paying for a player's seat can use their store credit (GM credit): Shopify POS applies it in the cart.
+      return row.kind === 'gm-cover' ? { ...add, hint: storeCreditHint(row) } : add;
     case 'paid':
       return make('back', 'Back', { hint: 'Nothing to pay on this.' });
     case 'check-in': {
@@ -469,6 +471,17 @@ export function personAction({ row, plan, choice, inUse = null, inCart, shareInC
       // They're in with nothing to pay: the scanner is ready for the next code.
       return justChecked ? make('done', 'Done', { hint: 'Or scan the next code.', more: [{ action: 'back', label: 'Back' }] }) : make('back', 'Back');
   }
+}
+
+/**
+ * Under "Add $10 to cart" for a GM's charge (Mo, 27 Oct 2026: "The GM using their store credit to pay for a person"):
+ * Shopify POS takes store credit in the cart (Apply store credit, POS 10.2 and later), so what their credit covers
+ * never goes on the Verifone.
+ * @param {Row} row the charge, on the GM's account
+ */
+export function storeCreditHint(row) {
+  const first = firstName(row?.name);
+  return `The screen closes. Paying with ${first ? `${first}'s` : 'their'} store credit? In the cart, tap Apply store credit.`;
 }
 
 /** A banner's title when the Lair app said something staff should see before taking payment (a pass that didn't cover everyone, say). */

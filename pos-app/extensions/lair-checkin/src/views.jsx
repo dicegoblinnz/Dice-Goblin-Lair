@@ -874,13 +874,16 @@ function MemberView({ screen, ctx }) {
 
       {charges.length ? (
         <s-section heading="Paying for players">
-          <RowList
-            items={charges.map(({ row, group }) => ({ row, group, details: whenLabel(row.start, row.end) }))}
-            cart={cart}
-            busy={busy}
-            onOpen={openRow}
-            titleOf={(row) => whatLabel(row)}
-          />
+          <s-stack direction="block" gap="small">
+            <RowList
+              items={charges.map(({ row, group }) => ({ row, group, details: whenLabel(row.start, row.end) }))}
+              cart={cart}
+              busy={busy}
+              onOpen={openRow}
+              titleOf={(row) => whatLabel(row)}
+            />
+            <s-text color="subdued">{`${first || 'They'} can pay with store credit: once it's in the cart, tap Apply store credit there.`}</s-text>
+          </s-stack>
         </s-section>
       ) : null}
 

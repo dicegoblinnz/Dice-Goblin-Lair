@@ -514,6 +514,10 @@ test('once they’re here: add to cart, close and pay once it’s in the cart, o
   const charge = { id: 'bk_cv', type: 'booking', kind: 'gm-cover', ref: 'KA-OWL-12', name: 'Kate Moana', status: 'confirmed', due: 1000, start: at(3, 18), end: at(3, 22) };
   assert.deepEqual(personPlan(charge, null, TODAY), { stage: 'owed', force: false, warning: '' });
   assert.deepEqual([act(charge).action, act(charge).label], ['add', 'Add $10 to cart']);
+  // The GM can pay it with their store credit: Shopify POS applies it in the cart.
+  assert.equal(act(charge).hint, "The screen closes. Paying with Kate's store credit? In the cart, tap Apply store credit.");
+  assert.equal(act(lastWeek).hint, CLOSES, 'an owed seat: the usual words');
+  assert.equal(act(charge, { inCart: true }).action, 'close');
 });
 
 test('once they’re here: a pass picked for what’s left leads, and so does splitting when they’re splitting', () => {
