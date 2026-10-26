@@ -27,6 +27,8 @@ function fakeCtx() {
   const db = new DatabaseSync(':memory:');
   const sql = {
     exec(query, ...bindings) {
+      // as SQLite in a Durable Object: at most 100 bound values a query (Cloudflare's limit; 27 Oct 2026)
+      if (bindings.length > 100) throw new Error(`too many SQL variables: ${bindings.length}`);
       const stmt = db.prepare(query);
       if (/^\s*(select|with)/i.test(query)) {
         const rows = stmt.all(...bindings);
@@ -678,4 +680,22 @@ test('GM credit (round 21, review): the floor\'s figures hold when a credited se
   const view = (await gameOn(id)).gmCredit;
   assert.deepEqual([view.credited, view.unpaid, view.toCome], [{ players: 1, amount: 500 }, { players: 0 }, { players: 0 }]);
   assert.equal(creditedOf(id), 1);
+});
+
+test('GM credit (round 21): the staff floor with more than 100 sessions from 26 Oct 2026 (Cloudflare takes 100 bound values a query)', async () => {
+  // 27 Oct 2026: one bound value per session in gmCreditsIn broke the whole staff floor, and the staff page showed no games
+  const days = ['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
+  const ids = [];
+  for (const day of days) {
+    for (let t = 1; t <= 20; t += 1) ids.push(await list({ start: at(day, 18), end: at(day, 22), tables: [`T${t}`], title: `Session ${day} T${t}` }));
+  }
+  assert.equal(ids.length, 120);
+  const mias = await seat(ids[0], MIA, 'Mia', { paid: true });
+  await seat(ids[1], KAI, 'Kai');
+  const games = (await board(OWNER)).games;
+  assert.equal(games.filter((g) => ids.includes(g.id)).length, 120);
+  const first = games.find((g) => g.id === ids[0]);
+  assert.deepEqual([first.gmCredit.auto, first.gmCredit.toCome.players], [true, 1]);
+  assert.equal(games.find((g) => g.id === ids[1]).gmCredit.unpaid.players, 1);
+  assert.ok(mias.ref);
 });

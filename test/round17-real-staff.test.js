@@ -19,6 +19,8 @@ function fakeCtx() {
   const db = new DatabaseSync(':memory:');
   const sql = {
     exec(query, ...bindings) {
+      // as SQLite in a Durable Object: at most 100 bound values a query (Cloudflare's limit; 27 Oct 2026)
+      if (bindings.length > 100) throw new Error(`too many SQL variables: ${bindings.length}`);
       const stmt = db.prepare(query);
       if (/^\s*(select|with)/i.test(query)) {
         const rows = stmt.all(...bindings);

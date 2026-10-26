@@ -509,22 +509,19 @@ export const gmCreditMethods = {
   gmCreditsIn(from, to, rules) {
     const fee = rules.prices.gmCredit;
     const out = new Map();
-    const games = this.sql
-      .exec(
-        `SELECT g.id AS id, g.free AS free, COALESCE(g.gm_fee, ?) AS fee FROM games g
+    // The sessions, as a filter the later queries reuse as a subquery: never one bound value per session, because SQLite
+    // in a Durable Object takes at most 100 bound values a query (27 Oct 2026: a list of them broke the staff floor)
+    const PICK = `FROM games g
           WHERE g.starts_at >= ? AND g.ends_at > ? AND g.starts_at < ?
             AND NOT EXISTS (SELECT 1 FROM credits c WHERE c.game_id = g.id AND COALESCE(c.by, '') != 'auto')
-            AND NOT (g.credited IS NOT NULL AND NOT EXISTS (SELECT 1 FROM gm_credit_seats x WHERE x.game_id = g.id))`,
-        fee, GM_CREDIT.autoFrom, from, to,
-      )
-      .toArray();
+            AND NOT (g.credited IS NOT NULL AND NOT EXISTS (SELECT 1 FROM gm_credit_seats x WHERE x.game_id = g.id))`;
+    const picked = [GM_CREDIT.autoFrom, from, to];
+    const games = this.sql.exec(`SELECT g.id AS id, g.free AS free, COALESCE(g.gm_fee, ?) AS fee ${PICK}`, fee, ...picked).toArray();
     const byId = new Map(games.map((g) => [g.id, g]));
     for (const g of games) out.set(g.id, this.gmCreditBlank());
     if (!games.length) return out;
-    const ids = games.map((g) => g.id);
-    const marks = ids.map(() => '?').join(', ');
     // what's been decided, whatever's happened to the seat since
-    for (const r of this.sql.exec(`SELECT game_id, status, people, amount FROM gm_credit_seats WHERE game_id IN (${marks})`, ...ids).toArray()) {
+    for (const r of this.sql.exec(`SELECT game_id, status, people, amount FROM gm_credit_seats WHERE game_id IN (SELECT g.id ${PICK})`, ...picked).toArray()) {
       const view = out.get(r.game_id);
       if (r.status === 'sending') view.toCome.players += r.people;
       else if (view[r.status]) {
@@ -537,8 +534,8 @@ export const gmCreditMethods = {
       .exec(
         `SELECT b.game_id AS game_id, b.people AS people, b.paid AS paid, b.amount AS amount, b.waived AS waived, b.covered_by AS covered_by
            FROM bookings b LEFT JOIN gm_credit_seats s ON s.booking_id = b.id
-          WHERE b.game_id IN (${marks}) AND b.kind = 'gm-seat' AND b.status IN ('confirmed', 'seated', 'done') AND s.booking_id IS NULL`,
-        ...ids,
+          WHERE b.game_id IN (SELECT g.id ${PICK}) AND b.kind = 'gm-seat' AND b.status IN ('confirmed', 'seated', 'done') AND s.booking_id IS NULL`,
+        ...picked,
       )
       .toArray();
     for (const r of seats) {
