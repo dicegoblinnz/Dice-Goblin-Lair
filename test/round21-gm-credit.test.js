@@ -166,6 +166,13 @@ test('round 21: the words, word for word, and the start: sessions from midnight 
   assert.equal(W.notOver, "GM credit adds itself for this session: once it's over, the GM gets their fee for each player who's paid. There's nothing to tap.");
   assert.equal(W.nothingYet, "Nothing to add yet: the GM gets their fee for each player once they've paid.");
   assert.equal(W.allDone, "Done: the GM has had their fee for every player who's paid.");
+  assert.equal(W.sending, "Gobgob is adding the GM's credit right now. Check again in a minute.");
+  assert.equal(W.free, "This session was free, so there's no GM credit to add.");
+  assert.equal(W.noFee, "This GM covers their players' fee, so there's no store credit to add.");
+  assert.equal(W.marked, "The GM's credit has gone to them already, so it can't be kept now. Take it off their store credit on their member page if it shouldn't have gone.");
+  assert.equal(W.markedOn, "Marked: they were working, so there's no GM credit for this session.");
+  assert.equal(W.markedOff, "Marked: they weren't working, so they get their GM credit once it's over.");
+  assert.equal(W.undone('Rangi', '$5.00', "Mia's seat at Curse of Strahd", 'was cancelled'), "Rangi got $5.00 GM credit for Mia's seat at Curse of Strahd, but that seat was cancelled. If Rangi shouldn't keep it, take it off their store credit on their member page.");
   assert.equal(W.noAccount, "The GM isn't linked to a customer account, so add the store credit in Shopify admin.");
   assert.equal(W.refused('Customer is not eligible'), "Shopify didn't add the store credit (Customer is not eligible). Nothing moved. Gobgob tries again in 10 minutes.");
   assert.equal(W.failed('Customer is not eligible'), "Shopify didn't add the store credit after 5 tries (Customer is not eligible). Nothing moved. Add it in Shopify admin.");
@@ -526,4 +533,149 @@ test('GM credit (round 21): the 10-minute run does it, and the floor shows where
   assert.deepEqual([run.gmRuns, run.gmCredit?.credited], [{ looked: 1 }, 1]);
   assert.equal(stamps(RANGI), 1);
   assert.deepEqual(credited, [[RANGI, 500]]);
+});
+
+/* ---------------- after the review (26 Oct 2026) ---------------- */
+
+test('GM credit (round 21, review): round 17\'s mark still works: "they weren\'t working" pays a kept session; "they were" is refused once paid', async () => {
+  ok(await call('POST', 'team/gm-credit', { mode: 'shifts' }, OWNER));
+  ok(await call('POST', `team/${ANA}/hours`, { hours: [{ day: 'tue', from: '16:00', to: '23:00' }] }, OWNER));
+  const id = await list({ gm: ANA });
+  await seat(id, MIA, 'Mia', { paid: true });
+  nowIs(at('2026-10-27', 20));
+  // the floor says what the setting does for this staff GM's session
+  assert.deepEqual((await gameOn(id)).gmCredit.staffGm, { mode: 'shifts', credit: false, onShift: true, marked: false, shift: 'Tue 4pm–11pm', hours: 'Tue 4pm–11pm' });
+  nowIs(at('2026-10-27', 22, 10));
+  assert.equal((await lair.autoGmCredit(Date.now())).staff, 1);
+  // only the main account marks it
+  ok(await call('POST', 'team', { customerId: '9102', name: 'Hemi Walker', email: 'hemi@example.com', perms: ['sessions', 'money'] }, OWNER));
+  assert.equal((await credit(id, { onShift: false }, '9102')).status, 403);
+  const paid = ok(await credit(id, { onShift: false }));
+  assert.deepEqual([paid.status, paid.players, paid.amount], ['credited', 1, 500]);
+  assert.deepEqual(credited, [[ANA, 500]]);
+  assert.equal(lair.sql.exec("SELECT note FROM credits WHERE game_id = ? AND status = 'credited'", id).one().note, "Ana wasn't working then, as Mo marked on the staff page, so they earn it like any GM.");
+  assert.deepEqual((await gameOn(id)).gmCredit.staffGm.marked, true);
+  // marked "was working" now: it's gone already
+  assert.equal(said(await credit(id, { onShift: true })), `409 ${W.marked}`);
+  // marked ahead of time: kept for the run
+  const next = await list({ gm: ANA, start: at('2026-10-28', 18), end: at('2026-10-28', 22) });
+  await seat(next, KAI, 'Kai', { paid: true });
+  nowIs(at('2026-10-28', 19));
+  assert.deepEqual(ok(await credit(next, { onShift: false })), { players: 0, amount: 0, status: 'marked', note: W.markedOff, auto: true });
+  assert.equal(lair.game(next).gmOnShift, false);
+  nowIs(at('2026-10-28', 22, 10));
+  assert.equal((await lair.autoGmCredit(Date.now())).credited, 1, 'not in her hours on Wednesday anyway, and marked not working');
+});
+
+test('GM credit (round 21, review): the tap says why for a free session, a $0 GM fee, and how much to add by hand', async () => {
+  const free = await list({ title: 'Free night' });
+  ok(await call('POST', `games/${free}/free`, { free: true }, OWNER));
+  const noFee = await list({ tables: ['B2'], gmFee: 0, title: 'GM covers it' });
+  await seat(noFee, MIA, 'Mia', { paid: true });
+  const hemis = await list({ gm: null, email: 'hemi@example.com', tables: ['B3'], title: "Hemi's one-shot" });
+  await seat(hemis, KAI, 'Kai', { people: 2, paid: true });
+  nowIs(at('2026-10-27', 22, 10));
+  assert.deepEqual(ok(await credit(free)), { players: 0, amount: 0, status: 'none', note: W.free, auto: true });
+  assert.deepEqual(ok(await credit(noFee)), { players: 0, amount: 0, status: 'none', note: W.noFee, auto: true });
+  assert.deepEqual(ok(await credit(hemis)), { players: 2, amount: 1000, status: 'manual', note: W.noAccount, auto: true });
+  assert.deepEqual(ok(await credit(hemis)), { players: 2, amount: 1000, status: 'manual', note: W.noAccount, auto: true }, 'and after');
+});
+
+test('GM credit (round 21, review): a Session done tap cut off before this went live (credited, no record) is never paid again', async () => {
+  const id = await list();
+  await seat(id, MIA, 'Mia', { paid: true });
+  lair.sql.exec('UPDATE games SET credited = 1 WHERE id = ?', id);
+  nowIs(at('2026-10-27', 22, 10));
+  assert.equal(await lair.autoGmCredit(Date.now()), null);
+  assert.deepEqual(creditCalls, []);
+  // the floor leaves it to the card's own words (GM credited for 1 player)
+  assert.equal('gmCredit' in (await gameOn(id)), false);
+});
+
+test('GM credit (round 21, review): a failed Shopify login is "nothing sent": tried again, not left for staff to check', async () => {
+  const { ShopifyAdmin } = await import('../src/shopify.js');
+  const admin = new ShopifyAdmin({ SHOP: 'test.myshopify.com', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret' }, { get: async () => null, put: async () => {}, delete: async () => {} });
+  admin.accessToken = async () => {
+    throw new Error('Shopify login failed (401): bad credentials');
+  };
+  await assert.rejects(admin.creditCustomer('5001', 500, 'NZD'), (e) => e.refused === true && /login failed/.test(e.message));
+});
+
+test('GM credit (round 21, review): the GM can\'t change while a credit is with Shopify; a credited seat\'s payment undone tells staff', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia', { paid: true });
+  nowIs(at('2026-10-27', 22, 10));
+  // with Shopify: the GM stays put
+  let release;
+  lair.shopify.creditCustomer = (customerId, cents) => new Promise((resolve) => {
+    release = () => {
+      credited.push([customerId, cents]);
+      resolve({ amount: { amount: (cents / 100).toFixed(2) } });
+    };
+  });
+  const running = lair.autoGmCredit(Date.now());
+  for (let i = 0; i < 20 && !release; i += 1) await new Promise((r) => setTimeout(r, 5));
+  assert.ok(release, 'with Shopify');
+  assert.equal(said(await call('POST', `games/${id}/gm`, { gmCustomerId: WIREMU, gmCustomerName: 'Wiremu', gmEmail: 'wiremu@example.com' }, OWNER)), `409 ${GM_SESSION_WORDS.gmCredited}`);
+  release();
+  await running;
+  assert.deepEqual(credited, [[RANGI, 500]]);
+  // Mia's payment was a mistake: unmarked, staff hear Rangi has credit for it
+  ok(await call('POST', `bookings/${mias.id}/update`, { paid: false }, OWNER));
+  assert.deepEqual(alerts.map((a) => a.subject), ['GM credit to check: Rangi Hohaia']);
+  assert.equal(alerts[0].intro, W.undone('Rangi Hohaia', '$5.00', "Mia's seat at Rangi's one-shot", "isn't marked paid any more"));
+});
+
+test('GM credit (round 21, review): each seat counts its own tries; a tap answers for its own session only', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia', { paid: true });
+  await seat(id, KAI, 'Kai', { paid: true });
+  const other = await list({ tables: ['B2'], title: 'Other one', start: at('2026-10-28', 18), end: at('2026-10-28', 22) });
+  const rias = await seat(other, RIA, 'Ria', { paid: true });
+  // Mia's seat has been refused four times already; Kai's is new
+  lair.sql.exec("INSERT INTO gm_credit_seats (booking_id, game_id, customer_id, people, amount, status, batch, note, tries, created_at, updated_at) VALUES (?, ?, ?, 1, 500, 'retry', 'gc_old', NULL, 4, ?, ?)", mias.id, id, RANGI, NOW, NOW);
+  nowIs(at('2026-10-27', 22, 10));
+  shopifySays = 'refuse';
+  const run = await lair.autoGmCredit(Date.now());
+  assert.deepEqual([run.failed, run.retry], [1, 1]);
+  assert.deepEqual(ledger(id).map((r) => [r.booking_id === mias.id ? 'Mia' : 'Kai', r.status, r.tries]).sort(), [['Kai', 'retry', 1], ['Mia', 'failed', 5]]);
+  shopifySays = null;
+  // a store credit stuck with Shopify for another session (an hour, so this tap finds it's to check) doesn't change what
+  // this session's tap says
+  lair.sql.exec("INSERT INTO gm_credit_seats (booking_id, game_id, customer_id, people, amount, status, batch, note, tries, created_at, updated_at) VALUES (?, ?, ?, 1, 500, 'sending', 'gc_stuck', NULL, 0, ?, ?)", rias.id, other, RANGI, at('2026-10-27', 21), at('2026-10-27', 21));
+  const tap = ok(await credit(id));
+  assert.equal(ledger(other)[0].status, 'check');
+  assert.deepEqual([tap.status, tap.players, tap.amount], ['credited', 1, 500], "Kai's, now");
+});
+
+test('GM stamps (round 21, review): the team as it was when the session started; players who don\'t book through the Lair count', async () => {
+  const rangis = await list();
+  await seat(rangis, MIA, 'Mia');
+  const anas = await list({ gm: ANA, tables: ['B2'] });
+  await seat(anas, KAI, 'Kai');
+  // Rangi is made a helper after his session, and Ana stops being one after hers
+  nowIs(at('2026-10-28', 10));
+  ok(await call('POST', 'team', { customerId: RANGI, name: 'Rangi Hohaia', email: 'rangi@example.com', perms: ['sessions'] }, OWNER));
+  ok(await call('POST', `team/${ANA}/remove`, {}, OWNER));
+  assert.deepEqual(await lair.gmRunUpkeep(Date.now()), { looked: 2 });
+  assert.deepEqual([stamps(RANGI), stamps(ANA)], [1, 0], 'Rangi wasn\'t staff then; Ana was');
+  // a session whose players are all ones the group already had (offline players): it ran
+  const group = await list({ gm: WIREMU, tables: ['B3'], start: at('2026-10-29', 18), end: at('2026-10-29', 22) });
+  lair.sql.exec('UPDATE games SET offline_players = 3 WHERE id = ?', group);
+  nowIs(at('2026-10-29', 19));
+  await lair.gmRunUpkeep(Date.now());
+  assert.equal(stamps(WIREMU), 1);
+});
+
+test('GM credit (round 21, review): the floor\'s figures hold when a credited seat is cancelled; a waived seat isn\'t "still to pay"', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia', { paid: true });
+  const kais = await seat(id, KAI, 'Kai');
+  nowIs(at('2026-10-27', 22, 10));
+  await lair.autoGmCredit(Date.now());
+  ok(await call('POST', `bookings/${kais.id}/update`, { waived: true }, OWNER));
+  ok(await call('POST', `bookings/${mias.id}/update`, { status: 'cancelled' }, OWNER));
+  const view = (await gameOn(id)).gmCredit;
+  assert.deepEqual([view.credited, view.unpaid, view.toCome], [{ players: 1, amount: 500 }, { players: 0 }, { players: 0 }]);
+  assert.equal(creditedOf(id), 1);
 });

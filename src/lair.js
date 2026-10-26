@@ -61,7 +61,7 @@ import { REPORT_COLUMNS, REPORT_TABLES, STAMP_WRITES, reportMethods } from './re
 // Round 20 (26 Oct 2026): the TTRPG page's sessions, in the page itself
 import { sessionsFeedMethods } from './sessions-feed.js';
 // Round 21 (26 Oct 2026): GMs' stamps, and GM credit that adds itself
-import { GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
+import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -994,7 +994,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1139,6 +1139,8 @@ export class Lair {
       free: Boolean(r.free), newSeats: Math.max(0, Number(r.new_seats) || 0),
       // 17 Oct 2026 (contract v18-private): invite only, whether it takes "Register interest", and its invite link's key
       private: Boolean(r.private), interestOpen: Boolean(r.private) && Boolean(r.interest_open), inviteKey: r.invite_key || null,
+      // Round 21: round 17's mark for its staff GM ('shifts'): working then (true), not (false), or their hours decide (null)
+      gmOnShift: r.gm_on_shift == null ? null : Boolean(r.gm_on_shift), gmOnShiftBy: r.gm_on_shift_by || null,
     };
   }
 
@@ -2260,7 +2262,13 @@ export class Lair {
         // onShift, shift and hours)
         if (creditView) {
           if (credits.has(g.id)) game.credit = credits.get(g.id);
-          if (autoCredit(g)) game.gmCredit = autoCredits.get(g.id) || this.gmCreditBlank();
+          if (autoCredit(g) && autoCredits.has(g.id)) {
+            game.gmCredit = autoCredits.get(g.id);
+            // and for a staff GM's session that's started, what the team's setting says (with the main account's mark)
+            const team = g.start <= now && !g.free ? gmTeam?.get(String(g.gmCustomerId)) : null;
+            const rule = team ? this.staffGmRule(g, team, rules, g.gmOnShift ?? null) : null;
+            if (rule) game.gmCredit.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, marked: rule.marked, shift: rule.shift, hours: rule.hours };
+          }
           const rule = readyForCredit(g, now) && gmTeam?.has(String(g.gmCustomerId)) ? this.staffGmRule(g, gmTeam.get(String(g.gmCustomerId)), rules) : null;
           if (rule) game.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, shift: rule.shift, hours: rule.hours };
         }
@@ -2856,6 +2864,8 @@ export class Lair {
       }
     }
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
+    // Round 21: a seat whose GM credit has gone, now not paid or taken off: staff hear, to decide whether the GM keeps it
+    if (next.kind === 'gm-seat') this.gmCreditUndone(booking, next);
     // Round 17: its library game follows it: let go when it's cancelled or a no-show, moved with it, played once it's checked in
     if (next.game) this.bookingGameChanged(booking, now);
     // Round 9: a bill with this on it stays true (paid by hand, waived or changed: see reconcileBills)
@@ -4157,7 +4167,7 @@ export class Lair {
     const before = this.game(id);
     // Round 21: a session from 26 Oct 2026 on has GM credit that adds itself (src/gm-credit.js): this tap just does it
     // now, once the session's over
-    if (before && autoCredit(before) && before.status !== 'cancelled') return this.creditGmNow(before);
+    if (before && autoCredit(before) && before.status !== 'cancelled') return this.creditGmNow(before, Date.now(), { onShift, who });
     const gm = before?.gmCustomerId ? await this.person(before.gmCustomerId) : null;
     // --- no awaits until the game is claimed, so two staff tapping "credit" at once can't pay twice ---
     const now = Date.now();

@@ -192,9 +192,17 @@ export class ShopifyAdmin {
    */
   async graphql(query, variables = {}, options = {}) {
     const { retried = false, timeout = null } = typeof options === 'boolean' ? { retried: options } : options || {};
+    // Round 21: no login, nothing sent, so nothing ran (a mutation's caller can safely try again: madeAnyway marks it refused)
+    let token;
+    try {
+      token = await this.accessToken({ timeout });
+    } catch (error) {
+      if (error && typeof error === 'object') error.nothingRan = true;
+      throw error;
+    }
     const response = await fetch(`https://${this.shop}/admin/api/${this.version}/graphql.json`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': await this.accessToken({ timeout }) },
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
       body: JSON.stringify({ query, variables }),
       ...(timeout ? { signal: AbortSignal.timeout(timeout) } : {}),
     });

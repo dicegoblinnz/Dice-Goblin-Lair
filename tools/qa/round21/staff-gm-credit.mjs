@@ -112,6 +112,29 @@ for (const size of sizes) {
   const tapped = await page.evaluate(async () => window.Lair.store.backend.creditGm('gm-r21-rangi', {}));
   check(`${tag} Session done on a round 21 session: nothing to tap, and it's all done`,
     tapped.auto === true && tapped.status === 'none' && tapped.note === "Done: the GM has had their fee for every player who's paid.", tapped);
+
+  // Round 17's marks still work: Not in their hours, Ana works Mondays to 11:59pm, so tonight's session is kept from her;
+  // the main account says she wasn't working (two taps), and she's credited
+  const weekday = await page.evaluate(() => ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][window.Lair.store.time.weekday(window.Lair.store.time.today())]);
+  await page.evaluate(async ([ana, day]) => {
+    const be = window.Lair.store.backend;
+    await be.teamGmCredit('shifts');
+    await be.teamHours(ana, [{ day, from: '16:00', to: '23:59' }]);
+    await window.Lair.store.refresh();
+  }, [ANA, weekday]);
+  await settle(page, 500);
+  const kept = await card(page, 'Ana’s staff one-shot');
+  const off = '.staff-gm-card [data-act="credit"][data-value="off"]';
+  check(`${tag} Not in their hours: Ana’s kept session offers the main account They weren’t working: credit $5`,
+    kept && JSON.stringify(kept.buttons) === JSON.stringify(['They weren’t working: credit $5']), kept);
+  await page.click(off);
+  await settle(page, 150);
+  await page.click(off);
+  await settle(page, 600);
+  const marked = await card(page, 'Ana’s staff one-shot');
+  check(`${tag} Marked not working: GM credited $5 for 1 player, no buttons left`,
+    marked && JSON.stringify(marked.badges) === JSON.stringify(['GM credited $5 for 1 player']) && marked.buttons.length === 0, marked);
+  await shot(page, `${size}-marked`, '[data-panel="games"]');
   await ctx.close();
 }
 

@@ -379,7 +379,8 @@ export const gmSessionMethods = {
     const game = this.game(id);
     if (!game) throw new RuleError('Game not found.', 404);
     if (game.status === 'cancelled') throw new RuleError('That game was cancelled.', 409);
-    if (game.credited != null) throw new RuleError(GM_SESSION_WORDS.gmCredited, 409);
+    // (round 21: and one whose GM credit has started going: with Shopify, gone, kept, or to check or add by hand)
+    if (game.credited != null || this.gmCreditStarted(game.id)) throw new RuleError(GM_SESSION_WORDS.gmCredited, 409);
     let gmCustomerId = null;
     let gmEmail = null;
     let picked = null;
@@ -401,7 +402,7 @@ export const gmSessionMethods = {
     const sameAccount = gmCustomerId ? String(game.gmCustomerId || '') === gmCustomerId : !game.gmCustomerId && String(game.gmEmail || '').toLowerCase() === String(gmEmail).toLowerCase();
     if (sameAccount && gm === game.gm) throw new RuleError(GM_SESSION_WORDS.gmSame);
     // every check before anything's saved (a bad scope makes no member record)
-    const sessions = this.sessionsFor(game, input?.scope).filter((s) => s.credited == null);
+    const sessions = this.sessionsFor(game, input?.scope).filter((s) => s.credited == null && !this.gmCreditStarted(s.id));
     if (picked) this.makeMember(picked, now);
     // the new GM's own bio from their GM profile (none yet: none), not the GM before's
     const gmBio = sameAccount ? game.gmBio || '' : (gmCustomerId && this.sql.exec('SELECT bio FROM gm_profiles WHERE customer_id = ?', gmCustomerId).toArray()[0]?.bio) || '';

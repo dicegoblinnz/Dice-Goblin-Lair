@@ -53,6 +53,12 @@ export const GM_CREDIT = Object.freeze({
 /** Whether a session's GM credit adds itself (round 21), rather than waiting for "Session done" */
 export const autoCredit = (game) => Number(game?.start ?? game?.starts_at) >= GM_CREDIT.autoFrom;
 
+/**
+ * Round 17's mark on a round 21 session, for the 'shifts' setting (creditGmNow): the main account said its staff GM was
+ * working then (gm_on_shift 1) or wasn't (0), whatever their hours say, and who said so (made when missing)
+ */
+export const GM_CREDIT_COLUMNS = [['games', 'gm_on_shift', 'INTEGER'], ['games', 'gm_on_shift_by', 'TEXT']];
+
 /** The round 21 tables (made when missing) */
 export const GM_CREDIT_TABLES = [
   // gm_runs: for each session under way, whether its GM was on the team then (staff 1: no GM stamp). customer_id is the
@@ -73,15 +79,17 @@ export const GM_CREDIT_TABLES = [
 /**
  * The sessions that earn their GM a stamp, as stampedSessions' columns (id, kind 'gm-run', at, people 1, tables,
  * occurrence_id, game_title, join_title). Two bound values: the GM's customer ID, then the loyalty start. A player's
- * seat is what says it ran (not the GM's own, if they booked one); a GM checked in on a seat of their own session has
- * that seat's stamp already, so the session gives them no second one.
+ * seat is what says it ran (not the GM's own, if they booked one), or players the group had who don't book through the
+ * Lair (offline_players); a GM checked in on a seat of their own session has that seat's stamp already, so the session
+ * gives them no second one.
  */
 export const GM_STAMP_ROWS = `
   SELECT g.id AS id, 'gm-run' AS kind, g.starts_at AS at, 1 AS people, g.tables AS tables, NULL AS occurrence_id, g.title AS game_title, NULL AS join_title
     FROM gm_runs r JOIN games g ON g.id = r.game_id AND g.gm_customer_id = r.customer_id
    WHERE r.customer_id = ? AND r.staff = 0 AND g.status IN ('open', 'full') AND g.starts_at >= ?
-     AND EXISTS (SELECT 1 FROM bookings s WHERE s.game_id = g.id AND s.kind = 'gm-seat' AND s.status IN ('confirmed', 'seated', 'done')
-                   AND (s.customer_id IS NULL OR s.customer_id != r.customer_id))
+     AND (COALESCE(g.offline_players, 0) > 0
+       OR EXISTS (SELECT 1 FROM bookings s WHERE s.game_id = g.id AND s.kind = 'gm-seat' AND s.status IN ('confirmed', 'seated', 'done')
+                   AND (s.customer_id IS NULL OR s.customer_id != r.customer_id)))
      AND NOT EXISTS (SELECT 1 FROM bookings s WHERE s.game_id = g.id AND s.kind = 'gm-seat' AND s.customer_id = r.customer_id AND s.status IN ('seated', 'done'))`;
 
 /** Every message the staff page or a GM can see, word for word in the contract */
@@ -90,6 +98,13 @@ export const GM_CREDIT_WORDS = {
   notOver: "GM credit adds itself for this session: once it's over, the GM gets their fee for each player who's paid. There's nothing to tap.",
   nothingYet: "Nothing to add yet: the GM gets their fee for each player once they've paid.",
   allDone: "Done: the GM has had their fee for every player who's paid.",
+  sending: "Gobgob is adding the GM's credit right now. Check again in a minute.",
+  free: "This session was free, so there's no GM credit to add.",
+  noFee: "This GM covers their players' fee, so there's no store credit to add.",
+  marked: "The GM's credit has gone to them already, so it can't be kept now. Take it off their store credit on their member page if it shouldn't have gone.",
+  markedOn: "Marked: they were working, so there's no GM credit for this session.",
+  markedOff: "Marked: they weren't working, so they get their GM credit once it's over.",
+  undone: (gm, amount, seat, why) => `${gm} got ${amount} GM credit for ${seat}, but that seat ${why}. If ${gm} shouldn't keep it, take it off their store credit on their member page.`,
   noAccount: "The GM isn't linked to a customer account, so add the store credit in Shopify admin.",
   refused: (said) => `Shopify didn't add the store credit (${said}). Nothing moved. Gobgob tries again in 10 minutes.`,
   failed: (said) => `Shopify didn't add the store credit after ${GM_CREDIT.maxTries} tries (${said}). Nothing moved. Add it in Shopify admin.`,
@@ -108,13 +123,15 @@ export const gmCreditMethods = {
 
   /**
    * The 10-minute run: for sessions under way or over since the loyalty start (not cancelled, with a GM account), whether
-   * their GM is on the team, once each (gm_runs). A GM Shopify can't tell about (tags not read, not a helper) is asked
-   * again next run. Returns { looked } or null. Awaits Shopify's tags (person(): kept 5 minutes).
+   * their GM was on the team then, once each (gm_runs): the main account (tagged staff in Shopify), or a helper at the
+   * time the session started (the team's log, staff_log, says when each was made a helper and when they stopped). A GM
+   * whose tags Shopify couldn't read is asked again next run, unless they were a helper then. Returns { looked } or
+   * null. Awaits Shopify's tags (taggedPerson: kept 5 minutes).
    */
   async gmRunUpkeep(now = Date.now()) {
     const rows = this.sql
       .exec(
-        `SELECT g.id AS id, g.gm_customer_id AS gm FROM games g
+        `SELECT g.id AS id, g.gm_customer_id AS gm, g.starts_at AS start FROM games g
           WHERE g.gm_customer_id IS NOT NULL AND g.status IN ('open', 'full') AND g.starts_at >= ? AND g.starts_at <= ?
             AND NOT EXISTS (SELECT 1 FROM gm_runs r WHERE r.game_id = g.id AND r.customer_id = g.gm_customer_id)
           ORDER BY g.starts_at LIMIT ?`,
@@ -122,33 +139,49 @@ export const gmCreditMethods = {
       )
       .toArray();
     if (!rows.length) return null;
-    const team = new Map();
+    // the main account's tags (null: Shopify couldn't say)
+    const owner = new Map();
     for (const id of [...new Set(rows.map((r) => String(r.gm)))].slice(0, GM_CREDIT.lookupsPerRun)) {
-      const person = await this.person(id);
-      // (a helper is known without Shopify; anyone else whose tags couldn't be read waits for the next run)
-      if (person?.tagsFailed && !person.staff) continue;
-      team.set(id, Boolean(person?.staff));
+      const person = await this.taggedPerson(id);
+      owner.set(id, person?.tagsFailed ? null : Boolean(person?.staff));
     }
     // --- no awaits from here on ---
     let looked = 0;
     for (const r of rows) {
       const id = String(r.gm);
-      if (!team.has(id)) continue;
+      if (!owner.has(id)) continue;
+      const helper = this.helperAt(id, r.start);
+      // (a GM Shopify couldn't say about waits for the next run, unless they were a helper then)
+      if (owner.get(id) === null && !helper) continue;
+      const staff = helper || owner.get(id);
       this.write(
         `INSERT INTO gm_runs (game_id, customer_id, staff, at) VALUES (?, ?, ?, ?)
          ON CONFLICT(game_id) DO UPDATE SET customer_id = excluded.customer_id, staff = excluded.staff, at = excluded.at`,
-        r.id, id, team.get(id) ? 1 : 0, Date.now(),
+        r.id, id, staff ? 1 : 0, Date.now(),
       );
       looked += 1;
     }
     return looked ? { looked } : null;
   },
 
+  /**
+   * Whether someone was a helper at a time (ms), from the team's log (staff_log: 'added', 'changed', 'removed'): the
+   * last entry before then says. Nothing logged before then: not a helper then (they were made one later), unless
+   * nothing's logged for them at all, when it's whether they're one now. No awaits.
+   */
+  helperAt(customerId, at) {
+    const before = this.sql.exec('SELECT action FROM staff_log WHERE customer_id = ? AND at <= ? ORDER BY at DESC, rowid DESC LIMIT 1', String(customerId), at).toArray()[0];
+    if (before) return before.action !== 'removed';
+    if (this.sql.exec('SELECT 1 FROM staff_log WHERE customer_id = ? LIMIT 1', String(customerId)).toArray().length) return false;
+    return Boolean(this.helperRow(customerId));
+  },
+
   /* ---------------- GM credit that adds itself ---------------- */
 
   /**
    * The seats ready for their GM's credit now: in a round 21 session that's over and isn't cancelled, free or without a
-   * GM fee, that nobody credited with "Session done"; paid (amount over $0: a free seat isn't a paying player's) and not
+   * GM fee, that nobody credited with "Session done" (a credits row of theirs, or credited set with nothing in the
+   * ledger: a tap whose answer never came back); paid (amount over $0: a free seat isn't a paying player's) and not
    * cancelled or a no-show; not decided yet, or Shopify said no last time. gameId: just that session's. No awaits.
    */
   gmCreditReady(now, rules, gameId = null) {
@@ -162,6 +195,7 @@ export const gmCreditMethods = {
             AND g.starts_at >= ? AND g.ends_at <= ? AND g.status IN ('open', 'full') AND COALESCE(g.free, 0) = 0
             AND COALESCE(g.gm_fee, ?) > 0
             AND NOT EXISTS (SELECT 1 FROM credits c WHERE c.game_id = g.id AND COALESCE(c.by, '') != 'auto')
+            AND NOT (g.credited IS NOT NULL AND NOT EXISTS (SELECT 1 FROM gm_credit_seats x WHERE x.game_id = g.id))
             AND (s.booking_id IS NULL OR s.status = 'retry')
             ${gameId ? 'AND g.id = ?' : ''}
           ORDER BY g.ends_at, b.created_at, b.id LIMIT ?`,
@@ -200,15 +234,17 @@ export const gmCreditMethods = {
         if (!game || String(game.gmCustomerId || '') !== gm) continue;
         const count = seats.reduce((n, r) => n + r.people, 0);
         const due = seats.reduce((n, r) => n + r.people * r.fee, 0);
-        const rule = this.staffGmRule(game, person, rules);
+        // (round 17's mark, for 'shifts': the main account said they were working then, or weren't)
+        const rule = this.staffGmRule(game, person, rules, game.gmOnShift ?? null);
+        const markedBy = rule?.marked ? this.markerName(game.gmOnShiftBy) : '';
         if (rule && !rule.credit) {
-          const note = this.staffGmNote(rule, game, due, count, '');
+          const note = this.staffGmNote(rule, game, due, count, markedBy);
           for (const r of seats) this.saveGmCreditSeat(r, gm, { amount: 0, status: 'staff', batch, note, at });
           this.recordGmCredit(id, gm, { players: count, amount: 0, status: 'staff', note, at });
           out.staff += count;
           continue;
         }
-        const note = rule ? this.staffGmNote(rule, game, due, count, '') : '';
+        const note = rule ? this.staffGmNote(rule, game, due, count, markedBy) : '';
         for (const r of seats) this.saveGmCreditSeat(r, gm, { amount: r.people * r.fee, status: 'sending', batch, note, at });
         sending.push({ id, count, due, note });
       }
@@ -227,6 +263,36 @@ export const gmCreditMethods = {
     }
     const decided = out.credited + out.staff + out.manual + out.retry + out.failed + out.check;
     return decided ? out : null;
+  },
+
+  /**
+   * Whether a session's GM credit has started going (a seat with Shopify, credited, kept, to check or added by hand), so
+   * its GM can't change now (POST /games/:id/gm). Shopify saying no left nothing moved, so that doesn't count. No awaits.
+   */
+  gmCreditStarted(gameId) {
+    return this.sql.exec("SELECT 1 FROM gm_credit_seats WHERE game_id = ? AND status IN ('sending', 'credited', 'staff', 'check', 'manual') LIMIT 1", gameId).toArray().length > 0;
+  },
+
+  /**
+   * After staff change a seat (updateBooking): one whose GM credit has gone to its GM, now not marked paid (its payment
+   * undone) or taken off (cancelled, or a no-show), means the GM may have credit for a seat nobody paid for. Nothing's
+   * taken back by itself: staff hear, once a day for each seat, and decide. No awaits.
+   */
+  gmCreditUndone(before, after) {
+    const row = this.sql.exec("SELECT * FROM gm_credit_seats WHERE booking_id = ? AND status = 'credited'", after.id).toArray()[0];
+    if (!row) return;
+    const unpaid = before.paid && !after.paid;
+    const off = !['cancelled', 'noshow'].includes(before.status) && ['cancelled', 'noshow'].includes(after.status);
+    if (!unpaid && !off) return;
+    const game = this.game(row.game_id);
+    const gm = (row.customer_id && this.memberName ? this.memberName(row.customer_id) : '') || game?.gm || 'The GM';
+    const seat = `${String(after.name || 'a player').split(' ')[0]}'s seat at ${game?.title || 'their session'}`;
+    const why = unpaid ? "isn't marked paid any more" : after.status === 'noshow' ? 'was marked a no-show' : 'was cancelled';
+    this.staffAlert(`gm-credit-undone:${after.id}`, `GM credit to check: ${gm}`, {
+      title: 'GM credit to check',
+      intro: GM_CREDIT_WORDS.undone(gm, money(row.amount), seat, why),
+      details: [['GM', gm], ['Seat', after.ref], ['GM credit', money(row.amount)]],
+    });
   },
 
   /** One seat's record, written before Shopify is asked (or with what was decided). No awaits. */
@@ -259,20 +325,27 @@ export const gmCreditMethods = {
     const count = seats.reduce((n, r) => n + r.people, 0);
     const refused = Boolean(error?.refused);
     if (refused) {
-      const last = seats.some((r) => (r.tries || 0) + 1 >= GM_CREDIT.maxTries);
-      const note = last ? GM_CREDIT_WORDS.failed(said(error)) : GM_CREDIT_WORDS.refused(said(error));
-      this.write(
-        `UPDATE gm_credit_seats SET status = ?, tries = tries + 1, note = ?, updated_at = ? WHERE batch = ? AND status = 'sending'`,
-        last ? 'failed' : 'retry', note, at, batch,
-      );
-      if (last) {
-        out.failed += count;
+      // each seat counts its own tries: one new to this batch isn't failed by another's fifth
+      const failed = [];
+      for (const r of seats) {
+        const last = (r.tries || 0) + 1 >= GM_CREDIT.maxTries;
+        this.write(
+          'UPDATE gm_credit_seats SET status = ?, tries = tries + 1, note = ?, updated_at = ? WHERE booking_id = ? AND status = \'sending\'',
+          last ? 'failed' : 'retry', last ? GM_CREDIT_WORDS.failed(said(error)) : GM_CREDIT_WORDS.refused(said(error)), at, r.booking_id,
+        );
+        if (last) failed.push(r);
+        else out.retry += r.people;
+      }
+      if (failed.length) {
+        const lost = failed.reduce((n, r) => n + r.amount, 0);
+        const who = failed.reduce((n, r) => n + r.people, 0);
+        out.failed += who;
         this.staffAlert(`gm-credit-failed:${batch}`, `GM credit to add by hand: ${name}`, {
           title: 'GM credit Shopify wouldn\'t add',
-          intro: `Shopify said no to ${name}'s GM credit ${GM_CREDIT.maxTries} times, so nothing was added. Add ${money(total)} to their store credit in Shopify admin.`,
-          details: [['GM', name], ['Store credit', money(total)], ['For', players(count)], ['Shopify said', said(error)]],
+          intro: `Shopify said no to ${name}'s GM credit ${GM_CREDIT.maxTries} times, so nothing was added. Add ${money(lost)} to their store credit in Shopify admin.`,
+          details: [['GM', name], ['Store credit', money(lost)], ['For', players(who)], ['Shopify said', said(error)]],
         }, at);
-      } else out.retry += count;
+      }
       return;
     }
     const note = GM_CREDIT_WORDS.check(said(error));
@@ -344,54 +417,127 @@ export const gmCreditMethods = {
 
   /**
    * POST /games/:id/credit for a round 21 session (creditGm hands it here): GM credit adds itself, so this just does
-   * now what the next run would. Before it's over: 409 (notOver). After: { players, amount, status, note, auto: true }
-   * for what this tap did (status 'credited', 'staff', 'manual', 'check', 'retry', 'failed' or 'none').
+   * now what the next run would, for this session. onShift (the main account, the 'shifts' setting; creditGm checked
+   * who may send it): round 17's mark that a staff GM was working then (true) or wasn't (false), whatever their hours
+   * say, kept on the session for the runs to come. Marked "wasn't working" after their seats were kept from them, those
+   * seats are decided again (so they're paid now); marked "was working" once something's gone to them: 409 (marked).
+   * Before the session's over: 409 (notOver), or with a mark, { status: 'marked', note } (kept for the run once it's
+   * over). After: { players, amount, status, note, auto: true }
+   * for what this tap did: 'credited' (amount), 'staff', 'manual' (amount: to add by hand), 'check', 'retry' or 'failed'
+   * (with that seat's note). With nothing to do now: where the session is up to ('sending' while another run has it
+   * with Shopify, then 'check', 'failed', 'retry' or 'manual'), or 'none' with why (a free session, a $0 GM fee, a
+   * seat still to pay, or all done).
    */
-  async creditGmNow(game, now = Date.now()) {
+  async creditGmNow(game, now = Date.now(), { onShift = null, who = null } = {}) {
+    if (typeof onShift === 'boolean') {
+      this.markOnShift(game, onShift, who);
+      // marked ahead of time: kept for the run once it's over
+      if (game.end > now) return { players: 0, amount: 0, status: 'marked', note: onShift ? GM_CREDIT_WORDS.markedOn : GM_CREDIT_WORDS.markedOff, auto: true };
+    }
     if (game.end > now) throw new RuleError(GM_CREDIT_WORDS.notOver, 409);
-    const done = await this.autoGmCredit(now, { gameId: game.id });
-    const seats = this.sql.exec('SELECT status, people, note FROM gm_credit_seats WHERE game_id = ? ORDER BY updated_at DESC, booking_id', game.id).toArray();
-    const noteOf = (status) => seats.find((s) => s.status === status)?.note || '';
+    // what this tap did: this session's seats that changed while it ran (another session's are never counted)
+    const read = () => this.sql.exec('SELECT booking_id, status, people, amount, note, batch, updated_at FROM gm_credit_seats WHERE game_id = ? ORDER BY updated_at DESC, booking_id', game.id).toArray();
+    const key = (r) => `${r.status}|${r.batch || ''}|${r.updated_at}`;
+    const was = new Map(read().map((r) => [r.booking_id, key(r)]));
+    await this.autoGmCredit(now, { gameId: game.id });
+    const seats = read();
+    const sum = (list) => ({ players: list.reduce((n, s) => n + s.people, 0), amount: list.reduce((n, s) => n + s.amount, 0) });
     const order = ['check', 'failed', 'retry', 'manual', 'staff', 'credited'];
-    const happened = order.find((k) => done?.[k] > 0);
-    if (happened === 'credited') return { players: done.credited, amount: done.amount, status: 'credited', note: noteOf('credited'), auto: true };
-    if (happened) return { players: done[happened], amount: 0, status: happened, note: noteOf(happened), auto: true };
-    // nothing to do now: where the session was already up to (a seat to check first), or that it's all done
+    const mine = seats.filter((s) => was.get(s.booking_id) !== key(s));
+    const happened = order.find((k) => mine.some((s) => s.status === k));
+    const answer = (status, list) => {
+      const { players, amount } = sum(list);
+      return { players, amount: ['credited', 'manual'].includes(status) ? amount : 0, status, note: list[0]?.note || '', auto: true };
+    };
+    if (happened) return answer(happened, mine.filter((s) => s.status === happened));
+    // nothing done now: where it's up to
+    const sending = seats.filter((s) => s.status === 'sending');
+    if (sending.length) return { ...answer('sending', sending), note: GM_CREDIT_WORDS.sending };
     const before = order.slice(0, 4).find((k) => seats.some((s) => s.status === k));
-    if (before) return { players: seats.filter((s) => s.status === before).reduce((n, s) => n + s.people, 0), amount: 0, status: before, note: noteOf(before), auto: true };
+    if (before) return answer(before, seats.filter((s) => s.status === before));
+    const fresh = this.game(game.id) || game;
+    if (fresh.free) return { players: 0, amount: 0, status: 'none', note: GM_CREDIT_WORDS.free, auto: true };
+    if ((fresh.gmFee ?? 1) === 0) return { players: 0, amount: 0, status: 'none', note: GM_CREDIT_WORDS.noFee, auto: true };
     const unpaid = this.sql
-      .exec("SELECT COUNT(*) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND amount > 0 AND status IN ('confirmed', 'seated', 'done')", game.id)
+      .exec("SELECT COUNT(*) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND waived = 0 AND amount > 0 AND status IN ('confirmed', 'seated', 'done')", game.id)
       .one().n;
     return { players: 0, amount: 0, status: 'none', note: unpaid || !seats.length ? GM_CREDIT_WORDS.nothingYet : GM_CREDIT_WORDS.allDone, auto: true };
   },
 
   /**
+   * Round 17's mark on a round 21 session (creditGmNow): kept on the session (gm_on_shift, gm_on_shift_by). "Wasn't
+   * working" frees the seats kept from them to be decided again; "was working" once anything's gone to them: 409. No
+   * awaits.
+   */
+  markOnShift(game, onShift, who) {
+    if (onShift) {
+      const gone = this.sql.exec("SELECT COUNT(*) AS n FROM gm_credit_seats WHERE game_id = ? AND status IN ('sending', 'credited', 'check')", game.id).one().n;
+      if (gone) throw new RuleError(GM_CREDIT_WORDS.marked, 409);
+    }
+    const now = Date.now();
+    this.write('UPDATE games SET gm_on_shift = ?, gm_on_shift_by = ?, updated_at = ? WHERE id = ?', onShift ? 1 : 0, who?.customerId ? String(who.customerId) : null, now, game.id);
+    if (!onShift) {
+      this.write("DELETE FROM gm_credit_seats WHERE game_id = ? AND status = 'staff'", game.id);
+      // (the session's credited count follows: only what's credited stays)
+      const done = this.sql.exec(`SELECT COALESCE(SUM(people), 0) AS n, COUNT(*) AS rows FROM gm_credit_seats WHERE game_id = ? AND status IN (${DONE.map(() => '?').join(', ')})`, game.id, ...DONE).one();
+      this.write('UPDATE games SET credited = ?, updated_at = ? WHERE id = ?', done.rows ? done.n : null, now, game.id);
+    }
+  },
+
+  /** The first name of whoever marked a staff GM's session (the main account), for the note. No awaits. */
+  markerName(customerId) {
+    if (!customerId) return '';
+    const m = this.memberRow(customerId);
+    return m ? m.first_name || String(m.name || '').split(' ')[0] || '' : '';
+  },
+
+  /**
    * For the floor (staff who see GM credit): round 21 sessions' GM credit so far, by game ID, from..to: { auto: true,
-   * credited, staff, manual, check, failed, retry: { players, amount }, toCome: { players } (paid seats not decided
-   * yet: the session isn't over, or the next run), unpaid: { players } (seats still to pay) }. No awaits.
+   * credited, staff, manual, check, failed, retry: { players, amount } (what's been decided, whatever's happened to the
+   * seat since), toCome: { players } (paid seats not decided yet: the session isn't over, or the next run has them),
+   * unpaid: { players } (seats still to pay) }. A
+   * session someone credited with Session done before round 21 went live isn't in it (its card says what that did).
+   * No awaits.
    */
   gmCreditsIn(from, to, rules) {
     const fee = rules.prices.gmCredit;
     const out = new Map();
-    const blank = () => this.gmCreditBlank();
-    const rows = this.sql
+    const games = this.sql
       .exec(
-        `SELECT g.id AS game_id, g.free AS free, COALESCE(g.gm_fee, ?) AS fee, b.people AS people, b.paid AS paid, b.amount AS seat_amount,
-             s.status AS status, s.amount AS amount
-           FROM games g JOIN bookings b ON b.game_id = g.id AND b.kind = 'gm-seat' AND b.status IN ('confirmed', 'seated', 'done')
-           LEFT JOIN gm_credit_seats s ON s.booking_id = b.id
-          WHERE g.starts_at >= ? AND g.ends_at > ? AND g.starts_at < ?`,
+        `SELECT g.id AS id, g.free AS free, COALESCE(g.gm_fee, ?) AS fee FROM games g
+          WHERE g.starts_at >= ? AND g.ends_at > ? AND g.starts_at < ?
+            AND NOT EXISTS (SELECT 1 FROM credits c WHERE c.game_id = g.id AND COALESCE(c.by, '') != 'auto')
+            AND NOT (g.credited IS NOT NULL AND NOT EXISTS (SELECT 1 FROM gm_credit_seats x WHERE x.game_id = g.id))`,
         fee, GM_CREDIT.autoFrom, from, to,
       )
       .toArray();
-    for (const r of rows) {
-      const view = out.get(r.game_id) || blank();
-      out.set(r.game_id, view);
-      if (r.free || !(r.fee > 0) || !(r.seat_amount > 0)) continue;
-      if (r.status && view[r.status]) {
+    const byId = new Map(games.map((g) => [g.id, g]));
+    for (const g of games) out.set(g.id, this.gmCreditBlank());
+    if (!games.length) return out;
+    const ids = games.map((g) => g.id);
+    const marks = ids.map(() => '?').join(', ');
+    // what's been decided, whatever's happened to the seat since
+    for (const r of this.sql.exec(`SELECT game_id, status, people, amount FROM gm_credit_seats WHERE game_id IN (${marks})`, ...ids).toArray()) {
+      const view = out.get(r.game_id);
+      if (r.status === 'sending') view.toCome.players += r.people;
+      else if (view[r.status]) {
         view[r.status].players += r.people;
-        view[r.status].amount += r.status === 'staff' ? r.people * r.fee : r.amount;
-      } else if (r.status === 'sending') view.toCome.players += r.people;
+        view[r.status].amount += r.status === 'staff' ? r.people * byId.get(r.game_id).fee : r.amount;
+      }
+    }
+    // the seats on now that nothing's been decided for (or Shopify said no to last time: they're in retry)
+    const seats = this.sql
+      .exec(
+        `SELECT b.game_id AS game_id, b.people AS people, b.paid AS paid, b.amount AS amount, b.waived AS waived
+           FROM bookings b LEFT JOIN gm_credit_seats s ON s.booking_id = b.id
+          WHERE b.game_id IN (${marks}) AND b.kind = 'gm-seat' AND b.status IN ('confirmed', 'seated', 'done') AND s.booking_id IS NULL`,
+        ...ids,
+      )
+      .toArray();
+    for (const r of seats) {
+      const g = byId.get(r.game_id);
+      const view = out.get(r.game_id);
+      if (g.free || !(g.fee > 0) || !(r.amount > 0) || r.waived) continue;
       else if (r.paid) view.toCome.players += r.people;
       else view.unpaid.players += r.people;
     }

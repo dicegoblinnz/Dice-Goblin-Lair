@@ -296,7 +296,9 @@ export const staffGmMethods = {
    */
   staffGmTeam(games, now) {
     if (this.staffGmMode() === 'earn') return null;
-    const ids = [...new Set((games || []).filter((g) => readyForCredit(g, now)).map((g) => String(g.gmCustomerId)))];
+    // (round 21: and the GMs of sessions from 26 Oct 2026 on that have started, whose GM credit adds itself)
+    const auto = (g) => autoCredit(g) && Boolean(g.gmCustomerId) && g.status !== 'cancelled' && g.start <= now && !g.free && (g.gmFee ?? 1) > 0;
+    const ids = [...new Set((games || []).filter((g) => readyForCredit(g, now) || auto(g)).map((g) => String(g.gmCustomerId)))];
     const team = new Map();
     if (!this.staffGmAsked) this.staffGmAsked = new Map();
     for (const id of ids) {
