@@ -4,6 +4,8 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v20-sessions-feed.md` | Round 20, the TTRPG page's sessions in the page: the next two weeks of public sessions in the shop metafield `lair.sessions` for the theme to print (no GM names, no private games) | 26 Oct 2026 |
+| `lair-api-contract-v19-report.md` | Round 19, the weekly numbers: regulars, the staff report and email, and the website's anonymous booking steps | 24 Oct 2026 |
 | `lair-api-contract-v18-gm-players.md` | A GM sees their players on every session: regulars' saved seats listed (and messaged), and a series' GM sees every session's players | 17 Oct 2026 |
 | `lair-api-contract-v18-private.md` | Private games: invite only, with an invite link the GM shares, and Register interest | 17 Oct 2026 |
 | `lair-api-contract-v18-cash.md` | Cash at the counter: members tap Pay with cash, staff tick it off (checked in and paid), and Shopify gets a paid order | 17 Oct 2026 |

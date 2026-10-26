@@ -58,6 +58,8 @@ import { CASH_STAFF, CASH_TABLES, cashMethods } from './cash.js';
 import { PRIVATE_COLUMNS, PRIVATE_INDEXES, privacyOf, privateMethods } from './private-games.js';
 // Round 19 (24 Oct 2026): the weekly numbers and the website's booking steps (src/report.js)
 import { REPORT_COLUMNS, REPORT_TABLES, STAMP_WRITES, reportMethods } from './report.js';
+// Round 20 (26 Oct 2026): the TTRPG page's sessions, in the page itself
+import { sessionsFeedMethods } from './sessions-feed.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -10004,6 +10006,15 @@ export class Lair {
     } catch (error) {
       console.error('Lair: weekly numbers email failed', error);
     }
+    // Round 20: the next two weeks of public TTRPG sessions, for the TTRPG page's plain list (src/sessions-feed.js). After
+    // the series steps above, so a weekly game's next session is already there.
+    try {
+      const feed = await this.syncSessionsFeed(Date.now());
+      if (feed?.written) result.sessionsFeed = feed;
+    } catch (error) {
+      result.sessionsFeed = { error: String(error.message || error).slice(0, 300) };
+      console.error('Lair: could not update the TTRPG page\'s sessions in Shopify', error);
+    }
     // Round 17 (src/queue.js), each step on its own: games on table bookings held from 3 days before (or let go)
     try {
       const tables = this.bookingHoldUpkeep(Date.now());
@@ -10151,3 +10162,5 @@ Object.assign(Lair.prototype, cashMethods);
 Object.assign(Lair.prototype, privateMethods);
 // Round 19 (24 Oct 2026): the weekly numbers and the website's booking steps (src/report.js)
 Object.assign(Lair.prototype, reportMethods);
+// Round 20 (26 Oct 2026): the TTRPG page's sessions in a shop metafield (src/sessions-feed.js)
+Object.assign(Lair.prototype, sessionsFeedMethods);

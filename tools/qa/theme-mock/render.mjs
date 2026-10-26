@@ -280,7 +280,8 @@ export { globalSettings };
 /** r7 shell: the mock catalogue, so a check can mark a product sold out (or back in stock) while it runs */
 export { collections, allProducts };
 /** Test hooks: a logged-in customer and a request interceptor (used by live.mjs). */
-export const mockState = { customer: null, before: null };
+// sessionsFeed (round 20): the shop metafield lair.sessions the Lair app keeps, as its value; none unless a check sets it
+export const mockState = { customer: null, before: null, sessionsFeed: null };
 
 /* ---------------- engine ---------------- */
 const compiledCss = [];
@@ -510,6 +511,10 @@ const shop = {
   name: 'Dice Goblin NZ', email: 'hello@example.com', url: 'https://www.dicegoblin.nz', description: '', money_format: '${{amount}}',
   customer_accounts_enabled: true, enabled_payment_types: ['visa', 'master', 'american_express', 'apple_pay'], password_message: '',
   address: { address1: '56/691 Manukau Road', address2: 'Royal Oak', city: 'Auckland', zip: '1023', country_code: 'NZ' },
+  // Round 20 (contract v20-sessions-feed): shop.metafields.lair.sessions.value, from mockState.sessionsFeed
+  get metafields() {
+    return { lair: { sessions: mockState.sessionsFeed ? { value: mockState.sessionsFeed } : null } };
+  },
 };
 const routes = {
   root_url: '/', cart_url: '/cart', cart_add_url: '/cart/add', cart_change_url: '/cart/change', cart_update_url: '/cart/update',

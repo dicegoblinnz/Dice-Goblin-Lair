@@ -19,7 +19,8 @@ One Durable Object with a small SQLite database  (src/lair.js: bookings, games, 
         │
         ├── Shopify Admin API: rooms and events (metaobjects), booking rules (theme settings),
         │   customer tags (staff, gm, library plans), checkouts for events paid online (draft orders), store credit,
-        │   birthday gift codes, library games' copies (inventory), members' older orders (spend reports)
+        │   birthday gift codes, library games' copies (inventory), members' older orders (spend reports), and the
+        │   next two weeks of public TTRPG sessions for the TTRPG page (shop metafield lair.sessions, round 20)
         ├── Shopify webhook orders/paid → records payments for bookings and sign-ups (online or POS, a bill can be
         │   paid in parts), makes session passes and session gifts bought as a product, marks tabs paid, adds to
         │   members' spend
@@ -33,6 +34,7 @@ Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/che
 - Rooms come from **Content → Metaobjects → Lair rooms**, events that hold tables from **Lair events**.
 - Prices, opening hours, lead time and the other rules come from the theme: **Customize → Theme settings → Lair bookings**.
 - The app re-reads those every 5 minutes, so changes in Shopify show up on their own.
+- Every 10 minutes the health check also writes the next two weeks of public TTRPG sessions to the shop metafield `lair.sessions` when they've changed, so the TTRPG page's HTML lists them for search engines (no GM names, no private games: `docs/contracts/lair-api-contract-v20-sessions-feed.md`).
 - Staff and trusted GMs are Shopify customers tagged `staff` or `gm`.
 
 ## Where things live

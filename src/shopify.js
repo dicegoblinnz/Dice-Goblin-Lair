@@ -391,6 +391,32 @@ export class ShopifyAdmin {
     return { deletedId: data.metaobjectDelete?.deletedId || null, userErrors: data.metaobjectDelete?.userErrors || [] };
   }
 
+  /** Round 20: the store's own id (gid://shopify/Shop/…), asked once for each copy of the app. options: { timeout } (ms). */
+  async shopGid({ timeout = null } = {}) {
+    if (this.shopId) return this.shopId;
+    const data = await this.graphql('query LairShopId { shop { id } }', {}, { timeout });
+    if (!data.shop?.id) throw new Error('Shopify gave no shop id');
+    this.shopId = data.shop.id;
+    return this.shopId;
+  }
+
+  /**
+   * Round 20 (contract v20-sessions-feed): one metafield on the store itself, in a namespace the store owns ({ namespace,
+   * key, type, value }), which the theme reads as shop.metafields.<namespace>.<key>. Returns { metafield: { id, updatedAt } },
+   * or throws with what Shopify said when it turns the value away. options: { timeout } (ms).
+   */
+  async setShopMetafield({ namespace, key, type, value }, { timeout = null } = {}) {
+    const ownerId = await this.shopGid({ timeout });
+    const data = await this.graphql(
+      'mutation LairShopMetafield($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id updatedAt } userErrors { field message code } } }',
+      { metafields: [{ ownerId, namespace, key, type, value }] },
+      { timeout },
+    );
+    const problems = data.metafieldsSet?.userErrors || [];
+    if (problems.length) throw new Error(`Shopify turned the ${namespace}.${key} metafield away: ${problems.map((e) => e.message).join('; ')}`);
+    return { metafield: data.metafieldsSet?.metafields?.[0] || null };
+  }
+
   /**
    * An event picture into Shopify's Files (round 7): a staged upload target (stagedUploadsCreate), the file posted to it
    * by the Worker itself (a multipart form: every parameter Shopify gave, in order, then the file), then fileCreate.
