@@ -85,9 +85,11 @@ it is a refund due, and staff hear why). This happens when:
   gets the session's seat price, its player is emailed, and anything the old GM had paid on it is a refund due. From 24
   hours before (or once it's started, or over), an offer is locked in like any seat, so it **stays with the GM who made
   it**: they still pay, and staff get one email ("Still paying: <session>") listing those, to stop any that shouldn't
-  stay (once: a later change of GM doesn't send it again for the same offers). The board says who pays (`coverBy`), and
-  only staff can stop it. On a free session there's nothing to pay, so the old GM's offers just end (the seats stay free,
-  and nobody's emailed). "Locked in" is the seat's own lock, the one the player is held to.
+  stay (sent by the change that leaves an offer with them, not again by a later change that doesn't). The board says who
+  pays (`coverBy`), and only staff can stop it. On a free session there's nothing to pay, so the old GM's offers just
+  end (the seats stay free, and nobody's emailed). "Locked in" is the seat's own lock, the one the player is held to; a
+  seat that's been taken off goes by the 24 hours, so if it's put back later, the GM who made the offer still pays. The
+  player's email gives their own cancel-by (for a weekly regular's seat Gobgob saved inside the 24 hours, the start).
 
 ### Money back to the GM
 
@@ -211,7 +213,7 @@ more. It's $15.00 on your tab. Can't make it? Cancel it in My Lair by <time>.`
     `Owed: Paying for Mia's seat: Curse of Strahd (Tue 27 Oct)`.
   - checking in the charge itself (`/pos/checkin`, `POST /checkin`, its own code): not checked in, `reason: 'cover'`,
     message `Paying for Mia's seat: Curse of Strahd: nothing to check in. Charge $10.00.`, and (`/pos/checkin`) its
-    cart line in `lines` while it's on and unpaid. **For the POS app:** with `reason: 'cover'`, add `lines` to the cart as
+    cart line in `lines` while it's on and unpaid. One that's gone has `due: 0` (money on it is due back instead). **For the POS app:** with `reason: 'cover'`, add `lines` to the cart as
     for a check-in (nobody was checked in, but there's something to pay), and don't offer "Check in anyway".
   - the POS Today list doesn't list charges (they aren't people arriving).
   - the player's seat checks in as usual, with nothing to pay.

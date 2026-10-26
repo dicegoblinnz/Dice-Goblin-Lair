@@ -364,6 +364,22 @@ for (const size of sizes) {
     && !refundCard.buttons.some((b) => /^(Check in|−1|\+1|\+1 hour|Cancel booking|No-show)$/.test(b)), refundCard);
   await shot(page, `${size}-5-refunds`, '[data-refunds]');
   await axe(page, `${tag} staff page, Refunds to sort with a GM's charge`, '[data-refunds]');
+  // stopped: the charge's code at the desk says it was taken off, with nothing to pay and no Mark paid
+  await page.evaluate(async ([id, seatRef]) => {
+    await window.Lair.store.backend.uncoverGamePlayer(id, seatRef);
+    await window.Lair.store.refresh();
+  }, [GAME, 'R21-MIA-7']);
+  await page.fill('#checkin-code', ref);
+  await page.press('#checkin-code', 'Enter');
+  await page.waitForSelector('[data-checkin-result] .checkin-card', { timeout: 10000 });
+  await settle(page, 400);
+  const gone = await page.evaluate(() => {
+    const card = document.querySelector('[data-checkin-result] .checkin-card');
+    const f = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    return { status: f(card?.querySelector('.checkin-card__status')?.textContent), text: f(card?.textContent), buttons: [...(card?.querySelectorAll('button') || [])].map((b) => f(b.textContent)) };
+  });
+  check(`${tag} Staff desk: a GM's charge that's gone: Taken off, nothing to pay, no Mark paid`,
+    gone.status === 'Taken off' && /taken off, so there's nothing to pay/.test(gone.text) && !gone.buttons.some((b) => /^Mark paid/.test(b)) && !/To pay: \$/.test(gone.text), gone);
   check(`${tag} Staff (5): no errors`, !page.errors.length, page.errors);
   await ctx.close();
 

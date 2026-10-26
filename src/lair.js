@@ -4162,7 +4162,7 @@ export class Lair {
         const back = this.settleChargeRefund(id, now, 'gone', { quiet: true });
         if (back > 0 && back !== told) {
           const seat = before.coverOf ? this.booking(before.coverOf) : null;
-          refunds.push([before.ref, `${before.name}, the GM, paying for ${seat?.name || 'a player'}'s seat: ${dollars(back)} to give back${told ? ` in all (it was ${dollars(told)})` : ''}`]);
+          refunds.push([before.ref, `${before.name}, the GM, paying for ${seat?.name || 'a player'}'s seat on ${this.when(game, rules)}: ${dollars(back)} to give back${told ? ` in all (it was ${dollars(told)})` : ''}`]);
         }
       }
     }
@@ -5227,7 +5227,9 @@ export class Lair {
     const g = game !== undefined ? game : b.gameId ? this.game(b.gameId) : null;
     return {
       id: b.id, type: 'booking', kind: b.kind, ref: b.ref, name: b.name || '', people: b.people, tables: b.tables, start: b.start, end: b.end,
-      status: b.status, arrivedAt: b.arrivedAt || null, paid: b.paid, amount: b.amount || 0, covered: b.covered || 0, due: dueOf(b),
+      // (round 21: a GM's charge that's gone has nothing to pay: money on it is due back to them instead)
+      status: b.status, arrivedAt: b.arrivedAt || null, paid: b.paid, amount: b.amount || 0, covered: b.covered || 0,
+      due: b.kind === 'gm-cover' && b.status === 'cancelled' ? 0 : dueOf(b),
       paidAmount: b.paidAmount || 0, payments: payments || this.paymentsOf('booking', b.id), split: Boolean(b.split),
       customerId: b.customerId || null, pass: this.savedPass(b, memo), refund: b.refund || null, note: b.notes || '',
       title: this.rowTitle(b, rules, g), players: b.party || [], gameId: b.gameId || null, occurrenceId: b.occurrenceId || null,

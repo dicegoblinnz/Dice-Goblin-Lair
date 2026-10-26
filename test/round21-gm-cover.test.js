@@ -1058,3 +1058,51 @@ test('GM pays, review 3: a new GM on a free session ends the offer quietly; "Sti
   ok(await update(kais.id, { status: 'cancelled' }));
   ok(await uncover(other, kais.ref, OWNER));
 });
+
+test('GM pays, final check: a gone charge owes nothing at the desk; a new GM: the cancel-by is the seat\'s own, a taken-off seat stays the GM\'s', async () => {
+  const intros = [];
+  lair.letter = (to, subject, content) => {
+    intros.push([subject, content.intro]);
+    return { to, subject };
+  };
+  // a gone charge, scanned: nothing to pay, and no line
+  const id = await list({ start: at('2026-10-25', 18), end: at('2026-10-25', 21) });
+  const mias = await seat(id, MIA, 'Mia', { people: 3 });
+  ok(await cover(id, mias.ref, RANGI));
+  const charge = coverRow(mias.id);
+  ok(await uncover(id, mias.ref, OWNER));
+  nowIs(at('2026-10-25', 17, 30));
+  const scanned = ok(await pos('checkin', { code: charge.ref }));
+  assert.deepEqual([scanned.reason, scanned.due, scanned.row.due, scanned.lines], ['cover', 0, 0, []]);
+  nowIs(NOW);
+  // a regular's seat Gobgob saved inside the 24 hours can be cancelled until the start: a new GM ends the offer, and the
+  // player's email says the start, not a time that's passed
+  const later = await list({ tables: ['B2'], title: 'Weekly' });
+  const kais = await seat(later, KAI, 'Kai');
+  ok(await cover(later, kais.ref, RANGI));
+  nowIs(at('2026-10-27', 9));
+  lair.sql.exec('UPDATE bookings SET series_id = ?, gob_saved = 1, created_at = ? WHERE id = ?', 'sr_test', at('2026-10-27', 8), kais.id);
+  ok(await call('POST', `games/${later}/gm`, { gmCustomerId: WIREMU, gmCustomerName: 'Wiremu', gm: 'Wiremu' }, OWNER));
+  assert.equal(lair.booking(kais.id).coveredBy, undefined);
+  const letter = intros.find(([subject]) => subject === 'Weekly: your seat');
+  assert.ok(letter, intros.map(([s]) => s).join(', '));
+  assert.match(letter[1], /Cancel it in My Lair by Tuesday, 27 October at 6:00 pm\.$/);
+  // a seat taken off inside the 24 hours stays the GM's offer when the session gets a new GM: put back, he pays again
+  nowIs(NOW);
+  const third = await list({ tables: ['B3'], title: 'Third' });
+  const rias = await seat(third, RIA, 'Ria');
+  ok(await cover(third, rias.ref, RANGI));
+  nowIs(at('2026-10-27', 9));
+  ok(await update(rias.id, { status: 'cancelled' }));
+  ok(await call('POST', `games/${third}/gm`, { gmCustomerId: WIREMU, gmCustomerName: 'Wiremu', gm: 'Wiremu' }, OWNER));
+  assert.deepEqual([lair.booking(rias.id).coveredBy, lair.booking(rias.id).amount], [RANGI, 0]);
+  ok(await update(rias.id, { status: 'confirmed' }));
+  assert.deepEqual([coverRow(rias.id).status, coverRow(rias.id).customerId, coverRow(rias.id).amount], ['confirmed', RANGI, 1000]);
+  // a cancelled session's email says which session each GM's charge was for
+  shopifyOn = true;
+  ok(await update(coverRow(rias.id).id, { paid: true }));
+  alerts = [];
+  ok(await call('POST', `games/${third}/update`, { status: 'cancelled' }, OWNER));
+  const refunds = alerts.find((a) => a.subject === 'Refunds due: Third');
+  assert.ok(refunds);
+});

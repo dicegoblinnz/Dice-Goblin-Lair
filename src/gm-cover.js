@@ -493,8 +493,9 @@ export const gmCoverMethods = {
         this.endCover(seat, now, { why: 'gm', rules, amount: 0 });
         continue;
       }
-      // locked in (the seat's own lock, as the GM was told): it stays with the GM who made it
-      if (this.coverLocked(seat, rules, now)) {
+      // locked in (the seat's own lock, as the GM was told; for a seat that's off now, the 24 hours): it stays with the
+      // GM who made it, so a seat put back later is still theirs to pay for
+      if (this.coverLocked(seat, rules, now) || (!COVER_ON.has(seat.status) && cancelUntil(seat, rules) <= now)) {
         const cover = this.coverOf(seat.id);
         // (staff hear about an offer kept with the GM before once: when it's this change that left it with them)
         const theirs = oldGmCustomerId && String(seat.coveredBy) === String(oldGmCustomerId);
@@ -505,7 +506,8 @@ export const gmCoverMethods = {
       ended += seat.people;
       if (!['confirmed', 'seated'].includes(seat.status) || !isEmail(seat.email)) continue;
       const fee = seatPriceOf(session, rules) * seat.people;
-      const until = lairTime(rules.tz).label(cancelUntil(seat, rules));
+      // until when they can cancel it now it has a price (the start, for a regular's seat Gobgob saved inside the 24 hours)
+      const until = lairTime(rules.tz).label(this.cancelRule(this.booking(seat.id), rules, now).cancelUntil);
       letters.push(this.letter(seat.email, `${session.title}: your seat`, {
         title: 'Your seat has a price now',
         intro: GM_COVER_WORDS.gmChanged(session.title, this.when(session, rules), this.firstNameOf(oldGm || 'your GM'), money(fee), until),
