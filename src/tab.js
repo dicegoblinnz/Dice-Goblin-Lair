@@ -70,7 +70,7 @@ export const TAB_MESSAGES = {
 
 /** "Your Lair account is at its $100 limit. Pay your bill online or at the counter, then book again." */
 export function limitWords(limit, used, what = 'book') {
-  const again = { book: 'book again', join: 'sign up again', tab: 'add to your tab again' }[what] || 'try again';
+  const again = { book: 'book again', join: 'sign up again', tab: 'add to your tab again', cover: 'pay for them again' }[what] || 'try again';
   if (used >= limit) return `Your Lair account is at its ${money(limit)} limit. Pay your bill online or at the counter, then ${again}.`;
   return `That would take your Lair account over its ${money(limit)} limit (${money(limit - used)} left). Pay your bill online or at the counter, then ${again}.`;
 }

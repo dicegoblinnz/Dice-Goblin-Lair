@@ -98,6 +98,8 @@ export const GM_CREDIT_WORDS = {
   notOver: "GM credit adds itself for this session: once it's over, the GM gets their fee for each player who's paid. There's nothing to tap.",
   nothingYet: "Nothing to add yet: the GM gets their fee for each player once they've paid.",
   allDone: "Done: the GM has had their fee for every player who's paid.",
+  /** (round 21, part 2) */
+  covered: "The GM pays for their players' seats on this session, so there's no GM credit to add.",
   sending: "Gobgob is adding the GM's credit right now. Check again in a minute.",
   free: "This session was free, so there's no GM credit to add.",
   noFee: "This GM covers their players' fee, so there's no store credit to add.",
@@ -461,6 +463,11 @@ export const gmCreditMethods = {
     const unpaid = this.sql
       .exec("SELECT COUNT(*) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND paid = 0 AND waived = 0 AND amount > 0 AND status IN ('confirmed', 'seated', 'done')", game.id)
       .one().n;
+    // (round 21, part 2: a session whose GM pays for every player's seat has no GM credit to come)
+    const covered = !unpaid && !seats.length && this.sql
+      .exec("SELECT COUNT(*) AS n FROM bookings WHERE game_id = ? AND kind = 'gm-seat' AND covered_by IS NOT NULL AND status IN ('confirmed', 'seated', 'done', 'noshow')", game.id)
+      .one().n;
+    if (covered) return { players: 0, amount: 0, status: 'none', note: GM_CREDIT_WORDS.covered, auto: true };
     return { players: 0, amount: 0, status: 'none', note: unpaid || !seats.length ? GM_CREDIT_WORDS.nothingYet : GM_CREDIT_WORDS.allDone, auto: true };
   },
 

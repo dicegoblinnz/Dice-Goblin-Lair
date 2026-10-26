@@ -173,14 +173,16 @@ test('GM pays (round 21): the words, word for word', () => {
     coverPaid: "The GM has paid for that seat already, so it can't change now. Ask staff if it needs a refund.",
     locked: W.locked,
     seatLocked: W.seatLocked,
-    gmPaid: W.gmPaid,
+    nothingBack: "There's nothing to give back on that one: what the GM has paid isn't more than it costs.",
+    chargeGone: "That charge isn't on any more (the GM stopped paying, or the seat went), so there's nothing to pay for it.",
+    chargeFollows: "A GM's charge goes where the player's seat goes, so move the session or the seat instead.",
+    coveredSeat: "The GM pays for this seat, so there's nothing for the player to pay. If they're paying for it themselves, stop the GM paying first.",
     gmChanged: W.gmChanged,
     stopFirst: 'To stop paying for them, tap "Stop paying" on the session.',
     title: W.title,
   });
   assert.equal(W.locked(24), "It's less than 24 hours away, so it's locked in: you pay for this seat, the same as any seat. Ask staff if something's come up.");
   assert.equal(W.seatLocked(24), "It's less than 24 hours away, so it can't be cancelled online now: your GM is paying for your seat. Have a chat with us at the counter or give us a call, and we'll sort it out.");
-  assert.equal(W.gmPaid('Rangi'), 'Rangi has paid for a player\'s seat on this session already. Tap "Stop the GM paying" on that seat first (it flags Rangi\'s refund), then change the GM.');
   assert.equal(W.gmChanged('Curse of Strahd', 'Tue 27 Oct, 6pm', 'Rangi', '$15.00', 'Mon 26 Oct, 6pm'),
     "Heads up: Curse of Strahd on Tue 27 Oct, 6pm has a new GM, so Rangi isn't paying for your seat any more. It's $15.00 on your tab. Can't make it? Cancel it in My Lair by Mon 26 Oct, 6pm.");
   assert.equal(W.paid('Mia'), "Mia has paid for their seat already, so there's nothing to pay for.");
@@ -406,7 +408,8 @@ test('GM pays (round 21): a charge the GM had paid, then the seat went: a refund
   const after = lair.booking(charge.id);
   assert.deepEqual([after.status, after.refund], ['cancelled', 'due']);
   assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${charge.ref}`]);
-  assert.equal(alerts[0].intro, "Rangi Hohaia paid $10.00 for Mia's seat at Rangi's one-shot, Tuesday, 27 October at 6:00 pm to 10:00 pm, but Mia's seat was taken off, so Rangi doesn't pay for it. Refund Rangi (or put it on their store credit), then mark it refunded.");
+  assert.equal(alerts[0].intro, "Rangi Hohaia has paid $10.00 for Mia's seat at Rangi's one-shot, Tuesday, 27 October at 6:00 pm to 10:00 pm, but Mia's seat was taken off, so Rangi doesn't pay for it. Give Rangi back $10.00 (refund it, or put it on their store credit), then mark it refunded.");
+  assert.deepEqual([after.refundAmount, ok(await call('GET', `floor?from=${at('2026-10-24', 0)}&to=${at('2026-11-20', 0)}`, null, OWNER)).bookings.find((b) => b.id === charge.id).refundAmount], [1000, 1000]);
   // a paid charge can't be stopped by the GM; staff can, and what he paid is a refund due
   const kais = await seat(id, KAI, 'Kai');
   ok(await cover(id, kais.ref, RANGI));
@@ -417,13 +420,18 @@ test('GM pays (round 21): a charge the GM had paid, then the seat went: a refund
   ok(await uncover(id, kais.ref, OWNER));
   assert.deepEqual([lair.booking(kais.id).amount, lair.booking(kais.id).coveredBy, lair.booking(kaiCharge.id).status, lair.booking(kaiCharge.id).refund], [1500, undefined, 'cancelled', 'due']);
   assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${kaiCharge.ref}`]);
-  assert.match(alerts[0].intro, /but staff stopped Rangi paying for it\. Refund Rangi/);
+  assert.match(alerts[0].intro, /but staff stopped Rangi paying for it\. Give Rangi back \$10\.00/);
   // My Lair shows Rangi both, as money coming back to him
   const back = (await me(RANGI)).covers.map((c) => [c.ref, c.status, c.refund, c.refundAmount, c.due, c.owed]);
   assert.deepEqual(back, [[charge.ref, 'cancelled', 'due', 1000, 0, false], [kaiCharge.ref, 'cancelled', 'due', 1000, 0, false]]);
-  // once he's refunded, they're gone from the list
+  // once he's refunded, they're gone from the list: refunded is money back, so nothing's paid on it now
   ok(await update(charge.id, { refunded: true }));
   assert.deepEqual((await me(RANGI)).covers.map((c) => c.ref), [kaiCharge.ref]);
+  const refunded = lair.booking(charge.id);
+  assert.deepEqual([refunded.refund, refunded.refundAmount, refunded.paidAmount], ['done', 1000, 0]);
+  assert.deepEqual(lair.sql.exec("SELECT amount FROM payments WHERE booking_id = ? AND order_id = 'refund'", charge.id).toArray().map((p) => p.amount), [-1000]);
+  assert.deepEqual(lair.paymentsOf('booking', charge.id), [], 'money given back is not a payment staff see');
+  assert.equal(said(await update(charge.id, { refunded: true })), `409 ${W.nothingBack}`);
   // Mia's seat (taken off, the charge gone with it): staff can still put the seat's price back
   ok(await uncover(id, mias.ref, OWNER));
   assert.deepEqual([lair.booking(mias.id).amount, lair.booking(mias.id).coveredBy], [1500, undefined]);
@@ -536,7 +544,7 @@ test('GM pays (round 21): the 10-minute run puts a charge in step with a seat ch
 
 /* ---------------- after the review (26 Oct 2026): each finding, fixed ---------------- */
 
-test('GM pays, review 1: a seat put back after the GM had paid: no refund now (staff hear), or a new charge once he\'s been refunded', async () => {
+test('GM pays, review 1: a seat put back after the GM had paid: no refund now (staff hear), or owed again once he\'s been refunded', async () => {
   const id = await list();
   const mias = await seat(id, MIA, 'Mia');
   ok(await cover(id, mias.ref, RANGI));
@@ -553,14 +561,14 @@ test('GM pays, review 1: a seat put back after the GM had paid: no refund now (s
   ok(await update(mias.id, { status: 'seated' }));
   assert.deepEqual([lair.booking(charge.id).status, lair.booking(charge.id).refund, lair.booking(charge.id).paid], ['confirmed', null, true]);
   assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${charge.ref}`, `No refund now: ${charge.ref}`]);
-  assert.equal(alerts[1].intro, "Mia's seat at Rangi's one-shot, Tuesday, 27 October at 6:00 pm to 10:00 pm is back on, so Rangi Hohaia still pays for it: the $10.00 they paid stays paid. There's no refund to make.");
-  // taken off again, and this time staff refund him; then she's put back: a new charge, for him to pay again
+  assert.equal(alerts[1].intro, "There's nothing to give back to Rangi for Mia's seat at Rangi's one-shot, Tuesday, 27 October at 6:00 pm to 10:00 pm now: Mia's seat is on, and it costs $10.00, and the $10.00 they paid stays paid. Don't refund it. (If you already have, they owe it again: sort it out with them.)");
+  // taken off again, and this time staff refund him; then she's put back: the same charge, owed again
   ok(await update(mias.id, { status: 'cancelled' }));
   ok(await update(charge.id, { refunded: true }));
   ok(await update(mias.id, { status: 'seated' }));
   const again = coverRow(mias.id);
-  assert.notEqual(again.id, charge.id);
-  assert.deepEqual([again.status, again.amount, again.paid, again.customerId, lair.booking(charge.id).status], ['confirmed', 1000, false, RANGI, 'cancelled']);
+  assert.equal(again.id, charge.id);
+  assert.deepEqual([again.status, again.amount, again.paidAmount, again.paid, again.refund, again.customerId], ['confirmed', 1000, 0, false, null, RANGI]);
   // the board says the GM pays for her, and covering again is "already"; the next day he owes it
   assert.equal((await gameOn(id, RANGI)).players.find((p) => p.ref === mias.ref).covered, true);
   assert.equal(said(await cover(id, mias.ref, RANGI)), `409 ${W.already('Mia')}`);
@@ -609,7 +617,7 @@ test('GM pays, review 2: the player paying for their seat ends the GM\'s offer: 
     assert.deepEqual([k.amount, k.paidAmount, k.paid, k.coveredBy], [1500, 1500, true, undefined], title);
     assert.deepEqual([c.status, c.paidAmount, c.refund], ['cancelled', 1000, 'due'], title);
     assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${kaiCharge.ref}`], title);
-    assert.match(alerts[0].intro, order === 'gm' ? /but Kai paid for their own seat too\. Refund Rangi/ : /but Rangi wasn't paying for that seat any more\. Refund Rangi/, title);
+    assert.match(alerts[0].intro, /but Kai paid for their own seat too\. Give Rangi back \$10\.00/, title);
   }
 });
 
@@ -632,9 +640,9 @@ test('GM pays, review 3: people on a seat the GM has paid for: more is more for 
   ok(await update(mias.id, { people: 1 }));
   c = lair.booking(charge.id);
   assert.deepEqual([c.people, c.amount, c.paidAmount, c.paid], [1, 1000, 3000, true]);
-  assert.deepEqual(alerts.map((a) => a.subject), [`Overpaid: ${charge.ref}`]);
-  assert.match(alerts[0].intro, /is for 1 person now, and Rangi Hohaia had paid \$30\.00 for 3 people\. Refund Rangi the difference, \$20\.00/);
-  assert.match(c.notes, /\[Overpaid \$20\.00: the seat has fewer people now\. Refund the difference\.\]/);
+  assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${charge.ref}`]);
+  assert.match(alerts[0].intro, /Rangi Hohaia has paid \$30\.00 for Mia's seat at .*, but the seat is for 1 person now, so it costs \$10\.00\. Give Rangi back \$20\.00/);
+  assert.deepEqual([c.refund, c.refundAmount], ['due', 2000]);
   // and the 10-minute run has nothing more to say
   assert.equal(lair.coverUpkeep(Date.now()), 0);
   assert.equal(alerts.length, 1);
@@ -673,33 +681,46 @@ test('GM pays, review 4: locked in 24 hours before, like any seat: the player ca
   assert.equal(said(await uncover(late, rias.ref, RANGI)), `403 ${W.locked(24)}`);
 });
 
-test('GM pays, review 5: a new GM: the old GM\'s offers end (a price again, or free inside 24 hours); a paid one stops the change', async () => {
+test('GM pays, review 5: a new GM: the old GM\'s offers end while they could stop them (a refund if paid); from 24 hours before they stay theirs', async () => {
   const id = await list();
   const mias = await seat(id, MIA, 'Mia');
   const kais = await seat(id, KAI, 'Kai');
   ok(await cover(id, mias.ref, RANGI));
   ok(await cover(id, kais.ref, RANGI));
-  // Rangi has paid for Kai: staff stop that first (a refund due), then give the session to Wiremu
+  // Rangi has paid for Kai; more than 24 hours before, the session goes to Wiremu: both offers end
   ok(await update(coverRow(kais.id).id, { paid: true }));
   const toWiremu = { gmCustomerId: WIREMU, gmCustomerName: 'Wiremu', gm: 'Wiremu' };
-  assert.equal(said(await call('POST', `games/${id}/gm`, toWiremu, OWNER)), `409 ${W.gmPaid('Rangi')}`);
-  assert.equal(lair.game(id).gmCustomerId, RANGI, 'nothing changed');
-  ok(await uncover(id, kais.ref, OWNER));
-  assert.equal(lair.booking(coverRow(kais.id).id).refund, 'due');
+  alerts = [];
   ok(await call('POST', `games/${id}/gm`, toWiremu, OWNER));
-  // more than 24 hours before: Mia's seat costs her $15 again, and Rangi's charge goes
+  // the seats cost their players $15 again; Rangi's paid $10 for Kai is a refund due (staff hear)
   assert.deepEqual([lair.booking(mias.id).amount, lair.booking(mias.id).coveredBy, coverRow(mias.id).status], [1500, undefined, 'cancelled']);
-  assert.deepEqual((await me(RANGI)).covers.filter((c) => c.status !== 'cancelled'), []);
+  assert.deepEqual([lair.booking(kais.id).amount, coverRow(kais.id).status, coverRow(kais.id).refund, coverRow(kais.id).refundAmount], [1500, 'cancelled', 'due', 1000]);
+  assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${coverRow(kais.id).ref}`]);
+  assert.match(alerts[0].intro, /the session has another GM now, so Rangi doesn't pay for it/);
+  assert.deepEqual((await me(RANGI)).covers.map((c) => [c.player, c.status, c.refund]), [['Kai', 'cancelled', 'due']]);
   // Wiremu can pay for her himself
   const theirs = ok(await cover(id, mias.ref, WIREMU));
   assert.equal(coverRow(mias.id).customerId, WIREMU);
   assert.equal(theirs.cover.amount, 1000);
-  // inside the 24 hours, the session goes back to Rangi: Wiremu's offer ends, and Mia's seat stays free
+  // inside the 24 hours, the session goes back to Rangi: Wiremu's offer is locked in, so it stays his (staff hear)
   nowIs(at('2026-10-27', 9));
+  alerts = [];
   ok(await call('POST', `games/${id}/gm`, { gmCustomerId: RANGI, gmCustomerName: 'Rangi', gm: 'Rangi' }, OWNER));
-  assert.deepEqual([lair.booking(mias.id).amount, lair.booking(mias.id).coveredBy, coverRow(mias.id).status], [0, undefined, 'cancelled']);
+  assert.deepEqual([lair.booking(mias.id).amount, lair.booking(mias.id).coveredBy, coverRow(mias.id).status, coverRow(mias.id).customerId], [0, WIREMU, 'confirmed', WIREMU]);
+  assert.deepEqual(alerts.map((a) => a.subject), [`Still paying: ${lair.game(id).title}`]);
+  assert.match(alerts[0].intro, /Wiremu was paying for a player's seat on it, and it's less than 24 hours away \(or it's started\), so that's locked in: Wiremu still pays\./);
+  // Rangi's list says who pays for Mia; neither GM can stop it now (Wiremu: locked in; Rangi: not his), staff can
+  const shown = (await gameOn(id, RANGI)).players.find((p) => p.ref === mias.ref);
+  assert.deepEqual([shown.covered, shown.coverBy, shown.coverLocked], [true, 'Wiremu', true]);
+  assert.equal(said(await uncover(id, mias.ref, RANGI)), NOT_YOURS);
+  // the session's over and Wiremu hasn't paid: it's his to pay, not dropped
   nowIs(at('2026-10-28', 12));
-  assert.deepEqual([lair.owedRows(MIA, lair.rulesCache, Date.now()), lair.owedRows(WIREMU, lair.rulesCache, Date.now())], [[], []]);
+  assert.deepEqual(lair.owedRows(WIREMU, lair.rulesCache, Date.now()).map((r) => r.due), [1000]);
+  assert.deepEqual(lair.owedRows(MIA, lair.rulesCache, Date.now()), []);
+  // a new GM after the session doesn't drop it either
+  ok(await call('POST', `games/${id}/gm`, toWiremu, OWNER));
+  ok(await call('POST', `games/${id}/gm`, { gmCustomerId: RANGI, gmCustomerName: 'Rangi', gm: 'Rangi' }, OWNER));
+  assert.deepEqual(lair.owedRows(WIREMU, lair.rulesCache, Date.now()).map((r) => r.due), [1000]);
 });
 
 test('GM pays, review 6: a covered seat taken off, the session made free and priced again, then the seat put back: the GM pays for it', async () => {
@@ -770,4 +791,173 @@ test('GM pays, review 10: the GM\'s charge scanned at the counter on its own cod
   ok(await uncover(id, mias.ref, OWNER));
   const gone = ok(await pos('checkin', { code: charge.ref }));
   assert.deepEqual(gone.lines, []);
+});
+
+/* ---------------- after the second review (27 Oct 2026): money back to a GM is what they've paid, net ---------------- */
+
+/** What's due back to Rangi on a charge, as stored and as My Lair shows it */
+const backOn = async (chargeId) => {
+  const c = lair.booking(chargeId);
+  const mine = (await me(RANGI)).covers.find((x) => x.id === chargeId);
+  return { refund: c.refund ?? null, amount: c.refundAmount ?? null, paid: c.paidAmount || 0, shown: mine ? mine.refundAmount ?? null : null };
+};
+
+test('GM pays, review 2.1: a refund of part of what the GM paid counts: later changes go by what they\'ve paid, net', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia', { people: 3 });
+  ok(await cover(id, mias.ref, RANGI));
+  const charge = coverRow(mias.id);
+  ok(await update(charge.id, { paid: true }));
+  // 3 people to 1: $20 to give back, flagged
+  ok(await update(mias.id, { people: 1 }));
+  assert.deepEqual(await backOn(charge.id), { refund: 'due', amount: 2000, paid: 3000, shown: 2000 });
+  // staff give the $20 back and mark it: it's money back, so he's paid $10 net, and nothing more is due
+  ok(await update(charge.id, { refunded: true }));
+  assert.deepEqual(await backOn(charge.id), { refund: 'done', amount: 2000, paid: 1000, shown: null });
+  assert.equal(lair.booking(charge.id).paid, true);
+  // Mia cancels in time: the $10 he's still paid is due back, not $30 (staff hear $10)
+  alerts = [];
+  ok(await update(mias.id, { status: 'cancelled' }, MIA));
+  assert.deepEqual(await backOn(charge.id), { refund: 'due', amount: 1000, paid: 1000, shown: 1000 });
+  assert.match(alerts[0].intro, /has paid \$10\.00 for Mia's seat .* Give Rangi back \$10\.00/);
+  // put back before he's refunded: nothing due back, and he isn't charged again
+  alerts = [];
+  ok(await update(mias.id, { status: 'confirmed' }));
+  assert.deepEqual(await backOn(charge.id), { refund: null, amount: null, paid: 1000, shown: null });
+  assert.deepEqual([lair.booking(charge.id).paid, lair.booking(charge.id).amount], [true, 1000]);
+  assert.deepEqual(alerts.map((a) => a.subject), [`No refund now: ${charge.ref}`]);
+  // back up to 3 people: $30, with $10 paid: $20 for him to pay, not counted as paid
+  ok(await update(mias.id, { people: 3 }));
+  const c = lair.booking(charge.id);
+  assert.deepEqual([c.amount, c.paidAmount, c.paid, (await me(RANGI)).covers[0].due], [3000, 1000, false, 2000]);
+  // and undoing a refund mark puts it back as it was
+  const kais = await seat(id, KAI, 'Kai');
+  ok(await cover(id, kais.ref, RANGI));
+  const kc = coverRow(kais.id);
+  ok(await update(kc.id, { paid: true }));
+  ok(await update(kais.id, { status: 'cancelled' }));
+  ok(await update(kc.id, { refunded: true }));
+  assert.deepEqual(await backOn(kc.id), { refund: 'done', amount: 1000, paid: 0, shown: null });
+  ok(await update(kc.id, { refunded: false }));
+  assert.deepEqual(await backOn(kc.id), { refund: 'due', amount: 1000, paid: 1000, shown: 1000 });
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM payments WHERE booking_id = ?", kc.id).one().n, 0);
+});
+
+test('GM pays, review 2.1: given back without marking it, then more changes: staff hear the total to give back, in all', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia', { people: 3 });
+  ok(await cover(id, mias.ref, RANGI));
+  const charge = coverRow(mias.id);
+  ok(await update(charge.id, { paid: true }));
+  ok(await update(mias.id, { people: 1 }));
+  alerts = [];
+  ok(await update(mias.id, { status: 'cancelled' }, MIA));
+  assert.deepEqual(await backOn(charge.id), { refund: 'due', amount: 3000, paid: 3000, shown: 3000 });
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0].intro, /What to give back to Rangi for Mia's seat at .* is \$30\.00 now, not \$20\.00: .* That's \$30\.00 in all: if you've given some back already without marking it, give back the rest\. Then mark it refunded\./);
+});
+
+test('GM pays, review 2.2: money paid on a charge that\'s gone is always flagged, once an order, whatever the order of its lines', async () => {
+  shopifyOn = true;
+  const id = await list();
+  // a later payment on a part-paid charge that's gone: staff hear the new total
+  const mias = await seat(id, MIA, 'Mia');
+  ok(await cover(id, mias.ref, RANGI));
+  const charge = coverRow(mias.id);
+  const half = { price: '5.00', properties: { _booking: charge.ref } };
+  ok(await internal('orders-paid', posOrder(4101, [half])));
+  ok(await update(mias.id, { status: 'cancelled' }, MIA));
+  assert.deepEqual(await backOn(charge.id), { refund: 'due', amount: 500, paid: 500, shown: 500 });
+  alerts = [];
+  ok(await internal('orders-paid', posOrder(4102, [half])));
+  assert.deepEqual(await backOn(charge.id), { refund: 'due', amount: 1000, paid: 1000, shown: 1000 });
+  assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${charge.ref}`]);
+  assert.match(alerts[0].intro, /is \$10\.00 now, not \$5\.00/);
+  // the same order sent again adds nothing and says nothing
+  alerts = [];
+  ok(await internal('orders-paid', posOrder(4102, [half])));
+  assert.deepEqual([await backOn(charge.id), alerts.length], [{ refund: 'due', amount: 1000, paid: 1000, shown: 1000 }, 0]);
+  // a $0 line on a gone charge: nothing to say
+  ok(await internal('orders-paid', posOrder(4103, [{ price: '0.00', properties: { _booking: charge.ref } }])));
+  assert.equal(alerts.length, 0);
+  // both lines on one order, the GM having paid $5 already: one email, $10, either way round
+  for (const [n, order] of [[4201, 'seat'], [4202, 'gm']]) {
+    alerts = [];
+    const other = await list({ tables: [n === 4201 ? 'B2' : 'B3'], title: `Order ${order} first` });
+    const kais = await seat(other, KAI, 'Kai');
+    ok(await cover(other, kais.ref, RANGI));
+    const kc = coverRow(kais.id);
+    ok(await internal('orders-paid', posOrder(n * 10, [{ price: '5.00', properties: { _booking: kc.ref } }])));
+    const seatLine = { price: '15.00', properties: { _booking: kais.ref } };
+    const gmLine = { price: '5.00', properties: { _booking: kc.ref } };
+    ok(await internal('orders-paid', posOrder(n, order === 'seat' ? [seatLine, gmLine] : [gmLine, seatLine])));
+    assert.deepEqual(await backOn(kc.id), { refund: 'due', amount: 1000, paid: 1000, shown: 1000 }, order);
+    assert.deepEqual(alerts.map((a) => a.subject), [`Refund due: ${kc.ref}`], order);
+    assert.match(alerts[0].intro, /Give Rangi back \$10\.00/, order);
+  }
+  // marking a gone charge paid by hand (a page left open): refused
+  const rias = await seat(id, RIA, 'Ria');
+  ok(await cover(id, rias.ref, RANGI));
+  const rc = coverRow(rias.id);
+  ok(await update(rias.id, { status: 'cancelled' }, RIA));
+  assert.equal(said(await update(rc.id, { paid: true })), `409 ${W.chargeGone}`);
+});
+
+test('GM pays, review 2.3: the staff view of a part-paid charge: what\'s left to pay, and refunds at what was paid', async () => {
+  shopifyOn = true;
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia');
+  ok(await cover(id, mias.ref, RANGI));
+  const charge = coverRow(mias.id);
+  ok(await update(charge.id, { paid: true }));
+  ok(await update(mias.id, { people: 3 }));
+  const staffView = (await board(OWNER)).bookings.find((b) => b.id === charge.id);
+  assert.deepEqual([staffView.amount, staffView.paidAmount, staffView.due, staffView.paid], [3000, 1000, 2000, false]);
+  // a player's seat refunded at what they paid (a split bill part paid), not its price
+  const kais = await seat(id, KAI, 'Kai');
+  ok(await internal('orders-paid', posOrder(4301, [{ price: '7.50', properties: { _booking: kais.ref, _share: '1' } }])));
+  ok(await call('POST', `games/${id}/update`, { status: 'cancelled' }, OWNER));
+  const kai = (await board(OWNER)).bookings.find((b) => b.id === kais.id);
+  assert.deepEqual([kai.refund, kai.refundAmount, kai.amount], ['due', 750, 1500]);
+});
+
+test('GM pays, review 2.7 to 2.9: a charge never moves on its own; a GM\'s monthly limit counts, as for booking; a covered seat isn\'t marked paid', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia');
+  ok(await cover(id, mias.ref, RANGI));
+  const charge = coverRow(mias.id);
+  assert.equal(said(await update(charge.id, { tables: ['T7'] })), `409 ${W.chargeFollows}`);
+  assert.equal(said(await update(charge.id, { end: at('2026-10-27', 23) })), `409 ${W.chargeFollows}`);
+  assert.deepEqual([coverRow(mias.id).tables, lair.game(id).tables], [[], ['B1']]);
+  assert.equal(said(await update(mias.id, { paid: true })), `409 ${W.coveredSeat}`);
+  // Rangi on a monthly account with a $5 limit: paying $10 for a player would go over it, as booking $10 would (staff
+  // at the counter can still say the GM pays)
+  ok(await call('POST', `members/${RANGI}/account`, { billing: 'monthly', creditLimit: 500 }, OWNER));
+  const kais = await seat(id, KAI, 'Kai');
+  const over = await cover(id, kais.ref, RANGI);
+  assert.equal(over.status, 409);
+  assert.equal(over.data.error, 'That would take your Lair account over its $5 limit ($5 left). Pay your bill online or at the counter, then pay for them again.');
+  ok(await cover(id, kais.ref, OWNER));
+});
+
+test('GM pays, review 2.9: a free session shows no GM paying; Session done says when the GM pays for every seat; a paid free seat is flagged', async () => {
+  shopifyOn = true;
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia');
+  ok(await cover(id, mias.ref, RANGI));
+  ok(await call('POST', `games/${id}/free`, { free: true }, OWNER));
+  const shown = (await gameOn(id, RANGI)).players.find((p) => p.ref === mias.ref);
+  assert.deepEqual([shown.covered, shown.coverable], [false, false]);
+  assert.equal((await me(MIA)).seats.find((x) => x.id === mias.id).coveredByGm, undefined);
+  // a counter line made before it was free, paid after: staff hear
+  alerts = [];
+  ok(await internal('orders-paid', posOrder(4401, [{ price: '15.00', properties: { _booking: mias.ref } }])));
+  assert.deepEqual(alerts.map((a) => a.subject), [`Paid for a free seat: ${mias.ref}`]);
+  // a session with a price whose GM pays for every seat: Session done says there's no credit to come
+  const other = await list({ tables: ['B2'], title: 'All paid for' });
+  const kais = await seat(other, KAI, 'Kai');
+  ok(await cover(other, kais.ref, RANGI));
+  nowIs(at('2026-10-27', 22, 10));
+  const tapped = ok(await call('POST', `games/${other}/credit`, {}, OWNER));
+  assert.deepEqual([tapped.status, tapped.note], ['none', "The GM pays for their players' seats on this session, so there's no GM credit to add."]);
 });

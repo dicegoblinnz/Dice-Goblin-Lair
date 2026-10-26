@@ -17,7 +17,12 @@
  * the seat, and off otherwise (money the GM paid on it is a refund due, and staff hear). Like any seat, it's locked in
  * refundHours (24) before the session: the player can't cancel it online then, the GM can't stop paying, and a no-show
  * still costs the GM. Staff can change anything. The GM's offer ends (endCover) when the player pays for their seat
- * themselves ("until the player has paid"), when the GM or staff stop it, and when the session gets another GM.
+ * themselves ("until the player has paid"), when the GM or staff stop it, and when the session gets another GM while it
+ * could still be stopped.
+ *
+ * Money back to a GM is worked out, never guessed: what's due back on a charge is what they've paid on it, net of what's
+ * been given back (staff marking it refunded records a payment of minus that much, order_id 'refund'), over what it costs now
+ * (chargeBack). The refund flag follows that (settleChargeRefund), and staff hear when it starts, changes or stops.
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair.
  */
@@ -45,13 +50,22 @@ export const GM_COVER_WORDS = {
   locked: (hours) => `It's less than ${hours} hours away, so it's locked in: you pay for this seat, the same as any seat. Ask staff if something's come up.`,
   /** The player's own cancel inside the lock */
   seatLocked: (hours) => `It's less than ${hours} hours away, so it can't be cancelled online now: your GM is paying for your seat. Have a chat with us at the counter or give us a call, and we'll sort it out.`,
-  /** A new GM for a session its GM has paid a player's seat on already */
-  gmPaid: (gm) => `${gm} has paid for a player's seat on this session already. Tap "Stop the GM paying" on that seat first (it flags ${gm}'s refund), then change the GM.`,
+  /** Staff marking a charge refunded with nothing due back on it */
+  nothingBack: "There's nothing to give back on that one: what the GM has paid isn't more than it costs.",
+  /** Staff marking a charge paid once it's gone (a page left open, say) */
+  chargeGone: "That charge isn't on any more (the GM stopped paying, or the seat went), so there's nothing to pay for it.",
+  /** Staff moving a charge as a booking: it goes where its seat goes */
+  chargeFollows: "A GM's charge goes where the player's seat goes, so move the session or the seat instead.",
+  /** Staff marking a seat its GM pays for paid by hand */
+  coveredSeat: "The GM pays for this seat, so there's nothing for the player to pay. If they're paying for it themselves, stop the GM paying first.",
   /** The player's email when a new GM means their old GM stops paying for their seat */
   gmChanged: (title, when, gm, fee, until) => `Heads up: ${title} on ${when} has a new GM, so ${gm} isn't paying for your seat any more. It's ${fee} on your tab. Can't make it? Cancel it in My Lair by ${until}.`,
   stopFirst: 'To stop paying for them, tap "Stop paying" on the session.',
   title: (player, game) => `Paying for ${player}'s seat: ${game}`,
 };
+
+/** Why money's due back to a GM, the one to tell staff first when an order brings more than one */
+const WHY_FIRST = ['paid', 'off', 'stopped', 'gm', 'free', 'gone', 'fewer', 'back', 'late', 'more'];
 
 /** A covered seat's statuses that keep the GM's charge on (a no-show still costs the GM, as any seat costs its player) */
 const COVER_ON = new Set(['confirmed', 'seated', 'done', 'noshow']);
@@ -105,12 +119,24 @@ export const gmCoverMethods = {
    */
   coverState(b, known = null) {
     if (!b || b.kind !== 'gm-seat') return { covered: false, coverable: false };
-    if (b.coveredBy) return { covered: true, coverable: false, coverLocked: this.coverLocked(b) };
     const game = known && known.id === b.gameId ? known : b.gameId ? this.game(b.gameId) : null;
+    if (b.coveredBy) {
+      // (while the session is free there's nothing to pay: the offer waits, for if it has a price again)
+      if (game?.free) return { covered: false, coverable: false };
+      // coverBy: who pays, when it isn't the session's GM (an offer locked in before it got a new GM)
+      const theirs = String(game?.gmCustomerId || '') === String(b.coveredBy);
+      return { covered: true, coverable: false, coverLocked: this.coverLocked(b), ...(theirs ? {} : { coverBy: this.coverPayer(b) }) };
+    }
     const coverable = Boolean(game && game.gmCustomerId && !game.free && ['open', 'full'].includes(game.status))
       && ['confirmed', 'seated', 'done'].includes(b.status) && (b.amount || 0) > 0 && !b.paid && !b.waived
       && !((b.paidAmount || 0) > 0) && !((b.covered || 0) > 0) && String(b.customerId || '') !== String(game.gmCustomerId);
     return { covered: false, coverable };
+  },
+
+  /** The first name of the GM paying for a seat. No awaits. */
+  coverPayer(seat) {
+    const cover = this.coverOf(seat.id);
+    return this.firstNameOf(cover?.name || this.memberRow(seat.coveredBy)?.name || 'Another GM');
   },
 
   /** A seat on a session for these routes: by its code or id, a player's seat on this game, or a 404. No awaits. */
@@ -148,6 +174,8 @@ export const gmCoverMethods = {
     if ((seat.paidAmount || 0) > 0 || (seat.covered || 0) > 0) throw new RuleError(GM_COVER_WORDS.paid(name), 409);
     if (seat.waived || !(seat.amount > 0)) throw new RuleError(GM_COVER_WORDS.nothing(name), 409);
     if (!(this.coverPer(game, rules) > 0)) throw new RuleError(GM_COVER_WORDS.nothing(name), 409);
+    // a GM on a monthly account pays for a player within their limit, as when they book (staff at the counter can always)
+    if (!this.can(who, ['sessions', 'checkin', 'money'])) this.checkAccountLimit(String(game.gmCustomerId), this.coverPer(game, rules) * seat.people, rules, now, 'cover');
     this.newCharge(seat, game, rules, now, who.customerId ? String(who.customerId) : 'staff');
     this.write(
       'UPDATE bookings SET covered_by = ?, cover_was = ?, amount = 0, paid = 0, updated_at = ? WHERE id = ?',
@@ -175,6 +203,8 @@ export const gmCoverMethods = {
     const seat = this.coverSeatOf(game, ref);
     if (!seat.coveredBy) throw new RuleError(GM_COVER_WORDS.notCovered, 409);
     if (!this.can(who, ['sessions', 'checkin', 'money'])) {
+      // (only the GM paying: a session given to another GM keeps a locked-in offer with the GM before)
+      if (String(seat.coveredBy) !== String(who.customerId)) throw new RuleError(GM_COVER_WORDS.notYours, 403);
       const cover = this.coverOf(seat.id);
       if (cover && cover.status !== 'cancelled' && ((cover.paidAmount || 0) > 0 || (cover.paid && cover.amount > 0))) throw new RuleError(GM_COVER_WORDS.coverPaid, 409);
       if (this.coverLocked(seat, rules, now)) throw new RuleError(GM_COVER_WORDS.locked(rules.refundHours), 403);
@@ -224,8 +254,8 @@ export const gmCoverMethods = {
 
   /**
    * The GM's offer for a seat ends: their charge goes (money they'd paid on it is a refund due, and staff hear why), and
-   * the seat costs its players a seat's price on the session now (amount: unless said; 0 keeps it free). why: 'stopped'
-   * (the GM or staff), 'paid' (the player paid for it themselves) or 'gm' (the session has another GM). No awaits.
+   * the seat costs its players a seat's price on the session now (amount: unless said). why: 'stopped' (the GM or
+   * staff), 'paid' (the player paid for it themselves) or 'gm' (the session has another GM). No awaits.
    */
   endCover(seat, now, { why = 'stopped', rules = this.rulesCache, amount = null } = {}) {
     const game = seat.gameId ? this.game(seat.gameId) : null;
@@ -236,39 +266,135 @@ export const gmCoverMethods = {
     this.write('UPDATE bookings SET covered_by = NULL, cover_was = NULL, amount = ?, paid = ?, updated_at = ? WHERE id = ?', price, paid ? 1 : 0, now, seat.id);
   },
 
-  /** A GM's charge goes. Money paid on it is a refund due (unless it's been refunded), and staff hear why. No awaits. */
+  /** A GM's charge goes; money on it is a refund due (settleChargeRefund: staff hear why). No awaits. */
   chargeOff(cover, seat, game, now, why) {
-    const refund = (cover.paidAmount || 0) > 0 && cover.refund !== 'done';
-    this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, refund = ?, updated_at = ? WHERE id = ?", refund ? 'due' : cover.refund || null, now, cover.id);
+    this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE id = ?", now, cover.id);
     this.dropDraft(cover);
-    if (refund) this.coverRefundDue(cover, seat, game, why);
+    this.settleChargeRefund(cover.id, now, why, { seat, game });
   },
 
   /**
-   * "Refund due": a GM paid for a seat they aren't paying for now. why: 'off' (the seat was taken off), 'free', 'paid'
-   * (the player paid for it too), 'stopped' (staff stopped it), 'gm' (another GM), 'late' (paid after it had gone).
+   * What's due back to a GM on a charge: what they've paid on it (net of money given back) over what it costs now, which
+   * is all of it once the charge has gone. No awaits.
+   */
+  chargeBack(cover) {
+    const owed = cover.status === 'cancelled' ? 0 : cover.amount || 0;
+    return Math.max(0, (cover.paidAmount || 0) - owed);
+  },
+
+  /**
+   * A charge's refund in step with the money on it (chargeBack): refund 'due' with refund_amount what to give back, or
+   * none. Staff hear when it starts, changes or stops being due (why says why); was: what they'd been told before, when
+   * the flag's been cleared already. Inside an order (coverHold), they hear once, after it. Returns what's due back.
    * No awaits.
    */
-  coverRefundDue(cover, seat, game, why, amount = cover.paidAmount || 0) {
+  settleChargeRefund(coverId, now, why, { seat = null, game = null, was = null } = {}) {
+    const cover = this.booking(coverId);
+    if (!cover || cover.kind !== 'gm-cover') return 0;
+    const back = this.chargeBack(cover);
+    const before = was ?? (cover.refund === 'due' ? cover.refundAmount || 0 : 0);
+    if (back > 0 && (cover.refund !== 'due' || cover.refundAmount !== back)) {
+      this.write("UPDATE bookings SET refund = 'due', refund_amount = ?, updated_at = ? WHERE id = ?", back, now, cover.id);
+    } else if (back === 0 && cover.refund === 'due') {
+      this.write('UPDATE bookings SET refund = NULL, refund_amount = NULL, updated_at = ? WHERE id = ?', now, cover.id);
+    }
+    // (inside an order, every change is noted, with its why: what staff hear is decided once the order's done)
+    if (back !== before || this.coverHold) this.tellChargeRefund(cover.id, { why, before, seat, game });
+    return back;
+  },
+
+  /** Staff hear what's due back on a charge now (or held until the order's done: coverHold). No awaits. */
+  tellChargeRefund(coverId, { why, before, seat = null, game = null }) {
+    if (this.coverHold) {
+      // (the email says what it was before the order, and the likeliest why: the player paying, say, over a GM's line)
+      const held = this.coverHold.get(coverId);
+      const rank = (w) => { const i = WHY_FIRST.indexOf(w); return i < 0 ? WHY_FIRST.length : i; };
+      this.coverHold.set(coverId, {
+        why: held && rank(held.why) <= rank(why) ? held.why : why, before: held ? held.before : before, seat: seat || held?.seat || null, game: game || held?.game || null,
+      });
+      return;
+    }
+    const cover = this.booking(coverId);
+    const back = cover.refund === 'due' ? cover.refundAmount || 0 : 0;
+    if (back === before) return;
+    const theSeat = seat || (cover.coverOf ? this.booking(cover.coverOf) : null);
+    const theGame = game || (cover.gameId ? this.game(cover.gameId) : null);
     const gm = cover.name || 'The GM';
     const first = this.firstNameOf(gm);
-    const player = seat?.name || 'a player';
+    const player = theSeat?.name || 'a player';
+    const where = this.coverWhere(theGame);
+    const paid = cover.paidAmount || 0;
+    const details = [["GM's charge", cover.ref], ['Seat', theSeat?.ref || ''], ['Paid', money(paid)], ['To give back', money(back)]];
+    if (back === 0) {
+      const now = cover.status === 'cancelled' ? "it isn't on now" : `${player}'s seat is on, and it costs ${money(cover.amount || 0)}`;
+      this.notifyStaff(`No refund now: ${cover.ref}`, {
+        title: 'No refund now',
+        intro: `There's nothing to give back to ${first} for ${player}'s seat at ${where} now: ${now}, and the ${money(paid)} they paid stays paid. Don't refund it. (If you already have, they owe it again: sort it out with them.)`,
+        details,
+      });
+      return;
+    }
     const reason = {
       off: `${player}'s seat was taken off, so ${first} doesn't pay for it`,
       free: "the session is free now, so there's nothing to pay for",
       paid: `${player} paid for their own seat too`,
       stopped: `staff stopped ${first} paying for it`,
-      gm: 'the session has another GM now',
+      gm: `the session has another GM now, so ${first} doesn't pay for it`,
       late: `${first} wasn't paying for that seat any more`,
+      fewer: `the seat is for ${plural(cover.people || 1, 'person', 'people')} now, so it costs ${money(cover.amount || 0)}`,
+      more: `that's more than it costs (${money(cover.amount || 0)})`,
     }[why] || "the session isn't on now";
-    this.notifyStaff(`Refund due: ${cover.ref}`, {
-      title: 'Refund due',
-      intro: `${gm} paid ${money(amount)} for ${player}'s seat at ${this.coverWhere(game)}, but ${reason}. Refund ${first} (or put it on their store credit), then mark it refunded.`,
-      details: [["GM's charge", cover.ref], ['Seat', seat?.ref || ''], ['Refund', money(amount)]],
-    });
+    const intro = before > 0
+      ? `What to give back to ${first} for ${player}'s seat at ${where} is ${money(back)} now, not ${money(before)}: ${gm} has paid ${money(paid)} for it, and ${reason}. That's ${money(back)} in all: if you've given some back already without marking it, give back the rest. Then mark it refunded.`
+      : `${gm} has paid ${money(paid)} for ${player}'s seat at ${where}, but ${reason}. Give ${first} back ${money(back)} (refund it, or put it on their store credit), then mark it refunded.`;
+    this.notifyStaff(`Refund due: ${cover.ref}`, { title: 'Refund due', intro, details });
   },
 
-  /** "Session title, Tue 27 Oct, 6pm to 10pm" for staff emails. No awaits. */
+  /** Inside an order: staff hear about charges' refunds once, after it (tellChargeRefund). No awaits. */
+  holdChargeRefunds() {
+    this.coverHold = new Map();
+  },
+
+  /** The order's done: what each charge's refund came to, against what staff had been told before it. No awaits. */
+  flushChargeRefunds() {
+    const held = this.coverHold;
+    this.coverHold = null;
+    if (!held) return;
+    for (const [coverId, x] of held) this.tellChargeRefund(coverId, x);
+  },
+
+  /**
+   * POST /bookings/:id/update { refunded } on a GM's charge (staff, as for any refund): true, what was due back to the
+   * GM was given back. It's recorded as money back (a payment of minus that much, so every later sum goes by what the GM
+   * has paid, net), and the charge says refunded. false undoes the last one. Returns the staff view. No awaits.
+   */
+  chargeRefunded(cover, refunded, rules, now) {
+    if (refunded) {
+      const back = this.chargeBack(cover);
+      if (!(back > 0)) throw new RuleError(GM_COVER_WORDS.nothingBack, 409);
+      this.write(
+        "INSERT INTO payments (id, booking_id, kind, order_id, line_id, amount, customer_id, at) VALUES (?, ?, ?, 'refund', ?, ?, NULL, ?)",
+        makeId('pm'), cover.id, 'booking', `refund:${makeId('rf')}`, -back, now,
+      );
+      const paidAmount = Math.max(0, (cover.paidAmount || 0) - back);
+      const paid = cover.status !== 'cancelled' && (cover.amount || 0) > 0 ? paidAmount >= cover.amount : false;
+      this.write("UPDATE bookings SET paid_amount = ?, paid = ?, refund = 'done', refund_amount = ?, updated_at = ? WHERE id = ?", paidAmount, paid ? 1 : 0, back, now, cover.id);
+    } else {
+      const last = this.sql.exec("SELECT * FROM payments WHERE booking_id = ? AND order_id = 'refund' ORDER BY at DESC, rowid DESC LIMIT 1", cover.id).toArray()[0];
+      if (last) {
+        this.write('DELETE FROM payments WHERE id = ?', last.id);
+        const paidAmount = (cover.paidAmount || 0) - last.amount;
+        const paid = cover.status !== 'cancelled' && (cover.amount || 0) > 0 ? paidAmount >= cover.amount : Boolean(cover.paid);
+        this.write('UPDATE bookings SET paid_amount = ?, paid = ?, refund = NULL, refund_amount = NULL, updated_at = ? WHERE id = ?', paidAmount, paid ? 1 : 0, now, cover.id);
+      } else this.write('UPDATE bookings SET refund = NULL, refund_amount = NULL, updated_at = ? WHERE id = ?', now, cover.id);
+      // what's due back again, as before it was marked (staff were told then)
+      this.settleChargeRefund(cover.id, now, 'more', { was: this.chargeBack(this.booking(cover.id)) });
+    }
+    this.reconcileBills(rules, now);
+    return { booking: this.staffBooking(this.booking(cover.id)), refund: null };
+  },
+
+  /** "Session title, Tuesday 27 October at 6:00 pm to 10:00 pm" for staff emails. No awaits. */
   coverWhere(game) {
     return game ? `${game.title}, ${this.when(game, this.rulesCache)}` : 'a TTRPG session';
   },
@@ -280,10 +406,10 @@ export const gmCoverMethods = {
    *  - the seat costs its players nothing.
    *  - on (the seat's on, a no-show too, on a live session with a price): the charge is too, at the session's price for
    *    each person on the seat (a charge with money on it keeps the price it was paid at), over the seat's times. One
-   *    that went comes back (a refund that was due isn't now: staff hear); one whose money went back to the GM is done,
-   *    so a new one starts. Fewer people on a paid charge is money to give back: staff hear.
-   *  - off: the charge goes (money on it is a refund due: staff hear).
-   * Returns what changed ('ended', 'on', 'off', 'amount', 'seat') or null. No awaits.
+   *    that went comes back, with what the GM has paid on it (net) counting.
+   *  - off: the charge goes.
+   * Either way, what's due back to the GM follows (settleChargeRefund). Returns what changed ('ended', 'on', 'off',
+   * 'amount', 'seat') or null. No awaits.
    */
   syncCover(seatId, now = Date.now(), rules = this.rulesCache) {
     const seat = this.booking(seatId);
@@ -305,42 +431,31 @@ export const gmCoverMethods = {
       this.chargeOff(cover, seat, game, now, game?.free ? 'free' : seat.status === 'cancelled' ? 'off' : 'gone');
       return 'off';
     }
-    if (!cover || (cover.status === 'cancelled' && cover.refund === 'done')) {
+    let was = null;
+    if (!cover) {
       cover = this.newCharge(seat, game, rules, now, 'gobgob');
       changed = 'on';
     } else if (cover.status === 'cancelled') {
-      this.write("UPDATE bookings SET status = 'confirmed', refund = NULL, updated_at = ? WHERE id = ?", now, cover.id);
-      if (cover.refund === 'due' && (cover.paidAmount || 0) > 0) {
-        this.notifyStaff(`No refund now: ${cover.ref}`, {
-          title: 'No refund now',
-          intro: `${seat.name}'s seat at ${this.coverWhere(game)} is back on, so ${cover.name || 'the GM'} still pays for it: the ${money(cover.paidAmount)} they paid stays paid. There's no refund to make.`,
-          details: [["GM's charge", cover.ref], ['Seat', seat.ref]],
-        });
-      }
+      // back on: what the GM has paid on it (net of anything given back) counts towards it again
+      was = cover.refund === 'due' ? cover.refundAmount || 0 : 0;
+      this.write("UPDATE bookings SET status = 'confirmed', refund = NULL, refund_amount = NULL, updated_at = ? WHERE id = ?", now, cover.id);
       cover = this.booking(cover.id);
       changed = 'on';
     }
     const paidIn = cover.paidAmount || 0;
     const per = paidIn > 0 ? Math.round((cover.amount || 0) / Math.max(1, cover.people || 1)) : this.coverPer(game, rules);
     const amount = per * (seat.people || 1);
+    let why = 'back';
     if (cover.amount !== amount || cover.people !== seat.people || cover.start !== seat.start || cover.end !== seat.end) {
       const paid = amount > 0 ? paidIn >= amount : Boolean(cover.paid);
-      // what the GM has paid over what it costs now, past what was over before (fewer people on it)
-      const over = Math.max(0, paidIn - amount) - Math.max(0, paidIn - (cover.amount || 0));
-      const note = over > 0 ? `[Overpaid ${money(over)}: the seat has fewer people now. Refund the difference.]` : '';
-      this.write(
-        'UPDATE bookings SET people = ?, amount = ?, paid = ?, starts_at = ?, ends_at = ?, notes = ?, updated_at = ? WHERE id = ?',
-        seat.people, amount, paid ? 1 : 0, seat.start, seat.end, note ? `${cover.notes ? `${cover.notes} ` : ''}${note}` : cover.notes || null, now, cover.id,
-      );
-      if (over > 0) {
-        this.notifyStaff(`Overpaid: ${cover.ref}`, {
-          title: 'A GM paid too much for a seat',
-          intro: `${seat.name}'s seat at ${this.coverWhere(game)} is for ${plural(seat.people, 'person', 'people')} now, and ${cover.name || 'the GM'} had paid ${money(paidIn)} for ${plural(cover.people, 'person', 'people')}. Refund ${this.firstNameOf(cover.name || 'them')} the difference, ${money(over)} (or put it on their store credit).`,
-          details: [["GM's charge", cover.ref], ['Seat', seat.ref], ['Refund', money(over)]],
-        });
-      }
+      this.write('UPDATE bookings SET people = ?, amount = ?, paid = ?, starts_at = ?, ends_at = ?, updated_at = ? WHERE id = ?', seat.people, amount, paid ? 1 : 0, seat.start, seat.end, now, cover.id);
+      if (changed !== 'on') why = amount < (cover.amount || 0) ? 'fewer' : 'more';
       changed = changed || 'amount';
+    } else if (changed === 'on') {
+      const paid = amount > 0 ? paidIn >= amount : Boolean(cover.paid);
+      if (Boolean(cover.paid) !== paid) this.write('UPDATE bookings SET paid = ?, updated_at = ? WHERE id = ?', paid ? 1 : 0, now, cover.id);
     }
+    if (changed === 'on' || changed === 'amount') this.settleChargeRefund(cover.id, now, why, { seat, game, ...(was != null ? { was } : {}) });
     return changed;
   },
 
@@ -352,28 +467,10 @@ export const gmCoverMethods = {
   },
 
   /**
-   * POST /games/:id/gm (changeGm) for sessions their GM pays for players on: the old GM's offers go with them. A paid one
-   * stops the change (gmPaid: staff stop it first, which flags the refund): call this before anything's saved, with the
-   * new GM's account (or null). No awaits.
-   */
-  coversBeforeGmChange(sessions, gmCustomerId) {
-    for (const s of sessions) {
-      if (!s.gmCustomerId || String(s.gmCustomerId) === String(gmCustomerId || '')) continue;
-      const paid = this.sql
-        .exec(
-          `SELECT 1 AS n FROM bookings s JOIN bookings c ON c.cover_of = s.id AND c.kind = 'gm-cover' AND c.status != 'cancelled'
-            WHERE s.game_id = ? AND s.kind = 'gm-seat' AND s.covered_by IS NOT NULL AND (COALESCE(c.paid_amount, 0) > 0 OR (c.paid = 1 AND c.amount > 0)) LIMIT 1`,
-          s.id,
-        )
-        .toArray().length;
-      if (paid) throw new RuleError(GM_COVER_WORDS.gmPaid(this.firstNameOf(s.gm || 'The GM')), 409);
-    }
-  },
-
-  /**
-   * After a session gets another GM: each seat the old GM was paying for costs its players again. One they can still
-   * cancel online (more than refundHours before) gets the session's seat price, and its player is emailed; inside that
-   * it stays free (they can't cancel it now, and didn't choose a price). Returns the people left free. No awaits.
+   * After a session gets another GM (POST /games/:id/gm): each offer the GM before made, that they could still stop
+   * (more than refundHours before), ends. The seat gets the session's seat price, its player is emailed, and what the
+   * GM before had paid on it is a refund due. From refundHours before, an offer is locked in like any seat, so it stays
+   * theirs: staff get one email listing those, to stop any that shouldn't. Returns { ended, kept } (people). No awaits.
    */
   coversAfterGmChange(session, oldGm, rules, now) {
     const seats = this.sql
@@ -381,12 +478,17 @@ export const gmCoverMethods = {
       .toArray()
       .map((r) => this.rowToBooking(r));
     const letters = [];
-    let free = 0;
+    const kept = [];
+    let ended = 0;
     for (const seat of seats) {
-      const priced = cancelUntil(seat, rules) > now;
-      this.endCover(seat, now, { why: 'gm', rules, ...(priced ? {} : { amount: 0 }) });
-      if (!priced) free += seat.people;
-      if (!priced || !['confirmed', 'seated'].includes(seat.status) || !isEmail(seat.email)) continue;
+      if (cancelUntil(seat, rules) <= now) {
+        const cover = this.coverOf(seat.id);
+        if (cover && cover.status !== 'cancelled') kept.push([seat.name || 'A player', `${seat.ref}: ${money(cover.amount || 0)}, ${cover.paid ? 'paid' : 'not paid yet'}`]);
+        continue;
+      }
+      this.endCover(seat, now, { why: 'gm', rules });
+      ended += seat.people;
+      if (!['confirmed', 'seated'].includes(seat.status) || !isEmail(seat.email)) continue;
       const fee = seatPriceOf(session, rules) * seat.people;
       const until = lairTime(rules.tz).label(cancelUntil(seat, rules));
       letters.push(this.letter(seat.email, `${session.title}: your seat`, {
@@ -397,7 +499,15 @@ export const gmCoverMethods = {
       }));
     }
     if (letters.length && emailReady(this.env)) this.later(this.mailMany(letters));
-    return free;
+    if (kept.length) {
+      const old = this.firstNameOf(oldGm || 'The GM');
+      this.notifyStaff(`Still paying: ${session.title}`, {
+        title: 'A GM still pays for players',
+        intro: `${session.title}, ${this.when(session, rules)}, has a new GM, ${session.gm || 'someone else'}. ${old} was paying for ${kept.length === 1 ? "a player's seat" : `${kept.length} players' seats`} on it, and it's less than ${rules.refundHours} hours away (or it's started), so that's locked in: ${old} still pays. If ${old} shouldn't, tap "Stop the GM paying" on the seat: the player's seat then costs them its price (waive it if they shouldn't pay either).`,
+        details: kept,
+      });
+    }
+    return { ended, kept: kept.length };
   },
 
   /** The 10-minute run's safety net: every seat a GM pays for in step (syncCover). Returns how many changed. No awaits. */

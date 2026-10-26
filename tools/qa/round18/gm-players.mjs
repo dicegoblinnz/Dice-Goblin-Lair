@@ -163,7 +163,8 @@ for (const size of sizes) {
   await openSheet(page, 'gm-gp-1');
   const next = await own(page);
   check(`${tag} Your game (the series' next, still on no account): the three booked, no Regular badge, no "No players yet"`,
-    next && /3 of 6 seats taken$/.test(next.head) && JSON.stringify(next.rows) === JSON.stringify(['Mia as Thorin Frostbeard', 'Kai · no character yet', 'Ria · no character yet']) && !next.empty, next);
+    // (round 21, part 2: each booked seat offers Pay for them, as its GM can pay for a player)
+    next && /3 of 6 seats taken$/.test(next.head) && JSON.stringify(next.rows) === JSON.stringify(['Mia as Thorin Frostbeard Pay for them', 'Kai · no character yet Pay for them', 'Ria · no character yet Pay for them']) && !next.empty, next);
   await shot(page, `${size}-2-your-game-next`, '[data-sheet][open] .gm-own');
 
   /* ---------- 3. Message your players, his session ---------- */

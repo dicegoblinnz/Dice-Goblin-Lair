@@ -160,7 +160,7 @@ export const gmSessionMethods = {
           ref: b.ref, people: b.people, names: party.map((p) => p.name), characters: party.map((p) => p.character || ''),
           paid: Boolean(b.paid) || ((b.amount || 0) > 0 && owing === 0),
           due, regular: Boolean(b.seriesId && b.customerId), member: Boolean(b.customerId), here: b.status === 'seated' || Boolean(b.arrivedAt),
-          covered: cover.covered, coverable: cover.coverable, ...(cover.covered ? { coverLocked: cover.coverLocked } : {}),
+          covered: cover.covered, coverable: cover.coverable, ...(cover.covered ? { coverLocked: cover.coverLocked, ...(cover.coverBy ? { coverBy: cover.coverBy } : {}) } : {}),
         };
       });
   },
@@ -423,15 +423,14 @@ export const gmSessionMethods = {
     if (sameAccount && gm === game.gm) throw new RuleError(GM_SESSION_WORDS.gmSame);
     // every check before anything's saved (a bad scope makes no member record)
     const sessions = this.sessionsFor(game, input?.scope).filter((s) => s.credited == null && !this.gmCreditStarted(s.id));
-    // Round 21: a seat the GM before has paid for stops it (staff stop that first, which flags their refund)
-    this.coversBeforeGmChange(sessions, gmCustomerId);
     if (picked) this.makeMember(picked, now);
     // the new GM's own bio from their GM profile (none yet: none), not the GM before's
     const gmBio = sameAccount ? game.gmBio || '' : (gmCustomerId && this.sql.exec('SELECT bio FROM gm_profiles WHERE customer_id = ?', gmCustomerId).toArray()[0]?.bio) || '';
     for (const s of sessions) {
       this.saveGame({ ...s, gm, gmCustomerId, gmEmail, gmBio }, now);
       this.write("UPDATE bookings SET customer_id = ?, name = ?, updated_at = ? WHERE game_id = ? AND kind = 'gm'", gmCustomerId, `GM ${gm}`, now, s.id);
-      // Round 21: the GM before's offers to pay for players go with them (src/gm-cover.js)
+      // Round 21: the GM before's offers to pay for players end while they could still stop them; from 24 hours before,
+      // they're locked in and stay theirs (src/gm-cover.js)
       this.coversAfterGmChange(this.game(s.id), s.gm, rules, now);
     }
     // a bill with any of those seats or charges on it stays true

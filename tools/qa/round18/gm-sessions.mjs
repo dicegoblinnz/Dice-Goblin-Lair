@@ -12,6 +12,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 process.env.OUT = process.env.OUT || path.join(os.tmpdir(), 'dg-round18-gm-sessions');
+// Session done (these checks) is for sessions before 26 Oct 2026: round 21 credits later ones by itself, so the page's
+// today stays 25 October unless QA_TODAY says otherwise
+process.env.QA_TODAY = process.env.QA_TODAY || '2026-10-25';
 const lib = await import('../round15/lib.mjs');
 const { chromium, m, check, totals, flat, overflowX, axe, shot, context, watch, go, STAFF, RUBY } = lib;
 const PORT = Number(process.env.PORT || 4991);

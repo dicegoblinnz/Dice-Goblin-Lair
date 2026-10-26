@@ -78,6 +78,16 @@ const openSheet = async (page, id) => {
   await settle(page, 450);
 };
 const flash = (page) => page.evaluate(() => String(document.querySelector('[data-sheet][open] .gm-flash')?.textContent || '').replace(/\s+/g, ' ').trim());
+/** The demo's session (and its seats and charges) moved a week on, out of the 24 hours */
+const nextWeek = (page) => page.evaluate(async (id) => {
+  const { store } = window.Lair;
+  const be = store.backend;
+  const week = 7 * 24 * 3_600_000;
+  for (const g of be.state.games.filter((x) => x.id === id)) Object.assign(g, { start: g.start + week, end: g.end + week });
+  for (const b of be.state.bookings.filter((x) => x.gameId === id)) Object.assign(b, { start: b.start + week, end: b.end + week });
+  be.commit();
+  await store.refresh();
+}, GAME);
 /** The demo's session (and its seats and charges) moved to 3 hours from now, inside the 24 hours */
 const soon = (page) => page.evaluate(async (id) => {
   const { store } = window.Lair;
@@ -179,6 +189,10 @@ for (const size of sizes) {
     mine.roster.some((r) => /^Mia You pay for this seat$/.test(r)) && /Players you’re paying for\. They pay nothing, and there’s no GM credit for their seats\. Like any seat, each is locked in 24 hours before/.test(mine.covers)
     && /Paying for Mia's seat: The Sunless Citadel \$10 Locked in: pay at the counter/.test(mine.covers), mine);
   await shot(page, `${size}-2-my-lair-dan`, 'my-lair [data-panel="games"]');
+  const upNext = await page.evaluate(() => [...document.querySelectorAll('my-lair .ml-upnext__item')].map((li) => ({
+    text: String(li.textContent || '').replace(/\s+/g, ' ').trim(), cancel: Boolean(li.querySelector('[data-tab-cancel]')),
+  })).filter((x) => /Paying for Mia/.test(x.text)));
+  check(`${tag} My Lair (Dan): Coming up has "Paying for Mia's seat", with no Cancel there`, upNext.length === 1 && !upNext[0].cancel, upNext);
   await axe(page, `${tag} My Lair, a GM paying for a player`, 'my-lair [data-panel="games"]');
   check(`${tag} My Lair (Dan): no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
   check(`${tag} Dan: no errors`, !page.errors.length, page.errors);
@@ -213,6 +227,23 @@ for (const size of sizes) {
   await settle(page, 500);
   const locked = await page.evaluate(() => [...document.querySelectorAll('my-lair .ml-ticket')].map((x) => String(x.textContent || '').replace(/\s+/g, ' ').trim()).find((x) => /The Sunless Citadel/.test(x)) || '');
   check(`${tag} My Lair (Mia), 3 hours to go: Locked in: your GM pays for it, not on her tab`, /Locked in: your GM pays for it/.test(locked) && !/Locked in: on your tab/.test(locked), locked);
+  const lateCancel = await page.evaluate(async () => {
+    try {
+      await window.Lair.store.backend.updateBooking('bk-r21p-mia', { status: 'cancelled' });
+      return 'cancelled';
+    } catch (error) {
+      return `${error.status} ${error.message}`;
+    }
+  });
+  check(`${tag} Mia, 3 hours to go: the demo won't cancel her seat online`, lateCancel === "409 It's less than 24 hours away, so it can't be cancelled online now: your GM is paying for your seat. Have a chat with us at the counter or give us a call, and we'll sort it out.", lateCancel);
+  await nextWeek(page);
+  const inTime = await page.evaluate(async () => {
+    const be = window.Lair.store.backend;
+    await be.updateBooking('bk-r21p-mia', { status: 'cancelled' });
+    const cover = be.state.bookings.find((b) => b.id === 'bk-r21p-cover');
+    return cover && cover.status;
+  });
+  check(`${tag} Mia cancels a week out: Dan's charge goes with her seat`, inTime === 'cancelled', inTime);
   check(`${tag} Mia: no errors`, !page.errors.length, page.errors);
   await ctx.close();
 
@@ -243,7 +274,19 @@ for (const size of sizes) {
     row && /The GM pays: \$10 on their account/.test(row.text) && row.buttons.includes('Mark the GM’s $10 paid') && row.buttons.includes('Stop the GM paying') && !row.buttons.includes('Mark paid'), row);
   await shot(page, `${size}-4-staff`, '.staff-players');
   await axe(page, `${tag} staff page, a seat the GM pays for`, '.staff-players');
-  // the GM pays at the counter; staff can still stop it, and it's a refund due to him
+  // the GM has paid $5 of it: $5 left, and Mark the GM's $5 paid
+  await page.evaluate(async (id) => {
+    const be = window.Lair.store.backend;
+    const cover = be.state.bookings.find((b) => b.kind === 'gm-cover' && b.gameId === id && b.status !== 'cancelled');
+    cover.paidAmount = 500;
+    be.commit();
+    await window.Lair.store.refresh();
+  }, GAME);
+  await settle(page, 500);
+  row = await playerRow('Mia');
+  check(`${tag} Staff: part paid: The GM pays: $5 left on their account, with Mark the GM’s $5 paid`,
+    row && /The GM pays: \$5 left on their account/.test(row.text) && row.buttons.includes('Mark the GM’s $5 paid'), row);
+  // the GM pays the rest at the counter; staff can still stop it, and it's a refund due to him
   await page.click('.staff-players [data-act="paid"]');
   await settle(page, 700);
   row = await playerRow('Mia');

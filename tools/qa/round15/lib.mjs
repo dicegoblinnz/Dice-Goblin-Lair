@@ -22,7 +22,9 @@ const TZ = 'Pacific/Auckland';
 export const lairKey = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 const offset = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: TZ, timeZoneName: 'longOffset' }).formatToParts(new Date(`${key}T12:00:00Z`)).find((p) => p.type === 'timeZoneName').value.replace('GMT', '') || '+00:00';
 export const iso = (key, hm) => `${key}T${hm}:00${offset(key)}`;
-export const today = lairKey(Date.now());
+// QA_TODAY (YYYY-MM-DD) pins the page's today, for checks of rules that depend on the date (Session done is for sessions
+// before 26 Oct 2026: round 21 credits later ones by itself)
+export const today = /^\d{4}-\d{2}-\d{2}$/.test(process.env.QA_TODAY || '') ? process.env.QA_TODAY : lairKey(Date.now());
 /** The page clock: today at hm (default 1pm) in Auckland */
 export const clockAt = (hm = '13:00') => {
   const AT = Date.parse(iso(today, hm));
