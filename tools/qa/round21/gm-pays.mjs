@@ -9,6 +9,8 @@
 //  3. My Lair as Mia: her seat says Your GM pays for it; 3 hours away, Locked in: your GM pays for it.
 //  4. The staff page's session: The GM pays (two taps), then the GM's $10 on their account, Mark it paid, Stop (even
 //     once it's paid: two taps, and the GM's $10 is a refund due).
+//  7. Mo's no-show rule (27 Oct 2026): staff mark Mia a no-show, so her seat is $15 on her own tab and Dan pays nothing:
+//     the staff page, My Lair as Mia, and as Dan.
 // No sideways scroll and axe at each. Phone and desktop.
 // Usage: DG_THEME=/path/to/theme [PORT=4987] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round21/gm-pays.mjs [phone|desktop]
 import os from 'node:os';
@@ -88,6 +90,23 @@ const nextWeek = (page) => page.evaluate(async (id) => {
   be.commit();
   await store.refresh();
 }, GAME);
+/** The demo's session (and its seats and charges) moved to have started an hour ago */
+const started = (page) => page.evaluate(async (id) => {
+  const { store } = window.Lair;
+  const be = store.backend;
+  const start = Date.now() - 3_600_000;
+  const end = start + 4 * 3_600_000;
+  for (const g of be.state.games.filter((x) => x.id === id)) Object.assign(g, { start, end });
+  for (const b of be.state.bookings.filter((x) => x.gameId === id)) Object.assign(b, { start, end });
+  be.commit();
+  await store.refresh();
+}, GAME);
+/** The staff page's session card: a player's row, its words and buttons */
+const staffRow = (page, name) => page.evaluate((who) => {
+  const f = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const li = [...document.querySelectorAll('.staff-players > li')].find((x) => f(x.querySelector('.staff-player__names')?.textContent).startsWith(who));
+  return li ? { text: f(li.innerText), buttons: [...li.querySelectorAll('button')].map((b) => f(b.textContent)) } : null;
+}, name);
 /** The demo's session (and its seats and charges) moved to 3 hours from now, inside the 24 hours */
 const soon = (page) => page.evaluate(async (id) => {
   const { store } = window.Lair;
@@ -130,7 +149,7 @@ for (const size of sizes) {
   });
   check(`${tag} Pay for them asks first: "Pay for Mia’s seat?", what it means ($10 at the counter, Mia pays nothing, no GM credit, locked in 24 hours before), Pay $10, focus on the question`,
     ask.q === 'Pay for Mia’s seat?' && /^You pay the table fee, \$10, at the counter \(it goes on your account\), and Mia pays nothing for The Sunless Citadel, /.test(ask.lines[0] || '')
-    && ask.lines[1] === 'There’s no GM credit for a seat you pay for. Like any seat, it’s locked in 24 hours before: after that you pay even if they don’t come.' && ask.go === 'Pay $10' && ask.focus, ask);
+    && ask.lines[1] === 'There’s no GM credit for a seat you pay for. Like any seat, it’s locked in 24 hours before: after that you pay for it if they come, and if they don’t, the full price goes on their own tab.' && ask.go === 'Pay $10' && ask.focus, ask);
   await shot(page, `${size}-1-ask`, '[data-sheet][open]');
   await axe(page, `${tag} Pay for them, the question`, '[data-sheet]');
   await page.click('[data-sheet][open] [data-gm-pays-do]');
@@ -171,7 +190,7 @@ for (const size of sizes) {
       return `${error.status} ${error.message}`;
     }
   }, [GAME, 'R21-MIA-7']);
-  check(`${tag} 3 hours to go: the demo won't let Dan stop paying`, tried === "403 It's less than 24 hours away, so it's locked in: you pay for this seat, the same as any seat. Ask staff if something's come up.", tried);
+  check(`${tag} 3 hours to go: the demo won't let Dan stop paying`, tried === "403 It's less than 24 hours away, so it's locked in: you pay for this seat if they come, and if they don't, it's on their own tab. Ask staff if something's come up.", tried);
 
   /* ---------- 2. My Lair as Dan ---------- */
   await go(page, BASE, '/pages/my-lair#bookings', DAN);
@@ -226,7 +245,8 @@ for (const size of sizes) {
   await page.waitForSelector('my-lair .ml-ticket', { timeout: 20000 });
   await settle(page, 500);
   const locked = await page.evaluate(() => [...document.querySelectorAll('my-lair .ml-ticket')].map((x) => String(x.textContent || '').replace(/\s+/g, ' ').trim()).find((x) => /The Sunless Citadel/.test(x)) || '');
-  check(`${tag} My Lair (Mia), 3 hours to go: Locked in: your GM pays for it, not on her tab`, /Locked in: your GM pays for it/.test(locked) && !/Locked in: on your tab/.test(locked), locked);
+  check(`${tag} My Lair (Mia), 3 hours to go: Locked in: your GM pays for it, not on her tab, and if she can't come it's the full price on her tab`,
+    /Locked in: your GM pays for it/.test(locked) && !/Locked in: on your tab/.test(locked) && /If you can’t make it, the full price goes on your tab/.test(locked), locked);
   const lateCancel = await page.evaluate(async () => {
     try {
       await window.Lair.store.backend.updateBooking('bk-r21p-mia', { status: 'cancelled' });
@@ -235,7 +255,7 @@ for (const size of sizes) {
       return `${error.status} ${error.message}`;
     }
   });
-  check(`${tag} Mia, 3 hours to go: the demo won't cancel her seat online`, lateCancel === "409 It's less than 24 hours away, so it can't be cancelled online now: your GM is paying for your seat. Have a chat with us at the counter or give us a call, and we'll sort it out.", lateCancel);
+  check(`${tag} Mia, 3 hours to go: the demo won't cancel her seat online`, lateCancel === "409 It's less than 24 hours away, so it can't be cancelled online now. Your GM pays for your seat if you come. If you can't make it, the full price goes on your tab, so have a chat with us at the counter or give us a call.", lateCancel);
   await nextWeek(page);
   const inTime = await page.evaluate(async () => {
     const be = window.Lair.store.backend;
@@ -402,6 +422,78 @@ for (const size of sizes) {
   check(`${tag} Dan's game: Mia shows Rangi pays for it, and Dan has no Stop paying`,
     rows && rows[0].badges.includes('Rangi pays for it') && rows[0].buttons.length === 0, rows);
   check(`${tag} Dan (6): no errors`, !page.errors.length, page.errors);
+  await ctx.close();
+
+  /* ---------- 7. Mo's no-show rule (27 Oct 2026): Mia doesn't come, so it's $15 on her own tab, and Dan pays nothing ---------- */
+  ctx = await context(browser, size);
+  page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/lair-staff', STAFF);
+  await page.waitForSelector('#checkin-code', { timeout: 20000 });
+  await seed(page);
+  await page.evaluate(async ([id, seatRef]) => {
+    await window.Lair.store.backend.coverGamePlayer(id, seatRef);
+    await window.Lair.store.refresh();
+  }, [GAME, 'R21-MIA-7']);
+  await started(page);
+  await page.click('[data-tab="games"]');
+  await page.waitForSelector(`button.staff-gm-row[data-gm-manage="${GAME}"]`, { timeout: 15000 });
+  await page.click(`button.staff-gm-row[data-gm-manage="${GAME}"]`);
+  await page.waitForSelector('.staff-players', { timeout: 15000 });
+  let row = await staffRow(page, 'Mia');
+  check(`${tag} Staff, it's started: Mia's seat says the GM pays, with No-show`, row && /The GM pays: \$10 on their account/.test(row.text) && row.buttons.includes('No-show'), row);
+  await page.click('.staff-players [data-act="noshow"]');
+  await settle(page, 700);
+  row = await staffRow(page, 'Mia');
+  const charge = await page.evaluate((id) => {
+    const cover = window.Lair.store.backend.state.bookings.find((b) => b.kind === 'gm-cover' && b.gameId === id);
+    return cover ? { status: cover.status, refund: cover.refund || null } : null;
+  }, GAME);
+  check(`${tag} Staff: No-show: Mia's seat is $15 to pay, the GM doesn't pay, no Stop the GM paying, and the GM's charge has gone`,
+    row && /Unpaid, \$15 to pay/.test(row.text) && /No-show/.test(row.text) && !/The GM pays/.test(row.text) && !row.buttons.includes('Stop the GM paying')
+    && charge && charge.status === 'cancelled' && charge.refund === null, { row, charge });
+  await shot(page, `${size}-7-staff-noshow`, '.staff-players');
+  await axe(page, `${tag} staff page, a no-show the GM was paying for`, '.staff-players');
+  check(`${tag} Staff (7): no errors`, !page.errors.length, page.errors);
+  const state = await page.evaluate(() => JSON.stringify(window.Lair.store.backend.state));
+  await ctx.close();
+  // My Lair as Mia: no "Your GM pays for it", and $15 to pay
+  ctx = await context(browser, size);
+  page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/gm-games', MIA);
+  await ready(page);
+  await page.evaluate(async (json) => {
+    const be = window.Lair.store.backend;
+    Object.assign(be.state, JSON.parse(json));
+    be.commit();
+    await window.Lair.store.refresh();
+  }, state);
+  await go(page, BASE, '/pages/my-lair#bookings', MIA);
+  await page.waitForSelector('my-lair', { timeout: 20000 });
+  await settle(page, 900);
+  const mine = await page.evaluate(async (ref) => {
+    const data = await window.Lair.store.backend.me();
+    const seat = (data.seats || []).find((x) => x.ref === ref);
+    return seat ? { coveredByGm: Boolean(seat.coveredByGm), amount: seat.amount, status: seat.status } : null;
+  }, 'R21-MIA-7');
+  const page7 = await page.evaluate(() => String(document.querySelector('my-lair')?.textContent || '').replace(/\s+/g, ' '));
+  check(`${tag} My Lair (Mia), a no-show: her seat is hers to pay ($15), not Your GM pays for it`,
+    mine && !mine.coveredByGm && mine.amount === 1500 && mine.status === 'noshow' && !/Your GM pays for it/.test(page7), { mine, says: /Your GM pays for it/.test(page7) });
+  check(`${tag} Mia (7): no errors`, !page.errors.length, page.errors);
+  await ctx.close();
+  // My Lair as Dan: nothing to pay for her
+  ctx = await context(browser, size);
+  page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/gm-games', DAN);
+  await ready(page);
+  await page.evaluate(async (json) => {
+    const be = window.Lair.store.backend;
+    Object.assign(be.state, JSON.parse(json));
+    be.commit();
+    await window.Lair.store.refresh();
+  }, state);
+  const dans = await page.evaluate(async () => (await window.Lair.store.backend.me()).covers || []);
+  check(`${tag} My Lair (Dan), Mia a no-show: nothing for him to pay for her`, Array.isArray(dans) && dans.length === 0, dans);
+  check(`${tag} Dan (7): no errors`, !page.errors.length, page.errors);
   await ctx.close();
 }
 
