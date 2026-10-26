@@ -945,16 +945,24 @@ export class ShopifyAdmin {
     return orderOf((data.orders?.nodes || []).find((n) => (n.customAttributes || []).some((a) => a.key === key && a.value === value)));
   }
 
-  async creditCustomer(customerId, cents, currency) {
+  /**
+   * Store credit with Shopify's email to the customer. Throws with error.refused when Shopify answered and said no (or
+   * turned the call away before it ran), so nothing moved; any other error may or may not have moved it. Round 21:
+   * timeout (ms) gives up after that long (the GM credit that adds itself).
+   */
+  async creditCustomer(customerId, cents, currency, { timeout = null } = {}) {
     const data = await madeAnyway(this.graphql(
       `mutation Credit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
         storeCreditAccountCredit(id: $id, creditInput: $creditInput) { storeCreditAccountTransaction { amount { amount } } userErrors { field message code } }
       }`,
       { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: { amount: (cents / 100).toFixed(2), currencyCode: currency }, notify: true } },
+      timeout ? { timeout } : {},
     ));
     const result = data?.storeCreditAccountCredit;
     if (!result) throw new Error('Shopify gave no answer for the store credit.');
-    if (result.userErrors?.length) throw new Error(result.userErrors.map((e) => e.message).join('; '));
+    if (result.userErrors?.length) {
+      throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true, code: result.userErrors[0].code || null });
+    }
     return result.storeCreditAccountTransaction;
   }
 

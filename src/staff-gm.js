@@ -17,6 +17,7 @@
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair.
  */
 import { RuleError, addDays, lairTime } from './core.js';
+import { autoCredit } from './gm-credit.js';
 
 /** The three choices, in the order the Team tab shows them, and the one used until the main account picks */
 export const STAFF_GM_MODES = ['never', 'shifts', 'earn'];
@@ -137,8 +138,9 @@ export function shiftFor(hours, start, end, time) {
 }
 
 /** A session ready for its GM's credit: it has a GM account and a GM fee, has started, isn't cancelled and isn't credited */
-// (round 18: a free session has no GM credit to give, so nothing for staff to weigh)
-export const readyForCredit = (g, now) => Boolean(g?.gmCustomerId) && g.credited == null && g.start <= now && g.status !== 'cancelled' && (g.gmFee ?? 1) > 0 && !g.free;
+// (round 18: a free session has no GM credit to give, so nothing for staff to weigh. Round 21: nor does a session from
+// 26 Oct 2026 on, whose GM credit adds itself)
+export const readyForCredit = (g, now) => Boolean(g?.gmCustomerId) && g.credited == null && g.start <= now && g.status !== 'cancelled' && (g.gmFee ?? 1) > 0 && !g.free && !autoCredit(g);
 
 export const staffGmMethods = {
   /** The team's setting: 'never', 'shifts' or 'earn' (STAFF_GM_DEFAULT until the main account picks). No awaits. */

@@ -60,6 +60,8 @@ import { PRIVATE_COLUMNS, PRIVATE_INDEXES, privacyOf, privateMethods } from './p
 import { REPORT_COLUMNS, REPORT_TABLES, STAMP_WRITES, reportMethods } from './report.js';
 // Round 20 (26 Oct 2026): the TTRPG page's sessions, in the page itself
 import { sessionsFeedMethods } from './sessions-feed.js';
+// Round 21 (26 Oct 2026): GMs' stamps, and GM credit that adds itself
+import { GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1025,6 +1027,8 @@ export class Lair {
     // Round 19: the website's booking steps, and the indexes the weekly numbers read by (made when missing), and when
     // bookings and sign-ups paid before then were paid
     for (const statement of REPORT_TABLES) this.sql.exec(statement);
+    // Round 21: whether each session's GM was on the team (GM stamps), and each seat's GM credit (made when missing)
+    for (const statement of GM_CREDIT_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -2180,6 +2184,8 @@ export class Lair {
     const creditView = staffView && this.can(who, ['sessions', 'money']);
     const gmTeam = creditView ? this.staffGmTeam(st.games, now) : null;
     const credits = creditView ? this.creditsIn(from, to) : null;
+    // Round 21: and for sessions from 26 Oct 2026 on, whose GM credit adds itself, where it's up to (gmCreditsIn)
+    const autoCredits = creditView ? this.gmCreditsIn(from, to, rules) : null;
     const paid = staffView ? { booking: this.paymentsIn('booking', from, to), join: this.paymentsIn('join', from, to) } : null;
     const view = (bk) => {
       // Staff see everything, plus the saved pass, what passes covered, what's due, the refund state and who paid.
@@ -2254,6 +2260,7 @@ export class Lair {
         // onShift, shift and hours)
         if (creditView) {
           if (credits.has(g.id)) game.credit = credits.get(g.id);
+          if (autoCredit(g)) game.gmCredit = autoCredits.get(g.id) || this.gmCreditBlank();
           const rule = readyForCredit(g, now) && gmTeam?.has(String(g.gmCustomerId)) ? this.staffGmRule(g, gmTeam.get(String(g.gmCustomerId)), rules) : null;
           if (rule) game.staffGm = { mode: rule.mode, credit: rule.credit, onShift: rule.onShift, shift: rule.shift, hours: rule.hours };
         }
@@ -4148,6 +4155,9 @@ export class Lair {
     const rules = await this.rules();
     // Round 17: whether the GM is on the team (the main account or a helper), asked before the part with no awaits
     const before = this.game(id);
+    // Round 21: a session from 26 Oct 2026 on has GM credit that adds itself (src/gm-credit.js): this tap just does it
+    // now, once the session's over
+    if (before && autoCredit(before) && before.status !== 'cancelled') return this.creditGmNow(before);
     const gm = before?.gmCustomerId ? await this.person(before.gmCustomerId) : null;
     // --- no awaits until the game is claimed, so two staff tapping "credit" at once can't pay twice ---
     const now = Date.now();
@@ -6527,7 +6537,8 @@ export class Lair {
    * people less its guests with an account. One who signed up is never their own guest too (a guest row with the sign-up's
    * own account, from before it joined their account, counts once). Round 11: the same for a game table's named players:
    * each with an account gets their own stamp once the game is checked in, and the booker's card counts its people less
-   * them. No awaits.
+   * them. Round 21: a GM gets one for each session they ran (GM_STAMP_ROWS: started, not cancelled, with a player
+   * booked, and they weren't on the team then). No awaits.
    */
   stampedSessions(customerId, limit = -1) {
     return this.sql
@@ -6549,8 +6560,10 @@ export class Lair {
          SELECT j.id, 'join', j.starts_at, 1, '[]', j.occurrence_id, NULL, j.title
            FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
           WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
+         UNION ALL ${GM_STAMP_ROWS}
          ORDER BY at DESC, id DESC LIMIT ?`,
-        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, limit,
+        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
+        String(customerId), this.loyaltyFrom, limit,
       )
       .toArray();
   }
@@ -6570,8 +6583,11 @@ export class Lair {
              FROM event_joins j WHERE j.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ?
            UNION ALL
            SELECT 1 FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
-            WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id))`,
+            WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
+           UNION ALL
+           SELECT people FROM (${GM_STAMP_ROWS}))`,
         String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
+        String(customerId), this.loyaltyFrom,
       )
       .one().n;
   }
@@ -6611,6 +6627,8 @@ export class Lair {
   stampTitle(s, rules = this.rulesCache) {
     if (s.kind === 'join') return s.join_title || 'Event';
     if (s.kind === 'gm-seat') return s.game_title || 'TTRPG session';
+    // Round 21: a session they ran as its GM
+    if (s.kind === 'gm-run') return GM_CREDIT_WORDS.stampTitle(s.game_title);
     if (s.occurrence_id) return (rules && findOccurrence(rules, s.occurrence_id)?.title) || 'Event game spot';
     return this.tablesTitle(parse(s.tables, []));
   }
@@ -10015,6 +10033,20 @@ export class Lair {
       result.sessionsFeed = { error: String(error.message || error).slice(0, 300) };
       console.error('Lair: could not update the TTRPG page\'s sessions in Shopify', error);
     }
+    // Round 21 (src/gm-credit.js), each step on its own: whether each session under way has a GM on the team (GM stamps),
+    // then GM credit for each paid seat of a session that's over
+    try {
+      const runs = await this.gmRunUpkeep(Date.now());
+      if (runs) result.gmRuns = runs;
+    } catch (error) {
+      console.error('Lair: could not check sessions\' GMs for their stamps', error);
+    }
+    try {
+      const gmCredit = await this.autoGmCredit(Date.now());
+      if (gmCredit) result.gmCredit = gmCredit;
+    } catch (error) {
+      console.error('Lair: GM credit that adds itself failed', error);
+    }
     // Round 17 (src/queue.js), each step on its own: games on table bookings held from 3 days before (or let go)
     try {
       const tables = this.bookingHoldUpkeep(Date.now());
@@ -10164,3 +10196,5 @@ Object.assign(Lair.prototype, privateMethods);
 Object.assign(Lair.prototype, reportMethods);
 // Round 20 (26 Oct 2026): the TTRPG page's sessions in a shop metafield (src/sessions-feed.js)
 Object.assign(Lair.prototype, sessionsFeedMethods);
+// Round 21 (26 Oct 2026): GMs' stamps and GM credit that adds itself (src/gm-credit.js)
+Object.assign(Lair.prototype, gmCreditMethods);

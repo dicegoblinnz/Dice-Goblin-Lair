@@ -35,6 +35,7 @@ Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/che
 - Prices, opening hours, lead time and the other rules come from the theme: **Customize → Theme settings → Lair bookings**.
 - The app re-reads those every 5 minutes, so changes in Shopify show up on their own.
 - Every 10 minutes the health check also writes the next two weeks of public TTRPG sessions to the shop metafield `lair.sessions` when they've changed, so the TTRPG page's HTML lists them for search engines (no GM names, no private games: `docs/contracts/lair-api-contract-v20-sessions-feed.md`).
+- Round 21 (26 Oct 2026): the same run gives GMs a loyalty stamp for each session they ran (not staff), and for sessions from 26 October on adds each paid seat's GM fee to its GM's store credit once the session is over, one store credit per GM a run (`docs/contracts/lair-api-contract-v21-gm-credit.md`). Sessions before then keep the staff page's Session done button.
 - Staff and trusted GMs are Shopify customers tagged `staff` or `gm`.
 
 ## Where things live

@@ -4,6 +4,7 @@ These are the specs each build round was written against. Read them newest first
 
 | File | Round | Date |
 |---|---|---|
+| `lair-api-contract-v21-gm-credit.md` | Round 21, GMs' stamps and GM credit that adds itself: a stamp for each session a GM ran (not staff), and from 26 Oct 2026 each paid seat gives its GM their fee once the session is over | 26 Oct 2026 |
 | `lair-api-contract-v20-sessions-feed.md` | Round 20, the TTRPG page's sessions in the page: the next two weeks of public sessions in the shop metafield `lair.sessions` for the theme to print (no GM names, no private games) | 26 Oct 2026 |
 | `lair-api-contract-v19-report.md` | Round 19, the weekly numbers: regulars, the staff report and email, and the website's anonymous booking steps | 24 Oct 2026 |
 | `lair-api-contract-v18-gm-players.md` | A GM sees their players on every session: regulars' saved seats listed (and messaged), and a series' GM sees every session's players | 17 Oct 2026 |
