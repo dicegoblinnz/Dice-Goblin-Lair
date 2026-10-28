@@ -6,6 +6,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings, DEFAULT_HOURS } from '../src/core.js';
 import { ORDERMATE, counterSale, customSale, orderTags, titleCodes, titleTabRefs } from '../src/counter.js';
@@ -26,7 +27,7 @@ function fakeCtx() {
   const db = new DatabaseSync(':memory:');
   const sql = {
     exec(query, ...bindings) {
-      if (bindings.length > 100) throw new Error(`too many SQL variables: ${bindings.length}`);
+      cloudflareSql(query, bindings);
       const stmt = db.prepare(query);
       if (/^\s*(select|with)/i.test(query)) {
         const rows = stmt.all(...bindings);
