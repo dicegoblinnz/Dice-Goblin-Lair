@@ -581,3 +581,42 @@ test("every date to come: clashes across the dates it changed; skipping a change
   assert.equal(blockRow(ids[3]), undefined);
   assert.ok(JSON.parse(lair.sql.exec('SELECT skip_days FROM block_series WHERE id = ?', seriesId).one().skip_days).includes('2026-11-19'));
 });
+
+test("a two-day one-off (Oddity Alley): each day is its own date, with its own tables, both on holdEvents", async () => {
+  useRules([...EVENTS, { id: 'oddity-alley-november', title: 'Oddity Alley', start: at('2026-11-21', 10), end: at('2026-11-21', 15), tables: 'T1-T21', lockTables: true, days: 2 }]);
+  ok(await holdDate('oddity-alley-november@2026-11-22', { tables: 'T1-T10' }));
+  const floor = await board(OWNER, at('2026-11-20', 0), at('2026-11-24', 0));
+  const alley = eventOn(floor, 'oddity-alley-november');
+  assert.deepEqual(alley.dates.map((d) => [d.occurrenceId, d.tables.length, d.changed]), [['oddity-alley-november@2026-11-21', 21, false], ['oddity-alley-november@2026-11-22', 10, true]]);
+  assert.equal(alley.repeat, null);
+  // Sunday's T15 can be booked; Saturday's can't
+  ok(await book(['T15'], at('2026-11-22', 11), at('2026-11-22', 12)));
+  assert.equal((await book(['T15'], at('2026-11-21', 11), at('2026-11-21', 12))).status, 409);
+});
+
+test("a date's own tables ride along when the rules load again (and only the methods here change them)", async () => {
+  ok(await holdDate(GUNDAM, { tables: ['T18'] }));
+  // the rules come back as a new object (Shopify read again): the date still has its own tables
+  useRules();
+  lair.holdDatesCache = null;
+  assert.deepEqual(holdFor(await board(), GUNDAM).tables, ['T18']);
+  // a second Lair (the Durable Object started again) reads them from its database
+  const again = new Lair(lair.ctx, { CURRENCY: 'NZD' });
+  again.rulesCache = lair.rulesCache;
+  again.rulesLoadedAt = lair.rulesLoadedAt;
+  const rules = await again.rules();
+  assert.deepEqual(eventHolds(rules, at('2026-10-30', 0), at('2026-10-31', 0)).find((h) => h.occurrenceId === GUNDAM).tables, ['T18']);
+});
+
+test('a GM game, a staff hold and a walk-in are checked against the date’s own tables too (staff skip locked tables, as before)', async () => {
+  ok(await holdDate(POKEMON, { tables: ['T1'] }));
+  ok(await holdDate(GUNDAM, { tables: ['T2'] }));
+  // a customer can't book T1 at 8pm that Friday now, but T10 (no longer held by either) is free
+  assert.equal((await book(['T1'], at('2026-10-30', 20), at('2026-10-30', 21))).status, 409);
+  ok(await book(['T10'], at('2026-10-30', 20), at('2026-10-30', 21)));
+  // staff booking for someone skip locked event tables (blockingItems' staff), as before
+  const staffBooking = await call('POST', 'bookings', {
+    kind: 'table', tables: ['T1'], start: at('2026-10-30', 20), end: at('2026-10-30', 21), people: 2, name: 'Walk-in', pay: 'day', staffOverride: true,
+  }, OWNER);
+  assert.equal(staffBooking.status, 200, staffBooking.data.error);
+});
