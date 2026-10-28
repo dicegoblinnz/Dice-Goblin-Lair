@@ -17,6 +17,7 @@ import {
   personAction,
   whyNothing,
   nextScreen,
+  withCard,
   NO_PASS,
   notALairCode,
   openUseIds,
@@ -62,10 +63,11 @@ test('a booking or sign-up opens the person view, with the pass choice ready', (
     filled: false,
     cover: null,
     confirm: null,
+    fresh: 0,
   });
   const card = { stamps: 9, cardSize: 10, rollsAvailable: 0, card: 2 };
   const withCard = nextScreen({ type: 'booking', row, group: null, loyalty: card });
-  assert.deepEqual(withCard?.name === 'person' && withCard.loyalty, card, 'their card, once the Lair app sends it with tickets');
+  assert.deepEqual(withCard?.name === 'person' && withCard.loyalty, card, 'their card: round 22\'s Lair app sends it with tickets on an account');
   const join = nextScreen({ type: 'join', row: { id: 'ej_1', ref: 'JO-PIXIE-1' }, group: null });
   assert.equal(join?.name === 'person' && join.row.type, 'join');
   assert.equal(join?.name === 'person' && join.groupKey, null);
@@ -89,7 +91,7 @@ test('a member opens the member view with their rows, tab and passes', () => {
   assert.equal(screen.passes.length, 1);
   assert.deepEqual(screen.loyalty, { stamps: 7, cardSize: 10, rollsAvailable: 1 }, 'the loyalty card, for show (round 6)');
   const bare = nextScreen({ type: 'member', member: { customerId: '1' } });
-  assert.deepEqual(bare?.name === 'member' && [bare.rows, bare.tab, bare.passes, bare.loyalty], [[], null, [], null]);
+  assert.deepEqual(bare?.name === 'member' && [bare.rows, bare.tab, bare.passes, bare.loyalty, bare.fresh, bare.added], [[], null, [], null, 0, []]);
 });
 
 test('a pass opens the pass view; anything else is not a screen', () => {
@@ -663,4 +665,14 @@ test('a GM’s member code: their charges for their players’ seats are paid wi
   assert.deepEqual([plan.label, plan.parts, plan.total], ['Check in and add everything · $47', "Today $15 · Players' seats $10 · Owed $15 · Tab $7", 4700]);
   const only = everythingPlan([charge], null);
   assert.deepEqual([only.label, only.separate, only.parts], ['Add $10 to cart', false, '']);
+});
+
+test('round 22: a fresh look at their card goes on the screen with the stamps that landed since', () => {
+  const screen = { name: 'member', loyalty: { stamps: 4, cardSize: 10, rollsAvailable: 0, card: 1 }, fresh: 0 };
+  const after = withCard(screen, { stamps: 7, cardSize: 10, rollsAvailable: 0, card: 1 });
+  assert.deepEqual([after.loyalty, after.fresh], [{ stamps: 7, cardSize: 10, rollsAvailable: 0, card: 1 }, 3]);
+  const again = withCard(after, { stamps: 8, cardSize: 10, rollsAvailable: 0, card: 1 });
+  assert.equal(again.fresh, 4, 'adds up on the same screen');
+  assert.equal(withCard(again, null), again, 'no card in the answer: unchanged');
+  assert.equal(withCard(again, 'lots').fresh, 4);
 });

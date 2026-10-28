@@ -80,8 +80,8 @@ export function linesTotal(lines) {
 
 /**
  * The cart lines for a weekly regular's owed seats: the line the Lair app sent with each owed row ("Owed: Curse of
- * Strahd (Thu 1 Oct)"), or one made the same way when a row came without it (the Today list's rows have none). Each is
- * tagged with its seat's code, so paying it pays that seat. Rows that aren't owed, or have nothing left to pay, add
+ * Strahd (Thu 1 Oct, KT-KRAKEN-7)"), or one made the same way when a row came without it (the Today list's rows have
+ * none). Each is tagged with its seat's code, and has it in its title, so paying it pays that seat. Rows that aren't owed, or have nothing left to pay, add
  * nothing.
  * @param {{ ref?: string, owed?: boolean, due?: number, title?: string, start?: number, line?: unknown }[]} rows
  * @returns {FeeLine[]}
@@ -99,8 +99,11 @@ export function owedLines(rows) {
       continue;
     }
     const day = shortDay(row.start);
+    // (round 22: the code in the title too, inside its first 120 characters: Pay on Verifone keeps a line's title and
+    // drops its _booking, so the Lair app finds the seat by the code in the title)
+    const what = String(row.title || 'GM seat').replace(/\s+/g, ' ').trim();
     lines.push({
-      title: `Owed: ${String(row.title || 'GM seat').trim()}${day ? ` (${day})` : ''}`.slice(0, 120),
+      title: `Owed: ${what.length > 60 ? `${what.slice(0, 59).trimEnd()}…` : what} (${day ? `${day}, ` : ''}${ref})`,
       price: (due / 100).toFixed(2),
       quantity: 1,
       taxable: true,

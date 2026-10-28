@@ -1,7 +1,7 @@
 // Putting fees, shares, tabs and members in the POS cart, with a pretend POS cart: `npm test` in pos-app.
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, hasLairLines, putOnSale, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
+import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, hasLairLines, putOnSale, scanCustomer, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
 
 /**
  * A pretend POS cart that records every call.
@@ -239,4 +239,16 @@ test('Add everything to cart: just fees, just a tab, or nothing; the tab stays i
   const { calls: none } = pretendCart();
   const nothing = await addEverythingToCart({ lines: [], tab: null, customerId: '888', markAdded: async () => assert.fail('no tab') });
   assert.deepEqual([none, nothing.customer], [[], 'none'], 'nothing in the sale, so no customer either');
+});
+
+test('round 22: scanning someone puts them on the sale when nobody is on it, or in place of someone on an empty one; never over a sale with things in it or a share', () => {
+  assert.equal(scanCustomer({ lineItems: [] }, '777'), 'set', 'nobody on an empty sale');
+  assert.equal(scanCustomer({ lineItems: [{ uuid: 'a', properties: {} }] }, 'gid://shopify/Customer/777'), 'set', 'a session rung up by hand with nobody on it yet');
+  assert.equal(scanCustomer({ lineItems: [], customer: { id: 777 } }, '777'), 'already');
+  assert.equal(scanCustomer({ lineItems: [], customer: { id: 9 } }, '777'), 'replace', 'the last customer, left on an empty sale');
+  assert.equal(scanCustomer({ lineItems: [{ uuid: 'a', properties: { _booking: 'SJ-OWLBEAR-17' } }], customer: { id: 9 } }, '777'), 'keep', "someone else's sale");
+  assert.equal(scanCustomer({ lineItems: [{ uuid: 'a', properties: { _booking: 'SJ-OWLBEAR-17', _share: '1' } }] }, '777'), 'keep', "a share of a bill: its payer stays whoever's on it");
+  assert.equal(scanCustomer({ lineItems: [] }, null), 'none', 'a guest: no account');
+  assert.equal(scanCustomer(null, ''), 'none');
+  assert.equal(scanCustomer(undefined, 777), 'set');
 });

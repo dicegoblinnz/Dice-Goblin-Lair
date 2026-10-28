@@ -15,13 +15,14 @@
 // tap from Pay on Verifone. If POS doesn't close it (a known POS bug after the screen has waited on the Lair app),
 // staff see "In the cart" with one "Close and pay" button instead.
 // Fees go in the POS cart as custom sales tagged `_booking` (plus `_share` for a share of a bill; an owed session is
-// "Owed: <game> (<date>)"), and a tab's items as the real products tagged `_tab`. When the sale is paid on the
-// Verifone, the Lair app's orders/paid webhook marks them paid. API contract v4, sections 7 and 11, v5 section 2, and
-// v21-gm-cover.
+// "Owed: <game> (<date>, <code>)"), and a tab's items as the real products tagged `_tab`. When the sale is paid on the
+// Verifone, the Lair app's orders/paid webhook marks them paid. Pay on Verifone's orders lose those tags, so since round
+// 22 the Lair app goes by the code in each fee's title, and by the tab's items and the member on the sale. API
+// contract v4, sections 7 and 11, v5 section 2, v21-gm-cover and v22-stamps.
 import '@shopify/ui-extensions/preact';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, cartCustomerId, putOnSale, sharesInCart, tabsInCart } from './cart.js';
+import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, cartCustomerId, putOnSale, scanCustomer, sharesInCart, tabsInCart } from './cart.js';
 import { readCode } from './codes.js';
 import {
   afterCart,
@@ -49,13 +50,14 @@ import {
   stackAfterPerson,
   tabNotes,
   undoNote,
+  withCard,
   withGroups,
   wrongScan,
 } from './flow.js';
 import { dayKey, firstName, money, plural } from './format.js';
-import { checkIn, coverSeat, getToday, LairError, problemFor, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse } from './lair.js';
+import { addStamp, checkIn, coverSeat, getToday, LairError, problemFor, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse, undoStamp } from './lair.js';
 import { feeLines, itemCount, linesTotal, owedLines, shareLines, tabToast } from './lines.js';
-import { cardFilled, cardFullShort, cardFullWords } from './loyalty.js';
+import { cardFilled, cardFullShort, cardFullWords, freshStamps, stampAddedWords, stampKey } from './loyalty.js';
 import { customerNames } from './sale.js';
 import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState, WAITING, waitingRefs } from './split.js';
 import { loadPending, savePending, saveTileEntry } from './store.js';
@@ -471,13 +473,35 @@ function CheckIn() {
           }
           throw error;
         }
-        route(answer, what);
+        const opened = route(answer, what);
+        if (opened) await placeOnSale(opened);
       },
       () => handle(raw, what),
     );
   }
 
-  /** @param {any} answer @param {Want} what */
+  /**
+   * Round 22 (Mo, 28 Oct 2026: "when you scan the QR code it adds the person as a customer to make sure they are added
+   * and everything applies"): whoever's code was just scanned goes on the sale straight away, so their store credit and
+   * discounts are there at the till, their spend counts, and a session rung up by hand stamps their card. Only when
+   * nobody's on the sale, or someone else is on an empty one (scanCustomer); never over someone else's sale or a share
+   * of a bill. Never throws: the screen works the same if POS says no.
+   * @param {Screen} screen the member or person view the scan opened
+   */
+  async function placeOnSale(screen) {
+    const who = screen.name === 'member' ? screen.member : screen.name === 'person' ? screen.row : null;
+    if (!who?.customerId) return;
+    const plan = scanCustomer(shopify.cart.current.value, who.customerId);
+    if (plan !== 'set' && plan !== 'replace') return;
+    const result = await putOnSale(who.customerId, plan === 'replace');
+    if (result === 'added') toast(`${firstName(String(who.name || '')) || 'They'} is on this sale`);
+  }
+
+  /**
+   * @param {any} answer
+   * @param {Want} what
+   * @returns {Screen | null} the screen it opened, or null when the scan went somewhere else (a payer, a pass, a problem)
+   */
   function route(answer, what) {
     const person = topPerson();
     const row = person ? currentRow(person, todayNow.current) : null;
@@ -493,18 +517,18 @@ function CheckIn() {
     if (purpose === 'wrong') {
       const words = wrongScan(what === 'pass' ? 'pass' : 'payer');
       say(words.title, words.message, 'warning', { label: 'Scan again', run: () => scan(what) });
-      return;
+      return null;
     }
     if (purpose === 'payer') {
       const found = payerFromScan(answer);
       if ('problem' in found) {
         say("That's not a member code", found.problem);
-        return;
+        return null;
       }
       remember(found.payer);
       updatePerson((screen) => ({ ...screen, split: { ...screen.split, open: true, payer: found.payer } }));
       toast(`${firstName(found.payer.name) || 'They'} will pay this share`);
-      return;
+      return null;
     }
     if (purpose === 'pass') {
       /** @type {PassLike} */
@@ -512,16 +536,16 @@ function CheckIn() {
       const why = passProblem(pass);
       if (why) {
         say(`${pass?.label || 'That pass'} can't be used`, why);
-        return;
+        return null;
       }
       updatePerson((screen) => ({ ...screen, passes: [...screen.passes.filter((p) => p.code !== pass.code), pass], choice: String(pass.code) }));
       toast(`${pass.label || 'The pass'} is ready to use`);
-      return;
+      return null;
     }
     const screen = nextScreen(answer);
     if (!screen) {
       say('That code needs a newer screen', 'The Lair app answered with something this screen doesn’t know. Search by name instead.');
-      return;
+      return null;
     }
     if (screen.name === 'person') setRows([screen.row]);
     if (screen.name === 'member') {
@@ -530,6 +554,7 @@ function CheckIn() {
     }
     setQuery('');
     navigate([HOME, screen]);
+    return screen;
   }
 
   /* ---------------- a person: check in, the cart, a share of the bill ---------------- */
@@ -700,7 +725,9 @@ function CheckIn() {
       const uses = recordUses(current.uses, answer);
       const choice = outcome.arrived ? passOptions(fresh, current.passes, passInUse(fresh, uses)).picked : current.choice;
       const loyalty = answer?.loyalty && typeof answer.loyalty === 'object' ? answer.loyalty : current.loyalty;
-      return { ...current, row: fresh, result: answer, uses, note: null, choice, loyalty, filled: current.filled || filled };
+      // round 22: the stamps this check-in put on their card, shown as new on it
+      const stamped = (current.fresh || 0) + freshStamps(current.loyalty, answer?.loyalty);
+      return { ...current, row: fresh, result: answer, uses, note: null, choice, loyalty, filled: current.filled || filled, fresh: stamped };
     });
     return { answer, filled };
   }
@@ -1123,10 +1150,10 @@ function CheckIn() {
         const day = plan.today.canCheckIn ? await checkInToday(current, plan.today) : { rows: [], lines: [], checked: 0, notices: [] };
         // A check-in can fill their card: look again while the cart fills.
         const card = day.checked && before ? withTimeout(lookAgain(current), CARD_WAIT_MS).catch(() => null) : Promise.resolve(null);
-        /** The card after check-in, on screen; true when it filled. */
+        /** The card after check-in, on screen (round 22: with its new stamps); true when it filled. */
         const cardNow = async () => {
           const after = await card;
-          if (after) updateMember((shown) => ({ ...shown, loyalty: after.loyalty }));
+          if (after) updateMember((shown) => withCard(shown, after.loyalty));
           return Boolean(after && cardFilled(before, after.loyalty));
         };
         // Today's lines, then their owed sessions' (the fresh look's, each with the Lair app's own line).
@@ -1185,7 +1212,7 @@ function CheckIn() {
         // Only the ones still to come: nothing to pay now, so nothing is asked for lines.
         const day = await checkInToday(screen, { ...plan, owing: [] });
         const after = day.checked && screen.loyalty ? await withTimeout(lookAgain(screen), CARD_WAIT_MS).catch(() => null) : null;
-        if (after) updateMember((shown) => ({ ...shown, loyalty: after.loyalty }));
+        if (after) updateMember((shown) => withCard(shown, after.loyalty));
         const full = after && cardFilled(screen.loyalty, after.loyalty) ? cardFullWords(name) : '';
         const words = [day.checked ? "Today's fees go on their account." : '', ...day.notices, full].filter(Boolean).join(' ');
         const title = day.checked ? `${name ? `${name}'s` : "They're"} checked in` : 'No one was checked in';
@@ -1232,6 +1259,62 @@ function CheckIn() {
       },
       addTab,
       'tab',
+    );
+  }
+
+  /* ---------------- the loyalty card: Add a stamp (round 22, contract v22-stamps) ---------------- */
+
+  /**
+   * "Add a stamp" on a member's card (Mo, 28 Oct 2026: "give the staff [a way] to add a stamp on the area for the
+   * stamps"), for a session the Lair app doesn't know about: one stamp a tap (POST /pos/stamp). The tap's key goes with
+   * Try again too, so a lost answer never adds two. The card shows it as new, and Undo takes it back.
+   */
+  function addStampHere() {
+    const screen = topMember();
+    if (!screen?.member.customerId) return;
+    const customerId = screen.member.customerId;
+    const name = firstName(String(screen.member.name || ''));
+    const key = stampKey();
+    const go = () =>
+      run(
+        'Adding a stamp…',
+        async () => {
+          const before = topMember()?.loyalty || screen.loyalty || null;
+          const answer = await addStamp({ customerId, key });
+          const id = answer?.stamp?.id ? String(answer.stamp.id) : '';
+          updateMember((shown) =>
+            String(shown.member.customerId) !== String(customerId)
+              ? shown
+              : { ...withCard(shown, answer?.loyalty), added: id && !(shown.added || []).includes(id) ? [...(shown.added || []), id] : shown.added || [] },
+          );
+          toast(stampAddedWords(answer?.loyalty, name));
+          if (cardFilled(before, answer?.loyalty)) say('Card full!', `${cardFullWords(name)} Let them know.`, 'success');
+        },
+        go,
+        'stamp',
+      );
+    go();
+  }
+
+  /** "Undo that stamp": takes back the last stamp added on this screen (POST /pos/stamp-undo). */
+  function undoStampHere() {
+    const screen = topMember();
+    const id = screen?.added?.[screen.added.length - 1];
+    if (!screen || !id) return;
+    const customerId = screen.member.customerId;
+    run(
+      'Taking the stamp back…',
+      async () => {
+        const answer = await undoStamp({ customerId, id });
+        updateMember((shown) => {
+          if (String(shown.member.customerId) !== String(customerId)) return shown;
+          const loyalty = answer?.loyalty && typeof answer.loyalty === 'object' ? answer.loyalty : shown.loyalty;
+          return { ...shown, loyalty, fresh: Math.max(0, (shown.fresh || 0) - freshStamps(loyalty, shown.loyalty)), added: (shown.added || []).filter((x) => x !== id) };
+        });
+        toast(answer?.already ? 'That stamp was taken back already.' : 'Stamp taken back.');
+      },
+      undoStampHere,
+      'stamp-undo',
     );
   }
 
@@ -1348,6 +1431,8 @@ function CheckIn() {
       checkInMemberOnly,
       addTab,
       putMemberOnSale,
+      addStamp: addStampHere,
+      undoStamp: undoStampHere,
       openPass: (pass) => push({ name: 'pass', pass, picking: false }),
       togglePicking: () => updatePass((screen) => ({ ...screen, picking: !screen.picking })),
       usePassOn,

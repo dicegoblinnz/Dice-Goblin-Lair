@@ -115,6 +115,25 @@ export function undoPassUse(useId) {
 }
 
 /**
+ * A stamp on someone's loyalty card from the counter (contract v22-stamps), one a tap. `key` is the tap's own (stampKey
+ * in loyalty.js): asking again with it after a lost answer adds nothing more. Answers `{ stamp, repeated, loyalty }`.
+ * @param {{ customerId: unknown, key: string }} input
+ * @returns {Promise<any>}
+ */
+export function addStamp({ customerId, key }) {
+  return call('POST', '/pos/stamp', { customerId: String(customerId ?? ''), key }, 'Adding a stamp needs the Lair app’s latest update. Try again in a few minutes.');
+}
+
+/**
+ * Takes back a stamp the counter added (its `stamp.id`). Answers `{ stamp, already, loyalty }`.
+ * @param {{ customerId: unknown, id: string }} input
+ * @returns {Promise<any>}
+ */
+export function undoStamp({ customerId, id }) {
+  return call('POST', '/pos/stamp-undo', { customerId: String(customerId ?? ''), id }, "That stamp isn't on their card any more. Scan their code again.");
+}
+
+/**
  * Tells the Lair app a member's tab is in the cart (so they can't change it while they pay). Answers `{ tab }`.
  * @param {string | number} tabId
  * @returns {Promise<any>}

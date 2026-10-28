@@ -3,6 +3,7 @@
 import { readCode } from './codes.js';
 import { dateLabel, dayKey, firstName, money, plural, shortDay, timeRange } from './format.js';
 import { addedToast, everythingToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabCents, tabItems } from './lines.js';
+import { freshStamps } from './loyalty.js';
 import { canSplit, splitFirst } from './split.js';
 import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, passUsable, rowKey, rowState } from './today.js';
 
@@ -32,14 +33,18 @@ import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, pass
  *   the GM's charge from POST /pos/cover (contract v21-gm-cover)
  * @typedef {{ name: 'person', row: Row, groupKey: string | null, groupTitle: string, passes: PassLike[],
  *   choice: string | null, result: CheckinAnswer | null, split: SplitState, uses: KnownUse[], note: Note | null,
- *   loyalty?: object | null, filled?: boolean, cover?: Cover | null, confirm?: 'cover' | 'uncover' | null }} PersonScreen
- *   loyalty: their loyalty card, when this screen has it (from their member code, or a ticket's scan once the Lair app
- *   sends it); filled: this screen's check-in filled their card; cover: the GM's charge this screen just set up;
- *   confirm: "GM pays" (or stop) is waiting for a yes
+ *   loyalty?: object | null, filled?: boolean, cover?: Cover | null, confirm?: 'cover' | 'uncover' | null,
+ *   fresh?: number }} PersonScreen
+ *   loyalty: their loyalty card, when this screen has it (from their member code, or a ticket's scan: round 22's Lair
+ *   app sends it with tickets on an account); filled: this screen's check-in filled their card; cover: the GM's charge
+ *   this screen just set up; confirm: "GM pays" (or stop) is waiting for a yes; fresh: stamps this screen saw land
  * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], loyalty?: object | null,
- *   account?: { billing?: string, creditLimit?: number, owed?: number, available?: number | null, warning?: string | null } | null }} MemberScreen
- *   loyalty: their loyalty card from the scan (`{ stamps, cardSize, rollsAvailable, card }`, rounds 6 and 7), for show only
+ *   account?: { billing?: string, creditLimit?: number, owed?: number, available?: number | null, warning?: string | null } | null,
+ *   fresh?: number, added?: string[] }} MemberScreen
+ *   loyalty: their loyalty card from the scan (`{ stamps, cardSize, rollsAvailable, card }`, rounds 6 and 7)
  *   account: their billing from the scan (round 9): `{ billing: 'visit' }`, or a monthly account's limit and what's owed
+ *   fresh: stamps this screen saw land (check-ins, and stamps staff added); added (round 22): the stamps staff added on
+ *   this screen, oldest first, so Undo can take the last one back
  * @typedef {{ name: 'pass', pass: PassLike & Record<string, any>, picking: boolean }} PassScreen
  * @typedef {{ name: 'group', key: string, ticked: string[], picking: boolean }} GroupScreen
  *   picking: "Check in several at once" is open; ticked: the rowKeys ticked to pay together
@@ -88,6 +93,7 @@ export function personScreen(row, { groupKey = null, groupTitle = '', passes = [
     filled: false,
     cover: null,
     confirm: null,
+    fresh: 0,
   };
 }
 
@@ -107,7 +113,7 @@ export function nextScreen(answer) {
       {
         groupKey: answer.group?.key != null ? String(answer.group.key) : null,
         groupTitle: String(answer.group?.title || ''),
-        // their card, once the Lair app sends it with tickets (the counter's ask, 27 Oct 2026)
+        // their card: round 22's Lair app sends it with a ticket on an account (the counter's ask, 27 Oct 2026)
         loyalty: answer.loyalty && typeof answer.loyalty === 'object' ? answer.loyalty : null,
       },
     );
@@ -121,10 +127,25 @@ export function nextScreen(answer) {
       passes: Array.isArray(answer.passes) ? answer.passes : [],
       loyalty: answer.loyalty && typeof answer.loyalty === 'object' ? answer.loyalty : null,
       account: answer.account && typeof answer.account === 'object' ? answer.account : null,
+      fresh: 0,
+      added: [],
     };
   }
   if (type === 'pass' && answer.pass && typeof answer.pass === 'object') return { name: 'pass', pass: answer.pass, picking: false };
   return null;
+}
+
+/**
+ * A member or person view with a fresh look at their loyalty card (round 22): the card as the Lair app now says, and the
+ * stamps that landed since the screen's last look added to its new ones. Unchanged when there's no card in the answer.
+ * @template {{ loyalty?: object | null, fresh?: number }} S
+ * @param {S} screen
+ * @param {unknown} loyalty a scan's or answer's `loyalty`
+ * @returns {S}
+ */
+export function withCard(screen, loyalty) {
+  if (!loyalty || typeof loyalty !== 'object') return screen;
+  return { ...screen, loyalty, fresh: (screen.fresh || 0) + freshStamps(screen.loyalty, loyalty) };
 }
 
 /**

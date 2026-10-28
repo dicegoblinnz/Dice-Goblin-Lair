@@ -129,17 +129,23 @@ test('says what happened in plain words', () => {
 const oct1 = Date.UTC(2026, 9, 1, 5, 0);
 
 test('owed sessions: the Lair app\'s own line for each, or one made the same way when a row has none', () => {
-  const sent = { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-7' } };
+  const sent = { title: 'Owed: Curse of Strahd (Thu 1 Oct, KT-KRAKEN-7)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-7' } };
   const owed = { id: 'bk_kai', ref: 'KT-KRAKEN-7', owed: true, due: 1500, title: 'Curse of Strahd', start: oct1, line: sent };
   assert.deepEqual(owedLines([owed]), [sent]);
-  // The Today list's rows carry no line: the same title, from the row.
+  // The Today list's rows carry no line: the same title, from the row, with the seat's code in it (round 22: Pay on
+  // Verifone keeps a line's title and drops its _booking, so the Lair app finds the seat by the code in the title)
   assert.deepEqual(owedLines([{ ...owed, line: undefined, ref: 'KT-KRAKEN-8', due: 2000 }]), [
-    { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: '20.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-8' } },
+    { title: 'Owed: Curse of Strahd (Thu 1 Oct, KT-KRAKEN-8)', price: '20.00', quantity: 1, taxable: true, properties: { _booking: 'KT-KRAKEN-8' } },
   ]);
   assert.deepEqual(owedLines([{ ...owed, line: { title: 'Owed: Curse of Strahd (Thu 1 Oct)', price: 15 } }])[0].properties, { _booking: 'KT-KRAKEN-7' }, 'a line without its code gets the row\'s');
-  assert.equal(owedLines([{ ...owed, line: { title: 'Broken', price: 'abc' } }])[0].title, 'Owed: Curse of Strahd (Thu 1 Oct)', 'a broken line is made again');
+  assert.equal(owedLines([{ ...owed, line: { title: 'Broken', price: 'abc' } }])[0].title, 'Owed: Curse of Strahd (Thu 1 Oct, KT-KRAKEN-7)', 'a broken line is made again');
   assert.deepEqual(owedLines([{ ...owed, owed: false }, { ...owed, due: 0 }, { ...owed, ref: '' }, null]), [], 'not owed, nothing left, or no code to pay it by');
-  assert.equal(owedLines([{ ...owed, line: undefined, title: '' }])[0].title, 'Owed: GM seat (Thu 1 Oct)');
+  assert.equal(owedLines([{ ...owed, line: undefined, title: '' }])[0].title, 'Owed: GM seat (Thu 1 Oct, KT-KRAKEN-7)');
+  // a long name is cut short, so the code stays in the title's first 120 characters
+  const long = owedLines([{ ...owed, line: undefined, title: `The ${'Very '.repeat(30)}Long Campaign` }])[0].title;
+  assert.ok(long.length <= 120 && long.endsWith('(Thu 1 Oct, KT-KRAKEN-7)') && long.includes('…'), long);
+  // no start time: just the code
+  assert.equal(owedLines([{ ...owed, line: undefined, start: undefined }])[0].title, 'Owed: Curse of Strahd (KT-KRAKEN-7)');
 });
 
 test('splits a member\'s lines into today\'s and the owed seats\'', () => {

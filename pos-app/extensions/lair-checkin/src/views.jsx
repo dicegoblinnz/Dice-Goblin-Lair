@@ -23,7 +23,7 @@ import {
 } from './flow.js';
 import { customerIdNumber, dateLabel, firstName, longDay, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
 import { accountLine, tabItems } from './lines.js';
-import { cardFullWords, cardHeading, loyaltyCard, rollWords, stampMarks, stampWords } from './loyalty.js';
+import { cardFullWords, cardHeading, freshWords, loyaltyCard, rollWords, stampCount, stampNote, stampRows, stampsLeft } from './loyalty.js';
 import { saleStrip } from './sale.js';
 import { amountProblem, bookerPayer, paidSummary, parseDollars, paymentsLine, pendingState, personShare, shareSummary, WAITING } from './split.js';
 import {
@@ -106,6 +106,8 @@ import {
  *   checkInMemberOnly: () => void,
  *   addTab: () => void,
  *   putMemberOnSale: () => void,
+ *   addStamp: () => void,
+ *   undoStamp: () => void,
  *   openPass: (pass: PassLike) => void,
  *   togglePicking: () => void,
  *   usePassOn: (row: Row, group: Group) => void,
@@ -405,13 +407,15 @@ function PersonView({ screen, ctx }) {
   const asking = Boolean(screen.confirm);
   const showPasses =
     row.type !== 'join' && !splitting && !asking && !holding && !inCart && (plan.stage === 'check-in' || plan.stage === 'pay' || (plan.stage === 'done' && Boolean(inUse)));
-  const cardShown = screen.filled ? (
+  const fullBanner = screen.filled ? (
     <s-banner tone="success" heading="Card full!">
       {`${cardFullWords(first)} Let them know.`}
     </s-banner>
-  ) : card ? (
-    <LoyaltySection card={card} />
   ) : null;
+  // Round 22: their card on a ticket too (the Lair app sends it for a ticket on an account), with its new stamp once
+  // they're checked in; it's under the main button, which stays the next step. A ticket's session stamps by itself, so
+  // there's no Add a stamp here: that's on their member code.
+  const cardShown = card ? <LoyaltySection card={card} fresh={screen.fresh || 0} note={stampNote(row)} ctx={ctx} /> : null;
   /** @param {{ action: PersonActionName, label: string }} button */
   const label = (button) => (button.action === 'back' && button.label === 'Back' ? `‹ ${ctx.backLabel}` : button.label);
 
@@ -423,6 +427,7 @@ function PersonView({ screen, ctx }) {
         <s-banner tone="success" heading={first ? `${first}'s in` : "They're in"}>
           {[whyNothing(row), outcome?.notice || ''].filter(Boolean).join(' ')}
         </s-banner>
+        {fullBanner}
         {cardShown}
         {showPasses ? <PassChoice row={row} screen={screen} options={choices.options} inUse={inUse} stage={plan.stage} ctx={ctx} /> : null}
         <MainButtons main={main} label={label} ctx={ctx} />
@@ -453,7 +458,7 @@ function PersonView({ screen, ctx }) {
         </s-stack>
       </s-section>
       <MoneySection row={row} plan={plan} />
-      {cardShown}
+      {fullBanner}
       {screen.note ? (
         <s-banner tone="success" heading={screen.note.heading}>
           {screen.note.body}
@@ -484,6 +489,7 @@ function PersonView({ screen, ctx }) {
           Use a session pass
         </s-button>
       ) : null}
+      {splitting || asking ? null : cardShown}
     </Page>
   );
 }
@@ -562,21 +568,54 @@ function MoneySection({ row, plan }) {
 }
 
 /**
- * The loyalty card: a star for each stamp, then what's left and any rolls waiting.
- * @param {{ card: import('./loyalty.js').Card }} props
+ * The loyalty card (round 22, Mo: "the stamp is not clear"), drawn like a punch card: two rows of five, a big green star
+ * for each stamp and a grey ring for each space left, then the count in big type ("7 of 10 stamps", with "New stamp"
+ * when this screen saw one land), what's left to the d20 roll, any rolls waiting in My Lair, and when stamps land. On a
+ * member's card, "Add a stamp" for a session the Lair app doesn't know about, and "Undo that stamp" after one.
+ * @param {{ card: import('./loyalty.js').Card, fresh?: number, note: string, ctx: Ctx, stamping?: { added: boolean } | null }} props
+ *   fresh: stamps this screen saw land; note: stampNote's line; stamping: staff can add a stamp here (added: one was,
+ *   so Undo shows)
  */
-function LoyaltySection({ card }) {
-  const words = rollWords(card);
+function LoyaltySection({ card, fresh = 0, note, ctx, stamping = null }) {
+  const rolls = rollWords(card);
+  const busyNow = Boolean(ctx.busy);
   return (
     <s-section heading={cardHeading(card)}>
-      <s-stack direction="block" gap="small">
-        <s-stack direction="inline" gap="small-300">
-          {stampMarks(card).map((stamped, i) => (
-            <s-icon key={i} type={stamped ? 'star-filled' : 'circle'} tone={stamped ? 'caution' : 'neutral'} />
+      <s-stack direction="block" gap="base">
+        <s-stack direction="block" gap="small">
+          {stampRows(card, fresh).map((row, r) => (
+            <s-stack key={r} direction="inline" gap="small">
+              {row.map((mark, i) =>
+                mark === 'off' ? (
+                  <s-icon key={i} type="circle" tone="neutral" color="subdued" size="large-100" />
+                ) : (
+                  <s-icon key={i} type="star-filled" tone="success" color="strong" size="large-100" />
+                ),
+              )}
+            </s-stack>
           ))}
         </s-stack>
-        <s-text>{stampWords(card)}</s-text>
-        {words ? <s-text color="subdued">{words}</s-text> : null}
+        <s-stack direction="block" gap="small-300">
+          <s-stack direction="inline" gap="small" alignItems="center">
+            <s-heading>{stampCount(card)}</s-heading>
+            {fresh ? <s-badge tone="success">{freshWords(fresh)}</s-badge> : null}
+          </s-stack>
+          <s-text>{stampsLeft(card)}</s-text>
+          {rolls ? <s-text type="strong">{rolls}</s-text> : null}
+          {note ? <s-text color="subdued">{note}</s-text> : null}
+        </s-stack>
+        {stamping ? (
+          <s-stack direction="block" gap="small">
+            <s-button variant="secondary" loading={ctx.busyKey === 'stamp'} disabled={busyNow} onClick={ctx.act.addStamp}>
+              Add a stamp
+            </s-button>
+            {stamping.added ? (
+              <s-button variant="secondary" tone="critical" loading={ctx.busyKey === 'stamp-undo'} disabled={busyNow} onClick={ctx.act.undoStamp}>
+                Undo that stamp
+              </s-button>
+            ) : null}
+          </s-stack>
+        ) : null}
       </s-stack>
     </s-section>
   );
@@ -814,7 +853,6 @@ function MemberView({ screen, ctx }) {
           {account}
         </s-banner>
       ) : null}
-      {card ? <LoyaltySection card={card} /> : null}
       <s-section heading="To pay">
         <s-stack direction="block" gap="small">
           <s-heading>{everything.total ? money(everything.total) : sharing.length || waiting.length ? 'Nothing to add yet' : 'Nothing to pay'}</s-heading>
@@ -860,6 +898,11 @@ function MemberView({ screen, ctx }) {
           </s-text>
         </s-stack>
       )}
+
+      {/* Round 22: their card under the main button, with Add a stamp (and Undo once one's added) */}
+      {card ? (
+        <LoyaltySection card={card} fresh={screen.fresh || 0} note={stampNote()} ctx={ctx} stamping={member.customerId ? { added: Boolean(screen.added?.length) } : null} />
+      ) : null}
 
       {todayRows.length ? (
         <s-section heading="Today">

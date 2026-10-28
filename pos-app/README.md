@@ -3,7 +3,9 @@
 A tile on the Shopify POS home screen for the Dice Goblin counter. It shows who's booked today (GM games, events
 and table bookings), checks people in, and puts what they owe in the POS cart. Then the check-in screen closes by
 itself, so staff take payment straight away with **Pay on Verifone**. Once a sale is paid, the Lair app marks the
-booking, sign-up or tab paid by itself.
+booking, sign-up or tab paid by itself. (Pay on Verifone saves each sale as its own order and drops the hidden tags on
+the cart's lines, so since round 22 the Lair app reads each fee by the code in its name, like "GM seat: Barons
+(MA-HARP-10)", and a tab by its items and the member on the sale. Don't rename fee lines in the cart.)
 
 This folder is a Shopify app project: `shopify.app.toml` holds the app's settings and `extensions/lair-checkin` is
 the tile. It talks to the Lair app (the Cloudflare Worker at the root of this repository).
@@ -17,7 +19,10 @@ A person's screen shows, from the top: who it is, **To pay** in big numbers, and
 ("In the cart: $15 · Sam Jones"). The big button is always the next step. If someone else's sale is in the cart, a
 yellow box says so: if they're paying apart, take that payment first.
 
-The scanner works on every screen: scan a code any time and the screen jumps to it. **Scan a code** (or **Scan** at
+The scanner works on every screen: scan a code any time and the screen jumps to it. Scanning someone's member code,
+or a ticket on their account, also **puts them on the sale** straight away ("Sam is on this sale"), so everything they
+pay for counts for them, a Session rung up by hand included. It leaves the sale alone when someone else is on it and
+it has things in it already (finish that sale first), or when a friend's share of a bill is in it. **Scan a code** (or **Scan** at
 the top) opens the camera instead.
 
 ### Someone arrives with a ticket
@@ -122,13 +127,24 @@ Scanning someone's member code (from My Lair) shows their loyalty card, **To pay
 
 ### Their loyalty card
 
-A member code shows their card: a star for each stamp, like "9 of 10 stamps. One more fills it.", and any rolls
-waiting in My Lair. Stamps come from check-ins, and they roll in My Lair: it's for show here.
+A member code, or a ticket on someone's account, shows their card like a punch card: two rows of five, a green star
+for each stamp, "7 of 10 stamps" in big letters, what's left ("3 more fill the card: a d20 roll for store credit.")
+and any rolls waiting in My Lair. A stamp that lands while the screen is open (a check-in, a payment) has a **New
+stamp** badge. On a ticket it says whether this session's stamps are on yet.
 
-When a check-in fills their card, the message at the bottom of POS says **"Sam's loyalty card is full!"**. Let them
-know: a roll for store credit is waiting in My Lair. (If the screen stays open, it says so too.)
+Stamps come by themselves (round 22):
 
-(A ticket shows the card too once the Lair app sends it with tickets: see "What we've asked the Lair app for" below.)
+- **Checking in, or paying.** A session paid in full stamps on its day even if nobody scans them in, and one that's
+  paid and checked in stamps once. A session with no account on it stamps whoever paid for it, so scan the payer's
+  code first.
+- **A Session rung up by hand** (Day Pass, TCG League, RPG Session, RPG Kids Session, Curse of Strahd) stamps the
+  customer on the sale, one a unit. Scan their member code first: that's what puts them on the sale.
+- **Add a stamp** on a member's screen, for a session the Lair app doesn't know about. **Undo that stamp** takes it
+  back. (Stamps added on the staff page are taken back there, under Members.)
+
+They roll in My Lair. When a check-in or a stamp fills their card, the message at the bottom of POS says **"Sam's
+loyalty card is full!"**. Let them know: a roll for store credit is waiting in My Lair. (If the screen stays open, it
+says so too.)
 
 ### Weekly regulars and owed sessions
 
@@ -338,6 +354,8 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
 | `POST /pos/tab/:id/added` | A member's tab is in the cart |
 | `POST /pos/cover { gameId, ref }` | The GM pays for a player's seat (contract v21-gm-cover); answers `{ seat, cover, game }` |
 | `POST /pos/uncover { gameId, ref }` | The GM stops paying for it; answers `{ seat, cover: null, game }` |
+| `POST /pos/stamp { customerId, key }` | Round 22, Add a stamp: one stamp on their card; the same `key` again adds nothing. Answers `{ stamp, repeated, loyalty }` |
+| `POST /pos/stamp-undo { customerId, id }` | Undo that stamp (only stamps added by hand at the counter). Answers `{ stamp, already, loyalty }` |
 
 - The session token is a JWT signed HS256 with the app's client secret, `aud` = the client ID, `dest` =
   `https://ep0qiq-rp.myshopify.com`. Errors come back as `{ error: "Plain sentence" }` and the screen shows them.
@@ -396,9 +414,8 @@ The check-in screen already works without these; each makes it better once the W
    `/pos/uncover` answering with the seat's counter row as `row`. Until then the screen works out whether to offer it
    from the seat, shows "Free" (not "GM pays") on a seat the GM pays for once the screen is reopened, and says the
    table fee's amount only after the GM pays.
-2. **The loyalty card on tickets.** `loyalty` (`{ stamps, cardSize, rollsAvailable, card }`, as for a member code) in
-   `POST /pos/scan` for a booking or sign-up on an account, and in the `/pos/checkin` answer as it is after the
-   check-in. Then a ticket shows the card too, and says straight away when a check-in fills it.
+2. ~~**The loyalty card on tickets.**~~ Done in round 22 (contract v22-stamps): `POST /pos/scan` for a booking or
+   sign-up on an account, and the `/pos/checkin` answer, carry `loyalty`.
 
 ## For developers
 
