@@ -108,6 +108,7 @@ for (const size of sizes) {
   check(`${tag} check-in: Add a stamp puts one on (${k0.stamps} to ${wantK} of 10), says so, and offers Undo that stamp`,
     k1.stamps === wantK && k1.dots === wantK && (wantK ? t1k === `Stamp added: Aroha is on ${wantK} of 10.` : /card is full/.test(t1k)) && k1.undo === 'Undo that stamp', { k1, t1k });
   await shot(page, `${size}-checkin-card`, '.checkin-card--member');
+  await page.evaluate(() => document.querySelector('.checkin-card__loyalty')?.scrollIntoView({ block: 'center' }));
   await axe(page, `${tag} the check-in card with the loyalty card`, '.checkin-card--member');
   check(`${tag} check-in card: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
   await page.click('[data-checkin-stamp-undo]');
@@ -209,6 +210,9 @@ for (const size of sizes) {
   const again = await page.evaluate(async ([who, s]) => window.Lair.store.backend.memberStampUndo(who, s), [id, sid]);
   check(`${tag} Undo twice: already, and the card stays at ${want4}`, again && again.already === true && again.member.loyalty.stamps === want4, again && { already: again.already, stamps: again.member?.loyalty?.stamps });
   await shot(page, `${size}-ledger`, '.staff-loyalty');
+  // (the element screenshot scrolls the section to the top, under the site's sticky header, which axe would count as
+  // covering the Undo buttons: put the list in the middle of the screen first)
+  await page.evaluate(() => document.querySelector('.staff-loyalty__added')?.scrollIntoView({ block: 'center' }));
   await axe(page, `${tag} the loyalty card with Add stamps and its list`, '.staff-loyalty');
 
   // ---------- ten stamps fill a card ----------
