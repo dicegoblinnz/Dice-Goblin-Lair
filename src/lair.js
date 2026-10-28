@@ -68,6 +68,9 @@ import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinVia, sessionLines, stampMethods } from './stamps.js';
 // Round 22: counter sales through Pay on Verifone (OrderMate), whose orders lose the cart lines' properties
 import { counterMethods, counterSale, customSale } from './counter.js';
+// Round 22 (28 Oct 2026): every hold can be edited: an event date's own tables, and staff holds (src/holds.js)
+import { HOLD_COLUMNS, HOLD_TABLES, holdMethods } from './holds.js';
+import { dateTables } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -87,7 +90,7 @@ const RULES_TTL = 5 * MIN;
 const PERSON_TTL = 5 * MIN;
 const STATE_TTL = 60_000;
 /** 17 Oct 2026: writes that change the floor's cached state: its tables (state, seriesInfo and heldIn read them) */
-const FLOOR_WRITES = /\b(?:INTO|UPDATE|FROM)\s+(?:bookings|games|blocks|openings|series|series_members)\b/i;
+const FLOOR_WRITES = /\b(?:INTO|UPDATE|FROM)\s+(?:bookings|games|blocks|openings|series|series_members|event_hold_dates)\b/i;
 /** 17 Oct 2026: a member's last seen is kept to within this (touchMember skips the write when nothing else changes) */
 const TOUCH_EVERY = 15 * 60_000;
 /** Abuse limits for people who are not staff */
@@ -1012,7 +1015,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS, ...HOLD_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1051,6 +1054,8 @@ export class Lair {
     this.sql.exec("CREATE INDEX IF NOT EXISTS bookings_cover_of ON bookings (cover_of) WHERE cover_of IS NOT NULL");
     // Round 22: the stamp ledger: sessions rung up at the counter and stamps staff add (made when missing)
     for (const statement of STAMP_TABLES) this.sql.exec(statement);
+    // Round 22: event dates' own tables (made when missing)
+    for (const statement of HOLD_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1178,6 +1183,8 @@ export class Lair {
     return {
       id: r.id, tables: parse(r.tables, []), start: r.starts_at, end: r.ends_at, label: r.label, type: r.type, game: r.game || null,
       seriesId: r.series_id || null,
+      // round 22: a weekly hold's date changed on its own (staff only: floor()), said only when it is
+      ...(r.changed ? { changed: true } : {}),
     };
   }
 
@@ -1681,7 +1688,8 @@ export class Lair {
 
   /* ---------------- rules and people ---------------- */
   async rules() {
-    if (this.rulesCache && Date.now() - this.rulesLoadedAt < RULES_TTL) return this.rulesCache;
+    // Round 22: event dates' own tables ride along (rules.holdDates), current whenever the rules are asked for
+    if (this.rulesCache && Date.now() - this.rulesLoadedAt < RULES_TTL) return this.withHoldDates(this.rulesCache);
     let rules = null;
     let source = 'built-in defaults';
     if (this.shopify.configured) {
@@ -1712,7 +1720,7 @@ export class Lair {
         events: r.events.length,
       },
     });
-    return this.rulesCache;
+    return this.withHoldDates(this.rulesCache);
   }
 
   /**
@@ -2026,6 +2034,8 @@ export class Lair {
       if (a === 'gm-profile' && !b) return json(await this.saveGmProfile(body, who));
       if (a === 'blocks' && !b) return json(await this.createBlock(body, who));
       if (a === 'blocks' && c === 'delete') return json(await this.removeBlock(b, who, body));
+      // Round 22 (contract v22-holds): a staff hold edited (a one-off, a weekly hold's date, or every date to come)
+      if (a === 'blocks' && b && c === 'update' && !d) return json(await this.updateBlock(b, body, who));
       if (a === 'openings' && !b) return json(await this.createOpening(body, who));
       if (a === 'openings' && c === 'delete') return json(await this.removeOpening(b, who));
       if (a === 'checkin' && !b) return json(await this.checkIn(body, who));
@@ -2035,6 +2045,8 @@ export class Lair {
       if (a === 'events' && b && b !== 'joins' && c === 'joins' && !d) return json(await this.staffJoin(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'attend') return json(await this.attendEvent(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
+      // Round 22 (contract v22-holds): the tables one date of an event holds
+      if (a === 'events' && b && b !== 'joins' && c === 'hold' && !d) return json(await this.holdEventDate(decodeURIComponent(b), body, who));
       // Round 9, play: "I'm interested" in a TTRPG session, "Maybe" for an event date, and taking it back
       // Round 11: "Join the waitlist" on a full date (POST /interest with waitlist: true)
       if (a === 'interest' && !b && body?.waitlist === true) return json(await this.joinWaitlist(body, who, client));
@@ -2296,8 +2308,10 @@ export class Lair {
       // (round 21: a GM's charge for a player's seat is no place on the floor: only staff see it, to settle it)
       bookings: st.bookings.filter((bk) => staffView || (ACTIVE.has(bk.status) && bk.kind !== 'gm-cover')).map(view),
       // Round 8: staff see a hold's series (seriesId, repeat, repeatTag, until); the public see nothing new
-      blocks: staffView ? this.staffBlocks(st.blocks, rules) : st.blocks.map(({ seriesId, ...bl }) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
+      blocks: staffView ? this.staffBlocks(st.blocks, rules) : st.blocks.map(({ seriesId, changed, ...bl }) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
       eventHolds: holds,
+      // Round 22 (contract v22-holds): for staff, each event with tables held, its usual tables and every date's
+      ...(staffView ? { holdEvents: this.holdEventsIn(rules, from, to) } : {}),
       games: visibleGames.map((g) => {
         const game = this.gameView(g, st, rules, info, { staff: staffView });
         if (staffView || (who.customerId && g.gmCustomerId === who.customerId) || (g.seriesId && mySeries.has(g.seriesId))) game.players = this.gamePlayers(st, g.id);
@@ -5543,7 +5557,8 @@ export class Lair {
       group(`game:${g.id}`, () => ({ key: `game:${g.id}`, kind: 'game', title: `${g.title} · GM ${g.gm}`, start: g.start, end: g.end, tables: g.tables }));
     }
     for (const o of eventOccurrences(rules, from, to)) {
-      const tables = [...new Set([...parseTableList(o.tables, rules.rooms), ...parseSpots(o.gameTables, rules.rooms).flat()])];
+      // round 22: the date's own tables, when staff gave it some
+      const tables = [...new Set([...dateTables(o, rules).tables, ...parseSpots(o.gameTables, rules.rooms).flat()])];
       group(`event:${o.id}`, () => ({ key: `event:${o.id}`, kind: 'event', title: o.title, start: o.start, end: o.end, tables }));
     }
     // (round 21: nor is a GM's charge for a player's seat someone arriving: it's paid from the GM's member code)
@@ -6686,6 +6701,8 @@ export class Lair {
     if (result.userErrors?.length || !result.metaobject) throw this.shopifySaidNo(result.userErrors || []);
     // --- no awaits from here on ---
     this.dropEvents();
+    // Round 22: new Tables reserved: dates with their own tables keep them, but those now the same go back to usual
+    if ('tables' in set) this.dropMatchingDates(node.handle, parseTableList(merged.tables || '', rules.rooms));
     return { event: this.eventEntry(result.metaobject, rules, Date.now()).view, notice };
   }
 
@@ -6715,6 +6732,8 @@ export class Lair {
     if (result.userErrors?.length) throw this.shopifySaidNo(result.userErrors);
     // --- no awaits from here on ---
     this.dropEvents();
+    // Round 22: its dates' own tables go with it, so a new event with the same handle starts clean
+    this.forgetEventDates(node.handle);
     return { ok: true, handle: node.handle };
   }
 
@@ -10370,6 +10389,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not extend table hold series', error);
     }
+    // Round 22: event dates' own tables are forgotten 31 days after the date
+    try {
+      const tidied = this.tidyHoldDates(Date.now());
+      if (tidied) result.holdDatesTidied = tidied;
+    } catch (error) {
+      console.error('Lair: could not tidy event dates\' own tables', error);
+    }
     // Weekly regulars roll forward: once a session ends, they get a seat in the next one.
     try {
       const rolled = this.rollSeries(rules, Date.now());
@@ -10582,3 +10608,5 @@ Object.assign(Lair.prototype, gmCoverMethods);
 // Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add (src/stamps.js)
 Object.assign(Lair.prototype, stampMethods);
 Object.assign(Lair.prototype, counterMethods);
+// Round 22 (28 Oct 2026): every hold can be edited (src/holds.js)
+Object.assign(Lair.prototype, holdMethods);

@@ -508,22 +508,52 @@ export function findOccurrence(rules, occurrenceId) {
 }
 
 /* ---------- availability ---------- */
+/** Table ids in the floor's order (room by room, as Lair rooms lists them), each once */
+export function inTableOrder(ids, rooms) {
+  const order = [...tableIndex(rooms).keys()];
+  const wanted = new Set(ids);
+  return order.filter((id) => wanted.has(id));
+}
+
+/** Two lists of tables hold the same tables (in any order) */
+export const sameTables = (a, b) => a.length === b.length && a.every((t) => b.includes(t));
+
+/**
+ * Round 22 (28 Oct 2026, contract v22-holds): an event date's tables. usual: its event's Tables reserved; tables: what
+ * the date holds (its own, when staff gave it some on the staff page, else the usual); changed: it has its own that
+ * aren't the usual. rules.holdDates (lair.js keeps it current): a Map of occurrence id → { eventId, tables }, where []
+ * holds none that date. A table that's gone from the rooms since drops out.
+ */
+export function dateTables(o, rules) {
+  const usual = parseTableList(o.tables, rules.rooms);
+  const own = rules.holdDates instanceof Map ? rules.holdDates.get(o.id) : null;
+  if (!own) return { usual, tables: usual, changed: false };
+  const index = tableIndex(rules.rooms);
+  const tables = (Array.isArray(own.tables) ? own.tables : []).filter((t) => index.has(t));
+  return sameTables(tables, usual) ? { usual, tables: usual, changed: false } : { usual, tables, changed: true };
+}
+
 /**
  * Event dates' table holds overlapping [from, to), the way the floor sends eventHolds (and the theme works them
  * out). An event's "Tables reserved" (tables) are soft: marked for the event on the booking page but bookable by
  * anyone, unless the event locks them (lockTables), which makes them hard holds. Its game-spot tables
  * (game_tables) are soft-reserved for it too. Each item: { id, eventId, occurrenceId, tables, start, end, label,
- * title, type: 'event', soft, spots? }, with id ev-<occurrence id> for the event's tables and ev-<occurrence id>-spots
- * for its game-spot tables.
+ * title, type: 'event', soft, spots?, changed? }, with id ev-<occurrence id> for the event's tables and
+ * ev-<occurrence id>-spots for its game-spot tables.
+ * Round 22: a date with its own tables (dateTables) holds those, with changed: true, and none at all when it has [] (an
+ * event with no Tables reserved can still hold a date's own). Game tables never repeat a table the date's locked hold
+ * has, its usual tables or its own.
  */
 export function eventHolds(rules, from, to) {
   const out = [];
-  const events = (rules.events || []).filter((e) => e.tables || e.gameTables);
+  const own = rules.holdDates instanceof Map ? rules.holdDates : null;
+  const changedEvents = new Set(own ? [...own.values()].map((c) => c.eventId) : []);
+  const events = (rules.events || []).filter((e) => e.tables || e.gameTables || changedEvents.has(e.id));
   for (const o of eventOccurrences({ ...rules, events }, from, to)) {
-    const tables = parseTableList(o.tables, rules.rooms);
+    const { usual, tables, changed } = dateTables(o, rules);
     const base = { eventId: o.eventId, occurrenceId: o.id, start: o.start, end: o.end, label: o.title, title: o.title, type: 'event' };
-    if (tables.length) out.push({ ...base, id: `ev-${o.id}`, tables, soft: !o.lockTables });
-    const spots = [...new Set(parseSpots(o.gameTables, rules.rooms).flat())].filter((t) => !(o.lockTables && tables.includes(t)));
+    if (tables.length) out.push({ ...base, id: `ev-${o.id}`, tables, soft: !o.lockTables, ...(changed ? { changed: true } : {}) });
+    const spots = [...new Set(parseSpots(o.gameTables, rules.rooms).flat())].filter((t) => !(o.lockTables && (tables.includes(t) || usual.includes(t))));
     if (spots.length) out.push({ ...base, id: `ev-${o.id}-spots`, tables: spots, soft: true, spots: true });
   }
   return out;
