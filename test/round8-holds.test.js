@@ -264,7 +264,9 @@ test('the floor: staff see each hold\'s series (seriesId, repeat, repeatTag, unt
   const once = await call('POST', 'blocks', { tables: 'A1', start: at('2026-10-01', 18), end: at('2026-10-01', 20), label: 'Aroha 021 555 0199', type: 'impromptu' }, 'staff');
   const staff = (await call('GET', 'floor', null, 'staff')).data.blocks;
   const sid = weekly.data.series.id;
-  assert.deepEqual(staff.find((b) => b.id === weekly.data.block.id), { ...weekly.data.block, seriesId: sid, repeat: 'weekly', repeatTag: 'Weekly · Thursdays 6pm', until: '2026-10-29' });
+  // (round 22, contract v22-holds: a weekly hold's dates carry its usual too)
+  const usual = { tables: ['T14', 'T15', 'T16', 'T17'], startTime: '18:00', minutes: 240, label: 'Pokémon league', type: 'tournament', game: 'Pokémon' };
+  assert.deepEqual(staff.find((b) => b.id === weekly.data.block.id), { ...weekly.data.block, seriesId: sid, repeat: 'weekly', repeatTag: 'Weekly · Thursdays 6pm', until: '2026-10-29', usual });
   assert.deepEqual(staff.filter((b) => b.seriesId === sid).map((b) => time.key(b.start)), ['2026-10-01', '2026-10-08', '2026-10-15', '2026-10-22', '2026-10-29']);
   assert.deepEqual(staff.find((b) => b.id === once.data.block.id), { ...once.data.block, seriesId: null, repeat: null, repeatTag: null, until: null });
   const pub = (await call('GET', 'floor')).data.blocks;

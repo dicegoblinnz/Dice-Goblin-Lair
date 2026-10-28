@@ -36,12 +36,14 @@ const KEEP_DATES_DAYS = 31;
 
 /**
  * Made on every start when missing (as ROUND16_WISHLIST is), so they never wait on a step in MIGRATIONS:
- *  - event_hold_dates: an event date's own tables (contract v22-holds section 1), one row per date.
+ *  - event_hold_dates: an event date's own tables (contract v22-holds section 1), one row per date. event_gid is the
+ *    lair_event entry's Shopify id when the date was changed: a handle can be used again by a new entry (one deleted in
+ *    Shopify admin, then made again with the same title), and the new one never takes the old one's dates.
  */
 export const HOLD_TABLES = [
   `CREATE TABLE IF NOT EXISTS event_hold_dates (
-    occurrence_id TEXT PRIMARY KEY, event_id TEXT NOT NULL, tables TEXT NOT NULL, starts_at INTEGER, ends_at INTEGER, by TEXT,
-    updated_at INTEGER NOT NULL)`,
+    occurrence_id TEXT PRIMARY KEY, event_id TEXT NOT NULL, event_gid TEXT, tables TEXT NOT NULL, starts_at INTEGER, ends_at INTEGER,
+    by TEXT, updated_at INTEGER NOT NULL)`,
   'CREATE INDEX IF NOT EXISTS event_hold_dates_event ON event_hold_dates (event_id)',
 ];
 /** blocks.changed: 1 for a weekly hold's date changed on its own, so a change to every date leaves it be */
@@ -57,26 +59,50 @@ const parse = (text, fallback) => {
 const has = (input, key) => Boolean(input) && Object.prototype.hasOwnProperty.call(input, key);
 const byOf = (who) => (who.customerId ? `staff:${who.customerId}` : 'staff');
 
+/**
+ * A time sent as ms: a number, or the digits of one. Nothing else is a time (null, '' and false aren't 1970, and true
+ * isn't 1 ms after it). → ms, or NaN.
+ */
+export function timeOf(raw) {
+  const value = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\s*\d+(\.\d+)?\s*$/.test(raw) ? Number(raw) : NaN;
+  return Number.isFinite(value) && value > 0 ? value : NaN;
+}
+
 export const holdMethods = {
   /* ---------------- an event date's own tables ---------------- */
 
   /**
-   * Every event date's own tables as a Map of occurrence id → { eventId, tables, by, at }, read once and kept until one
-   * changes (only the methods here write them). rules() hands it on as rules.holdDates. No awaits.
+   * Every event date's own tables as a Map of occurrence id → { eventId, gid, tables, by, at }, read once and kept until
+   * one changes (only the methods here write them). No awaits.
    */
   holdDatesMap() {
     if (!this.holdDatesCache) {
       this.holdDatesCache = new Map(
         this.sql.exec('SELECT * FROM event_hold_dates').toArray()
-          .map((r) => [r.occurrence_id, { eventId: r.event_id, tables: parse(r.tables, []), by: r.by || null, at: r.updated_at }]),
+          .map((r) => [r.occurrence_id, { eventId: r.event_id, gid: r.event_gid || null, tables: parse(r.tables, []), by: r.by || null, at: r.updated_at }]),
       );
     }
     return this.holdDatesCache;
   },
 
-  /** rules with rules.holdDates current (the rules are kept for 5 minutes; the dates' own tables change any time) */
+  /**
+   * rules with rules.holdDates current (the rules are kept for 5 minutes; the dates' own tables change any time): the
+   * dates' own tables less any changed for an earlier entry with the same handle (its Shopify id isn't the event's now).
+   * Worked out again only when either changes. No awaits.
+   */
   withHoldDates(rules) {
-    if (rules) rules.holdDates = this.holdDatesMap();
+    if (!rules) return rules;
+    const all = this.holdDatesMap();
+    const memo = this.holdDatesMemo;
+    if (!memo || memo.all !== all || memo.events !== rules.events) {
+      const gids = new Map((rules.events || []).map((e) => [e.id, e.gid || null]));
+      const mine = new Map([...all].filter(([, row]) => {
+        const gid = gids.get(row.eventId);
+        return !(row.gid && gid && row.gid !== gid);
+      }));
+      this.holdDatesMemo = { all, events: rules.events, mine };
+    }
+    rules.holdDates = this.holdDatesMemo.mine;
     return rules;
   },
 
@@ -119,11 +145,12 @@ export const holdMethods = {
     if (sameTables(tables, usual)) {
       this.writeHoldDate('DELETE FROM event_hold_dates WHERE occurrence_id = ?', o.id);
     } else {
+      const gid = (rules.events || []).find((e) => e.id === o.eventId)?.gid || null;
       this.writeHoldDate(
-        `INSERT INTO event_hold_dates (occurrence_id, event_id, tables, starts_at, ends_at, by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(occurrence_id) DO UPDATE SET event_id = excluded.event_id, tables = excluded.tables, starts_at = excluded.starts_at,
-         ends_at = excluded.ends_at, by = excluded.by, updated_at = excluded.updated_at`,
-        o.id, o.eventId, JSON.stringify(tables), o.start, o.end, byOf(who), now,
+        `INSERT INTO event_hold_dates (occurrence_id, event_id, event_gid, tables, starts_at, ends_at, by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(occurrence_id) DO UPDATE SET event_id = excluded.event_id, event_gid = excluded.event_gid, tables = excluded.tables,
+         starts_at = excluded.starts_at, ends_at = excluded.ends_at, by = excluded.by, updated_at = excluded.updated_at`,
+        o.id, o.eventId, gid, JSON.stringify(tables), o.start, o.end, byOf(who), now,
       );
     }
     // (the rules then have the date's tables as they are now)
@@ -211,13 +238,15 @@ export const holdMethods = {
     const out = { ...current };
     if (has(input, 'tables')) {
       const index = tableIndex(rules.rooms);
-      const tables = (Array.isArray(input.tables) ? input.tables : parseTableList(input.tables, rules.rooms)).map((t) => String(t ?? '').trim().toUpperCase());
+      // written as the Hold tables form takes them: every part has to be tables that exist ('T14, T99' isn't T14)
+      if (!Array.isArray(input.tables) && !this.tablesExist(String(input.tables ?? ''), rules.rooms)) throw new RuleError(HOLD_WORDS.holdTables);
+      const tables = (Array.isArray(input.tables) ? input.tables : parseTableList(String(input.tables), rules.rooms)).map((t) => String(t ?? '').trim().toUpperCase());
       if (!tables.length || tables.some((t) => !index.has(t))) throw new RuleError(HOLD_WORDS.holdTables);
-      out.tables = inTableOrder(tables, rules.rooms);
+      out.tables = inTableOrder([...new Set(tables)], rules.rooms);
     }
     for (const key of ['start', 'end']) {
       if (!has(input, key)) continue;
-      const value = Number(input[key]);
+      const value = timeOf(input[key]);
       if (!Number.isFinite(value)) throw new RuleError(HOLD_WORDS.endAfter);
       out[key] = value;
     }

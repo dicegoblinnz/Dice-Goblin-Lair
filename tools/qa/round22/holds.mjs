@@ -3,18 +3,23 @@
 // all that have been created can be edited."
 //  1. The holds list: a weekly event is one card (its tag, "From the events calendar", its usual tables and times,
 //     locked or not, its next four dates, Then every …), a one-off event's card, and game tables named (with Change them
-//     under Events). No card for every date any more.
-//  2. One date of an event: Change (its tables, what they read as while typing, Save), Free the tables, Back to usual;
+//     under Events). No card for every date any more. A monthly market's card says which weekend of the month.
+//  2. One date of an event: Edit (its tables, what they read as while typing, Save), Free the tables, Back to usual;
 //     the toasts; focus kept in the card; a date's own tables hold the floor that date (and only that date).
-//  3. Every date of an event: Change every date (the usual tables and Lock these tables, the times are the event's),
-//     dates with their own keeping them; Stop holding tables asks first (Keep them, then Yes).
-//  4. Escape closes an editor; a mistake stays in it with the words; what's typed survives the floor updating.
-//  5. A staff one-off: Edit (what for, type, tables, day, from, until).
-//  6. A staff weekly hold: a date's Change (tables and times) and Back to usual; Edit every date (dates changed on their
+//  3. Every date of an event: Edit every date (the usual tables and Lock these tables, the times are the event's),
+//     dates with their own keeping them, and the Events tab's form has the new tables; Stop holding tables asks first
+//     (Keep them, then Yes).
+//  4. Escape closes an editor; a mistake stays in it with the Lair app's words; what's typed survives the floor updating.
+//  5. A staff one-off: Edit (what for, type, tables, day, from, until); a table that doesn't exist is refused, even when
+//     the floor draws the list again while it saves.
+//  6. A staff weekly hold: a date's Edit (tables and times) and Back to usual; Edit every date (dates changed on their
 //     own keep theirs).
-//  7. The floor, on a night an event holds tables: Free this table today, and Change the hold (the Holds tab, on that
-//     date's editor). A staff hold's Edit there too.
-//  8. A Lair app from before round 22 (no holdEvents): event holds show as before. LiveBackend's routes.
+//  7. The floor, on a night an event holds tables: Free this table today (focus stays in the sheet), and Edit the hold
+//     (the Holds tab, on that date's editor). A staff hold's Edit there too.
+//  8. A Lair app from before round 22 (no holdEvents): event holds show as before, and staff holds have no Edit.
+//  9. A weekly hold changed while tonight's date is on: the card and Edit every date have the new usual.
+// 10. The booking page's list and the calendar follow a date's own tables (and game tables on a date that holds none).
+// LiveBackend's routes. (Items 3, 5, 9 and 10's checks came from the independent review, 28 Oct.)
 // No sideways scroll and axe at each. Phone and desktop. The events are stand-ins shaped like the store's on 28 Oct 2026
 // (two Friday nights holding the same locked tables, a locked Thursday with game tables inside them, a one-off).
 // Usage: DG_THEME=/path/to/theme [PORT=4992] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round22/holds.mjs [phone|desktop]
@@ -52,6 +57,13 @@ const EVENTS = [
     handle: 'qa-social', title: 'Social deduction', event_type: 'social', starts_at: iso(addDays(T, 10), '12:00'), ends_at: iso(addDays(T, 10), '18:00'),
     tables: 'F1, P1-P4', lock_tables: true, capacity: 40, entry_fee: 10, image_slug: 'board-games', description: 'A one-off.',
   },
+  // a market over a weekend each month, like Oddity Alley: the third Saturday and the Sunday after, from two months back
+  (() => {
+    let day = `${addDays(T, -45).slice(0, 8)}01`;
+    while (weekday(day) !== 6) day = addDays(day, 1);
+    day = addDays(day, 14);
+    return { handle: 'qa-market', title: 'Weekend market', event_type: 'market', starts_at: iso(day, '10:00'), ends_at: iso(day, '15:00'), repeat: 'monthly', days: 2, tables: 'T1-T7', lock_tables: true, image_slug: 'board-games', description: 'Monthly.' };
+  })(),
 ];
 const eventsFile = path.join(os.tmpdir(), 'dg-round22-events.json');
 fs.writeFileSync(eventsFile, JSON.stringify(EVENTS));
@@ -101,11 +113,15 @@ for (const size of sizes) {
   const war = flat(await page.textContent(card('qa-wargames')));
   check(`${size}: the Thursday's card: tag, from the calendar, usual tables and times, locked`, war.includes('Weekly · Thursdays 6pm · From the events calendar') && war.includes('T8–T21 · 6pm–midnight · locked'), war.slice(0, 200));
   const warRows = await page.$$eval(`${card('qa-wargames')} .staff-series__date`, (els) => els.map((e) => e.querySelector('.staff-series__when').textContent.replace(/\s+/g, ' ').trim() + ' | ' + [...e.querySelectorAll('button')].map((b) => b.textContent.trim()).join(', ')));
-  check(`${size}: …its next four dates, tonight's on now, each with Change and Free the tables`, warRows.length === 4 && warRows[0].startsWith('Today, on now') && warRows.every((r) => r.endsWith('| Change, Free the tables')), warRows);
-  check(`${size}: …Then every Thursday, Change every date and Stop holding tables`, war.includes('Then every Thursday.') && (await page.locator(`${card('qa-wargames')} [data-act="hold-edit"][data-id="event:qa-wargames"]`).count()) === 1 && (await page.locator(`${card('qa-wargames')} [data-act="event-stop"]`).count()) === 1);
+  check(`${size}: …its next four dates, tonight's on now, each with Edit and Free the tables`, warRows.length === 4 && warRows[0].startsWith('Today, on now') && warRows.every((r) => r.endsWith('| Edit, Free the tables')), warRows);
+  const warEdits = await page.$$eval(`${card('qa-wargames')} .staff-series__date [data-act="hold-edit"]`, (els) => els.map((b) => b.getAttribute('aria-expanded')));
+  check(`${size}: …each date's Edit says it's shut (aria-expanded false)`, warEdits.length === 4 && warEdits.every((x) => x === 'false'), warEdits);
+  check(`${size}: …Then every Thursday, Edit every date and Stop holding tables`, war.includes('Then every Thursday.') && (await page.locator(`${card('qa-wargames')} [data-act="hold-edit"][data-id="event:qa-wargames"]`).textContent()).trim() === 'Edit every date' && (await page.locator(`${card('qa-wargames')} [data-act="event-stop"]`).count()) === 1);
   check(`${size}: …its game tables named, with Change them under Events`, war.includes('Game tables people book for it: T8+T9, T10+T11, T12+T13, T14+T15, T18+T19, T20+T21.') && (await page.locator(`${card('qa-wargames')} [data-act="open-event"]`).count()) === 1, war.slice(-160));
   const social = flat(await page.textContent(card('qa-social')));
-  check(`${size}: a one-off event's card: its date, tables, locked, Change and Free the tables`, social.includes('From the events calendar') && /F1, P1–P4, locked/.test(social) && social.endsWith('Change Free the tables'), social);
+  check(`${size}: a one-off event's card: its date, tables, locked, Edit and Free the tables`, social.includes('From the events calendar') && /F1, P1–P4, locked/.test(social) && social.endsWith('Edit Free the tables'), social);
+  const market = flat(await page.textContent(card('qa-market')));
+  check(`${size}: a monthly market's card: Then the third Saturday and Sunday of every month`, market.includes('Monthly · Third Saturday and Sunday 10am · From the events calendar') && market.includes('Then the third Saturday and Sunday of every month.'), market.slice(0, 260));
   const kill = flat(await page.textContent('[data-hold-card="spots:qa-killteam"]').catch(() => ''));
   check(`${size}: an event with only game tables: named, set aside, changed under Events`, kill.includes('Kill Team night') && kill.includes('set aside, still bookable') && kill.includes('Game tables people book for it: G1+G2, G3+G4.'), kill);
   const firstCard = await page.$eval('[data-holds-list] > article', (a) => a.querySelector('strong').textContent.trim());
@@ -120,7 +136,7 @@ for (const size of sizes) {
   await settle(page);
   const editor = `${row('qa-cards-early', 1)} [data-hold-edit-form]`;
   const label = flat(await page.textContent(`${editor} label`).catch(() => ''));
-  check(`${size}: Change opens the date's editor in its row, with its tables, focused`, (await page.inputValue(`${editor} [name="tables"]`)) === 'T10-T13, T18-T21' && label === `Tables on ${words.fri}` && (await focused()).startsWith('input(tables)'), { label, focused: await focused() });
+  check(`${size}: Edit opens the date's editor in its row, with its tables, focused, and says it's open`, (await page.getAttribute(`${row('qa-cards-early', 1)} [data-act="hold-edit"]`, 'aria-expanded')) === 'true' && (await page.inputValue(`${editor} [name="tables"]`)) === 'T10-T13, T18-T21' && label === `Tables on ${words.fri}` && (await focused()).startsWith('input(tables)'), { label, focused: await focused() });
   await page.fill(`${editor} [name="tables"]`, 't18-t21');
   check(`${size}: …it says what they read as while typing`, flat(await page.textContent(`${editor} [data-tables-read]`)) === 'Reads as 4 tables: T18–T21.', await page.textContent(`${editor} [data-tables-read]`));
   // the floor updating while it's open never loses what's typed
@@ -133,7 +149,7 @@ for (const size of sizes) {
   await settle(page, 500);
   check(`${size}: Save: the toast says what it holds tomorrow`, (await toast()) === 'Friday cards holds T18–T21 tomorrow.', await toast());
   const row1 = flat(await page.innerText(row('qa-cards-early', 1)));
-  check(`${size}: …the row says so, with Back to usual; focus on its Change`, row1 === 'Tomorrow T18–T21 this date Change Back to usual' && (await focused()).startsWith('button[hold-edit]|Change'), { row1, focused: await focused() });
+  check(`${size}: …the row says so, with Back to usual; focus on its Edit`, row1 === 'Tomorrow T18–T21 this date Edit Back to usual' && (await focused()).startsWith('button[hold-edit]|Edit'), { row1, focused: await focused() });
   const floorThen = await page.evaluate((fri) => {
     const { store } = window.Lair;
     const t = store.time;
@@ -146,10 +162,10 @@ for (const size of sizes) {
   await page.click(`${row('qa-cards-early', 2)} [data-act="edate-free"]`);
   await settle(page, 500);
   check(`${size}: Free the tables: the toast`, (await toast()) === `Friday cards isn’t holding tables on ${words.fri2}. It’s still on the events calendar.`, await toast());
-  check(`${size}: …the row says none, with Back to usual (focused)`, flat(await page.innerText(row('qa-cards-early', 2))) === `${words.fri2} No tables held this date Change Back to usual` && (await focused()).startsWith('button[edate-usual]'), { row: flat(await page.innerText(row('qa-cards-early', 2))), focused: await focused() });
+  check(`${size}: …the row says none, with Back to usual (focused)`, flat(await page.innerText(row('qa-cards-early', 2))) === `${words.fri2} No tables held this date Edit Back to usual` && (await focused()).startsWith('button[edate-usual]'), { row: flat(await page.innerText(row('qa-cards-early', 2))), focused: await focused() });
   await page.click(`${row('qa-cards-early', 1)} [data-act="edate-usual"]`);
   await settle(page, 500);
-  check(`${size}: Back to usual: the toast, and the row as it was`, (await toast()) === 'Friday cards is back to its usual tables tomorrow: T10–T13, T18–T21.' && flat(await page.innerText(row('qa-cards-early', 1))) === 'Tomorrow Change Free the tables', [await toast(), flat(await page.innerText(row('qa-cards-early', 1)))]);
+  check(`${size}: Back to usual: the toast, and the row as it was`, (await toast()) === 'Friday cards is back to its usual tables tomorrow: T10–T13, T18–T21.' && flat(await page.innerText(row('qa-cards-early', 1))) === 'Tomorrow Edit Free the tables', [await toast(), flat(await page.innerText(row('qa-cards-early', 1)))]);
   await noSideways('a changed date');
   await page.locator(card('qa-cards-early')).scrollIntoViewIfNeeded();
   await shot(page, `${size}-2-dates-changed`, card('qa-cards-early'));
@@ -159,7 +175,7 @@ for (const size of sizes) {
   await settle(page);
   await page.keyboard.press('Escape');
   await settle(page);
-  check(`${size}: Escape closes the editor, back on its Change`, (await page.locator(`${card('qa-wargames')} [data-hold-edit-form]`).count()) === 0 && (await focused()).startsWith('button[hold-edit]|Change'), await focused());
+  check(`${size}: Escape closes the editor, back on its Edit`, (await page.locator(`${card('qa-wargames')} [data-hold-edit-form]`).count()) === 0 && (await focused()).startsWith('button[hold-edit]|Edit'), await focused());
   await page.click(`${row('qa-wargames', 2)} [data-act="hold-edit"]`);
   await settle(page);
   await page.fill(`${row('qa-wargames', 2)} [name="tables"]`, 'Z99');
@@ -167,11 +183,22 @@ for (const size of sizes) {
   await page.click(`${row('qa-wargames', 2)} [data-hold-edit-form] [type="submit"]`);
   await settle(page);
   const said = flat(await page.textContent(`${row('qa-wargames', 2)} [data-form-error]`).catch(() => ''));
-  check(`${size}: …Save keeps it open with the words, focus back in the tables`, said === 'None of those are tables. Use codes like T20-T21, a room’s name, or all.' && (await focused()).startsWith('input(tables)'), { said, focused: await focused() });
+  check(`${size}: …Save keeps it open with the Lair app's words, focus back in the tables`, said === "Some of those tables don't exist. Use table codes like T20-T21, a room's name, or all." && (await focused()).startsWith('input(tables)'), { said, focused: await focused() });
+  // one that exists and one that doesn't is refused too (it isn't the one that exists)
+  await page.fill(`${row('qa-wargames', 2)} [name="tables"]`, 'T12, T99');
+  await page.click(`${row('qa-wargames', 2)} [data-hold-edit-form] [type="submit"]`);
+  await settle(page);
+  const said2 = flat(await page.textContent(`${row('qa-wargames', 2)} [data-form-error]`).catch(() => ''));
+  check(`${size}: …T12, T99 too: nothing saved`, said2 === "Some of those tables don't exist. Use table codes like T20-T21, a room's name, or all." && !(await page.evaluate((occ) => (window.Lair.store.data.holdEvents || []).flatMap((e) => e.dates).find((d) => d.occurrenceId === occ)?.changed, `qa-wargames@${addDays(T, 7)}`)), said2);
   await page.click(`${row('qa-wargames', 2)} [data-act="hold-edit-cancel"]`);
   await settle(page);
 
   /* ---------------- 3. every date of an event ---------------- */
+  // the Events tab's list is loaded first (review, 28 Oct: after a change here its form showed the old tables)
+  await page.click('[data-tab="events"]');
+  await page.waitForFunction(() => (document.querySelector('staff-events')?.state?.list || []).length > 0, null, { timeout: 15000 });
+  await page.click('[data-tab="holds"]');
+  await settle(page);
   // the late Friday's third date gets tables of its own first
   await page.click(`${row('qa-cards-late', 3)} [data-act="hold-edit"]`);
   await settle(page);
@@ -182,7 +209,7 @@ for (const size of sizes) {
   await settle(page);
   const all = `${card('qa-cards-late')} > [data-hold-edit-form]`;
   const allText = flat(await page.textContent(all));
-  check(`${size}: Change every date: the usual tables, Lock these tables ticked, the times are the event's, the date with its own named`,
+  check(`${size}: Edit every date: the usual tables, Lock these tables ticked, the times are the event's, the date with its own named`,
     (await page.inputValue(`${all} [name="tables"]`)) === 'T10-T13, T18-T21' && (await page.isChecked(`${all} [name="lock"]`)) && allText.includes('The times are the event’s. Change them under Events') && allText.includes(`${words.fri3} keeps the tables it has of its own.`),
     allText.slice(0, 300));
   await axe(page, `${size}: every date's editor`, card('qa-cards-late'));
@@ -194,6 +221,16 @@ for (const size of sizes) {
   const late = flat(await page.textContent(card('qa-cards-late')));
   const cfgTables = await page.evaluate(() => window.Lair.store.cfg.events.find((e) => e.id === 'qa-cards-late').tables);
   check(`${size}: …the card's usual tables follow, and the page's events have them`, late.includes('T10–T13 · 7pm–midnight · locked') && late.includes('T20–T21 this date') && cfgTables === 'T10-T13', { late: late.slice(0, 220), cfgTables });
+  await page.click(`${card('qa-cards-late')} [data-act="hold-edit"][data-id="event:qa-cards-late"]`);
+  await settle(page);
+  await page.click(`${card('qa-cards-late')} > [data-hold-edit-form] [data-act="open-event"]`);
+  await page.waitForFunction(() => document.querySelector('staff-events form [name="tables"]'), null, { timeout: 15000 });
+  const evForm = await page.evaluate(() => ({ tab: document.querySelector('lair-staff').tab, tables: document.querySelector('staff-events form [name="tables"]').value }));
+  check(`${size}: …Change them under Events: the event's form has its new tables`, evForm.tab === 'events' && evForm.tables === 'T10-T13', evForm);
+  await page.click('[data-tab="holds"]');
+  await settle(page);
+  if (await page.locator(`${card('qa-cards-late')} > [data-hold-edit-form]`).count()) await page.click(`${card('qa-cards-late')} [data-act="hold-edit-cancel"]`);
+  await settle(page);
   await page.click(`${card('qa-monday')} [data-act="event-stop"]`);
   await settle(page);
   const ask = flat(await page.textContent(`${card('qa-monday')} .staff-confirm`).catch(() => ''));
@@ -226,6 +263,31 @@ for (const size of sizes) {
   check(`${size}: …Edit: what for, type, tables, day, from and until, filled in; focus on What for`, JSON.stringify(filled) === JSON.stringify({ label: 'Card prerelease (r22)', type: 'tournament', tables: 'T14-T17', day: day3, from: '14:00', to: '22:00' }) && (await focused()).startsWith('input(label)'), { filled, focused: await focused() });
   await axe(page, `${size}: a staff hold's editor`, one);
   await shot(page, `${size}-5-staff-edit`, one);
+  await page.fill(`${one} [name="tables"]`, 'T14, T99');
+  await page.click(`${one} [data-hold-edit-form] [type="submit"]`);
+  await settle(page, 400);
+  const bad = flat(await page.textContent(`${one} [data-form-error]`).catch(() => ''));
+  check(`${size}: …T14, T99: the Lair app's words, focus in the tables, nothing saved`, bad === 'Pick tables that exist, like T11-T20.' && (await focused()).startsWith('input(tables)') && (await page.evaluate((id) => window.Lair.store.data.blocks.find((b) => b.id === id).tables.join(), oneId)) === 'T14,T15,T16,T17', { bad, focused: await focused() });
+  // the floor draws the list again while it saves: the new editor's Save is busy, and the error is said in it
+  await page.evaluate(() => {
+    const { store } = window.Lair;
+    const staff = document.querySelector('lair-staff');
+    const real = store.mutate;
+    store.mutate = function again(...args) {
+      store.mutate = real;
+      const list = staff.querySelector('[data-holds-list]');
+      list.dataset.html = '';
+      staff.renderHolds();
+      window.qaBusyMid = staff.querySelector('[data-holds-list] [data-hold-edit-form] [type="submit"]')?.getAttribute('aria-busy') || null;
+      return real.apply(store, args);
+    };
+  });
+  await page.click(`${one} [data-hold-edit-form] [type="submit"]`);
+  await settle(page, 400);
+  const mid = await page.evaluate(() => window.qaBusyMid);
+  const bad2 = flat(await page.textContent(`${one} [data-form-error]`).catch(() => ''));
+  const busyAfter = await page.getAttribute(`${one} [data-hold-edit-form] [type="submit"]`, 'aria-busy');
+  check(`${size}: …drawn again while it saves: its Save is busy meanwhile, then the words are in the editor on the page`, mid === 'true' && bad2 === 'Pick tables that exist, like T11-T20.' && busyAfter === null && (await focused()).startsWith('input(tables)'), { mid, bad2, busyAfter, focused: await focused() });
   await page.fill(`${one} [name="tables"]`, 'T14-T18');
   await page.fill(`${one} [name="from"]`, '13:00');
   await page.click(`${one} [data-hold-edit-form] [type="submit"]`);
@@ -252,14 +314,14 @@ for (const size of sizes) {
   const sc = `[data-series="${seriesId}"]`;
   const srow = (n) => `${sc} .staff-series__date:nth-child(${n})`;
   const sRows = await page.$$eval(`${sc} .staff-series__date`, (els) => els.map((e) => [...e.querySelectorAll('button')].map((b) => b.textContent.trim()).join(', ')));
-  check(`${size}: a weekly hold: each date has Change and Skip this date, the card Edit every date`, sRows.length === 4 && sRows.every((r) => r === 'Change, Skip this date') && (await page.locator(`${sc} [data-act="hold-edit"][data-id="series:${seriesId}"]`).count()) === 1, sRows);
+  check(`${size}: a weekly hold: each date has Edit and Skip this date, the card Edit every date`, sRows.length === 4 && sRows.every((r) => r === 'Edit, Skip this date') && (await page.locator(`${sc} [data-act="hold-edit"][data-id="series:${seriesId}"]`).count()) === 1, sRows);
   await page.click(`${srow(2)} [data-act="hold-edit"]`);
   await settle(page);
   await page.fill(`${srow(2)} [name="to"]`, '21:00');
   await page.click(`${srow(2)} [data-hold-edit-form] [type="submit"]`);
   await settle(page, 500);
   const second = await page.evaluate((d) => window.Lair.store.time.fmtDate(window.Lair.store.time.addDays(d, 7)).replace(',', ''), monday);
-  check(`${size}: …a date's Change: the toast, and the row says what it has, with Back to usual`, (await toast()) === `Saved ${second}: T1–T4, 6pm–9pm.` && flat(await page.innerText(srow(2))) === `${second} T1–T4 · 6pm–9pm this date Change Back to usual Skip this date`, [await toast(), flat(await page.innerText(srow(2)))]);
+  check(`${size}: …a date's Edit: the toast, and the row says what it has, with Back to usual`, (await toast()) === `Saved ${second}: T1–T4, 6pm–9pm.` && flat(await page.innerText(srow(2))) === `${second} T1–T4 · 6pm–9pm this date Edit Back to usual Skip this date`, [await toast(), flat(await page.innerText(srow(2)))]);
   await page.click(`${sc} [data-act="hold-edit"][data-id="series:${seriesId}"]`);
   await settle(page);
   check(`${size}: …Edit every date: the hold's usual tables and times (not the changed date's)`, (await page.inputValue(`${sc} > [data-hold-edit-form] [name="tables"]`)) === 'T1-T4' && (await page.inputValue(`${sc} > [data-hold-edit-form] [name="to"]`)) === '22:00');
@@ -271,7 +333,7 @@ for (const size of sizes) {
   check(`${size}: …the card's usual is new, the changed date kept`, sText.includes('T1–T6 · 6pm–10pm') && flat(await page.innerText(srow(2))).startsWith(`${second} T1–T4 · 6pm–9pm this date`), sText.slice(0, 260));
   await page.click(`${srow(2)} [data-act="bdate-usual"]`);
   await settle(page, 500);
-  check(`${size}: …Back to usual: the hold's new tables and times`, (await toast()) === `${second} is back to usual: T1–T6, 6pm–10pm.` && flat(await page.innerText(srow(2))) === `${second} Change Skip this date`, [await toast(), flat(await page.innerText(srow(2)))]);
+  check(`${size}: …Back to usual: the hold's new tables and times`, (await toast()) === `${second} is back to usual: T1–T6, 6pm–10pm.` && flat(await page.innerText(srow(2))) === `${second} Edit Skip this date`, [await toast(), flat(await page.innerText(srow(2)))]);
   await noSideways('a weekly hold');
   await page.locator(sc).scrollIntoViewIfNeeded();
   await shot(page, `${size}-6-weekly-hold`, sc);
@@ -285,7 +347,7 @@ for (const size of sizes) {
   });
   await settle(page);
   const sheet = flat(await page.textContent('[data-sheet]'));
-  check(`${size}: the floor: a table the Thursday holds says so, with Free T12 today and Change the hold`, sheet.includes('Wargames night') && sheet.includes('From the events calendar.') && sheet.includes('Free T12 today') && sheet.includes('Change the hold'), sheet.slice(0, 260));
+  check(`${size}: the floor: a table the Thursday holds says so, with Free T12 today and Edit the hold`, sheet.includes('Wargames night') && sheet.includes('From the events calendar.') && sheet.includes('Free T12 today') && sheet.includes('Edit the hold'), sheet.slice(0, 260));
   await axe(page, `${size}: the floor's sheet (the hold)`, '[data-sheet] article.staff-card:not([class*="staff-card--"])');
   await page.locator('[data-sheet]').scrollIntoViewIfNeeded();
   await shot(page, `${size}-7-floor-sheet`, '[data-sheet]');
@@ -296,6 +358,7 @@ for (const size of sizes) {
     return { status: store.statusAt('T12', Date.now()).status, t13: store.statusAt('T13', Date.now()).status };
   });
   check(`${size}: …Free T12 today: the toast, T12 free now, T13 still held`, (await toast()) === 'T12 is free: Wargames night doesn’t hold it today.' && freed.status !== 'event' && freed.t13 === 'event', [await toast(), freed]);
+  check(`${size}: …focus stays in the sheet (its heading)`, await page.evaluate(() => Boolean(document.activeElement && document.activeElement.closest('[data-sheet]') && document.activeElement.tagName === 'H3')), await focused());
   await page.evaluate(() => {
     const staff = document.querySelector('lair-staff');
     staff.selected = [];
@@ -305,7 +368,7 @@ for (const size of sizes) {
   await page.click('[data-sheet] [data-act="floor-edit-hold"]');
   await settle(page, 600);
   const onHolds = await page.evaluate(() => ({ tab: document.querySelector('lair-staff').tab, value: document.activeElement && document.activeElement.value, name: document.activeElement && document.activeElement.name }));
-  check(`${size}: …Change the hold: the Holds tab, that date's editor with its tables now (T12 gone), focused`, onHolds.tab === 'holds' && onHolds.name === 'tables' && onHolds.value === 'T8-T11, T13-T21', onHolds);
+  check(`${size}: …Edit the hold: the Holds tab, that date's editor with its tables now (T12 gone), focused`, onHolds.tab === 'holds' && onHolds.name === 'tables' && onHolds.value === 'T8-T11, T13-T21', onHolds);
   await page.keyboard.press('Escape');
   await settle(page);
   // a staff hold on the floor: Edit too
@@ -335,12 +398,72 @@ for (const size of sizes) {
     store.data.holdEvents = null;
     staff.renderHolds();
     const cards = [...document.querySelectorAll('[data-holds-list] > article')].filter((a) => a.querySelector('strong').textContent.trim() === 'Friday cards');
-    const out = { cards: cards.length, buttons: cards.reduce((n, a) => n + a.querySelectorAll('button').length, 0), says: cards[0] && cards[0].textContent.includes('From the events calendar') };
+    const edits = document.querySelectorAll('[data-holds-list] [data-act="hold-edit"], [data-holds-list] [data-act="bdate-usual"]').length;
+    const out = { cards: cards.length, buttons: cards.reduce((n, a) => n + a.querySelectorAll('button').length, 0), says: cards[0] && cards[0].textContent.includes('From the events calendar'), edits };
     store.data.holdEvents = kept;
     staff.renderHolds();
     return out;
   });
-  check(`${size}: a Lair app with no holdEvents: event holds as before (a card a date, nothing to tap)`, older.cards > 3 && older.buttons === 0 && older.says, older);
+  check(`${size}: a Lair app with no holdEvents: event holds as before (a card a date, nothing to tap), and no Edit on staff holds`, older.cards > 3 && older.buttons === 0 && older.says && older.edits === 0, older);
+  const both = await page.evaluate(() => {
+    const staff = document.querySelector('lair-staff');
+    const d = { start: Date.now() };
+    return [staff.everyText({ repeat: null }, [d, d]), staff.everyText({ repeat: null }, [d, d, d]), staff.everyText({ repeat: 'fortnightly', repeatTag: 'Fortnightly · Thursdays 6:30pm' }, [d]), staff.everyText({ repeat: 'weekly', repeatTag: 'Weekly · Saturdays and Sundays 10am' }, [d])];
+  });
+  check(`${size}: Stop holding's words: a one-off over two days "on both days"; fortnightly; a weekend`, JSON.stringify(both) === JSON.stringify(['on both days', 'on all 3 days', 'every second Thursday', 'every Saturday and Sunday']), both);
+
+  /* ---------------- 9. a weekly hold changed while tonight's date is on (review, 28 Oct) ---------------- */
+  await page.click('[data-tab="holds"]');
+  await settle(page);
+  const painting = await page.evaluate(async (today) => {
+    const { store } = window.Lair;
+    const t = store.time;
+    const { series } = await store.mutate('createBlock', { tables: ['P1', 'P2'], start: t.at(today, 18 * 60), end: t.at(today, 22 * 60), label: 'Painting club (r22)', type: 'event', repeat: 'weekly' });
+    return series.id;
+  }, T);
+  const pc = `[data-series="${painting}"]`;
+  await page.waitForSelector(pc);
+  await page.click(`${pc} [data-act="hold-edit"][data-id="series:${painting}"]`);
+  await settle(page);
+  await page.fill(`${pc} > [data-hold-edit-form] [name="tables"]`, 'P3-P4');
+  await page.fill(`${pc} > [data-hold-edit-form] [name="from"]`, '17:00');
+  await page.fill(`${pc} > [data-hold-edit-form] [name="to"]`, '21:00');
+  await page.fill(`${pc} > [data-hold-edit-form] [name="label"]`, 'Painting night (r22)');
+  await page.click(`${pc} > [data-hold-edit-form] [type="submit"]`);
+  await settle(page, 500);
+  const pText = flat(await page.innerText(pc));
+  const pRow1 = flat(await page.innerText(`${pc} .staff-series__date:nth-child(1)`));
+  check(`${size}: a weekly hold changed while tonight's is on: the card has its new name, tables and times; tonight keeps what it had`, pText.startsWith('Painting night (r22)') && pText.includes('P3–P4 · 5pm–9pm') && pRow1.startsWith('Today, on now P1–P2 · 6pm–10pm this date'), { pText: pText.slice(0, 200), pRow1 });
+  await page.click(`${pc} [data-act="hold-edit"][data-id="series:${painting}"]`);
+  await settle(page);
+  const againVals = await page.evaluate((sel) => Object.fromEntries([...document.querySelectorAll(`${sel} > [data-hold-edit-form] [name]`)].map((el) => [el.name, el.value])), pc);
+  check(`${size}: …Edit every date again: the new usual, not tonight's`, againVals.tables === 'P3-P4' && againVals.from === '17:00' && againVals.to === '21:00' && againVals.label === 'Painting night (r22)', againVals);
+  await page.click(`${pc} [data-act="hold-edit-cancel"]`);
+  await settle(page);
+  await noSideways('a weekly hold under way');
+  await axe(page, `${size}: a weekly hold under way`, pc);
+
+  /* ---------------- 10. the booking page and the calendar (review, 28 Oct) ---------------- */
+  const warNext = `qa-wargames@${addDays(T, 7)}`;
+  await page.evaluate(async ([tonight, next]) => {
+    const { store } = window.Lair;
+    await store.mutate('holdEventDate', tonight, { tables: 'T8-T9' });
+    await store.mutate('holdEventDate', next, { tables: '' });
+  }, [`qa-wargames@${T}`, warNext]);
+  await go(page, BASE, '/pages/book-a-table?show=events');
+  await page.waitForSelector('.play-row', { timeout: 20000 });
+  const rowMeta = await page.evaluate(() => {
+    const r = [...document.querySelectorAll('.play-row')].find((x) => x.querySelector('.play-row__title')?.textContent.trim() === 'Wargames night');
+    return r ? r.querySelector('.play-row__meta')?.textContent.replace(/\s+/g, ' ').trim() : null;
+  });
+  check(`${size}: the booking page: tonight's Wargames night says the tables it holds tonight`, Boolean(rowMeta) && rowMeta.endsWith('T8 + T9'), rowMeta);
+  await go(page, BASE, `/pages/events-calendar#event=${encodeURIComponent(warNext)}`);
+  await page.waitForSelector('lair-calendar [data-dialog][open]', { timeout: 20000 });
+  await settle(page);
+  const calNote = flat(await page.textContent('lair-calendar [data-dialog] .cal-note--early, lair-calendar [data-dialog] .cal-note--held').catch(() => ''));
+  const floorSays = await page.evaluate((occ) => (window.Lair.store.data.eventHolds || []).filter((h) => h.occurrenceId === occ).map((h) => `${h.spots ? 'spots' : 'held'}:${h.tables.join('+')}`), warNext);
+  check(`${size}: the calendar: next week's Wargames night holds none, and its game tables are set aside as the floor marks them`,
+    calNote === 'T8–T15 and T18–T21 are set aside for wargames night. Anyone can still book them, but expect armies.' && JSON.stringify(floorSays) === JSON.stringify(['spots:T8+T9+T10+T11+T12+T13+T14+T15+T18+T19+T20+T21']), { calNote, floorSays });
   await noSideways('the end');
   check(`${size}: no script errors`, !page.errors.length, page.errors);
   await ctx.close();

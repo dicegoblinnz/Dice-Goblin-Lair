@@ -168,9 +168,10 @@ test("an event date's own tables: that date holds them (locked, changed), every 
   assert.deepEqual(holdFor(floor, 'gundam-night@2026-11-06').tables, USUAL);
   assert.equal(holdFor(floor, 'gundam-night@2026-11-06').changed, undefined);
   assert.deepEqual(holdFor(floor, POKEMON).tables, USUAL);
-  // the public floor holds the same tables (and says nothing about who changed it)
+  // the public floor holds the same tables, and says nothing about who changed it or that it's changed
   const pub = await board('');
   assert.deepEqual(holdFor(pub, GUNDAM).tables, ['T18', 'T19', 'T20', 'T21']);
+  assert.equal('changed' in holdFor(pub, GUNDAM), false);
   assert.equal(pub.holdEvents, undefined, 'holdEvents is for staff');
 });
 
@@ -267,15 +268,21 @@ test('holding never moves a booking: clashes lists those on the tables it holds,
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM bookings WHERE status = 'confirmed'").one().n, 2, 'both bookings stay');
 });
 
-test("game tables stay the event's, never repeating a table the date's locked hold has (usual or its own)", async () => {
+test("game tables stay marked for the event (their spots are still sold), less any table the date holds locked", async () => {
   // Warhammer's pairs are inside its locked T8-T21: no game-table hold of their own
   let floor = await board();
   assert.equal(holdFor(floor, WARHAMMER, true), undefined);
-  // this Thursday it holds T8-T13 only: the freed pairs aren't set aside for it (they're its usual tables)
+  // this Thursday it holds T8-T13 only: the pairs it doesn't hold are marked for it, still bookable (review, 28 Oct)
   ok(await holdDate(WARHAMMER, { tables: 'T8-T13' }));
   floor = await board();
   assert.deepEqual(holdFor(floor, WARHAMMER).tables, ['T8', 'T9', 'T10', 'T11', 'T12', 'T13']);
-  assert.equal(holdFor(floor, WARHAMMER, true), undefined);
+  assert.deepEqual([holdFor(floor, WARHAMMER, true).tables, holdFor(floor, WARHAMMER, true).soft], [['T14', 'T15', 'T18', 'T19', 'T20', 'T21'], true]);
+  // a date that holds none still marks every pair, and anyone can book one, as with any soft hold
+  ok(await holdDate('warhammer-night@2026-11-05', { tables: [] }));
+  floor = await board();
+  assert.equal(holdFor(floor, 'warhammer-night@2026-11-05'), undefined);
+  assert.deepEqual(holdFor(floor, 'warhammer-night@2026-11-05', true).tables, ['T8', 'T9', 'T10', 'T11', 'T12', 'T13', 'T14', 'T15', 'T18', 'T19', 'T20', 'T21']);
+  ok(await book(['T12'], at('2026-11-05', 19), at('2026-11-05', 20)));
   // a soft event's game tables stay set aside whatever its date holds
   ok(await holdDate('learn-night@2026-11-04', { tables: [] }));
   floor = await board();
@@ -409,8 +416,15 @@ function eventsInShopify() {
     nodes.delete(x.handle);
     return { deletedId: id, userErrors: [] };
   };
+  lair.shopify.createLairEvent = async (handle, fields) => {
+    const x = { id: `gid://shopify/Metaobject/${n}`, handle, updatedAt: new Date(NOW).toISOString(), fields: Object.fromEntries(fields.map(({ key, value }) => [key, value === '' ? null : value])) };
+    n += 1;
+    nodes.set(handle, x);
+    return { metaobject: node(x), userErrors: [] };
+  };
+  // (each entry's Shopify id rides along, as loadLairData reads it)
   lair.shopify.loadLairData = async () => ({
-    rooms: ROOMS, events: [...nodes.values()].map((x) => lair.eventRule(x.handle, x.fields)), theme: null, shop: {},
+    rooms: ROOMS, events: [...nodes.values()].map((x) => lair.eventRule(x.handle, x.fields, x.id)), theme: null, shop: {},
     settingsText: JSON.stringify({ current: { lair_hours: DEFAULT_HOURS, lair_shop_tables: '' } }),
   });
   lair.rulesLoadedAt = 0;
@@ -454,6 +468,31 @@ test("a deleted event's dates' own tables go with it, so a new event with its ha
   assert.deepEqual(ownRows().map((r) => r.occurrence_id), [GUNDAM]);
 });
 
+test("an entry deleted in Shopify admin and made again with the same handle never takes the old one's dates", async () => {
+  const nodes = eventsInShopify();
+  ok(await holdDate(GUNDAM, { tables: ['T18'] }));
+  assert.equal(ownRows()[0].event_gid, nodes.get('gundam-night').id, "the entry's Shopify id is kept with the date");
+  // Mo deletes Gundam Weeklies in Shopify admin and makes it again there: the same handle, a new id
+  nodes.set('gundam-night', { ...nodes.get('gundam-night'), id: 'gid://shopify/Metaobject/99' });
+  lair.rulesLoadedAt = 0;
+  let floor = await board();
+  assert.deepEqual([holdFor(floor, GUNDAM).tables, 'changed' in holdFor(floor, GUNDAM)], [USUAL, false]);
+  assert.equal(dateOn(floor, GUNDAM).changed, false);
+  // a change from now on is the new entry's
+  ok(await holdDate(GUNDAM, { tables: ['T19'] }));
+  assert.deepEqual(ownRows().map((r) => [r.occurrence_id, r.event_gid, JSON.parse(r.tables)]), [[GUNDAM, 'gid://shopify/Metaobject/99', ['T19']]]);
+  floor = await board();
+  assert.deepEqual(holdFor(floor, GUNDAM).tables, ['T19']);
+  // made again on the staff page: its handle's old dates are forgotten as it's made
+  ok(await holdDate('clocktower@2026-11-29', { tables: 'T1-T4' }));
+  nodes.delete('clocktower');
+  lair.rulesLoadedAt = 0;
+  const made = ok(await call('POST', 'events', { title: 'Clocktower', type: 'social', start: at('2026-11-29', 12), end: at('2026-11-29', 18), tables: 'F1, P1-P4', lockTables: true }, OWNER));
+  assert.equal(nodes.get('clocktower').handle, 'clocktower', made.event && made.event.handle);
+  assert.deepEqual(ownRows().map((r) => r.occurrence_id), [GUNDAM]);
+  assert.deepEqual(holdFor(await board(OWNER, at('2026-11-28', 0), at('2026-11-30', 0)), 'clocktower@2026-11-29').tables, ['F1', 'P1', 'P2', 'P3', 'P4']);
+});
+
 /* ---------------- editing a staff hold ---------------- */
 
 test('a one-off staff hold: its tables, day, times, what it is for and its type change; the floor and bookings follow', async () => {
@@ -494,6 +533,20 @@ test("a staff hold edit's words: not found, finished, tables, times, and who may
   assert.equal(said(await editHold(block.id, { tables: 'nowhere' })), `422 ${W.holdTables}`);
   assert.equal(said(await editHold(block.id, { end: at('2026-11-01', 13) })), `422 ${W.endAfter}`);
   assert.equal(said(await editHold(block.id, { start: 'soon' })), `422 ${W.endAfter}`);
+  // an empty time isn't 1970 (review, 28 Oct): null, '' and false are refused, and the hold is as it was
+  for (const start of [null, '', false, true, 0]) assert.equal(said(await editHold(block.id, { start })), `422 ${W.endAfter}`, JSON.stringify(start));
+  assert.equal(said(await editHold(block.id, { end: '' })), `422 ${W.endAfter}`);
+  assert.equal(blockRow(block.id).starts_at, at('2026-11-01', 14));
+  // tables written out: every one has to exist ('T14, T99' isn't T14)
+  assert.equal(said(await editHold(block.id, { tables: 'T14, T99' })), `422 ${W.holdTables}`);
+  assert.equal(said(await editHold(block.id, { tables: 'T14 T99' })), `422 ${W.holdTables}`);
+  assert.deepEqual(JSON.parse(blockRow(block.id).tables), ['T14', 'T15', 'T16', 'T17']);
+  // and the Hold tables form, the same (round 8's, with round 22's checks)
+  assert.equal(said(await makeHold({ start: '' })), '422 The hold needs an end time after the start.');
+  assert.equal(said(await makeHold({ tables: 'T14, T99' })), `422 ${W.holdTables}`);
+  // a time sent as its digits is still a time
+  ok(await editHold(block.id, { start: String(at('2026-11-01', 15)) }));
+  assert.equal(blockRow(block.id).starts_at, at('2026-11-01', 15));
   assert.equal(said(await editHold(block.id, { start: at('2026-10-27', 18), end: at('2026-10-27', 22) })), `422 ${W.endPast}`);
   assert.equal(said(await editHold(block.id, { label: 'x' }, TAMA)), `403 ${NOT_PERMITTED}`);
   assert.equal(said(await editHold(block.id, { label: 'x' }, ANA)), `403 ${NOT_PERMITTED}`, 'Events alone is not Tables');
@@ -522,6 +575,7 @@ test("a weekly hold's date on its own: its tables and times change, it's marked 
   assert.deepEqual(done.block, {
     id: ids[1], tables: ['T14', 'T15'], start: at('2026-11-05', 19), end: at('2026-11-05', 23), label: 'Warhammer league', type: 'tournament', game: null,
     seriesId, repeat: 'weekly', repeatTag: 'Weekly · Thursdays 6pm', until: null, changed: true,
+    usual: { tables: ['T14', 'T15', 'T16', 'T17'], startTime: '18:00', minutes: 240, label: 'Warhammer league', type: 'tournament', game: null },
   });
   assert.equal(done.series.id, seriesId);
   // the other dates are as they were
@@ -560,6 +614,13 @@ test('every date to come: the dates and the series take the new tables, times an
   assert.deepEqual(view(rows[1]), ['2026-11-05', 'T18+T19+T20+T21', 17 * 60, 270, 'Warhammer league night', 'event', 0]);
   assert.deepEqual(view(rows[2]), ['2026-11-12', 'T17', 18 * 60, 240, 'Warhammer league night', 'event', 1], 'changed on its own: its tables and times, the new words');
   for (const r of rows.slice(3)) assert.deepEqual(view(r).slice(1), ['T18+T19+T20+T21', 17 * 60, 270, 'Warhammer league night', 'event', 0], time.key(r.starts_at));
+  // the staff floor: the date under way keeps what it had, and every date says the hold's usual now (review, 28 Oct:
+  // the staff page read the usual off the first date, the one under way)
+  const first = (await board()).blocks.find((b) => b.id === ids[0]);
+  assert.deepEqual([first.tables.join(), first.label, first.usual], [
+    'T14,T15,T16,T17', 'Warhammer league',
+    { tables: ['T18', 'T19', 'T20', 'T21'], startTime: '17:00', minutes: 270, label: 'Warhammer league night', type: 'event', game: null },
+  ]);
   // back to usual is the new usual
   const back = ok(await editHold(ids[2], { scope: 'date', usual: true }));
   assert.deepEqual([back.block.tables.join(), back.block.start, back.block.end], ['T18,T19,T20,T21', at('2026-11-12', 17), at('2026-11-12', 21, 30)]);

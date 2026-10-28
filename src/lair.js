@@ -69,7 +69,7 @@ import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinV
 // Round 22: counter sales through Pay on Verifone (OrderMate), whose orders lose the cart lines' properties
 import { counterMethods, counterSale, customSale } from './counter.js';
 // Round 22 (28 Oct 2026): every hold can be edited: an event date's own tables, and staff holds (src/holds.js)
-import { HOLD_COLUMNS, HOLD_TABLES, holdMethods } from './holds.js';
+import { HOLD_COLUMNS, HOLD_TABLES, holdMethods, timeOf } from './holds.js';
 import { dateTables } from './core.js';
 
 const FALLBACK_ROOMS = [
@@ -2309,7 +2309,8 @@ export class Lair {
       bookings: st.bookings.filter((bk) => staffView || (ACTIVE.has(bk.status) && bk.kind !== 'gm-cover')).map(view),
       // Round 8: staff see a hold's series (seriesId, repeat, repeatTag, until); the public see nothing new
       blocks: staffView ? this.staffBlocks(st.blocks, rules) : st.blocks.map(({ seriesId, changed, ...bl }) => ({ ...bl, label: PUBLIC_HOLD[bl.type] || 'Reserved' })),
-      eventHolds: holds,
+      // (round 22: the public see each date's tables as it holds them, and nothing about which dates staff changed)
+      eventHolds: staffView ? holds : holds.map(({ changed, ...h }) => h),
       // Round 22 (contract v22-holds): for staff, each event with tables held, its usual tables and every date's
       ...(staffView ? { holdEvents: this.holdEventsIn(rules, from, to) } : {}),
       games: visibleGames.map((g) => {
@@ -4490,11 +4491,14 @@ export class Lair {
     // --- no awaits from here on: the checks, the holds and their clashes in one go ---
     const now = Date.now();
     const time = new LairTime(rules.tz);
-    const tables = (Array.isArray(input.tables) ? input.tables : parseTableList(input.tables, rules.rooms)).map(String);
+    // (round 22: tables written out have to be tables that exist, every one of them: 'T14, T99' isn't T14)
+    if (!Array.isArray(input.tables) && !this.tablesExist(String(input.tables ?? ''), rules.rooms)) throw new RuleError('Pick tables that exist, like T11-T20.');
+    const tables = (Array.isArray(input.tables) ? input.tables : parseTableList(String(input.tables), rules.rooms)).map(String);
     const index = tableIndex(rules.rooms);
     if (!tables.length || tables.some((t) => !index.has(t))) throw new RuleError('Pick tables that exist, like T11-T20.');
-    const start = Number(input.start);
-    const end = Number(input.end);
+    // (round 22: a time is a number of ms; an empty one isn't 1970)
+    const start = timeOf(input.start);
+    const end = timeOf(input.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || !(end > start)) throw new RuleError('The hold needs an end time after the start.');
     const repeat = String(input.repeat ?? '').trim().toLowerCase();
     if (repeat && !HOLD_REPEATS[repeat]) throw new RuleError('Pick how often it repeats: weekly or fortnightly. Or leave it as a one-off.');
@@ -4614,14 +4618,24 @@ export class Lair {
     };
   }
 
-  /** Round 8: the staff floor's holds, each with its series: seriesId, repeat, repeatTag and until (nulls for a one-off). No awaits. */
+  /**
+   * Round 8: the staff floor's holds, each with its series: seriesId, repeat, repeatTag and until (nulls for a one-off).
+   * Round 22: and a weekly hold's usual, its own tables, start time ('18:00'), minutes, label, type and game (a one-off has none):
+   * what its dates are, since a date can be changed on its own and one under way keeps what it had. No awaits.
+   */
   staffBlocks(blocks, rules) {
     const ids = [...new Set(blocks.map((bl) => bl.seriesId).filter(Boolean))];
     const rows = ids.length ? this.sql.exec(`SELECT * FROM block_series WHERE id IN (${ids.map(() => '?').join(', ')})`, ...ids).toArray() : [];
-    const series = new Map(rows.map((r) => [r.id, { repeat: this.holdRepeat(r), repeatTag: this.holdRepeatTag(r, rules), until: r.until_day || null }]));
+    const series = new Map(rows.map((r) => [r.id, {
+      repeat: this.holdRepeat(r), repeatTag: this.holdRepeatTag(r, rules), until: r.until_day || null,
+      usual: {
+        tables: parse(r.tables, []), startTime: `${String(Math.floor(r.start_min / 60)).padStart(2, '0')}:${String(r.start_min % 60).padStart(2, '0')}`,
+        minutes: r.minutes, label: r.label || 'Held', type: r.type || 'event', game: r.game || null,
+      },
+    }]));
     return blocks.map((bl) => {
       const s = (bl.seriesId && series.get(bl.seriesId)) || null;
-      return { ...bl, seriesId: s ? bl.seriesId : null, repeat: s?.repeat || null, repeatTag: s?.repeatTag || null, until: s?.until || null };
+      return { ...bl, seriesId: s ? bl.seriesId : null, repeat: s?.repeat || null, repeatTag: s?.repeatTag || null, until: s?.until || null, ...(s ? { usual: s.usual } : {}) };
     });
   }
 
@@ -6246,11 +6260,11 @@ export class Lair {
   }
 
   /** An event's fields the way the Lair's rules hold events (as shopify.js loadLairData reads them), for its dates */
-  eventRule(handle, f) {
+  eventRule(handle, f, gid = null) {
     const start = Date.parse(f.starts_at || '');
     const fee = Math.round(Number(f.entry_fee || 0) * 100);
     return {
-      id: handle, title: f.title || '', start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * HOUR, tables: f.tables || '',
+      id: handle, gid: gid || null, title: f.title || '', start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * HOUR, tables: f.tables || '',
       repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: this.eventSkipDates(f.skip_dates),
       capacity: f.capacity ? Number(f.capacity) : null, entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
       payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
@@ -6652,6 +6666,8 @@ export class Lair {
     if (result.userErrors?.length || !result.metaobject) throw this.shopifySaidNo(result.userErrors || []);
     // --- no awaits from here on ---
     this.dropEvents();
+    // Round 22: a handle used before (an entry deleted in Shopify admin) never brings back an old event's dates' tables
+    this.forgetEventDates(result.metaobject.handle);
     return { event: this.eventEntry(result.metaobject, rules, Date.now()).view, notice: null };
   }
 

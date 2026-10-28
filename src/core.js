@@ -541,8 +541,8 @@ export function dateTables(o, rules) {
  * title, type: 'event', soft, spots?, changed? }, with id ev-<occurrence id> for the event's tables and
  * ev-<occurrence id>-spots for its game-spot tables.
  * Round 22: a date with its own tables (dateTables) holds those, with changed: true, and none at all when it has [] (an
- * event with no Tables reserved can still hold a date's own). Game tables never repeat a table the date's locked hold
- * has, its usual tables or its own.
+ * event with no Tables reserved can still hold a date's own). Game tables never repeat a table the date holds locked
+ * (its usual tables or its own); a date that holds none still marks them all, since their spots are still sold.
  */
 export function eventHolds(rules, from, to) {
   const out = [];
@@ -550,10 +550,12 @@ export function eventHolds(rules, from, to) {
   const changedEvents = new Set(own ? [...own.values()].map((c) => c.eventId) : []);
   const events = (rules.events || []).filter((e) => e.tables || e.gameTables || changedEvents.has(e.id));
   for (const o of eventOccurrences({ ...rules, events }, from, to)) {
-    const { usual, tables, changed } = dateTables(o, rules);
+    const { tables, changed } = dateTables(o, rules);
     const base = { eventId: o.eventId, occurrenceId: o.id, start: o.start, end: o.end, label: o.title, title: o.title, type: 'event' };
     if (tables.length) out.push({ ...base, id: `ev-${o.id}`, tables, soft: !o.lockTables, ...(changed ? { changed: true } : {}) });
-    const spots = [...new Set(parseSpots(o.gameTables, rules.rooms).flat())].filter((t) => !(o.lockTables && (tables.includes(t) || usual.includes(t))));
+    // game tables stay marked for the event (their spots are still sold), less any the date holds locked (round 22: the
+    // tables it holds that date, so a date that frees its tables still marks its game tables)
+    const spots = [...new Set(parseSpots(o.gameTables, rules.rooms).flat())].filter((t) => !(o.lockTables && tables.includes(t)));
     if (spots.length) out.push({ ...base, id: `ev-${o.id}-spots`, tables: spots, soft: true, spots: true });
   }
   return out;

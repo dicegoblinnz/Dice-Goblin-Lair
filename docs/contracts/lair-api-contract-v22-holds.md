@@ -17,8 +17,9 @@ note (`assets/lair-calendar.js`) and the demo (`assets/lair-demo.js`).
 ## 1. An event date's own tables
 
 Stored: `event_hold_dates`, made when missing: `occurrence_id` (the key, `<handle>@YYYY-MM-DD`), `event_id` (the
-handle), `tables` (a JSON list of table ids; `[]` holds none that date), `starts_at` and `ends_at` (the date's times
-when it was changed, for tidying up), `by` (`staff:<customer id>`, or `staff`) and `updated_at`.
+handle), `event_gid` (the `lair_event` entry's Shopify id when the date was changed), `tables` (a JSON list of table
+ids; `[]` holds none that date), `starts_at` and `ends_at` (the date's times when it was changed, for tidying up), `by`
+(`staff:<customer id>`, or `staff`) and `updated_at`. The rules read each entry's Shopify id (`gid`) with its fields.
 
 What it does (`eventHolds`, so everywhere: the floor, bookings, games and holds checked against locked tables, and the
 POS's today):
@@ -26,10 +27,13 @@ POS's today):
 - A date with its own tables holds them in place of the event's usual tables (Tables reserved), soft or locked as the
   event is, and its hold says `changed: true`. A date with `[]` holds no tables (no `ev-<occurrence id>` item).
 - An event with no Tables reserved can still hold a date's own tables.
-- Game tables don't change: they stay soft-reserved for the event, less any table the date's locked hold has (its
-  usual tables or its own).
+- Game tables don't change: they stay soft-reserved for the event (their spots are still sold), less any table the
+  date holds locked (its usual tables, or its own). A date that holds none still marks them all.
 - A date keeps its own tables when the event changes (its times included). A date that goes from the calendar (skipped
   or deleted) holds nothing; if it comes back, its own tables come back with it.
+- A handle used again never brings back an old event's dates: a date's own tables count only while the entry is the
+  one they were changed for (`event_gid`; an entry deleted in Shopify admin and made again there has a new id), and a
+  new event made on the staff page forgets any kept under its handle.
 - Maintenance forgets a date's own tables 31 days after the date ends.
 
 ### `POST /events/:occurrenceId/hold` (staff with Tables or Events)
@@ -64,13 +68,15 @@ soonest date first:
 
 `dates`: every date of the event in the window, in order. `changed`: it has its own tables (`[]`: none held that
 date); `by` and `at` say who changed it and when. The public floor is unchanged: its `eventHolds` follow each date's
-tables.
+tables, and never say which are `changed` (only the staff floor's do).
 
 ## 4. Editing a staff hold: `POST /blocks/:id/update` (staff with Tables)
 
-Body: any of `tables` (ids, or written as the Hold tables form takes them), `start`, `end`, `label` (80 characters at
-most; empty is `Held`), `type` (20 at most), `game` (40 at most; `''` clears it), and for a date of a weekly or
-fortnightly hold `scope`: `'date'` or `'series'`.
+Body: any of `tables` (ids, or written as the Hold tables form takes them: every table written has to exist, so
+`T14, T99` is refused, not saved as T14), `start`, `end` (ms, as a number or its digits: `null`, `''` and `false` are
+refused, never read as 1970), `label` (80 characters at most; empty is `Held`), `type` (20 at most), `game` (40 at
+most; `''` clears it), and for a date of a weekly or fortnightly hold `scope`: `'date'` or `'series'`. The Hold tables
+form (`POST /blocks`) takes the same checks on written tables and times, in its round 8 words.
 
 - **A one-off:** what's sent changes. Its start and end can move to another day.
 - **A date of a weekly hold, `scope: 'date'`:** this date only: its tables, start and end (still on its own day). It's
@@ -88,27 +94,44 @@ fortnightly hold `scope`: `'date'` or `'series'`.
 - Holding never moves a booking. → `{ block, clashes, series, kept }`: `block` as the floor has it, `clashes` `[{ ref,
   start }]` across every hold it changed, `series` the hold series as staff see it (or `null`), `kept` `[{ id, start }]`.
 
-The staff floor's holds gain `changed: true` for a date changed one at a time.
+The staff floor's holds gain `changed: true` for a date changed one at a time, and a weekly or fortnightly hold's
+dates carry `usual`: the hold's own `{ tables, startTime: '18:00', minutes, label, type, game }`. A date changed on its
+own, or one under way when every date changed, can differ from it; the staff page reads the hold's tables, times and
+name from `usual`, never from a date.
 
 ## 5. The staff page
 
 **Holds and openings › Current and upcoming holds**, soonest first:
 
 - **An event's tables** are one card: a repeating event's says its repeat tag and "From the events calendar", its usual
-  tables and times (Locked when they are), its next four dates and "Then every Friday". Each date has **Change** (its
-  tables, under it) and **Free the tables** (none held that date); a date with its own tables, or none, says so and has
-  **Back to usual**. The card has **Change every date** (staff with Events: the usual tables and Lock these tables; the
-  times are the event's, changed under Events) and **Stop holding tables** (asks first; the event stays on the
-  calendar). A one-off event's card has its date's Change and Free the tables. An event's game tables are named, with
-  Change them under Events.
+  tables and times (Locked when they are), its next four dates and "Then every Friday" (from its tag: "every second
+  Thursday", "the third Saturday and Sunday of every month"). Each date has **Edit** (its tables, under it) and **Free
+  the tables** (none held that date); a date with its own tables, or none, says so and has **Back to usual**. The card
+  has **Edit every date** (staff with Events: the usual tables and Lock these tables; the times are the event's,
+  changed under Events) and **Stop holding tables** (asks first; the event stays on the calendar; a one-off over two
+  days says "on both days"). A one-off event's card has its date's Edit and Free the tables. An event's game tables are
+  named, with Change them under Events. An event changed here is in the Events tab's list at once.
 - **A staff hold:** **Edit** (what for, type, tables, day, from and until) and Remove.
-- **A weekly staff hold:** **Edit every date** (what for, type, tables, from and until), and each date **Change** (its
-  tables, from and until) and Skip this date. A changed date says what it has, with **Back to usual**.
+- **A weekly staff hold:** **Edit every date** (what for, type, tables, from and until), and each date **Edit** (its
+  tables, from and until) and Skip this date. The card's name, tables and times are the hold's `usual`. A date with its
+  own tables or times (changed on its own, or under way when every date changed) says what it has, with **Back to
+  usual**.
 - Every edit opens in its card, says what the tables read as while typing, saves with **Save** or goes with **Cancel**,
-  and its toast says what's held, with a heads-up for bookings that overlap. Focus stays in the card.
+  and its toast says what's held, with a heads-up for bookings that overlap. Focus stays in the card. Tables go as
+  they're typed, so the Lair app's words say when one doesn't exist. The floor drawing the list again while it saves
+  keeps its Save busy, and an error is said in the editor on the page.
+- A Lair app from before round 22 (no `holdEvents`): event holds show as before, and no hold has Edit.
 
 **The floor:** a table an event holds says From the events calendar, with **Free this table today** (that date's own
-tables become its tables less this one) and **Change the hold** (the Holds tab, on that date). A staff hold's table
-gets **Edit** too (the Holds tab, on that hold).
+tables become its tables less this one; focus stays in the sheet) and **Edit the hold** (the Holds tab, on that date).
+A staff hold's table gets **Edit** too (the Holds tab, on that hold).
 
-**The calendar:** an event date's note ("T10–T13 are held for card night") follows that date's tables.
+**The calendar and the booking page:** an event date's note ("T10–T13 are held for card night") and its row in the
+booking page's list follow that date's tables, and the note names its game tables as the floor marks them (a date that
+holds none: "T8–T15 and T18–T21 are set aside for wargames night").
+
+**Changes after the review (28 Oct):** a weekly hold's card and Edit every date read its `usual`; the booking page's
+row; the calendar's game tables on a freed date (and the floor's, which kept them marked); `event_gid` and the new
+event's handle; the Events tab's list; empty times and tables that don't exist refused; the public floor's `changed`;
+one verb (Edit); the editor drawn again while it saves; `aria-expanded` on each date's Edit; focus after Free this
+table today; no Edit on an older Lair app.

@@ -259,7 +259,7 @@ export class ShopifyAdmin {
     const previewQuery = /^\d+$/.test(id) ? `preview: theme(id: "gid://shopify/OnlineStoreTheme/${id}") { id name ${settingsFile} }` : '';
     const data = await this.graphql(`query LairData {
       rooms: metaobjects(type: "lair_room", first: 50) { nodes { handle capabilities { publishable { status } } fields { key value } } }
-      events: metaobjects(type: "lair_event", first: 250, sortKey: "id", reverse: true) { nodes { handle capabilities { publishable { status } } fields { key value } } }
+      events: metaobjects(type: "lair_event", first: 250, sortKey: "id", reverse: true) { nodes { id handle capabilities { publishable { status } } fields { key value } } }
       main: themes(roles: [MAIN], first: 1) { nodes { id name ${settingsFile} } }
       shop { name shopAddress { address1 address2 city zip } }
       ${previewQuery}
@@ -295,7 +295,8 @@ export class ShopifyAdmin {
         const start = Date.parse(f.starts_at);
         const fee = Math.round(Number(f.entry_fee || 0) * 100);
         return {
-          id: n.handle, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '',
+          // gid (round 22): the entry's Shopify id, which a new entry never shares even when it takes the same handle
+          id: n.handle, gid: n.id || null, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '',
           repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: list(f.skip_dates), capacity: f.capacity ? Number(f.capacity) : null,
           // entry_fee: NZD a person (cents here). game_tables: bookable game spots like "T14+T15, T16+T17".
           entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
