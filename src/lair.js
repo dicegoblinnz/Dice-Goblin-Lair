@@ -6879,7 +6879,10 @@ export class Lair {
     const id = String(customerId);
     const until = this.stampsUntil(now);
     return {
-      sql: `SELECT b.id AS id, b.kind AS kind, b.starts_at AS at,
+      // (29 Oct 2026: Cloudflare's SQLite takes at most 5 terms in one compound SELECT, and these are 8, so they're two
+      // groups of at most 5, each in its own SELECT; My Lair failed on the 8 from 12:19am to the fix)
+      sql: `SELECT * FROM (
+         SELECT b.id AS id, b.kind AS kind, b.starts_at AS at,
              MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL AND p.customer_id != b.customer_id), 0) AS people,
              b.tables AS tables, b.occurrence_id AS occurrence_id, g.title AS game_title, NULL AS join_title, ${bookingVia('b')} AS via
            FROM bookings b LEFT JOIN games g ON g.id = b.game_id
@@ -6896,8 +6899,9 @@ export class Lair {
          SELECT j.id, 'join', j.starts_at, 1, '[]', j.occurrence_id, NULL, j.title, ${joinVia('j')}
            FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
           WHERE x.customer_id = ? AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id) AND ${joinStamps('j')}
-         UNION ALL ${GM_STAMP_ROWS}
+         UNION ALL ${GM_STAMP_ROWS})
          UNION ALL
+         SELECT * FROM (
          SELECT s.id, 'stamp-' || s.kind, s.at, s.count, '[]', NULL, NULL, s.title, 'ledger' FROM loyalty_stamps s WHERE s.customer_id = ? AND s.undone_at IS NULL
          UNION ALL
          SELECT b.id, b.kind, b.starts_at,
@@ -6914,7 +6918,7 @@ export class Lair {
            FROM (SELECT DISTINCT m.booking_id AS paid_id FROM payments m WHERE m.customer_id = ? AND m.kind = 'join') mine
            JOIN event_joins j ON j.id = mine.paid_id
           WHERE j.customer_id IS NULL AND j.starts_at >= ? AND ${joinStamps('j')}
-            AND (SELECT m.customer_id FROM payments m WHERE m.booking_id = j.id AND m.kind = 'join' AND m.customer_id IS NOT NULL ORDER BY m.at, m.rowid LIMIT 1) = ?`,
+            AND (SELECT m.customer_id FROM payments m WHERE m.booking_id = j.id AND m.kind = 'join' AND m.customer_id IS NOT NULL ORDER BY m.at, m.rowid LIMIT 1) = ?)`,
       // in the order of the query's question marks: each part's customer, loyalty start and (round 22) end of today; the
       // ledger's customer; then a payer's own: the payer, the loyalty start, the end of today and the payer again (for a
       // booking, once more: not the GM of its game)

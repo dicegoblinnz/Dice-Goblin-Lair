@@ -2,6 +2,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair } from '../src/lair.js';
 import { LairTime, openWindow, rulesFromSettings, parseTableList, buildRooms, TAB_WORDS } from '../src/core.js';
 import { verifyProxySignature, verifyWebhook } from '../src/shopify.js';
@@ -18,8 +19,9 @@ function fakeCtx() {
   const db = new DatabaseSync(':memory:');
   const sql = {
     exec(query, ...bindings) {
-      // as SQLite in a Durable Object: at most 100 bound values a query (Cloudflare's limit; 27 Oct 2026)
-      if (bindings.length > 100) throw new Error(`too many SQL variables: ${bindings.length}`);
+      // as SQLite in a Durable Object: at most 100 bound values a query (27 Oct 2026) and 5 terms in a compound SELECT
+      // (29 Oct 2026), Cloudflare's limits (test/cloudflare-sql.js)
+      cloudflareSql(query, bindings);
       const stmt = db.prepare(query);
       if (/^\s*(select|with)/i.test(query)) {
         const rows = stmt.all(...bindings);
