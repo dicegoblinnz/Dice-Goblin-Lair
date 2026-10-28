@@ -43,6 +43,12 @@ Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/che
 ## Where things live
 
 - **Code:** GitHub, `dicegoblinnz/Dice-Goblin-Lair`. Every push to `main` is built and deployed by Cloudflare Workers Builds (the Worker is `dice-goblin-lair` on the dicegoblinnz Cloudflare account).
+  Workers Builds builds each commit once, and its builds of other branches fail for this Worker: a commit pushed to a
+  branch first isn't built again when `main` reaches it, so `main` needs a commit of its own to deploy (a merge commit,
+  or an empty one). After a push, check the Worker's last change (Cloudflare → Workers) or the commit's check on GitHub.
+- **Cloudflare's SQLite limits** (the Durable Object's database, and D1): at most 100 bound values a query and at most 5
+  terms in one compound SELECT (`UNION ALL` and the like; a bracketed SELECT counts on its own). Node's SQLite allows
+  more, so every test file checks both through `test/cloudflare-sql.js` (27 and 29 Oct 2026: each limit took a page down).
 - **Theme:** GitHub, `dicegoblinnz/Dice-Goblin-website`, branch `dice-goblin-2-theme` (connect it in Shopify: Online Store → Themes → Add theme → Connect from GitHub).
 - **Address:** `https://dice-goblin-lair.dicegoblinnz.workers.dev`. Open it for a plain status page; the website reaches the app through `www.dicegoblin.nz/apps/liar`.
 - **Keys and settings:** the D1 database `dice-goblin-lair-config`, table `config` (Cloudflare → Storage & databases → D1). Changes there apply within a minute, no redeploy needed. A Worker variable or secret with the same name overrides the database.
