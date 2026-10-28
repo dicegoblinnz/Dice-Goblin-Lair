@@ -96,7 +96,8 @@ for (const [size, vp] of [['phone', { width: 390, height: 844 }], ['desktop', { 
   await page.keyboard.press('Enter');
   await page.waitForTimeout(300);
   check(`${size}: Enter skips it; focus on the next date's Skip`, (await focused(page)) === 'button[skipdate]', await focused(page));
-  for (let i = 0; i < 6 && (await focused(page)) !== 'button[series-stop]'; i += 1) await page.keyboard.press('Tab');
+  // (round 22: each date has Change too, and the card Edit every date, so Stop repeating is a few more tabs on)
+  for (let i = 0; i < 14 && (await focused(page)) !== 'button[series-stop]'; i += 1) await page.keyboard.press('Tab');
   check(`${size}: Tab reaches Stop repeating`, (await focused(page)) === 'button[series-stop]', await focused(page));
   await page.keyboard.press('Enter');
   await page.waitForTimeout(200);
