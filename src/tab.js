@@ -786,8 +786,8 @@ export const runningTabMethods = {
 
   /**
    * The POS's rows for what a member owes on their account from earlier days (a monthly period's check-ins and tabs),
-   * after their owed rows (owedRows): each owed: true, onAccount: true, with its cart line ("Owed: Table T3 (Thu 1 Oct)",
-   * or a tab's "Tab: Thu 1 Oct (3 things)" tagged _tab). Today's are in their day already, and owedRows' are listed once.
+   * after their owed rows (owedRows): each owed: true, onAccount: true, with its cart line ("Owed: Table T3 (Thu 1 Oct,
+   * SJ-OWLBEAR-17)", or a tab's "Tab: Thu 1 Oct (3 things, TAB-1A2B3C)" tagged _tab). Today's are in their day already, and owedRows' are listed once.
    * No awaits.
    */
   accountOwedRows(customerId, rules, now) {
@@ -799,7 +799,8 @@ export const runningTabMethods = {
       if (i.type === 'tab') {
         const t = this.sql.exec('SELECT * FROM tabs WHERE id = ?', i.id).toArray()[0];
         if (!t) continue;
-        const title = `Tab: ${this.shortDay(t.created_at, rules)} (${plural(i.things || 0, 'thing', 'things')})`;
+        // (round 22: with its ref, so a counter sale that lost _tab still pays it: src/counter.js)
+        const title = `Tab: ${this.shortDay(t.created_at, rules)} (${plural(i.things || 0, 'thing', 'things')}, ${this.tabRef(t.id)})`;
         rows.push({
           id: t.id, type: 'tab', kind: 'tab', ref: i.ref, name: '', people: 1, tables: [], start: t.created_at, end: t.updated_at || t.created_at, status: t.status,
           arrivedAt: null, paid: false, amount: t.total, covered: 0, due: t.total, paidAmount: 0, payments: [], split: false, customerId: String(customerId), pass: null,

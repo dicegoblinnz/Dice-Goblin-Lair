@@ -233,7 +233,7 @@ test('tab (round 9): a pay-each-visit member sees today owed and what is coming 
   assert.equal(tab.owed.total, 4900);
   const counter = (await internal('pos/scan', { code })).data;
   assert.deepEqual(counter.rows.map((r) => [r.ref, r.owed]), [[today.ref, false], [yesterday.ref, true]]);
-  assert.deepEqual(counter.rows[1].line, { title: `Owed: Table T5 (${lair.shortDay(at('2026-09-15', 18))})`, price: '20.00', quantity: 1, taxable: true, properties: { _booking: yesterday.ref } });
+  assert.deepEqual(counter.rows[1].line, { title: `Owed: Table T5 (${lair.shortDay(at('2026-09-15', 18))}, ${yesterday.ref})`, price: '20.00', quantity: 1, taxable: true, properties: { _booking: yesterday.ref } });
   const lines = (await internal('pos/checkin-member', { customerId: SAM })).data.lines;
   assert.deepEqual(lines.map((l) => [l.properties._booking, l.price]), [[today.ref, '20.00'], [yesterday.ref, '20.00']]);
 });
@@ -700,7 +700,7 @@ test('tab (round 9): the counter takes everything on the account at once: /pos/c
   const now15 = (await internal('pos/checkin-member', { customerId: SAM })).data;
   assert.deepEqual(now15.rows.map((r) => [r.type, r.ref, r.owed]), [['booking', visit.ref, true], ['tab', all.rows[1].ref, true]]);
   assert.deepEqual(now15.lines.map((l) => [l.title, l.price, l.properties._booking || null, l.properties._tab || null]), [
-    [`Owed: Table T5 (${lair.shortDay(at('2026-09-16', 18))})`, '20.00', visit.ref, null], [all.lines[1].title, '9.00', null, tabId],
+    [`Owed: Table T5 (${lair.shortDay(at('2026-09-16', 18))}, ${visit.ref})`, '20.00', visit.ref, null], [all.lines[1].title, '9.00', null, tabId],
   ]);
 });
 

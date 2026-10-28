@@ -2,7 +2,8 @@
 //   /proxy/*                 Shopify app proxy (www.dicegoblin.nz/apps/liar/*), signature checked. Signed requests
 //                            on other paths are served the same way, in case the proxy URL was entered without /proxy.
 //   /pos/*                   the POS extension on the counter iPad (today, scan, checkin, checkin-member, share,
-//                            tab/:id/added, member): a Shopify POS session token, CORS for its origin
+//                            tab/:id/added, member, pass-undo, cover, uncover, stamp, stamp-undo): a Shopify POS
+//                            session token, CORS for its origin
 //   /webhooks/orders-paid    Shopify webhook, HMAC checked
 //   /webhooks/memberships    Lair Memberships' webhooks (contracts, billing attempts, cards), HMAC checked with its own secret
 //   /setup?key=SETUP_KEY     check the connection and (re)register the payment webhook; &memberships=plans also sets up
@@ -35,8 +36,9 @@ const POS_CORS = {
 };
 /** The POS routes: GET /pos/today, and POST for the rest. /pos/member is round 3's name for scanning a member code.
     /pos/pass-undo { useId } gives a pass's sessions back, the same as the staff page's undo. Round 21: /pos/cover and
-    /pos/uncover { gameId, ref }: the GM pays for a player's seat, or stops. */
-const POS_ROUTES = /^(?:today|scan|checkin|checkin-member|share|member|pass-undo|cover|uncover|tab\/[A-Za-z0-9_-]{1,64}\/added)$/;
+    /pos/uncover { gameId, ref }: the GM pays for a player's seat, or stops. Round 22: /pos/stamp { customerId, key } adds
+    a stamp to someone's loyalty card, and /pos/stamp-undo { customerId, id } takes it back. */
+const POS_ROUTES = /^(?:today|scan|checkin|checkin-member|share|member|pass-undo|cover|uncover|stamp|stamp-undo|tab\/[A-Za-z0-9_-]{1,64}\/added)$/;
 const withCors = (response) => {
   const out = new Response(response.body, response);
   for (const [key, value] of Object.entries(POS_CORS)) out.headers.set(key, value);

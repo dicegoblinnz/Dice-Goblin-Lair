@@ -415,7 +415,7 @@ test('round 15: a table booked from round 15 on that ends unpaid is owed, no-sho
   assert.deepEqual(mine.account.owed.items.map((i) => [i.type, i.ref, i.amount, i.status, i.settle, i.owedRow]), [['booking', booked.ref, 4000, 'owed', 'day', true]]);
   assert.equal(mine.account.owed.total, 4000);
   // The POS: an owed row with its line (not among today's rows, though it was today), never checked in
-  const line = { title: 'Owed: Table T5 (Thu 1 Oct)', price: '40.00', quantity: 1, taxable: true, properties: { _booking: booked.ref } };
+  const line = { title: `Owed: Table T5 (Thu 1 Oct, ${booked.ref})`, price: '40.00', quantity: 1, taxable: true, properties: { _booking: booked.ref } };
   const scan = (await pos('scan', { code })).data;
   assert.deepEqual(scan.rows.map((r) => [r.id, r.owed]), [[booked.id, true]]);
   assert.deepEqual(scan.rows[0].line, line);
@@ -453,7 +453,7 @@ test('round 15: a sign-up from round 15 on that ends unpaid is owed too ("Owed:"
   assert.deepEqual(mine.dueNow, [{ id: join.id, type: 'join', ref: join.ref, title: 'Trivia night', start: at('2026-10-02', 18), end: at('2026-10-02', 20), amount: 1000, covered: 0, paidAmount: 0, due: 1000, owed: true }]);
   assert.deepEqual(mine.account.owed.items.map((i) => [i.type, i.ref, i.kind, i.amount, i.owedRow]), [['join', join.ref, 'event', 1000, true]]);
   // The POS lists it once, as owed (not among today's rows too, though it ended today), and checks nothing in
-  const line = { title: 'Owed: Trivia night (Fri 2 Oct)', price: '10.00', quantity: 1, taxable: true, properties: { _booking: join.ref } };
+  const line = { title: `Owed: Trivia night (Fri 2 Oct, ${join.ref})`, price: '10.00', quantity: 1, taxable: true, properties: { _booking: join.ref } };
   const scan = (await pos('scan', { code })).data;
   assert.deepEqual(scan.rows.map((r) => [r.type, r.id, r.owed]), [['join', join.id, true]]);
   assert.deepEqual(scan.rows[0].line, line);
@@ -492,7 +492,7 @@ test('round 15: owed rows come oldest first, bookings and sign-ups together, eac
   Date.now = () => at('2026-10-05', 13);
   const rows = (await pos('scan', { code })).data.rows;
   assert.deepEqual(rows.map((r) => [r.type, r.id, r.line.title]), [
-    ['booking', tbl.id, 'Owed: Table T5 (Thu 1 Oct)'], ['booking', spot.id, 'Owed: Warhammer night (Fri 2 Oct)'], ['join', join.id, 'Owed: Trivia night (Fri 2 Oct)'],
+    ['booking', tbl.id, `Owed: Table T5 (Thu 1 Oct, ${tbl.ref})`], ['booking', spot.id, `Owed: Warhammer night (Fri 2 Oct, ${spot.ref})`], ['join', join.id, `Owed: Trivia night (Fri 2 Oct, ${join.ref})`],
   ]);
   // The Members view counts the same three (GET /members?owing=1 and the member's own page)
   const owing = (await call('GET', 'members?owing=1', null, 'staff')).data;

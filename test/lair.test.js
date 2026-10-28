@@ -3763,13 +3763,13 @@ test('owed seats: a regular\'s seat that ends unpaid is owed, whether or not the
   const scan = await pos('scan', { code: lair.memberRow('mia').code });
   assert.deepEqual(scan.data.rows.map((r) => [r.start, r.owed, r.arrivedAt != null]), [[sessions[1].start, false, false], [sessions[0].start, true, true]]);
   const owedRow = scan.data.rows[1];
-  assert.deepEqual(owedRow.line, { title: 'Owed: Weekly Mothership (Thu 1 Oct)', price: '15.00', quantity: 1, taxable: true, properties: { _booking: mia.ref } });
+  assert.deepEqual(owedRow.line, { title: `Owed: Weekly Mothership (Thu 1 Oct, ${mia.ref})`, price: '15.00', quantity: 1, taxable: true, properties: { _booking: mia.ref } });
   // Checking her in does today's seat only; the owed seat's line comes after.
   const checked = await pos('checkin-member', { customerId: 'mia' });
   assert.equal(checked.status, 200, checked.data.error);
   assert.deepEqual(checked.data.rows.map((r) => [r.start, r.owed, r.status]), [[sessions[1].start, false, 'seated'], [sessions[0].start, true, 'seated']]);
   assert.deepEqual(checked.data.lines.map((l) => [l.title, l.price, l.properties._booking]), [
-    [`GM seat: Weekly Mothership (${checked.data.rows[0].ref})`, '15.00', checked.data.rows[0].ref], ['Owed: Weekly Mothership (Thu 1 Oct)', '15.00', mia.ref],
+    [`GM seat: Weekly Mothership (${checked.data.rows[0].ref})`, '15.00', checked.data.rows[0].ref], [`Owed: Weekly Mothership (Thu 1 Oct, ${mia.ref})`, '15.00', mia.ref],
   ]);
   assert.equal(lair.booking(mia.ref).arrivedAt, at('2026-10-01', 17, 50), 'the owed seat keeps its own check-in');
   // Paying that sale pays both, like any _booking line.

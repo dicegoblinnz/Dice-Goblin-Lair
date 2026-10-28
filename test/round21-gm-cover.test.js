@@ -310,7 +310,7 @@ test('GM pays (round 21): until the player has paid, after the session too: an o
   assert.equal(lair.isOwed(lair.booking(mias.id)), false);
   assert.deepEqual(lair.owedRows(MIA, lair.rulesCache, Date.now()), []);
   const owed = lair.owedRows(RANGI, lair.rulesCache, Date.now());
-  assert.deepEqual(owed.map((r) => [r.kind, r.due, r.owed, r.line.title, r.line.price]), [['gm-cover', 1000, true, "Owed: Paying for Mia's seat: Rangi's one-shot (Tue 27 Oct)", '10.00']]);
+  assert.deepEqual(owed.map((r) => [r.kind, r.due, r.owed, r.line.title, r.line.price]), [['gm-cover', 1000, true, `Owed: Paying for Mia's seat: Rangi's one-shot (Tue 27 Oct, ${owed[0].ref})`, '10.00']]);
   // but he can't stop paying now: it's locked in (staff can)
   assert.equal(said(await uncover(id, mias.ref, RANGI)), `403 ${W.locked(24)}`);
 });

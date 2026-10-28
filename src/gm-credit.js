@@ -31,6 +31,7 @@
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair.
  */
 import { RuleError, makeId } from './core.js';
+import { bookingStamps } from './stamps.js';
 
 export const GM_CREDIT = Object.freeze({
   // Mo, 26 Oct 2026: "Automatic from today": sessions starting from midnight that day, Lair time (NZDT, UTC+13)
@@ -78,10 +79,11 @@ export const GM_CREDIT_TABLES = [
 
 /**
  * The sessions that earn their GM a stamp, as stampedSessions' columns (id, kind 'gm-run', at, people 1, tables,
- * occurrence_id, game_title, join_title). Two bound values: the GM's customer ID, then the loyalty start. A player's
- * seat is what says it ran (not the GM's own, if they booked one), or players the group had who don't book through the
- * Lair (offline_players); a GM checked in on a seat of their own session has that seat's stamp already, so the session
- * gives them no second one.
+ * occurrence_id, game_title, join_title). Three bound values: the GM's customer ID, the loyalty start, then when today
+ * ends (round 22's stampsUntil). A player's seat is what says it ran (not the GM's own, if they booked one), or players
+ * the group had who don't book through the Lair (offline_players); a GM with a seat of their own session that stamps
+ * (checked in, or round 22: paid once its day has come) has that seat's stamp already, so the session gives them no
+ * second one.
  */
 export const GM_STAMP_ROWS = `
   SELECT g.id AS id, 'gm-run' AS kind, g.starts_at AS at, 1 AS people, g.tables AS tables, NULL AS occurrence_id, g.title AS game_title, NULL AS join_title
@@ -90,7 +92,7 @@ export const GM_STAMP_ROWS = `
      AND (COALESCE(g.offline_players, 0) > 0
        OR EXISTS (SELECT 1 FROM bookings s WHERE s.game_id = g.id AND s.kind = 'gm-seat' AND s.status IN ('confirmed', 'seated', 'done')
                    AND (s.customer_id IS NULL OR s.customer_id != r.customer_id)))
-     AND NOT EXISTS (SELECT 1 FROM bookings s WHERE s.game_id = g.id AND s.kind = 'gm-seat' AND s.customer_id = r.customer_id AND s.status IN ('seated', 'done'))`;
+     AND NOT EXISTS (SELECT 1 FROM bookings s WHERE s.game_id = g.id AND s.kind = 'gm-seat' AND s.customer_id = r.customer_id AND ${bookingStamps('s')})`;
 
 /** Every message the staff page or a GM can see, word for word in the contract */
 export const GM_CREDIT_WORDS = {

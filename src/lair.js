@@ -64,6 +64,10 @@ import { sessionsFeedMethods } from './sessions-feed.js';
 import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
 // Round 21, part 2: a GM pays for one of their players
 import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
+// Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add
+import { STAMP_TABLES, STAMP_WORDS, bookingStamps, joinStamps, sessionLines, stampMethods } from './stamps.js';
+// Round 22: counter sales through Pay on Verifone (OrderMate), whose orders lose the cart lines' properties
+import { counterMethods, counterSale, customSale } from './counter.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1045,6 +1049,8 @@ export class Lair {
     for (const statement of GM_CREDIT_TABLES) this.sql.exec(statement);
     // and (part 2) a seat's GM charge is found by its seat
     this.sql.exec("CREATE INDEX IF NOT EXISTS bookings_cover_of ON bookings (cover_of) WHERE cover_of IS NOT NULL");
+    // Round 22: the stamp ledger: sessions rung up at the counter and stamps staff add (made when missing)
+    for (const statement of STAMP_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1815,6 +1821,9 @@ export class Lair {
         // Round 21, part 2: the GM pays for a player's seat, at the counter ({ gameId, ref }: src/gm-cover.js)
         if (b === 'pos' && c === 'cover') return json(await this.coverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
         if (b === 'pos' && c === 'uncover') return json(await this.uncoverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
+        // Round 22: a stamp on someone's card from the counter, and taking it back ({ customerId, key } / { customerId, id }: src/stamps.js)
+        if (b === 'pos' && c === 'stamp') return json(await this.posStamp(body, by));
+        if (b === 'pos' && c === 'stamp-undo') return json(await this.posStampUndo(body, by));
         return json({ error: 'Not found' }, 404);
       }
       const origin = request.headers.get('X-Lair-Origin');
@@ -1948,6 +1957,9 @@ export class Lair {
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
+      // Round 22: stamps staff add on a member's page, and taking one back (src/stamps.js)
+      if (a === 'members' && b && c === 'stamps' && !d) return json(await this.giveStamps(decodeURIComponent(b), body, who));
+      if (a === 'members' && b && c === 'stamps' && d && parts[4] === 'undo' && !parts[5]) return json(await this.takeBackStamp(decodeURIComponent(b), decodeURIComponent(d), who));
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
@@ -2722,7 +2734,7 @@ export class Lair {
 
   /**
    * A member's owed bookings, seats and sign-ups, oldest first, as check-in rows (owed: true) each with the cart line
-   * that pays it ("Owed: Curse of Strahd (Thu 1 Oct)"). memo: see savedPass. No awaits.
+   * that pays it ("Owed: Curse of Strahd (Thu 1 Oct, SJ-OWLBEAR-17)"). memo: see savedPass. No awaits.
    */
   owedRows(customerId, rules, now, memo = new Map()) {
     const id = String(customerId);
@@ -4642,11 +4654,14 @@ export class Lair {
    * order only counts when it came from a draft order (our checkouts; customers can't make those), and only for a
    * booking or sign-up that was sent to checkout: Shopify is asked which order its draft became, and if the draft is
    * gone (deleted as the hold ran out) or not linked yet, the draft-order source is the proof. POS orders are made by
-   * staff at the counter, so a POS line with a _booking property pays for that booking. Each such line adds what it
+   * staff at the counter, so a POS line with a _booking property pays for that booking. Round 22: so does a counter
+   * sale through Pay on Verifone (OrderMate), which drops line properties: a custom sale on it pays the booking or
+   * sign-up its title names (src/counter.js). Each such line adds what it
    * paid (price × quantity, less the line's discounts) to the booking's paidAmount, once per order line however often
    * Shopify sends the webhook; a bill can be split between several orders. The order's customer is the payer.
    *
-   * Tabs. A POS line with a _tab property marks that self-serve tab paid.
+   * Tabs. A POS line with a _tab property marks that self-serve tab paid. Round 22: on a counter sale that lost _tab, a
+   * custom sale naming a tab (TAB-1A2B3C) pays it, and so does having every item of the customer's tab at the counter.
    *
    * Session passes. A line whose SKU is LAIR-PASS-N (online or at the POS) makes a pass of N sessions for each one
    * bought, once per order, line and unit (issueOrderPasses).
@@ -4658,7 +4673,8 @@ export class Lair {
     const orderId = order.admin_graphql_api_id || (order.id ? `gid://shopify/Order/${order.id}` : '');
     if (!orderId || !this.shopify.configured) return { updated: [] };
     const source = order.source_name || '';
-    const pos = source === 'pos';
+    // Rung up at the counter: Shopify POS's own orders, and since round 22 Pay on Verifone's (src/counter.js)
+    const pos = counterSale(order);
     const fromDraft = !source || source === 'shopify_draft_order';
     // The lines that pay for a booking or sign-up (its code in _booking), with what each paid; tabs paid; and session
     // passes bought (their SKU), with what each one cost after the line's discounts.
@@ -4670,10 +4686,18 @@ export class Lair {
       const props = item.properties || [];
       const lineId = String(item.id ?? item.admin_graphql_api_id ?? `line-${index}`);
       const booking = props.find((p) => p.name === '_booking' && p.value);
+      // Round 22: a counter line that lost its _booking on the way (Pay on Verifone) pays what its title names
+      const named = !booking && pos && customSale(item) ? this.titleBooking(item.title) : null;
       if (booking) lines.push({ ref: String(booking.value).trim().toUpperCase(), lineId, amount: lineAmount(item) });
+      else if (named) lines.push({ ref: String(named.item.ref).trim().toUpperCase(), lineId, amount: lineAmount(item) });
       // A self-serve tab's items, rung up at the counter. Only staff make POS orders, so only those count.
       const tab = props.find((p) => p.name === '_tab' && p.value);
       if (tab && pos) tabs.add(String(tab.value).trim());
+      // (round 22: a counter line for a monthly account's tab that lost its _tab, by the TAB-1A2B3C in its title)
+      else if (!tab && pos && customSale(item)) {
+        const tabId = this.titleTab(item.title);
+        if (tabId) tabs.add(tabId);
+      }
       const sku = String(item.sku ?? '').trim().match(PASS_SKU);
       const quantity = Math.max(0, Math.floor(Number(item.quantity ?? 1)) || 0);
       if (sku && Number(sku[1]) > 0 && quantity > 0) {
@@ -4685,6 +4709,9 @@ export class Lair {
         giftLines.push({ lineId, sessions: Number(gift[1]), quantity: Math.min(quantity, PASSES_A_LINE), each: Math.round(lineAmount(item) / quantity) });
       }
     });
+    // Round 22: sessions rung up by hand at the counter (a SKU starting LAIR-SESSION): a stamp a unit for the sale's
+    // customer. Only staff make POS orders, so only those count.
+    const sessions = pos ? sessionLines(order) : [];
     const refs = new Set(lines.map((l) => l.ref));
     if (fromDraft) {
       for (const a of order.note_attributes || []) if (a.name === '_booking' && a.value) refs.add(String(a.value).trim().toUpperCase());
@@ -4745,7 +4772,15 @@ export class Lair {
     if (gifts.length) this.sendGiftCodes(gifts, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules });
     // Round 7: a birthday gift's product code on this order (online or at the POS) has been used
     const giftCodes = this.markGiftCodesUsed(spend, Date.now());
-    return { updated, tabs: tabsPaid, spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}) };
+    // Round 22: the sessions rung up by hand stamp the sale's customer (src/stamps.js), once per order, line and unit
+    const stamps = this.stampSessionSales(orderId, sessions, spend?.customerId || order.customer?.id, { orderName: spend?.name || (order.name ? String(order.name) : null), now: Date.now() });
+    // Round 22: a tab at the counter whose every item is on this counter sale, when its lines lost _tab (src/counter.js)
+    const cartTabs = pos ? this.markTabsPaid(this.cartTabsPaidBy(order, spend?.customerId || order.customer?.id), orderId, Date.now()) : [];
+    if (cartTabs.length) this.reconcileBills(rules, Date.now(), { orderId, pos });
+    return {
+      updated, tabs: [...tabsPaid, ...cartTabs], spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}),
+      ...(stamps ? { stamps } : {}),
+    };
   }
 
   /**
@@ -5438,9 +5473,12 @@ export class Lair {
         ? `${x.playerOf.name} booked them into a game at ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''}${x.due ? `, their share ${dollars(x.due)}` : ''})`
         : `${x.guestOf.name} signed them up for ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''})`)).join('; ')}.`;
     }
+    // Round 22: their loyalty card, so staff can add a stamp from the check-in card (contract v22-stamps)
+    const card = member ? this.loyaltyOf(customerId, rules) : null;
     return {
       found: true, kind: 'member', type: 'member', checkedIn: false, customer: { id: String(customerId) },
       member: { customerId: String(customerId), name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null },
+      ...(card ? { loyalty: { stamps: card.stamps, cardSize: card.cardSize, cards: card.cards, rollsAvailable: card.rolls.available, card: card.card } } : {}),
       rows: [...[...rows, ...along].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name)), ...owed], passes: this.activePasses(customerId, now), due,
       bookings: rows.map((x) => ({
         kind: x.type, id: x.id, ref: x.ref, title: x.title, start: x.start, end: x.end, people: x.people, tables: x.tables, status: x.status,
@@ -5583,7 +5621,19 @@ export class Lair {
       };
     }
     const row = found.type === 'join' ? this.joinRow(found.item) : this.bookingRow(found.item, rules);
-    return { type: found.type, row, group: this.groupOf(found.type, found.item, rules) };
+    // round 22: the loyalty card of the account it's booked on, as a member code shows it (none for a guest's)
+    const loyalty = this.ticketLoyalty(row, rules);
+    return { type: found.type, row, group: this.groupOf(found.type, found.item, rules), ...(loyalty ? { loyalty } : {}) };
+  }
+
+  /**
+   * Round 22: the card a ticket's row stamps (its account's, as the counter shows a member code's card): for a table
+   * booking, walk-in, TTRPG seat or sign-up on an account, else null (a guest's, or a GM's charge for a player's seat,
+   * which stamps nobody). No awaits.
+   */
+  ticketLoyalty(row, rules = this.rulesCache) {
+    if (!row?.customerId || !['table', 'walkin', 'gm-seat', 'join'].includes(row.kind)) return null;
+    return this.posLoyalty(row.customerId, rules);
   }
 
   /**
@@ -5602,13 +5652,18 @@ export class Lair {
     const { row } = result;
     // (round 21: a GM's charge for a player's seat is paid, never checked in: its line comes while it's on)
     const payable = result.checkedIn || (result.reason === 'cover' && row.status !== 'cancelled');
-    return { ...result, lines: payable && row.due > 0 ? [this.posLine(row, rules)] : [], customer: row.customerId ? { id: row.customerId } : null };
+    // round 22: their loyalty card as it is now, with this check-in's stamps on it (the counter says when it fills)
+    const loyalty = this.ticketLoyalty(row, rules);
+    return {
+      ...result, lines: payable && row.due > 0 ? [this.posLine(row, rules)] : [], customer: row.customerId ? { id: row.customerId } : null,
+      ...(loyalty ? { loyalty } : {}),
+    };
   }
 
   /**
    * POST /pos/checkin-member { customerId }: check in all of that member's rows today (their saved passes apply), with
    * lines for everything left to pay. Their owed seats (a weekly regular's unpaid sessions) come after today's rows, not
-   * checked in, with a line each: "Owed: Curse of Strahd (Thu 1 Oct)". Returns { rows, lines, customer, notices }.
+   * checked in, with a line each: "Owed: Curse of Strahd (Thu 1 Oct, SJ-OWLBEAR-17)". Returns { rows, lines, customer, notices }.
    */
   async posCheckInMember(input, by = 'pos') {
     const rules = await this.rules();
@@ -5659,18 +5714,24 @@ export class Lair {
    * One custom sale for the POS cart, from a row: what's left to pay for it. "Table fee: SJ-OWLBEAR-17 (T4, 3 people)",
    * "GM seat: Curse of Strahd (SJ-OWLBEAR-17)", "Game spot: Warhammer night (SJ-OWLBEAR-17)" or "Event entry: Pokémon
    * TCG league (SJ-OWLBEAR-17)", plus "(pass covered $20)" when a pass took some off. A weekly regular's owed seat is
-   * "Owed: Curse of Strahd (Thu 1 Oct)".
+   * "Owed: Curse of Strahd (Thu 1 Oct, SJ-OWLBEAR-17)". Round 22: every title has the code, inside its first 120
+   * characters (a long name is cut short instead), because Pay on Verifone keeps a line's title and drops its _booking
+   * (src/counter.js).
    */
   posLine(row, rules = this.rulesCache) {
+    const name = (text, max = 60) => {
+      const words = String(text ?? '').replace(/\s+/g, ' ').trim();
+      return words.length > max ? `${words.slice(0, max - 1).trimEnd()}…` : words;
+    };
     let title;
-    if (row.owed) title = `Owed: ${row.title} (${this.shortDay(row.start, rules)})`;
-    else if (row.type === 'join') title = `Event entry: ${row.title} (${row.ref})`;
-    else if (row.kind === 'gm-seat') title = `GM seat: ${row.title} (${row.ref})`;
+    if (row.owed) title = `Owed: ${name(row.title)} (${this.shortDay(row.start, rules)}, ${row.ref})`;
+    else if (row.type === 'join') title = `Event entry: ${name(row.title)} (${row.ref})`;
+    else if (row.kind === 'gm-seat') title = `GM seat: ${name(row.title)} (${row.ref})`;
     // Round 21: a GM paying for one of their players' seats: "Paying for Mia's seat: Curse of Strahd (RA-OWL-12)"
-    else if (row.kind === 'gm-cover') title = `${row.title} (${row.ref})`;
+    else if (row.kind === 'gm-cover') title = `${name(row.title, 90)} (${row.ref})`;
     // Round 11: a named player pays their own share of a game
-    else if (row.playerOf) title = `Game spot share: ${row.title} (${row.ref}, ${row.name})`;
-    else if (row.occurrenceId) title = `Game spot: ${row.title} (${row.ref})`;
+    else if (row.playerOf) title = `Game spot share: ${name(row.title)} (${row.ref}, ${name(row.name, 24)})`;
+    else if (row.occurrenceId) title = `Game spot: ${name(row.title)} (${row.ref})`;
     else title = `Table fee: ${row.ref} (${row.tables.join(', ')}, ${plural(row.people, 'person', 'people')})`;
     if (row.covered > 0 && !row.owed) title += ` (pass covered ${money(row.covered)})`;
     return { title: title.slice(0, 120), price: (row.due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: row.ref, ...(row.playerOf ? { _share: '1' } : {}) } };
@@ -6759,68 +6820,82 @@ export class Lair {
 
   /* ---------------- the loyalty card (round 6) ---------------- */
   /**
-   * The sessions that earn a member stamps, newest first: their table bookings, game spots and TTRPG seats that were
-   * checked in ('seated', or 'done' once they left) and their event sign-ups that were 'attended', for sessions that
-   * start on or after the loyalty start. Each is a stamp for every person on it (friends without an account go on the
-   * booker's card). No-shows, cancellations and holds never count, and undoing a check-in takes its stamps back,
-   * because nothing is stored: it's counted here every time. A GM's own table isn't one. Round 8: a guest with an
-   * account on someone's sign-up gets their own stamp (one person, on their card), so the sign-up's own card counts its
-   * people less its guests with an account. One who signed up is never their own guest too (a guest row with the sign-up's
-   * own account, from before it joined their account, counts once). Round 11: the same for a game table's named players:
-   * each with an account gets their own stamp once the game is checked in, and the booker's card counts its people less
-   * them. Round 21: a GM gets one for each session they ran (GM_STAMP_ROWS: started, not cancelled, with a player
-   * booked, and they weren't on the team then). No awaits.
+   * The sessions that earn a member stamps, as one query's rows (id, kind, at, people, tables, occurrence_id, game_title,
+   * join_title) and its bound values: their table bookings, game spots and TTRPG seats and their event sign-ups that
+   * stamp (round 22, bookingStamps and joinStamps: checked in, or paid in full once their day has come), for sessions
+   * that start on or after the loyalty start. Each is a stamp for every person on it (friends without an account go on the
+   * booker's card). No-shows, cancellations and holds never count, and a session cancelled, marked a no-show or (unpaid)
+   * un-checked-in takes its stamps back, because nothing is stored: it's counted every time. A GM's own table isn't one.
+   * Round 8: a guest with an account on someone's sign-up gets their own stamp (one person, on their card), so the
+   * sign-up's own card counts its people less its guests with an account. One who signed up is never their own guest too
+   * (a guest row with the sign-up's own account, from before it joined their account, counts once). Round 11: the same for
+   * a game table's named players: each with an account gets their own stamp once the game stamps, and the booker's card
+   * counts its people less them. Round 21: a GM gets one for each session they ran (GM_STAMP_ROWS: started, not
+   * cancelled, with a player booked, and they weren't on the team then). Round 22: the stamp ledger's rows that haven't
+   * been taken back (src/stamps.js: sessions rung up at the counter, kind 'stamp-sale', and stamps staff added,
+   * 'stamp-staff'); and a session with no account on it (a guest's, a walk-in or a booking staff made) stamps whoever
+   * paid for it (Mo: "if that person has no account the payer gets it"): the customer on its first payment that had one,
+   * as if they'd booked it. Its named players and guests with accounts still get their own. Once it joins an account
+   * (a guest logs in with its email), it's that account's. No awaits.
    */
-  stampedSessions(customerId, limit = -1) {
-    return this.sql
-      .exec(
-        `SELECT b.id AS id, b.kind AS kind, b.starts_at AS at,
+  stampRowsQuery(customerId, now = Date.now()) {
+    const id = String(customerId);
+    const until = this.stampsUntil(now);
+    return {
+      sql: `SELECT b.id AS id, b.kind AS kind, b.starts_at AS at,
              MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL AND p.customer_id != b.customer_id), 0) AS people,
              b.tables AS tables, b.occurrence_id AS occurrence_id, g.title AS game_title, NULL AS join_title
            FROM bookings b LEFT JOIN games g ON g.id = b.game_id
-          WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.status IN ('seated', 'done') AND b.starts_at >= ?
+          WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.starts_at >= ? AND ${bookingStamps('b')}
          UNION ALL
          SELECT b.id, b.kind, b.starts_at, 1, b.tables, b.occurrence_id, NULL, NULL
            FROM booking_players p JOIN bookings b ON b.id = p.booking_id
-          WHERE p.customer_id = ? AND b.status IN ('seated', 'done') AND b.starts_at >= ? AND (b.customer_id IS NULL OR b.customer_id != p.customer_id)
+          WHERE p.customer_id = ? AND b.starts_at >= ? AND (b.customer_id IS NULL OR b.customer_id != p.customer_id) AND ${bookingStamps('b')}
          UNION ALL
          SELECT j.id, 'join', j.starts_at, MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0),
              '[]', j.occurrence_id, NULL, j.title
-           FROM event_joins j WHERE j.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ?
+           FROM event_joins j WHERE j.customer_id = ? AND j.starts_at >= ? AND ${joinStamps('j')}
          UNION ALL
          SELECT j.id, 'join', j.starts_at, 1, '[]', j.occurrence_id, NULL, j.title
            FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
-          WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
+          WHERE x.customer_id = ? AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id) AND ${joinStamps('j')}
          UNION ALL ${GM_STAMP_ROWS}
-         ORDER BY at DESC, id DESC LIMIT ?`,
-        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
-        String(customerId), this.loyaltyFrom, limit,
-      )
-      .toArray();
+         UNION ALL
+         SELECT s.id, 'stamp-' || s.kind, s.at, s.count, '[]', NULL, NULL, s.title FROM loyalty_stamps s WHERE s.customer_id = ? AND s.undone_at IS NULL
+         UNION ALL
+         SELECT b.id, b.kind, b.starts_at,
+             MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL), 0),
+             b.tables, b.occurrence_id, g.title, NULL
+           FROM (SELECT DISTINCT m.booking_id AS paid_id FROM payments m WHERE m.customer_id = ? AND m.kind = 'booking') mine
+           JOIN bookings b ON b.id = mine.paid_id LEFT JOIN games g ON g.id = b.game_id
+          WHERE b.customer_id IS NULL AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.starts_at >= ? AND ${bookingStamps('b')}
+            AND (SELECT m.customer_id FROM payments m WHERE m.booking_id = b.id AND m.kind = 'booking' AND m.customer_id IS NOT NULL ORDER BY m.at, m.rowid LIMIT 1) = ?
+         UNION ALL
+         SELECT j.id, 'join', j.starts_at, MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0),
+             '[]', j.occurrence_id, NULL, j.title
+           FROM (SELECT DISTINCT m.booking_id AS paid_id FROM payments m WHERE m.customer_id = ? AND m.kind = 'join') mine
+           JOIN event_joins j ON j.id = mine.paid_id
+          WHERE j.customer_id IS NULL AND j.starts_at >= ? AND ${joinStamps('j')}
+            AND (SELECT m.customer_id FROM payments m WHERE m.booking_id = j.id AND m.kind = 'join' AND m.customer_id IS NOT NULL ORDER BY m.at, m.rowid LIMIT 1) = ?`,
+      // in the order of the query's question marks: each part's customer, loyalty start and (round 22) end of today; the
+      // ledger's customer; then a payer's own: the payer, the loyalty start, the end of today and the payer again
+      binds: [
+        id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id,
+        id, this.loyaltyFrom, until, id, id, this.loyaltyFrom, until, id,
+      ],
+    };
   }
 
-  /** All the stamps a member has earned: one a person a checked-in session (stampedSessions). No awaits. */
-  stampCount(customerId) {
-    return this.sql
-      .exec(
-        `SELECT COALESCE(SUM(people), 0) AS n FROM (
-           SELECT MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL AND p.customer_id != b.customer_id), 0) AS people
-             FROM bookings b WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.status IN ('seated', 'done') AND b.starts_at >= ?
-           UNION ALL
-           SELECT 1 FROM booking_players p JOIN bookings b ON b.id = p.booking_id
-            WHERE p.customer_id = ? AND b.status IN ('seated', 'done') AND b.starts_at >= ? AND (b.customer_id IS NULL OR b.customer_id != p.customer_id)
-           UNION ALL
-           SELECT MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0)
-             FROM event_joins j WHERE j.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ?
-           UNION ALL
-           SELECT 1 FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
-            WHERE x.customer_id = ? AND j.status = 'attended' AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
-           UNION ALL
-           SELECT people FROM (${GM_STAMP_ROWS}))`,
-        String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom, String(customerId), this.loyaltyFrom,
-        String(customerId), this.loyaltyFrom,
-      )
-      .one().n;
+  /** The sessions that earn a member stamps (stampRowsQuery), newest first, up to `limit` (-1: all). No awaits. */
+  stampedSessions(customerId, limit = -1, now = Date.now()) {
+    const { sql, binds } = this.stampRowsQuery(customerId, now);
+    return this.sql.exec(`SELECT * FROM (${sql}) ORDER BY at DESC, id DESC LIMIT ?`, ...binds, limit).toArray();
+  }
+
+  /** All the stamps a member has earned: one a person a session that stamps, and the ledger's (stampRowsQuery). No awaits. */
+  stampCount(customerId, now = Date.now()) {
+    const { sql, binds } = this.stampRowsQuery(customerId, now);
+    return this.sql.exec(`SELECT COALESCE(SUM(people), 0) AS n FROM (${sql})`, ...binds).one().n;
   }
 
   /**
@@ -6860,6 +6935,9 @@ export class Lair {
     if (s.kind === 'gm-seat') return s.game_title || 'TTRPG session';
     // Round 21: a session they ran as its GM
     if (s.kind === 'gm-run') return GM_CREDIT_WORDS.stampTitle(s.game_title);
+    // Round 22: the stamp ledger's: a session rung up at the counter ("RPG Session"), or a stamp staff added
+    if (s.kind === 'stamp-sale') return s.join_title || STAMP_WORDS.saleTitle;
+    if (s.kind === 'stamp-staff') return STAMP_WORDS.staffTitle;
     if (s.occurrence_id) return (rules && findOccurrence(rules, s.occurrence_id)?.title) || 'Event game spot';
     return this.tablesTitle(parse(s.tables, []));
   }
@@ -9122,6 +9200,8 @@ export class Lair {
     return {
       member: {
         ...this.memberListItem(id, rules, now), profile: this.profileView(row), gifts: gifts.map((g) => this.giftView(g, now)),
+        // Round 22: stamps added by hand and sessions rung up at the counter, newest first, with Undo (src/stamps.js)
+        stamps: this.stampLedger(id),
         library: {
           plan: this.planWords(plan), holds: this.activeHolds(id, now).map((h) => this.staffHoldView(h, now, memo)),
           atHome: this.loansOut(id).map((l) => this.staffLoanView(l, now, memo)),
@@ -10458,3 +10538,6 @@ Object.assign(Lair.prototype, sessionsFeedMethods);
 Object.assign(Lair.prototype, gmCreditMethods);
 // Round 21, part 2: a GM pays for one of their players (src/gm-cover.js)
 Object.assign(Lair.prototype, gmCoverMethods);
+// Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add (src/stamps.js)
+Object.assign(Lair.prototype, stampMethods);
+Object.assign(Lair.prototype, counterMethods);
