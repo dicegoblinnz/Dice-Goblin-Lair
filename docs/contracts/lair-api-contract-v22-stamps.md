@@ -41,7 +41,9 @@ its day has come** (Lair time):
 - paid: `paid = 1` and still `confirmed`, from midnight (Auckland) on the day it starts. Paid ahead for a later date, its
   stamps land on that day. Part paid waits until it's all paid (or they're checked in);
 - no-shows, cancellations and holds never stamp. Nothing is stored: a session cancelled or marked a no-show afterwards
-  takes its stamps back, and one both paid and checked in stamps once.
+  takes its stamps back, and one both paid and checked in stamps once;
+- a sign-up or game table on an event date that's gone from the calendar (deleted, moved or skipped in Shopify) stamps
+  only if they were checked in: paid alone, the event may not have happened (after the review).
 
 `bookingStamps(alias)` and `joinStamps(alias)` in `src/stamps.js` are the one place that says this (one bound value:
 when today ends); the card, its list of stamped sessions and a GM's own-session stamp (`GM_STAMP_ROWS`) all read them.
@@ -49,7 +51,8 @@ when today ends); the card, its list of stamped sessions and a GM's own-session 
 **No account on it.** A session nobody's account is on (a guest's, a walk-in, one staff made) stamps whoever paid for
 it: the customer on its first payment that had one (`payments.customer_id`), as if they'd booked it. Scanning someone's
 code at the counter before they pay is what puts them on the sale (section 5). Once the session joins an account (a
-guest logs in with its email), it's that account's.
+guest logs in with its email), it's that account's. A GM who pays a guest's seat in a session they run gets no stamp
+for it: the session's own stamp is theirs already (after the review).
 
 ## 2. The stamp ledger
 
@@ -78,6 +81,12 @@ A line whose **SKU is `LAIR-SESSION` or starts `LAIR-SESSION-`** (`STAMPS.sessio
 Its title is the variant's name when it has letters (not "Default Title"), else the product's. A sale with nobody on it
 stamps nobody. Online orders never count.
 
+**One session, one stamp (after the review).** Staff often ring up a Session for a session the Lair already has (a
+booked table, a TTRPG seat), so a day's Session products and that day's Lair sessions are taken to be the same
+sessions: the day counts whichever has more stamps, whichever came first. A Day Pass rung up for a checked-in table
+is one stamp; a second Day Pass that day is a second stamp. The covered sale rows drop out of My Lair's list. Stamps
+staff add by hand are never covered. (It's worked out every time, in `stampTally`.)
+
 The store's session products had no SKUs on 28 Oct 2026. To go live they get:
 
 | Product | Variant | Price | SKU |
@@ -103,11 +112,17 @@ these stamp.
 
 - `key`: 8 to 64 letters, numbers, dashes or underscores. The same key again (a double tap, a retry after a lost
   answer) gives back the first row with `repeated: true`. The same key on someone else's card is refused.
+- **Limits (after the review)**, so nobody can fill a card (a d20 roll for store credit) by tapping: a helper can't add
+  stamps to their own card (403 `ownCard`; the main account can); a helper without Members adds one at a time (403
+  `oneAtATime`); and the counter and helpers without Members add at most **2 a member a Lair day** between them (409
+  `daily`; a stamp taken back doesn't count). The main account and helpers with Members aren't limited on the member's
+  page. `created_by` says where it came from: `pos:…`, `checkin:<id>` (a helper without Members) or `staff:<id>`.
 - `member` is as `GET /members` lists them, plus `stamps`: their ledger, the last 20 rows newest first, undone ones too.
   `GET /members/:id` (the member's page) has `stamps` too.
 - `stamp`: `{ id, kind, count, at, title, note, addedBy, orderName, undoneAt, undoneBy }`. `addedBy` and `undoneBy` are a
   team member's first name, `'the counter'` or null (a sale's `addedBy` is null: `orderName` says which order).
-- The counter can only take back stamps added by hand (`notHere` for a sale's); the staff page takes back either.
+- The counter can only take back stamps it added itself (`notHere` for a sale's, or one added on the staff page); the
+  staff page takes back any.
 - Undo twice: `already: true`, nothing more.
 - `loyalty` (the counter's): `{ stamps, cardSize, rollsAvailable, card }`.
 
@@ -128,16 +143,19 @@ Every message, word for word (`STAMP_WORDS`):
 | `notFound` | That stamp isn't on their card any more. Scan their code again. |
 | `notTheirs` | That stamp is on someone else's card. Scan their code again. |
 | `notHere` | That stamp didn't come from the counter, so take it back on the staff page, under Members. |
+| `ownCard` | You can't add stamps to your own card. Ask the main account. |
+| `oneAtATime` | More than one stamp at a time needs the Members permission. Ask the main account to tick it on the Team tab. |
+| `daily` | That's 2 stamps added at the counter or check-in for them today. Any more go on the staff page, under Members. |
 | `staffTitle` | A stamp from Gobgob |
 | `saleTitle` | A session at the counter |
 
 ## 5. The counter tile
 
 - **Scanning a code puts the person on the sale.** A member code, or a ticket on someone's account, sets the cart's
-  customer straight away (`scanCustomer`): when nobody's on it; or someone else is but the cart is empty. It's left alone
-  when they're on it already, when someone else is on a sale that already has things in it (staff finish that sale
-  first), or when the cart holds shares of a bill (the friend paying is the one on it). A toast says "Sam is on this
-  sale".
+  customer straight away when nobody's on it (`scanCustomer`), things in the cart or not: a sale rung up first and
+  their code scanned at the till is theirs. It never swaps out someone already on the sale (they may be paying for this
+  person: **Put … on this sale** does that), and leaves a cart with a share of a bill alone (the friend paying is the
+  one on it). A toast says "Sam is on this sale".
 - **The card is drawn like a punch card**: two rows of five, stamps filled, "7 of 10 stamps" big, then what's left in
   words ("3 more fill the card: a d20 roll for store credit."), rolls waiting, and a "New stamp" badge on stamps that
   landed while the screen was open. On a ticket it says whether this session's stamps are on yet.
@@ -162,9 +180,11 @@ On a counter sale, a line that lost its properties still counts:
   exactly one does. It counts what the line paid (price × quantity, less its discounts), once per order line, like a
   `_booking` line. Lines from before this round (an "Owed:" title without its code) pay nothing.
 - **A monthly account's tab from an earlier day** by its ref in the title: "Tab: Tue 15 Sep (2 things, TAB-1A2B3C)".
-- **Today's tab**: its items go in the cart as the shop's own products, so a tab at the counter (`in-cart`) for the
-  sale's customer is paid when the sale has every one of its items (the same variant, at least as many), newest tab
-  first, each line used once.
+- **Today's tab**: its items go in the cart as the shop's own products, so on a Pay on Verifone sale, a tab the tile
+  put in the cart in the 3 hours before the sale (`TAB_CART_WINDOW`, from the order's processed time; putting it in a
+  cart again starts the time again) for the sale's customer is paid when the sale has every one of its items (the same
+  variant, at least as many), newest tab first, each line used once. Never on Shopify POS's own sales (they keep
+  `_tab`), so a tab left at the counter from a cleared sale isn't paid by a later purchase of the same snacks.
 - A counter payment sends no booking confirmation, and a pass sold this way says "Bought at the counter".
 
 Shopify POS's own orders work as before (`_booking`, `_tab`). What the tile shows staff is unchanged.

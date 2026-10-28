@@ -156,10 +156,13 @@ test('round 22: the words, word for word, and the rules', () => {
     notFound: "That stamp isn't on their card any more. Scan their code again.",
     notTheirs: "That stamp is on someone else's card. Scan their code again.",
     notHere: "That stamp didn't come from the counter, so take it back on the staff page, under Members.",
+    ownCard: "You can't add stamps to your own card. Ask the main account.",
+    oneAtATime: 'More than one stamp at a time needs the Members permission. Ask the main account to tick it on the Team tab.',
+    daily: "That's 2 stamps added at the counter or check-in for them today. Any more go on the staff page, under Members.",
     staffTitle: 'A stamp from Gobgob',
     saleTitle: 'A session at the counter',
   });
-  assert.deepEqual([STAMPS.perLine, STAMPS.staffMax, STAMPS.listed], [10, 10, 20]);
+  assert.deepEqual([STAMPS.perLine, STAMPS.staffMax, STAMPS.listed, STAMPS.byHandDaily], [10, 10, 20, 2]);
   for (const sku of ['LAIR-SESSION', 'LAIR-SESSION-RPG', 'lair-session-rpg-kids', 'LAIR-SESSION-DAY', ' LAIR-SESSION-TCG ']) assert.ok(STAMPS.sessionSku.test(sku.trim()), sku);
   for (const sku of ['LAIR-PASS-5', 'LAIR-GIFT-10', 'LAIR-SESSIONS', 'DGL34-M011', 'SESSION', '']) assert.ok(!STAMPS.sessionSku.test(sku), sku);
   // the one place that says which sessions stamp: checked in, or paid in full once its day has come
@@ -358,6 +361,66 @@ test('session products (round 22): a Session rung up at the counter stamps the s
   assert.equal(stamps(MIA), 2);
 });
 
+test('session products (round 22, after review): a Session rung up for a session the Lair has that day is the same session: one stamp, whichever came first', async () => {
+  const sale = (n, units = 1, at = null) => {
+    if (at) nowIs(at);
+    return internal('orders-paid', posOrder(n, [sessionLine(n * 10 + 1, 'Dice Goblin Day Pass', 'LAIR-SESSION-DAY', units, '10.00')], { customer: { id: Number(MIA) } }));
+  };
+  // Mia's table this afternoon, checked in: one stamp; then a Day Pass rung up for it by hand: still one
+  const booking = await table(MIA, 'Mia', { tables: ['T4'], people: 1 });
+  ok(await pos('checkin', { id: booking.id, type: 'booking' }));
+  assert.equal(stamps(MIA), 1);
+  ok(await sale(9001, 1, NOW + 60_000));
+  assert.equal(stamps(MIA), 1);
+  assert.deepEqual((await card(MIA)).recent.map((r) => [r.title, r.people]), [['Table T4', 1]], 'the table is the stamp; the Day Pass was for it');
+  // a second Day Pass that day (a session the Lair doesn't know about): that one counts
+  ok(await sale(9002, 1, NOW + 120_000));
+  assert.equal(stamps(MIA), 2);
+  // the other way round, on Monday: Kai's table for 2 (booked on Sunday), two Day Passes rung up first (one stamp each),
+  // then the table is checked in
+  const kais = await table(KAI, 'Kai', { tables: ['T5'], people: 2, start: at('2026-10-26', 17), end: at('2026-10-26', 19) });
+  nowIs(at('2026-10-26', 17));
+  ok(await internal('orders-paid', posOrder(9003, [sessionLine(90031, 'Dice Goblin Day Pass', 'LAIR-SESSION-DAY', 2, '10.00')], { customer: { id: Number(KAI) } })));
+  assert.equal(stamps(KAI), 2);
+  ok(await pos('checkin', { id: kais.id, type: 'booking' }));
+  assert.equal(stamps(KAI), 2, 'the table and its two Day Passes are the same session');
+  // stamps staff add by hand are never covered
+  ok(await call('POST', `members/${KAI}/stamps`, { count: 1 }, OWNER));
+  assert.equal(stamps(KAI), 3);
+});
+
+test('paid sessions (round 22, after review): a paid sign-up on an event date gone from the calendar stamps only if they were checked in', async () => {
+  const join = ok(await call('POST', 'events/quiz@2026-10-25/join', { name: 'Mia', email: 'mia@example.com', phone: '021 555 0100', people: 2 }, MIA)).join;
+  ok(await internal('orders-paid', posOrder(9101, [bookingLine(91011, join.ref, 10)])));
+  assert.equal(stamps(MIA), 2);
+  // the quiz is taken off the calendar in Shopify: paid but not there (it may not have happened), so no stamps
+  const rules = lair.rulesCache;
+  lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '' }, ROOMS, []);
+  assert.equal(stamps(MIA), 0);
+  // put back: back again
+  lair.rulesCache = rules;
+  assert.equal(stamps(MIA), 2);
+  // checked in, it happened: it stamps whatever the calendar says now
+  ok(await pos('checkin', { id: join.id, type: 'join' }));
+  lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '' }, ROOMS, []);
+  assert.equal(stamps(MIA), 2);
+  lair.rulesCache = rules;
+});
+
+test('paid sessions (round 22, after review): a GM who pays a guest\'s seat in their own session gets no stamp for it; anyone else would', async () => {
+  const id = await list();
+  const guest = (name, email) => call('POST', 'bookings', { kind: 'gm-seat', gameId: id, people: 1, name, email, phone: '021 555 0101', pay: 'day' }, '');
+  const pats = ok(await guest('Pat', 'pat@example.com')).booking;
+  const jos = ok(await guest('Jo', 'jo@example.com')).booking;
+  lair.shopify.orderSpend = async () => ({ customerId: RANGI, amount: 1500, name: '#9201', source: 'pos' });
+  ok(await internal('orders-paid', posOrder(9201, [bookingLine(92011, pats.ref, 15)])));
+  lair.shopify.orderSpend = async () => ({ customerId: KAI, amount: 1500, name: '#9202', source: 'pos' });
+  ok(await internal('orders-paid', posOrder(9202, [bookingLine(92021, jos.ref, 15)])));
+  lair.shopify.orderSpend = async () => null;
+  nowIs(at('2026-10-27', 19));
+  assert.deepEqual([stamps(RANGI), stamps(KAI)], [0, 1], "Rangi runs it (his stamp is the session's own); Kai's payment is Jo's seat");
+});
+
 /* ---------------- stamps staff add ---------------- */
 
 test('staff stamps (round 22): at the counter, one a tap; the same tap again adds nothing; Undo takes it back', async () => {
@@ -368,30 +431,73 @@ test('staff stamps (round 22): at the counter, one a tap; the same tap again add
   const repeat = ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' }));
   assert.deepEqual([repeat.repeated, repeat.stamp.id, repeat.loyalty.stamps], [true, added.stamp.id, 1]);
   assert.equal(stamps(MIA), 1);
-  // a new tap is a new stamp; without a key it still works (older screens)
+  // a new tap is a new stamp
   ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0002' }));
-  ok(await pos('stamp', { customerId: MIA }));
-  assert.equal(stamps(MIA), 3);
+  assert.equal(stamps(MIA), 2);
+  // after review: two a member a day from the counter (one a tap, for a session the Lair app doesn't know about), so ten
+  // taps can't fill a card; without a key (older screens) it's the same
+  assert.equal(said(await pos('stamp', { customerId: MIA })), `409 ${W.daily}`);
+  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0005' })), `409 ${W.daily}`);
   // the same key for someone else, a key that isn't one, nobody, and no account
   assert.equal(said(await pos('stamp', { customerId: KAI, key: 'tap-aaaa-0001' })), `409 ${W.notTheirs}`);
   assert.equal(said(await pos('stamp', { customerId: MIA, key: 'x' })), `422 ${W.badKey}`);
   assert.equal(said(await pos('stamp', { customerId: MIA, key: 'has spaces in it' })), `422 ${W.badKey}`);
   assert.equal(said(await pos('stamp', { key: 'tap-aaaa-0003' })), `404 ${W.noMember}`);
   assert.equal(said(await pos('stamp', { customerId: '4040', key: 'tap-aaaa-0004' })), `404 ${W.noMember}`);
-  assert.equal(stamps(MIA), 3);
+  assert.equal(stamps(MIA), 2);
   assert.equal(stamps(KAI), 0);
   // Undo: gone from the card; again, nothing more; someone else's or a stamp that isn't there
   const undone = ok(await pos('stamp-undo', { customerId: MIA, id: added.stamp.id }));
-  assert.deepEqual([undone.already, undone.loyalty.stamps, undone.stamp.undoneBy, Boolean(undone.stamp.undoneAt)], [false, 2, 'the counter', true]);
+  assert.deepEqual([undone.already, undone.loyalty.stamps, undone.stamp.undoneBy, Boolean(undone.stamp.undoneAt)], [false, 1, 'the counter', true]);
   assert.equal(ok(await pos('stamp-undo', { customerId: MIA, id: added.stamp.id })).already, true);
-  assert.equal(stamps(MIA), 2);
+  assert.equal(stamps(MIA), 1);
   assert.equal(said(await pos('stamp-undo', { customerId: KAI, id: repeat.stamp.id })), `409 ${W.notTheirs}`);
   assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: 'st_nothere' })), `404 ${W.notFound}`);
   // the same key after Undo is still the first tap: it never adds it again
   assert.equal(ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' })).repeated, true);
+  assert.equal(stamps(MIA), 1);
+  // a stamp taken back doesn't count towards the day's two: one more tap works
+  ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0006' }));
   assert.equal(stamps(MIA), 2);
   // My Lair lists them as Gobgob's, without the undone one
   assert.deepEqual((await card(MIA)).recent.map((r) => [r.title, r.people]), [[W.staffTitle, 1], [W.staffTitle, 1]]);
+  // tomorrow the counter can add two more
+  nowIs(at('2026-10-26', 10));
+  ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0007' }));
+  assert.equal(stamps(MIA), 3);
+});
+
+test('staff stamps (round 22, after review): a helper never stamps their own card; without Members, one at a time and two a day with the counter; the counter takes back only its own', async () => {
+  // Hemi (Check-in only) and his own card: no, one at a time or more
+  assert.equal(said(await call('POST', `members/${HEMI}/stamps`, { count: 1 }, HEMI)), `403 ${W.ownCard}`);
+  assert.equal(said(await call('POST', `members/${HEMI}/stamps`, { count: 10 }, HEMI)), `403 ${W.ownCard}`);
+  assert.equal(stamps(HEMI), 0);
+  // on Mia's card: one at a time (the check-in card's way), recorded as his, from check-in
+  assert.equal(said(await call('POST', `members/${MIA}/stamps`, { count: 2 }, HEMI)), `403 ${W.oneAtATime}`);
+  const one = ok(await call('POST', `members/${MIA}/stamps`, { count: 1, key: 'hemi-tap-0001' }, HEMI));
+  assert.equal(one.stamp.addedBy, 'Hemi');
+  assert.equal(lair.sql.exec('SELECT created_by FROM loyalty_stamps WHERE id = ?', one.stamp.id).one().created_by, `checkin:${HEMI}`);
+  // the counter's tap and Hemi's share the day's two
+  ok(await pos('stamp', { customerId: MIA, key: 'counter-tap-0001' }));
+  assert.equal(said(await call('POST', `members/${MIA}/stamps`, { count: 1 }, HEMI)), `409 ${W.daily}`);
+  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'counter-tap-0002' })), `409 ${W.daily}`);
+  assert.equal(stamps(MIA), 2);
+  // the main account (and helpers with Members) aren't limited: a member's page, with a note
+  ok(await call('POST', `members/${MIA}/stamps`, { count: 5, note: 'A league night the Lair missed' }, OWNER));
+  assert.equal(stamps(MIA), 7);
+  // the main account can stamp their own card (it's their shop); a helper with Members still can't stamp their own
+  ok(await call('POST', `members/${OWNER}/stamps`, { count: 1 }, OWNER));
+  ok(await call('POST', 'team', { customerId: HEMI, name: 'Hemi Walker', email: 'hemi@example.com', perms: ['checkin', 'members'] }, OWNER));
+  assert.equal(said(await call('POST', `members/${HEMI}/stamps`, { count: 1 }, HEMI)), `403 ${W.ownCard}`);
+  ok(await call('POST', `members/${MIA}/stamps`, { count: 3 }, HEMI));
+  assert.equal(stamps(MIA), 10);
+  // the counter can't take back a stamp added on the staff page (the main account's five), only its own
+  const page = ok(await call('GET', `members/${MIA}`, null, OWNER)).member;
+  const mos = page.stamps.find((s) => s.count === 5);
+  const counters = page.stamps.find((s) => s.addedBy === 'the counter');
+  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: mos.id })), `409 ${W.notHere}`);
+  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: one.stamp.id })), `409 ${W.notHere}`, "Hemi's check-in stamp is the staff page's to take back");
+  assert.equal(ok(await pos('stamp-undo', { customerId: MIA, id: counters.id })).already, false);
 });
 
 test('staff stamps (round 22): on a member\'s page, 1 to 10 with a note, for staff with Check-in or Members; Undo there; ten fill a card', async () => {

@@ -484,16 +484,15 @@ function CheckIn() {
    * Round 22 (Mo, 28 Oct 2026: "when you scan the QR code it adds the person as a customer to make sure they are added
    * and everything applies"): whoever's code was just scanned goes on the sale straight away, so their store credit and
    * discounts are there at the till, their spend counts, and a session rung up by hand stamps their card. Only when
-   * nobody's on the sale, or someone else is on an empty one (scanCustomer); never over someone else's sale or a share
-   * of a bill. Never throws: the screen works the same if POS says no.
+   * nobody's on the sale (scanCustomer): never over someone else, or a share of a bill. Never throws: the screen works
+   * the same if POS says no.
    * @param {Screen} screen the member or person view the scan opened
    */
   async function placeOnSale(screen) {
     const who = screen.name === 'member' ? screen.member : screen.name === 'person' ? screen.row : null;
     if (!who?.customerId) return;
-    const plan = scanCustomer(shopify.cart.current.value, who.customerId);
-    if (plan !== 'set' && plan !== 'replace') return;
-    const result = await putOnSale(who.customerId, plan === 'replace');
+    if (scanCustomer(shopify.cart.current.value, who.customerId) !== 'set') return;
+    const result = await putOnSale(who.customerId);
     if (result === 'added') toast(`${firstName(String(who.name || '')) || 'They'} is on this sale`);
   }
 

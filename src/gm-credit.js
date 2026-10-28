@@ -79,14 +79,15 @@ export const GM_CREDIT_TABLES = [
 
 /**
  * The sessions that earn their GM a stamp, as stampedSessions' columns (id, kind 'gm-run', at, people 1, tables,
- * occurrence_id, game_title, join_title). Three bound values: the GM's customer ID, the loyalty start, then when today
+ * occurrence_id, game_title, join_title, via 'run'). Three bound values: the GM's customer ID, the loyalty start, then when today
  * ends (round 22's stampsUntil). A player's seat is what says it ran (not the GM's own, if they booked one), or players
  * the group had who don't book through the Lair (offline_players); a GM with a seat of their own session that stamps
  * (checked in, or round 22: paid once its day has come) has that seat's stamp already, so the session gives them no
  * second one.
  */
 export const GM_STAMP_ROWS = `
-  SELECT g.id AS id, 'gm-run' AS kind, g.starts_at AS at, 1 AS people, g.tables AS tables, NULL AS occurrence_id, g.title AS game_title, NULL AS join_title
+  SELECT g.id AS id, 'gm-run' AS kind, g.starts_at AS at, 1 AS people, g.tables AS tables, NULL AS occurrence_id, g.title AS game_title, NULL AS join_title,
+         'run' AS via
     FROM gm_runs r JOIN games g ON g.id = r.game_id AND g.gm_customer_id = r.customer_id
    WHERE r.customer_id = ? AND r.staff = 0 AND g.status IN ('open', 'full') AND g.starts_at >= ?
      AND (COALESCE(g.offline_players, 0) > 0

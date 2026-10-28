@@ -65,7 +65,7 @@ import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, au
 // Round 21, part 2: a GM pays for one of their players
 import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 // Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add
-import { STAMP_TABLES, STAMP_WORDS, bookingStamps, joinStamps, sessionLines, stampMethods } from './stamps.js';
+import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinVia, sessionLines, stampMethods } from './stamps.js';
 // Round 22: counter sales through Pay on Verifone (OrderMate), whose orders lose the cart lines' properties
 import { counterMethods, counterSale, customSale } from './counter.js';
 
@@ -4774,8 +4774,8 @@ export class Lair {
     const giftCodes = this.markGiftCodesUsed(spend, Date.now());
     // Round 22: the sessions rung up by hand stamp the sale's customer (src/stamps.js), once per order, line and unit
     const stamps = this.stampSessionSales(orderId, sessions, spend?.customerId || order.customer?.id, { orderName: spend?.name || (order.name ? String(order.name) : null), now: Date.now() });
-    // Round 22: a tab at the counter whose every item is on this counter sale, when its lines lost _tab (src/counter.js)
-    const cartTabs = pos ? this.markTabsPaid(this.cartTabsPaidBy(order, spend?.customerId || order.customer?.id), orderId, Date.now()) : [];
+    // Round 22: a tab put in the cart shortly before this Pay on Verifone sale, whose every item is on it (src/counter.js)
+    const cartTabs = pos ? this.markTabsPaid(this.cartTabsPaidBy(order, spend?.customerId || order.customer?.id, spend?.processedAt || Date.now()), orderId, Date.now()) : [];
     if (cartTabs.length) this.reconcileBills(rules, Date.now(), { orderId, pos });
     return {
       updated, tabs: [...tabsPaid, ...cartTabs], spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}),
@@ -6821,7 +6821,7 @@ export class Lair {
   /* ---------------- the loyalty card (round 6) ---------------- */
   /**
    * The sessions that earn a member stamps, as one query's rows (id, kind, at, people, tables, occurrence_id, game_title,
-   * join_title) and its bound values: their table bookings, game spots and TTRPG seats and their event sign-ups that
+   * join_title, via) and its bound values: their table bookings, game spots and TTRPG seats and their event sign-ups that
    * stamp (round 22, bookingStamps and joinStamps: checked in, or paid in full once their day has come), for sessions
    * that start on or after the loyalty start. Each is a stamp for every person on it (friends without an account go on the
    * booker's card). No-shows, cancellations and holds never count, and a session cancelled, marked a no-show or (unpaid)
@@ -6836,7 +6836,9 @@ export class Lair {
    * 'stamp-staff'); and a session with no account on it (a guest's, a walk-in or a booking staff made) stamps whoever
    * paid for it (Mo: "if that person has no account the payer gets it"): the customer on its first payment that had one,
    * as if they'd booked it. Its named players and guests with accounts still get their own. Once it joins an account
-   * (a guest logs in with its email), it's that account's. No awaits.
+   * (a guest logs in with its email), it's that account's. A GM paying a guest's seat in a session they run gets no
+   * stamp for it (they have the session's own). via: 'here' (checked in), 'paid' (paid, not checked in), 'run' (a GM's
+   * session) or 'ledger'. stampTally counts them. No awaits.
    */
   stampRowsQuery(customerId, now = Date.now()) {
     const id = String(customerId);
@@ -6844,58 +6846,96 @@ export class Lair {
     return {
       sql: `SELECT b.id AS id, b.kind AS kind, b.starts_at AS at,
              MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL AND p.customer_id != b.customer_id), 0) AS people,
-             b.tables AS tables, b.occurrence_id AS occurrence_id, g.title AS game_title, NULL AS join_title
+             b.tables AS tables, b.occurrence_id AS occurrence_id, g.title AS game_title, NULL AS join_title, ${bookingVia('b')} AS via
            FROM bookings b LEFT JOIN games g ON g.id = b.game_id
           WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.starts_at >= ? AND ${bookingStamps('b')}
          UNION ALL
-         SELECT b.id, b.kind, b.starts_at, 1, b.tables, b.occurrence_id, NULL, NULL
+         SELECT b.id, b.kind, b.starts_at, 1, b.tables, b.occurrence_id, NULL, NULL, ${bookingVia('b')}
            FROM booking_players p JOIN bookings b ON b.id = p.booking_id
           WHERE p.customer_id = ? AND b.starts_at >= ? AND (b.customer_id IS NULL OR b.customer_id != p.customer_id) AND ${bookingStamps('b')}
          UNION ALL
          SELECT j.id, 'join', j.starts_at, MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0),
-             '[]', j.occurrence_id, NULL, j.title
+             '[]', j.occurrence_id, NULL, j.title, ${joinVia('j')}
            FROM event_joins j WHERE j.customer_id = ? AND j.starts_at >= ? AND ${joinStamps('j')}
          UNION ALL
-         SELECT j.id, 'join', j.starts_at, 1, '[]', j.occurrence_id, NULL, j.title
+         SELECT j.id, 'join', j.starts_at, 1, '[]', j.occurrence_id, NULL, j.title, ${joinVia('j')}
            FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
           WHERE x.customer_id = ? AND j.starts_at >= ? AND (j.customer_id IS NULL OR j.customer_id != x.customer_id) AND ${joinStamps('j')}
          UNION ALL ${GM_STAMP_ROWS}
          UNION ALL
-         SELECT s.id, 'stamp-' || s.kind, s.at, s.count, '[]', NULL, NULL, s.title FROM loyalty_stamps s WHERE s.customer_id = ? AND s.undone_at IS NULL
+         SELECT s.id, 'stamp-' || s.kind, s.at, s.count, '[]', NULL, NULL, s.title, 'ledger' FROM loyalty_stamps s WHERE s.customer_id = ? AND s.undone_at IS NULL
          UNION ALL
          SELECT b.id, b.kind, b.starts_at,
              MAX(b.people - (SELECT COUNT(*) FROM booking_players p WHERE p.booking_id = b.id AND p.customer_id IS NOT NULL), 0),
-             b.tables, b.occurrence_id, g.title, NULL
+             b.tables, b.occurrence_id, g.title, NULL, ${bookingVia('b')}
            FROM (SELECT DISTINCT m.booking_id AS paid_id FROM payments m WHERE m.customer_id = ? AND m.kind = 'booking') mine
            JOIN bookings b ON b.id = mine.paid_id LEFT JOIN games g ON g.id = b.game_id
           WHERE b.customer_id IS NULL AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.starts_at >= ? AND ${bookingStamps('b')}
             AND (SELECT m.customer_id FROM payments m WHERE m.booking_id = b.id AND m.kind = 'booking' AND m.customer_id IS NOT NULL ORDER BY m.at, m.rowid LIMIT 1) = ?
+            AND (g.gm_customer_id IS NULL OR g.gm_customer_id != ?)
          UNION ALL
          SELECT j.id, 'join', j.starts_at, MAX(j.people - (SELECT COUNT(*) FROM event_join_guests x WHERE x.join_id = j.id AND x.customer_id IS NOT NULL), 0),
-             '[]', j.occurrence_id, NULL, j.title
+             '[]', j.occurrence_id, NULL, j.title, ${joinVia('j')}
            FROM (SELECT DISTINCT m.booking_id AS paid_id FROM payments m WHERE m.customer_id = ? AND m.kind = 'join') mine
            JOIN event_joins j ON j.id = mine.paid_id
           WHERE j.customer_id IS NULL AND j.starts_at >= ? AND ${joinStamps('j')}
             AND (SELECT m.customer_id FROM payments m WHERE m.booking_id = j.id AND m.kind = 'join' AND m.customer_id IS NOT NULL ORDER BY m.at, m.rowid LIMIT 1) = ?`,
       // in the order of the query's question marks: each part's customer, loyalty start and (round 22) end of today; the
-      // ledger's customer; then a payer's own: the payer, the loyalty start, the end of today and the payer again
+      // ledger's customer; then a payer's own: the payer, the loyalty start, the end of today and the payer again (for a
+      // booking, once more: not the GM of its game)
       binds: [
         id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id, this.loyaltyFrom, until, id,
-        id, this.loyaltyFrom, until, id, id, this.loyaltyFrom, until, id,
+        id, this.loyaltyFrom, until, id, id, id, this.loyaltyFrom, until, id,
       ],
     };
   }
 
-  /** The sessions that earn a member stamps (stampRowsQuery), newest first, up to `limit` (-1: all). No awaits. */
-  stampedSessions(customerId, limit = -1, now = Date.now()) {
+  /**
+   * A member's stamps, session by session (stampRowsQuery), as their card counts them. Round 22 (after its review):
+   *  - a sign-up or game table on an event date that's gone from the calendar (dateGone) stamps only if they were checked
+   *    in: paid alone, the event may not have happened;
+   *  - a day's Session products rung up at the counter ('stamp-sale') are the same sessions as that day's Lair sessions,
+   *    so the day counts whichever has more: a Day Pass rung up for a booked table is still one stamp, whichever came
+   *    first. The sale rows a day's sessions cover drop out (stamps staff added by hand never do).
+   * Returns { rows (newest first), total }. No awaits.
+   */
+  stampTally(customerId, now = Date.now(), rules = this.rulesCache) {
     const { sql, binds } = this.stampRowsQuery(customerId, now);
-    return this.sql.exec(`SELECT * FROM (${sql}) ORDER BY at DESC, id DESC LIMIT ?`, ...binds, limit).toArray();
+    const rows = this.sql.exec(`SELECT * FROM (${sql}) ORDER BY at, id`, ...binds).toArray().map((r) => ({ ...r, people: Math.max(0, Number(r.people) || 0) }));
+    const kept = rules ? rows.filter((r) => !(r.via === 'paid' && r.occurrence_id && this.dateGone(rules, r.occurrence_id))) : rows;
+    const time = new LairTime(rules?.tz || 'Pacific/Auckland');
+    const days = new Map();
+    for (const r of kept) {
+      if (r.kind === 'stamp-staff') continue;
+      const day = time.key(r.at);
+      if (!days.has(day)) days.set(day, { sessions: 0, sales: [] });
+      const d = days.get(day);
+      if (r.kind === 'stamp-sale') d.sales.push(r);
+      else d.sessions += r.people;
+    }
+    const covered = new Set();
+    for (const d of days.values()) {
+      let left = d.sessions;
+      for (const r of d.sales) {
+        const take = Math.min(left, r.people);
+        r.people -= take;
+        left -= take;
+        if (!r.people) covered.add(r);
+      }
+    }
+    const counted = kept.filter((r) => !covered.has(r)).reverse();
+    return { rows: counted, total: counted.reduce((sum, r) => sum + r.people, 0) };
   }
 
-  /** All the stamps a member has earned: one a person a session that stamps, and the ledger's (stampRowsQuery). No awaits. */
+  /** The sessions that earn a member stamps (stampTally), newest first, up to `limit` (-1: all). No awaits. */
+  stampedSessions(customerId, limit = -1, now = Date.now()) {
+    const { rows } = this.stampTally(customerId, now);
+    return limit < 0 ? rows : rows.slice(0, limit);
+  }
+
+  /** All the stamps a member has earned (stampTally): one a person a session that stamps, and the ledger's. No awaits. */
   stampCount(customerId, now = Date.now()) {
-    const { sql, binds } = this.stampRowsQuery(customerId, now);
-    return this.sql.exec(`SELECT COALESCE(SUM(people), 0) AS n FROM (${sql})`, ...binds).one().n;
+    return this.stampTally(customerId, now).total;
   }
 
   /**
@@ -7296,7 +7336,8 @@ export class Lair {
     const row = this.sql.exec('SELECT * FROM tabs WHERE id = ?', String(id)).toArray()[0];
     if (!row) throw new RuleError('That tab is gone. Scan their member code again.', 404);
     if (row.status === 'paid') throw new RuleError('That tab is paid already.', 409);
-    if (row.status === 'open') this.write("UPDATE tabs SET status = 'in-cart', updated_at = ? WHERE id = ? AND status = 'open'", Date.now(), row.id);
+    // (round 22: put in a cart again, its time is now: a Pay on Verifone sale pays it by its items soon after: src/counter.js)
+    if (['open', 'in-cart'].includes(row.status)) this.write("UPDATE tabs SET status = 'in-cart', updated_at = ? WHERE id = ? AND status IN ('open', 'in-cart')", Date.now(), row.id);
     return { tab: this.tabView(this.sql.exec('SELECT * FROM tabs WHERE id = ?', row.id).one()) };
   }
 

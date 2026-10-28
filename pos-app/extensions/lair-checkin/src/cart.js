@@ -58,24 +58,23 @@ export function cartProblem(error) {
 /**
  * Round 22 (Mo, 28 Oct 2026: "when you scan the QR code it adds the person as a customer to make sure they are added and
  * everything applies"): what scanning someone's code does to the sale's customer, before anything goes in the cart.
- *   'set'      nobody's on the sale: put them on it
- *   'replace'  someone else is on an empty sale (their last sale is done): put this person on it instead
+ *   'set'      nobody's on the sale: put them on it (a sale rung up first and their code scanned at the till is theirs)
  *   'already'  they're on it
- *   'keep'     someone else's sale has something in it, or a share of a bill is in it (the Lair app counts a payment as
- *              the sale customer's): leave it; the cart strip says whose sale it is
+ *   'keep'     someone else is on the sale, or a share of a bill is in it (the Lair app counts a payment as the sale
+ *              customer's): leave it. After round 22's review, never swapped by itself: they may be paying for this
+ *              person (staff use Put … on this sale), and POS takes the last customer off once a sale is paid.
  *   'none'     no account to put on it
  * @param {CartLike} cart
  * @param {unknown} id their Shopify customer id
- * @returns {'set' | 'replace' | 'already' | 'keep' | 'none'}
+ * @returns {'set' | 'already' | 'keep' | 'none'}
  */
 export function scanCustomer(cart, id) {
   const customerId = customerIdNumber(id);
   if (!customerId) return 'none';
   const current = cartCustomerId(cart);
   if (current === customerId) return 'already';
-  if (sharesInCart(cart).length) return 'keep';
-  if (!current) return 'set';
-  return (cart?.lineItems || []).length ? 'keep' : 'replace';
+  if (current || sharesInCart(cart).length) return 'keep';
+  return 'set';
 }
 
 /**

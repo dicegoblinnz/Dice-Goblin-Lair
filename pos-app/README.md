@@ -20,9 +20,10 @@ A person's screen shows, from the top: who it is, **To pay** in big numbers, and
 yellow box says so: if they're paying apart, take that payment first.
 
 The scanner works on every screen: scan a code any time and the screen jumps to it. Scanning someone's member code,
-or a ticket on their account, also **puts them on the sale** straight away ("Sam is on this sale"), so everything they
-pay for counts for them, a Session rung up by hand included. It leaves the sale alone when someone else is on it and
-it has things in it already (finish that sale first), or when a friend's share of a bill is in it. **Scan a code** (or **Scan** at
+or a ticket on their account, also **puts them on the sale** straight away ("Sam is on this sale") when nobody's on it,
+so everything they pay for counts for them, a Session rung up by hand included. It never swaps out someone already on
+the sale (they may be paying for this person: tap **Put … on this sale** if not), and leaves the sale alone when a
+friend's share of a bill is in it. **Scan a code** (or **Scan** at
 the top) opens the camera instead.
 
 ### Someone arrives with a ticket
@@ -138,9 +139,11 @@ Stamps come by themselves (round 22):
   paid and checked in stamps once. A session with no account on it stamps whoever paid for it, so scan the payer's
   code first.
 - **A Session rung up by hand** (Day Pass, TCG League, RPG Session, RPG Kids Session, Curse of Strahd) stamps the
-  customer on the sale, one a unit. Scan their member code first: that's what puts them on the sale.
-- **Add a stamp** on a member's screen, for a session the Lair app doesn't know about. **Undo that stamp** takes it
-  back. (Stamps added on the staff page are taken back there, under Members.)
+  customer on the sale, one a unit. Scan their member code first: that's what puts them on the sale. A Session rung up
+  for a session they booked is the same session, so it's still one stamp that day.
+- **Add a stamp** on a member's screen, for a session the Lair app doesn't know about: one a tap, two a member a day
+  (more go on the staff page, under Members). **Undo that stamp** takes it back. (Stamps added on the staff page are
+  taken back there.)
 
 They roll in My Lair. When a check-in or a stamp fills their card, the message at the bottom of POS says **"Sam's
 loyalty card is full!"**. Let them know: a roll for store credit is waiting in My Lair. (If the screen stays open, it

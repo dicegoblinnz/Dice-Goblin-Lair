@@ -24,6 +24,8 @@ const settle = (page, ms = 500) => page.waitForTimeout(ms);
 const card = (page) => page.evaluate(() => {
   const f = (x) => String(x || '').replace(/\s+/g, ' ').trim();
   const root = document.querySelector('[data-person-loyalty]');
+  const list = document.querySelector('[data-person-stamps]');
+  const section = document.querySelector('.staff-loyalty');
   if (!root) return null;
   const facts = Object.fromEntries([...root.querySelectorAll('.staff-person__facts > div')].map((d) => [f(d.querySelector('dt')?.textContent), f(d.querySelector('dd')?.textContent)]));
   const count = f(root.querySelector('.staff-loyalty__count')?.textContent);
@@ -33,14 +35,16 @@ const card = (page) => page.evaluate(() => {
     dots: root.querySelectorAll('.staff-loyalty__dot.is-on').length,
     cards: Number(facts['Cards filled']),
     rolls: Number(facts['Rolls ready']),
-    heading: f(root.querySelector('.staff-loyalty__added-h')?.textContent),
-    items: [...root.querySelectorAll('.staff-loyalty__item')].map((li) => ({
+    heading: list && !list.hidden ? f(list.querySelector('.staff-loyalty__added-h')?.textContent) : '',
+    // (after review: the list sits outside the card's live region, so a refresh doesn't read it all out)
+    listInLive: Boolean(root.querySelector('.staff-loyalty__list')) || Boolean(list?.closest('[aria-live]')),
+    items: [...(list ? list.querySelectorAll('.staff-loyalty__item') : [])].map((li) => ({
       what: f(li.querySelector('.staff-loyalty__what')?.textContent),
       meta: f(li.querySelector('p.muted')?.textContent),
       undone: li.classList.contains('is-undone'),
       back: f(li.querySelector('p:not(.muted)')?.textContent),
       undo: li.querySelector('[data-stamp-undo]') ? { label: li.querySelector('[data-stamp-undo]').getAttribute('aria-label'), height: li.querySelector('[data-stamp-undo]').getBoundingClientRect().height } : null,
-      fits: li.getBoundingClientRect().right <= root.getBoundingClientRect().right + 0.5,
+      fits: li.getBoundingClientRect().right <= section.getBoundingClientRect().right + 0.5,
     })),
   };
 });
@@ -107,6 +111,7 @@ for (const size of sizes) {
   const wantK = (k0.stamps + 1) % 10;
   check(`${tag} check-in: Add a stamp puts one on (${k0.stamps} to ${wantK} of 10), says so, and offers Undo that stamp`,
     k1.stamps === wantK && k1.dots === wantK && (wantK ? t1k === `Stamp added: Aroha is on ${wantK} of 10.` : /card is full/.test(t1k)) && k1.undo === 'Undo that stamp', { k1, t1k });
+  check(`${tag} check-in: focus stays on Add a stamp`, await page.evaluate(() => document.activeElement?.matches('[data-checkin-stamp]')), await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80)));
   await shot(page, `${size}-checkin-card`, '.checkin-card--member');
   await page.evaluate(() => document.querySelector('.checkin-card__loyalty')?.scrollIntoView({ block: 'center' }));
   await axe(page, `${tag} the check-in card with the loyalty card`, '.checkin-card--member');
@@ -116,6 +121,35 @@ for (const size of sizes) {
   const k2 = await ci();
   const t2k = await toast(page);
   check(`${tag} check-in: Undo that stamp takes it back (${k0.stamps} of 10) and goes`, k2.stamps === k0.stamps && !k2.undo && t2k === 'Took that stamp back off Aroha’s card.', { k2, t2k });
+  // a lost answer (the stamp went on, the answer didn't come back): the button comes back, and the second tap is the
+  // same stamp, with its Undo
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    const real = be.memberStamps.bind(be);
+    let lost = false;
+    be.memberStamps = async (...a) => {
+      const answer = await real(...a);
+      if (!lost) {
+        lost = true;
+        throw new Error('The Lair app didn’t answer. Try again.');
+      }
+      return answer;
+    };
+  });
+  await page.click('[data-checkin-stamp]');
+  await settle(page, 600);
+  const lostState = await page.evaluate(() => {
+    const b = document.querySelector('[data-checkin-stamp]');
+    return { disabled: b.disabled, busy: b.getAttribute('aria-busy'), undo: Boolean(document.querySelector('[data-checkin-stamp-undo]')) };
+  });
+  check(`${tag} check-in: after a lost answer, Add a stamp works again`, !lostState.disabled && !lostState.busy && !lostState.undo, lostState);
+  await page.click('[data-checkin-stamp]');
+  await settle(page, 700);
+  const k3 = await ci();
+  check(`${tag} check-in: trying again adds nothing more (${(k0.stamps + 1) % 10} of 10) and offers its Undo`, k3.stamps === (k0.stamps + 1) % 10 && k3.undo === 'Undo that stamp', k3);
+  await page.click('[data-checkin-stamp-undo]');
+  await settle(page, 700);
+  check(`${tag} check-in: and Undo takes it back`, (await ci()).stamps === k0.stamps, await ci());
   await page.click('[data-checkin-clear]').catch(() => {});
   await settle(page, 300);
 
@@ -132,9 +166,9 @@ for (const size of sizes) {
     && JSON.stringify(f0.steppers) === JSON.stringify(['One stamp fewer', 'One stamp more']), f0);
   const order = await page.evaluate(() => {
     const s = document.querySelector('.staff-loyalty');
-    return [...s.children].map((c) => (c.matches('[data-person-loyalty]') ? 'card' : c.matches('[data-stamps-form]') ? 'stamps' : c.matches('[data-rolls-form]') ? 'rolls' : c.matches('[data-since-form]') ? 'since' : c.tagName.toLowerCase()));
+    return [...s.children].map((c) => (c.matches('[data-person-loyalty]') ? 'card' : c.matches('[data-person-stamps]') ? 'list' : c.matches('[data-stamps-form]') ? 'stamps' : c.matches('[data-rolls-form]') ? 'rolls' : c.matches('[data-since-form]') ? 'since' : c.tagName.toLowerCase()));
   });
-  check(`${tag} the order: the card, Add stamps, Give rolls, Customer since`, JSON.stringify(order.filter((x) => x !== 'h4')) === JSON.stringify(['card', 'stamps', 'rolls', 'since']), order);
+  check(`${tag} the order: the card, its list of stamps, Add stamps, Give rolls, Customer since`, JSON.stringify(order.filter((x) => x !== 'h4')) === JSON.stringify(['card', 'list', 'stamps', 'rolls', 'since']), order);
   const c0 = await card(page);
   check(`${tag} no list of added stamps before any are added`, c0 && !c0.heading && !c0.items.length, c0);
 
@@ -149,8 +183,8 @@ for (const size of sizes) {
   check(`${tag} 2 stamps: the card goes from ${c0.stamps} to ${want1} of 10`, c1.stamps === want1 && c1.dots === want1 && c1.cards === c0.cards + filled1, { c0: c0.count, c1: c1.count });
   check(`${tag} 2 stamps: the toast says so`, t1 === `Added 2 stamps to Sam’s card. Sam is on ${want1} of 10.`, t1);
   const row1 = c1.items[0];
-  check(`${tag} 2 stamps: the list under the card says what, who, when and the note, with Undo`,
-    c1.heading === 'Added by hand or rung up at the counter' && c1.items.length === 1 && row1.what === '+2 A stamp from Gobgob, 2 stamps'
+  check(`${tag} 2 stamps: the list under the card says what, who, when and the note, with Undo (outside the live region)`,
+    c1.heading === 'Added by hand or rung up at the counter' && !c1.listInLive && c1.items.length === 1 && row1.what === '+2 A stamp from Gobgob, 2 stamps'
     && row1.meta === `Added by Mo · Today, 1pm · ${NOTE}` && row1.undo && row1.undo.label === 'Take back 2 stamps: A stamp from Gobgob' && !row1.undone, row1);
   check(`${tag} Undo is a 44px tap target, and the row fits the card`, row1.undo && row1.undo.height >= 44 && row1.fits, row1.undo);
   const f1 = await form(page);
@@ -202,6 +236,8 @@ for (const size of sizes) {
   check(`${tag} Undo takes the 2 back: ${want4} of 10, and says so`, c4.stamps === want4 && t4 === 'Took 2 stamps back off Sam’s card.', { stamps: c4.stamps, t4 });
   check(`${tag} the taken back row stays, struck through, with who and when, and no Undo`,
     undone && undone.undone && undone.back === 'Taken back by Mo, Today, 1pm' && !undone.undo, undone);
+  const focusedRow = await page.evaluate(() => document.activeElement?.closest?.('[data-stamp-row]')?.textContent.replace(/\s+/g, ' ').trim() || document.activeElement?.tagName);
+  check(`${tag} Undo keeps focus: on the row it took back`, /^\+2 A stamp from Gobgob/.test(focusedRow || ''), focusedRow);
   // twice (a second tab, a slow tap): nothing more taken back
   const sid = await page.evaluate((who) => {
     const be = window.Lair.store.backend;

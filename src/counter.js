@@ -12,13 +12,20 @@
 //     MA-HARP-10)", "Tab: Tue 15 Sep (2 things, TAB-1A2B3C)"), so a custom sale on a counter sale that lost its
 //     _booking or _tab pays the booking, sign-up or tab its title names, when it names exactly one (titleBooking,
 //     titleTab);
-//   - a member's tab goes in the cart as the shop's own products, so a tab at the counter ('in-cart') for the sale's
-//     customer is paid by a counter sale that has every one of its items (cartTabsPaidBy).
+//   - a member's tab goes in the cart as the shop's own products, so on a Pay on Verifone sale, a tab the tile put in
+//     the cart shortly before (TAB_CART_WINDOW) for the sale's customer is paid by it when the sale has every one of its
+//     items (cartTabsPaidBy). Shopify POS's own sales keep _tab, so they never go by items.
 // Only counter sales are read this way: customers can't make one (the online store's orders are 'web', our checkouts
 // 'shopify_draft_order'), so a code typed into an online cart pays nothing.
 
 /** The Verifone terminal's app: its orders' source_name, and their tag (lower case) */
 export const ORDERMATE = Object.freeze({ app: '36219584513', tag: 'ordermate' });
+
+/**
+ * How long before a Pay on Verifone sale its tab can have gone in the cart (POST /pos/tab/:id/added) to be paid by its
+ * items: a tab left at the counter from a sale that was cleared isn't paid by a purchase days later.
+ */
+export const TAB_CART_WINDOW = 3 * 60 * 60 * 1000;
 
 /** A booking or sign-up code in a line's title (SJ-OWLBEAR-17, or the first release's GOB-7K2QXM), and a tab's ref */
 const CODE_IN_TITLE = /\b(?:[A-Z]{2}-[A-Z]{3,9}-\d{1,2}|GOB-[A-Z0-9]{6})\b/g;
@@ -47,6 +54,11 @@ export function counterSale(order) {
   const source = String(order?.source_name ?? '');
   if (source === 'pos' || source === ORDERMATE.app) return true;
   return /^\d+$/.test(source) && orderTags(order).includes(ORDERMATE.tag);
+}
+
+/** A Pay on Verifone sale (a counter sale that isn't Shopify POS's own): its lines have lost their properties */
+export function verifoneSale(order) {
+  return counterSale(order) && String(order?.source_name ?? '') !== 'pos';
 }
 
 /** A custom sale: no product behind it. The Lair tile's lines are custom sales; a product's title never names a booking. */
@@ -88,12 +100,13 @@ export const counterMethods = {
   },
 
   /**
-   * The tabs a counter sale pays when its lines lost _tab (Pay on Verifone): the customer's tabs at the counter
-   * ('in-cart', newest first), each paid when every one of its items is on the sale (the same product variant, at least
-   * as many) among the lines without _tab that no other tab has taken. No awaits. Returns tab ids.
+   * The tabs a Pay on Verifone sale pays (its lines lost _tab): the customer's tabs put in the cart ('in-cart') within
+   * TAB_CART_WINDOW before the sale (saleAt), newest first, each paid when every one of its items is on the sale (the
+   * same product variant, at least as many) among the lines no other tab has taken. Never for Shopify POS's own sales,
+   * which keep _tab. No awaits. Returns tab ids.
    */
-  cartTabsPaidBy(order, customerId) {
-    if (!customerId) return [];
+  cartTabsPaidBy(order, customerId, saleAt = Date.now()) {
+    if (!customerId || !verifoneSale(order)) return [];
     const left = new Map();
     for (const item of order?.line_items || []) {
       if ((item.properties || []).some((p) => p.name === '_tab' && p.value)) continue;
@@ -103,8 +116,12 @@ export const counterMethods = {
     }
     if (!left.size) return [];
     const paid = [];
+    // (updated_at: when the tile last put it in a cart; a few minutes' grace for the two clocks)
     const tabs = this.sql
-      .exec("SELECT id, items FROM tabs WHERE customer_id = ? AND status = 'in-cart' ORDER BY updated_at DESC, rowid DESC LIMIT 5", String(customerId))
+      .exec(
+        "SELECT id, items FROM tabs WHERE customer_id = ? AND status = 'in-cart' AND updated_at >= ? AND updated_at <= ? ORDER BY updated_at DESC, rowid DESC LIMIT 5",
+        String(customerId), saleAt - TAB_CART_WINDOW, saleAt + 10 * 60 * 1000,
+      )
       .toArray();
     for (const tab of tabs) {
       const need = new Map();

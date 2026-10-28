@@ -305,12 +305,15 @@ test('Pay on Verifone (round 22): a tab at the counter is paid when the sale has
 });
 
 test('Pay on Verifone (round 22): two tabs at the counter share one sale only when it has enough for both; a POS sale still goes by _tab', async () => {
+  // (an hour ago a tab went in a cart and that sale was cleared; a fresh tab went in just now)
+  nowIs(NOW - HOUR);
   const older = await tabAtCounter(RIA, [{ variantId: '5001', title: 'Pocky', variantTitle: 'Strawberry', price: 450, qty: 1 }]);
-  // (yesterday's tab still at the counter, and today's)
-  lair.sql.exec("UPDATE tabs SET day = '2026-10-24', created_at = ?, updated_at = ? WHERE id = ?", at('2026-10-24', 19), at('2026-10-24', 19), older);
+  nowIs(NOW);
+  lair.sql.exec("UPDATE tabs SET status = 'paid' WHERE id = ?", older); // (only so Ria can start the second tab today)
   const newer = await tabAtCounter(RIA, [{ variantId: '5001', title: 'Pocky', variantTitle: 'Strawberry', price: 450, qty: 2 }]);
+  lair.sql.exec("UPDATE tabs SET status = 'in-cart' WHERE id = ?", older);
   customerIs(RIA);
-  // two Pocky: enough for today's (the newest) only
+  // two Pocky: enough for the newest only
   ok(await paid(verifone(3101, [product(31011, 'Pocky', 5001, 2, '4.50')])));
   assert.deepEqual([tabRow(newer).status, tabRow(older).status], ['paid', 'in-cart']);
   ok(await paid(verifone(3102, [product(31021, 'Pocky', 5001, 1, '4.50')])));
@@ -320,6 +323,33 @@ test('Pay on Verifone (round 22): two tabs at the counter share one sale only wh
   customerIs(null);
   ok(await paid(posOrder(3103, [product(31031, 'Drinks', 5002, 1, '3.00', [{ name: '_tab', value: kais }])])));
   assert.equal(tabRow(kais).status, 'paid');
+});
+
+test('Pay on Verifone (round 22, after review): a tab left at the counter is never paid by a later purchase: not by a POS sale, not hours later', async () => {
+  // Ria's tab went in a cart and that sale was cleared
+  const tabId = await tabAtCounter(RIA, [{ variantId: '5001', title: 'Pocky', variantTitle: 'Strawberry', price: 450, qty: 1 }]);
+  customerIs(RIA);
+  // a Shopify POS sale of the same Pocky, without _tab (bought on its own): POS keeps line properties, so it isn't the tab
+  ok(await paid(posOrder(3301, [product(33011, 'Pocky', 5001, 1, '4.50')])));
+  assert.equal(tabRow(tabId).status, 'in-cart');
+  // four hours later, the same Pocky on Pay on Verifone: too long after the tab went in the cart
+  nowIs(NOW + 4 * HOUR);
+  ok(await paid(verifone(3302, [product(33021, 'Pocky', 5001, 1, '4.50')])));
+  assert.equal(tabRow(tabId).status, 'in-cart');
+  // the sale's own time is what counts (Shopify can send the webhook again later): processed 10 minutes after the tab
+  // went in, the webhook arriving hours later still pays it
+  lair.shopify.orderSpend = async () => ({ customerId: RIA, amount: 450, name: '#3303', source: '36219584513', processedAt: NOW + 10 * 60 * 1000 });
+  ok(await paid(verifone(3303, [product(33031, 'Pocky', 5001, 1, '4.50')])));
+  assert.equal(tabRow(tabId).status, 'paid');
+});
+
+test('Pay on Verifone (round 22): putting a tab in the cart again starts its time again', async () => {
+  const tabId = await tabAtCounter(KAI, [{ variantId: '5002', title: 'Drinks', variantTitle: '$3 Drink', price: 300, qty: 1 }]);
+  nowIs(NOW + 5 * HOUR);
+  ok(await pos(`tab/${tabId}/added`, {}));
+  customerIs(KAI);
+  ok(await paid(verifone(3401, [product(34011, 'Drinks', 5002, 1, '3.00')])));
+  assert.equal(tabRow(tabId).status, 'paid');
 });
 
 test("Pay on Verifone (round 22): a monthly account's tab from an earlier day is paid by the TAB code in its line", async () => {

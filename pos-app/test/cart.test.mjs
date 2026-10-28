@@ -245,7 +245,7 @@ test('round 22: scanning someone puts them on the sale when nobody is on it, or 
   assert.equal(scanCustomer({ lineItems: [] }, '777'), 'set', 'nobody on an empty sale');
   assert.equal(scanCustomer({ lineItems: [{ uuid: 'a', properties: {} }] }, 'gid://shopify/Customer/777'), 'set', 'a session rung up by hand with nobody on it yet');
   assert.equal(scanCustomer({ lineItems: [], customer: { id: 777 } }, '777'), 'already');
-  assert.equal(scanCustomer({ lineItems: [], customer: { id: 9 } }, '777'), 'replace', 'the last customer, left on an empty sale');
+  assert.equal(scanCustomer({ lineItems: [], customer: { id: 9 } }, '777'), 'keep', 'someone else on it, even an empty sale: never swapped by itself');
   assert.equal(scanCustomer({ lineItems: [{ uuid: 'a', properties: { _booking: 'SJ-OWLBEAR-17' } }], customer: { id: 9 } }, '777'), 'keep', "someone else's sale");
   assert.equal(scanCustomer({ lineItems: [{ uuid: 'a', properties: { _booking: 'SJ-OWLBEAR-17', _share: '1' } }] }, '777'), 'keep', "a share of a bill: its payer stays whoever's on it");
   assert.equal(scanCustomer({ lineItems: [] }, null), 'none', 'a guest: no account');
