@@ -861,7 +861,7 @@ export function rollPrize(roll) {
 
 /* ---------- the loyalty card (round 6: it replaces the spend dice) ----------
    A stamp for each person at each session they turn up to; 10 stamps fill a card, and a full card earns a d20 roll
-   whose face is the prize in store credit ($1 to $20). */
+   whose face is the prize in store credit ($1 to $20). Round 23: or, the member's pick, a sure $10 instead. */
 export const CARD_SIZE = 10;
 
 /** The card from all the stamps someone has: { stamps (0-9 on the current card), cards (full cards so far) } */
@@ -881,6 +881,29 @@ export function loyaltyMessage(roll, pending = false) {
   const said = roll === 20 ? 'Natural 20! $20 store credit is yours.'
     : roll === 1 ? "A 1! $1 store credit, and Gobgob's still proud of it."
       : `You rolled ${[8, 11, 18].includes(roll) ? 'an' : 'a'} ${roll}: $${roll} store credit is yours.`;
+  return pending ? `${said} Show this screen at the counter to claim it.` : said;
+}
+
+/**
+ * Round 23 (Mo, 30 Oct 2026): "either get $10 store credit or roll a d20 and get store credit equal to the number they
+ * rolled. Make it a choice for the user if they feel their luck is bad." Each loyalty roll can be taken as this much
+ * store credit instead (cents). A d20 pays $10.50 on average, so rolling stays (just) the better bet, and the sure $10
+ * costs the shop no more than a roll does; it takes the sting out of rolling a 2 after ten sessions.
+ */
+export const LOYALTY_SURE = 1000;
+
+/** Round 23: what a loyalty roll is spent on, picked before anything is rolled: the d20 (no pick means this too) or the sure $10 */
+export const LOYALTY_PICKS = ['roll', 'sure'];
+
+/** Round 23's words: a pick that isn't one of LOYALTY_PICKS, and the line in staff's "Prize to give at the counter" email */
+export const PICK_WORDS = {
+  unknown: "That pick didn't come through properly. Try again.",
+  staffPicked: `Took $${LOYALTY_SURE / 100} instead of rolling`,
+};
+
+/** What Gobgob says about the sure $10. pending: Shopify couldn't add it, so it's claimed at the counter, like a roll's prize. */
+export function loyaltySureMessage(pending = false) {
+  const said = `You played it safe: $${LOYALTY_SURE / 100} store credit is yours.`;
   return pending ? `${said} Show this screen at the counter to claim it.` : said;
 }
 

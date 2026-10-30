@@ -10,7 +10,7 @@ import {
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings,
   SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
   CARD_SIZE, financialYear, financialYearFrom, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
-  eventDays,
+  eventDays, LOYALTY_PICKS, LOYALTY_SURE, PICK_WORDS, loyaltySureMessage,
 } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
@@ -356,6 +356,12 @@ const ROUND18_COLUMNS = [
  * before), and the GM's charge for it, a booking of kind 'gm-cover' (cover_of: the seat)
  */
 const ROUND21_COLUMNS = [['bookings', 'covered_by', 'TEXT'], ['bookings', 'cover_was', 'INTEGER'], ['bookings', 'cover_of', 'TEXT'], ['bookings', 'refund_amount', 'INTEGER']];
+/**
+ * Round 23, the sure $10 (Mo, 30 Oct 2026: a loyalty roll can be taken as $10 store credit instead of rolling):
+ * member_rolls.pick, made sure of on every start as ROUND15_COLUMNS are. null: the d20 was rolled (every row from before
+ * round 23 too); 'sure': they took the sure $10, and the row's roll is 0, since nothing was rolled.
+ */
+const ROUND23_COLUMNS = [['member_rolls', 'pick', 'TEXT']];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -904,6 +910,15 @@ const parse = (text, fallback) => {
 };
 
 const dollars = (cents) => `$${(cents / 100).toFixed(2)}`;
+/**
+ * Round 23: a loyalty roll's pick and face from its member_rolls row (pick and roll columns): the d20's face, 1 to 20
+ * (pick null: every roll, and every row from before round 23), or the sure $10 with no face (pick 'sure', roll 0).
+ * A prize with no roll row has neither.
+ */
+const rolledAs = (row) => {
+  if (row.pick === 'sure') return { pick: 'sure', roll: null };
+  return row.roll == null ? { pick: null, roll: null } : { pick: 'roll', roll: row.roll };
+};
 /** Short money for titles and notices: $10, or $12.50 */
 const money = (cents) => `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)}`;
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -1015,7 +1030,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS, ...HOLD_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS, ...HOLD_COLUMNS, ...ROUND23_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -6791,6 +6806,9 @@ export class Lair {
    *   fun (no body, { kind: 'fun' }, or not logged in): just the roll, never a prize. The home page uses this.
    *   loyalty (logged in, round 6): uses one of their loyalty rolls (a full card, a round 6 welcome roll, birthday gifts,
    *     rolls staff gave or, round 7, loot codes). Whatever the d20 shows is the prize: $1 to $20 store credit.
+   *     Round 23, pick (Mo, 30 Oct 2026): 'roll' (or no pick) rolls the d20 as above; 'sure' takes the sure $10 of store
+   *     credit instead, and nothing is rolled. Anything else is a 422 before anything is used. The pick is part of the
+   *     request that spends the roll, so there's no face to see first and no changing it after.
    *   spend and bonus: the spend dice retired in round 6 (410). daily: retired in round 4 (410).
    * The roll is claimed in the database before Shopify is asked for anything, so two quick taps can't spend one roll
    * twice. If Shopify can't add the store credit, the prize is kept as pending: the member shows the screen at the
@@ -6813,13 +6831,17 @@ export class Lair {
     if (!who.customerId || !['loyalty', 'spend', 'bonus', 'daily'].includes(asked)) return { roll: d20() };
     if (asked === 'daily') throw new RuleError('The daily roll has retired. Fill your loyalty card: 10 sessions earn a roll.', 410);
     if (asked !== 'loyalty') throw new RuleError(SPEND_RETIRED, 410);
+    // Round 23: the d20 or the sure $10, picked before anything is rolled (no pick: the d20, as pages before round 23 ask)
+    const pick = input?.pick ?? 'roll';
+    if (!LOYALTY_PICKS.includes(pick)) throw new RuleError(PICK_WORDS.unknown, 422);
     if (this.loyaltyOf(who.customerId).rolls.available < 1) throw new RuleError('No rolls yet, friend. Fill your card: 10 sessions earn a roll.', 409);
-    const roll = d20();
-    const won = loyaltyPrize(roll);
+    const sure = pick === 'sure';
+    const roll = sure ? null : d20();
+    const won = sure ? { kind: 'credit', amount: LOYALTY_SURE } : loyaltyPrize(roll);
     const prizeId = makeId('pz');
     this.write(
-      "INSERT INTO member_rolls (id, customer_id, kind, day, roll, prize_id, created_at) VALUES (?, ?, 'loyalty', ?, ?, ?, ?)",
-      makeId('rl'), who.customerId, new LairTime(rules.tz).key(now), roll, prizeId, now,
+      "INSERT INTO member_rolls (id, customer_id, kind, day, roll, prize_id, created_at, pick) VALUES (?, ?, 'loyalty', ?, ?, ?, ?, ?)",
+      makeId('rl'), who.customerId, new LairTime(rules.tz).key(now), roll ?? 0, prizeId, now, sure ? 'sure' : null,
     );
     this.write(
       "INSERT INTO prizes (id, customer_id, source, kind, amount, status, created_at, updated_at) VALUES (?, ?, 'loyalty', 'credit', ?, 'pending', ?, ?)",
@@ -6844,12 +6866,16 @@ export class Lair {
       this.notifyStaff(`Prize to give at the counter: ${member?.name || member?.code || 'a member'}`, {
         title: 'A dice prize to give at the counter',
         intro: "Shopify couldn't add a loyalty roll's prize to a member's account, so they'll show their screen at the counter. Add the store credit there, then mark the prize done on the staff page.",
-        details: [['Member', `${member?.name || 'Unknown'}${member?.code ? ` (${member.code})` : ''}`], ['Roll', String(roll)], ['Prize', `${dollars(won.amount)} store credit`], ['Why', problem]],
+        details: [
+          ['Member', `${member?.name || 'Unknown'}${member?.code ? ` (${member.code})` : ''}`], sure ? ['Picked', PICK_WORDS.staffPicked] : ['Roll', String(roll)],
+          ['Prize', `${dollars(won.amount)} store credit`], ['Why', problem],
+        ],
       });
     }
     return {
-      roll, kind: 'loyalty', prize: { id: prize.id, kind: 'credit', amount: prize.amount, status: prize.status },
-      message: loyaltyMessage(roll, Boolean(problem)), loyalty: this.loyaltyOf(who.customerId, rules, { details: true }),
+      roll, kind: 'loyalty', pick, prize: { id: prize.id, kind: 'credit', amount: prize.amount, status: prize.status },
+      message: sure ? loyaltySureMessage(Boolean(problem)) : loyaltyMessage(roll, Boolean(problem)),
+      loyalty: this.loyaltyOf(who.customerId, rules, { details: true }),
     };
   }
 
@@ -6980,11 +7006,13 @@ export class Lair {
   /**
    * A member's loyalty card (GET /me, the roll, staff views): { stamps (0-9 on this card), cardSize, cards (full cards),
    * card (round 7: the number of the card they're on, cards + 1), rolls: { available, earned: { cards, welcome,
-   * birthday, staff, codes }, used } }. A full card earns a roll and the next card starts at once; so do the welcome
+   * birthday, staff, codes }, used }, sure }. A full card earns a roll and the next card starts at once; so do the welcome
    * rolls given in round 6, birthday gifts' rolls, rolls staff give and (round 7) loot codes' rolls. used: loyalty rolls
-   * rolled (the old spend dice's rolls never count). details adds recent (the last 10 stamped sessions, newest first:
-   * { at, title, people }) and history (the last 20 loyalty rolls, newest first: { id, at, roll, amount, status:
-   * 'added'|'pending' }). No awaits.
+   * spent, rolled or taken as the sure $10 (the old spend dice's rolls never count). sure (round 23): the store credit,
+   * in cents, any roll can be taken as instead of rolling, so a page offers it only when the Lair does. details adds
+   * recent (the last 10 stamped sessions, newest first: { at, title, people }) and history (the last 20 loyalty rolls,
+   * newest first: { id, at, roll, pick, amount, status: 'added'|'pending' }; round 23: pick 'roll' with the d20's face,
+   * or 'sure' with roll null). No awaits.
    */
   loyaltyOf(customerId, rules = this.rulesCache, { details = false } = {}) {
     const id = String(customerId);
@@ -6993,18 +7021,21 @@ export class Lair {
     const earned = { cards, welcome: grants.get('welcome') || 0, birthday: this.giftedRolls(id), staff: grants.get('staff') || 0, codes: grants.get('code') || 0 };
     const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty'", id).one().n;
     const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes - used);
-    const card = { stamps, cardSize: CARD_SIZE, cards, card: cards + 1, rolls: { available, earned, used } };
+    const card = { stamps, cardSize: CARD_SIZE, cards, card: cards + 1, rolls: { available, earned, used }, sure: LOYALTY_SURE };
     if (!details) return card;
     const recent = this.stampedSessions(id, 10).map((s) => ({ at: s.at, title: this.stampTitle(s, rules), people: s.people }));
     const history = this.sql
       .exec(
-        `SELECT r.id AS roll_id, r.prize_id AS prize_id, r.created_at AS at, r.roll AS roll, p.amount AS amount, p.status AS status
+        `SELECT r.id AS roll_id, r.prize_id AS prize_id, r.created_at AS at, r.roll AS roll, r.pick AS pick, p.amount AS amount, p.status AS status
            FROM member_rolls r LEFT JOIN prizes p ON p.id = r.prize_id WHERE r.customer_id = ? AND r.kind = 'loyalty'
           ORDER BY r.created_at DESC, r.rowid DESC LIMIT 20`,
         id,
       )
       .toArray()
-      .map((r) => ({ id: r.prize_id || r.roll_id, at: r.at, roll: r.roll, amount: r.amount ?? r.roll * 100, status: r.status === 'pending' ? 'pending' : 'added' }));
+      .map((r) => {
+        const as = rolledAs(r);
+        return { id: r.prize_id || r.roll_id, at: r.at, ...as, amount: r.amount ?? (as.pick === 'sure' ? LOYALTY_SURE : r.roll * 100), status: r.status === 'pending' ? 'pending' : 'added' };
+      });
     return { ...card, recent, history };
   }
 
@@ -7241,24 +7272,25 @@ export class Lair {
     return this.sql.exec('SELECT COALESCE(SUM(rolls), 0) AS n FROM gifts WHERE customer_id = ?', String(customerId)).one().n;
   }
 
-  /** One prize with its roll, or null */
+  /** One prize with its roll (round 23: and its pick), or null */
   prizeRow(id) {
-    return this.sql.exec('SELECT p.*, r.roll AS roll FROM prizes p LEFT JOIN member_rolls r ON r.prize_id = p.id WHERE p.id = ?', String(id)).toArray()[0] || null;
+    return this.sql.exec('SELECT p.*, r.roll AS roll, r.pick AS pick FROM prizes p LEFT JOIN member_rolls r ON r.prize_id = p.id WHERE p.id = ?', String(id)).toArray()[0] || null;
   }
 
   /**
-   * A dice prize as My Lair and staff see it: { id, kind: 'credit', amount, status, roll, at }. status: 'added' (on
-   * their account), 'pending' (to give at the counter) or 'done' (staff gave it).
+   * A dice prize as My Lair and staff see it: { id, kind: 'credit', amount, status, roll, pick, at }. status: 'added' (on
+   * their account), 'pending' (to give at the counter) or 'done' (staff gave it). Round 23: pick 'roll' with the d20's
+   * face, or 'sure' (the sure $10 taken instead) with roll null.
    */
   prizeView(p) {
-    return { id: p.id, kind: p.kind, amount: p.amount || 0, status: p.status, roll: p.roll ?? null, at: p.created_at };
+    return { id: p.id, kind: p.kind, amount: p.amount || 0, status: p.status, ...rolledAs(p), at: p.created_at };
   }
 
   /** A member's last 10 dice prizes (birthday codes are emailed, so they aren't in this list), or only the pending ones */
   memberPrizes(customerId, { pending = false } = {}) {
     return this.sql
       .exec(
-        `SELECT p.*, r.roll AS roll FROM prizes p LEFT JOIN member_rolls r ON r.prize_id = p.id
+        `SELECT p.*, r.roll AS roll, r.pick AS pick FROM prizes p LEFT JOIN member_rolls r ON r.prize_id = p.id
          WHERE p.customer_id = ? AND p.source != 'birthday' ${pending ? "AND p.status = 'pending'" : ''} ORDER BY p.created_at DESC, p.rowid DESC LIMIT 10`,
         String(customerId),
       )
