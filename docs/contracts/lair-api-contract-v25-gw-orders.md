@@ -26,11 +26,18 @@ A product released after the order day (`custom.gw_release_date`) counts from it
 ## A paid order (orders/paid)
 
 A GW line is one whose vendor is `Games Workshop` and whose SKU is a GW code (8 to 13 digits; library copies'
-`DGLRPG-…` never are). An order with GW lines is worked out once (one Shopify request: the order, the lines' variants,
-`gw.schedule`); if Shopify can't answer, the webhook fails and comes again.
+`DGLRPG-…` never are). An order with GW lines is worked out once, after everything else the webhook keeps (spend,
+passes, gifts, stamps, tabs), so it never holds those up. Shopify is asked for the lines' variants and `gw.schedule`
+(`gwStock`, no customer data); if it can't answer, the webhook fails and comes again, which only repeats what's kept once
+per order. When and how the order was made (`gwOrderInfo`) and who bought it (`orderGiftBuyer`) are protected customer
+data, so neither ever stops it: a member on the order fills in the email and first name, the order's date falls back to
+now, and an unknown delivery gets neutral words ("We'll let you know when it's in"; the shop is told to check the order).
 
-For each GW line whose variant is tracked and keeps selling (`CONTINUE`): Shopify has already taken the sale off the
-stock, so the variant is short by `max(0, -inventoryQuantity)`. What the Lair already has down as ordered in for that
+First, stock added since maintenance last looked goes to what was already waiting: the variant was short by
+`-(inventoryQuantity + this order's units of it)` before this sale, and open ordered-in units beyond that are in, oldest
+order first (as maintenance step 2, and those orders are told). Then, for each GW line whose variant is tracked and keeps
+selling (`CONTINUE`): Shopify has already taken the sale off the stock, so the variant is short by
+`max(0, -inventoryQuantity)`. What the Lair already has down as ordered in for that
 variant (not in, not taken off) counts first; the rest, up to the line's quantity, is this line's ordered-in units. A
 variant that stops at 0 (dropped off the pad) is never ordered in. The order's date is when it was made, so an order
 made at 11:58pm on Monday is that week's however late its webhook comes.
@@ -59,9 +66,10 @@ email has gone (Resend's key `gw-list-<cutoff>` stops a second copy).
 
 ## Maintenance: refunds, deliveries, late orders
 
-Every run with open lines (one Shopify request for their variants, orders and order lines):
+Every run with open lines (up to 400; Shopify is asked about their variants, orders and order lines, 240 ids a request):
 
-1. A cancelled order takes all its open ordered-in units off; a line with fewer units left (a refund or an edit) takes
+1. A cancelled order takes all its open ordered-in units off, and so does an order Shopify no longer has (deleted) on two
+   runs at least 5 minutes apart; one Shopify has again is kept. A line with fewer units left (a refund or an edit) takes
    that many off, ordered-in units first.
 2. A variant with more open ordered-in units than it's short has had stock come in: the difference goes to its open
    lines, oldest order first.
@@ -72,9 +80,10 @@ Every run with open lines (one Shopify request for their variants, orders and or
 
 ## Known limits
 
-- Who gets the shelf's last one goes by the stock when each webhook is worked out. Two orders for the same variant
-  within seconds of each other, or a sale that takes fresh stock below zero again before the next maintenance run, can
-  swap who's ordered in. The total ordered from GW is still right.
+- Who gets the shelf's last one goes by the stock when each webhook is worked out. Two orders for the same variant whose
+  webhooks are worked out in the other order (seconds apart) can swap which customer is told it's ordered in; how many
+  are ordered from GW is still right.
+- A stock count and a sale landing within the one request maintenance makes can mark a unit in a few minutes early.
 - Refund an ordered-in item with Restock ticked, so the count goes back to where it was; otherwise it shows as below
   zero with no order to explain it.
 - At the till: when Shopify says 0 but there's one on the shelf, it's someone's online order. Don't sell it: the

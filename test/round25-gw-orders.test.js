@@ -52,6 +52,8 @@ let orders;
 let overrides;
 let marks;
 let denyMark;
+let stockDown;
+let privateData;
 let mails;
 let calls;
 let pending;
@@ -90,14 +92,20 @@ async function pay(n, lines, { who = null, how = 'pickup', placed = Date.now(), 
       lines: new Map(lines.map((l) => [`gid://shopify/LineItem/${l.id}`, l.quantity])),
     });
   }
+  const { status, data } = await deliver(n, lines, how);
+  assert.equal(status, 200, data.error);
+  return data;
+}
+/** The orders/paid webhook for an order (again, as Shopify sends it when it's had no 200) */
+async function deliver(n, lines, how = 'pickup') {
+  const orderId = `gid://shopify/Order/${n}`;
   const webhook = { id: n, admin_graphql_api_id: orderId, name: `#${n}`, source_name: how === 'counter' ? 'pos' : 'web', line_items: lines };
   const response = await lair.fetch(new Request('https://lair.test/internal/orders-paid', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: JSON.stringify(webhook),
   }));
   const data = await response.json();
-  assert.equal(response.status, 200, data.error);
   await settle();
-  return data;
+  return { status: response.status, data };
 }
 const maintain = async (ms) => {
   nowIs(ms);
@@ -122,6 +130,8 @@ beforeEach(() => {
   calls = [];
   marks = [];
   denyMark = false;
+  stockDown = false;
+  privateData = false;
   overrides = {};
   stock = new Map([
     [KIT, { code: '99120101386', title: 'Combat Patrol: Space Marines', available: 0, policy: 'CONTINUE', pack: 1, release: '', price: '210.00' }],
@@ -136,13 +146,21 @@ beforeEach(() => {
   lair.shopify.orderSpend = async () => null;
   lair.shopify.orderBuyer = async () => null;
   lair.shopify.customerEmail = async () => null;
-  lair.shopify.gwOrder = async (orderId, ids) => {
-    calls.push(['gwOrder', orderId, ids]);
-    return {
-      order: orders.get(orderId)?.info || null,
-      variants: new Map(ids.filter((id) => stock.has(id)).map((id) => [id, { id, tracked: true, ...stock.get(id) }])),
-      overrides,
-    };
+  lair.shopify.gwStock = async (ids) => {
+    calls.push(['gwStock', ids]);
+    if (stockDown) throw new Error('Shopify is having a moment');
+    return { variants: new Map(ids.filter((id) => stock.has(id)).map((id) => [id, { id, tracked: true, ...stock.get(id) }])), overrides };
+  };
+  // names, emails and the order itself are protected customer data: privateData has Shopify keep them to itself
+  lair.shopify.gwOrderInfo = async (orderId) => {
+    if (privateData) throw new Error('Access denied for order field.');
+    const info = orders.get(orderId)?.info;
+    return info ? { id: info.id, name: info.name, createdAt: info.createdAt, shippingLine: info.shippingLine } : null;
+  };
+  lair.shopify.orderGiftBuyer = async (orderId) => {
+    if (privateData) throw new Error('Access denied for email field.');
+    const info = orders.get(orderId)?.info;
+    return info ? { name: info.name, email: info.email || '', firstName: info.customer?.firstName || '' } : null;
   };
   lair.shopify.gwState = async (ids) => {
     calls.push(['gwState', ids.length]);
@@ -232,6 +250,7 @@ test('round 25: the customer\'s words, word for word', () => {
     ship: "We'll post your order in one parcel once everything's here.",
     pickup: "We'll email you when it's in at the Lair, ready to collect.",
     counter: "We'll email you when it's in, ready to collect at the Lair.",
+    none: "We'll let you know when it's in.",
   });
   assert.equal(W.refund, "If Games Workshop can't supply it, we'll let you know and refund it in full.");
   assert.equal(W.inSubject('#2041'), "It's in: order #2041 is ready to collect");
@@ -310,6 +329,8 @@ test('round 25: tags Shopify turned down (the scope not approved yet) are tried 
   assert.equal(marks.length, 0);
   assert.equal(lair.sql.exec('SELECT marked_at FROM gw_orders').one().marked_at, null);
   denyMark = false;
+  stockDown = false;
+  privateData = false;
   const run = await maintain(NOW + HOUR);
   assert.equal(run.orders.marked, 1);
   assert.equal(marks.length, 1);
@@ -414,11 +435,11 @@ test('round 25: stock coming in marks ordered-in units in, oldest order first; p
 });
 
 test('round 25: a refund or a cancelled order takes its ordered-in units off, and the restock isn\'t mistaken for GW\'s delivery', async () => {
-  await pay(2100, [gwLine(1, KIT, 2)], { who: KAI });
+  await pay(2100, [gwLine(21001, KIT, 2)], { who: KAI });
   nowIs(NOW + HOUR);
-  await pay(2101, [gwLine(1, KIT, 1)], { who: MIA });
+  await pay(2101, [gwLine(21011, KIT, 1)], { who: MIA });
   // Kai is refunded one kit, restocked (−3 → −2)
-  orders.get('gid://shopify/Order/2100').lines.set('gid://shopify/LineItem/1', 1);
+  orders.get('gid://shopify/Order/2100').lines.set('gid://shopify/LineItem/21001', 1);
   stock.get(KIT).available += 1;
   mails = [];
   const run = await maintain(NOW + 2 * HOUR);
@@ -443,4 +464,84 @@ test('round 25: an order still waiting the day after its date is flagged to the 
   assert.equal(shop.subject, 'Late from Games Workshop: 1 order');
   assert.match(shop.text, /#2110 \(Kai\), due Thu 26 Nov/);
   assert.equal((await maintain(at('2026-11-27', 10))).orders, null);
+});
+
+/* ---------------- after the review ---------------- */
+
+test('round 25: Shopify keeping names and emails to itself never stops the order: a member on it fills in who they are', async () => {
+  lair.makeMember({ customerId: '7001', name: 'Kai Tane', email: 'kai@example.com' }, NOW);
+  lair.shopify.orderSpend = async () => ({ customerId: '7001', amount: 21000, source: 'web', name: '#2200' });
+  privateData = true;
+  const paid = await pay(2200, [gwLine(22001, KIT, 1)], { who: KAI });
+  assert.equal(paid.gw.units, 1);
+  const order = lair.sql.exec('SELECT * FROM gw_orders').one();
+  assert.equal(order.email, 'kai@example.com');
+  assert.equal(order.first_name, 'Kai');
+  assert.equal(order.delivery, 'none');
+  assert.equal(order.name, '#2200');
+  const [told] = mailsTo('kai@example.com');
+  assert.match(told.text, /We'll let you know when it's in\./);
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM spend').one().n, 1);
+});
+
+test('round 25: when Shopify can\'t say how the stock stands, the rest of the webhook is kept and the GW step comes again', async () => {
+  lair.makeMember({ customerId: '7001', name: 'Kai Tane', email: 'kai@example.com' }, NOW);
+  lair.shopify.orderSpend = async () => ({ customerId: '7001', amount: 21000, source: 'web', name: '#2210' });
+  stockDown = true;
+  await pay(2209, [diceLine(22091)], { who: KAI }); // set up the pretend order (no GW lines, so nothing's asked)
+  const failed = await deliver(2210, [gwLine(22101, KIT, 1)]);
+  assert.equal(failed.status, 500);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM spend WHERE order_id = 'gid://shopify/Order/2210'").one().n, 1);
+  assert.equal(orderins().length, 0);
+  stockDown = false;
+  orders.set('gid://shopify/Order/2210', { ...orders.get('gid://shopify/Order/2209'), info: { ...orders.get('gid://shopify/Order/2209').info, id: 'gid://shopify/Order/2210', name: '#2210' } });
+  stock.get(KIT).available -= 1; // the sale Shopify made
+  const again = await deliver(2210, [gwLine(22101, KIT, 1)]);
+  assert.equal(again.status, 200);
+  assert.equal(again.data.gw.units, 1);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM spend WHERE order_id = 'gid://shopify/Order/2210'").one().n, 1);
+});
+
+test('round 25: stock added before maintenance has seen it goes to what was waiting, and a sale straight after is still ordered in', async () => {
+  await pay(2300, [gwLine(23001, KIT, 1)], { who: KAI, how: 'pickup' });
+  stock.get(KIT).available += 1; // GW's kit added to stock (−1 → 0)
+  nowIs(NOW + HOUR);
+  mails = [];
+  const mia = await pay(2301, [gwLine(23011, KIT, 1)], { who: MIA, how: 'ship' }); // and sold again straight away (0 → −1)
+  assert.equal(mia.gw.units, 1);
+  assert.deepEqual(orderins().map((r) => [r.order_id.split('/').pop(), r.quantity, r.arrived]), [['2300', 1, 1], ['2301', 1, 0]]);
+  assert.equal(mailsTo('kai@example.com')[0].subject, "It's in: order #2300 is ready to collect");
+  assert.match(mailsTo('staff@example.com')[0].text, /Kai collects at the Lair/);
+  // maintenance agrees: nothing more is in
+  assert.equal((await maintain(NOW + 2 * HOUR)).orders, null);
+});
+
+test('round 25: an order deleted in Shopify is taken off once two runs miss it, and one Shopify has again is kept', async () => {
+  await pay(2400, [gwLine(24001, KIT, 1)], { who: KAI });
+  await pay(2401, [gwLine(24011, KIT, 1)], { who: MIA });
+  const back = orders.get('gid://shopify/Order/2401');
+  orders.delete('gid://shopify/Order/2400');
+  orders.delete('gid://shopify/Order/2401');
+  assert.equal((await maintain(NOW + HOUR)).orders, null);
+  orders.set('gid://shopify/Order/2401', back);
+  const run = await maintain(NOW + HOUR + 10 * 60_000);
+  assert.deepEqual(run.orders, { cancelled: 1 });
+  assert.deepEqual(orderins().map((r) => [r.order_id.split('/').pop(), r.cancelled]), [['2400', 1], ['2401', 0]]);
+  assert.equal(lair.sql.exec("SELECT missing_at FROM gw_orders WHERE name = '#2401'").one().missing_at, null);
+});
+
+test('round 25: every open line is checked each run, however many there are', async () => {
+  for (let n = 0; n < 125; n += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await pay(2500 + n, [gwLine(250000 + n, KIT, 1)], { how: 'counter' });
+  }
+  assert.equal(orderins().length, 125);
+  // the newest is refunded and restocked: taken off, and the restock isn't mistaken for GW's delivery
+  orders.get('gid://shopify/Order/2624').lines.set('gid://shopify/LineItem/250124', 0);
+  stock.get(KIT).available += 1;
+  calls = [];
+  const run = await maintain(NOW + HOUR);
+  assert.deepEqual(run.orders, { cancelled: 1 });
+  assert.equal(calls.filter((c) => c[0] === 'gwState').length, 2);
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM gw_orderins WHERE arrived > 0').one().n, 0);
 });

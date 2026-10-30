@@ -29,6 +29,8 @@
 import { LairTime, addDays } from './core.js';
 import { emailReady } from './shopify.js';
 
+const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
+
 const TZ = 'Pacific/Auckland';
 const DAY = 24 * 3_600_000;
 
@@ -41,9 +43,12 @@ export const GW_LIST_HOUR = 6;
 /** Days from the Monday cutoff: GW ships on the Thursday, and it should be with the customer two weeks after */
 export const GW_SHIPS_DAYS = 3;
 export const GW_PROMISE_DAYS = 17;
-/** Most lines one order's GW check looks at, and ids one reconcile asks Shopify about */
+/** Most lines one order's GW check looks at; open lines one maintenance run checks, and ids a request asks about */
 const MOST_LINES = 50;
+const MOST_OPEN = 400;
 const MOST_IDS = 240;
+/** An order Shopify no longer has, seen missing this long apart (two maintenance runs), is gone */
+const GONE_AFTER = 5 * 60_000;
 
 /** Every word a customer or the shop reads, word for word in the contract */
 export const GW_WORDS = {
@@ -61,6 +66,7 @@ export const GW_WORDS = {
     ship: "We'll post your order in one parcel once everything's here.",
     pickup: "We'll email you when it's in at the Lair, ready to collect.",
     counter: "We'll email you when it's in, ready to collect at the Lair.",
+    none: "We'll let you know when it's in.",
   },
   refund: "If Games Workshop can't supply it, we'll let you know and refund it in full.",
   // the customer's email when it's in (Lair pickups and counter sales)
@@ -80,6 +86,7 @@ export const GW_WORDS = {
     ship: "Ready to pack and post: it's all in.",
     counterTold: (who) => `Counter sale for ${who}: we've emailed them. Put it aside.`,
     counter: 'Counter sale with no customer on it: put it aside for whoever ordered it.',
+    none: "Shopify didn't say how it's reaching them: check the order for pickup or post.",
   },
   lateSubject: (n) => `Late from Games Workshop: ${n === 1 ? '1 order' : `${n} orders`}`,
   lateTitle: 'Still waiting on Games Workshop',
@@ -174,7 +181,7 @@ export const GW_TABLES = [
     order_id TEXT PRIMARY KEY, name TEXT, channel TEXT NOT NULL, delivery TEXT NOT NULL,
     customer_id TEXT, email TEXT, first_name TEXT, placed_at INTEGER NOT NULL, units INTEGER NOT NULL DEFAULT 0,
     all_units INTEGER NOT NULL DEFAULT 0, promise TEXT, told_at INTEGER, marked_at INTEGER, ready_at INTEGER, ready_told_at INTEGER, late_at INTEGER,
-    created_at INTEGER NOT NULL)`,
+    missing_at INTEGER, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gw_orderins (
     id TEXT PRIMARY KEY, order_id TEXT NOT NULL, line_id TEXT NOT NULL, variant_id TEXT NOT NULL, code TEXT NOT NULL,
     title TEXT NOT NULL, line_quantity INTEGER NOT NULL, quantity INTEGER NOT NULL, arrived INTEGER NOT NULL DEFAULT 0,
@@ -197,20 +204,43 @@ export const gwOrderMethods = {
   },
 
   /**
-   * orders/paid: a paid order's GW lines (see the top of this file). Shopify is asked about the order and the lines'
-   * variants in one request; if it can't answer, this throws and the webhook is sent again. Returns null when the order
-   * has no GW lines (or they were worked out before), else { units, lines: [{ code, quantity, promise }] }.
+   * orders/paid: a paid order's GW lines (see the top of this file), after everything else the webhook keeps. Shopify is
+   * asked for the lines' stock and the schedule (if it can't answer, this throws and the webhook is sent again), then for
+   * when and how the order was made and who bought it: names and emails are protected customer data, so those two never
+   * stop it, and a member on the order fills in what Shopify won't say. Returns null when the order has no GW lines (or
+   * they were worked out before), else { units, lines: [{ code, quantity, promise }] }.
    */
-  async gwOrderPaid(order, orderId, { pos = false } = {}) {
+  async gwOrderPaid(order, orderId, { pos = false, spend = null } = {}) {
     const items = (order?.line_items || []).filter((item) => isGwItem(item) && item.variant_id && units(item.quantity) > 0).slice(0, MOST_LINES);
     if (!items.length || !orderId || this.gwKnown(orderId)) return null;
-    const found = await this.shopify.gwOrder(orderId, [...new Set(items.map((item) => variantGid(item.variant_id)))]);
+    const found = await this.shopify.gwStock([...new Set(items.map((item) => variantGid(item.variant_id)))]);
+    let info = null;
+    try {
+      info = await this.shopify.gwOrderInfo(orderId);
+    } catch (error) {
+      console.error('Lair: Shopify would not say when a Games Workshop order was made', String(error?.message || error).slice(0, 200));
+    }
+    let buyer = null;
+    try {
+      buyer = await this.shopify.orderGiftBuyer(orderId);
+    } catch (error) {
+      console.error('Lair: Shopify would not say who made a Games Workshop order', String(error?.message || error).slice(0, 200));
+    }
     // --- no awaits from here on ---
     if (this.gwKnown(orderId)) return null; // another delivery of the webhook got here first
     const now = Date.now();
-    const info = found?.order || {};
-    const placedAt = Date.parse(info.createdAt || '') || now;
+    const placedAt = Date.parse(info?.createdAt || '') || now;
     const day = new LairTime(this.rulesCache?.tz || TZ).key(placedAt);
+    // Stock that came in before this sale goes to what was already waiting, oldest first, even when maintenance hasn't
+    // seen it yet: what the variant was short before this order is its stock now plus this order's units of it.
+    const mine = new Map();
+    for (const item of items) mine.set(variantGid(item.variant_id), (mine.get(variantGid(item.variant_id)) || 0) + units(item.quantity));
+    const touched = new Set();
+    for (const [id, quantity] of mine) {
+      const variant = found?.variants?.get(id);
+      if (!variant || !Number.isFinite(Number(variant.available))) continue;
+      for (const done of this.gwArrive(id, -(Math.floor(Number(variant.available)) + quantity))) touched.add(done.orderId);
+    }
     const lines = [];
     for (const item of items) {
       const variant = found?.variants?.get(variantGid(item.variant_id));
@@ -235,21 +265,56 @@ export const gwOrderMethods = {
     }
     const total = lines.reduce((sum, l) => sum + l.quantity, 0);
     const promise = lines.reduce((latest, l) => (l.promise > latest ? l.promise : latest), '') || null;
-    const customer = info.customer || {};
-    const email = String(info.email || customer.defaultEmailAddress?.emailAddress || '').trim().slice(0, 120);
-    const fallback = String(customer.displayName || '').trim().split(/\s+/)[0] || '';
-    const first = String(customer.firstName || info.billingAddress?.firstName || '').trim() || (fallback.includes('@') ? '' : fallback);
+    const customerId = spend?.customerId || (order.customer?.id ? String(order.customer.id).split('/').pop() : null);
+    const member = customerId ? this.memberRow(customerId) : null;
+    const email = [buyer?.email, member?.email].map((e) => String(e || '').trim()).find((e) => isEmail(e)) || '';
+    const first = String(buyer?.firstName || member?.first_name || String(member?.name || '').split(/\s+/)[0] || '').trim();
     this.write(
       `INSERT OR IGNORE INTO gw_orders (order_id, name, channel, delivery, customer_id, email, first_name, placed_at, units, all_units, promise, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      orderId, info.name || order.name || null, pos ? 'counter' : 'online', deliveryOf(info, pos),
-      customer.id ? String(customer.id).split('/').pop() : null, email || null, first.slice(0, 40) || null, placedAt, total,
+      orderId, info?.name || buyer?.name || spend?.name || order.name || null, pos ? 'counter' : 'online', deliveryOf(info, pos),
+      customerId, email.slice(0, 120) || null, first.slice(0, 40) || null, placedAt, total,
       (order.line_items || []).reduce((sum, item) => sum + units(item.quantity), 0), promise, now,
     );
+    this.gwSettle(touched, now);
     if (!total) return { units: 0, lines: [] };
     this.later(this.gwMark(orderId));
     if (email && emailReady(this.env)) this.later(this.gwTell(orderId));
     return { units: total, lines: lines.map((l) => ({ code: l.code, quantity: l.quantity, promise: l.promise })) };
+  },
+
+  /**
+   * Stock in for a variant short by `short` (below zero by that many; 0 or less when it isn't): its open ordered-in units
+   * beyond that are in, oldest order first. Returns [{ orderId, units }] for each line marked. No awaits.
+   */
+  gwArrive(variantId, short) {
+    const rows = this.sql.exec(`SELECT * FROM gw_orderins WHERE variant_id = ? AND ${OPEN} ORDER BY placed_at, id`, variantId).toArray();
+    let spare = rows.reduce((sum, r) => sum + r.quantity - r.arrived - r.cancelled, 0) - Math.max(0, Math.floor(short) || 0);
+    const done = [];
+    for (const row of rows) {
+      if (spare <= 0) break;
+      const take = Math.min(spare, row.quantity - row.arrived - row.cancelled);
+      this.write('UPDATE gw_orderins SET arrived = ? WHERE id = ?', row.arrived + take, row.id);
+      spare -= take;
+      done.push({ orderId: row.order_id, units: take });
+    }
+    return done;
+  },
+
+  /**
+   * Orders with nothing left to come: when something came in, the customer (a pickup or counter sale) and the shop hear,
+   * and when it was all taken off there's nothing to say. Returns the names of the orders that are in. No awaits.
+   */
+  gwSettle(orderIds, now = Date.now()) {
+    const ready = [];
+    for (const orderId of orderIds) {
+      const { order, lines } = this.gwOrderRows(orderId);
+      if (!order || order.ready_at || lines.some((l) => l.quantity > l.arrived + l.cancelled)) continue;
+      this.write('UPDATE gw_orders SET ready_at = ? WHERE order_id = ?', now, orderId);
+      if (lines.some((l) => l.arrived > 0)) ready.push({ order, lines: lines.filter((l) => l.arrived > 0) });
+    }
+    if (ready.length) this.gwTellReady(ready);
+    return ready.map((r) => r.order.name || r.order.order_id);
   },
 
   /** An order's row and its ordered-in lines. No awaits. */
@@ -285,7 +350,7 @@ export const gwOrderMethods = {
     if (!order?.email || order.told_at || !lines.length) return false;
     const some = order.units < order.all_units;
     const promise = gwLabel(order.promise);
-    const outro = GW_WORDS.toldOutro[order.delivery] || GW_WORDS.toldOutro.pickup;
+    const outro = GW_WORDS.toldOutro[order.delivery] || GW_WORDS.toldOutro.none;
     const sent = await this.mail(this.letter(order.email, GW_WORDS.toldSubject(order.name), {
       title: GW_WORDS.toldTitle,
       intro: GW_WORDS.toldIntro(order.first_name, some, promise),
@@ -303,7 +368,7 @@ export const gwOrderMethods = {
 
   /**
    * Every maintenance run: refunds and cancellations, then what's come in (see the top of this file). Shopify is asked
-   * about every open line's variant, order and order line in one request.
+   * about every open line's variant, order and order line, a page of ids a request (up to MOST_OPEN lines a run).
    */
   async gwReconcile(now = Date.now()) {
     const result = {};
@@ -312,61 +377,61 @@ export const gwOrderMethods = {
     let marked = 0;
     for (const row of unmarked) if (await this.gwMark(row.order_id)) marked += 1;
     if (marked) result.marked = marked;
-    const before = this.sql.exec(`SELECT order_id, line_id, variant_id FROM gw_orderins WHERE ${OPEN} ORDER BY placed_at, id LIMIT 80`).toArray();
+    const before = this.sql.exec(`SELECT order_id, line_id, variant_id FROM gw_orderins WHERE ${OPEN} ORDER BY placed_at, id LIMIT ?`, MOST_OPEN).toArray();
     if (!before.length) return Object.keys(result).length ? result : null;
-    const ids = [...new Set(before.flatMap((r) => [r.variant_id, r.order_id, lineGid(r.line_id)]))].slice(0, MOST_IDS);
-    const state = await this.shopify.gwState(ids);
+    const ids = [...new Set(before.flatMap((r) => [r.variant_id, r.order_id, lineGid(r.line_id)]))];
+    const state = new Map();
+    for (let i = 0; i < ids.length; i += MOST_IDS) {
+      // eslint-disable-next-line no-await-in-loop
+      const page = await this.shopify.gwState(ids.slice(i, i + MOST_IDS));
+      for (const [id, node] of page) state.set(id, node);
+    }
+    const asked = new Set(ids);
     // --- no awaits from here on: read the open lines fresh ---
     const open = this.sql.exec(`SELECT * FROM gw_orderins WHERE ${OPEN} ORDER BY placed_at, id`).toArray();
     const touched = new Set();
+    // 0. an order Shopify no longer has (deleted in Shopify) on two runs in a row is gone; one that's back is kept
+    const gone = new Set();
+    for (const orderId of new Set(open.map((r) => r.order_id))) {
+      if (!asked.has(orderId)) continue;
+      const missingAt = this.sql.exec('SELECT missing_at FROM gw_orders WHERE order_id = ?', orderId).toArray()[0]?.missing_at ?? null;
+      if (state.has(orderId)) {
+        if (missingAt) this.write('UPDATE gw_orders SET missing_at = NULL WHERE order_id = ?', orderId);
+      } else if (!missingAt) {
+        this.write('UPDATE gw_orders SET missing_at = ? WHERE order_id = ?', now, orderId);
+      } else if (now - missingAt >= GONE_AFTER) {
+        gone.add(orderId);
+      }
+    }
+    // 1. a cancelled or deleted order, or units taken off a line (a refund or an edit): its ordered-in units go first
     let cancelled = 0;
-    // 1. a cancelled order, or units taken off a line (a refund or an edit): its ordered-in units go first
     for (const row of open) {
       const order = state.get(row.order_id);
       const line = state.get(lineGid(row.line_id));
-      let gone = row.cancelled;
-      if (order?.cancelledAt) gone = row.quantity - row.arrived;
-      else if (line && Number.isFinite(line.currentQuantity)) gone = Math.max(row.cancelled, Math.min(row.quantity - row.arrived, row.line_quantity - line.currentQuantity));
-      if (gone > row.cancelled) {
-        this.write('UPDATE gw_orderins SET cancelled = ? WHERE id = ?', gone, row.id);
-        cancelled += gone - row.cancelled;
-        row.cancelled = gone;
+      let off = row.cancelled;
+      if (order?.cancelledAt || gone.has(row.order_id)) off = row.quantity - row.arrived;
+      else if (line && Number.isFinite(line.currentQuantity)) off = Math.max(row.cancelled, Math.min(row.quantity - row.arrived, row.line_quantity - line.currentQuantity));
+      if (off > row.cancelled) {
+        this.write('UPDATE gw_orderins SET cancelled = ? WHERE id = ?', off, row.id);
+        cancelled += off - row.cancelled;
         touched.add(row.order_id);
       }
     }
     // 2. stock that's come in: what a variant has beyond what it's short goes to its open lines, oldest order first
     let arrived = 0;
-    const byVariant = new Map();
-    for (const row of open) if (row.quantity > row.arrived + row.cancelled) byVariant.set(row.variant_id, [...(byVariant.get(row.variant_id) || []), row]);
-    for (const [variantId, rows] of byVariant) {
+    for (const variantId of new Set(open.map((r) => r.variant_id))) {
       const variant = state.get(variantId);
       if (!variant || !Number.isFinite(variant.available)) continue;
-      const short = Math.max(0, -Math.floor(variant.available));
-      let spare = rows.reduce((sum, r) => sum + r.quantity - r.arrived - r.cancelled, 0) - short;
-      for (const row of rows) {
-        if (spare <= 0) break;
-        const take = Math.min(spare, row.quantity - row.arrived - row.cancelled);
-        this.write('UPDATE gw_orderins SET arrived = ? WHERE id = ?', row.arrived + take, row.id);
-        row.arrived += take;
-        spare -= take;
-        arrived += take;
-        touched.add(row.order_id);
+      for (const done of this.gwArrive(variantId, -Math.floor(variant.available))) {
+        arrived += done.units;
+        touched.add(done.orderId);
       }
     }
     if (cancelled) result.cancelled = cancelled;
     if (arrived) result.arrived = arrived;
     // 3. orders with nothing left to come: in (an email and the shop told), or all taken off (nothing to say)
-    const ready = [];
-    for (const orderId of touched) {
-      const { order, lines } = this.gwOrderRows(orderId);
-      if (!order || order.ready_at || lines.some((l) => l.quantity > l.arrived + l.cancelled)) continue;
-      this.write('UPDATE gw_orders SET ready_at = ? WHERE order_id = ?', now, orderId);
-      if (lines.some((l) => l.arrived > 0)) ready.push({ order, lines: lines.filter((l) => l.arrived > 0) });
-    }
-    if (ready.length) {
-      result.ready = ready.map((r) => r.order.name || r.order.order_id);
-      this.gwTellReady(ready);
-    }
+    const ready = this.gwSettle(touched, now);
+    if (ready.length) result.ready = ready;
     // 4. orders past their date with something still to come: the shop hears once
     const today = new LairTime(this.rulesCache?.tz || TZ).key(now);
     const late = this.sql.exec(
@@ -394,13 +459,15 @@ export const gwOrderMethods = {
     const rows = [];
     for (const { order, lines } of ready) {
       const what = listText(lines.map((l) => lineText(l, l.arrived)));
-      const collect = order.delivery !== 'ship';
+      // only a Lair pickup or a counter sale is told it's ready to collect; a posted order hears from Shopify when it's sent
+      const collect = order.delivery === 'pickup' || order.delivery === 'counter';
       const tell = collect && order.email && emailReady(this.env);
       const who = order.first_name || order.email || '';
       let action;
       if (order.delivery === 'ship') action = GW_WORDS.ready.ship;
       else if (order.delivery === 'counter') action = tell ? GW_WORDS.ready.counterTold(who) : GW_WORDS.ready.counter;
-      else action = tell ? GW_WORDS.ready.pickupTold(who) : GW_WORDS.ready.pickup;
+      else if (order.delivery === 'pickup') action = tell ? GW_WORDS.ready.pickupTold(who) : GW_WORDS.ready.pickup;
+      else action = GW_WORDS.ready.none;
       rows.push([`${order.name || 'Order'}: ${what}`, action]);
       if (!tell) continue;
       this.later((async () => {

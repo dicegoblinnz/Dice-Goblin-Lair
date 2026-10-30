@@ -838,25 +838,29 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 25 (src/gw-orders.js): what a paid order's Games Workshop lines need, in one request: the order (who, how it's
-   * reaching them, when it was made), each variant's stock, whether it keeps selling when out of stock, its pack size
-   * (custom.gw_pack_size) and its product's release date (custom.gw_release_date), and the shop's schedule changes
-   * (gw.schedule). Throws when Shopify can't answer, so the webhook is sent again.
+   * Round 25 (src/gw-orders.js): a paid order's Games Workshop lines' variants, in one request: each one's stock, whether
+   * it keeps selling when out of stock, its pack size (custom.gw_pack_size) and its product's release date
+   * (custom.gw_release_date), with the shop's schedule changes (gw.schedule). No customer data, so it needs only the
+   * product and inventory scopes. Throws when Shopify can't answer, so the webhook is sent again.
    */
-  async gwOrder(orderId, variantIds) {
+  async gwStock(variantIds) {
     const data = await this.graphql(
-      `query GwOrder($id: ID!, $variants: [ID!]!) {
-        order(id: $id) { id name email createdAt customer { id firstName displayName defaultEmailAddress { emailAddress } } billingAddress { firstName } shippingLine { title deliveryCategory } }
+      `query GwStock($variants: [ID!]!) {
         nodes(ids: $variants) { ... on ProductVariant { ${GW_VARIANT} } }
         shop { schedule: metafield(namespace: "gw", key: "schedule") { value } }
       }`,
-      { id: orderId, variants: variantIds.slice(0, 100) },
+      { variants: variantIds.slice(0, 100) },
     );
     return {
-      order: data.order || null,
       variants: new Map((data.nodes || []).filter((v) => v?.id).map((v) => [v.id, gwVariant(v)])),
       overrides: gwOverrides(data.shop),
     };
+  }
+
+  /** Round 25: when an order was made, its number, and how it's reaching them (its shipping line: a pickup or post) */
+  async gwOrderInfo(orderId) {
+    const data = await this.graphql('query GwOrderInfo($id: ID!) { order(id: $id) { id name createdAt shippingLine { title deliveryCategory } } }', { id: orderId });
+    return data.order || null;
   }
 
   /**

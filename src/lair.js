@@ -4832,9 +4832,6 @@ export class Lair {
     await this.offerClaimsPaid(order, orderId);
     // Round 17: a paid postal library swap (_libsend), checked against the send's own draft order (src/queue.js)
     const librarySends = await this.librarySendsPaid(order, orderId);
-    // Round 25: Games Workshop lines ordered in from GW (src/gw-orders.js): Shopify's answer first, then its own writes. If
-    // Shopify can't answer, this throws and the webhook comes again; everything above is kept once per order.
-    const gw = await this.gwOrderPaid(order, orderId, { pos });
     // --- no awaits from here on ---
     // The order's customer paid: a friend paying their share with their own member code attached is the payer.
     if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
@@ -4856,6 +4853,10 @@ export class Lair {
     // Round 22: a tab put in the cart shortly before this Pay on Verifone sale, whose every item is on it (src/counter.js)
     const cartTabs = pos ? this.markTabsPaid(this.cartTabsPaidBy(order, spend?.customerId || order.customer?.id, spend?.processedAt || Date.now()), orderId, Date.now()) : [];
     if (cartTabs.length) this.reconcileBills(rules, Date.now(), { orderId, pos });
+    // Round 25: Games Workshop lines ordered in from GW (src/gw-orders.js), last, so it never holds up anything above: its
+    // own awaits, then its own writes. If Shopify can't say how the stock stands, this throws and the webhook comes
+    // again, which only repeats what's above (kept once per order).
+    const gw = await this.gwOrderPaid(order, orderId, { pos, spend });
     return {
       updated, tabs: [...tabsPaid, ...cartTabs], spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}),
       ...(stamps ? { stamps } : {}),
