@@ -238,3 +238,16 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   person picked, a seat booked free that stays free when it's charged for again inside the 24 hours, a free session's
   Session done, focus after running a session, the Reserve email's hint, and a player taken off already. Axe, no sideways
   scroll. `DG_THEME=… PORT=4991 [AXE=…/axe.min.js] [OUT=…] node tools/qa/round18/gm-sessions.mjs [phone|desktop]`.
+
+## round23: the sure $10 (round 23)
+
+- `round23/sure-ten.mjs`: the theme mock in demo mode, at 320px, 390px and 1280px. My Lair's loyalty card: "Roll for $1
+  to $20, or play it safe with $10." under rolls ready, Take $10 instead (the ghost button) under Roll your d20 (gold),
+  both 44px or taller and inside the card; How it works's new line under the roll's; taking the $10 sends `pick: 'sure'`,
+  greys out both buttons while it's on its way, rolls nothing (the die rests on its 20) and prints a coupon with a round
+  $10 coin, then offers Roll your d20 (not Roll again); a forced 14 still rolls; with none left, no buttons; the Wallet's
+  $10 with its coin and "Played it safe · <day>"; a $10 Shopify couldn't add, on the cream coupon with "Taken at";
+  a $10 that didn't go through keeps the roll and puts focus back on its button; a Lair app without `loyalty.sure`
+  offers no $10; a login that lapsed in an open tab (the logged-out answer, `{ roll }` alone) prints no coupon on either
+  button and says to log in again; and the staff page's prize to sort says "took it instead of rolling". Axe, no sideways scroll, no
+  console errors. `DG_THEME=… [PORT=4988] [AXE=…/axe.min.js] [OUT=…] node tools/qa/round23/sure-ten.mjs [small|phone|desktop]`.

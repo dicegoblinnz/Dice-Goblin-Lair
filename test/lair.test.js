@@ -1819,7 +1819,8 @@ test('dice (round 6): the spend dice and the daily roll have retired (410); a lo
     lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', 'gid://shopify/Order/1', '1001', 20000, 'pos', NOW);
     const me = (await call('GET', 'me', null, '1001')).data;
     assert.deepEqual([me.rolls, me.prizes], [{ available: 0, toNext: null, per: null, bonus: 0 }, []], 'the old rolls field mirrors the loyalty rolls');
-    assert.deepEqual(me.loyalty, { stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 0, earned: { cards: 0, welcome: 0, birthday: 0, staff: 0, codes: 0 }, used: 0 }, recent: [], history: [] });
+    // round 23: the card says a roll can be taken as a sure $10 instead
+    assert.deepEqual(me.loyalty, { stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 0, earned: { cards: 0, welcome: 0, birthday: 0, staff: 0, codes: 0 }, used: 0 }, sure: 1000, recent: [], history: [] });
   } finally {
     unload();
   }
@@ -1854,7 +1855,8 @@ test('dice (round 6): a loyalty roll\'s face is the prize, $1 to $20 store credi
     assert.deepEqual([credits.length, credits.reduce((sum, [, cents]) => sum + cents, 0), credits.every(([id]) => id === '1001')], [20, 21000, true], 'every face, $1 to $20');
     const me = (await call('GET', 'me', null, '1001')).data;
     assert.equal(me.loyalty.history.length, 20);
-    assert.deepEqual(me.loyalty.history[0], { id: me.loyalty.history[0].id, at: NOW, roll: 20, amount: 2000, status: 'added' }, 'newest first');
+    // round 23: each roll says it was rolled (pick 'roll'), not taken as the sure $10
+    assert.deepEqual(me.loyalty.history[0], { id: me.loyalty.history[0].id, at: NOW, roll: 20, pick: 'roll', amount: 2000, status: 'added' }, 'newest first');
     assert.deepEqual(me.loyalty.history.map((h) => h.roll), faces.slice().reverse());
     assert.equal(me.prizes.length, 10, 'the last 10 prizes, as before');
     assert.equal(me.prizes[0].id, me.loyalty.history[0].id, "a roll's history id is its prize's");
@@ -1896,7 +1898,7 @@ test('dice (round 6): when Shopify can\'t add a loyalty roll\'s credit, the priz
     assert.deepEqual(found.pendingPrizes.map((p) => [p.kind, p.amount, p.status, p.roll]), [['credit', 2000, 'pending', 20], ['credit', 1100, 'pending', 11]]);
     assert.equal((await call('POST', `prizes/${eleven.data.prize.id}/done`, {}, '1001')).status, 403);
     const done = await call('POST', `prizes/${eleven.data.prize.id}/done`, {}, 'staff');
-    assert.deepEqual(done.data.prize, { id: eleven.data.prize.id, kind: 'credit', amount: 1100, status: 'done', roll: 11, at: NOW });
+    assert.deepEqual(done.data.prize, { id: eleven.data.prize.id, kind: 'credit', amount: 1100, status: 'done', roll: 11, pick: 'roll', at: NOW });
     assert.equal((await call('POST', 'prizes/pz_nope/done', {}, 'staff')).status, 404);
     assert.deepEqual((await call('GET', 'members?q=aroha', null, 'staff')).data[0].pendingPrizes.map((p) => p.amount), [2000]);
     const me = (await call('GET', 'me', null, '1001')).data;
@@ -5507,7 +5509,7 @@ test('live data: round 5\'s database (main, db8702b) moves to round 6 with every
   // rolls do (round 7: and there's no welcome roll on this visit)
   const me = (await call('GET', 'me', null, '1001')).data;
   assert.deepEqual(me.loyalty, {
-    stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 2, earned: { cards: 0, welcome: 0, birthday: 2, staff: 0, codes: 0 }, used: 0 }, recent: [], history: [],
+    stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 2, earned: { cards: 0, welcome: 0, birthday: 2, staff: 0, codes: 0 }, used: 0 }, sure: 1000, recent: [], history: [],
   });
   assert.deepEqual(me.rolls, { available: 2, toNext: null, per: null, bonus: 2 });
   // Kai's seated session last week (round 4) earns nothing either; Mia hasn't visited (and no welcome roll waits for her)
