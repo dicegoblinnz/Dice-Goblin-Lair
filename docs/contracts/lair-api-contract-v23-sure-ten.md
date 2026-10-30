@@ -77,6 +77,10 @@ mark it done with `POST /prizes/:id/done`.
 - How it works (the section's default, which the live template doesn't override): "Feeling unlucky? Skip the roll and
   take a sure $10 instead. Your pick, every roll."
 - The staff page: a member's prize to sort at the counter says "· took it instead of rolling".
+- From the review: the page counts a tap as spent only when the answer is a loyalty one with its prize. A login that
+  lapsed in an open tab gets the logged-out answer (just a fun roll, nothing paid), and the page now says "You've been
+  logged out. Log in again to use your rolls." instead of printing it as a prize (a hole since round 6, on Roll your d20
+  too).
 - Demo mode works the same way (`pick: 'sure'`, `loyalty.sure`, each roll's `pick`).
 
 ## 6. Going live

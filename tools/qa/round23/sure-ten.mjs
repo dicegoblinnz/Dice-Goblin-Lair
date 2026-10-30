@@ -216,6 +216,31 @@ for (const size of sizes) {
   check(`${tag} a $10 that didn't go through says why, keeps the roll, and puts focus back on Take $10 instead`,
     b.error === 'The Lair app is taking a breather. Try again in a moment.' && b.sure && !b.sure.disabled && focus && (await rollsReady(page)) === readyBefore, { error: b.error, focus });
 
+  // ---------- a login that lapsed in an open tab (the review): the Lair answers as it does anyone logged out, with
+  // just a fun roll ({ roll }), so nothing was spent or paid and no coupon may print, whichever button was tapped ----------
+  for (const which of ['[data-roll-sure]', '[data-roll]']) {
+    await open(page, '/pages/my-lair');
+    await page.evaluate(() => {
+      const be = window.Lair.store.backend;
+      const real = be.roll.bind(be);
+      let once = true;
+      be.roll = async (input) => {
+        if (once) {
+          once = false;
+          return { roll: 14 };
+        }
+        return real(input);
+      };
+    });
+    const readyNow = await rollsReady(page);
+    await page.click(`[data-roll-slots] ${which}`);
+    await page.waitForSelector('[data-roll-slots] .ml-roll__error', { timeout: 10000 }).catch(() => {});
+    await settle(page, 1200);
+    b = await box(page);
+    check(`${tag} logged out in another tab, ${which === '[data-roll]' ? 'Roll your d20' : 'Take $10 instead'}: no made-up coupon, "You've been logged out. Log in again to use your rolls.", and the roll's still there`,
+      !b.result && b.error === "You've been logged out. Log in again to use your rolls." && b.die.number !== '14' && !b.die.cls.includes('is-win') && (await rollsReady(page)) === readyNow && b.ready.startsWith(`${readyNow} roll`), b);
+  }
+
   // ---------- a Lair app from before round 23 (no loyalty.sure): no $10 on offer ----------
   await page.evaluate(async () => {
     const be = window.Lair.store.backend;
