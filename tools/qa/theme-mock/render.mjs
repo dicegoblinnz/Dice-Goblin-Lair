@@ -592,6 +592,48 @@ const PAGES = {
   '/pages/contact': () => renderPage(hasTemplate('page.contact') ? 'page.contact' : 'page', { page: pages.contact, template: { name: 'page', suffix: 'contact' } }),
 };
 
+/* ---- round 25, Games Workshop ordered in (31 Oct 2026): kits on the shelf, ordered in and with one left, and a cart
+   with each. Everything on GW's pad keeps selling at 0 (inventory_policy continue). ---- */
+const gwKit = (handle, title, inv, policy = 'continue', price = 89) => {
+  const p = product(handle, title, 'Games Workshop', price, price, null, true, inv, 1000, 1000);
+  p.type = 'War Game';
+  const v = p.variants[0];
+  v.inventory_policy = policy;
+  v.available = inv > 0 || policy === 'continue';
+  p.available = v.available;
+  p.tags = ['Warhammer', 'Warhammer 40K', 'Necrons'];
+  return p;
+};
+const gwInStore = gwKit('necrons-immortals', 'Necrons: Immortals', 4);
+const gwOrderedIn = gwKit('necrons-warriors', 'Necrons: Necron Warriors', 0, 'continue', 99);
+const gwLastOne = gwKit('necrons-lokhust-heavy-destroyer', 'Necrons: Lokhust Heavy Destroyer', 1, 'continue', 83);
+const gwLine = (key, p, quantity, properties = {}) => ({
+  key, url: p.url, image: p.featured_media, product: p, variant: { ...p.variants[0], quantity_rule: {} }, quantity,
+  final_line_price: p.price * quantity, original_line_price: p.price * quantity, properties, line_level_discount_allocations: [],
+});
+const gwCart = {
+  ...emptyCart, item_count: 5, total_price: 9900 * 2 + 8300 * 2 + 9500,
+  items: [
+    gwLine('gw:1', gwOrderedIn, 2, { 'Ordered in': 'From Games Workshop, should be with you by Thu 19 Nov' }),
+    gwLine('gw:2', gwLastOne, 2),
+    { key: 'a:1', url: '/products/wingspan', image: boardGames[0].featured_media, product: boardGames[0], variant: { title: 'Default Title', quantity_rule: {} }, quantity: 1, final_line_price: 9500, original_line_price: 9500, properties: {}, line_level_discount_allocations: [] },
+  ],
+};
+const gwOnlyCart = { ...emptyCart, item_count: 1, total_price: 9900, items: [gwLine('gw:3', gwOrderedIn, 1)] };
+const gwProductPage = (p) => () => renderPage('product', { product: p, request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } });
+// a War Game collection with them, and a kit that's dropped off the pad (stops selling at 0: never shown)
+const gwDropped = gwKit('citadel-small-base-brush', 'Citadel Small Base Brush', 0, 'deny', 19);
+collections['war-game'] = coll('war-game', 'War Game', [gwOrderedIn, gwInStore, gwDropped, gwLastOne], 4);
+Object.assign(PAGES, {
+  '/collections/war-game': () => shopCollectionPage('war-game'),
+  '/products/gw-in-store': gwProductPage(gwInStore),
+  '/products/gw-ordered-in': gwProductPage(gwOrderedIn),
+  '/products/gw-last-one': gwProductPage(gwLastOne),
+  '/cart-gw': () => renderPage('cart', { cart: gwCart, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
+  '/cart-gw-only': () => renderPage('cart', { cart: gwOnlyCart, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
+  '/cart-gw-drawer': () => renderPage('index', { cart: gwCart }),
+});
+
 /* ---- library routes (library worktree): tag-filtered library collection, membership, terms, search ---- */
 const handleize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const CONTENT_DIR = path.join(HERE, '..', 'library-content');
