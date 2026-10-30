@@ -37,11 +37,12 @@ A loot code (round 7) can be a welcome code: `roll_codes.pays_on` is `'first-ses
 by them: 409; switched off, past its last day or used up: 410):
 
 - They used a welcome code already (any of them): 409 "You've used a welcome code already. It's one per player."
-- They played at the Lair before today (`playedBefore`: a stamped session that started before today, or a table, walk-in,
-  TTRPG seat or sign-up on their account checked in or paid before today, from before the loyalty card too): 409
-  "That's a welcome code for players new to the Lair, and you've played with us before. Thanks for coming back!" Nothing
-  is saved. Today doesn't count against them, so someone can check in and pay for their first session at the counter and
-  type the code after.
+- They've been to Dice Goblin before today (`playedBefore`): a stamped session that started before today; a table,
+  walk-in, TTRPG seat or sign-up they were on (as the booker, a named player or a guest) checked in or paid before today,
+  from before the loyalty card too; or a counter purchase with their account on the sale before today (Shopify POS's own
+  or Pay on Verifone's). 409 "That's a welcome code for players new to the Lair, and you've played with us before. Thanks
+  for coming back!" Nothing is saved. Today doesn't count against them, so someone can check in and pay for their first
+  session at the counter and type the code after. An online-only customer is still new: buying online isn't a visit.
 - Otherwise the use is saved (`roll_code_uses.pays_on` 'first-session', no grant), and the answer is
   `{ kind: 'welcome', rolls: 0, waiting, message, loyalty }`: "Saved! Your welcome roll unlocks after your first paid
   session at the Lair. Show your member code at the counter when you pay, and it's yours." (2 or more: "Saved! Your 2
@@ -54,11 +55,21 @@ by them: 409; switched off, past its last day or used up: 410):
 One welcome code a member is also kept by a unique index (`roll_code_uses_welcome`), so two codes typed at the same
 moment save one.
 
-**A paid session** (`paidSession`) is one that stamps their card (round 22's `stampTally`) and was paid for: a table,
-walk-in, TTRPG seat or sign-up with money paid towards it (`paid_amount > 0`) or a session pass used on it
-(`covered > 0`), a Session product rung up at the counter for them, or a stamp staff added by hand. A free session, one
-staff let them off (waived), a seat their GM pays for and a GM's own session don't count. Checked in without paying, the
-roll waits until it's paid.
+**Their first paid session** (`paidSession`; Mo: "They need to come and pay using their id or qr") is a session on
+their card (round 22's `stampTally`) that has started, or that they're checked in for, and that they paid for
+themselves:
+- their own table, walk-in, TTRPG seat or sign-up, paid in full (`paid` 1) with money or a session pass
+  (`paid_amount > 0` or `covered > 0`);
+- a payment of theirs (`payments.customer_id`: their code on the sale) towards someone else's, as a named player paying
+  their share or a guest paying their part, or towards a session with no account on it;
+- a Session product rung up at the counter on their sale for more than $0 (`loyalty_stamps.amount`, from the line's
+  price after discounts); or
+- a stamp staff added by hand.
+
+A free session, one staff let them off (waived), a seat their GM pays for, a GM's own session and someone else paying for
+them don't count. Checked in without paying, or paid ahead for later today, the roll waits. (These came from the
+review: at first any money towards a stamped session counted, so a friend paying, one share of a split table, a session
+paid ahead or a $0 Session could have released it.)
 
 **Like stamps, it's worked out every time** (`welcomeOf`), never stored. A paid session marked a no-show or cancelled
 puts the roll back to waiting; one already rolled stays rolled, and the card never goes below none.
@@ -102,9 +113,10 @@ name), or null.
 - `POST /pos/found-us { customerId, answer }` (the counter): `{ foundUs }`. A member code's `POST /pos/scan` adds
   `foundUs` and `newHere` (true on a new player's first day: no session before today), and the counter asks while
   `newHere` and nobody has answered.
-- `POST /me/found-us { answer }` (logged in): their own answer, `{ foundUs }`. GET /me adds `foundUs`.
+- `POST /me/found-us { answer }` (logged in): their own answer, `{ foundUs }`. GET /me adds `foundUs`. Someone the Lair
+  hasn't met yet (no GET /me) is a 404: making their member record here would give them a member code without their name.
 - `POST /members/:customerId/found-us { answer }` (staff with Check-in or Members): `{ foundUs }`; `answer: null` clears
-  it. GET /members/:id adds `foundUs`.
+  it, and no `answer` at all is a 422. GET /members/:id adds `foundUs`.
 - An answer that isn't one of these: 422 "Pick one of the answers." (the counter and My Lair can't clear one). No such
   member: 404 "No member with that customer ID."
 
@@ -120,8 +132,9 @@ isn't tags, nothing is saved, and the request goes ahead: an ad tag never stops 
 - Saved on the booking or sign-up (`ad_source`, `ad_medium`, `ad_campaign` on `bookings` and `event_joins`), and on the
   member as their first (`members.ad_source`, `ad_medium`, `ad_campaign`, `ad_at`) when they're logged in and have none.
   A later ad never replaces a member's first. A weekly seat keeps them on the member only.
-- `POST /me/ad { source, medium?, campaign? }` (logged in): My Lair sends the tags it kept once they've logged in.
-  `{ saved: true }` when they were the member's first, else `{ saved: false }`.
+- `POST /me/ad { source, medium?, campaign? }` (logged in): the website sends the tags it kept once GET /me has answered.
+  `{ saved: true }` when they were the member's first, else `{ saved: false }`. Someone the Lair hasn't met yet is a 404
+  (from the review: making their member record here, without their name, gave them a DG- member code).
 
 ## 4. New players in the weekly numbers
 
@@ -131,8 +144,10 @@ visit that week. Each is counted once: by the welcome code they used, else the a
 they told us when asked how they found us."
 
 - A visit is round 19's (checked in, or paid on the day), as the booker, a named player or a guest with an account. The
-  first visit ever counts, however long ago, so someone back after a while is never new. Friends without an account are
-  in the visits, never new players.
+  first visit ever counts, however long ago, so someone back after a while is never new, and neither is someone who
+  bought at the counter before it (section 7). Friends without an account are in the visits, never new players. The
+  Lair's records start in September and October 2026, so the first weeks include some long-time customers' first
+  recorded visits; compare the weeks after 9 November with the weeks just before.
 - `ads` keys are `source/medium` (`none` without a medium).
 - The Monday email adds a line, beside the week before: "New players: 3 (1 the week before): 1 by welcome code
   (SCROLL-ROLL 1), 1 by ad link (google/paid 1), 1 told us (Walked past 1)", with ", 1 not known" when there are some.
@@ -151,12 +166,18 @@ they told us when asked how they found us."
   `lair-ad`): its `utm_source`, `utm_medium` and `utm_campaign`, cleaned as the Lair cleans them; Google's `gclid`,
   `gbraid` or `wbraid` alone is google/cpc. A later link never replaces it until it's 30 days old.
 - `assets/lair-core.js` sends them as `ad` with table bookings, TTRPG seats, sign-ups, game spots and weekly seats (and
-  nothing else), and once with `POST /me/ad` on a Lair page when someone's logged in (noted in `lair-ad:sent:<id>`).
+  nothing else), and once with `POST /me/ad` after GET /me has answered on a Lair page, so the Lair has made the member
+  (and their member code from their name) first. From the review: the tags belong to the first account that uses them in
+  that browser (`owner` in `lair-ad`), so someone else logging in on a shared computer isn't credited to that ad and
+  their bookings carry none; and a refused `POST /me/ad` (a Lair app without it) waits a day (`retryAt`) instead of
+  trying on every page.
 - My Lair (`assets/my-lair.js`): "Got a code?" shows a welcome code's message with no Roll it now, and Home's loyalty
   card says "Your welcome roll is waiting, friend. It unlocks after your first paid session at the Lair." ("Your 2
   welcome rolls are waiting, friend. They unlock …") while `rolls.waiting`, in place of "No rolls yet".
 - The staff page: Loot codes (`assets/lair-staff-codes.js`) has a Welcome code tick on Make a loot code and on Edit,
-  and a Welcome badge, with "1 roll for a new player, once they've paid for their first session"; a member's page lists
+  and a Welcome badge, with "1 roll for a new player, once they've paid for their first session". The tick shows only
+  once the Lair app has listed its codes with `welcome` (from the review: with a Lair app that doesn't know welcome codes,
+  a ticked code would quietly pay out at once). A member's page lists
   Found us ("Instagram (at the counter, Sun 1 Nov)", or "Not asked yet") and Welcome code ("SCROLL-ROLL · roll waits
   for their first paid session", "… · roll unlocked" or "None"). Changing an answer there, and the weekly numbers on the
   staff page, can come later: the Monday email and GET /report have new players now.
@@ -164,11 +185,22 @@ they told us when asked how they found us."
   the card from the day the code was typed, so the lab can show both states.
 - The browser check: `tools/qa/round24/new-players.mjs` (the theme mock, demo and live with a stand-in Lair app).
 
-## 7. Going live
+## 7. Checks for the counter's records
+
+`loyalty_stamps.amount` (made sure of on every start, once the ledger's table is there): what a Session rung up at the
+counter paid a unit, in cents. Null for the ones before round 24, which never count as a first paid session.
+
+The weekly numbers leave out a member whose counter purchase (their account on the sale) came more than 12 hours
+(`PAID_BEFORE`) before their first visit: they'd been to Dice Goblin before, so their first recorded visit isn't a new
+player.
+
+## 8. Going live
 
 The Lair app first: the four codes are made on its first start, and nothing changes for the live theme (a welcome
 code's `welcome` answer shows as a message; nothing sends ad tags yet). Then the counter's extension (it asks only when
-the Lair says `newHere`). Then the theme, through the preview to the live theme. Before the ads start, switch off any
+the Lair says `newHere`). Then the theme, through the preview to the live theme. Round 7's ROLL-FOR-LOOT is still an
+ordinary code that gives every customer a roll at once: check it's switched off on the Loot codes tab (or tick it
+Welcome code). Before the ads start, switch off any
 code whose channel isn't running yet, or leave them on: only someone new can use one, and it gives nothing until
 they've paid for a session.
 

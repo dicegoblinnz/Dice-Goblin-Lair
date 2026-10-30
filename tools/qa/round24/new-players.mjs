@@ -179,6 +179,8 @@ for (const size of sizes) {
 // A stand-in for the Lair app behind /apps/liar: every request is noted, and each gets a small answer
 const API = '/apps/liar';
 let calls = [];
+// what POST /me/ad answers: 200 { saved: true }, or 404 (a Lair app from before round 24)
+let adStatus = 200;
 m.globalSettings.lair_mode = 'live';
 m.mockState.before = async (req, res, url) => {
   if (!url.pathname.startsWith(`${API}/`)) return false;
@@ -193,6 +195,11 @@ m.mockState.before = async (req, res, url) => {
   }
   const route = url.pathname.slice(API.length);
   calls.push({ method: req.method, route, body });
+  if (route === '/me/ad' && adStatus !== 200) {
+    res.writeHead(adStatus, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+    return true;
+  }
   const answer = route === '/me/ad' ? { saved: true } : route === '/me' ? { customer: { id: mockState().customer?.id || null }, bookings: [], seats: [], joins: [], games: [], credits: [], member: {} } : { ok: true };
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(answer));
@@ -227,6 +234,10 @@ const posts = (route) => calls.filter((c) => c.method === 'POST' && c.route === 
   await settle(page, 800);
   check(`${tag} POST /me/ad once logged in, with the kept tags`,
     posts('/me/ad').length === 1 && JSON.stringify(posts('/me/ad')[0].body) === JSON.stringify({ source: 'google', medium: 'paid', campaign: 'new-players-nov' }), posts('/me/ad'));
+  // (from the review) only after GET /me, which makes their member record and code from their name
+  const order = calls.map((c) => `${c.method} ${c.route}`);
+  check(`${tag} POST /me/ad goes after GET /me has answered`, order.indexOf('GET /me') > -1 && order.indexOf('GET /me') < order.indexOf('POST /me/ad'), order);
+  check(`${tag} the tags now belong to Ruby's account`, (await kept(page))?.owner === String(RUBY.id) && (await kept(page))?.sent === true, await kept(page));
   calls = [];
   await go(page, BASE, '/pages/my-lair', RUBY);
   await settle(page, 800);
@@ -249,6 +260,15 @@ const posts = (route) => calls.filter((c) => c.method === 'POST' && c.route === 
     JSON.stringify(withAd.map((c) => c.route).sort()) === JSON.stringify(['/bookings', '/bookings', '/events/quiz@2026-11-01/join', '/events/warhammer@2026-11-03/reserve', '/games/g_2/join-series'].sort())
       && withAd.every((c) => JSON.stringify(c.body.ad) === JSON.stringify({ source: 'google', medium: 'paid', campaign: 'new-players-nov' })), calls);
   check(`${tag} a change to a booking and a code don't`, calls.some((c) => c.route === '/bookings/bk_1/update' && !c.body.ad) && calls.some((c) => c.route === '/me/codes/redeem' && !c.body.ad), calls);
+  // (from the review) someone else logging in on this browser isn't credited to Ruby's ad
+  const KIRI = { ...RUBY, id: 7700445566, first_name: 'Kiri', last_name: 'Smith', name: 'Kiri Smith', email: 'kiri@example.com' };
+  calls = [];
+  await go(page, BASE, '/pages/my-lair', KIRI);
+  await page.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
+  await settle(page, 800);
+  await page.evaluate(() => window.Lair.store.backend.createBooking({ kind: 'table', name: 'Kiri' }).catch(() => null));
+  check(`${tag} Kiri on the same browser: no POST /me/ad, and her booking carries no tags`,
+    posts('/me/ad').length === 0 && posts('/bookings').length === 1 && !posts('/bookings')[0].body.ad, calls.map((c) => `${c.method} ${c.route} ${JSON.stringify(c.body?.ad || null)}`));
   // over 30 days old: never sent, and the next ad link replaces it
   await page.evaluate(() => window.localStorage.setItem('lair-ad', JSON.stringify({ source: 'google', medium: 'paid', campaign: 'old', at: Date.now() - 31 * 24 * 3600 * 1000 })));
   calls = [];
@@ -267,7 +287,50 @@ const posts = (route) => calls.filter((c) => c.method === 'POST' && c.route === 
   check(`${tag} Google's gclid alone is google/cpc`, k && k.source === 'google' && k.medium === 'cpc' && k.campaign === null, k);
   await page2.goto(`${BASE}/`, { waitUntil: 'networkidle', timeout: 60000 });
   check(`${tag} a plain visit keeps nothing new`, (await kept(page2))?.medium === 'cpc', await kept(page2));
+  // (from the review) a Lair app without POST /me/ad: the 404 waits a day, not every page
+  adStatus = 404;
+  calls = [];
+  await go(page2, BASE, '/pages/my-lair', RUBY);
+  await page2.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
+  await settle(page2, 800);
+  const tried = posts('/me/ad').length;
+  calls = [];
+  await go(page2, BASE, '/pages/my-lair', RUBY);
+  await settle(page2, 800);
+  const retry = (await kept(page2))?.retryAt;
+  check(`${tag} refused once, it waits a day before trying again`, tried === 1 && posts('/me/ad').length === 0 && retry > Date.now() + 23 * 3600 * 1000 && !(await kept(page2))?.sent, { tried, again: posts('/me/ad').length, retry });
+  adStatus = 200;
   await ctx2.close();
+}
+
+/* ---------------- (from the review) the staff page with a Lair app that doesn't know welcome codes ---------------- */
+{
+  const tag = '[older Lair]';
+  m.globalSettings.lair_mode = 'demo';
+  m.mockState.before = null;
+  const ctx = await context('phone');
+  const page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/lair-staff#codes', STAFF);
+  await page.waitForSelector('.sa-code', { timeout: 20000 });
+  // the demo's codes as an older Lair app lists them (nothing says welcome), then the list loaded again (All)
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    const real = be.rollCodes.bind(be);
+    be.rollCodes = async (...a) => {
+      const data = await real(...a);
+      return { codes: data.codes.map(({ welcome, ...rest }) => rest) };
+    };
+  });
+  await page.click('label.chip:has([data-code-status][value="all"])');
+  await page.waitForFunction(() => !document.querySelector('[data-code-list]')?.textContent.includes('Loading'), null, { timeout: 10000 });
+  await settle(page, 300);
+  await page.click('[data-code-make]');
+  await settle(page, 300);
+  check(`${tag} no Welcome code tick on Make a loot code, so it can't quietly make a code that pays at once`, (await page.locator('[data-code-form] [name="welcome"]').count()) === 0);
+  await page.locator('.sa-code').first().locator('summary', { hasText: 'Edit' }).click();
+  check(`${tag} nor on Edit`, (await page.locator('.sa-code').first().locator('[name="welcome"]').count()) === 0);
+  check(`${tag} no console errors`, !page.errors.length, page.errors);
+  await ctx.close();
 }
 
 const { pass, fail } = totals();

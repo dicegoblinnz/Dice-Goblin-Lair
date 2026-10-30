@@ -65,13 +65,13 @@ import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, au
 // Round 21, part 2: a GM pays for one of their players
 import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 // Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add
-import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinVia, sessionLines, stampMethods } from './stamps.js';
+import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinVia, sessionLines, sessionUnitPaid, stampMethods } from './stamps.js';
 // Round 22: counter sales through Pay on Verifone (OrderMate), whose orders lose the cart lines' properties
 import { counterMethods, counterSale, customSale } from './counter.js';
 // Round 22 (28 Oct 2026): every hold can be edited: an event date's own tables, and staff holds (src/holds.js)
 import { HOLD_COLUMNS, HOLD_TABLES, holdMethods, timeOf } from './holds.js';
 // Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
-import { NEW_PLAYER_COLUMNS, NEW_PLAYER_TABLES, WELCOME, WELCOME_WORDS, cleanAd, newPlayerMethods } from './newplayers.js';
+import { NEW_PLAYER_COLUMNS, NEW_PLAYER_STAMP_COLUMNS, NEW_PLAYER_TABLES, WELCOME, WELCOME_WORDS, cleanAd, newPlayerMethods } from './newplayers.js';
 import { dateTables } from './core.js';
 
 const FALLBACK_ROOMS = [
@@ -1071,6 +1071,15 @@ export class Lair {
     this.sql.exec("CREATE INDEX IF NOT EXISTS bookings_cover_of ON bookings (cover_of) WHERE cover_of IS NOT NULL");
     // Round 22: the stamp ledger: sessions rung up at the counter and stamps staff add (made when missing)
     for (const statement of STAMP_TABLES) this.sql.exec(statement);
+    // Round 24 (src/newplayers.js): what each Session rung up at the counter paid a unit (made sure of, as round 15's
+    // columns are, once the ledger's table is there); null for the ones before it
+    for (const [table, column, type] of NEW_PLAYER_STAMP_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     // Round 22: event dates' own tables (made when missing)
     for (const statement of HOLD_TABLES) this.sql.exec(statement);
     // Round 24: one welcome code a member (src/newplayers.js), kept by a unique index (made when missing)
@@ -4834,7 +4843,10 @@ export class Lair {
     // Round 7: a birthday gift's product code on this order (online or at the POS) has been used
     const giftCodes = this.markGiftCodesUsed(spend, Date.now());
     // Round 22: the sessions rung up by hand stamp the sale's customer (src/stamps.js), once per order, line and unit
-    const stamps = this.stampSessionSales(orderId, sessions, spend?.customerId || order.customer?.id, { orderName: spend?.name || (order.name ? String(order.name) : null), now: Date.now() });
+    // (round 24: with what each unit paid, so a $0 Session is never a new player's first paid session)
+    const stamps = this.stampSessionSales(orderId, sessions, spend?.customerId || order.customer?.id, {
+      orderName: spend?.name || (order.name ? String(order.name) : null), now: Date.now(), unitPaid: sessionUnitPaid(order),
+    });
     // Round 22: a tab put in the cart shortly before this Pay on Verifone sale, whose every item is on it (src/counter.js)
     const cartTabs = pos ? this.markTabsPaid(this.cartTabsPaidBy(order, spend?.customerId || order.customer?.id, spend?.processedAt || Date.now()), orderId, Date.now()) : [];
     if (cartTabs.length) this.reconcileBills(rules, Date.now(), { orderId, pos });

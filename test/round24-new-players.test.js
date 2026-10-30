@@ -64,6 +64,9 @@ const ENV = { CURRENCY: 'NZD' };
 
 let ctx;
 let lair;
+// Who paid each POS order (its number → customer ID): Shopify's answer for the order's customer, so the Lair notes whose
+// payment it was (payments.customer_id)
+let buyers;
 // Each store credit Shopify was asked for ([customerId, cents])
 let credited;
 async function call(method, path, body, customer = '', extraHeaders = {}) {
@@ -96,8 +99,8 @@ const NO_ROLLS = '409 No rolls yet, friend. Fill your card: 10 sessions earn a r
 const posOrder = (n, lineItems, extra = {}) => ({ id: n, admin_graphql_api_id: `gid://shopify/Order/${n}`, name: `#${n}`, source_name: 'pos', line_items: lineItems, ...extra });
 /** An order line paying a booking at the counter (a custom sale with its code in _booking), $amount */
 const bookingLine = (id, ref, amount) => ({ id, quantity: 1, price: amount.toFixed(2), properties: [{ name: '_booking', value: ref }] });
-/** An order line for the Session product */
-const sessionLine = (id, variant, sku) => ({ id, title: 'Session', variant_title: variant, sku, quantity: 1, price: '15.00', properties: [] });
+/** An order line for the Session product, $15 unless said */
+const sessionLine = (id, variant, sku, price = '15.00') => ({ id, title: 'Session', variant_title: variant, sku, quantity: 1, price, properties: [] });
 
 /** A table booked online by a member (pay at the Lair), today 2pm to 4pm unless said → the booking */
 async function table(who, name, { tables = ['T3'], people = 1, start = at(TODAY, 14), end = at(TODAY, 16), ...more } = {}) {
@@ -137,7 +140,11 @@ beforeEach(async () => {
     if (id) lair.people.set(id, { at: Date.now(), person });
     return person;
   };
-  lair.shopify.orderSpend = async () => null;
+  buyers = new Map();
+  lair.shopify.orderSpend = async (orderId) => {
+    const n = String(orderId).split('/').pop();
+    return buyers.has(n) ? { customerId: buyers.get(n), amount: 1000, source: 'pos', name: `#${n}` } : null;
+  };
   lair.shopify.orderBuyer = async () => null;
   lair.shopify.customerEmail = async () => null;
   lair.shopify.customersSince = async () => new Map();
@@ -230,8 +237,13 @@ test('welcome codes (Mo, 31 Oct 2026): "only given out after their first event a
   const booking = await table(MIA, 'Mia');
   assert.equal((await card(MIA)).rolls.waiting, 1);
   assert.equal(said(await roll(MIA)), NO_ROLLS);
-  // "They need to come and pay using their id or qr": her table paid at the counter, and the roll is hers
-  ok(await internal('orders-paid', posOrder(8001, [bookingLine(80011, booking.ref, 10)])));
+  // "They need to come and pay using their id or qr": at 2pm she's checked in, then pays at the counter with her code on
+  // the sale, and the roll is hers
+  nowIs(at(TODAY, 14));
+  ok(await pos('checkin', { id: booking.id, type: 'booking' }));
+  assert.equal((await card(MIA)).rolls.waiting, 1, 'here, but nothing paid yet');
+  buyers.set('8001', MIA);
+  ok(await internal('orders-paid', posOrder(8001, [bookingLine(80011, booking.ref, booking.amount / 100)])));
   const c = await card(MIA);
   assert.deepEqual([c.rolls.available, c.rolls.earned.codes, c.rolls.used], [1, 1, 0]);
   assert.equal('waiting' in c.rolls, false, 'nothing waits any more');
@@ -305,6 +317,8 @@ test('welcome codes: a session pass used at check-in, a Session product rung up 
 test('welcome codes: like stamps, the roll follows the paid session: marked a no-show or cancelled, it waits again (unless it was rolled)', async () => {
   ok(await redeem(MIA, 'SCROLL-ROLL'));
   const booking = await table(MIA, 'Mia');
+  // marked paid on the staff page once her 2pm table has started
+  nowIs(at(TODAY, 14, 5));
   ok(await update(booking.id, { paid: true }));
   assert.equal((await card(MIA)).rolls.available, 1);
   ok(await update(booking.id, { status: 'noshow' }));
@@ -315,6 +329,97 @@ test('welcome codes: like stamps, the roll follows the paid session: marked a no
   ok(await update(booking.id, { status: 'cancelled' }));
   const c = await card(MIA);
   assert.deepEqual([c.rolls.available, c.rolls.used, c.rolls.waiting], [0, 1, 1], 'rolled already: nothing more to take, and never below none');
+});
+
+/* ---------------- from the review: "they need to come and pay", themselves ---------------- */
+
+test('from the review: someone else paying doesn\'t unlock it: a guest with an account on Kai\'s sign-up waits until she pays for herself', async () => {
+  ok(await redeem(MIA, 'SCROLL-ROLL'));
+  // Kai signs up for trivia with Mia as his guest (by her member code) and pays for both with his own code on the sale
+  const join = await signUp(KAI, 'Kai', 'quiz', { guests: [{ code: codeOf(MIA) }] });
+  const table1 = await table(MIA, 'Mia', { start: at(TODAY, 18), end: at(TODAY, 20), tables: ['T6'] });
+  buyers.set('8501', KAI);
+  nowIs(at(TODAY, 18, 5));
+  ok(await pos('checkin', { id: join.id, type: 'join' }));
+  ok(await internal('orders-paid', posOrder(8501, [bookingLine(85011, join.ref, 10)])));
+  assert.equal(lair.stampCount(MIA), 1, 'the session is on her card');
+  assert.deepEqual([(await card(MIA)).rolls.available, (await card(MIA)).rolls.waiting], [0, 1], 'but Kai paid, not Mia');
+  // Mia pays for her own table this evening, with her code on the sale: that's hers
+  buyers.set('8502', MIA);
+  ok(await internal('orders-paid', posOrder(8502, [bookingLine(85021, table1.ref, 10)])));
+  assert.deepEqual([(await card(MIA)).rolls.available, 'waiting' in (await card(MIA)).rolls], [1, false]);
+});
+
+test('from the review: a named player on Kai\'s table unlocks it by paying their own share, not by Kai paying his', async () => {
+  ok(await redeem(LEO, 'SEARCH-ROLL'));
+  // Kai's table for three with Leo named on it (his member code), split at the counter
+  const kais = await table(KAI, 'Kai', { people: 3, tables: ['T7'], split: true });
+  lair.sql.exec("INSERT INTO booking_players (id, booking_id, role, position, name, customer_id, created_at) VALUES ('bp_leo', ?, 'player', 1, 'Leo', ?, ?)", kais.id, LEO, NOW);
+  nowIs(at(TODAY, 14, 5));
+  ok(await pos('checkin', { id: kais.id, type: 'booking' }));
+  buyers.set('8601', KAI);
+  ok(await internal('orders-paid', posOrder(8601, [{ ...bookingLine(86011, kais.ref, 10), properties: [{ name: '_booking', value: kais.ref }, { name: '_share', value: '1' }] }])));
+  assert.equal((await card(LEO)).rolls.waiting, 1, "Kai's share paid, not Leo's");
+  buyers.set('8602', LEO);
+  ok(await internal('orders-paid', posOrder(8602, [{ ...bookingLine(86021, kais.ref, 10), properties: [{ name: '_booking', value: kais.ref }, { name: '_share', value: '1' }] }])));
+  assert.deepEqual([(await card(LEO)).rolls.available, 'waiting' in (await card(LEO)).rolls], [1, false], 'Leo paid his own share');
+});
+
+test('from the review: "after their first event": paid ahead for later today, the roll waits until the session starts or they\'re checked in', async () => {
+  ok(await redeem(MIA, 'SCROLL-ROLL'));
+  const evening = await table(MIA, 'Mia', { start: at(TODAY, 18), end: at(TODAY, 20), tables: ['T8'] });
+  ok(await internal('orders-paid', posOrder(8701, [bookingLine(87011, evening.ref, 10)])));
+  assert.deepEqual([(await card(MIA)).rolls.available, (await card(MIA)).rolls.waiting], [0, 1], 'paid at 1pm for 6pm: not yet');
+  nowIs(at(TODAY, 18));
+  assert.equal((await card(MIA)).rolls.available, 1, 'from 6pm, when it starts');
+  // checked in early counts straight away
+  ok(await redeem(KAI, 'TOK-ROLL'));
+  nowIs(NOW);
+  const kais = await table(KAI, 'Kai', { start: at(TODAY, 18), end: at(TODAY, 20), tables: ['T9'] });
+  ok(await internal('orders-paid', posOrder(8702, [bookingLine(87021, kais.ref, 10)])));
+  nowIs(at(TODAY, 17, 45));
+  assert.equal((await card(KAI)).rolls.waiting, 1);
+  ok(await pos('checkin', { id: kais.id, type: 'booking' }));
+  assert.equal((await card(KAI)).rolls.available, 1, 'here at 5:45pm for 6pm');
+});
+
+test('from the review: a Session rung up at the counter for $0 (a freebie, or 100% off) doesn\'t unlock it', async () => {
+  ok(await redeem(KAI, 'SCROLL-ROLL'));
+  ok(await internal('orders-paid', posOrder(8801, [sessionLine(88011, 'Dice Goblin Day Pass', 'LAIR-SESSION-DAY', '0.00')], { customer: { id: Number(KAI) } })));
+  ok(await internal('orders-paid', posOrder(8802, [{ ...sessionLine(88021, 'RPG Session', 'LAIR-SESSION-RPG'), discount_allocations: [{ amount: '15.00' }] }], { customer: { id: Number(KAI) } })));
+  assert.equal(lair.stampCount(KAI), 2, 'each one rung up is a stamp, paid or not');
+  assert.deepEqual([(await card(KAI)).rolls.available, (await card(KAI)).rolls.waiting], [0, 1], 'nothing paid');
+  nowIs(at('2026-11-02', 15));
+  ok(await internal('orders-paid', posOrder(8803, [sessionLine(88031, 'RPG Session', 'LAIR-SESSION-RPG')], { customer: { id: Number(KAI) } })));
+  assert.equal((await card(KAI)).rolls.available, 1, '$15 paid the next day');
+});
+
+test('from the review: "new to Dice Goblin": someone who bought at the counter before today, or played as a named player before the loyalty card, is turned away; an online-only customer is still new', async () => {
+  // Leo bought dice at the counter last week (with his code on the sale)
+  lair.sql.exec("INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES ('gid://shopify/Order/7701', ?, 4500, 'pos', ?)", LEO, at('2026-10-24', 15));
+  assert.equal(said(await redeem(LEO, 'SCROLL-ROLL')), `409 ${W.notNew}`);
+  // Ria paid with the Verifone terminal (OrderMate) a week ago
+  lair.sql.exec("INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES ('gid://shopify/Order/7702', ?, 1500, '36219584513', ?)", RIA, at('2026-10-24', 16));
+  assert.equal(said(await redeem(RIA, 'SCROLL-ROLL')), `409 ${W.notNew}`);
+  // Mia only ever ordered online: she's new to playing at the Lair
+  lair.sql.exec("INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES ('gid://shopify/Order/7703', ?, 3000, 'web', ?)", MIA, at('2026-10-20', 9));
+  assert.equal(ok(await redeem(MIA, 'SCROLL-ROLL')).kind, 'welcome');
+  // Kai played at a friend's table in September, before the loyalty card started (named on it, checked in)
+  lair.sql.exec(
+    `INSERT INTO bookings (id, ref, kind, status, tables, starts_at, ends_at, people, name, paid, paid_amount, customer_id, created_at, updated_at)
+     VALUES ('bk_sept', 'SEPT-TABLE-1', 'table', 'done', '["T2"]', ?, ?, 2, 'Pat', 1, 2000, NULL, ?, ?)`,
+    at('2026-09-12', 14), at('2026-09-12', 16), at('2026-09-10', 9), at('2026-09-12', 16),
+  );
+  lair.sql.exec("INSERT INTO booking_players (id, booking_id, role, position, name, customer_id, created_at) VALUES ('bp_sept', 'bk_sept', 'player', 1, 'Kai', ?, ?)", KAI, at('2026-09-10', 9));
+  assert.equal(said(await redeem(KAI, 'SCROLL-ROLL')), `409 ${W.notNew}`);
+  // and the counter doesn't ask any of them how they found us
+  assert.deepEqual(await Promise.all([LEO, RIA, KAI].map(async (id) => ok(await pos('scan', { code: codeOf(id) })).newHere)), [false, false, false]);
+});
+
+test('from the review: a member\'s page with no answer sent (an empty form) is a 422, never a clear', async () => {
+  ok(await call('POST', `members/${MIA}/found-us`, { answer: 'friend' }, OWNER));
+  assert.equal(said(await call('POST', `members/${MIA}/found-us`, {}, OWNER)), `422 ${W.answer}`);
+  assert.equal(ok(await call('GET', `members/${MIA}`, null, OWNER)).member.foundUs.answer, 'friend');
 });
 
 /* ---------------- welcome codes are for new players, one each ---------------- */
@@ -404,6 +509,7 @@ test('staff see a member\'s welcome code on their page: which code, when, and wh
   ok(await redeem(MIA, 'SCROLL-ROLL'));
   assert.deepEqual(ok(await call('GET', `members/${MIA}`, null, OWNER)).member.welcome, { code: 'SCROLL-ROLL', at: NOW, rolls: 1, waiting: true });
   const booking = await table(MIA, 'Mia');
+  nowIs(at(TODAY, 14, 5));
   ok(await update(booking.id, { paid: true }));
   assert.equal(ok(await call('GET', `members/${MIA}`, null, OWNER)).member.welcome.waiting, false);
 });
@@ -502,6 +608,18 @@ test('ad tags: a booking or sign-up made from an ad link keeps where it came fro
   assert.equal(adOf('bookings', forSomeone.id).ad_source, null);
 });
 
+test('from the review: POST /me/ad and /me/found-us from someone the Lair hasn\'t met yet make no member, so their member code still comes from their name when they first open My Lair', async () => {
+  const SAM = '6099';
+  assert.equal(said(await call('POST', 'me/ad', { source: 'google', medium: 'paid' }, SAM)), `404 ${W.noMember}`);
+  assert.equal(said(await call('POST', 'me/found-us', { answer: 'google' }, SAM)), `404 ${W.noMember}`);
+  assert.equal(lair.memberRow(SAM), null, 'no member record yet');
+  const me = ok(await call('GET', `me?name=${encodeURIComponent('Sam Jones')}`, null, SAM));
+  assert.match(me.member.code, /^SJ-/, 'their code from their name, not DG-');
+  // and once GET /me has made them, the website's POST /me/ad lands
+  assert.deepEqual(ok(await call('POST', 'me/ad', { source: 'google', medium: 'paid' }, SAM)), { saved: true });
+  assert.equal(lair.memberRow(SAM).ad_source, 'google');
+});
+
 /* ---------------- new players in the weekly numbers ---------------- */
 
 // The weeks, by their Mondays: this week so far (Sunday 1 Nov is its last day), then the whole weeks before it
@@ -549,6 +667,11 @@ test('weekly numbers (round 24): new players are people with an account whose fi
   // Tim: came on 1 September, long before these weeks, and again on 23 Oct: never new in them
   visit({ customer: TIM, day: '2026-09-01' });
   visit({ customer: TIM, day: '2026-10-23' });
+  // Nina: bought at the counter in September, then first booked a table on 22 Oct: she's been to Dice Goblin before
+  const NINA = '6008';
+  lair.makeMember({ customerId: NINA, name: 'Nina Roa', email: 'nina@example.com' }, NOW);
+  lair.sql.exec("INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES ('gid://shopify/Order/6801', ?, 2500, 'pos', ?)", NINA, at('2026-09-20', 15));
+  visit({ customer: NINA, day: '2026-10-22' });
   // friends without an account (Ria's other two) are visits, never new players
   const data = ok(await call('GET', 'report?weeks=4', null, OWNER));
   const week = (monday) => data.weeks.find((w) => w.week === monday).newPlayers;

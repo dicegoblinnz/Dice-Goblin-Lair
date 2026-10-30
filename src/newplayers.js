@@ -8,14 +8,18 @@
  *    give people free credit."
  *
  * Welcome codes. A loot code (round 7) can be a welcome code: roll_codes.pays_on 'first-session'. Redeemed in "Got a
- * code?", its rolls wait (roll_code_uses.pays_on 'first-session', no grant) until the member has a paid session: a
- * table, walk-in, TTRPG seat or sign-up that stamps their card (round 22) with money paid towards it or a session pass
- * used on it, a Session product rung up at the counter for them, or a stamp staff added by hand. A free session, one
- * staff let them off, a seat their GM pays for and a GM's own session don't count. Like stamps, nothing about it is
- * stored: it's worked out every time (welcomeOf), so a paid session taken back (a no-show, a cancellation) puts the roll
- * back to waiting, unless it's been rolled. A welcome code is for players new to the Lair: one with a session before
- * today (playedBefore) is turned away, so the counter can still check someone in and pay for their first session before
- * they type it. One welcome code a member, kept by a unique index. The four channels' codes are made once on start.
+ * code?", its rolls wait (roll_code_uses.pays_on 'first-session', no grant) until the member's first paid session
+ * (paidSession): a session on their card (round 22's stamps) that has started, or that they're checked in for, and that
+ * they paid for themselves (after round 24's review): their own booking or sign-up paid in full with money or a session
+ * pass, or a payment of theirs towards someone else's (their code on the sale: a share, or a guest's own part); a Session
+ * rung up at the counter on their sale for more than $0; or a stamp staff added by hand. A free session, one staff let
+ * them off, a seat their GM pays for, a GM's own session and someone else paying for them don't count. Like stamps,
+ * nothing about it is stored: it's worked out every time (welcomeOf), so a paid session taken back (a no-show, a
+ * cancellation) puts the roll back to waiting, unless it's been rolled. A welcome code is for players new to Dice Goblin:
+ * one with a session at the Lair before today, in any way the Lair knows of, or a counter purchase before today
+ * (playedBefore), is turned away, so the counter can still check someone in and pay for their first session before they
+ * type it. An online-only customer is still new. One welcome code a member, kept by a unique index. The four channels'
+ * codes are made once on start.
  *
  * "How did you find us?" (members.found_us): one of FOUND_US_ANSWERS, from the member in My Lair, the counter (asked on a
  * new player's first day: the scan's newHere) or the staff page. The latest answer stands, with when and who.
@@ -28,6 +32,7 @@
  * awaits anywhere in here.
  */
 import { LairTime, RuleError, codeKey, makeId } from './core.js';
+import { ORDERMATE } from './counter.js';
 
 /** roll_codes.pays_on and roll_code_uses.pays_on for a welcome code: its rolls wait for the first paid session */
 export const WELCOME = 'first-session';
@@ -47,6 +52,15 @@ export const NEW_PLAYER_COLUMNS = [
   ['bookings', 'ad_source', 'TEXT'], ['bookings', 'ad_medium', 'TEXT'], ['bookings', 'ad_campaign', 'TEXT'],
   ['event_joins', 'ad_source', 'TEXT'], ['event_joins', 'ad_medium', 'TEXT'], ['event_joins', 'ad_campaign', 'TEXT'],
 ];
+
+/**
+ * Round 24's column on the stamp ledger, made sure of once its table is there (lair.js's migrate): loyalty_stamps.amount,
+ * what a Session rung up at the counter paid a unit, in cents (null for one before round 24)
+ */
+export const NEW_PLAYER_STAMP_COLUMNS = [['loyalty_stamps', 'amount', 'INTEGER']];
+
+/** The counter's orders, by their source: Shopify POS's own and Pay on Verifone's (OrderMate: src/counter.js) */
+export const COUNTER_SOURCES = ['pos', ORDERMATE.app];
 
 /** Round 24's index, made when missing: one welcome code a member, kept in the data itself */
 export const NEW_PLAYER_TABLES = [
@@ -138,39 +152,55 @@ export const newPlayerMethods = {
   },
 
   /**
-   * Whether a member played at the Lair before `before` (ms): one of their stamped sessions (stampTally's sessions: theirs,
-   * as a named player or guest, paid for by them, run as a GM, or in the stamp ledger) started before it, or a table,
-   * walk-in, TTRPG seat or sign-up on their account was checked in or paid before it, from before the loyalty card too.
+   * Whether a member has been to Dice Goblin before `before` (ms): one of their stamped sessions (stampTally's sessions:
+   * theirs, as a named player or guest, paid for by them, run as a GM, or in the stamp ledger) started before it; a table,
+   * walk-in, TTRPG seat or sign-up they were on (as the booker, a named player or a guest) was checked in or paid before
+   * it, from before the loyalty card too; or (after round 24's review) they bought something at the counter before it,
+   * with their account on the sale. An online order isn't a visit.
    */
   playedBefore(customerId, before, tally = this.stampTally(customerId)) {
     if (tally.sessions.some((r) => r.at < before)) return true;
     const id = String(customerId);
-    const booked = this.sql.exec(
-      `SELECT 1 AS n FROM bookings WHERE customer_id = ? AND kind IN ('table', 'walkin', 'gm-seat') AND starts_at < ?
-          AND (status IN ('seated', 'done') OR (paid_amount > 0 AND status NOT IN ('cancelled', 'noshow', 'held'))) LIMIT 1`,
-      id, before,
-    ).toArray();
-    if (booked.length) return true;
-    return this.sql.exec(
-      `SELECT 1 AS n FROM event_joins WHERE customer_id = ? AND starts_at < ?
-          AND (status = 'attended' OR (paid_amount > 0 AND status NOT IN ('cancelled', 'held'))) LIMIT 1`,
-      id, before,
-    ).toArray().length > 0;
+    const visit = (b) => `(${b}.status IN ('seated', 'done') OR (${b}.paid_amount > 0 AND ${b}.status NOT IN ('cancelled', 'noshow', 'held')))`;
+    const went = (j) => `(${j}.status = 'attended' OR (${j}.paid_amount > 0 AND ${j}.status NOT IN ('cancelled', 'held')))`;
+    const checks = [
+      [`SELECT 1 AS n FROM bookings b WHERE b.customer_id = ? AND b.kind IN ('table', 'walkin', 'gm-seat') AND b.starts_at < ? AND ${visit('b')} LIMIT 1`, id, before],
+      [`SELECT 1 AS n FROM booking_players p JOIN bookings b ON b.id = p.booking_id WHERE p.customer_id = ? AND b.starts_at < ? AND ${visit('b')} LIMIT 1`, id, before],
+      [`SELECT 1 AS n FROM event_joins j WHERE j.customer_id = ? AND j.starts_at < ? AND ${went('j')} LIMIT 1`, id, before],
+      [`SELECT 1 AS n FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id WHERE x.customer_id = ? AND j.starts_at < ? AND ${went('j')} LIMIT 1`, id, before],
+      [`SELECT 1 AS n FROM spend WHERE customer_id = ? AND created_at < ? AND source IN (${COUNTER_SOURCES.map(() => '?').join(', ')}) LIMIT 1`, id, before, ...COUNTER_SOURCES],
+    ];
+    return checks.some(([query, ...binds]) => this.sql.exec(query, ...binds).toArray().length > 0);
   },
 
   /**
-   * Whether any of a member's stamped sessions (stampTally's sessions) was paid for: a table, walk-in, TTRPG seat or
-   * sign-up with money paid towards it or a session pass used on it, a Session product rung up at the counter, or a stamp
-   * staff added by hand. A free session, one staff let them off, a seat their GM pays for and a GM's own session aren't.
+   * Whether a member has had their first paid session (Mo: "They need to come and pay using their id or qr"): one of their
+   * stamped sessions (stampTally's sessions) that has started, or that they're checked in for, and that they paid for
+   * themselves: their own table, walk-in, TTRPG seat or sign-up paid in full with money or a session pass, or a payment of
+   * theirs (their code on the sale) towards someone else's or towards one with no account on it; a Session rung up at the
+   * counter on their sale for more than $0; or a stamp staff added by hand. Not: a free session, one staff let them off,
+   * a seat their GM pays for, a GM's own session, or someone else paying for them (after round 24's review).
    */
-  paidSession(sessions) {
+  paidSession(customerId, sessions, now = Date.now()) {
+    const id = String(customerId);
     for (const r of sessions) {
-      if (r.kind === 'stamp-sale' || r.kind === 'stamp-staff') return true;
-      if (r.kind === 'join') {
-        if (this.sql.exec('SELECT 1 AS n FROM event_joins WHERE id = ? AND paid_amount > 0', r.id).toArray().length) return true;
-      } else if (r.kind === 'table' || r.kind === 'walkin' || r.kind === 'gm-seat') {
-        if (this.sql.exec('SELECT 1 AS n FROM bookings WHERE id = ? AND (paid_amount > 0 OR covered > 0)', r.id).toArray().length) return true;
+      if (r.kind === 'stamp-staff') return true;
+      if (r.kind === 'stamp-sale') {
+        if (this.sql.exec('SELECT 1 AS n FROM loyalty_stamps WHERE id = ? AND amount > 0', r.id).toArray().length) return true;
+        continue;
       }
+      const join = r.kind === 'join';
+      if (!join && r.kind !== 'table' && r.kind !== 'walkin' && r.kind !== 'gm-seat') continue;
+      // after it's started, or once they're here
+      if (r.via !== 'here' && !(Number(r.at) <= now)) continue;
+      const row = this.sql
+        .exec(join ? 'SELECT customer_id, paid, paid_amount, 0 AS covered FROM event_joins WHERE id = ?' : 'SELECT customer_id, paid, paid_amount, covered FROM bookings WHERE id = ?', r.id)
+        .toArray()[0];
+      if (!row) continue;
+      const own = String(row.customer_id || '') === id;
+      if (own && Number(row.paid) === 1 && (Number(row.paid_amount) > 0 || Number(row.covered) > 0)) return true;
+      const theirs = this.sql.exec('SELECT 1 AS n FROM payments WHERE booking_id = ? AND kind = ? AND customer_id = ? AND amount > 0 LIMIT 1', r.id, join ? 'join' : 'booking', id);
+      if (theirs.toArray().length) return true;
     }
     return false;
   },
@@ -190,7 +220,7 @@ export const newPlayerMethods = {
       .toArray();
     if (!uses.length) return { ready: 0, waiting: 0, code: null, at: null };
     const rolls = uses.reduce((sum, u) => sum + Math.max(0, Number(u.rolls) || 0), 0);
-    const paid = this.paidSession(tally.sessions);
+    const paid = this.paidSession(customerId, tally.sessions);
     return { ready: paid ? rolls : 0, waiting: paid ? 0 : rolls, code: uses[0].code || null, at: uses[0].at };
   },
 
@@ -262,12 +292,13 @@ export const newPlayerMethods = {
     return this.foundUsView(this.memberRow(id));
   },
 
-  /** POST /me/found-us { answer } (logged in): their own answer. Returns { foundUs }. */
+  /**
+   * POST /me/found-us { answer } (logged in): their own answer. Returns { foundUs }. Someone the Lair hasn't met yet
+   * (no GET /me) is a 404: making their member record here would give them a member code without their name.
+   */
   meFoundUs(input, who) {
     if (!who.customerId) throw new RuleError('Log in to tell us.', 401);
-    const now = Date.now();
-    this.touchMember(who.customerId, {}, now);
-    return { foundUs: this.saveFoundUs(who.customerId, input?.answer, 'me', { now }) };
+    return { foundUs: this.saveFoundUs(who.customerId, input?.answer, 'me') };
   },
 
   /** POST /pos/found-us { customerId, answer } (the counter): a new player's answer at their first visit. Returns { foundUs }. */
@@ -281,7 +312,9 @@ export const newPlayerMethods = {
    */
   staffFoundUs(customerId, input, who) {
     this.requireStaff(who, ['checkin', 'members']);
-    return { foundUs: this.saveFoundUs(customerId, input?.answer ?? null, who.customerId ? `staff:${who.customerId}` : 'staff', { clear: true }) };
+    // (after round 24's review: only an answer of null clears it; none at all is a 422, never a clear)
+    const answer = input && Object.prototype.hasOwnProperty.call(input, 'answer') ? input.answer : undefined;
+    return { foundUs: this.saveFoundUs(customerId, answer, who.customerId ? `staff:${who.customerId}` : 'staff', { clear: true }) };
   },
 
   /* ---------------- ad tags ---------------- */
@@ -306,15 +339,16 @@ export const newPlayerMethods = {
   },
 
   /**
-   * POST /me/ad { source, medium?, campaign? } (logged in): the ad tags of the link they first came by, sent by My Lair
-   * once they've logged in. Kept only when they have none yet. Returns { saved }.
+   * POST /me/ad { source, medium?, campaign? } (logged in): the ad tags of the link they first came by, sent by the
+   * website once GET /me has answered. Kept only when they have none yet. Returns { saved }. From the review: someone
+   * the Lair hasn't met yet is a 404 (the page tries again later), because making their member record here would give
+   * them a member code without their name (GET /me's ?name= makes it from their name).
    */
   meAd(input, who) {
     if (!who.customerId) throw new RuleError('Log in first.', 401);
+    if (!this.memberRow(who.customerId)) throw new RuleError(WELCOME_WORDS.noMember, 404);
     const ad = cleanAd(input);
     if (!ad) return { saved: false };
-    const now = Date.now();
-    this.touchMember(who.customerId, {}, now);
-    return { saved: this.firstAd(who.customerId, ad, now) };
+    return { saved: this.firstAd(who.customerId, ad, Date.now()) };
   },
 };

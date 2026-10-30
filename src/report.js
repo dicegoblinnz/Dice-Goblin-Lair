@@ -29,7 +29,7 @@
 //   REPORT_EMAIL (config) sends it somewhere else, or 'off' stops it; otherwise it goes to STAFF_EMAIL.
 import { HOUR, LairTime, MIN } from './core.js';
 import { emailReady } from './shopify.js';
-import { FOUND_US_ANSWERS } from './newplayers.js';
+import { COUNTER_SOURCES, FOUND_US_ANSWERS } from './newplayers.js';
 
 /** Booking flows on the website and the steps counted for each (anything else sent to POST /steps is ignored) */
 export const STEP_FLOWS = ['table', 'ttrpg', 'event'];
@@ -304,7 +304,9 @@ export const reportMethods = {
    * Round 24: people with an account whose first visit ever (the same visits as visitorsByWeek: as the booker, a named
    * player or a guest with an account) started from `from` to `until`, with how they found the Lair: { id, first (when
    * that visit started), code (the welcome code they used, or null), ad_source, ad_medium (the first ad tags they came
-   * with), found_us (their answer) }. Visits from before `from` count against being new, however long ago. No awaits.
+   * with), found_us (their answer) }. Visits from before `from` count against being new, however long ago, and (after
+   * round 24's review) so does a counter purchase with their account on it from before that visit's day (more than
+   * PAID_BEFORE before it), so a long-time customer's first recorded visit isn't a new player. No awaits.
    */
   firstVisits(from, until) {
     return this.sql.exec(
@@ -327,8 +329,10 @@ export const reportMethods = {
               WHERE x.customer_id IS NOT NULL AND x.customer_id != '' AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
                 AND j.starts_at < ? AND ${JOIN_VISIT}
            ) v GROUP BY v.id HAVING MIN(v.at) >= ?
-         ) f LEFT JOIN members m ON m.customer_id = f.id`,
-      until, until, until, until, from,
+         ) f LEFT JOIN members m ON m.customer_id = f.id
+        WHERE NOT EXISTS (SELECT 1 FROM spend s WHERE s.customer_id = f.id AND s.created_at < f.first - ${PAID_BEFORE}
+                            AND s.source IN (${COUNTER_SOURCES.map(() => '?').join(', ')}))`,
+      until, until, until, until, from, ...COUNTER_SOURCES,
     ).toArray();
   },
 
