@@ -65,11 +65,13 @@ import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, au
 // Round 21, part 2: a GM pays for one of their players
 import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 // Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add
-import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinVia, sessionLines, stampMethods } from './stamps.js';
+import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinVia, sessionLines, sessionUnitPaid, stampMethods } from './stamps.js';
 // Round 22: counter sales through Pay on Verifone (OrderMate), whose orders lose the cart lines' properties
-import { counterMethods, counterSale, customSale } from './counter.js';
+import { counterMethods, counterSale, counterSource, customSale } from './counter.js';
 // Round 22 (28 Oct 2026): every hold can be edited: an event date's own tables, and staff holds (src/holds.js)
 import { HOLD_COLUMNS, HOLD_TABLES, holdMethods, timeOf } from './holds.js';
+// Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
+import { NEW_PLAYER_COLUMNS, NEW_PLAYER_STAMP_COLUMNS, NEW_PLAYER_TABLES, WELCOME, WELCOME_WORDS, cleanAd, newPlayerMethods } from './newplayers.js';
 import { dateTables } from './core.js';
 
 const FALLBACK_ROOMS = [
@@ -1030,7 +1032,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS, ...HOLD_COLUMNS, ...ROUND23_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS, ...HOLD_COLUMNS, ...ROUND23_COLUMNS, ...NEW_PLAYER_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1069,8 +1071,19 @@ export class Lair {
     this.sql.exec("CREATE INDEX IF NOT EXISTS bookings_cover_of ON bookings (cover_of) WHERE cover_of IS NOT NULL");
     // Round 22: the stamp ledger: sessions rung up at the counter and stamps staff add (made when missing)
     for (const statement of STAMP_TABLES) this.sql.exec(statement);
+    // Round 24 (src/newplayers.js): what each Session rung up at the counter paid a unit (made sure of, as round 15's
+    // columns are, once the ledger's table is there); null for the ones before it
+    for (const [table, column, type] of NEW_PLAYER_STAMP_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     // Round 22: event dates' own tables (made when missing)
     for (const statement of HOLD_TABLES) this.sql.exec(statement);
+    // Round 24: one welcome code a member (src/newplayers.js), kept by a unique index (made when missing)
+    for (const statement of NEW_PLAYER_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1121,6 +1134,9 @@ export class Lair {
       }
       this.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('welcome-loot-code', ?)", String(Date.now()));
     }
+    // Round 24: the ads plan's four welcome codes (SEARCH-ROLL, SCROLL-ROLL, TOK-ROLL, UPVOTE-ROLL), made once: their
+    // rolls wait for a new player's first paid session (src/newplayers.js). Staff switch them off on the Loot codes tab.
+    this.seedWelcomeCodes(Date.now());
   }
 
   /** Every write goes through here, so cached floor data is dropped the moment anything changes. */
@@ -1847,6 +1863,8 @@ export class Lair {
         // Round 22: a stamp on someone's card from the counter, and taking it back ({ customerId, key } / { customerId, id }: src/stamps.js)
         if (b === 'pos' && c === 'stamp') return json(await this.posStamp(body, by));
         if (b === 'pos' && c === 'stamp-undo') return json(await this.posStampUndo(body, by));
+        // Round 24: a new player's answer to "How did you find us?" ({ customerId, answer }: src/newplayers.js)
+        if (b === 'pos' && c === 'found-us') return json(this.posFoundUs(body, by));
         return json({ error: 'Not found' }, 404);
       }
       const origin = request.headers.get('X-Lair-Origin');
@@ -1925,6 +1943,9 @@ export class Lair {
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
       if (a === 'me' && b === 'passes' && c === 'claim') return json(await this.claimPass(body, who));
       if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
+      // Round 24: "How did you find us?" in My Lair, and the ad tags of the link they came by (src/newplayers.js)
+      if (a === 'me' && b === 'found-us' && !c) return json(this.meFoundUs(body, who));
+      if (a === 'me' && b === 'ad' && !c) return json(this.meAd(body, who));
       // Round 9: "Pay online now" for everything on a monthly account
       if (a === 'me' && b === 'account' && c === 'pay') return json(await this.payAccountNow(who));
       // 17 Oct 2026: pay with cash at the counter, or not after all
@@ -1984,6 +2005,8 @@ export class Lair {
       if (a === 'members' && b && c === 'stamps' && !d) return json(await this.giveStamps(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'stamps' && d && parts[4] === 'undo' && !parts[5]) return json(await this.takeBackStamp(decodeURIComponent(b), decodeURIComponent(d), who));
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
+      // Round 24: a member's answer to "How did you find us?", from their page (src/newplayers.js)
+      if (a === 'members' && b && c === 'found-us' && !d) return json(this.staffFoundUs(decodeURIComponent(b), body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
       // Round 17: GM credit for staff (the team's setting), and each person's hours
@@ -2449,6 +2472,8 @@ export class Lair {
     // Round 19: what staff make for someone is counted apart from bookings made online (the weekly numbers)
     if (override) this.write('UPDATE bookings SET added_by = ? WHERE id = ?', who.customerId ? `staff:${who.customerId}` : 'staff', id);
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email, mobile: booking.phone }, now);
+    // Round 24: the ad tags of the link they came by (src/newplayers.js), never on what staff make for someone
+    if (!override) this.tagAd('bookings', id, who.customerId || null, cleanAd(input.ad), now);
     if (tableGame) booking.game = this.setBookingGame(booking.id, tableGame, now).game;
     // --- saved: the table is ours ---
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
@@ -4003,6 +4028,8 @@ export class Lair {
       game.seriesId, who.customerId, people, JSON.stringify(players), name, email, now, now,
     );
     this.touchMember(who.customerId, { name, email, mobile }, now);
+    // Round 24: the ad tags of the link they came by, as their first (src/newplayers.js); the seats Gobgob saves don't carry them
+    this.firstAd(who.customerId, cleanAd(input.ad), now);
     const member = this.seriesMember(game.seriesId, who.customerId);
     const code = this.memberRow(who.customerId)?.code || null;
     const booked = [];
@@ -4807,7 +4834,7 @@ export class Lair {
     if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
     let counted = 0;
     if (spend?.customerId && spend.amount > 0 && !this.sql.exec('SELECT 1 AS n FROM spend WHERE order_id = ?', orderId).toArray().length) {
-      this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, spend.source || source || null, Date.now());
+      this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, counterSource(order) || spend.source || source || null, Date.now());
       counted = spend.amount;
     }
     const passes = this.issueOrderPasses(orderId, passLines, buyer, { pos, rules, now: Date.now() });
@@ -4816,7 +4843,10 @@ export class Lair {
     // Round 7: a birthday gift's product code on this order (online or at the POS) has been used
     const giftCodes = this.markGiftCodesUsed(spend, Date.now());
     // Round 22: the sessions rung up by hand stamp the sale's customer (src/stamps.js), once per order, line and unit
-    const stamps = this.stampSessionSales(orderId, sessions, spend?.customerId || order.customer?.id, { orderName: spend?.name || (order.name ? String(order.name) : null), now: Date.now() });
+    // (round 24: with what each unit paid, so a $0 Session is never a new player's first paid session)
+    const stamps = this.stampSessionSales(orderId, sessions, spend?.customerId || order.customer?.id, {
+      orderName: spend?.name || (order.name ? String(order.name) : null), now: Date.now(), unitPaid: sessionUnitPaid(order),
+    });
     // Round 22: a tab put in the cart shortly before this Pay on Verifone sale, whose every item is on it (src/counter.js)
     const cartTabs = pos ? this.markTabsPaid(this.cartTabsPaidBy(order, spend?.customerId || order.customer?.id, spend?.processedAt || Date.now()), orderId, Date.now()) : [];
     if (cartTabs.length) this.reconcileBills(rules, Date.now(), { orderId, pos });
@@ -5655,11 +5685,15 @@ export class Lair {
       const card = this.loyaltyOf(customerId, rules);
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
+        // round 24: "How did you find us?": their answer (or null), and newHere, true on a new player's first day at the
+        // Lair (no session before today), when the counter asks
+        foundUs: this.foundUsView(member), newHere: !this.playedBefore(customerId, this.todayStarts(now)),
         // round 9: after their owed rows, what a monthly account owes from earlier days (none for pay-each-visit members);
         // round 15: a monthly account's owed rows are on it (onAccount)
         rows: [...today, ...this.onAccountRows(customerId, owed), ...this.accountOwedRows(customerId, rules, now)], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
         // round 7: card is the number of the card they're on
-        loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card },
+        // round 24: rollsWaiting, a welcome code's rolls waiting for their first paid session (only there while some do)
+        loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card, ...(card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}) },
         // round 9: their billing ({ billing: 'visit' }, or a monthly account's limit and what's owed)
         account: this.accountSummary(customerId, rules, now),
       };
@@ -5888,6 +5922,8 @@ export class Lair {
       this.write('INSERT INTO event_join_guests (id, join_id, customer_id, name, code, created_at) VALUES (?, ?, ?, ?, ?, ?)', makeId('eg'), join.id, g.customerId, g.name, g.code, now);
     }
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
+    // Round 24: the ad tags of the link they came by (src/newplayers.js)
+    this.tagAd('event_joins', join.id, who.customerId || null, cleanAd(input.ad), now);
     // --- saved: the spaces are ours ---
     return { ...(await this.payOrConfirmJoin(join, rules, plan)), spacesLeft: left - people };
   }
@@ -6114,6 +6150,8 @@ export class Lair {
     // Round 11: the other players (their emails go with the confirmation: confirm)
     this.saveGamePlayers(booking, players, now);
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
+    // Round 24: the ad tags of the link they came by (src/newplayers.js)
+    this.tagAd('bookings', spotId, who.customerId || null, cleanAd(input.ad), now);
     // --- saved: the spot is ours ---
     const result = await this.payOrConfirm(booking, rules, { ...plan, title: `Game spot at ${occurrence.title} (${free[0].join(', ')})` });
     // Round 11: the booker's answer lists the players (with the emails they typed)
@@ -6962,7 +7000,8 @@ export class Lair {
    *  - a day's Session products rung up at the counter ('stamp-sale') are the same sessions as that day's Lair sessions,
    *    so the day counts whichever has more: a Day Pass rung up for a booked table is still one stamp, whichever came
    *    first. The sale rows a day's sessions cover drop out (stamps staff added by hand never do).
-   * Returns { rows (newest first), total }. No awaits.
+   * Returns { rows (newest first), total, sessions }. sessions (round 24): every row that stamps, oldest first, the sale
+   * rows a day's sessions cover too (a Session rung up for a booked table is still a payment for it: welcomeOf). No awaits.
    */
   stampTally(customerId, now = Date.now(), rules = this.rulesCache) {
     const { sql, binds } = this.stampRowsQuery(customerId, now);
@@ -6989,7 +7028,7 @@ export class Lair {
       }
     }
     const counted = kept.filter((r) => !covered.has(r)).reverse();
-    return { rows: counted, total: counted.reduce((sum, r) => sum + r.people, 0) };
+    return { rows: counted, total: counted.reduce((sum, r) => sum + r.people, 0), sessions: kept };
   }
 
   /** The sessions that earn a member stamps (stampTally), newest first, up to `limit` (-1: all). No awaits. */
@@ -7012,16 +7051,21 @@ export class Lair {
    * in cents, any roll can be taken as instead of rolling, so a page offers it only when the Lair does. details adds
    * recent (the last 10 stamped sessions, newest first: { at, title, people }) and history (the last 20 loyalty rolls,
    * newest first: { id, at, roll, pick, amount, status: 'added'|'pending' }; round 23: pick 'roll' with the d20's face,
-   * or 'sure' with roll null). No awaits.
+   * or 'sure' with roll null). Round 24: a welcome code's rolls count with the loot codes' (earned.codes) once their
+   * first paid session has unlocked them (welcomeOf); until then rolls.waiting says how many wait (only there while some
+   * do). No awaits.
    */
   loyaltyOf(customerId, rules = this.rulesCache, { details = false } = {}) {
     const id = String(customerId);
-    const { stamps, cards } = loyaltyCard(this.stampCount(id));
+    const tally = this.stampTally(id);
+    const { stamps, cards } = loyaltyCard(tally.total);
     const grants = new Map(this.sql.exec('SELECT kind, COALESCE(SUM(count), 0) AS n FROM loyalty_grants WHERE customer_id = ? GROUP BY kind', id).toArray().map((r) => [r.kind, r.n]));
-    const earned = { cards, welcome: grants.get('welcome') || 0, birthday: this.giftedRolls(id), staff: grants.get('staff') || 0, codes: grants.get('code') || 0 };
+    const welcome = this.welcomeOf(id, tally);
+    const earned = { cards, welcome: grants.get('welcome') || 0, birthday: this.giftedRolls(id), staff: grants.get('staff') || 0, codes: (grants.get('code') || 0) + welcome.ready };
     const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty'", id).one().n;
     const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes - used);
-    const card = { stamps, cardSize: CARD_SIZE, cards, card: cards + 1, rolls: { available, earned, used }, sure: LOYALTY_SURE };
+    const rolls = { available, earned, used, ...(welcome.waiting ? { waiting: welcome.waiting } : {}) };
+    const card = { stamps, cardSize: CARD_SIZE, cards, card: cards + 1, rolls, sure: LOYALTY_SURE };
     if (!details) return card;
     const recent = this.stampedSessions(id, 10).map((s) => ({ at: s.at, title: this.stampTitle(s, rules), people: s.people }));
     const history = this.sql
@@ -7101,7 +7145,8 @@ export class Lair {
   /**
    * A loot code as staff see it: { id, code, rolls, limit (null: none), uses, left (null with no limit), expiresAt (the
    * last moment it works, or null), status: 'active' | 'inactive' | 'expired' | 'used-up', note, createdAt, createdBy,
-   * lastUsedAt, recent: the last 10 redeems, newest first ({ customerId, name, code (their member code), at }) }.
+   * lastUsedAt, recent: the last 10 redeems, newest first ({ customerId, name, code (their member code), at }), welcome
+   * (round 24: true for a welcome code, whose rolls wait for a new player's first paid session) }.
    */
   rollCodeView(r, now = Date.now()) {
     const used = this.sql.exec('SELECT COUNT(*) AS n, MAX(at) AS last FROM roll_code_uses WHERE code_id = ?', r.id).one();
@@ -7117,6 +7162,8 @@ export class Lair {
     return {
       id: r.id, code: r.code, rolls: r.rolls, limit, uses: used.n, left: limit == null ? null : Math.max(0, limit - used.n), expiresAt: r.expires_at || null,
       status, note: r.note || '', createdAt: r.created_at, createdBy: r.created_by || null, lastUsedAt: used.last || null,
+      // Round 24: a welcome code (its rolls wait for a new player's first paid session)
+      welcome: r.pays_on === WELCOME,
       recent: recent.map((u) => ({ customerId: u.customer_id, name: u.name || u.first_name || '', code: u.code || null, at: u.at })),
     };
   }
@@ -7125,7 +7172,7 @@ export class Lair {
    * A staff form's loot code fields, checked (creating and updating share the rules; only what was sent is returned,
    * and a new code gets 1 roll when none is sent): rolls 1 to 20; limit 1 to 100,000 in all, or null for none;
    * expires 'YYYY-MM-DD' (the last day it works, until midnight Lair time) or null; note up to 300 characters; status
-   * 'active' or 'inactive'. No awaits.
+   * 'active' or 'inactive'; round 24: welcome true or false (paysOn: 'first-session' or null). No awaits.
    */
   rollCodeFields(input, rules, now, existing = null) {
     const out = {};
@@ -7154,6 +7201,12 @@ export class Lair {
       }
     }
     if (has('note')) out.note = trimmed(input.note, 300) || null;
+    // Round 24: welcome true makes it a welcome code (its rolls wait for a new player's first paid session), false an
+    // ordinary one; uses already made keep what the code was when they were typed (roll_code_uses.pays_on)
+    if (has('welcome')) {
+      if (typeof input.welcome !== 'boolean') throw new RuleError(WELCOME_WORDS.welcome);
+      out.paysOn = input.welcome ? WELCOME : null;
+    }
     if (existing && has('status')) {
       if (!['active', 'inactive'].includes(input.status)) throw new RuleError(ROLL_CODE_MESSAGES.status);
       out.status = input.status;
@@ -7167,11 +7220,14 @@ export class Lair {
     const now = Date.now();
     const all = url.searchParams.get('status') === 'all';
     const rows = this.sql.exec(`SELECT * FROM roll_codes${all ? '' : " WHERE status != 'inactive'"} ORDER BY created_at DESC, rowid DESC LIMIT 200`).toArray();
-    return { codes: rows.map((r) => this.rollCodeView(r, now)) };
+    // welcomeCodes (round 24): this Lair knows welcome codes, so the Loot codes tab shows its Welcome tick even when no
+    // code is listed (an older Lair leaves it out, and the tick stays hidden)
+    return { codes: rows.map((r) => this.rollCodeView(r, now)), welcomeCodes: true };
   }
 
   /**
-   * POST /roll-codes { code?, rolls?, limit?, expires?, note? } (staff): a loot code. Typed: 4 to 24 letters, numbers or
+   * POST /roll-codes { code?, rolls?, limit?, expires?, note?, welcome? } (staff): a loot code (round 24: welcome true
+   * makes it a welcome code, whose rolls wait for a new player's first paid session). Typed: 4 to 24 letters, numbers or
    * dashes, kept in capitals, at least 4 letters or numbers; left empty, Gobgob makes one like GG-KOBOLD-14. Its text goes
    * in the codes table (kind 'roll'), so no code of any kind is used twice, and it never changes. Returns { code }.
    */
@@ -7193,14 +7249,14 @@ export class Lair {
     const id = makeId('rc');
     this.write("INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, 'roll', ?, ?)", codeKey(code), code, id, now);
     this.write(
-      `INSERT INTO roll_codes (id, code, rolls, total_limit, expires_at, status, note, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
-      id, code, f.rolls, f.limit ?? null, f.expiresAt ?? null, f.note ?? null, who.customerId ? `staff:${who.customerId}` : 'staff', now, now,
+      `INSERT INTO roll_codes (id, code, rolls, total_limit, expires_at, status, note, created_by, created_at, updated_at, pays_on)
+       VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+      id, code, f.rolls, f.limit ?? null, f.expiresAt ?? null, f.note ?? null, who.customerId ? `staff:${who.customerId}` : 'staff', now, now, f.paysOn ?? null,
     );
     return { code: this.rollCodeView(this.rollCodeRow(id), now) };
   }
 
-  /** POST /roll-codes/:id/update { rolls?, limit?, expires?, note?, status? } (staff). The limit can't go below the uses so far. Returns { code }. */
+  /** POST /roll-codes/:id/update { rolls?, limit?, expires?, note?, status?, welcome? } (staff). The limit can't go below the uses so far. Returns { code }. */
   async updateRollCode(id, input, who) {
     this.requireStaff(who, 'money');
     const rules = await this.rules();
@@ -7213,7 +7269,7 @@ export class Lair {
       const uses = this.sql.exec('SELECT COUNT(*) AS n FROM roll_code_uses WHERE code_id = ?', row.id).one().n;
       if (f.limit < uses) throw new RuleError(`It's been used ${plural(uses, 'time', 'times')}, so the limit can't be lower than ${uses}.`, 409);
     }
-    const columns = { rolls: 'rolls', limit: 'total_limit', expiresAt: 'expires_at', note: 'note', status: 'status' };
+    const columns = { rolls: 'rolls', limit: 'total_limit', expiresAt: 'expires_at', note: 'note', status: 'status', paysOn: 'pays_on' };
     const keys = Object.keys(f).filter((k) => columns[k]);
     if (keys.length) this.write(`UPDATE roll_codes SET ${keys.map((k) => `${columns[k]} = ?`).join(', ')}, updated_at = ? WHERE id = ?`, ...keys.map((k) => f[k] ?? null), now, row.id);
     return { code: this.rollCodeView(this.rollCodeRow(row.id), now) };
@@ -7222,7 +7278,9 @@ export class Lair {
   /**
    * POST /me/codes/redeem { code } (logged in): "Got a code?", one box for pass codes, session gift codes and loot codes.
    * A pass nobody has claimed is claimed exactly as POST /me/passes/claim does ({ kind: 'pass', pass, message }). A loot
-   * code gives its rolls, once per customer ({ kind: 'roll', rolls, message, loyalty }). A birthday gift's product code
+   * code gives its rolls, once per customer ({ kind: 'roll', rolls, message, loyalty }); round 24: a welcome code's wait
+   * for their first paid session ({ kind: 'welcome', rolls: 0, waiting, message, loyalty }: redeemWelcome, which turns
+   * away anyone who played at the Lair before today, or used a welcome code already). A birthday gift's product code
    * is for the shop's checkout (422); anything else Gobgob doesn't know (404). Ten tries in ten minutes a member, shared
    * with the claim route (a pass code counts once, in claimPass).
    */
@@ -7251,6 +7309,8 @@ export class Lair {
         throw new RuleError("You've used that code already. It's one go each.", 409);
       }
       if (this.rollCodeView(loot, now).status !== 'active') throw new RuleError("That code isn't working any more. Ask us at the counter.", 410);
+      // Round 24: a welcome code's rolls wait for their first paid session (src/newplayers.js)
+      if (loot.pays_on === WELCOME) return this.redeemWelcome(loot, me, rules, now);
       this.touchMember(me, {}, now);
       const grantId = makeId('lg');
       this.write(
@@ -9314,6 +9374,9 @@ export class Lair {
         ...this.memberListItem(id, rules, now), profile: this.profileView(row), gifts: gifts.map((g) => this.giftView(g, now)),
         // Round 22: stamps added by hand and sessions rung up at the counter, newest first, with Undo (src/stamps.js)
         stamps: this.stampLedger(id),
+        // Round 24: "How did you find us?" ({ answer, label, at, by } or null) and their welcome code ({ code, at, rolls,
+        // waiting } or null: src/newplayers.js)
+        foundUs: this.foundUsView(row), welcome: this.welcomeView(id),
         library: {
           plan: this.planWords(plan), holds: this.activeHolds(id, now).map((h) => this.staffHoldView(h, now, memo)),
           atHome: this.loansOut(id).map((l) => this.staffLoanView(l, now, memo)),
@@ -10168,6 +10231,8 @@ export class Lair {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
         spendTotal: member.spendTotal, code: member.code,
       },
+      // Round 24: their answer to "How did you find us?" ({ answer, label, at, by }), or null when they haven't said
+      foundUs: this.foundUsView(memberRow),
       // Games they're seated at every session of (POST /series/:id/leave stops it). schedule: how the series repeats,
       // 'weekly', 'fortnightly' or 'flexible', as the games board's series.schedule says it.
       series: this.sql
@@ -10662,3 +10727,5 @@ Object.assign(Lair.prototype, stampMethods);
 Object.assign(Lair.prototype, counterMethods);
 // Round 22 (28 Oct 2026): every hold can be edited (src/holds.js)
 Object.assign(Lair.prototype, holdMethods);
+// Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
+Object.assign(Lair.prototype, newPlayerMethods);

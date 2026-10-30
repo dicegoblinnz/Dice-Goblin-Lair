@@ -97,6 +97,25 @@ export const bookingVia = (b) => `(CASE WHEN ${b}.status IN ('seated', 'done') T
 /** The same for an event sign-up (alias j). No bound values. */
 export const joinVia = (j) => `(CASE WHEN ${j}.status = 'attended' THEN 'here' ELSE 'paid' END)`;
 
+/**
+ * Round 24 (from its review): what each session line of an order paid a unit, in cents, after its discounts, by the same
+ * line ids sessionLines gives: Map(lineId → cents). A Session rung up for $0, or 100% off, paid nothing, so it never
+ * counts as a new player's first paid session (src/newplayers.js). No awaits.
+ * @param {{ line_items?: any[] }} order
+ */
+export function sessionUnitPaid(order) {
+  const cents = (value) => Math.round(Number(value || 0) * 100) || 0;
+  const paid = new Map();
+  (order?.line_items || []).forEach((item, index) => {
+    if (!STAMPS.sessionSku.test(String(item?.sku ?? '').trim())) return;
+    const quantity = Math.max(1, Math.floor(Number(item.quantity ?? 1)) || 1);
+    const gross = cents(item.price ?? item.price_set?.shop_money?.amount) * quantity;
+    const discounts = (item.discount_allocations || []).reduce((sum, d) => sum + cents(d.amount ?? d.amount_set?.shop_money?.amount), 0);
+    paid.set(String(item.id ?? item.admin_graphql_api_id ?? `line-${index}`), Math.max(0, Math.floor((gross - discounts) / quantity)));
+  });
+  return paid;
+}
+
 /** The customer number at the end of a Shopify id ("gid://shopify/Customer/123" or 123), or null */
 const customerNumber = (value) => String(value ?? '').match(/(\d{1,20})$/)?.[1] || null;
 const trimmed = (v, max) => String(v ?? '').trim().slice(0, max);
@@ -127,21 +146,28 @@ export const stampMethods = {
     return time.at(addDays(time.key(now), 1), 0);
   },
 
-  /** A card as the counter shows it: { stamps, cardSize, rollsAvailable, card }, or null for nobody. No awaits. */
+  /**
+   * A card as the counter shows it: { stamps, cardSize, rollsAvailable, card }, or null for nobody. Round 24: and
+   * rollsWaiting, a welcome code's rolls waiting for their first paid session, only while some do. No awaits.
+   */
   posLoyalty(customerId, rules = this.rulesCache) {
     if (!customerId) return null;
     const card = this.loyaltyOf(customerId, rules);
-    return { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card };
+    return {
+      stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card,
+      ...(card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}),
+    };
   },
 
   /**
    * Stamps for session products rung up at the counter (ordersPaid, round 22): one for each unit of each line, for the
-   * order's customer, made once per order, line and unit. Returns how many were made. No awaits.
+   * order's customer, made once per order, line and unit. Round 24: each keeps what its unit paid (amount, from
+   * unitPaid: sessionUnitPaid), so a $0 one is never a first paid session. Returns how many were made. No awaits.
    * @param {string} orderId
    * @param {{ lineId: string, title: string, quantity: number }[]} lines sessionLines
    * @param {unknown} customer the order's customer (an id, or a gid)
    */
-  stampSessionSales(orderId, lines, customer, { orderName = null, now = Date.now() } = {}) {
+  stampSessionSales(orderId, lines, customer, { orderName = null, now = Date.now(), unitPaid = null } = {}) {
     const customerId = customerNumber(customer);
     if (!orderId || !customerId || !lines?.length) return 0;
     let made = 0;
@@ -149,9 +175,10 @@ export const stampMethods = {
       for (let unit = 0; unit < line.quantity; unit += 1) {
         if (this.sql.exec('SELECT 1 AS n FROM loyalty_stamps WHERE order_id = ? AND line_id = ? AND unit = ?', orderId, line.lineId, unit).toArray().length) continue;
         this.write(
-          `INSERT INTO loyalty_stamps (id, customer_id, kind, count, title, note, order_id, order_name, line_id, unit, key, at, created_by, created_at)
-           VALUES (?, ?, 'sale', 1, ?, NULL, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+          `INSERT INTO loyalty_stamps (id, customer_id, kind, count, title, note, order_id, order_name, line_id, unit, key, at, created_by, created_at, amount)
+           VALUES (?, ?, 'sale', 1, ?, NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
           makeId('st'), customerId, line.title, orderId, orderName || null, line.lineId, unit, now, `order:${orderName || orderId}`, now,
+          unitPaid && unitPaid.has(line.lineId) ? unitPaid.get(line.lineId) : null,
         );
         made += 1;
       }

@@ -23,7 +23,8 @@ import {
 } from './flow.js';
 import { customerIdNumber, dateLabel, firstName, longDay, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
 import { accountLine, tabItems } from './lines.js';
-import { cardFullWords, cardHeading, freshWords, loyaltyCard, rollWords, stampCount, stampNote, stampRows, stampsLeft } from './loyalty.js';
+import { FOUND_US, FOUND_US_WORDS, askFoundUs } from './foundus.js';
+import { cardFullWords, cardHeading, freshWords, loyaltyCard, rollWords, stampCount, stampNote, stampRows, stampsLeft, welcomeWords } from './loyalty.js';
 import { saleStrip } from './sale.js';
 import { amountProblem, bookerPayer, paidSummary, parseDollars, paymentsLine, pendingState, personShare, shareSummary, WAITING } from './split.js';
 import {
@@ -108,6 +109,7 @@ import {
  *   putMemberOnSale: () => void,
  *   addStamp: () => void,
  *   undoStamp: () => void,
+ *   foundUs: (answer: string) => void,
  *   openPass: (pass: PassLike) => void,
  *   togglePicking: () => void,
  *   usePassOn: (row: Row, group: Group) => void,
@@ -578,6 +580,8 @@ function MoneySection({ row, plan }) {
  */
 function LoyaltySection({ card, fresh = 0, note, ctx, stamping = null }) {
   const rolls = rollWords(card);
+  // round 24: a welcome code's roll, theirs once they've paid for a session
+  const welcome = welcomeWords(card);
   const busyNow = Boolean(ctx.busy);
   return (
     <s-section heading={cardHeading(card)}>
@@ -602,6 +606,7 @@ function LoyaltySection({ card, fresh = 0, note, ctx, stamping = null }) {
           </s-stack>
           <s-text>{stampsLeft(card)}</s-text>
           {rolls ? <s-text type="strong">{rolls}</s-text> : null}
+          {welcome ? <s-text>{welcome}</s-text> : null}
           {note ? <s-text color="subdued">{note}</s-text> : null}
         </s-stack>
         {stamping ? (
@@ -616,6 +621,27 @@ function LoyaltySection({ card, fresh = 0, note, ctx, stamping = null }) {
             ) : null}
           </s-stack>
         ) : null}
+      </s-stack>
+    </s-section>
+  );
+}
+
+/**
+ * "How did they find us?" (contract v24-new-players, section 5): on a new player's first day, under their card. One tap
+ * saves their answer and the question goes; nothing waits on it.
+ * @param {{ ctx: Ctx }} props
+ */
+function FoundUsSection({ ctx }) {
+  const busyNow = Boolean(ctx.busy);
+  return (
+    <s-section heading={FOUND_US_WORDS.heading}>
+      <s-stack direction="block" gap="small">
+        <s-text color="subdued">{FOUND_US_WORDS.hint}</s-text>
+        {FOUND_US.map(([answer, label]) => (
+          <s-button key={answer} variant="secondary" loading={ctx.busyKey === `found-us-${answer}`} disabled={busyNow} onClick={() => ctx.act.foundUs(answer)}>
+            {label}
+          </s-button>
+        ))}
       </s-stack>
     </s-section>
   );
@@ -903,6 +929,9 @@ function MemberView({ screen, ctx }) {
       {card ? (
         <LoyaltySection card={card} fresh={screen.fresh || 0} note={stampNote()} ctx={ctx} stamping={member.customerId ? { added: Boolean(screen.added?.length) } : null} />
       ) : null}
+
+      {/* Round 24: "How did they find us?" on a new player's first day, until someone answers */}
+      {member.customerId && askFoundUs(screen) ? <FoundUsSection ctx={ctx} /> : null}
 
       {todayRows.length ? (
         <s-section heading="Today">

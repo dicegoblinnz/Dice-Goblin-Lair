@@ -323,6 +323,8 @@ test('loot codes (3): staff make them, typed or made by Gobgob; every rule has i
   assert.deepEqual(welcome.data.code, {
     id: welcome.data.code.id, code: 'ROLL-FOR-LOOT', rolls: 1, limit: null, uses: 0, left: null, expiresAt: null, status: 'active',
     note: "Gobgob's welcome loot, for every customer", createdAt: NOW, createdBy: 'staff:staff', lastUsedAt: null, recent: [],
+    // round 24 (contract v24-new-players): whether it's a welcome code, whose rolls wait for a first paid session
+    welcome: false,
   }, 'kept in capitals, 1 roll by default');
   // Made by the Lair: GG-WORD-N
   const made = (await makeCode({ rolls: 3, limit: 50, expires: '2026-10-31', note: 'Market day' })).data.code;
@@ -364,11 +366,12 @@ test('loot codes (3): the first start makes the welcome code ROLL-FOR-LOOT once;
   fresh.rulesCache = lair.rulesCache;
   fresh.rulesLoadedAt = lair.rulesLoadedAt;
   const list = (await fresh.fetch(new Request('https://lair.test/roll-codes', { headers: { 'X-Lair-Customer': 'staff' } })).then((r) => r.json())).codes;
-  assert.deepEqual(list.map((c) => [c.code, c.rolls, c.limit, c.expiresAt, c.status, c.note, c.createdBy]), [['ROLL-FOR-LOOT', 1, null, null, 'active', "Gobgob's welcome loot, for every customer", 'setup']]);
+  // (round 24's four welcome codes are made on the first start too: test/round24-new-players.test.js checks them)
+  assert.deepEqual(list.filter((c) => !c.welcome).map((c) => [c.code, c.rolls, c.limit, c.expiresAt, c.status, c.note, c.createdBy]), [['ROLL-FOR-LOOT', 1, null, null, 'active', "Gobgob's welcome loot, for every customer", 'setup']]);
   fresh.sql.exec("UPDATE roll_codes SET status = 'inactive'");
   fresh.migrate();
-  assert.equal(fresh.sql.exec('SELECT COUNT(*) AS n FROM roll_codes').one().n, 1, 'made once');
-  assert.equal(fresh.sql.exec("SELECT status FROM roll_codes").one().status, 'inactive', 'switched off stays off');
+  assert.equal(fresh.sql.exec('SELECT COUNT(*) AS n FROM roll_codes WHERE pays_on IS NULL').one().n, 1, 'made once');
+  assert.equal(fresh.sql.exec("SELECT status FROM roll_codes WHERE code = 'ROLL-FOR-LOOT'").one().status, 'inactive', 'switched off stays off');
 });
 
 test('loot codes (3): "Got a code?" gives a loot code\'s rolls once per customer, typed any way; the words say so; used up, expired or switched off it stops; it\'s never a ticket', async () => {
