@@ -632,6 +632,8 @@ Object.assign(PAGES, {
   '/cart-gw': () => renderPage('cart', { cart: gwCart, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
   '/cart-gw-only': () => renderPage('cart', { cart: gwOnlyCart, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
   '/cart-gw-drawer': () => renderPage('index', { cart: gwCart }),
+  // the live cart (what /cart/add.js and change.js have put in it), as its page
+  '/cart': () => renderPage('cart', { cart: cartLiquid(), template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
 });
 
 /* ---- library routes (library worktree): tag-filtered library collection, membership, terms, search ---- */
@@ -850,6 +852,8 @@ const feedProducts = (() => {
 })();
 collections.all = coll('all', 'All products', [...arrivals, ...boardGames], feedProducts.length);
 const variantIndex = new Map(feedProducts.flatMap((p) => p.variants.map((v) => [Number(v.id), { product: p, variant: v }])));
+// round 25: the GW kits can go in the live cart too (quick add on /collections/war-game, the cart's Ordered in notes)
+for (const p of [gwInStore, gwOrderedIn, gwLastOne, gwDropped]) for (const v of p.variants) variantIndex.set(Number(v.id), { product: p, variant: v });
 /* ---- round 16, the game page: product types as the store has them (games are Board Games or Card Games, library copies
    included), descriptions laid out like the shop's write-ups (a hook, the "<Title> is a …" summary, Gobgob's favourite
    bit, the 👥 ⏱ 🎂 stats line, the 🛒 or 📚 line and the 🎥 video link), custom.difficulty, type tags, and the library
@@ -959,6 +963,14 @@ const feedJson = (p) => ({
   images: p.featured_media ? [{ src: `/img/${encodeURIComponent(p.featured_media.__seed)}.svg?v=1`, width: p.featured_media.width, height: p.featured_media.height }] : [],
 });
 export const mockCart = { lines: [], codes: [], note: '' };
+/** A cart line's key, as Shopify's: the variant and its properties (no properties keeps the key it always had) */
+const lineKey = (id, properties = {}) => {
+  const text = JSON.stringify(properties || {});
+  if (text === '{}') return `${id}:7b7d`;
+  let hash = 2166136261;
+  for (const ch of text) hash = Math.imul(hash ^ ch.codePointAt(0), 16777619) >>> 0;
+  return `${id}:${hash.toString(16)}`;
+};
 function pricedCart() {
   const lines = mockCart.lines.map((l) => {
     const hit = variantIndex.get(Number(l.variantId));
@@ -1006,7 +1018,7 @@ function cartLiquid() {
   return {
     ...emptyCart, note: mockCart.note, item_count: c.lines.reduce((s, l) => s + l.quantity, 0), total_price: c.total, cart_level_discount_applications: c.cartLevel,
     items: c.lines.map((l) => ({
-      key: l.key, url: l.product.url, image: l.product.featured_media, product: l.product, variant: { title: l.variant.title, quantity_rule: {} }, quantity: l.quantity,
+      key: l.key, url: l.product.url, image: l.product.featured_media, product: l.product, variant: { ...l.variant, quantity_rule: {} }, quantity: l.quantity,
       final_line_price: l.unit * l.quantity - l.off, original_line_price: l.unit * l.quantity, properties: l.properties || {}, line_level_discount_allocations: l.allocations,
     })),
   };
@@ -1018,9 +1030,16 @@ async function cartSections(ids) {
   engine.options.globals = local;
   try {
     for (const id of ids) {
-      if (!fs.existsSync(path.join(THEME, 'sections', `${id}.liquid`))) continue;
-      const schema = schemaOf(`sections/${id}.liquid`);
-      const html = await engine.parseAndRender(read(`sections/${id}.liquid`), { ...local, section: { id, settings: resolveSettings(schema.settings, {}), blocks: [] } });
+      // a section file by its name (cart-drawer), or a template's section by its id (the cart page's
+      // "template--1__main", its "main" in templates/cart.json), as the Section Rendering API finds either
+      let file = id;
+      if (!fs.existsSync(path.join(THEME, 'sections', `${file}.liquid`))) {
+        const type = fs.existsSync(path.join(THEME, 'templates', 'cart.json')) ? readJson('templates/cart.json').sections?.[id.replace(/^template--\d+__/, '')]?.type : null;
+        if (!type || !fs.existsSync(path.join(THEME, 'sections', `${type}.liquid`))) continue;
+        file = type;
+      }
+      const schema = schemaOf(`sections/${file}.liquid`);
+      const html = await engine.parseAndRender(read(`sections/${file}.liquid`), { ...local, section: { id, settings: resolveSettings(schema.settings, {}), blocks: [] } });
       out[id] = sectionWrapper(id, schema, html);
     }
   } finally {
@@ -1092,7 +1111,7 @@ async function shopJson(req, res, url) {
   const sectionIds = Array.isArray(body.sections) ? body.sections : String(body.sections || '').split(',').filter(Boolean);
   const addLine = (id, quantity, properties = {}) => {
     if (!variantIndex.has(Number(id))) return false;
-    const key = `${id}:${Buffer.from(JSON.stringify(properties)).toString('hex').slice(0, 8) || '0'}`;
+    const key = lineKey(id, properties);
     const line = mockCart.lines.find((l) => l.key === key);
     if (line) line.quantity += quantity;
     else mockCart.lines.push({ key, variantId: Number(id), quantity, properties });
@@ -1126,7 +1145,16 @@ async function shopJson(req, res, url) {
     return true;
   }
   const line = mockCart.lines.find((l) => l.key === body.id || String(l.variantId) === String(body.id));
-  if (line) line.quantity = Number(body.quantity);
+  // as Shopify: a line that isn't in the cart (an old key) is a 400; new properties replace the line's, and its key
+  if (!line) {
+    sendJson(res, 400, { status: 400, message: 'Cart Error', description: 'No line with that key' });
+    return true;
+  }
+  line.quantity = Number(body.quantity);
+  if (body.properties && typeof body.properties === 'object') {
+    line.properties = body.properties;
+    line.key = lineKey(line.variantId, body.properties);
+  }
   mockCart.lines = mockCart.lines.filter((l) => l.quantity > 0);
   sendJson(res, 200, { ...cartJsonOut(), sections: await cartSections(sectionIds) });
   return true;
