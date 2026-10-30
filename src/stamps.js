@@ -127,11 +127,17 @@ export const stampMethods = {
     return time.at(addDays(time.key(now), 1), 0);
   },
 
-  /** A card as the counter shows it: { stamps, cardSize, rollsAvailable, card }, or null for nobody. No awaits. */
+  /**
+   * A card as the counter shows it: { stamps, cardSize, rollsAvailable, card }, or null for nobody. Round 24: and
+   * rollsWaiting, a welcome code's rolls waiting for their first paid session, only while some do. No awaits.
+   */
   posLoyalty(customerId, rules = this.rulesCache) {
     if (!customerId) return null;
     const card = this.loyaltyOf(customerId, rules);
-    return { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card };
+    return {
+      stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card,
+      ...(card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}),
+    };
   },
 
   /**

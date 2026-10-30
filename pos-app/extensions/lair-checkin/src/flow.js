@@ -40,11 +40,12 @@ import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, pass
  *   this screen just set up; confirm: "GM pays" (or stop) is waiting for a yes; fresh: stamps this screen saw land
  * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], loyalty?: object | null,
  *   account?: { billing?: string, creditLimit?: number, owed?: number, available?: number | null, warning?: string | null } | null,
- *   fresh?: number, added?: string[] }} MemberScreen
+ *   fresh?: number, added?: string[], foundUs?: { answer?: string, label?: string } | null, newHere?: boolean }} MemberScreen
  *   loyalty: their loyalty card from the scan (`{ stamps, cardSize, rollsAvailable, card }`, rounds 6 and 7)
  *   account: their billing from the scan (round 9): `{ billing: 'visit' }`, or a monthly account's limit and what's owed
  *   fresh: stamps this screen saw land (check-ins, and stamps staff added); added (round 22): the stamps staff added on
- *   this screen, oldest first, so Undo can take the last one back
+ *   this screen, oldest first, so Undo can take the last one back; foundUs and newHere (round 24, contract
+ *   v24-new-players): their answer to "How did you find us?" (null: none yet), and whether today is their first day
  * @typedef {{ name: 'pass', pass: PassLike & Record<string, any>, picking: boolean }} PassScreen
  * @typedef {{ name: 'group', key: string, ticked: string[], picking: boolean }} GroupScreen
  *   picking: "Check in several at once" is open; ticked: the rowKeys ticked to pay together
@@ -129,6 +130,9 @@ export function nextScreen(answer) {
       account: answer.account && typeof answer.account === 'object' ? answer.account : null,
       fresh: 0,
       added: [],
+      // round 24: "How did you find us?" (foundus.js asks while newHere and nobody has answered)
+      foundUs: answer.foundUs && typeof answer.foundUs === 'object' ? answer.foundUs : null,
+      newHere: answer.newHere === true,
     };
   }
   if (type === 'pass' && answer.pass && typeof answer.pass === 'object') return { name: 'pass', pass: answer.pass, picking: false };

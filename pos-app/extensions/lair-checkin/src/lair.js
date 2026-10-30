@@ -134,6 +134,16 @@ export function undoStamp({ customerId, id }) {
 }
 
 /**
+ * A new player's answer to "How did you find us?" (contract v24-new-players: one of foundus.js's FOUND_US). Answers
+ * `{ foundUs: { answer, label, at, by } }`.
+ * @param {{ customerId: unknown, answer: string }} input
+ * @returns {Promise<any>}
+ */
+export function saveFoundUs({ customerId, answer }) {
+  return call('POST', '/pos/found-us', { customerId: String(customerId ?? ''), answer }, 'Saving that needs the Lair app’s latest update. Try again in a few minutes.');
+}
+
+/**
  * Tells the Lair app a member's tab is in the cart (so they can't change it while they pay). Answers `{ tab }`.
  * @param {string | number} tabId
  * @returns {Promise<any>}

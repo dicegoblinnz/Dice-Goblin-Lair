@@ -29,6 +29,7 @@
 //   REPORT_EMAIL (config) sends it somewhere else, or 'off' stops it; otherwise it goes to STAFF_EMAIL.
 import { HOUR, LairTime, MIN } from './core.js';
 import { emailReady } from './shopify.js';
+import { FOUND_US_ANSWERS } from './newplayers.js';
 
 /** Booking flows on the website and the steps counted for each (anything else sent to POST /steps is ignored) */
 export const STEP_FLOWS = ['table', 'ttrpg', 'event'];
@@ -88,7 +89,10 @@ export const REPORT_WORDS = {
   visit: 'A visit is a table, walk-in or TTRPG seat, or an event sign-up, that was checked in, or paid on the day (from 12 hours before it to a day after). Cancellations, no-shows and unpaid holds never count, and nor does a seat paid later because nobody came.',
   regular: `A regular came in at least ${REGULAR_MIN} different weeks of the last ${REGULAR_WINDOW} (with an account, so each person counts once).`,
   week: 'Weeks run Monday to Sunday at the Lair.',
+  // Round 24 (contract v24-new-players)
+  newPlayer: 'A new player has an account and made their first visit that week. Each is counted once: by the welcome code they used, else the ad link they first came by, else what they told us when asked how they found us.',
 };
+const ANSWER_WORDS = new Map(FOUND_US_ANSWERS);
 
 /** 'YYYY-MM-DD' plus n days */
 export const addDays = (key, n) => {
@@ -117,7 +121,8 @@ export const reportMethods = {
    * before this one (default 8, at most 26); this week so far comes first, with partial: true. Each week: { week (its
    * Monday, 'YYYY-MM-DD'), label, partial, regulars, visitors, visits, checkIns: { checkedIn, paidOnly, notRecorded,
    * rate }, noShows, bookingsMade: { online, staff, saved }, newMembers, ttrpg: { sessions, seats, taken }, library:
-   * { loansOut }, steps: { table, ttrpg, event: { start, login, done } } }. Also asOf, tz, words (the definitions) and
+   * { loansOut }, steps: { table, ttrpg, event: { start, login, done } }, newPlayers (round 24: { total, codes: { code: n },
+   * ads: { 'source/medium': n }, answers: { answer: n }, unknown }) }. Also asOf, tz, words (the definitions) and
    * library: { memberships } (current, not by week).
    */
   async weeklyNumbers(url, who) {
@@ -160,6 +165,7 @@ export const reportMethods = {
         visitors: (people.get(monday) || new Set()).size,
         visits: 0, checkIns: { checkedIn: 0, paidOnly: 0, notRecorded: 0, rate: null }, noShows: 0,
         bookingsMade: { online: 0, staff: 0, saved: 0 }, newMembers: 0, ttrpg: { sessions: 0, seats: 0, taken: 0 },
+        newPlayers: { total: 0, codes: {}, ads: {}, answers: {}, unknown: 0 },
         library: { loansOut: 0 },
         steps: Object.fromEntries(STEP_FLOWS.map((flow) => [flow, Object.fromEntries(STEP_NAMES.map((s) => [s, 0]))])),
       };
@@ -210,6 +216,21 @@ export const reportMethods = {
     // that person first turns up, never the week it was made)
     for (const r of this.sql.exec('SELECT first_seen AS at FROM members WHERE first_seen >= ? AND first_seen < ?', start, until).toArray()) {
       add(r.at, (row) => { row.newMembers += 1; });
+    }
+
+    // Round 24: new players, by the week of their first visit ever, each once by how they found the Lair: their welcome
+    // code, else the ad link they first came by (source/medium), else their answer to "How did you find us?"
+    for (const r of this.firstVisits(start, until)) {
+      add(r.first, (row) => {
+        const n = row.newPlayers;
+        n.total += 1;
+        if (r.code) n.codes[r.code] = (n.codes[r.code] || 0) + 1;
+        else if (r.ad_source) {
+          const key = `${r.ad_source}/${r.ad_medium || 'none'}`;
+          n.ads[key] = (n.ads[key] || 0) + 1;
+        } else if (r.found_us) n.answers[r.found_us] = (n.answers[r.found_us] || 0) + 1;
+        else n.unknown += 1;
+      });
     }
 
     // TTRPG sessions that ran (not cancelled, not waiting for approval): seats on offer and taken (booked seats plus
@@ -277,6 +298,38 @@ export const reportMethods = {
       out.get(week).add(String(r.id));
     }
     return out;
+  },
+
+  /**
+   * Round 24: people with an account whose first visit ever (the same visits as visitorsByWeek: as the booker, a named
+   * player or a guest with an account) started from `from` to `until`, with how they found the Lair: { id, first (when
+   * that visit started), code (the welcome code they used, or null), ad_source, ad_medium (the first ad tags they came
+   * with), found_us (their answer) }. Visits from before `from` count against being new, however long ago. No awaits.
+   */
+  firstVisits(from, until) {
+    return this.sql.exec(
+      `SELECT f.id AS id, f.first AS first, m.ad_source AS ad_source, m.ad_medium AS ad_medium, m.found_us AS found_us,
+              (SELECT c.code FROM roll_code_uses u JOIN roll_codes c ON c.id = u.code_id
+                WHERE u.customer_id = f.id AND u.pays_on = 'first-session' ORDER BY u.at LIMIT 1) AS code
+         FROM (
+           SELECT v.id AS id, MIN(v.at) AS first FROM (
+             SELECT b.customer_id AS id, b.starts_at AS at FROM bookings b
+              WHERE b.customer_id IS NOT NULL AND b.customer_id != '' AND b.kind IN ${BOOKING_KINDS} AND b.starts_at < ? AND ${BOOKING_VISIT}
+             UNION ALL
+             SELECT p.customer_id, b.starts_at FROM booking_players p JOIN bookings b ON b.id = p.booking_id
+              WHERE p.customer_id IS NOT NULL AND p.customer_id != '' AND (b.customer_id IS NULL OR b.customer_id != p.customer_id)
+                AND b.kind IN ${BOOKING_KINDS} AND b.starts_at < ? AND ${BOOKING_VISIT}
+             UNION ALL
+             SELECT j.customer_id, j.starts_at FROM event_joins j
+              WHERE j.customer_id IS NOT NULL AND j.customer_id != '' AND j.starts_at < ? AND ${JOIN_VISIT}
+             UNION ALL
+             SELECT x.customer_id, j.starts_at FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
+              WHERE x.customer_id IS NOT NULL AND x.customer_id != '' AND (j.customer_id IS NULL OR j.customer_id != x.customer_id)
+                AND j.starts_at < ? AND ${JOIN_VISIT}
+           ) v GROUP BY v.id HAVING MIN(v.at) >= ?
+         ) f LEFT JOIN members m ON m.customer_id = f.id`,
+      until, until, until, until, from,
+    ).toArray();
   },
 
   /**
@@ -379,6 +432,23 @@ export const reportMethods = {
     this.sql.exec('UPDATE members SET first_seen = COALESCE(created_at, last_seen) WHERE first_seen IS NULL AND last_seen IS NOT NULL');
   },
 
+  /**
+   * Round 24: a week's new players in words, beside the week before: "3 (1 the week before): 1 by welcome code (SCROLL-ROLL
+   * 1), 1 by ad link (google/paid 1), 1 told us (Walked past 1), 1 not known". No awaits.
+   */
+  newPlayerWords(n, then) {
+    if (!n) return '0';
+    const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
+    const list = (counts, name = (k) => k) => Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, v]) => `${name(k)} ${v}`).join(', ');
+    const parts = [
+      sum(n.codes) ? `${sum(n.codes)} by welcome code (${list(n.codes)})` : '',
+      sum(n.ads) ? `${sum(n.ads)} by ad link (${list(n.ads)})` : '',
+      sum(n.answers) ? `${sum(n.answers)} told us (${list(n.answers, (k) => ANSWER_WORDS.get(k) || k)})` : '',
+      n.unknown ? `${n.unknown} not known` : '',
+    ].filter(Boolean);
+    return `${n.total}${then ? ` (${then.total} the week before)` : ''}${parts.length ? `: ${parts.join(', ')}` : ''}`;
+  },
+
   /** The weekly email's words: { subject, body: { title, intro, details, outro } }. No awaits. */
   weeklyReportContent(last, before, report) {
     const was = (then) => (then == null ? '' : ` (${then} the week before)`);
@@ -391,6 +461,8 @@ export const reportMethods = {
       ['No-shows', String(last.noShows)],
       ['Bookings and sign-ups made', `${last.bookingsMade.online} online, ${last.bookingsMade.staff} by staff, ${last.bookingsMade.saved} saved for weekly regulars`],
       ['New to the Lair app', `${last.newMembers}${was(before?.newMembers)}`],
+      // Round 24: "3 (1 the week before): 1 by welcome code (SCROLL-ROLL 1), 1 by ad link (google/paid 1), 1 told us (Walked past 1)"
+      ['New players', this.newPlayerWords(last.newPlayers, before?.newPlayers)],
       ['TTRPG seats', last.ttrpg.sessions ? `${last.ttrpg.taken} of ${last.ttrpg.seats} taken, across ${plural(last.ttrpg.sessions, 'session', 'sessions')}` : 'No sessions'],
       ['Library games out', String(last.library.loansOut)],
       ['Library memberships now', String(report.library.memberships)],

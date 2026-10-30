@@ -55,7 +55,8 @@ import {
   wrongScan,
 } from './flow.js';
 import { dayKey, firstName, money, plural } from './format.js';
-import { addStamp, checkIn, coverSeat, getToday, LairError, problemFor, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse, undoStamp } from './lair.js';
+import { addStamp, checkIn, coverSeat, getToday, LairError, problemFor, saveFoundUs, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse, undoStamp } from './lair.js';
+import { foundUsSaved } from './foundus.js';
 import { feeLines, itemCount, linesTotal, owedLines, shareLines, tabToast } from './lines.js';
 import { cardFilled, cardFullShort, cardFullWords, freshStamps, stampAddedWords, stampKey } from './loyalty.js';
 import { customerNames } from './sale.js';
@@ -1317,6 +1318,32 @@ function CheckIn() {
     );
   }
 
+  /* ---------------- "How did they find us?" (round 24, contract v24-new-players) ---------------- */
+
+  /**
+   * A new player's answer, one tap (POST /pos/found-us). Once it's in, the question goes from their screen. Try again
+   * sends the same answer.
+   * @param {string} answer
+   */
+  function foundUsHere(answer) {
+    const screen = topMember();
+    if (!screen?.member.customerId) return;
+    const customerId = screen.member.customerId;
+    const go = () =>
+      run(
+        'Saving their answer…',
+        async () => {
+          const saved = await saveFoundUs({ customerId, answer });
+          const foundUs = saved?.foundUs && typeof saved.foundUs === 'object' ? saved.foundUs : { answer };
+          updateMember((shown) => (String(shown.member.customerId) !== String(customerId) ? shown : { ...shown, foundUs }));
+          toast(foundUsSaved(answer));
+        },
+        go,
+        `found-us-${answer}`,
+      );
+    go();
+  }
+
   /** "Put Sam on this sale". */
   function putMemberOnSale() {
     const screen = topMember();
@@ -1432,6 +1459,7 @@ function CheckIn() {
       putMemberOnSale,
       addStamp: addStampHere,
       undoStamp: undoStampHere,
+      foundUs: foundUsHere,
       openPass: (pass) => push({ name: 'pass', pass, picking: false }),
       togglePicking: () => updatePass((screen) => ({ ...screen, picking: !screen.picking })),
       usePassOn,

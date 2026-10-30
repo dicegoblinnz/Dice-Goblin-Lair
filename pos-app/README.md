@@ -149,6 +149,18 @@ They roll in My Lair. When a check-in or a stamp fills their card, the message a
 loyalty card is full!"**. Let them know: a roll for store credit is waiting in My Lair. (If the screen stays open, it
 says so too.)
 
+**A welcome code** (round 24: SEARCH-ROLL, SCROLL-ROLL, TOK-ROLL or UPVOTE-ROLL, from the ads) gives a new player a
+roll once they've paid for their first session. Until then their card says **"Welcome roll waiting: theirs once
+they've paid for a session."** Paying for today's session (scan their code first, so they're on the sale) unlocks it:
+the roll is waiting in My Lair from then.
+
+### How did they find us?
+
+On a new player's first day (round 24), their member screen asks **How did they find us?** under their card: Google,
+Facebook, Instagram, TikTok, Reddit, A friend, Walked past, Discord or Something else. Ask them and tap their answer:
+it's how Mo sees which ads bring people in. One tap saves it and the question goes. It never stops anything else:
+skip it on a busy night. (Staff can change an answer on the member's page.)
+
 ### Weekly regulars and owed sessions
 
 **Weekly** on someone's seat means they're a weekly regular (they tapped "Join every session" on the website): their
@@ -359,6 +371,7 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
 | `POST /pos/uncover { gameId, ref }` | The GM stops paying for it; answers `{ seat, cover: null, game }` |
 | `POST /pos/stamp { customerId, key }` | Round 22, Add a stamp: one stamp on their card; the same `key` again adds nothing. Answers `{ stamp, repeated, loyalty }` |
 | `POST /pos/stamp-undo { customerId, id }` | Undo that stamp (only stamps added by hand at the counter). Answers `{ stamp, already, loyalty }` |
+| `POST /pos/found-us { customerId, answer }` | Round 24: a new player's answer to "How did you find us?" (contract v24-new-players). Answers `{ foundUs }`. A member code's `/pos/scan` says `foundUs` and `newHere`, and its card `rollsWaiting` while a welcome code's roll waits |
 
 - The session token is a JWT signed HS256 with the app's client secret, `aud` = the client ID, `dest` =
   `https://ep0qiq-rp.myshopify.com`. Errors come back as `{ error: "Plain sentence" }` and the screen shows them.

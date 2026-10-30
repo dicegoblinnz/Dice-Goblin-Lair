@@ -7,30 +7,33 @@
 import { plural } from './format.js';
 
 /**
- * @typedef {{ stamps: number, size: number, rolls: number, card: number }} Card
+ * @typedef {{ stamps: number, size: number, rolls: number, card: number, waiting?: number }} Card
  *   stamps on this card (a full card's roll joins `rolls` and the next card starts at 0), the card's size (10), rolls
- *   waiting in My Lair, and which card they're on (1 for the first; 0 when the Lair app didn't say)
+ *   waiting in My Lair, and which card they're on (1 for the first; 0 when the Lair app didn't say). waiting (round 24,
+ *   contract v24-new-players): a welcome code's rolls waiting for their first paid session, only while some do
  */
 
 /** Stamps to a row when the card is drawn: two rows of five, like a punch card. */
 export const ROW = 5;
 
 /**
- * A scan's `loyalty` (`{ stamps, cardSize, rollsAvailable, card }`) as a Card, or null when there isn't one (a Lair
- * app from before round 6, or a guest's ticket: only an account has a card).
+ * A scan's `loyalty` (`{ stamps, cardSize, rollsAvailable, card, rollsWaiting? }`) as a Card, or null when there isn't
+ * one (a Lair app from before round 6, or a guest's ticket: only an account has a card).
  * @param {unknown} loyalty
  * @returns {Card | null}
  */
 export function loyaltyCard(loyalty) {
   if (!loyalty || typeof loyalty !== 'object') return null;
-  const raw = /** @type {{ stamps?: unknown, cardSize?: unknown, rollsAvailable?: unknown, card?: unknown }} */ (loyalty);
+  const raw = /** @type {{ stamps?: unknown, cardSize?: unknown, rollsAvailable?: unknown, card?: unknown, rollsWaiting?: unknown }} */ (loyalty);
   const size = Math.round(Number(raw.cardSize) || 0);
   if (size < 1) return null;
+  const waiting = Math.max(0, Math.round(Number(raw.rollsWaiting) || 0));
   return {
     stamps: Math.min(size, Math.max(0, Math.round(Number(raw.stamps) || 0))),
     size,
     rolls: Math.max(0, Math.round(Number(raw.rollsAvailable) || 0)),
     card: Math.max(0, Math.round(Number(raw.card) || 0)),
+    ...(waiting ? { waiting } : {}),
   };
 }
 
@@ -87,6 +90,17 @@ export function stampNote(row = null) {
 /** "1 roll waiting in My Lair", or '' with none. @param {Card} card */
 export function rollWords(card) {
   return card.rolls ? `${plural(card.rolls, 'roll')} waiting in My Lair` : '';
+}
+
+/**
+ * Round 24 (contract v24-new-players): a welcome code's rolls, which are theirs once they've paid for a session: "Welcome
+ * roll waiting: theirs once they’ve paid for a session.", "2 welcome rolls waiting: …", or '' with none.
+ * @param {Card} card
+ */
+export function welcomeWords(card) {
+  const n = card.waiting || 0;
+  if (!n) return '';
+  return `${n === 1 ? 'Welcome roll' : `${n} welcome rolls`} waiting: theirs once they’ve paid for a session.`;
 }
 
 /**
