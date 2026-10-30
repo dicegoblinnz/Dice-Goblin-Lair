@@ -59,7 +59,10 @@ export const NEW_PLAYER_COLUMNS = [
  */
 export const NEW_PLAYER_STAMP_COLUMNS = [['loyalty_stamps', 'amount', 'INTEGER']];
 
-/** The counter's orders, by their source: Shopify POS's own and Pay on Verifone's (OrderMate: src/counter.js) */
+/**
+ * The counter's orders, by the source the Lair keeps for them (spend.source): Shopify POS's own and Pay on Verifone's
+ * (OrderMate). counterSource (src/counter.js) keeps every counter sale as one of these, even if OrderMate's app ID changes.
+ */
 export const COUNTER_SOURCES = ['pos', ORDERMATE.app];
 
 /** Round 24's index, made when missing: one welcome code a member, kept in the data itself */
@@ -197,12 +200,30 @@ export const newPlayerMethods = {
         .exec(join ? 'SELECT customer_id, paid, paid_amount, 0 AS covered FROM event_joins WHERE id = ?' : 'SELECT customer_id, paid, paid_amount, covered FROM bookings WHERE id = ?', r.id)
         .toArray()[0];
       if (!row) continue;
+      const kind = join ? 'join' : 'booking';
+      // their own, paid in full: by a session pass, or with money that wasn't all someone else's (after the second review:
+      // another member's code on every sale that paid for it is them paying, not this member)
       const own = String(row.customer_id || '') === id;
-      if (own && Number(row.paid) === 1 && (Number(row.paid_amount) > 0 || Number(row.covered) > 0)) return true;
-      const theirs = this.sql.exec('SELECT 1 AS n FROM payments WHERE booking_id = ? AND kind = ? AND customer_id = ? AND amount > 0 LIMIT 1', r.id, join ? 'join' : 'booking', id);
+      if (own && Number(row.paid) === 1 && (Number(row.covered) > 0 || (Number(row.paid_amount) > 0 && !this.paidByOthers(r.id, kind, id)))) return true;
+      const theirs = this.sql.exec('SELECT 1 AS n FROM payments WHERE booking_id = ? AND kind = ? AND customer_id = ? AND amount > 0 LIMIT 1', r.id, kind, id);
       if (theirs.toArray().length) return true;
     }
     return false;
+  },
+
+  /**
+   * Every payment towards a booking or sign-up came from other members (their code on each sale): none of it is this
+   * member's. A payment no member is known for (a sale without a code, or one from before payments were kept) could be
+   * theirs, so it doesn't make it someone else's. No payments at all (staff marked it paid) is false too. No awaits.
+   */
+  paidByOthers(bookingId, kind, customerId) {
+    const n = this.sql
+      .exec(
+        'SELECT COUNT(*) AS paid, COALESCE(SUM(CASE WHEN customer_id IS NOT NULL AND customer_id != ? THEN 1 ELSE 0 END), 0) AS others FROM payments WHERE booking_id = ? AND kind = ? AND amount > 0',
+        String(customerId), bookingId, kind,
+      )
+      .one();
+    return Number(n.paid) > 0 && Number(n.others) === Number(n.paid);
   },
 
   /**

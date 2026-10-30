@@ -56,6 +56,16 @@ export function counterSale(order) {
   return /^\d+$/.test(source) && orderTags(order).includes(ORDERMATE.tag);
 }
 
+/**
+ * What the Lair keeps as a sale's source when it was rung up at the counter (spend.source, round 24): 'pos' for Shopify
+ * POS's own, and OrderMate's app ID for Pay on Verifone's, even one counterSale knows by its tag, so a counter purchase is
+ * always one of the two (newplayers.js COUNTER_SOURCES). null for any other sale.
+ */
+export function counterSource(order) {
+  if (!counterSale(order)) return null;
+  return String(order?.source_name ?? '') === 'pos' ? 'pos' : ORDERMATE.app;
+}
+
 /** A Pay on Verifone sale (a counter sale that isn't Shopify POS's own): its lines have lost their properties */
 export function verifoneSale(order) {
   return counterSale(order) && String(order?.source_name ?? '') !== 'pos';

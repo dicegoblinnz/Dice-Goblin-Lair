@@ -338,12 +338,18 @@ test('from the review: someone else paying doesn\'t unlock it: a guest with an a
   // Kai signs up for trivia with Mia as his guest (by her member code) and pays for both with his own code on the sale
   const join = await signUp(KAI, 'Kai', 'quiz', { guests: [{ code: codeOf(MIA) }] });
   const table1 = await table(MIA, 'Mia', { start: at(TODAY, 18), end: at(TODAY, 20), tables: ['T6'] });
+  const afternoon = await table(MIA, 'Mia', { start: at(TODAY, 15), end: at(TODAY, 17), tables: ['T5'] });
   buyers.set('8501', KAI);
   nowIs(at(TODAY, 18, 5));
   ok(await pos('checkin', { id: join.id, type: 'join' }));
   ok(await internal('orders-paid', posOrder(8501, [bookingLine(85011, join.ref, 10)])));
   assert.equal(lair.stampCount(MIA), 1, 'the session is on her card');
   assert.deepEqual([(await card(MIA)).rolls.available, (await card(MIA)).rolls.waiting], [0, 1], 'but Kai paid, not Mia');
+  // (from the second review) her own afternoon table, paid in full by Kai with his code on the sale, isn't hers either
+  buyers.set('8503', KAI);
+  ok(await internal('orders-paid', posOrder(8503, [bookingLine(85031, afternoon.ref, afternoon.amount / 100)])));
+  assert.equal(lair.booking(afternoon.id).paid, true, 'paid in full');
+  assert.deepEqual([(await card(MIA)).rolls.available, (await card(MIA)).rolls.waiting], [0, 1], 'by Kai');
   // Mia pays for her own table this evening, with her code on the sale: that's hers
   buyers.set('8502', MIA);
   ok(await internal('orders-paid', posOrder(8502, [bookingLine(85021, table1.ref, 10)])));
@@ -363,6 +369,20 @@ test('from the review: a named player on Kai\'s table unlocks it by paying their
   buyers.set('8602', LEO);
   ok(await internal('orders-paid', posOrder(8602, [{ ...bookingLine(86021, kais.ref, 10), properties: [{ name: '_booking', value: kais.ref }, { name: '_share', value: '1' }] }])));
   assert.deepEqual([(await card(LEO)).rolls.available, 'waiting' in (await card(LEO)).rolls], [1, false], 'Leo paid his own share');
+});
+
+test('from the second review: a share paid in cash at the counter (Pay with cash) is the member\'s own payment', async () => {
+  lair.shopify.createPaidLinesDraft = async () => ({ id: 'gid://shopify/DraftOrder/1', ready: true });
+  lair.shopify.completePaidDraft = async () => ({ order: { id: 'gid://shopify/Order/9901', name: '#1501' }, status: 'COMPLETED', errors: [] });
+  lair.shopify.draftOrderState = async () => null;
+  ok(await redeem(LEO, 'SEARCH-ROLL'));
+  const kais = await table(KAI, 'Kai', { people: 3, tables: ['T7'], split: true });
+  lair.sql.exec("INSERT INTO booking_players (id, booking_id, role, position, name, customer_id, created_at) VALUES ('bp_leo2', ?, 'player', 1, 'Leo', ?, ?)", kais.id, LEO, NOW);
+  nowIs(at(TODAY, 14, 5));
+  const asked = ok(await call('POST', 'me/cash', {}, LEO)).cash;
+  assert.ok(asked.total > 0, 'his share to pay');
+  ok(await call('POST', `cash/${asked.id}/paid`, { expect: asked.total }, OWNER));
+  assert.deepEqual([(await card(LEO)).rolls.available, 'waiting' in (await card(LEO)).rolls], [1, false], 'Leo paid his share in cash');
 });
 
 test('from the review: "after their first event": paid ahead for later today, the roll waits until the session starts or they\'re checked in', async () => {
@@ -414,6 +434,17 @@ test('from the review: "new to Dice Goblin": someone who bought at the counter b
   assert.equal(said(await redeem(KAI, 'SCROLL-ROLL')), `409 ${W.notNew}`);
   // and the counter doesn't ask any of them how they found us
   assert.deepEqual(await Promise.all([LEO, RIA, KAI].map(async (id) => ok(await pos('scan', { code: codeOf(id) })).newHere)), [false, false, false]);
+});
+
+test('from the second review: a Verifone (OrderMate) sale from a new app ID, still tagged OrderMate, is a counter purchase, so its buyer isn\'t new', async () => {
+  // a week ago Ria bought dice on the Verifone terminal; OrderMate's orders now come from another app ID (src/counter.js)
+  lair.shopify.orderSpend = async () => ({ customerId: RIA, amount: 2500, source: '41000000001', name: '#7801' });
+  nowIs(at('2026-10-24', 16));
+  ok(await internal('orders-paid', posOrder(7801, [{ id: 78011, title: 'D20 set', price: '25.00', quantity: 1, product_id: 501, variant_id: 601, properties: [] }], { source_name: '41000000001', tags: 'OrderMate, Verifone' })));
+  nowIs(NOW);
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM spend WHERE customer_id = ?', RIA).one().n, 1, 'her purchase is kept');
+  assert.equal(said(await redeem(RIA, 'SCROLL-ROLL')), `409 ${W.notNew}`);
+  assert.equal(ok(await pos('scan', { code: codeOf(RIA) })).newHere, false, 'and the counter knows her');
 });
 
 test('from the review: a member\'s page with no answer sent (an empty form) is a 422, never a clear', async () => {
@@ -487,6 +518,13 @@ test('staff: a loot code is made a welcome code with welcome: true and switched 
   assert.deepEqual([made.code, made.rolls, made.welcome, made.status], ['MEET-GOBGOB', 1, true, 'active']);
   const plain = ok(await call('POST', 'roll-codes', { code: 'PLAIN-LOOT' }, OWNER)).code;
   assert.equal(plain.welcome, false, 'without the tick, as before');
+  // (from the second review) the list says the Lair knows welcome codes, even when no code is listed
+  ok(await call('POST', `roll-codes/${made.id}/update`, { status: 'inactive' }, OWNER));
+  const all = ok(await call('GET', 'roll-codes', null, OWNER));
+  for (const c of all.codes) ok(await call('POST', `roll-codes/${c.id}/update`, { status: 'inactive' }, OWNER));
+  const none = ok(await call('GET', 'roll-codes', null, OWNER));
+  assert.deepEqual([none.codes.length, none.welcomeCodes], [0, true]);
+  for (const c of [...all.codes, made]) ok(await call('POST', `roll-codes/${c.id}/update`, { status: 'active' }, OWNER));
   for (const bad of ['yes', 1, null, {}]) {
     assert.equal(said(await call('POST', 'roll-codes', { code: 'BAD-TICK', welcome: bad }, OWNER)), `422 ${W.welcome}`, JSON.stringify(bad));
   }

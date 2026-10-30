@@ -67,7 +67,7 @@ import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 // Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add
 import { STAMP_TABLES, STAMP_WORDS, bookingStamps, bookingVia, joinStamps, joinVia, sessionLines, sessionUnitPaid, stampMethods } from './stamps.js';
 // Round 22: counter sales through Pay on Verifone (OrderMate), whose orders lose the cart lines' properties
-import { counterMethods, counterSale, customSale } from './counter.js';
+import { counterMethods, counterSale, counterSource, customSale } from './counter.js';
 // Round 22 (28 Oct 2026): every hold can be edited: an event date's own tables, and staff holds (src/holds.js)
 import { HOLD_COLUMNS, HOLD_TABLES, holdMethods, timeOf } from './holds.js';
 // Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
@@ -4834,7 +4834,7 @@ export class Lair {
     if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
     let counted = 0;
     if (spend?.customerId && spend.amount > 0 && !this.sql.exec('SELECT 1 AS n FROM spend WHERE order_id = ?', orderId).toArray().length) {
-      this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, spend.source || source || null, Date.now());
+      this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, counterSource(order) || spend.source || source || null, Date.now());
       counted = spend.amount;
     }
     const passes = this.issueOrderPasses(orderId, passLines, buyer, { pos, rules, now: Date.now() });
@@ -7220,7 +7220,9 @@ export class Lair {
     const now = Date.now();
     const all = url.searchParams.get('status') === 'all';
     const rows = this.sql.exec(`SELECT * FROM roll_codes${all ? '' : " WHERE status != 'inactive'"} ORDER BY created_at DESC, rowid DESC LIMIT 200`).toArray();
-    return { codes: rows.map((r) => this.rollCodeView(r, now)) };
+    // welcomeCodes (round 24): this Lair knows welcome codes, so the Loot codes tab shows its Welcome tick even when no
+    // code is listed (an older Lair leaves it out, and the tick stays hidden)
+    return { codes: rows.map((r) => this.rollCodeView(r, now)), welcomeCodes: true };
   }
 
   /**

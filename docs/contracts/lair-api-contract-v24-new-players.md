@@ -40,7 +40,7 @@ by them: 409; switched off, past its last day or used up: 410):
 - They've been to Dice Goblin before today (`playedBefore`): a stamped session that started before today; a table,
   walk-in, TTRPG seat or sign-up they were on (as the booker, a named player or a guest) checked in or paid before today,
   from before the loyalty card too; or a counter purchase with their account on the sale before today (Shopify POS's own
-  or Pay on Verifone's). 409 "That's a welcome code for players new to the Lair, and you've played with us before. Thanks
+  or Pay on Verifone's, even if OrderMate's app ID changes: section 7). 409 "That's a welcome code for players new to the Lair, and you've played with us before. Thanks
   for coming back!" Nothing is saved. Today doesn't count against them, so someone can check in and pay for their first
   session at the counter and type the code after. An online-only customer is still new: buying online isn't a visit.
 - Otherwise the use is saved (`roll_code_uses.pays_on` 'first-session', no grant), and the answer is
@@ -58,10 +58,12 @@ moment save one.
 **Their first paid session** (`paidSession`; Mo: "They need to come and pay using their id or qr") is a session on
 their card (round 22's `stampTally`) that has started, or that they're checked in for, and that they paid for
 themselves:
-- their own table, walk-in, TTRPG seat or sign-up, paid in full (`paid` 1) with money or a session pass
-  (`paid_amount > 0` or `covered > 0`);
-- a payment of theirs (`payments.customer_id`: their code on the sale) towards someone else's, as a named player paying
-  their share or a guest paying their part, or towards a session with no account on it;
+- their own table, walk-in, TTRPG seat or sign-up, paid in full (`paid` 1) with a session pass (`covered > 0`), or with
+  money (`paid_amount > 0`) unless every payment towards it was someone else's (another member's code on each sale:
+  `paidByOthers`). A payment with no member on it (a sale without a code) could be theirs, so it counts;
+- a payment of theirs (`payments.customer_id`: their code on the sale, or they asked to pay with cash at the counter)
+  towards someone else's, as a named player paying their share or a guest paying their part, or towards a session with no
+  account on it;
 - a Session product rung up at the counter on their sale for more than $0 (`loyalty_stamps.amount`, from the line's
   price after discounts); or
 - a stamp staff added by hand.
@@ -69,7 +71,12 @@ themselves:
 A free session, one staff let them off (waived), a seat their GM pays for, a GM's own session and someone else paying for
 them don't count. Checked in without paying, or paid ahead for later today, the roll waits. (These came from the
 review: at first any money towards a stamped session counted, so a friend paying, one share of a split table, a session
-paid ahead or a $0 Session could have released it.)
+paid ahead or a $0 Session could have released it. The second review found two more: their own table paid in full on
+someone else's sale still counted, and a share paid with Pay with cash had no member on it, so it never counted.)
+
+A session paid online counts once it has started, before they're checked in, as a stamp does: it's paid, and too late to
+cancel for a refund, so it's never free credit. If they don't come and staff mark them a no-show, the roll waits again
+(unless it's been rolled).
 
 **Like stamps, it's worked out every time** (`welcomeOf`), never stored. A paid session marked a no-show or cancelled
 puts the roll back to waiting; one already rolled stays rolled, and the card never goes below none.
@@ -87,7 +94,8 @@ their first paid session), or null.
 **Staff** (Money, as for every loot code): `POST /roll-codes { …, welcome: true }` makes a welcome code, and
 `POST /roll-codes/:id/update { welcome: true | false }` switches one. Anything but true or false: 422 "That Welcome code
 tick didn't come through properly. Try again." A use keeps what the code was when it was typed. `GET /roll-codes` lists
-each code with `welcome: true | false`.
+each code with `welcome: true | false`, and says `welcomeCodes: true` even when no code is listed: that's how the staff
+page knows this Lair app has welcome codes.
 
 **The four codes** are made once on the Lair app's first start with this round (meta `welcome-codes`), 1 roll each, no
 limit and no last day, made by `setup`, one for each channel in the ads plan:
@@ -176,8 +184,9 @@ they told us when asked how they found us."
   welcome rolls are waiting, friend. They unlock …") while `rolls.waiting`, in place of "No rolls yet".
 - The staff page: Loot codes (`assets/lair-staff-codes.js`) has a Welcome code tick on Make a loot code and on Edit,
   and a Welcome badge, with "1 roll for a new player, once they've paid for their first session". The tick shows only
-  once the Lair app has listed its codes with `welcome` (from the review: with a Lair app that doesn't know welcome codes,
-  a ticked code would quietly pay out at once). A member's page lists
+  once the Lair app has said it knows welcome codes (`welcomeCodes` on the list, or a code with `welcome`). From the
+  review: with a Lair app that doesn't know welcome codes, a ticked code would quietly pay out at once; from the second
+  review: with every code switched off, the empty list hid the tick. A member's page lists
   Found us ("Instagram (at the counter, Sun 1 Nov)", or "Not asked yet") and Welcome code ("SCROLL-ROLL · roll waits
   for their first paid session", "… · roll unlocked" or "None"). Changing an answer there, and the weekly numbers on the
   staff page, can come later: the Monday email and GET /report have new players now.
@@ -189,6 +198,15 @@ they told us when asked how they found us."
 
 `loyalty_stamps.amount` (made sure of on every start, once the ledger's table is there): what a Session rung up at the
 counter paid a unit, in cents. Null for the ones before round 24, which never count as a first paid session.
+
+`spend.source` for a sale rung up at the counter (`counterSource`, src/counter.js): 'pos' for Shopify POS's own and
+OrderMate's app ID for Pay on Verifone's, including one `counterSale` knows only by its OrderMate tag (from the second
+review: if OrderMate's app ID changed, its sales would have been kept under the new ID and not been counter purchases).
+Sales from before round 24 keep the source Shopify gave them.
+
+Pay with cash (round 18): when staff mark a cash request paid, its payments are the member who asked's
+(`payments.customer_id`), as a counter sale's are its customer's, so a named player's share paid in cash is their own
+payment (from the second review: they had no member on them).
 
 The weekly numbers leave out a member whose counter purchase (their account on the sale) came more than 12 hours
 (`PAID_BEFORE`) before their first visit: they'd been to Dice Goblin before, so their first recorded visit isn't a new

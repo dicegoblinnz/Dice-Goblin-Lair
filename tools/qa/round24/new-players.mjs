@@ -333,6 +333,32 @@ const posts = (route) => calls.filter((c) => c.method === 'POST' && c.route === 
   await ctx.close();
 }
 
+/* ---------------- (from the second review) nothing active: the Welcome tick still shows ---------------- */
+{
+  const tag = '[no active codes]';
+  m.globalSettings.lair_mode = 'demo';
+  m.mockState.before = null;
+  const ctx = await context('phone');
+  const page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/lair-staff#codes', STAFF);
+  await page.waitForSelector('.sa-code', { timeout: 20000 });
+  // every code switched off: the Lair app lists none, and says it knows welcome codes
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    const real = be.rollCodes.bind(be);
+    be.rollCodes = async (...a) => ({ ...(await real(...a)), codes: [] });
+  });
+  await page.click('label.chip:has([data-code-status][value="all"])');
+  await page.waitForFunction(() => !document.querySelector('[data-code-list]')?.textContent.includes('Loading'), null, { timeout: 10000 });
+  await settle(page, 300);
+  check(`${tag} the list is empty`, (await page.locator('.sa-code').count()) === 0);
+  await page.click('[data-code-make]');
+  await settle(page, 300);
+  check(`${tag} Make a loot code still has the Welcome code tick`, (await page.locator('[data-code-form] [name="welcome"]').count()) === 1);
+  check(`${tag} no console errors`, !page.errors.length, page.errors);
+  await ctx.close();
+}
+
 const { pass, fail } = totals();
 console.log(`\n${pass} passed, ${fail} failed (today ${today}; shots in ${process.env.OUT})`);
 await browser.close();

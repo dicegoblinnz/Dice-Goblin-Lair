@@ -248,6 +248,9 @@ export const cashMethods = {
       if (found) paying.push({ type: found.type, id: found.item.id, lineId: `line-${i + 1}`, amount: l.cents });
     });
     const paidRefs = this.recordPayments(paying, orderKey, rules, { pos: true, now });
+    // (round 24's second review) the member who asked to pay cash is the payer, as the order's customer is for a sale
+    // (ordersPaid), so their share counts as theirs: a first paid session for a welcome code
+    if (fresh.customer_id) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', String(fresh.customer_id), orderKey);
     if (tab) this.markTabsPaid([tab.id], orderKey, now);
     if (paidRefs.length || tab) this.reconcileBills(rules, now, { orderId: orderKey, pos: true });
     // what its Shopify order is made of, fixed now: custom lines at what each paid, and the tab's things as products at
