@@ -190,9 +190,10 @@ async function session(more = {}) {
     start: at(TODAY, 18), end: at(TODAY, 21), ...more,
   }, GM)).game;
 }
-const track = (data, kind, first) => ({ id: (data.booking || data.join || {}).ref, kind, value: (data.booking || data.join).amount / 100, currency: 'NZD', first });
+// (from the review) the ID is the booking's own opaque ID, never its code: a code carries the booker's initials
+const track = (data, kind, first) => ({ id: (data.booking || data.join || {}).id, kind, value: (data.booking || data.join).amount / 100, currency: 'NZD', first });
 
-test('round 28: a new member\'s first table booking tells the ad platforms "booked": its code, what it comes to and first: true; their next booking isn\'t first', async () => {
+test('round 28: a new member\'s first table booking tells the ad platforms "booked": its ID, what it comes to and first: true; their next booking isn\'t first', async () => {
   const first = await bookTable(MIA, 'Mia', { people: 2 });
   assert.ok(first.booking.amount > 0, 'a table has a fee');
   assert.deepEqual(first.track, track(first, 'table', true));
@@ -218,9 +219,9 @@ test('round 28: a booking they cancelled doesn\'t make the next one not first; a
 
 test('round 28: a sign-up tells "booked" as an event: the $5 trivia night at 5, the free demo night at 0', async () => {
   const quiz = await join(MIA, 'Mia', 'quiz', { people: 2 });
-  assert.deepEqual(quiz.track, { id: quiz.join.ref, kind: 'event', value: 10, currency: 'NZD', first: true });
+  assert.deepEqual(quiz.track, { id: quiz.join.id, kind: 'event', value: 10, currency: 'NZD', first: true });
   const demo = await join(MIA, 'Mia', 'demo');
-  assert.deepEqual(demo.track, { id: demo.join.ref, kind: 'event', value: 0, currency: 'NZD', first: false });
+  assert.deepEqual(demo.track, { id: demo.join.id, kind: 'event', value: 0, currency: 'NZD', first: false });
 });
 
 test('round 28: what staff make for someone (the staff page, a walk-in) tells nothing: it isn\'t an ad\'s doing', async () => {
@@ -247,7 +248,7 @@ test('round 28: joining a weekly game tells "booked" as weekly for the seat it s
   const joined = ok(await call('POST', `games/${game.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com', phone: '021 555 0100' }, MIA));
   assert.equal(joined.booked.length, 1, 'tonight\'s seat');
   const seat = lair.booking(joined.booked[0].ref);
-  assert.deepEqual(joined.track, { id: seat.ref, kind: 'weekly', value: seat.amount / 100, currency: 'NZD', first: true });
+  assert.deepEqual(joined.track, { id: seat.id, kind: 'weekly', value: seat.amount / 100, currency: 'NZD', first: true });
   const again = ok(await call('POST', `games/${game.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com', phone: '021 555 0100' }, MIA));
   assert.equal('track' in again, false);
 });
@@ -262,5 +263,6 @@ test('round 28: only a confirmed booking is told: one held for online payment (i
   for (const status of ['held', 'cancelled', 'seated']) {
     assert.equal(lair.bookedTrack({ id: 'bk_x', ref: 'MI-OWLBEAR-1', status, amount: 1500 }, 'table', MIA), null, status);
   }
-  assert.deepEqual(lair.bookedTrack({ id: 'bk_x', ref: 'MI-OWLBEAR-1', status: 'confirmed', amount: 1550 }, 'table', MIA), { id: 'MI-OWLBEAR-1', kind: 'table', value: 15.5, currency: 'NZD', first: true });
+  assert.deepEqual(lair.bookedTrack({ id: 'bk_x', ref: 'MI-OWLBEAR-1', status: 'confirmed', amount: 1550 }, 'table', MIA), { id: 'bk_x', kind: 'table', value: 15.5, currency: 'NZD', first: true });
+  assert.equal(lair.bookedTrack({ ref: 'MI-OWLBEAR-1', status: 'confirmed', amount: 1550 }, 'table', MIA), null, 'no ID, nothing to tell');
 });

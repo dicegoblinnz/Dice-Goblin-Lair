@@ -16,7 +16,8 @@ const OUT = process.env.OUT || '/tmp/dg-round28';
 fs.mkdirSync(OUT, { recursive: true });
 
 const IDS = { ads_meta_pixel: '123456789012345', ads_google_id: 'AW-987654321', ads_google_booked: 'BookedLabel1', ads_google_first: 'FirstLabel22', ads_tiktok_pixel: 'CTEST123ABC456DEF789' };
-const TRACK = { id: 'RU-OWLBEAR-17', kind: 'table', value: 20, currency: 'NZD', first: true };
+// the booking's own opaque ID (from the review: never its code, which carries the booker's initials)
+const TRACK = { id: 'bk_9f3k27', kind: 'table', value: 20, currency: 'NZD', first: true };
 
 /* ---------------- a stand-in Lair behind /apps/liar ---------------- */
 const API = '/apps/liar';
@@ -38,7 +39,7 @@ m.mockState.before = async (req, res, url) => {
   if (route === '/me') return send(200, { customer: { id: m.mockState.customer?.id || null }, bookings: [], seats: [], joins: [], games: [], credits: [], member: {} });
   if (req.method === 'POST' && route === '/bookings') {
     if (bookingAnswer === 'refused') return send(422, { error: 'That table is taken.' });
-    const booking = { id: 'bk_1', ref: track.id, kind: 'table', status: 'confirmed', amount: 2000 };
+    const booking = { id: track.id, ref: 'RU-OWLBEAR-17', kind: 'table', status: 'confirmed', amount: 2000 };
     return send(200, bookingAnswer === 'track' ? { booking, track } : { booking });
   }
   return send(200, { ok: true });
@@ -52,7 +53,7 @@ const PLATFORMS = [
   ['google', /googletagmanager\.com\/gtag\/js/],
   ['tiktok', /analytics\.tiktok\.com\/i18n\/pixel\/events\.js/],
 ];
-async function context({ privacy = null } = {}) {
+async function context({ privacy = null, late = undefined } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   ctx.loads = [];
   for (const [name, pattern] of PLATFORMS) {
@@ -62,12 +63,23 @@ async function context({ privacy = null } = {}) {
     });
   }
   // Shopify's analytics and (when given) customer privacy, as the storefront provides them
-  await ctx.addInitScript((said) => {
+  await ctx.addInitScript(([said, later]) => {
     window.__published = [];
     window.Shopify = window.Shopify || {};
     window.Shopify.analytics = { publish: (name, data) => window.__published.push([name, data]) };
     if (said !== null) window.Shopify.customerPrivacy = { marketingAllowed: () => said };
-  }, privacy);
+    // (from the review) Shopify's privacy API, as a storefront loads it when asked: a moment later
+    if (later !== undefined) {
+      window.__asked = [];
+      window.Shopify.loadFeatures = (features, done) => {
+        window.__asked.push(features.map((f) => f.name).join(','));
+        setTimeout(() => {
+          window.Shopify.customerPrivacy = { marketingAllowed: () => later };
+          done();
+        }, 300);
+      };
+    }
+  }, [privacy, late]);
   return ctx;
 }
 function watch(page) {
@@ -195,31 +207,31 @@ set(IDS);
     JSON.stringify(t.meta) === JSON.stringify([
       ['set', 'autoConfig', false, IDS.ads_meta_pixel],
       ['init', IDS.ads_meta_pixel],
-      ['trackSingle', IDS.ads_meta_pixel, 'Schedule', { value: 20, currency: 'NZD', content_category: 'table', first_booking: true }, { eventID: 'booked-RU-OWLBEAR-17' }],
+      ['trackSingle', IDS.ads_meta_pixel, 'Schedule', { value: 20, currency: 'NZD', content_category: 'table', first_booking: true }, { eventID: 'booked-bk_9f3k27' }],
     ]), t.meta);
   check(`${tag} Google: Booked a session, and First booking (it's Ruby's first), each with its own transaction ID`,
     JSON.stringify(t.google) === JSON.stringify([
       ['config', IDS.ads_google_id, { send_page_view: false }],
-      ['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_booked}`, value: 20, currency: 'NZD', transaction_id: 'RU-OWLBEAR-17' }],
-      ['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_first}`, value: 20, currency: 'NZD', transaction_id: 'first-RU-OWLBEAR-17' }],
+      ['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_booked}`, value: 20, currency: 'NZD', transaction_id: 'bk_9f3k27' }],
+      ['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_first}`, value: 20, currency: 'NZD', transaction_id: 'first-bk_9f3k27' }],
     ]), t.google);
   check(`${tag} TikTok: Schedule with the event ID`,
-    JSON.stringify(t.tiktok) === JSON.stringify([['track', 'Schedule', { value: 20, currency: 'NZD', content_type: 'product', content_id: 'table', description: 'first booking' }, { event_id: 'booked-RU-OWLBEAR-17' }]]), t.tiktok);
+    JSON.stringify(t.tiktok) === JSON.stringify([['track', 'Schedule', { value: 20, currency: 'NZD', content_type: 'product', content_id: 'table', description: 'first booking' }, { event_id: 'booked-bk_9f3k27' }]]), t.tiktok);
   check(`${tag} Shopify's analytics hear it too (dice_goblin:booked)`,
-    JSON.stringify(t.published) === JSON.stringify([['dice_goblin:booked', { id: 'RU-OWLBEAR-17', kind: 'table', value: 20, currency: 'NZD', first: true }]]), t.published);
+    JSON.stringify(t.published) === JSON.stringify([['dice_goblin:booked', { id: 'bk_9f3k27', kind: 'table', value: 20, currency: 'NZD', first: true }]]), t.published);
   // the same booking told twice (a second answer, or the event again) is sent once
-  await page.evaluate((x) => document.dispatchEvent(new CustomEvent('lair:booked', { detail: x })), TRACK);
+  await page.evaluate((x) => document.dispatchEvent(new CustomEvent('lair:ad-booked', { detail: x })), TRACK);
   await book(page);
   t = await told(page);
   check(`${tag} the same booking again sends nothing more`, t.meta.length === 3 && t.google.length === 3 && t.tiktok.length === 1 && t.published.length === 1, t);
   // a second booking, not their first: no First booking conversion
-  track = { ...TRACK, id: 'RU-OWLBEAR-18', first: false };
+  track = { ...TRACK, id: 'bk_9f3k28', first: false };
   await book(page);
   t = await told(page);
   check(`${tag} a later booking: Booked a session only`,
-    JSON.stringify(t.google.slice(3)) === JSON.stringify([['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_booked}`, value: 20, currency: 'NZD', transaction_id: 'RU-OWLBEAR-18' }]]) && t.meta.length === 4 && t.tiktok.length === 2, t.google);
+    JSON.stringify(t.google.slice(3)) === JSON.stringify([['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_booked}`, value: 20, currency: 'NZD', transaction_id: 'bk_9f3k28' }]]) && t.meta.length === 4 && t.tiktok.length === 2, t.google);
   // an answer without track (staff made it, or it's held for payment) and a refused booking send nothing
-  track = { ...TRACK, id: 'RU-OWLBEAR-19' };
+  track = { ...TRACK, id: 'bk_9f3k29' };
   bookingAnswer = 'plain';
   await book(page);
   bookingAnswer = 'refused';
@@ -233,7 +245,7 @@ set(IDS);
 {
   const tag = '[said no to marketing]';
   bookingAnswer = 'track';
-  track = { ...TRACK, id: 'RU-OWLBEAR-20' };
+  track = { ...TRACK, id: 'bk_9f3k30' };
   const ctx = await context({ privacy: false });
   const page = watch(await ctx.newPage());
   await page.goto(`${BASE}/?gclid=Gtest-123456&fbclid=IwAR0test12345&ttclid=E.C.P.test12345`, { waitUntil: 'networkidle' });
@@ -246,9 +258,63 @@ set(IDS);
   await ctx.close();
 }
 {
+  const tag = '[privacy known late: no]';
+  bookingAnswer = 'track';
+  track = { ...TRACK, id: 'bk_9f3k40' };
+  const ctx = await context({ late: false });
+  const page = watch(await ctx.newPage());
+  await page.goto(`${BASE}/?gclid=Gtest-123456&fbclid=IwAR0test12345&ttclid=E.C.P.test12345`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(700);
+  check(`${tag} the page asks Shopify for its privacy API`, JSON.stringify(await page.evaluate(() => window.__asked)) === JSON.stringify(['consent-tracking-api']), await page.evaluate(() => window.__asked));
+  check(`${tag} and, told no once it arrives, keeps no click and loads nothing`, ctx.loads.length === 0 && (await cookie(ctx, '_fbc')) === null, ctx.loads);
+  await lairPage(page);
+  await book(page);
+  await page.waitForTimeout(500);
+  const t = await told(page);
+  check(`${tag} a booking is sent to no platform`, ctx.loads.length === 0 && t.meta === null && t.google === null && t.tiktok === null, { loads: ctx.loads, t });
+  check(`${tag} no console errors`, !page.errors.length, page.errors);
+  await ctx.close();
+}
+{
+  const tag = '[privacy known late: yes]';
+  const ctx = await context({ late: true });
+  const page = watch(await ctx.newPage());
+  await page.goto(`${BASE}/?gclid=Gtest-123456`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(700);
+  check(`${tag} once it says yes, Google's tag keeps the click`, JSON.stringify(ctx.loads) === JSON.stringify(['google']), ctx.loads);
+  await ctx.close();
+}
+{
+  const tag = '[first not known]';
+  bookingAnswer = 'track';
+  track = { ...TRACK, id: 'bk_9f3k41', kind: 'ttrpg', first: null };
+  const ctx = await context();
+  const page = watch(await ctx.newPage());
+  await lairPage(page);
+  await book(page);
+  const t = await told(page);
+  const schedule = (t.meta || []).find((a) => a[0] === 'trackSingle');
+  check(`${tag} a guest's booking: Meta isn't told it's a repeat (no first_booking at all)`, schedule && !('first_booking' in schedule[3]), schedule);
+  check(`${tag} Google: Booked a session only (no First booking)`, (t.google || []).filter((a) => a[0] === 'event').length === 1, t.google);
+  check(`${tag} Shopify's analytics hear first: null`, t.published.length === 1 && t.published[0][1].first === null, t.published);
+  await ctx.close();
+}
+{
+  const tag = '[the booking page\'s own lair:booked]';
+  const ctx = await context();
+  const page = watch(await ctx.newPage());
+  await lairPage(page);
+  // lair-booking.js fires lair:booked when a booking's made (demo too): it isn't for the ad platforms, whatever it holds
+  await page.evaluate((x) => document.dispatchEvent(new CustomEvent('lair:booked', { bubbles: true, detail: { booking: { id: 'bk_1' }, ...x } })), { ...TRACK, id: 'bk_9f3k42' });
+  await page.waitForTimeout(300);
+  const t = await told(page);
+  check(`${tag} sends nothing`, ctx.loads.length === 0 && t.meta === null && t.google === null && t.tiktok === null && t.published.length === 0, { loads: ctx.loads, t });
+  await ctx.close();
+}
+{
   const tag = '[only Google set]';
   set({ ads_google_id: IDS.ads_google_id, ads_google_booked: IDS.ads_google_booked });
-  track = { ...TRACK, id: 'RU-OWLBEAR-21' };
+  track = { ...TRACK, id: 'bk_9f3k31' };
   const ctx = await context();
   const page = watch(await ctx.newPage());
   await lairPage(page);
@@ -264,6 +330,10 @@ set(IDS);
   m.globalSettings.lair_mode = 'demo';
   const ctx = await context();
   const page = watch(await ctx.newPage());
+  // (from the review) the lab is demo mode: arriving from an ad there loads nothing either, with IDs set
+  await page.goto(`${BASE}/?gclid=Gtest-123456&fbclid=IwAR0test12345&ttclid=E.C.P.test12345`, { waitUntil: 'networkidle' });
+  const landing = await told(page);
+  check(`${tag} no IDs or tracking.js on the page, and nothing loads arriving from ads`, landing.config === null && !landing.script && ctx.loads.length === 0 && (await cookie(ctx, '_fbc')) === null, { landing, loads: ctx.loads });
   await lairPage(page, '/pages/book-a-table');
   await page.evaluate(async () => {
     const be = window.Lair.store.backend;

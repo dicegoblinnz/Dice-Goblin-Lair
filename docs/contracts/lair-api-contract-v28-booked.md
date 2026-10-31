@@ -18,7 +18,8 @@ platforms should hear about it (`bookedTrack` in `src/newplayers.js`):
 track: { id, kind, value, currency, first }
 ```
 
-- `id`: its code (the booking's or sign-up's ref; for a weekly seat, the seat it saved). Each platform counts an ID once.
+- `id`: its own opaque ID (the booking's or sign-up's `id`; for a weekly seat, the seat it saved), never its code, which
+  carries the booker's initials. Each platform counts an ID once.
 - `kind`: `table`, `ttrpg`, `event`, `game-spot` or `weekly`.
 - `value`: what it comes to, in dollars (its amount; 0 for something free). `currency`: `CURRENCY` (NZD).
 - `first`: whether it's their first booking at Dice Goblin: no session at the Lair before (round 24's `playedBefore`: a
@@ -32,9 +33,11 @@ next seat was already theirs or isn't on the board yet. An answer without `track
 ## 2. The website (theme)
 
 - `assets/lair-core.js`: a successful POST to one of those routes whose answer has `track` announces it to the page as a
-  `lair:booked` event. Demo mode doesn't go through the Lair app, so the lab's made-up bookings are never told.
+  `lair:ad-booked` event. It has its own name because `assets/lair-booking.js` already fires `lair:booked` for the page
+  (in demo mode too), and that one is never for the ad platforms. Demo mode doesn't go through the Lair app, and in demo
+  mode (the lab) `layout/theme.liquid` doesn't load the IDs or `assets/tracking.js` at all.
 - `assets/tracking.js` (loaded only when an ID is set in Theme settings › Ad tracking) sends each booking once:
-  - Meta: `fbq('trackSingle', pixel, 'Schedule', { value, currency, content_category: kind, first_booking }, { eventID: 'booked-<id>' })`, with the pixel's automatic events off and no page view;
+  - Meta: `fbq('trackSingle', pixel, 'Schedule', { value, currency, content_category: kind, first_booking }, { eventID: 'booked-<id>' })`, with the pixel's automatic events off and no page view. `first_booking` is left out when `first` is null (a guest's booking is never told as a repeat);
   - Google Ads: the "Booked a session" conversion (`send_to: AW-…/<label>`, `transaction_id: <id>`), and "First booking"
     too (`transaction_id: first-<id>`) when it's someone's first and that label is set;
   - TikTok: `track('Schedule', { value, currency, … }, { event_id: 'booked-<id>' })` on the pixel's own instance;
@@ -44,7 +47,8 @@ next seat was already theirs or isn't on the board yet. An answer without `track
   TikTok's pixel the same way; from a Facebook or Instagram ad (fbclid), the click goes in Meta's `_fbc` cookie
   (`fb.1.<ms>.<fbclid>`, 90 days) with no script.
 - A visitor who has said no to marketing (`Shopify.customerPrivacy.marketingAllowed()` false) is told nothing and has no
-  click kept.
+  click kept. The page asks Shopify for its privacy API (`Shopify.loadFeatures`, `consent-tracking-api`) and waits for it
+  before keeping a click or sending a booking; if it can't be loaded, nothing is kept or sent.
 - The browser check: `tools/qa/round28/booked.mjs` (the theme mock, live mode with a stand-in Lair app and the
   platforms' scripts stood in for).
 
@@ -66,6 +70,15 @@ Empty switches that platform off.
 - No customer details are sent (no advanced matching or enhanced conversions). That needs Mo's yes first.
 - TikTok keeps its click in its own cookie when its pixel loads on the landing page. When TikTok ads start, check in
   TikTok's Events Manager that Schedule events are matched to clicks.
+
+## From the review
+
+A separate review found no critical or high problems. Fixed, each with a browser check that failed first:
+- (medium) a guest's booking (first unknown) was told to Meta as `first_booking: false`;
+- the privacy check read Shopify's privacy API before it had loaded, so it said yes;
+- demo mode (the lab) with IDs set still kept clicks from ad links;
+- the event ID was the booking's code, which carries the booker's initials (now its opaque ID, a Lair change);
+- the page event shared its name with `lair-booking.js`'s `lair:booked`.
 
 ## 5. Going live
 
