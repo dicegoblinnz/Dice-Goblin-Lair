@@ -75,6 +75,8 @@ import { NEW_PLAYER_COLUMNS, NEW_PLAYER_STAMP_COLUMNS, NEW_PLAYER_TABLES, WELCOM
 import { GW_COLUMNS, GW_TABLES, gwOrderMethods } from './gw-orders.js';
 // Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)
 import { GW_PAD_TABLES, gwPadMethods } from './gw-pad.js';
+// Round 27: the rest of the Warhammer tab: this week's order, the box coming in, order dates (src/gw-week.js)
+import { GW_WEEK_TABLES, gwWeekMethods } from './gw-week.js';
 import { dateTables } from './core.js';
 
 const FALLBACK_ROOMS = [
@@ -1098,6 +1100,8 @@ export class Lair {
     // Round 26: the order pad, the shop's GW variants, the plan, the paint ranges' products and releases still hidden
     // (src/gw-pad.js); and each ordered-in line's release date, so a pre-order is never handed over early (made when missing)
     for (const statement of GW_PAD_TABLES) this.sql.exec(statement);
+    // Round 27: shelf top-ups, codes GW couldn't supply, and deliveries added to stock (src/gw-week.js)
+    for (const statement of GW_WEEK_TABLES) this.sql.exec(statement);
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -1961,6 +1965,11 @@ export class Lair {
       if (request.method === 'GET' && a === 'me' && b === 'picks' && !c) return json(this.myPicks(who));
       // Round 26: the Warhammer tab: where the pad's import stands, and the plan's lines (src/gw-pad.js)
       if (request.method === 'GET' && a === 'gw' && (!b || b === 'plan') && !c) return json(this.gwPlanView(url, who));
+      // Round 27: this week's order, a pad line by code or name, the delivery screen and order dates (src/gw-week.js)
+      if (request.method === 'GET' && a === 'gw' && b === 'week' && !c) return json(await this.gwWeek(who));
+      if (request.method === 'GET' && a === 'gw' && b === 'find' && !c) return json(this.gwFind(url, who));
+      if (request.method === 'GET' && a === 'gw' && b === 'receiving' && !c) return json(this.gwReceiving(who));
+      if (request.method === 'GET' && a === 'gw' && b === 'dates' && !c) return json(await this.gwDates(who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
@@ -1992,6 +2001,11 @@ export class Lair {
       if (a === 'gw' && b === 'plan' && !c) return json(this.gwPlan(who));
       if (a === 'gw' && b === 'apply' && !c) return json(await this.gwApply(who));
       if (a === 'gw' && b === 'releases' && c && !d) return json(this.gwReleaseDay(decodeURIComponent(c), body, who));
+      // Round 27: shelf top-ups, a code GW couldn't supply, a delivery a part at a time, and a week's dates (src/gw-week.js)
+      if (a === 'gw' && b === 'topups' && !c) return json(await this.gwTopup(body, who));
+      if (a === 'gw' && b === 'unsupplied' && !c) return json(await this.gwUnsupplied(body, who));
+      if (a === 'gw' && b === 'receive' && !c) return json(await this.gwReceive(body, who));
+      if (a === 'gw' && b === 'dates' && !c) return json(await this.gwDatesSave(body, who));
       if (a === 'pick' && !b) return json(await this.pick(body, who, client));
       if (a === 'pick' && b === 'swipes' && !c) return json(await this.pickSwipes(body, who, client));
       if (a === 'pick' && b === 'sync' && !c) return json(await this.staffPickSync(who));
@@ -10789,3 +10803,5 @@ Object.assign(Lair.prototype, newPlayerMethods);
 Object.assign(Lair.prototype, gwOrderMethods);
 // Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)
 Object.assign(Lair.prototype, gwPadMethods);
+// Round 27: the rest of the Warhammer tab (src/gw-week.js)
+Object.assign(Lair.prototype, gwWeekMethods);
