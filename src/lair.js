@@ -2523,7 +2523,10 @@ export class Lair {
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
     if (game) this.tellGmNewPlayer(booking, game, rules);
 
-    return this.payOrConfirm(booking, rules, { game });
+    const result = await this.payOrConfirm(booking, rules, { game });
+    // Round 28: "Booked a session" for the ad platforms (src/newplayers.js bookedTrack), never for what staff make
+    const track = override || kind === 'walkin' ? null : this.bookedTrack(result.booking, kind === 'gm-seat' ? 'ttrpg' : 'table', who.customerId || null, { now });
+    return track ? { ...result, track } : result;
   }
 
   /** At most 6 upcoming bookings per email for anyone but staff (seats from "join every session" don't count). */
@@ -4078,6 +4081,7 @@ export class Lair {
     const code = this.memberRow(who.customerId)?.code || null;
     const booked = [];
     const full = [];
+    let newSeat = null;
     // Only the next session still to start: later ones roll forward as each session ends. When it's full they're told
     // so (and the email promises to let them know if a seat comes free), which is noted for maintenance: if it seats
     // them before the staff hear, it still sends "A seat came free".
@@ -4085,6 +4089,8 @@ export class Lair {
     if (next && next.status === 'open') {
       const got = this.seatSeriesMember(next, member, rules, now);
       if (got) booked.push({ gameId: next.id, start: next.start, ref: got.seat.ref, ticketCode: code || got.seat.ref });
+      // Round 28: a seat this made is "Booked a session" for the ad platforms (one they had already isn't)
+      if (got?.created) newSeat = got.seat;
       // A weekly regular's first seat is a new player: the GM hears (round 6). Seats maintenance rolls forward don't.
       if (got?.created) this.tellGmNewPlayer(got.seat, next, rules);
       if (!got) {
@@ -4116,7 +4122,8 @@ export class Lair {
         button: { label: 'See it in My Lair', url: this.page('myLair') },
       })));
     }
-    return { member: { seriesId: game.seriesId, people, players }, booked, full };
+    const track = newSeat ? this.bookedTrack(newSeat, 'weekly', who.customerId, { now }) : null;
+    return { member: { seriesId: game.seriesId, people, players }, booked, full, ...(track ? { track } : {}) };
   }
 
   /**
@@ -5974,7 +5981,10 @@ export class Lair {
     // Round 24: the ad tags of the link they came by (src/newplayers.js)
     this.tagAd('event_joins', join.id, who.customerId || null, cleanAd(input.ad), now);
     // --- saved: the spaces are ours ---
-    return { ...(await this.payOrConfirmJoin(join, rules, plan)), spacesLeft: left - people };
+    const result = await this.payOrConfirmJoin(join, rules, plan);
+    // Round 28: "Booked a session" for the ad platforms (src/newplayers.js bookedTrack)
+    const track = this.bookedTrack(result.join, 'event', who.customerId || null, { now });
+    return { ...result, spacesLeft: left - people, ...(track ? { track } : {}) };
   }
 
   /**
@@ -6205,7 +6215,9 @@ export class Lair {
     const result = await this.payOrConfirm(booking, rules, { ...plan, title: `Game spot at ${occurrence.title} (${free[0].join(', ')})` });
     // Round 11: the booker's answer lists the players (with the emails they typed)
     const saved = this.booking(booking.id);
-    return { ...result, ...(result.booking && saved ? { booking: this.withGamePlayers(result.booking, saved) } : {}), spotsLeft: free.length - 1 };
+    // Round 28: "Booked a session" for the ad platforms (src/newplayers.js bookedTrack)
+    const track = this.bookedTrack(result.booking, 'game-spot', who.customerId || null, { now });
+    return { ...result, ...(result.booking && saved ? { booking: this.withGamePlayers(result.booking, saved) } : {}), spotsLeft: free.length - 1, ...(track ? { track } : {}) };
   }
 
   /** An event date's game spots that are free for its whole time (the event's own table hold doesn't count against them) */

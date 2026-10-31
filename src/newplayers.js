@@ -359,6 +359,33 @@ export const newPlayerMethods = {
     return true;
   },
 
+  /* ---------------- round 28: "Booked a session" for the ad platforms ---------------- */
+
+  /**
+   * Round 28: what the website tells the ad platforms about a booking or sign-up someone just made themselves (the ads
+   * plan's "Booked a session"), as `track` on its answer: { id, kind, value, currency, first }, or null when there's
+   * nothing to tell. Only a confirmed one counts: one held for online payment is counted by its checkout's purchase
+   * instead, and what staff make for someone isn't an ad's doing. id: its own opaque ID, so each platform counts it once
+   * (never its code: a code carries the booker's initials, from round 28's review). kind:
+   * 'table', 'ttrpg', 'event', 'game-spot' or 'weekly'. value: what it comes to, in dollars. first: whether it's their
+   * first booking at Dice Goblin (no session at the Lair before, and no other booking or sign-up of theirs that wasn't
+   * cancelled, besides `besides`: what this same request made); null without an account. No awaits.
+   */
+  bookedTrack(item, kind, customerId, { besides = [], now = Date.now() } = {}) {
+    if (!item || item.status !== 'confirmed' || !item.id) return null;
+    const id = customerId ? String(customerId) : null;
+    let first = null;
+    if (id) {
+      const mine = [...new Set([item.id, ...besides].filter(Boolean).map(String))];
+      const not = mine.length ? `AND id NOT IN (${mine.map(() => '?').join(', ')})` : '';
+      const other = (query) => this.sql.exec(query, id, ...mine).toArray().length > 0;
+      first = !other(`SELECT 1 AS n FROM bookings WHERE customer_id = ? ${not} AND status != 'cancelled' AND kind != 'gm-cover' LIMIT 1`)
+        && !other(`SELECT 1 AS n FROM event_joins WHERE customer_id = ? ${not} AND status != 'cancelled' LIMIT 1`)
+        && !this.playedBefore(id, now);
+    }
+    return { id: String(item.id), kind, value: Math.max(0, Math.round(Number(item.amount) || 0)) / 100, currency: this.env.CURRENCY || 'NZD', first };
+  },
+
   /**
    * POST /me/ad { source, medium?, campaign? } (logged in): the ad tags of the link they first came by, sent by the
    * website once GET /me has answered. Kept only when they have none yet. Returns { saved }. From the review: someone
