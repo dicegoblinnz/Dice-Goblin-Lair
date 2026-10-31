@@ -713,7 +713,8 @@ export const gwPadMethods = {
         const settled = this.gwSettleBatch(batch, products.map((p) => ({ codes: p.codes, error, nothingRan: true })), Date.now());
         return this.gwApplied(0, settled.errors);
       }
-      return { ...this.gwApplied(0, [], STUCK_AFTER), busy: PAD_WORDS.busy };
+      // the rest carry on meanwhile
+      return { ...this.gwApplied(0, [], 1000), busy: PAD_WORDS.busy };
     }
     // --- no awaits from here on ---
     const later = Date.now();
@@ -761,7 +762,7 @@ export const gwPadMethods = {
         const settled = this.gwSettleBatch(batch, [{ codes, error, nothingRan: true }], Date.now());
         return this.gwApplied(0, settled.errors);
       }
-      return { ...this.gwApplied(0, [], STUCK_AFTER), busy: PAD_WORDS.busy };
+      return { ...this.gwApplied(0, [], 1000), busy: PAD_WORDS.busy };
     }
     // --- no awaits from here on ---
     const later = Date.now();
