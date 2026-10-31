@@ -29,6 +29,10 @@ SHOP = "ep0qiq-rp.myshopify.com"
 API_VERSION = "2026-07"
 CURRENCY = "NZD"
 PUBLIC_URL = "https://dice-goblin-lair.dicegoblinnz.workers.dev"
+# Round 26: where new Games Workshop products are stocked (the shop, "Dice Goblin") and the till's sales channel (Point
+# of Sale) they're listed on, for the staff page's Warhammer tab
+GW_LOCATION_ID = "72250359911"
+GW_POS_PUBLICATION_ID = "129866989671"
 
 # Round 17, Help me pick: Workers AI tags new library games (config PICK_AI = "off" stops it; PICK_AI_MODEL picks the model)
 [ai]

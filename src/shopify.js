@@ -915,6 +915,194 @@ export class ShopifyAdmin {
     return { variants: (data.productVariants?.nodes || []).map(gwVariant), overrides: gwOverrides(data.shop) };
   }
 
+  /**
+   * Round 26 (src/gw-pad.js): a page of the shop's Games Workshop variants (100, by ID): price, cost, barcode, whether it
+   * keeps selling at 0, pack size, and its product (title, status, tags, how many variants, release date). Library
+   * copies come too (their vendor is Games Workshop); the Lair keeps only GW codes. { variants, next (cursor or null) }.
+   * barcode is the API version's (2026-07) single barcode field.
+   */
+  async gwShopPage(after = null) {
+    const data = await this.graphql(
+      `query GwShop($after: String) {
+        productVariants(first: 100, after: $after, sortKey: ID, query: "vendor:'Games Workshop'") {
+          nodes { id sku price barcode inventoryPolicy inventoryItem { unitCost { amount } }
+            pack: metafield(namespace: "custom", key: "gw_pack_size") { value }
+            product { id title status tags variantsCount { count } release: metafield(namespace: "custom", key: "gw_release_date") { value } } }
+          pageInfo { hasNextPage endCursor } } }`,
+      { after },
+    );
+    const page = data.productVariants || {};
+    return {
+      variants: (page.nodes || []).filter((v) => v?.id && v.product?.id).map((v) => ({
+        id: v.id, sku: String(v.sku || '').trim(), price: v.price, cost: v.inventoryItem?.unitCost?.amount ?? null, barcode: v.barcode || '',
+        policy: v.inventoryPolicy || 'DENY', pack: Math.max(1, Math.floor(Number(v.pack?.value) || 1)), productId: v.product.id,
+        productTitle: v.product.title || '', status: v.product.status || null, tags: Array.isArray(v.product.tags) ? v.product.tags : [],
+        variants: Number(v.product.variantsCount?.count) || 1, release: v.product.release?.value || null,
+      })),
+      next: page.pageInfo?.hasNextPage ? page.pageInfo.endCursor || null : null,
+    };
+  }
+
+  /**
+   * Round 26: changes to GW products, a few products in one request (up to 25): each group { productId, variants
+   * (productVariantsBulkUpdate's inputs), tag ('add' | 'remove' the New release tag, or null), release (a date for
+   * custom.gw_release_date, or null) }. [{ productId, error }] for each group, error when Shopify said no.
+   */
+  async gwUpdate(groups) {
+    const list = groups.slice(0, 25);
+    const defs = [];
+    const fields = [];
+    const vars = {};
+    const metafields = [];
+    const owner = [];
+    list.forEach((g, i) => {
+      if (!g.variants.length && !g.tag) return;
+      defs.push(`$p${i}: ID!`);
+      vars[`p${i}`] = g.productId;
+      if (g.variants.length) {
+        defs.push(`$v${i}: [ProductVariantsBulkInput!]!`);
+        vars[`v${i}`] = g.variants;
+        fields.push(`u${i}: productVariantsBulkUpdate(productId: $p${i}, variants: $v${i}) { userErrors { field message } }`);
+      }
+      if (g.tag) fields.push(`t${i}: ${g.tag === 'add' ? 'tagsAdd' : 'tagsRemove'}(id: $p${i}, tags: $newTag) { userErrors { field message } }`);
+    });
+    if (list.some((g) => g.tag)) {
+      defs.push('$newTag: [String!]!');
+      vars.newTag = ['New release'];
+    }
+    list.forEach((g, i) => {
+      if (!g.release) return;
+      metafields.push({ ownerId: g.productId, namespace: 'custom', key: 'gw_release_date', type: 'date', value: g.release });
+      owner.push(i);
+    });
+    if (metafields.length) {
+      defs.push('$m: [MetafieldsSetInput!]!');
+      vars.m = metafields;
+      fields.push('m: metafieldsSet(metafields: $m) { userErrors { field message } }');
+    }
+    if (!fields.length) return list.map((g) => ({ productId: g.productId }));
+    const data = await madeAnyway(this.graphql(`mutation GwUpdate(${defs.join(', ')}) { ${fields.join(' ')} }`, vars));
+    const metaErrors = new Map();
+    for (const e of data?.m?.userErrors || []) {
+      const at = owner[Number(Array.isArray(e.field) ? e.field[1] : NaN)];
+      if (at !== undefined) metaErrors.set(at, [...(metaErrors.get(at) || []), e]);
+    }
+    return list.map((g, i) => {
+      const asked = (g.variants.length ? [`u${i}`] : []).concat(g.tag ? [`t${i}`] : []);
+      const missing = asked.some((k) => !data?.[k]) || (g.release && !data?.m);
+      const errors = [...asked.flatMap((k) => data?.[k]?.userErrors || []), ...(metaErrors.get(i) || [])];
+      if (errors.length) return { productId: g.productId, error: new Error(errors.map((e) => e.message).join('; ')) };
+      if (missing) return { productId: g.productId, error: new Error('Shopify gave no answer for it.') };
+      return { productId: g.productId };
+    });
+  }
+
+  /**
+   * Round 26: new products (productSet, up to 10 in one request), then each one put on the till (posId, the Point of
+   * Sale channel). products: [{ codes, input, range }]. [{ codes, productId, range, published }] for each one made;
+   * { codes, error, nothingRan } when Shopify turned it down; { codes, unknown } when Shopify didn't say (the Lair looks
+   * for it by SKU later, so it's never made twice).
+   */
+  async gwCreate(products, posId) {
+    const list = products.slice(0, 10);
+    const defs = list.map((_, i) => `$i${i}: ProductSetInput!`).join(', ');
+    const fields = list.map((_, i) => `c${i}: productSet(input: $i${i}, synchronous: true) { product { id } userErrors { field message } }`).join(' ');
+    const data = await madeAnyway(this.graphql(`mutation GwCreate(${defs}) { ${fields} }`, Object.fromEntries(list.map((p, i) => [`i${i}`, p.input]))));
+    const made = list.map((p, i) => {
+      const answer = data?.[`c${i}`];
+      if (answer?.product?.id) return { codes: p.codes, productId: answer.product.id, range: p.range || null };
+      if (answer?.userErrors?.length) return { codes: p.codes, error: new Error(answer.userErrors.map((e) => e.message).join('; ')), nothingRan: true };
+      return { codes: p.codes, unknown: true };
+    });
+    const ids = made.filter((m) => m.productId).map((m) => m.productId);
+    let published = new Map();
+    if (ids.length) {
+      try {
+        published = new Map((await this.gwPublish(ids, posId)).map((r) => [r.productId, !r.error]));
+      } catch (error) {
+        console.error('Lair: new Games Workshop products were made but not put on the till yet', String(error?.message || error).slice(0, 200));
+      }
+    }
+    return made.map((m) => (m.productId ? { ...m, published: published.get(m.productId) === true } : m));
+  }
+
+  /** Round 26: products on the till (publishablePublish to posId, up to 25; publishing twice changes nothing). [{ productId, error }] */
+  async gwPublish(productIds, posId) {
+    const list = productIds.slice(0, 25);
+    const defs = list.map((_, i) => `$p${i}: ID!`).join(', ');
+    const fields = list.map((_, i) => `p${i}: publishablePublish(id: $p${i}, input: $pub) { userErrors { field message } }`).join(' ');
+    const vars = { pub: [{ publicationId: posId }], ...Object.fromEntries(list.map((id, i) => [`p${i}`, id])) };
+    const data = await madeAnyway(this.graphql(`mutation GwPublish($pub: [PublicationInput!]!, ${defs}) { ${fields} }`, vars));
+    return list.map((id, i) => {
+      const answer = data?.[`p${i}`];
+      if (!answer) return { productId: id, error: new Error('Shopify gave no answer for it.') };
+      return answer.userErrors?.length ? { productId: id, error: new Error(answer.userErrors.map((e) => e.message).join('; ')) } : { productId: id };
+    });
+  }
+
+  /**
+   * Round 26: paint colours added to their range's product (productVariantsBulkCreate, up to 100). variants are in
+   * productSet's shape (gwVariantInput): they're turned into the bulk input here. [{ codes: [sku], productId }] for each
+   * one made, { codes, error, nothingRan } for each one Shopify turned down, { codes, unknown } when it didn't say.
+   */
+  async gwAddVariants(productId, variants) {
+    const list = variants.slice(0, 100);
+    const bulk = list.map((v) => ({
+      optionValues: v.optionValues,
+      price: v.price,
+      ...(v.barcode ? { barcode: v.barcode } : {}),
+      inventoryPolicy: v.inventoryPolicy,
+      inventoryItem: { ...v.inventoryItem, sku: v.sku },
+      inventoryQuantities: (v.inventoryQuantities || []).map((q) => ({ locationId: q.locationId, availableQuantity: q.quantity })),
+      ...(v.metafields ? { metafields: v.metafields } : {}),
+    }));
+    const data = await madeAnyway(this.graphql(
+      `mutation GwAddVariants($id: ID!, $variants: [ProductVariantsBulkInput!]!) {
+        productVariantsBulkCreate(productId: $id, variants: $variants) { productVariants { id sku } userErrors { field message } } }`,
+      { id: productId, variants: bulk },
+    ));
+    const answer = data?.productVariantsBulkCreate;
+    const made = new Set((answer?.productVariants || []).map((v) => String(v?.sku || '').trim()));
+    const errors = answer?.userErrors || [];
+    return list.map((v) => {
+      if (made.has(v.sku)) return { codes: [v.sku], productId };
+      if (errors.length) return { codes: [v.sku], error: new Error(errors.map((e) => e.message).join('; ')), nothingRan: true };
+      return { codes: [v.sku], unknown: true };
+    });
+  }
+
+  /**
+   * Round 26: GW variants with these SKUs (up to 40, gw-pad.js FIND_MAX), for a batch Shopify never answered: Map of sku →
+   * { variantId, productId }
+   */
+  async gwFindSkus(codes) {
+    const list = [...new Set(codes.map((c) => String(c).trim()).filter((c) => /^\d{8,13}$/.test(c)))].slice(0, 40);
+    if (!list.length) return new Map();
+    const data = await this.graphql(
+      'query GwFind($query: String!) { productVariants(first: 100, query: $query) { nodes { id sku product { id vendor } } } }',
+      { query: list.map((c) => `sku:${c}`).join(' OR ') },
+    );
+    const found = new Map();
+    for (const v of data.productVariants?.nodes || []) {
+      const sku = String(v?.sku || '').trim();
+      if (v?.product?.vendor === 'Games Workshop' && list.includes(sku) && !found.has(sku)) found.set(sku, { variantId: v.id, productId: v.product.id });
+    }
+    return found;
+  }
+
+  /** Round 26: releases going on sale: their draft products made active (up to 10). [{ productId, error }] */
+  async gwActivate(productIds) {
+    const list = productIds.slice(0, 10);
+    const defs = list.map((_, i) => `$a${i}: ProductUpdateInput!`).join(', ');
+    const fields = list.map((_, i) => `a${i}: productUpdate(product: $a${i}) { product { id status } userErrors { field message } }`).join(' ');
+    const data = await madeAnyway(this.graphql(`mutation GwActivate(${defs}) { ${fields} }`, Object.fromEntries(list.map((id, i) => [`a${i}`, { id, status: 'ACTIVE' }]))));
+    return list.map((id, i) => {
+      const answer = data?.[`a${i}`];
+      if (answer?.userErrors?.length) return { productId: id, error: new Error(answer.userErrors.map((e) => e.message).join('; ')) };
+      return answer?.product?.status === 'ACTIVE' ? { productId: id } : { productId: id, error: new Error('Shopify gave no answer for it.') };
+    });
+  }
+
   /** The order a draft order turned into once it was paid (null while unpaid). */
   async draftOrderOrderId(id) {
     const data = await this.graphql('query DraftStatus($id: ID!) { draftOrder(id: $id) { id status order { id } } }', { id });

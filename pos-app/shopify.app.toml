@@ -24,7 +24,11 @@ automatically_update_urls_on_dev = false
 # pictures) from the staff page instead of Shopify admin. Asked for now so Mo approves all four at once.
 # read_store_credit_accounts (round 9): a member's store credit balance on the staff member page. Mo approves it once
 # in Shopify admin after the deploy; until then the page says so, and adding or taking off credit still works.
-scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory,write_metaobjects,write_files,read_store_credit_accounts"
+# write_products, write_inventory and write_publications (round 26): the staff page's Warhammer tab adds each week's
+# Games Workshop order pad to Shopify (new products stocked at 0 and listed on the till, prices and costs kept current).
+# read_products and read_inventory stay listed, as the Lair's health check looks for them. Mo approves the new ones once
+# in Shopify admin.
+scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory,write_metaobjects,write_files,read_store_credit_accounts,write_products,write_inventory,write_publications"
 use_legacy_install_flow = false
 
 [auth]
