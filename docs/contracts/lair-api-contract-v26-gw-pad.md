@@ -46,7 +46,8 @@ A product whose release date is after today is made as a draft (hidden everywher
 10am NZ on its pre-order day: 7 days before release unless staff move it (`POST /gw/releases/:code`). Maintenance (every
 10 minutes) makes it active then. One made in a batch whose answer was lost is kept the same way once it's found by SKU.
 When a later pad moves its release date, its on-sale day moves with it (7 days before the new date, whatever staff had
-set), at the plan, so it never goes on sale at the old pre-order day. A paint colour still to be released waits for a later pad (`later` in the plan), so it
+set), at the plan, so it never goes on sale at the old pre-order day. A release made again (the last one was deleted in
+Shopify) replaces the old one's record, so the new product is the one that goes on sale. A paint colour still to be released waits for a later pad (`later` in the plan), so it
 never shows on its range's product early. Round 25's It's in email, and the shop's list of parcels and pickups, wait for
 8am on release day for an order with an advance-order line that's in early (`gw_orderins.release`).
 
@@ -62,7 +63,8 @@ kept again. Part 1 clears the last pad and plan.
 
 Part 1 is turned away (409, "Finish updating the shop first: some changes are still on their way to Shopify or the
 till. Carry on updating the shop, then add the new pad.") while any change is still with Shopify or made but not yet
-on the till, since a new pad clears the plan.
+on the till, since a new pad clears the plan. Reading the shop again (`restart`) and a new plan are turned away the same
+way.
 
 Each row (the pad's Export sheet, header row 4): `{ code (Product Code), desc (Description), system, race, ss (SS Code),
 module, release (Release Date: an Excel day number or a date), minstock (Minimum Stock Level), pack (Qty in Pack),

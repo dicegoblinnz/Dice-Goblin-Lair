@@ -44,7 +44,6 @@ export const PAD_WORDS = {
   noPad: 'Upload the order pad first.',
   noShop: "Check the shop first: the Lair hasn't read Shopify's Games Workshop products since the pad came in.",
   shopAgain: 'Check the shop again first: products have changed since the Lair last read it.',
-  sending: 'Wait a moment: changes are still on their way to Shopify.',
   unfinished: 'Finish updating the shop first: some changes are still on their way to Shopify or the till. Carry on updating the shop, then add the new pad.',
   noPlan: 'Look over the plan first.',
   stale: 'A new pad came in since this plan was made. Check the shop again, then look over the new plan.',
@@ -401,9 +400,7 @@ export const gwPadMethods = {
     }
     // (the review, 1 Nov 2026) a new pad clears the plan, and with it what's still on its way to Shopify or the till:
     // made but not yet listed there, or not yet looked for. It waits for those.
-    if (part === 1 && this.sql.exec("SELECT COUNT(*) AS n FROM gw_plan WHERE status IN ('sending', 'publish')").one().n) {
-      throw new RuleError(PAD_WORDS.unfinished, 409);
-    }
+    if (part === 1 && this.gwUnfinished()) throw new RuleError(PAD_WORDS.unfinished, 409);
     const upload = part === 1 ? crypto.randomUUID().slice(0, 8) : state.upload;
     if (part === 1) {
       this.write('DELETE FROM gw_pad');
@@ -443,7 +440,7 @@ export const gwPadMethods = {
     this.requireStaff(who, 'warhammer');
     const restart = Boolean(body?.restart);
     const before = meta(this, 'gw-shop') || {};
-    if (restart && this.gwSending(Date.now())) throw new RuleError(PAD_WORDS.sending, 409);
+    if (restart && this.gwUnfinished()) throw new RuleError(PAD_WORDS.unfinished, 409);
     if (!restart && before.done) return { done: true, count: this.sql.exec('SELECT COUNT(*) AS n FROM gw_shop').one().n, wait: 0 };
     let cursor = restart ? null : before.cursor || null;
     const startedAt = restart || !before.startedAt ? Date.now() : before.startedAt;
@@ -487,6 +484,14 @@ export const gwPadMethods = {
     return { done, count: this.sql.exec('SELECT COUNT(*) AS n FROM gw_shop').one().n, wait: done ? 0 : wait };
   },
 
+  /**
+   * Whether a change is still on its way: with Shopify (or not yet looked for), or made but not yet on the till. A new
+   * pad, reading the shop again and a new plan all wait for these (the reviews, 1 Nov 2026). No awaits.
+   */
+  gwUnfinished() {
+    return this.sql.exec("SELECT COUNT(*) AS n FROM gw_plan WHERE status IN ('sending', 'publish')").one().n > 0;
+  },
+
   /** Whether a batch is with Shopify now (claimed less than STUCK_AFTER ago). No awaits. */
   gwSending(now) {
     return this.sql.exec("SELECT COUNT(*) AS n FROM gw_plan WHERE status = 'sending' AND sent_at >= ?", now - STUCK_AFTER).one().n > 0;
@@ -497,11 +502,12 @@ export const gwPadMethods = {
     this.requireStaff(who, 'warhammer');
     const pad = meta(this, 'gw-pad');
     if (!pad?.complete) throw new RuleError(PAD_WORDS.noPad, 409);
+    // changes still on their way come first: until they're done the shop can't be read again either
+    if (this.gwUnfinished()) throw new RuleError(PAD_WORDS.unfinished, 409);
     const shop = meta(this, 'gw-shop');
     if (!shop?.done || !(shop.startedAt > pad.at)) throw new RuleError(PAD_WORDS.noShop, 409);
     const applied = meta(this, 'gw-applied');
     if (applied && !(shop.startedAt > applied)) throw new RuleError(PAD_WORDS.shopAgain, 409);
-    if (this.gwSending(Date.now())) throw new RuleError(PAD_WORDS.sending, 409);
     const today = this.gwToday();
     this.write('DELETE FROM gw_plan');
     // new: on the pad, not in the shop. A paint colour goes on its range's product, once it's released.
@@ -917,8 +923,13 @@ export const gwPadMethods = {
   gwKeepRelease(p, productId, madeAt) {
     const { draft, onSaleAt } = this.gwReleaseOf(p, madeAt);
     if (!draft) return;
+    // (the second review, 1 Nov 2026) one made again (the last was deleted in Shopify) replaces it; the same product
+    // recorded twice keeps its row, and a day staff chose
     this.write(
-      'INSERT OR IGNORE INTO gw_releases (code, product_id, title, release, on_sale_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      `INSERT INTO gw_releases (code, product_id, title, release, on_sale_at, created_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(code) DO UPDATE SET product_id = excluded.product_id, title = excluded.title, release = excluded.release,
+         on_sale_at = excluded.on_sale_at, activated_at = NULL, error = NULL, created_at = excluded.created_at
+       WHERE gw_releases.product_id != excluded.product_id`,
       p.code, productId, p.title, p.release, onSaleAt, Date.now(),
     );
   },

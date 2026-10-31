@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import zlib from 'node:zlib';
 
 process.env.OUT = process.env.OUT || path.join(os.tmpdir(), 'dg-round26-warhammer');
 const lib = await import('../round15/lib.mjs');
@@ -128,6 +129,49 @@ const server = await m.serve(PORT);
 const browser = await chromium.launch();
 const settle = (page, ms = 400) => page.waitForTimeout(ms);
 const outside = [];
+
+/* ---------------- crafted xlsx files, for the reader ---------------- */
+/** A zip of { name: text }, each deflated (or stored with store: true) */
+function zipOf(files, { store = false } = {}) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(files)) {
+    const raw = Buffer.from(content);
+    const data = store ? raw : zlib.deflateRawSync(raw);
+    const nameBuf = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(store ? 0 : 8, 8);
+    local.writeUInt32LE(data.length, 18); local.writeUInt32LE(raw.length, 22); local.writeUInt16LE(nameBuf.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(store ? 0 : 8, 10);
+    central.writeUInt32LE(data.length, 20); central.writeUInt32LE(raw.length, 24); central.writeUInt16LE(nameBuf.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBuf, data);
+    centrals.push(central, nameBuf);
+    offset += 30 + nameBuf.length + data.length;
+  }
+  const dir = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(files).length, 8); end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, dir, end]);
+}
+const BOOK = '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Notes" sheetId="1" r:id="rId2"/><sheet name="Export" sheetId="2" r:id="rId1"/></sheets></workbook>';
+const RELS = '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="/xl/worksheets/export.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/notes.xml"/></Relationships>';
+const inline = (ref, text) => `<c r="${ref}" t="inlineStr"><is><t>${text}</t></is></c>`;
+const ODD = zipOf({
+  'xl/workbook.xml': BOOK,
+  'xl/_rels/workbook.xml.rels': RELS,
+  'xl/worksheets/notes.xml': '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">' + inline('A1', 'Not this sheet') + '</row></sheetData></worksheet>',
+  'xl/worksheets/export.xml': '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+    + '<row r="1">' + inline('A1', 'A note') + '</row>'
+    + '<row r="4">' + ['Release Date (Last 4 Weeks)', 'System', 'Race', 'Product Code', 'Description', 'Qty in Pack', 'NZ MRP'].map((h, i) => inline(`${'ABCDEFG'[i]}4`, h)).join('') + '</row>'
+    + '<row r="5"><c r="A5" t="d"><v>2026-11-21T00:00:00</v></c>' + inline('B5', 'Warhammer 40K') + inline('C5', '40K - Generic') + '<c r="D5"><v>99120100902</v></c>'
+    + inline('E5', 'Combat Patrol: Test Marines') + '<c r="F5"><v>1</v></c><c r="G5"><v>210</v></c><c r="ZZZZZZ5"><v>1</v></c></row>'
+    + '</sheetData></worksheet>',
+});
+const BOMB = zipOf({ 'xl/workbook.xml': BOOK, 'xl/_rels/workbook.xml.rels': RELS, 'xl/worksheets/notes.xml': '<x/>', 'xl/worksheets/export.xml': ' '.repeat(40 * 1024 * 1024) });
+const JUNK = Buffer.from('this is not a spreadsheet, just some words in a file called pad.xlsx');
 const VIEWPORTS = { small: { width: 320, height: 640 }, phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
 
 async function open(size, who) {
@@ -180,6 +224,24 @@ const tabState = (page) => page.evaluate(() => {
   await page.click('[data-wh-pad] button[type="submit"]');
   st = await tabState(page);
   check(`${tag} no file: says to pick GW's pad`, st.error === 'Pick GW’s order pad first: the .xlsx file from GW’s trade site.', st);
+  // crafted files: a date cell, a column past Excel's last and a second sheet; one that unzips to 40MB; not a zip
+  const crafted = await page.evaluate(async (files) => {
+    const read = async (b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const started = performance.now();
+      try {
+        return { rows: await customElements.get('staff-warhammer').readPad(new File([bytes], 'pad.xlsx')), ms: performance.now() - started };
+      } catch (error) {
+        return { error: error.message, ms: performance.now() - started };
+      }
+    };
+    return { odd: await read(files.odd), bomb: await read(files.bomb), junk: await read(files.junk) };
+  }, { odd: ODD.toString('base64'), bomb: BOMB.toString('base64'), junk: JUNK.toString('base64') });
+  check(`${tag} a crafted pad: the Export sheet, its date cell as a date, a column past Excel's last left out`,
+    JSON.stringify(crafted.odd.rows) === JSON.stringify([{ code: '99120100902', desc: 'Combat Patrol: Test Marines', system: 'Warhammer 40K', race: '40K - Generic', ss: '', module: '', release: '2026-11-21T00:00:00', minstock: null, pack: 1, barcode: '', nz_trade: null, nz_mrp: 210 }]) && crafted.odd.ms < 2000, crafted.odd);
+  const unreadable = 'That file couldn’t be read. Save it again from GW’s trade site and try again.';
+  check(`${tag} a file that unzips to 40MB is turned away, quickly`, crafted.bomb.error === unreadable && crafted.bomb.ms < 5000, crafted.bomb);
+  check(`${tag} a file that isn't a zip: couldn't be read`, crafted.junk.error === unreadable, crafted.junk);
   // the browser's reader against another reader's rows: every line, every field the Lair uses
   const read = await page.evaluate(async (b64) => {
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));

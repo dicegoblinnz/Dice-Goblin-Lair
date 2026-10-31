@@ -698,6 +698,44 @@ test('round 26: a lost batch of 50 paint colours is looked for 40 at a time, and
   assert.equal(ok(await call('GET', 'gw')).left, 0);
 });
 
+test('round 26: a hidden release deleted in Shopify and made again is the one that goes on sale', async () => {
+  ok(await upload(padRows()));
+  await readShop();
+  ok(await call('POST', 'gw/plan', {}));
+  await applyAll();
+  const first = productOf('99120100902');
+  // someone deletes it in Shopify admin; the next pad makes it again
+  for (const id of first.variants) variants.delete(id);
+  products.delete(first.id);
+  ok(await upload(padRows()));
+  await readShop();
+  const again = ok(await call('POST', 'gw/plan', {}));
+  assert.equal(plan(99120100902).action, 'create');
+  assert.equal(again.counts.create.todo, 1);
+  await applyAll();
+  const second = productOf('99120100902');
+  assert.notEqual(second.id, first.id);
+  assert.equal(lair.sql.exec('SELECT product_id FROM gw_releases WHERE code = ?', '99120100902').one().product_id, second.id);
+  nowIs(at('2026-11-14', 10, 5));
+  assert.deepEqual(await lair.gwActivateReleases(Date.now()), { activated: ['Combat Patrol: Test Marines'] });
+  assert.equal(second.status, 'ACTIVE');
+});
+
+test("round 26: the shop isn't read again, or a new plan made, while changes are still on their way", async () => {
+  ok(await upload(padRows()));
+  await readShop();
+  ok(await call('POST', 'gw/plan', {}));
+  ok(await call('POST', 'gw/apply', {}));
+  trouble.publish = true;
+  ok(await call('POST', 'gw/apply', {}));
+  trouble.publish = false;
+  // (the staff page never asks these here, as a new pad is turned away first; the Lair turns them away too)
+  assert.equal(said(await call('POST', 'gw/shop', { restart: true })), `409 ${W.unfinished}`);
+  assert.equal(said(await call('POST', 'gw/plan', {})), `409 ${W.unfinished}`);
+  ok(await call('POST', 'gw/apply', {}));
+  ok(await call('POST', 'gw/shop', { restart: true }));
+});
+
 test('round 26: a new pad waits while changes are still on their way to Shopify or the till', async () => {
   ok(await upload(padRows()));
   await readShop();
