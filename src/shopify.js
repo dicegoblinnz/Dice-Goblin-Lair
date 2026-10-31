@@ -1103,6 +1103,72 @@ export class ShopifyAdmin {
     });
   }
 
+  /**
+   * Round 27 (src/gw-week.js): a delivery's Games Workshop variants by SKU (up to 25): Map of sku → { variantId,
+   * inventoryItemId, tracked, title }.
+   */
+  async gwReceiveLookup(codes) {
+    const list = [...new Set(codes.map((c) => String(c).trim()).filter((c) => /^\d{8,13}$/.test(c)))].slice(0, 25);
+    if (!list.length) return new Map();
+    const data = await this.graphql(
+      'query GwReceive($query: String!) { productVariants(first: 100, query: $query) { nodes { id sku displayName inventoryItem { id tracked } product { vendor } } } }',
+      { query: list.map((c) => `sku:${c}`).join(' OR ') },
+    );
+    const found = new Map();
+    for (const v of data.productVariants?.nodes || []) {
+      const sku = String(v?.sku || '').trim();
+      if (v?.product?.vendor !== 'Games Workshop' || !list.includes(sku) || found.has(sku) || !v.inventoryItem?.id) continue;
+      found.set(sku, { variantId: v.id, inventoryItemId: v.inventoryItem.id, tracked: v.inventoryItem.tracked !== false, title: String(v.displayName || '').replace(/ - Default Title$/, '') });
+    }
+    return found;
+  }
+
+  /**
+   * Round 27: a delivery added to stock at the shop's location (inventoryAdjustQuantities, reason received) with
+   * Shopify's idempotency key (required from API 2026-04): the same key again within 24 hours gets the first answer and
+   * adds nothing. changes: [{ inventoryItemId, delta }]. { ok: true } once it's added; { errors: [{ code, message }] }
+   * when Shopify said no (nothing added, and that key is spent); throws when Shopify didn't answer.
+   */
+  async gwAdjust(changes, locationId, key, reference) {
+    const data = await madeAnyway(this.graphql(
+      `mutation GwReceive($input: InventoryAdjustQuantitiesInput!, $key: String!) {
+        inventoryAdjustQuantities(input: $input) @idempotent(key: $key) { inventoryAdjustmentGroup { id } userErrors { field message code } } }`,
+      {
+        key,
+        input: {
+          name: 'available', reason: 'received', referenceDocumentUri: reference,
+          changes: changes.map((c) => ({ inventoryItemId: c.inventoryItemId, locationId, delta: c.delta, changeFromQuantity: null })),
+        },
+      },
+    ));
+    const answer = data?.inventoryAdjustQuantities;
+    if (answer?.userErrors?.length) return { errors: answer.userErrors.map((e) => ({ code: e.code || null, message: String(e.message || '') })) };
+    if (answer?.inventoryAdjustmentGroup) return { ok: true };
+    throw new Error('Shopify gave no answer for it.');
+  }
+
+  /** Round 27: the shop's gw.schedule as it stands: { shopId, overrides, digest (its compareDigest, null when unset) } */
+  async gwScheduleRead() {
+    const data = await this.graphql('query GwScheduleRead { shop { id schedule: metafield(namespace: "gw", key: "schedule") { value compareDigest } } }');
+    return { shopId: data.shop?.id || null, overrides: gwOverrides(data.shop), digest: data.shop?.schedule?.compareDigest || null };
+  }
+
+  /**
+   * Round 27: gw.schedule saved only if it's still as it was read (compareDigest; null: only if it still isn't set).
+   * { ok: true }, { stale: true } when it changed in between, or { errors } when Shopify said no.
+   */
+  async gwScheduleSave(shopId, value, digest) {
+    const data = await madeAnyway(this.graphql(
+      'mutation GwScheduleSave($m: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $m) { metafields { id } userErrors { field message code } } }',
+      { m: [{ ownerId: shopId, namespace: 'gw', key: 'schedule', type: 'json', value, compareDigest: digest }] },
+    ));
+    const errors = data?.metafieldsSet?.userErrors || [];
+    if (errors.some((e) => e.code === 'STALE_OBJECT' || e.code === 'INVALID_COMPARE_DIGEST')) return { stale: true };
+    if (errors.length) return { errors: errors.map((e) => String(e.message || '')) };
+    if (data?.metafieldsSet?.metafields?.length) return { ok: true };
+    throw new Error('Shopify gave no answer for it.');
+  }
+
   /** The order a draft order turned into once it was paid (null while unpaid). */
   async draftOrderOrderId(id) {
     const data = await this.graphql('query DraftStatus($id: ID!) { draftOrder(id: $id) { id status order { id } } }', { id });

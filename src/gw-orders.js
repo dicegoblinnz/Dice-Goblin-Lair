@@ -95,8 +95,11 @@ export const GW_WORDS = {
   listTitle: "This week's Games Workshop order",
   listIntro: (cutoff) => `Orders closed at midnight on ${cutoff}. Here's what to order from Games Workshop for customers' ordered-in items, rounded up to GW's packs: paste these lines into the trade site, or use the CSV attached. Extras from a pack go on the shelf.`,
   listNothing: (cutoff) => `Orders closed at midnight on ${cutoff}, and nothing was ordered in from Games Workshop this week.`,
-  listOutro: 'The Lair has these down as ordered. When GW\'s delivery comes, add it to stock in Shopify as usual, and the Lair emails the customers whose items are in.',
+  listOutro: 'The Lair has these down as ordered. When GW\'s delivery comes, add it to stock on the staff page\'s Warhammer tab (When the box comes) or in Shopify, and the Lair emails the customers whose items are in.',
   listPacks: (title, units, packs, pack) => (pack > 1 ? `${title}: ${units} ordered in, so ${packs === 1 ? '1 pack' : `${packs} packs`} of ${pack} (${packs * pack - units} extra for the shelf)` : `${title}: ${units}`),
+  // Round 27: shelf top-ups from the Warhammer tab
+  listTopup: (packs) => `, plus ${packs === 1 ? '1 pack' : `${packs} packs`} for the shelf`,
+  listShelf: (title, packs, pack) => `${title}: ${packs === 1 ? '1 pack' : `${packs} packs`}${pack > 1 ? ` of ${pack}` : ''} for the shelf`,
   weekRow: { online: 'Ordered in online', counter: 'Ordered in at the counter' },
   week: (orders, units, value) => `${orders === 1 ? '1 order' : `${orders} orders`}, ${units === 1 ? '1 item' : `${units} items`}, ${value}`,
   noCustomer: (name) => `Counter sale ${name}, no customer`,
@@ -196,11 +199,19 @@ export const GW_TABLES = [
  * order that arrives before release day waits for it (GW's trade terms 9.3: nothing to a customer before release day).
  * Made when missing (lair.js); null for lines before then.
  */
-export const GW_COLUMNS = [['gw_orderins', 'release', 'TEXT']];
+export const GW_COLUMNS = [['gw_orderins', 'release', 'TEXT'], ['gw_orderins', 'unsupplied_at', 'INTEGER']];
 /** On release day, an order that's in is told from this hour (Auckland), not in the middle of the night */
 export const GW_RELEASE_HOUR = 8;
 
 const OPEN = 'quantity > arrived + cancelled';
+/**
+ * Round 27 (src/gw-week.js): a line GW couldn't supply that's being refunded (unsupplied_at) is still open until the
+ * refund lands, but nothing waits for it: stock that comes in goes to other lines, it doesn't hold up its order, and it's
+ * never late. WAITING is an open line something's still coming for.
+ */
+const WAITING = `${OPEN} AND unsupplied_at IS NULL`;
+/** Units still to come on an open line */
+const left = (row) => row.quantity - row.arrived - row.cancelled;
 
 export const gwOrderMethods = {
   /** Ordered-in units of a variant not in yet and not taken off. No awaits. */
@@ -296,14 +307,18 @@ export const gwOrderMethods = {
   /**
    * Stock in for a variant short by `short` (below zero by that many; 0 or less when it isn't): its open ordered-in units
    * beyond that are in, oldest order first. Returns [{ orderId, units }] for each line marked. No awaits.
+   * Round 27: units GW couldn't supply (being refunded) are part of the shortfall until the refund puts them back, but
+   * take nothing: the other lines wait on the shortfall less those.
    */
   gwArrive(variantId, short) {
-    const rows = this.sql.exec(`SELECT * FROM gw_orderins WHERE variant_id = ? AND ${OPEN} ORDER BY placed_at, id`, variantId).toArray();
-    let spare = rows.reduce((sum, r) => sum + r.quantity - r.arrived - r.cancelled, 0) - Math.max(0, Math.floor(short) || 0);
+    const open = this.sql.exec(`SELECT * FROM gw_orderins WHERE variant_id = ? AND ${OPEN} ORDER BY placed_at, id`, variantId).toArray();
+    const held = open.filter((r) => r.unsupplied_at).reduce((sum, r) => sum + left(r), 0);
+    const rows = open.filter((r) => !r.unsupplied_at);
+    let spare = rows.reduce((sum, r) => sum + left(r), 0) - Math.max(0, (Math.floor(short) || 0) - held);
     const done = [];
     for (const row of rows) {
       if (spare <= 0) break;
-      const take = Math.min(spare, row.quantity - row.arrived - row.cancelled);
+      const take = Math.min(spare, left(row));
       this.write('UPDATE gw_orderins SET arrived = ? WHERE id = ?', row.arrived + take, row.id);
       spare -= take;
       done.push({ orderId: row.order_id, units: take });
@@ -316,20 +331,25 @@ export const gwOrderMethods = {
    * and when it was all taken off there's nothing to say. Round 26: an advance order that's in before its release day
    * waits until 8am on release day (maintenance looks again each run), so nothing is collected or posted early.
    * Returns the names of the orders that are in. No awaits.
+   * Round 27: a line GW couldn't supply (being refunded) doesn't hold its order up. `out`, when given, gets each ready
+   * order's row for the shop ({ order, what, action }), for the Warhammer tab's delivery screen.
    */
-  gwSettle(orderIds, now = Date.now()) {
+  gwSettle(orderIds, now = Date.now(), out = null) {
     const ready = [];
     const time = new LairTime(this.rulesCache?.tz || TZ);
     const today = time.key(now);
     const early = (release) => Boolean(release) && (release > today || (release === today && time.parts(now).h < GW_RELEASE_HOUR));
     for (const orderId of orderIds) {
       const { order, lines } = this.gwOrderRows(orderId);
-      if (!order || order.ready_at || lines.some((l) => l.quantity > l.arrived + l.cancelled)) continue;
+      if (!order || order.ready_at || lines.some((l) => l.quantity > l.arrived + l.cancelled && !l.unsupplied_at)) continue;
       if (lines.some((l) => l.arrived > 0 && early(l.release))) continue;
       this.write('UPDATE gw_orders SET ready_at = ? WHERE order_id = ?', now, orderId);
       if (lines.some((l) => l.arrived > 0)) ready.push({ order, lines: lines.filter((l) => l.arrived > 0) });
     }
-    if (ready.length) this.gwTellReady(ready);
+    if (ready.length) {
+      const rows = this.gwTellReady(ready);
+      if (Array.isArray(out)) out.push(...rows);
+    }
     return ready.map((r) => r.order.name || r.order.order_id);
   },
 
@@ -393,10 +413,11 @@ export const gwOrderMethods = {
     let marked = 0;
     for (const row of unmarked) if (await this.gwMark(row.order_id)) marked += 1;
     if (marked) result.marked = marked;
-    // Round 26: advance orders that came in before release day, told once it's here (gwSettle holds them till then)
+    // Round 26: advance orders that came in before release day, told once it's here (gwSettle holds them till then).
+    // Round 27: and orders whose only lines left are ones GW couldn't supply
     const held = this.sql.exec(
       `SELECT order_id FROM gw_orders WHERE ready_at IS NULL AND units > 0
-       AND order_id NOT IN (SELECT order_id FROM gw_orderins WHERE ${OPEN}) ORDER BY placed_at LIMIT 50`,
+       AND order_id NOT IN (SELECT order_id FROM gw_orderins WHERE ${WAITING}) ORDER BY placed_at LIMIT 50`,
     ).toArray().map((r) => r.order_id);
     if (held.length) {
       const released = this.gwSettle(held, now);
@@ -457,11 +478,12 @@ export const gwOrderMethods = {
     // 3. orders with nothing left to come: in (an email and the shop told), or all taken off (nothing to say)
     const ready = this.gwSettle(touched, now);
     if (ready.length) result.ready = ready;
-    // 4. orders past their date with something still to come: the shop hears once
+    // 4. orders past their date with something still to come: the shop hears once (round 27: not for lines GW couldn't
+    // supply, which are being refunded)
     const today = new LairTime(this.rulesCache?.tz || TZ).key(now);
     const late = this.sql.exec(
       `SELECT * FROM gw_orders WHERE ready_at IS NULL AND late_at IS NULL AND units > 0 AND promise IS NOT NULL AND promise < ?
-       AND order_id IN (SELECT order_id FROM gw_orderins WHERE ${OPEN}) ORDER BY placed_at LIMIT 20`,
+       AND order_id IN (SELECT order_id FROM gw_orderins WHERE ${WAITING}) ORDER BY placed_at LIMIT 20`,
       today,
     ).toArray();
     if (late.length) {
@@ -470,7 +492,7 @@ export const gwOrderMethods = {
         title: GW_WORDS.lateTitle,
         intro: GW_WORDS.lateIntro,
         details: late.map((o) => {
-          const waiting = this.sql.exec(`SELECT * FROM gw_orderins WHERE order_id = ? AND ${OPEN}`, o.order_id).toArray();
+          const waiting = this.sql.exec(`SELECT * FROM gw_orderins WHERE order_id = ? AND ${WAITING}`, o.order_id).toArray();
           return [`${o.name || 'Order'}${o.first_name ? ` (${o.first_name})` : ''}, due ${gwLabel(o.promise, 'short')}`, listText(waiting.map((l) => lineText(l, l.quantity - l.arrived - l.cancelled)))];
         }),
       });
@@ -479,9 +501,14 @@ export const gwOrderMethods = {
     return Object.keys(result).length ? result : null;
   },
 
-  /** Orders whose ordered-in items are all in: their customers (pickups and counter sales) and the shop. No awaits. */
+  /**
+   * Orders whose ordered-in items are all in: their customers (pickups and counter sales) and the shop. No awaits.
+   * Returns each order's { order (its name), what, action } (round 27: the delivery screen shows them).
+   */
   gwTellReady(ready) {
     const rows = [];
+    const shown = [];
+    const letters = [];
     for (const { order, lines } of ready) {
       const what = listText(lines.map((l) => lineText(l, l.arrived)));
       // only a Lair pickup or a counter sale is told it's ready to collect; a posted order hears from Shopify when it's sent
@@ -494,19 +521,30 @@ export const gwOrderMethods = {
       else if (order.delivery === 'pickup') action = tell ? GW_WORDS.ready.pickupTold(who) : GW_WORDS.ready.pickup;
       else action = GW_WORDS.ready.none;
       rows.push([`${order.name || 'Order'}: ${what}`, action]);
+      shown.push({ order: order.name || 'Order', what, action });
       if (!tell) continue;
-      this.later((async () => {
-        const sent = await this.mail(this.letter(order.email, GW_WORDS.inSubject(order.name), {
+      letters.push({
+        orderId: order.order_id,
+        letter: this.letter(order.email, GW_WORDS.inSubject(order.name), {
           title: GW_WORDS.inTitle,
           intro: GW_WORDS.inIntro(order.first_name),
           details: [[GW_WORDS.inRow, what], [GW_WORDS.toldOrder, order.name || '']],
           outro: GW_WORDS.inOutro,
           signoff: GW_WORDS.signoff,
-        }, { idempotencyKey: `gw-in-${String(order.order_id).split('/').pop()}` }));
-        if (sent?.ok) this.write('UPDATE gw_orders SET ready_told_at = ? WHERE order_id = ?', Date.now(), order.order_id);
+        }, { idempotencyKey: `gw-in-${String(order.order_id).split('/').pop()}` }),
+      });
+    }
+    // Round 27 (the review, 31 Oct 2026): a box can finish many orders at once, so their It's in emails go together,
+    // in one request to Resend (one by one, a burst of them would be turned away)
+    if (letters.length) {
+      this.later((async () => {
+        const sent = letters.length === 1 ? await this.mail(letters[0].letter) : await this.mailMany(letters.map((l) => l.letter));
+        if (!sent?.ok) return;
+        for (const l of letters) this.write('UPDATE gw_orders SET ready_told_at = ? WHERE order_id = ?', Date.now(), l.orderId);
       })());
     }
     this.notifyStaff(GW_WORDS.readySubject(ready.length), { title: GW_WORDS.readyTitle, intro: GW_WORDS.readyIntro, details: rows });
+    return shown;
   },
 
   /** The cutoff whose Tuesday list is due at `now` (the last Monday before today), or null before 6am on the Tuesday */
@@ -548,14 +586,20 @@ export const gwOrderMethods = {
     for (const row of rows) {
       const need = row.quantity - row.arrived - row.cancelled;
       if (need <= 0) continue;
-      const code = codes.get(row.code) || { code: row.code, title: row.title, units: 0, pack: 1, price: row.price };
+      const code = codes.get(row.code) || { code: row.code, title: row.title, units: 0, pack: 1, price: row.price, topup: 0 };
       code.units += need;
       code.pack = Math.max(code.pack, row.pack);
       codes.set(row.code, code);
     }
-    const order = [...codes.values()].map((c) => ({ ...c, packs: packsFor(c.units, c.pack) }));
-    const paste = order.map((c) => `${c.code},${c.packs}`).join('\n');
-    const value = order.reduce((sum, c) => sum + c.packs * c.pack * c.price, 0);
+    // Round 27: the week's shelf top-ups from the Warhammer tab, whole packs on top (gw_topups, src/gw-week.js)
+    for (const top of this.sql.exec('SELECT * FROM gw_topups WHERE cutoff = ? AND packs > 0', cutoff).toArray()) {
+      const code = codes.get(top.code) || { code: top.code, title: top.title, units: 0, pack: Math.max(1, top.pack), price: top.price, topup: 0 };
+      code.topup = top.packs;
+      codes.set(top.code, code);
+    }
+    const order = [...codes.values()].map((c) => ({ ...c, packs: packsFor(c.units, c.pack) })).sort((a, b) => a.code.localeCompare(b.code));
+    const paste = order.map((c) => `${c.code},${c.packs + c.topup}`).join('\n');
+    const value = order.reduce((sum, c) => sum + (c.packs + c.topup) * c.pack * c.price, 0);
     // the week's ordered-in sales, by where they were made
     const week = this.sql.exec(
       `SELECT o.channel AS channel, COUNT(DISTINCT o.order_id) AS orders, SUM(l.quantity - l.cancelled) AS units, SUM((l.quantity - l.cancelled) * l.price) AS value
@@ -578,13 +622,15 @@ export const gwOrderMethods = {
     }
     const label = gwLabel(cutoff, 'cutoff');
     const details = [
-      ...order.map((c) => [c.code, GW_WORDS.listPacks(c.title, c.units, c.packs, c.pack)]),
+      ...order.map((c) => [c.code, c.units
+        ? `${GW_WORDS.listPacks(c.title, c.units, c.packs, c.pack)}${c.topup ? GW_WORDS.listTopup(c.topup) : ''}`
+        : GW_WORDS.listShelf(c.title, c.topup, c.pack)]),
       ...(order.length ? [[GW_WORDS.total, money(value)]] : []),
       ...week.map((w) => [GW_WORDS.weekRow[w.channel] || w.channel, GW_WORDS.week(w.orders, w.units, money(w.value))]),
       ...unknown,
       ...odd,
     ];
-    const csv = `Product code,Quantity\n${order.map((c) => `${c.code},${c.packs}`).join('\n')}${order.length ? '\n' : ''}`;
+    const csv = `Product code,Quantity\n${order.map((c) => `${c.code},${c.packs + c.topup}`).join('\n')}${order.length ? '\n' : ''}`;
     const letter = this.letter(to, GW_WORDS.listSubject(label, order.length), {
       title: GW_WORDS.listTitle,
       intro: order.length ? GW_WORDS.listIntro(label) : GW_WORDS.listNothing(label),
@@ -597,6 +643,11 @@ export const gwOrderMethods = {
       ...(order.length ? { attachments: [{ filename: `gw-order-${cutoff}.csv`, content: base64(csv) }] } : {}),
     });
     const ids = rows.map((r) => r.id);
+    // Round 27: the list as it went (customers' part: top-ups are read from gw_topups), for the Warhammer tab
+    const kept = JSON.stringify({
+      cutoff,
+      codes: order.filter((c) => c.units > 0).slice(0, 400).map((c) => ({ code: c.code, title: c.title, units: c.units, pack: c.pack, packs: c.packs, price: c.price })),
+    });
     this.later((async () => {
       const sent = await this.mail(letter);
       if (!sent?.ok || last() >= cutoff) return;
@@ -606,7 +657,8 @@ export const gwOrderMethods = {
         this.write(`UPDATE gw_orderins SET listed_for = ? WHERE listed_for IS NULL AND id IN (${chunk.map(() => '?').join(', ')})`, cutoff, ...chunk);
       }
       this.write("INSERT OR REPLACE INTO meta (key, value) VALUES ('gw-list', ?)", cutoff);
+      this.write("INSERT OR REPLACE INTO meta (key, value) VALUES ('gw-list-sent', ?)", JSON.stringify({ ...JSON.parse(kept), at: Date.now() }));
     })());
-    return { list: cutoff, codes: order.length, packs: order.reduce((sum, c) => sum + c.packs, 0) };
+    return { list: cutoff, codes: order.length, packs: order.reduce((sum, c) => sum + c.packs + c.topup, 0) };
   },
 };
