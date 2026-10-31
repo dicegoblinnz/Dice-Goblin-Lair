@@ -437,6 +437,10 @@ test("round 27: GW couldn't supply: refund it, and nothing waits for it", async 
     ['#1', CODE[KIT], 1, 21000, 'https://admin.shopify.com/store/ep0qiq-rp/orders/1'],
   ]);
   assert.equal(week.sent.codes.find((c) => c.code === CODE[KIT]).unsupplied.choice, 'refund');
+  // it isn't in GW's box, so the delivery screen doesn't fill it in, and nobody's waiting on it
+  const screen = ok(await call('GET', 'gw/receiving'));
+  assert.deepEqual(screen.lastList.codes.map((c) => c.code), [CODE[PAINT]]);
+  assert.deepEqual(screen.waiting.map((w) => w.code), [CODE[PAINT]]);
   // Leo orders the same kit next week: the next one that comes is his
   await pay(2, [gwLine(21, KIT, 1)], { who: LEO });
   assert.equal(stock.get(KIT).available, -2);

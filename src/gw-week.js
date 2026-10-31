@@ -460,6 +460,8 @@ export const gwWeekMethods = {
         code.units += top.packs * code.pack;
         codes.set(top.code, code);
       }
+      // not what GW said it couldn't supply from that list: it isn't in the box
+      for (const gone of this.sql.exec('SELECT code FROM gw_unsupplied WHERE cutoff = ?', kept.cutoff).toArray()) codes.delete(gone.code);
       // their barcodes, from the pad (90 codes a statement: Cloudflare's SQL takes 100 values)
       const list = [...codes.values()].filter((c) => c.units > 0);
       const barcodes = new Map();

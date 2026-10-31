@@ -332,6 +332,11 @@ for (const size of ['small', 'desktop']) {
   const tag = `[${size}]`;
   const { ctx, page } = await open(size, OWNER);
   await page.click('[data-tab="warhammer"]');
+  // (round 27: with the pad in and the shop up to date, the tab opens on This week's order; the pad is a tap away)
+  await page.waitForSelector('[data-wh-view="pad"]', { timeout: 10000 });
+  await page.waitForSelector('staff-gw-week .wh-step', { timeout: 10000 });
+  check(`${tag} the pad in and the shop up to date: the tab opens on This week's order`, (await page.$eval('[data-wh-view][aria-pressed="true"]', (e) => e.dataset.whView)) === 'week');
+  await page.click('[data-wh-view="pad"]');
   await page.waitForSelector('.wh-kinds', { timeout: 10000 });
   await settle(page);
   const rel = flat(await page.$eval('[aria-labelledby="wh-rel-title"]', (e) => e.textContent));
