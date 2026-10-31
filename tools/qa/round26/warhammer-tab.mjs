@@ -1,4 +1,4 @@
-// Round 26 (1 Nov 2026), the staff page's Warhammer tab on the theme mock (contract v26-gw-pad), with the real Lair app
+// Round 26 (31 Oct 2026), the staff page's Warhammer tab on the theme mock (contract v26-gw-pad), with the real Lair app
 // in this process (node:sqlite) and a pretend Shopify behind it. The owner picks GW's real order pad, it's read in the
 // browser (the browser's own unzip and XML reader: every line matches what the pad's own rows say, PAD_ROWS), sent a part
 // at a time, the shop is read, the plan shows what changes, and Update the shop runs to the end with a progress bar. A

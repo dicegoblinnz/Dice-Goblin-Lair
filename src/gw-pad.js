@@ -1,5 +1,5 @@
 /**
- * Round 26 (1 Nov 2026, contract v26-gw-pad): Games Workshop's weekly order pad into Shopify, from the staff page's
+ * Round 26 (31 Oct 2026, contract v26-gw-pad): Games Workshop's weekly order pad into Shopify, from the staff page's
  * Warhammer tab. Mo (31 Oct 2026): "how do we tackle the ordered products? Do we add them online? With the same
  * context?" Everything on the pad goes into Shopify set up like the live GW listings: its name as its description (Mo:
  * "just write the name of the product on the description"), the plain Google line, selling at 0 so it's ordered in.
@@ -398,7 +398,7 @@ export const gwPadMethods = {
     if (part > 1 && (!state.upload || body.upload !== state.upload || state.parts !== parts || (state.part !== part - 1 && state.part !== part))) {
       throw new RuleError(PAD_WORDS.part, 409);
     }
-    // (the review, 1 Nov 2026) a new pad clears the plan, and with it what's still on its way to Shopify or the till:
+    // (the review, 31 Oct 2026) a new pad clears the plan, and with it what's still on its way to Shopify or the till:
     // made but not yet listed there, or not yet looked for. It waits for those.
     if (part === 1 && this.gwUnfinished()) throw new RuleError(PAD_WORDS.unfinished, 409);
     const upload = part === 1 ? crypto.randomUUID().slice(0, 8) : state.upload;
@@ -486,7 +486,7 @@ export const gwPadMethods = {
 
   /**
    * Whether a change is still on its way: with Shopify (or not yet looked for), or made but not yet on the till. A new
-   * pad, reading the shop again and a new plan all wait for these (the reviews, 1 Nov 2026). No awaits.
+   * pad, reading the shop again and a new plan all wait for these (the reviews, 31 Oct 2026). No awaits.
    */
   gwUnfinished() {
     return this.sql.exec("SELECT COUNT(*) AS n FROM gw_plan WHERE status IN ('sending', 'publish')").one().n > 0;
@@ -550,7 +550,7 @@ export const gwPadMethods = {
        SELECT s.sku, 'drop', s.product_title, json_object('variantId', s.variant_id, 'productId', s.product_id)
        FROM gw_shop s LEFT JOIN gw_pad p ON p.code = s.sku WHERE p.code IS NULL AND s.policy = 'CONTINUE'`,
     );
-    // (the review, 1 Nov 2026) a hidden release GW has moved: its on-sale day moves with it (a week before the new release
+    // (the review, 31 Oct 2026) a hidden release GW has moved: its on-sale day moves with it (a week before the new release
     // day, as when it was made), so it never goes on sale at the old pre-order day. Today's on the Lair's own record, so
     // it follows GW's latest pad whether or not this plan is applied.
     const moved = this.sql.exec(
@@ -831,7 +831,7 @@ export const gwPadMethods = {
       const hit = found.get(row.code);
       if (hit) {
         this.write("UPDATE gw_plan SET status = 'publish', product_id = ?, error = NULL WHERE code = ?", hit.productId, row.code);
-        // (the review, 1 Nov 2026) a release still to come was made hidden: it still goes on sale on its pre-order day
+        // (the review, 31 Oct 2026) a release still to come was made hidden: it still goes on sale on its pre-order day
         if (row.action === 'create') {
           const p = this.sql.exec('SELECT * FROM gw_pad WHERE code = ?', row.code).toArray()[0];
           if (p) this.gwKeepRelease(p, hit.productId, row.sent_at);
@@ -923,7 +923,7 @@ export const gwPadMethods = {
   gwKeepRelease(p, productId, madeAt) {
     const { draft, onSaleAt } = this.gwReleaseOf(p, madeAt);
     if (!draft) return;
-    // (the second review, 1 Nov 2026) one made again (the last was deleted in Shopify) replaces it; the same product
+    // (the second review, 31 Oct 2026) one made again (the last was deleted in Shopify) replaces it; the same product
     // recorded twice keeps its row, and a day staff chose
     this.write(
       `INSERT INTO gw_releases (code, product_id, title, release, on_sale_at, created_at) VALUES (?, ?, ?, ?, ?, ?)

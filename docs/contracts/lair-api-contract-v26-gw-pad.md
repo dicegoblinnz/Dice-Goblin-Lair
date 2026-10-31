@@ -1,6 +1,6 @@
 # Lair API contract v26-gw-pad: Games Workshop's order pad into Shopify
 
-Round 26 (1 Nov 2026). Mo, 31 Oct 2026: "how do we tackle the ordered products? Do we add them online? With the same
+Round 26 (31 Oct 2026). Mo: "how do we tackle the ordered products? Do we add them online? With the same
 context?" Every line on GW's weekly ANZ order pad goes into Shopify set up like the live GW listings, and each new pad
 keeps the shop in step "in one go" (Mo's brief). The staff page's new Warhammer tab drives it (owner only).
 
