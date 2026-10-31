@@ -66,6 +66,8 @@ let adjusts; // Shopify's idempotency keys: key → { ok, params }
 let adjustCalls;
 let trouble; // what goes wrong next: { adjust: 'lost' | 'down' | 'refused' | [userError codes], lookup, state, save: 'stale' }
 let mails;
+let batches; // each mailMany: the customers' emails sent together
+let mailDown;
 let pending;
 let lair;
 
@@ -140,6 +142,8 @@ beforeEach(() => {
   nowIs(NOW);
   pending = [];
   mails = [];
+  batches = [];
+  mailDown = false;
   adjusts = new Map();
   adjustCalls = [];
   trouble = {};
@@ -244,6 +248,8 @@ beforeEach(() => {
     return { ok: true, attempted: true, status: 200 };
   };
   lair.mailMany = async (messages) => {
+    if (mailDown) return { ok: false, attempted: true, status: 500, message: 'Resend is down', sent: 0 };
+    batches.push(messages.map((m) => m.to));
     mails.push(...messages);
     return { ok: true, attempted: true, status: 200, sent: messages.length };
   };
@@ -431,7 +437,7 @@ test("round 27: GW couldn't supply: refund it, and nothing waits for it", async 
   const kai = mailsTo('kai@example.com')[0];
   assert.equal(kai.subject, "Sorry: part of order #1 isn't coming");
   assert.match(kai.text, /Hi Kai\. Games Workshop can't supply 1 × Combat Patrol: Space Marines, so we're refunding it in full, back the way you paid\./);
-  assert.match(kai.text, /\$210/);
+  assert.doesNotMatch(kai.text, /\$210/, "no amount: Shopify's refund says what they paid, after any discount");
   assert.match(kai.text, /The rest of your order is still on its way\./);
   assert.deepEqual(week.refunds.map((r) => [r.order, r.code, r.units, r.amount, r.admin]), [
     ['#1', CODE[KIT], 1, 21000, 'https://admin.shopify.com/store/ep0qiq-rp/orders/1'],
@@ -571,7 +577,8 @@ test('round 27: a delivery in parts, and what Shopify turns away', async () => {
   assert.equal(adjustCalls.at(-1).key, 'a1b2c3d4-0003-1-1', 'a fresh key after a refusal');
   // a previous try that failed on Shopify's side: a fresh key, and it's added
   adjusts.set('a1b2c3d4-0004-1', { ok: false, params: '[]' });
-  const fourth = { receipt: 'a1b2c3d4-0004', part: 1, parts: 1, items: [{ code: CODE[NULN], units: 1 }] };
+  // (the same count as the last delivery, so it's sent as another box: again)
+  const fourth = { receipt: 'a1b2c3d4-0004', part: 1, parts: 1, again: true, items: [{ code: CODE[NULN], units: 1 }] };
   assert.equal(said(await call('POST', 'gw/receive', fourth)), `409 ${W.changed}`, "Shopify's key for other counts");
   lair.sql.exec("DELETE FROM gw_receipts WHERE receipt = 'a1b2c3d4-0004'");
   adjusts.set('a1b2c3d4-0004-1', { ok: false, params: JSON.stringify([{ inventoryItemId: itemOf(NULN), delta: 1 }]) });
@@ -701,4 +708,72 @@ test('round 27: the owner only', async () => {
   }
   assert.equal(adjustCalls.length, 0);
   assert.deepEqual(schedule.overrides, {});
+});
+
+/* ---------------- the review, 31 Oct 2026 ---------------- */
+
+test('round 27 (the review): customers are told in one batch, and told counts what went', async () => {
+  await pay(1, [gwLine(11, KIT, 1)], { who: KAI });
+  await pay(2, [gwLine(21, KIT, 1)], { who: MIA, how: 'ship' });
+  await pay(3, [gwLine(31, KIT, 1)], { who: LEO, how: 'counter' });
+  await maintain(at('2026-11-10', 6, 5));
+  mails = [];
+  batches = [];
+  const singles = () => mails.filter((m) => m.to !== 'staff@example.com').length - batches.flat().length;
+  // three customers' new dates: one request to Resend, not three at once (it takes a couple a second)
+  const week = ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-09', code: CODE[KIT], choice: 'again', tell: true }));
+  assert.equal(week.told, 3);
+  assert.deepEqual(batches, [['kai@example.com', 'mia@example.com', 'leo@example.com']]);
+  assert.equal(singles(), 0);
+  // the box completes all three: Kai (pickup) and Leo (counter) hear it's in, together
+  await maintain(at('2026-11-17', 6, 5));
+  mails = [];
+  batches = [];
+  ok(await call('POST', 'gw/receive', { receipt: 'b1b2c3d4-0001', part: 1, parts: 1, items: [{ code: CODE[KIT], units: 3 }] }));
+  assert.deepEqual(batches, [['kai@example.com', 'leo@example.com']]);
+  assert.equal(singles(), 0);
+  assert.ok(order(1).ready_told_at && order(3).ready_told_at, 'kept as told once Resend took them');
+  // Resend down: told says nobody heard
+  await pay(4, [gwLine(41, SOON, 1)], { who: KAI });
+  await pay(5, [gwLine(51, SOON, 1)], { who: MIA });
+  await maintain(at('2026-11-24', 6, 5));
+  mailDown = true;
+  const down = ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-23', code: CODE[SOON], choice: 'refund', tell: true }));
+  assert.equal(down.told, 0);
+});
+
+test('round 27 (the review): shelf top-ups follow their week when it is skipped', async () => {
+  ok(await call('POST', 'gw/topups', { cutoff: '2026-11-09', code: CODE[NULN], packs: 2 }));
+  ok(await call('POST', 'gw/topups', { cutoff: '2026-11-09', code: CODE[PAINT], packs: 1 }));
+  // a top-up already on the week after (added before it was the open week)
+  lair.sql.exec("INSERT INTO gw_topups (cutoff, code, title, pack, packs, price, added_at) VALUES ('2026-11-16', ?, 'Shade: Nuln Oil (24ml)', 6, 1, 1160, 1)", CODE[NULN]);
+  ok(await call('POST', 'gw/dates', { monday: '2026-11-09', skip: true, tell: false }));
+  const week = ok(await call('GET', 'gw/week'));
+  assert.equal(week.open.cutoff, '2026-11-16');
+  assert.deepEqual(week.open.codes.map((c) => [c.code, c.topup]), [[CODE[PAINT], 1], [CODE[NULN], 3]]);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM gw_topups WHERE cutoff = '2026-11-09'").one().n, 0);
+});
+
+test('round 27 (the review): a delivery that looks the same as one just added asks first', async () => {
+  await pay(1, [gwLine(11, KIT, 1)], { who: KAI });
+  await maintain(at('2026-11-10', 6, 5));
+  nowIs(at('2026-11-19', 15, 40));
+  ok(await call('POST', 'gw/receive', { receipt: 'c1b2c3d4-0001', part: 1, parts: 1, items: [{ code: CODE[KIT], units: 1 }, { code: CODE[PAINT], units: 6 }] }));
+  // the same count again from another tab, or the tablet: nothing added until they say so
+  nowIs(at('2026-11-19', 16, 5));
+  const again = await call('POST', 'gw/receive', { receipt: 'c1b2c3d4-0002', part: 1, parts: 1, items: [{ code: CODE[PAINT], units: 6 }, { code: CODE[KIT], units: 1 }] });
+  assert.equal(said(again), `412 ${W.repeat('today at 3:40pm')}`);
+  assert.equal(adjustCalls.length, 1);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM gw_receipts WHERE receipt = 'c1b2c3d4-0002'").one().n, 0, 'nothing kept for it');
+  // they say it's another box
+  ok(await call('POST', 'gw/receive', { receipt: 'c1b2c3d4-0002', part: 1, parts: 1, again: true, items: [{ code: CODE[PAINT], units: 6 }, { code: CODE[KIT], units: 1 }] }));
+  assert.equal(adjustCalls.length, 2);
+  assert.equal(stock.get(PAINT).available, 12);
+  // other counts aren't the same delivery; nor is one from yesterday
+  ok(await call('POST', 'gw/receive', { receipt: 'c1b2c3d4-0003', part: 1, parts: 1, items: [{ code: CODE[KIT], units: 2 }] }));
+  nowIs(at('2026-11-20', 15));
+  const later = await call('POST', 'gw/receive', { receipt: 'c1b2c3d4-0004', part: 1, parts: 1, items: [{ code: CODE[KIT], units: 2 }] });
+  assert.equal(said(later), `412 ${W.repeat('Thu 19 Nov at 4:05pm')}`, 'yesterday, within a day');
+  nowIs(at('2026-11-21', 17));
+  ok(await call('POST', 'gw/receive', { receipt: 'c1b2c3d4-0004', part: 1, parts: 1, items: [{ code: CODE[KIT], units: 2 }] }));
 });

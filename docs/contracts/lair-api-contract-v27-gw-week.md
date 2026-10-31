@@ -45,7 +45,7 @@ All answers are JSON; errors are `{ error }` with the words in `GW_WEEK_WORDS`.
   it). `paste`: a line `code,packs` each (customers' packs and top-ups together), as GW's trade site takes them; `csv`:
   `Product code,Quantity` and the same lines.
 - `refunds`: lines GW couldn't supply, still to refund: `{ id, order, orderId, admin (the order in Shopify admin), code,
-  title, units, amount (cents), at }`.
+  title, units, amount (cents, at full price: before any discount on the order), at }`.
 - `weeks`: up to 6 weeks with ordered-in sales, newest first: `{ cutoff, online: { orders, units, value }, counter }`.
 
 ### GET /gw/find?q=
@@ -67,12 +67,15 @@ A code GW couldn't supply, on a list sent in the last 8 weeks. Its lines on that
 
 - `again`: back on the next list (the open week's), with that week's date. Customers with an email hear the new date
   when `tell` is true.
-- `refund`: refunds to do. Customers with an email hear it's not coming and is being refunded in full, when `tell`. Their
+- `refund`: refunds to do. Customers with an email hear it's not coming and is being refunded in full, when `tell` (no
+  amount: the line's price is before any discount, and Shopify's refund says what they paid). Their
   units stop waiting for stock (stock that comes in goes to other orders or the shelf), an order with nothing else to
   come is ready (its It's in email for the rest), and it's never flagged late. Refund it in Shopify with Restock ticked:
   maintenance sees the refund, and the line's done.
 
-→ the week (as GET) and `told` (emails sent). The same request again changes nothing. Errors (422): "Choose whether to
+→ the week (as GET) and `told`: the emails Resend took. Customers' emails go in one request to Resend (one by one, a
+burst would be turned away: it takes a couple a second); one on its own goes with its idempotency key. The same request
+again changes nothing. Errors (422): "Choose whether to
 order it again next week or refund it." · "Nothing from that list is still waiting on that code." · "That list is too old
 to change here."
 
@@ -85,7 +88,7 @@ to change here."
   barcode, pack, units }] }` (`null` before any list), to fill the delivery in from.
 - `receipts`: deliveries added in the last 14 days, newest first, up to 10: `{ receipt, at, who, units, lines, ready }`.
 
-### POST /gw/receive `{ receipt, part, parts, items: [{ code, units }] }`
+### POST /gw/receive `{ receipt, part, parts, items: [{ code, units }], again }`
 
 A delivery added to stock at the shop (Shopify's `received`), a part at a time: up to 25 lines a part, 20 parts.
 `receipt` is the browser's id for the delivery (8 to 64 letters, digits and dashes). Each code once a part, 1 to 999
@@ -95,9 +98,14 @@ Nothing is added twice. The Lair keeps each part's answer and gives it again whe
 idempotency key (`<receipt>-<part>`, a new one only after Shopify said no and added nothing) covers an answer lost on
 the way for 24 hours. A part that's every code in the shop, tracked, goes to Shopify; otherwise nothing is added.
 
+A new part with the same lines and counts as one added in the last day under another delivery id (the count sent again
+from another tab, or the box counted twice) is asked about first: 412, "This looks the same as a delivery added today at
+3:40pm. Add it to stock again?", and nothing is kept for it. Sent with `again: true`, it's added.
+
 Then, from the new stock, customers' units are marked in, oldest order first (as maintenance does), and the orders with
 nothing left to come are told (round 25: It's in emails, and the shop's email). If the stock can't be read straight
-after, maintenance does it within 10 minutes.
+after, maintenance does it within 10 minutes. The It's in emails a box sets off go in one request to Resend (round 25's
+gwTellReady, for every caller).
 
 → `{ added: [{ code, title, units }], ready: [{ order, what, action }], later (matched by maintenance) }`.
 
@@ -115,7 +123,8 @@ week; `canSkip`: its list hasn't gone and skipping it leaves fewer than 4 skippe
 
 ### POST /gw/dates `{ monday, skip | reset | ships + promise, tell }`
 
-- `skip: true`: a week whose list hasn't gone. Its orders join the next week's list and date.
+- `skip: true`: a week whose list hasn't gone. Its orders join the next week's list and date, and so do its shelf
+  top-ups (added to any already on that week, at most 99 packs).
 - `ships`, `promise`: the week's own dates: after the Monday, shipping first, both within 8 weeks. The usual dates take
   it back to usual.
 - `reset: true`: back to the usual dates.
@@ -123,7 +132,8 @@ week; `canSkip`: its list hasn't gone and skipping it leaves fewer than 4 skippe
 Saved to the shop's `gw.schedule` (`{"overrides": {"2026-12-28": {"skip": true}, "2027-01-04": {"ships": "2027-01-07",
 "promise": "2027-01-28"}}}`), compare-and-set; weeks more than 8 weeks gone are tidied away. Then every line still to
 come whose week is that one gets the week's date, its order's date follows (the latest of its lines), and an order told
-it was late can be told again. Customers with an email whose date moved hear the new one when `tell`.
+it was late can be told again. Customers with an email whose date moved hear the new one when `tell` (in one request to
+Resend).
 
 → the dates (as GET) and `told`. Errors: "Pick a Monday from the last six weeks or the next six months." · "That week's
 list has already gone, so it can't be skipped. Change its dates instead." · "Four weeks in a row are skipped already.

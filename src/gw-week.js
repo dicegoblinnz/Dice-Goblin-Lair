@@ -61,6 +61,7 @@ export const GW_WEEK_WORDS = {
   twice: 'Each code once a part: add the counts together.',
   changed: 'That delivery was already added with different counts. Start a new one.',
   stale: 'That delivery may already be in stock: check the counts in Shopify, then start a new one.',
+  repeat: (when) => `This looks the same as a delivery added ${when}. Add it to stock again?`,
   notInShop: (codes) => `These aren't in the shop yet: ${codes}. Update the shop from the latest pad, or take them off.`,
   untracked: (codes) => `Shopify doesn't count stock for these: ${codes}. Turn on Track quantity for them in Shopify, or take them off.`,
   busyAdding: 'Still adding the last lot to stock. Wait a moment, then try again.',
@@ -81,7 +82,6 @@ export const GW_WEEK_WORDS = {
   refundTitle: "Sorry, it's not coming",
   refundIntro: (first, what) => `${first ? `Hi ${first}. ` : ''}Games Workshop can't supply ${what}, so we're refunding it in full, back the way you paid.`,
   refundRow: 'Not coming',
-  refundAmount: 'Refund',
   refundRest: 'The rest of your order is still on its way.',
   refundOutro: 'Gobgob is sorry about this one.',
   datesSubject: (name) => (name ? `A new date for order ${name}` : 'A new date for your order'),
@@ -140,6 +140,14 @@ const metaJson = (lair, key) => {
 const denied = (error) => /access denied|required access/i.test(String(error?.message || error || ''));
 /** Shopify's trouble as words for staff: the permissions it needs, or try again (round 26's words) */
 const trouble = (error) => new RuleError(denied(error) ? PAD_WORDS.scopes : PAD_WORDS.shopify, 503);
+
+/** "today at 3:40pm" or "Thu 19 Nov at 4:05pm" (Auckland) */
+function whenText(ms, now, tz = TZ) {
+  const time = new LairTime(tz);
+  const { h, mi } = time.parts(ms);
+  const clock = `${h % 12 || 12}:${String(mi).padStart(2, '0')}${h < 12 ? 'am' : 'pm'}`;
+  return `${time.key(ms) === time.key(now) ? 'today' : gwLabel(time.key(ms), 'short')} at ${clock}`;
+}
 
 /** A week's own dates or the usual ones: { ships, promise, skip } */
 export function weekDates(monday, overrides = {}) {
@@ -376,7 +384,7 @@ export const gwWeekMethods = {
       cutoff, code, choice, units, this.gwWho(who), now,
     );
     const orders = [...new Set(rows.map((r) => r.order_id))];
-    let told = 0;
+    const letters = [];
     if (choice === 'again') {
       // back on the next list, with that week's date
       const week = this.gwOpenWeek(now, overrides);
@@ -389,12 +397,12 @@ export const gwWeekMethods = {
         if (!tell || !order || order.ready_at || !moved) continue;
         const what = listText(mine.map((r) => lineText(r, left(r))));
         const label = gwLabel(moved.after);
-        if (this.gwTellOrder(order, W.againSubject(order.name), {
+        letters.push(this.gwLetter(order, W.againSubject(order.name), {
           title: W.againTitle,
           intro: W.againIntro(order.first_name, what, label),
           details: [[W.againRow, what], [GW_WORDS.toldWhen, label], [GW_WORDS.toldOrder, order.name || '']],
           outro: [GW_WORDS.toldOutro[order.delivery] || GW_WORDS.toldOutro.none, W.againOutro(isEmail(this.env.STAFF_EMAIL))],
-        }, `gw-again-${String(orderId).split('/').pop()}-${cutoff}-${code}`)) told += 1;
+        }, `gw-again-${String(orderId).split('/').pop()}-${cutoff}-${code}`));
       }
     } else {
       // refunds to do: nothing waits for them, and an order with nothing else to come is ready
@@ -405,15 +413,18 @@ export const gwWeekMethods = {
         if (!tell || !order) continue;
         const what = listText(mine.map((r) => lineText(r, left(r))));
         const rest = lines.some((l) => l.quantity > l.arrived + l.cancelled && !l.unsupplied_at);
-        if (this.gwTellOrder(order, W.refundSubject(order.name), {
+        // (no amount: the line's price is before any discount, and Shopify's refund says what they paid)
+        letters.push(this.gwLetter(order, W.refundSubject(order.name), {
           title: W.refundTitle,
           intro: W.refundIntro(order.first_name, what),
-          details: [[W.refundRow, what], [W.refundAmount, money(mine.reduce((sum, r) => sum + left(r) * r.price, 0))], [GW_WORDS.toldOrder, order.name || '']],
+          details: [[W.refundRow, what], [GW_WORDS.toldOrder, order.name || '']],
           outro: [...(rest ? [W.refundRest] : []), W.refundOutro],
-        }, `gw-refund-${String(orderId).split('/').pop()}-${cutoff}-${code}`)) told += 1;
+        }, `gw-refund-${String(orderId).split('/').pop()}-${cutoff}-${code}`));
       }
       this.gwSettle(orders, now);
     }
+    // the customers' emails in one request (Resend takes a couple a second), after everything's kept
+    const told = await this.gwSend(letters);
     return { ...this.gwWeekView(overrides, now), told };
   },
 
@@ -431,12 +442,23 @@ export const gwWeekMethods = {
     return { before: order.promise, after };
   },
 
-  /** A customer's email about their order (from Gobgob; replies go to the shop). true when it's on its way. No awaits. */
-  gwTellOrder(order, subject, content, key) {
-    if (!isEmail(order?.email) || !emailReady(this.env)) return false;
+  /** A customer's email about their order (from Gobgob; replies go to the shop), or null with no email to send to */
+  gwLetter(order, subject, content, key) {
+    if (!isEmail(order?.email) || !emailReady(this.env)) return null;
     const replyTo = isEmail(this.env.STAFF_EMAIL) ? this.env.STAFF_EMAIL : null;
-    this.later(this.mail(this.letter(order.email, subject, { ...content, signoff: GW_WORDS.signoff }, { idempotencyKey: key, ...(replyTo ? { replyTo } : {}) })));
-    return true;
+    return this.letter(order.email, subject, { ...content, signoff: GW_WORDS.signoff }, { idempotencyKey: key, ...(replyTo ? { replyTo } : {}) });
+  },
+
+  /**
+   * Customers' emails sent together, in one request to Resend (one by one, a burst of them would be turned away). Returns
+   * how many went.
+   */
+  async gwSend(letters) {
+    const list = letters.filter(Boolean);
+    if (!list.length) return 0;
+    // (one on its own goes as one, with its key, so it's never sent twice)
+    const result = list.length === 1 ? await this.mail(list[0]) : await this.mailMany(list);
+    return result?.ok ? list.length : Math.max(0, Number(result?.sent) || 0);
   },
 
   /* ---------------- when the box comes ---------------- */
@@ -508,6 +530,15 @@ export const gwWeekMethods = {
     if (first?.status === 'done') return JSON.parse(first.result);
     // Shopify keeps an idempotency key for 24 hours: a part sent that long ago with no answer isn't sent again
     if (first?.status === 'sending' && Date.now() - first.at > 23 * 3_600_000) throw new RuleError(W.stale, 409);
+    // the same lines and counts as a delivery added in the last day (the count sent again from another tab, or the box
+    // counted twice): asked first, so it's added again only when they say so
+    if (!first && body?.again !== true) {
+      const same = this.sql.exec(
+        "SELECT done_at FROM gw_receipts WHERE status = 'done' AND items = ? AND receipt != ? AND done_at > ? ORDER BY done_at DESC LIMIT 1",
+        canon, receipt, Date.now() - DAY,
+      ).toArray()[0];
+      if (same) throw new RuleError(W.repeat(whenText(same.done_at, Date.now(), this.rulesCache?.tz || TZ)), 412);
+    }
     if (!first) claim0();
     // 1. the variants
     let found;
@@ -674,15 +705,31 @@ export const gwWeekMethods = {
     }
     if (saved?.stale) throw new RuleError(W.clash, 409);
     if (saved?.errors) throw new RuleError(W.shopifyNo(saved.errors.join('; ').slice(0, 300) || 'it was turned down.'), 422);
-    // --- no awaits from here on ---
+    // --- no awaits from here on (until the emails, once everything's kept) ---
     this.write("INSERT OR REPLACE INTO meta (key, value) VALUES ('gw-schedule', ?)", JSON.stringify(after));
-    const told = this.gwRedate(before, after, monday, tell);
+    // (the review, 31 Oct 2026) a skipped week's shelf top-ups go with its orders, to the week whose list they're on now
+    const to = listWeek(monday, after);
+    if (skip && to !== monday) {
+      for (const top of this.sql.exec('SELECT * FROM gw_topups WHERE cutoff = ?', monday).toArray()) {
+        const there = this.sql.exec('SELECT packs FROM gw_topups WHERE cutoff = ? AND code = ?', to, top.code).toArray()[0];
+        if (there) this.write('UPDATE gw_topups SET packs = ? WHERE cutoff = ? AND code = ?', Math.min(99, there.packs + top.packs), to, top.code);
+        else {
+          this.write(
+            'INSERT INTO gw_topups (cutoff, code, title, pack, packs, price, who, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            to, top.code, top.title, top.pack, top.packs, top.price, top.who, top.added_at,
+          );
+        }
+      }
+      this.write('DELETE FROM gw_topups WHERE cutoff = ?', monday);
+    }
+    const letters = this.gwRedate(before, after, monday, tell);
+    const told = await this.gwSend(letters);
     return { ...this.gwDatesView(after), told };
   },
 
   /**
-   * After a week's dates changed: every line still to come whose week is (or was) that Monday gets its week's date, its
-   * order's date follows, and customers whose date moved hear it when `tell`. Returns the emails sent. No awaits.
+   * After a week's dates changed: every line still to come whose week is (or was) that Monday gets its week's date, and
+   * its order's date follows. Returns the emails for customers whose date moved, when `tell` (sent by the caller). No awaits.
    */
   gwRedate(before, after, monday, tell, now = Date.now()) {
     const today = new LairTime(this.rulesCache?.tz || TZ).key(now);
@@ -698,20 +745,20 @@ export const gwWeekMethods = {
       this.write('UPDATE gw_orderins SET promise = ? WHERE id = ?', promise, row.id);
       moved.add(row.order_id);
     }
-    let told = 0;
+    const letters = [];
     for (const orderId of moved) {
       const change = this.gwOrderDate(orderId, today);
       if (!tell || !change) continue;
       const { order } = this.gwOrderRows(orderId);
       if (!order || order.ready_at) continue;
       const label = gwLabel(change.after);
-      if (this.gwTellOrder(order, W.datesSubject(order.name), {
+      letters.push(this.gwLetter(order, W.datesSubject(order.name), {
         title: W.datesTitle,
         intro: W.datesIntro(order.first_name, label, !change.before || change.after > change.before),
         details: [[GW_WORDS.toldWhen, label], [GW_WORDS.toldOrder, order.name || '']],
         outro: GW_WORDS.toldOutro[order.delivery] || GW_WORDS.toldOutro.none,
-      }, `gw-dates-${String(orderId).split('/').pop()}-${change.after}`)) told += 1;
+      }, `gw-dates-${String(orderId).split('/').pop()}-${change.after}`));
     }
-    return told;
+    return letters;
   },
 };

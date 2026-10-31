@@ -64,6 +64,10 @@ lair.mail = async (message) => {
   mails.push(message);
   return { ok: true, attempted: true, status: 200 };
 };
+lair.mailMany = async (messages) => {
+  mails.push(...messages);
+  return { ok: true, attempted: true, status: 200, sent: messages.length };
+};
 const V = (n) => `gid://shopify/ProductVariant/${n}`;
 const KIT = V(501);
 const PAINT = V(502);
@@ -75,6 +79,10 @@ const stock = new Map([
   [SOON, { code: '99120102999', title: 'Kill Team: Starter Set', available: 0, policy: 'CONTINUE', pack: 1, release: '', price: '180.00', tracked: true, barcode: '5011921170001' }],
   [NULN, { code: '99189953083', title: 'Shade: Nuln Oil (24ml)', available: 2, policy: 'CONTINUE', pack: 6, release: '', price: '11.60', tracked: true, barcode: '5011921100009' }],
 ]);
+// 30 more codes, so a delivery can be more than one part (25 lines a part)
+for (let i = 1; i <= 30; i += 1) {
+  stock.set(V(800 + i), { code: String(99120200000 + i), title: `Test Kit ${String(i).padStart(2, '0')}`, available: 0, policy: 'CONTINUE', pack: 1, release: '', price: '50.00', tracked: true, barcode: String(5011921200000 + i) });
+}
 const orders = new Map();
 let schedule = { overrides: {}, digest: null };
 const adjustKeys = new Map();
@@ -107,8 +115,14 @@ lair.shopify.gwScheduleSave = async (shopId, value, digest) => {
   return { ok: true };
 };
 lair.shopify.gwReceiveLookup = async (codes) => new Map([...stock].filter(([, v]) => codes.includes(v.code)).map(([id, v]) => [v.code, { variantId: id, inventoryItemId: itemOf(id), tracked: true, title: v.title }]));
+// a part Shopify doesn't answer (fails: how many times in a row)
+let failNext = 0;
 lair.shopify.gwAdjust = async (changes, locationId, key) => {
   adjustCalls.push(key);
+  if (failNext > 0) {
+    failNext -= 1;
+    throw new Error('The network connection was lost.');
+  }
   if (adjustKeys.has(key)) return { ok: true };
   for (const c of changes) stock.get([...stock.keys()].find((id) => itemOf(id) === c.inventoryItemId)).available += c.delta;
   adjustKeys.set(key, true);
@@ -123,6 +137,7 @@ pad(KIT, 21000);
 pad(PAINT, 850);
 pad(SOON, 18000);
 pad(NULN, 1160);
+for (let i = 1; i <= 30; i += 1) pad(V(800 + i), 5000);
 lair.sql.exec("INSERT INTO meta (key, value) VALUES ('gw-pad', ?)", JSON.stringify({ upload: 'qa', date: '2026-10-26', part: 1, parts: 1, rows: 4, skipped: 0, at: Date.now(), complete: true }));
 lair.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('gw-list', ?)", addDays(lastCutoff, -7));
 
@@ -235,6 +250,18 @@ const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: 'UTC', weekday
   await page.click('[data-gw-top] button[type="submit"]');
   await page.waitForFunction(() => /2 packs of 6 for the shelf/.test(document.querySelector('[aria-labelledby="gw-open-title"]')?.textContent || ''), null, { timeout: 10000 });
   check(`${tag} added for the shelf on the next order`, true);
+  // the same code again: its 2 packs show, and the number sets them (it doesn't add)
+  await page.fill('#gw-find', 'nuln');
+  await page.click('[data-gw-find] button[type="submit"]');
+  await page.waitForSelector('#gw-top-packs', { timeout: 10000 });
+  await page.check(`[data-gw-top] input[name="cutoff"][value="${nextCutoff}"]`);
+  await settle(page);
+  check(`${tag} a code already on the order: its packs show, and the button says Change`, (await page.$eval('#gw-top-packs', (e) => e.value)) === '2'
+    && (await text(page, '[data-gw-top] button[type="submit"]')) === 'Change the shelf packs' && (await text(page, '#gw-top-now')).startsWith('2 packs are on that order already'));
+  await page.fill('#gw-top-packs', '3');
+  await page.click('[data-gw-top] button[type="submit"]');
+  await page.waitForFunction(() => /3 packs of 6 for the shelf/.test(document.querySelector('[aria-labelledby="gw-open-title"]')?.textContent || ''), null, { timeout: 10000 });
+  check(`${tag} changed to 3 packs, not added to`, !/5 packs/.test(await text(page, '[aria-labelledby="gw-open-title"]')));
   // and two more on the order to paste: the lines change
   await page.fill('#gw-find', '5011921150001');
   await page.click('[data-gw-find] button[type="submit"]');
@@ -352,6 +379,86 @@ const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: 'UTC', weekday
   await shot(page, 'phone-5-dates', 'staff-warhammer');
   await page.evaluate(() => window.scrollTo(0, 0));
   await axe(page, `${tag} Order dates`, 'staff-warhammer');
+  check(`${tag} no console errors`, !page.errors.length, page.errors);
+  await ctx.close();
+}
+
+{
+  const tag = '[two tabs]';
+  const { ctx, page } = await open('desktop', OWNER);
+  await page.click('[data-tab="warhammer"]');
+  await page.click('[data-wh-view="box"]');
+  await page.waitForSelector('#gw-scan', { timeout: 10000 });
+  // the same count as the last box: Abaddon Black 12, Kill Team 1, Nuln Oil 2, the kit 1
+  for (const [code, units] of [['99189950001', 12], ['99120102999', 1], ['99189953083', 2], ['99120101386', 1]]) {
+    await page.fill('#gw-scan', code);
+    await page.press('#gw-scan', 'Enter');
+    await page.waitForSelector(`[data-gw-units="${code}"]`, { timeout: 10000 });
+    await page.fill(`[data-gw-units="${code}"]`, String(units));
+    await page.press(`[data-gw-units="${code}"]`, 'Tab');
+  }
+  // a second tab on the same browser has the same count
+  const other = watch(await ctx.newPage());
+  await other.goto(`${BASE}/pages/lair-staff`, { waitUntil: 'networkidle', timeout: 60000 });
+  await other.click('[data-tab="warhammer"]');
+  await other.click('[data-wh-view="box"]');
+  await other.waitForSelector('[data-gw-units]', { timeout: 10000 });
+  check(`${tag} the second tab has the count`, (await other.$$('[data-gw-units]')).length === 4);
+  // the first tab sends it: it's the same as the last box, so it asks
+  const before = adjustCalls.length;
+  await page.click('[data-gw-ask]');
+  await page.click('[data-gw-send]');
+  await page.waitForSelector('#gw-repeat-ask', { timeout: 10000 });
+  check(`${tag} the same counts as the last box: it asks first, nothing added`, /^This looks the same as a delivery added today at \d+:\d\d[ap]m\. Add it to stock again\?/.test(await text(page, '#gw-repeat-ask')) && adjustCalls.length === before, await text(page, '#gw-repeat-ask'));
+  await page.click('[data-gw-repeat-no]');
+  await settle(page, 600);
+  check(`${tag} No, it's in already: the count's cleared, nothing added`, !(await page.$('[data-gw-units]')) && adjustCalls.length === before);
+  check(`${tag} the second tab follows: the count's gone there too, and says why`, !(await other.$('[data-gw-units]')) && /The count changed in another tab or window/.test(await text(other, 'staff-gw-box')));
+  await other.close();
+  check(`${tag} no console errors`, !page.errors.length && !other.errors.length, [...page.errors, ...other.errors]);
+  await ctx.close();
+}
+
+{
+  const tag = '[two parts]';
+  const { ctx, page } = await open('desktop', OWNER);
+  await page.click('[data-tab="warhammer"]');
+  await page.click('[data-wh-view="box"]');
+  await page.waitForSelector('#gw-scan', { timeout: 10000 });
+  for (let i = 1; i <= 30; i += 1) {
+    await page.fill('#gw-scan', String(99120200000 + i));
+    await page.press('#gw-scan', 'Enter');
+    await page.waitForSelector(`[data-gw-units="${99120200000 + i}"]`, { timeout: 10000 });
+  }
+  check(`${tag} 30 lines counted`, (await text(page, '[data-gw-total]')) === '30 items in 30 lines');
+  // part 1 goes in; Shopify doesn't answer part 2 (three tries)
+  const before = adjustCalls.length;
+  page.on('request', (req) => {
+    if (req.url().includes('/gw/receive') && JSON.parse(req.postData() || '{}').part === 2 && failNext === 0 && !page.failedOnce) {
+      page.failedOnce = true;
+      failNext = 3;
+    }
+  });
+  await page.click('[data-gw-ask]');
+  await page.click('[data-gw-send]');
+  await page.waitForSelector('[data-gw-retry]', { timeout: 30000 });
+  const stuck = await text(page, 'staff-gw-box');
+  check(`${tag} part 2 not answered: Try again, the count can't be changed, part 1 shown as in`, stuck.includes('Try again') && stuck.includes('Added to stock') && stuck.includes('25 items in 25 lines')
+    && (await page.$$eval('[data-gw-units]', (els) => els.every((e) => e.disabled))), stuck.slice(0, 400));
+  // the page closed by mistake and opened again: still waiting to try again, what's in so far kept
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.click('[data-tab="warhammer"]');
+  await page.click('[data-wh-view="box"]');
+  await page.waitForSelector('[data-gw-retry]', { timeout: 10000 });
+  check(`${tag} after a reload: still Try again, part 1 still shown`, (await text(page, 'staff-gw-box')).includes('25 items in 25 lines'));
+  await page.click('[data-gw-retry]');
+  await page.waitForSelector('#gw-added-title', { timeout: 15000 });
+  await settle(page, 500);
+  const done = await text(page, '[aria-labelledby="gw-added-title"]');
+  const parts = adjustCalls.slice(before);
+  const counts = [...stock.entries()].filter(([id]) => Number(id.split('/').pop()) > 800).map(([, v]) => v.available);
+  check(`${tag} done: 30 items, each code added once (part 2's key sent again, never twice)`, done.includes('30 items in 30 lines') && counts.every((n) => n === 1)
+    && new Set(parts).size === 2, { done: done.slice(0, 200), parts, counts });
   check(`${tag} no console errors`, !page.errors.length, page.errors);
   await ctx.close();
 }

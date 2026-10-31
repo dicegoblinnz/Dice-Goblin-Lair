@@ -508,6 +508,7 @@ export const gwOrderMethods = {
   gwTellReady(ready) {
     const rows = [];
     const shown = [];
+    const letters = [];
     for (const { order, lines } of ready) {
       const what = listText(lines.map((l) => lineText(l, l.arrived)));
       // only a Lair pickup or a counter sale is told it's ready to collect; a posted order hears from Shopify when it's sent
@@ -522,15 +523,24 @@ export const gwOrderMethods = {
       rows.push([`${order.name || 'Order'}: ${what}`, action]);
       shown.push({ order: order.name || 'Order', what, action });
       if (!tell) continue;
-      this.later((async () => {
-        const sent = await this.mail(this.letter(order.email, GW_WORDS.inSubject(order.name), {
+      letters.push({
+        orderId: order.order_id,
+        letter: this.letter(order.email, GW_WORDS.inSubject(order.name), {
           title: GW_WORDS.inTitle,
           intro: GW_WORDS.inIntro(order.first_name),
           details: [[GW_WORDS.inRow, what], [GW_WORDS.toldOrder, order.name || '']],
           outro: GW_WORDS.inOutro,
           signoff: GW_WORDS.signoff,
-        }, { idempotencyKey: `gw-in-${String(order.order_id).split('/').pop()}` }));
-        if (sent?.ok) this.write('UPDATE gw_orders SET ready_told_at = ? WHERE order_id = ?', Date.now(), order.order_id);
+        }, { idempotencyKey: `gw-in-${String(order.order_id).split('/').pop()}` }),
+      });
+    }
+    // Round 27 (the review, 31 Oct 2026): a box can finish many orders at once, so their It's in emails go together,
+    // in one request to Resend (one by one, a burst of them would be turned away)
+    if (letters.length) {
+      this.later((async () => {
+        const sent = letters.length === 1 ? await this.mail(letters[0].letter) : await this.mailMany(letters.map((l) => l.letter));
+        if (!sent?.ok) return;
+        for (const l of letters) this.write('UPDATE gw_orders SET ready_told_at = ? WHERE order_id = ?', Date.now(), l.orderId);
       })());
     }
     this.notifyStaff(GW_WORDS.readySubject(ready.length), { title: GW_WORDS.readyTitle, intro: GW_WORDS.readyIntro, details: rows });
