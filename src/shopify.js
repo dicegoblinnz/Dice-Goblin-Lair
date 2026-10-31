@@ -129,6 +129,28 @@ const orderOf = (o) => {
   return { id: o.id, name: o.name || null, total: amount != null && Number.isFinite(Number(amount)) ? Math.round(Number(amount) * 100) : null };
 };
 
+/** Round 25: a Games Workshop variant's fields (src/gw-orders.js) */
+const GW_VARIANT = 'id sku displayName inventoryQuantity inventoryPolicy inventoryItem { tracked } pack: metafield(namespace: "custom", key: "gw_pack_size") { value } product { release: metafield(namespace: "custom", key: "gw_release_date") { value } }';
+const gwVariant = (v) => ({
+  id: v.id,
+  code: String(v.sku || '').trim(),
+  title: String(v.displayName || '').replace(/ - Default Title$/, ''),
+  available: Number(v.inventoryQuantity),
+  policy: v.inventoryPolicy || 'DENY',
+  tracked: v.inventoryItem?.tracked !== false,
+  pack: Math.max(1, Math.floor(Number(v.pack?.value)) || 1),
+  release: /^\d{4}-\d{2}-\d{2}/.test(String(v.product?.release?.value || '')) ? String(v.product.release.value).slice(0, 10) : '',
+});
+/** The shop's schedule changes (gw.schedule's overrides), or none when it isn't set or can't be read */
+const gwOverrides = (shop) => {
+  try {
+    const overrides = JSON.parse(shop?.schedule?.value || '{}')?.overrides;
+    return overrides && typeof overrides === 'object' && !Array.isArray(overrides) ? overrides : {};
+  } catch {
+    return {};
+  }
+};
+
 export class ShopifyAdmin {
   /**
    * The Lair's own Shopify app by default. Library memberships log in as a second app (Lair Memberships) with their own
@@ -815,6 +837,84 @@ export class ShopifyAdmin {
     };
   }
 
+  /**
+   * Round 25 (src/gw-orders.js): a paid order's Games Workshop lines' variants, in one request: each one's stock, whether
+   * it keeps selling when out of stock, its pack size (custom.gw_pack_size) and its product's release date
+   * (custom.gw_release_date), with the shop's schedule changes (gw.schedule). No customer data, so it needs only the
+   * product and inventory scopes. Throws when Shopify can't answer, so the webhook is sent again.
+   */
+  async gwStock(variantIds) {
+    const data = await this.graphql(
+      `query GwStock($variants: [ID!]!) {
+        nodes(ids: $variants) { ... on ProductVariant { ${GW_VARIANT} } }
+        shop { schedule: metafield(namespace: "gw", key: "schedule") { value } }
+      }`,
+      { variants: variantIds.slice(0, 100) },
+    );
+    return {
+      variants: new Map((data.nodes || []).filter((v) => v?.id).map((v) => [v.id, gwVariant(v)])),
+      overrides: gwOverrides(data.shop),
+    };
+  }
+
+  /** Round 25: when an order was made, its number, and how it's reaching them (its shipping line: a pickup or post) */
+  async gwOrderInfo(orderId) {
+    const data = await this.graphql('query GwOrderInfo($id: ID!) { order(id: $id) { id name createdAt shippingLine { title deliveryCategory } } }', { id: orderId });
+    return data.order || null;
+  }
+
+  /**
+   * Round 25: open ordered-in lines' variants (their stock), orders (cancelled or not) and order lines (units left after
+   * refunds and edits), in one request: a Map of id → { available, cancelledAt, currentQuantity }
+   */
+  async gwState(ids) {
+    const data = await this.graphql(
+      'query GwState($ids: [ID!]!) { nodes(ids: $ids) { id ... on ProductVariant { inventoryQuantity } ... on Order { cancelledAt } ... on LineItem { currentQuantity } } }',
+      { ids: ids.slice(0, 250) },
+    );
+    const state = new Map();
+    for (const node of data.nodes || []) {
+      if (!node?.id) continue;
+      state.set(node.id, {
+        available: 'inventoryQuantity' in node ? Number(node.inventoryQuantity) : NaN,
+        cancelledAt: node.cancelledAt || null,
+        currentQuantity: 'currentQuantity' in node ? Number(node.currentQuantity) : NaN,
+      });
+    }
+    return state;
+  }
+
+  /**
+   * Round 25: tag an order and add a paragraph to its note (left as it is when the paragraph's there already). Needs the
+   * app's write_orders; throws when Shopify says no.
+   */
+  async gwMarkOrder(orderId, tag, paragraph) {
+    const data = await this.graphql('query GwNote($id: ID!) { order(id: $id) { id note } }', { id: orderId });
+    if (!data.order) throw new Error('No such order.');
+    const note = String(data.order.note || '').trim();
+    const result = await this.graphql(
+      `mutation GwMark($id: ID!, $tags: [String!]!, $input: OrderInput!) {
+        tagsAdd(id: $id, tags: $tags) { userErrors { message } }
+        orderUpdate(input: $input) { userErrors { message } }
+      }`,
+      { id: orderId, tags: [tag], input: { id: orderId, note: note.includes(paragraph) ? note : [note, paragraph].filter(Boolean).join('\n\n') } },
+    );
+    const errors = [...(result.tagsAdd?.userErrors || []), ...(result.orderUpdate?.userErrors || [])];
+    if (errors.length) throw new Error(errors.map((e) => e.message).join('; '));
+    return true;
+  }
+
+  /** Round 25: Games Workshop variants below zero (up to 100) and the shop's schedule changes, for the Tuesday list */
+  async gwBelowZero() {
+    const data = await this.graphql(
+      `query GwBelowZero {
+        productVariants(first: 100, query: "vendor:'Games Workshop' AND inventory_quantity:<0") { nodes { ${GW_VARIANT} } }
+        shop { schedule: metafield(namespace: "gw", key: "schedule") { value } }
+      }`,
+    );
+    return { variants: (data.productVariants?.nodes || []).map(gwVariant), overrides: gwOverrides(data.shop) };
+  }
+
   /** The order a draft order turned into once it was paid (null while unpaid). */
   async draftOrderOrderId(id) {
     const data = await this.graphql('query DraftStatus($id: ID!) { draftOrder(id: $id) { id status order { id } } }', { id });
@@ -1102,9 +1202,13 @@ export const emailReady = (env) => Boolean(env.RESEND_API_KEY && env.FROM_EMAIL)
  * as it was (a receipt under its idempotency key), with the from and reply-to it was made with, whatever the settings
  * say now.
  */
-const resendEmail = (env, { to, subject, text, html = null, replyTo = null, from = null, pinned = false }) => {
+const resendEmail = (env, { to, subject, text, html = null, replyTo = null, from = null, pinned = false, attachments = null }) => {
   const reply = pinned ? replyTo : replyTo || env.REPLY_TO;
-  return { from: (pinned && from) || env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(reply ? { reply_to: reply } : {}) };
+  return {
+    from: (pinned && from) || env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(reply ? { reply_to: reply } : {}),
+    // Round 25: files with it ([{ filename, content (base64) }]), like the Tuesday GW order's CSV
+    ...(attachments?.length ? { attachments } : {}),
+  };
 };
 /** The from and reply-to an email would go with now, to keep with one that's pinned */
 export const emailSender = (env, replyTo = null) => ({ from: env.FROM_EMAIL || null, replyTo: replyTo || env.REPLY_TO || null });

@@ -72,6 +72,7 @@ import { counterMethods, counterSale, counterSource, customSale } from './counte
 import { HOLD_COLUMNS, HOLD_TABLES, holdMethods, timeOf } from './holds.js';
 // Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
 import { NEW_PLAYER_COLUMNS, NEW_PLAYER_STAMP_COLUMNS, NEW_PLAYER_TABLES, WELCOME, WELCOME_WORDS, cleanAd, newPlayerMethods } from './newplayers.js';
+import { GW_TABLES, gwOrderMethods } from './gw-orders.js';
 import { dateTables } from './core.js';
 
 const FALLBACK_ROOMS = [
@@ -1084,6 +1085,8 @@ export class Lair {
     for (const statement of HOLD_TABLES) this.sql.exec(statement);
     // Round 24: one welcome code a member (src/newplayers.js), kept by a unique index (made when missing)
     for (const statement of NEW_PLAYER_TABLES) this.sql.exec(statement);
+    // Round 25: Games Workshop items ordered in (src/gw-orders.js)
+    for (const statement of GW_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -4850,9 +4853,14 @@ export class Lair {
     // Round 22: a tab put in the cart shortly before this Pay on Verifone sale, whose every item is on it (src/counter.js)
     const cartTabs = pos ? this.markTabsPaid(this.cartTabsPaidBy(order, spend?.customerId || order.customer?.id, spend?.processedAt || Date.now()), orderId, Date.now()) : [];
     if (cartTabs.length) this.reconcileBills(rules, Date.now(), { orderId, pos });
+    // Round 25: Games Workshop lines ordered in from GW (src/gw-orders.js), last, so it never holds up anything above: its
+    // own awaits, then its own writes. If Shopify can't say how the stock stands, this throws and the webhook comes
+    // again, which only repeats what's above (kept once per order).
+    const gw = await this.gwOrderPaid(order, orderId, { pos, spend });
     return {
       updated, tabs: [...tabsPaid, ...cartTabs], spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}),
       ...(stamps ? { stamps } : {}),
+      ...(gw ? { gw } : {}),
     };
   }
 
@@ -10534,6 +10542,20 @@ export class Lair {
     } catch (error) {
       console.error('Lair: weekly numbers email failed', error);
     }
+    // Round 25 (src/gw-orders.js): the Games Workshop order list from 6am on Tuesday, then ordered-in lines kept in step
+    // with refunds and with stock that's come in, each step on its own
+    try {
+      const gwList = await this.gwOrderList(rules, Date.now());
+      if (gwList) result.gwList = gwList;
+    } catch (error) {
+      console.error('Lair: the Games Workshop order list failed', error);
+    }
+    try {
+      const gwOrders = await this.gwReconcile(Date.now());
+      if (gwOrders) result.gwOrders = gwOrders;
+    } catch (error) {
+      console.error('Lair: could not check Games Workshop orders', error);
+    }
     // Round 20: the next two weeks of public TTRPG sessions, for the TTRPG page's plain list (src/sessions-feed.js). After
     // the series steps above, so a weekly game's next session is already there.
     try {
@@ -10729,3 +10751,5 @@ Object.assign(Lair.prototype, counterMethods);
 Object.assign(Lair.prototype, holdMethods);
 // Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
 Object.assign(Lair.prototype, newPlayerMethods);
+// Round 25: Games Workshop items ordered in (src/gw-orders.js)
+Object.assign(Lair.prototype, gwOrderMethods);

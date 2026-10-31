@@ -592,6 +592,50 @@ const PAGES = {
   '/pages/contact': () => renderPage(hasTemplate('page.contact') ? 'page.contact' : 'page', { page: pages.contact, template: { name: 'page', suffix: 'contact' } }),
 };
 
+/* ---- round 25, Games Workshop ordered in (31 Oct 2026): kits on the shelf, ordered in and with one left, and a cart
+   with each. Everything on GW's pad keeps selling at 0 (inventory_policy continue). ---- */
+const gwKit = (handle, title, inv, policy = 'continue', price = 89) => {
+  const p = product(handle, title, 'Games Workshop', price, price, null, true, inv, 1000, 1000);
+  p.type = 'War Game';
+  const v = p.variants[0];
+  v.inventory_policy = policy;
+  v.available = inv > 0 || policy === 'continue';
+  p.available = v.available;
+  p.tags = ['Warhammer', 'Warhammer 40K', 'Necrons'];
+  return p;
+};
+const gwInStore = gwKit('necrons-immortals', 'Necrons: Immortals', 4);
+const gwOrderedIn = gwKit('necrons-warriors', 'Necrons: Necron Warriors', 0, 'continue', 99);
+const gwLastOne = gwKit('necrons-lokhust-heavy-destroyer', 'Necrons: Lokhust Heavy Destroyer', 1, 'continue', 83);
+const gwLine = (key, p, quantity, properties = {}) => ({
+  key, url: p.url, image: p.featured_media, product: p, variant: { ...p.variants[0], quantity_rule: {} }, quantity,
+  final_line_price: p.price * quantity, original_line_price: p.price * quantity, properties, line_level_discount_allocations: [],
+});
+const gwCart = {
+  ...emptyCart, item_count: 5, total_price: 9900 * 2 + 8300 * 2 + 9500,
+  items: [
+    gwLine('gw:1', gwOrderedIn, 2, { 'Ordered in': 'From Games Workshop, should be with you by Thu 19 Nov' }),
+    gwLine('gw:2', gwLastOne, 2),
+    { key: 'a:1', url: '/products/wingspan', image: boardGames[0].featured_media, product: boardGames[0], variant: { title: 'Default Title', quantity_rule: {} }, quantity: 1, final_line_price: 9500, original_line_price: 9500, properties: {}, line_level_discount_allocations: [] },
+  ],
+};
+const gwOnlyCart = { ...emptyCart, item_count: 1, total_price: 9900, items: [gwLine('gw:3', gwOrderedIn, 1)] };
+const gwProductPage = (p) => () => renderPage('product', { product: p, request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } });
+// a War Game collection with them, and a kit that's dropped off the pad (stops selling at 0: never shown)
+const gwDropped = gwKit('citadel-small-base-brush', 'Citadel Small Base Brush', 0, 'deny', 19);
+collections['war-game'] = coll('war-game', 'War Game', [gwOrderedIn, gwInStore, gwDropped, gwLastOne], 4);
+Object.assign(PAGES, {
+  '/collections/war-game': () => shopCollectionPage('war-game'),
+  '/products/gw-in-store': gwProductPage(gwInStore),
+  '/products/gw-ordered-in': gwProductPage(gwOrderedIn),
+  '/products/gw-last-one': gwProductPage(gwLastOne),
+  '/cart-gw': () => renderPage('cart', { cart: gwCart, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
+  '/cart-gw-only': () => renderPage('cart', { cart: gwOnlyCart, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
+  '/cart-gw-drawer': () => renderPage('index', { cart: gwCart }),
+  // the live cart (what /cart/add.js and change.js have put in it), as its page
+  '/cart': () => renderPage('cart', { cart: cartLiquid(), template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
+});
+
 /* ---- library routes (library worktree): tag-filtered library collection, membership, terms, search ---- */
 const handleize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const CONTENT_DIR = path.join(HERE, '..', 'library-content');
@@ -808,6 +852,8 @@ const feedProducts = (() => {
 })();
 collections.all = coll('all', 'All products', [...arrivals, ...boardGames], feedProducts.length);
 const variantIndex = new Map(feedProducts.flatMap((p) => p.variants.map((v) => [Number(v.id), { product: p, variant: v }])));
+// round 25: the GW kits can go in the live cart too (quick add on /collections/war-game, the cart's Ordered in notes)
+for (const p of [gwInStore, gwOrderedIn, gwLastOne, gwDropped]) for (const v of p.variants) variantIndex.set(Number(v.id), { product: p, variant: v });
 /* ---- round 16, the game page: product types as the store has them (games are Board Games or Card Games, library copies
    included), descriptions laid out like the shop's write-ups (a hook, the "<Title> is a …" summary, Gobgob's favourite
    bit, the 👥 ⏱ 🎂 stats line, the 🛒 or 📚 line and the 🎥 video link), custom.difficulty, type tags, and the library
@@ -917,6 +963,14 @@ const feedJson = (p) => ({
   images: p.featured_media ? [{ src: `/img/${encodeURIComponent(p.featured_media.__seed)}.svg?v=1`, width: p.featured_media.width, height: p.featured_media.height }] : [],
 });
 export const mockCart = { lines: [], codes: [], note: '' };
+/** A cart line's key, as Shopify's: the variant and its properties (no properties keeps the key it always had) */
+const lineKey = (id, properties = {}) => {
+  const text = JSON.stringify(properties || {});
+  if (text === '{}') return `${id}:7b7d`;
+  let hash = 2166136261;
+  for (const ch of text) hash = Math.imul(hash ^ ch.codePointAt(0), 16777619) >>> 0;
+  return `${id}:${hash.toString(16)}`;
+};
 function pricedCart() {
   const lines = mockCart.lines.map((l) => {
     const hit = variantIndex.get(Number(l.variantId));
@@ -964,7 +1018,7 @@ function cartLiquid() {
   return {
     ...emptyCart, note: mockCart.note, item_count: c.lines.reduce((s, l) => s + l.quantity, 0), total_price: c.total, cart_level_discount_applications: c.cartLevel,
     items: c.lines.map((l) => ({
-      key: l.key, url: l.product.url, image: l.product.featured_media, product: l.product, variant: { title: l.variant.title, quantity_rule: {} }, quantity: l.quantity,
+      key: l.key, url: l.product.url, image: l.product.featured_media, product: l.product, variant: { ...l.variant, quantity_rule: {} }, quantity: l.quantity,
       final_line_price: l.unit * l.quantity - l.off, original_line_price: l.unit * l.quantity, properties: l.properties || {}, line_level_discount_allocations: l.allocations,
     })),
   };
@@ -976,9 +1030,16 @@ async function cartSections(ids) {
   engine.options.globals = local;
   try {
     for (const id of ids) {
-      if (!fs.existsSync(path.join(THEME, 'sections', `${id}.liquid`))) continue;
-      const schema = schemaOf(`sections/${id}.liquid`);
-      const html = await engine.parseAndRender(read(`sections/${id}.liquid`), { ...local, section: { id, settings: resolveSettings(schema.settings, {}), blocks: [] } });
+      // a section file by its name (cart-drawer), or a template's section by its id (the cart page's
+      // "template--1__main", its "main" in templates/cart.json), as the Section Rendering API finds either
+      let file = id;
+      if (!fs.existsSync(path.join(THEME, 'sections', `${file}.liquid`))) {
+        const type = fs.existsSync(path.join(THEME, 'templates', 'cart.json')) ? readJson('templates/cart.json').sections?.[id.replace(/^template--\d+__/, '')]?.type : null;
+        if (!type || !fs.existsSync(path.join(THEME, 'sections', `${type}.liquid`))) continue;
+        file = type;
+      }
+      const schema = schemaOf(`sections/${file}.liquid`);
+      const html = await engine.parseAndRender(read(`sections/${file}.liquid`), { ...local, section: { id, settings: resolveSettings(schema.settings, {}), blocks: [] } });
       out[id] = sectionWrapper(id, schema, html);
     }
   } finally {
@@ -1050,7 +1111,7 @@ async function shopJson(req, res, url) {
   const sectionIds = Array.isArray(body.sections) ? body.sections : String(body.sections || '').split(',').filter(Boolean);
   const addLine = (id, quantity, properties = {}) => {
     if (!variantIndex.has(Number(id))) return false;
-    const key = `${id}:${Buffer.from(JSON.stringify(properties)).toString('hex').slice(0, 8) || '0'}`;
+    const key = lineKey(id, properties);
     const line = mockCart.lines.find((l) => l.key === key);
     if (line) line.quantity += quantity;
     else mockCart.lines.push({ key, variantId: Number(id), quantity, properties });
@@ -1084,7 +1145,16 @@ async function shopJson(req, res, url) {
     return true;
   }
   const line = mockCart.lines.find((l) => l.key === body.id || String(l.variantId) === String(body.id));
-  if (line) line.quantity = Number(body.quantity);
+  // as Shopify: a line that isn't in the cart (an old key) is a 400; new properties replace the line's, and its key
+  if (!line) {
+    sendJson(res, 400, { status: 400, message: 'Cart Error', description: 'No line with that key' });
+    return true;
+  }
+  line.quantity = Number(body.quantity);
+  if (body.properties && typeof body.properties === 'object') {
+    line.properties = body.properties;
+    line.key = lineKey(line.variantId, body.properties);
+  }
   mockCart.lines = mockCart.lines.filter((l) => l.quantity > 0);
   sendJson(res, 200, { ...cartJsonOut(), sections: await cartSections(sectionIds) });
   return true;
