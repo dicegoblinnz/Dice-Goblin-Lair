@@ -15,24 +15,28 @@ orders wait for release day). `wrangler.toml` holds the shop's location (`GW_LOC
 As the 56 live GW listings (31 Oct 2026):
 
 - Title: the pad's Description, tidied only: GW's short forms written out as GW writes them ("S/E:" → "Stormcast
-  Eternals:", "Hh:" → "Horus Heresy:", "W/" → "with", "O/T" → "of the"), sizes as "(18ml)", "(English)", "Eng",
+  Eternals:", "Hh:" → "Horus Heresy:", "W/" → "with", "O/T" → "of the", "Warhammer 40000" → "Warhammer 40,000"),
+  sizes as "(18ml)", "(English)", "Eng",
   "(Uk/Row)" and "Eng/Spa/Port/Lat" left off, "(Pb)" and "(Hb)" as "(Paperback)" and "(Hardback)", small words lower
   case. GW's words are never otherwise changed (Mo's rep: "so long as we don't change the actual words").
 - Description: the title, nothing else (`<p>Codex: Orks</p>`). SEO description: "Buy {title} at Dice Goblin in
   Auckland, in store or ordered in from Games Workshop."
-- Vendor Games Workshop. Type: Books (Black Library), Dice & Accessories (Hobby - Play), Paints & Hobby (paints,
-  brushes, sprays, tools), else War Game.
+- Vendor Games Workshop. Type: Dice & Accessories (Hobby - Play), Paints & Hobby (paints, paint sets such as "Orks +
+  Paints", brushes, sprays, tools), else War Game (kits, sets and books).
 - Tags: Warhammer; the game (Warhammer 40K, Age of Sigmar, Kill Team, Horus Heresy, The Old World, Necromunda, Legions
   Imperialis, Middle-earth, Blood Bowl, Warhammer Underworlds; Chaos Daemons adds both Age of Sigmar and Warhammer 40K);
   a faction for 40K, Age of Sigmar, Kill Team, Horus Heresy, Necromunda and The Old World (the Race's last part, or the
   one before "Generic"; never a grand alliance); Citadel and Paints for paints, Accessories and Citadel for brushes and
-  tools (plus Warhammer Colour or Warhammer Pro by name); Black Library for books; New release while the pad dates it.
+  tools (plus Warhammer Colour or Warhammer Pro by name); a paint set's game and faction with Citadel and Warhammer
+  Colour; Black Library for books; Starter sets on starter, introductory and core sets, Combat Patrol and Spearhead
+  boxes; New release while the pad dates it. No tag ever has a comma (Shopify splits it in two).
 - One variant: SKU the GW code, barcode, NZ MRP as the price, NZ trade (ex GST) as the cost, tracked, stocked at the shop
   with 0, keeps selling at 0 (`CONTINUE`, so round 25 orders it in), `custom.gw_pack_size` when GW's pack is over 1,
   `custom.gw_release_date` when the pad dates it.
 - On the till only (Point of Sale). It goes on the website and Shop app once it has GW's picture (a later step).
 - A paint in one of the eight ranges (Warhammer Colour Base, Layer, Shade, Contrast, Dry, Technical and Air, and
-  Warhammer Pro Tone) is a colour (variant) of its range's product: "Warhammer Colour Base Paints", option Colour, the
+  Warhammer Pro Tone) is a colour (variant) of its range's product: "Warhammer Colour Base Paints", option Colours (as
+  the live "Warhammer Colour Paints" listing), the
   colour's name without the range's short form ("Mephiston Red"), with its size when the range has two sizes
   ("Mordant Earth (24ml)"). The 18 colours already in "Warhammer Colour Paints" stay there for now.
 

@@ -322,6 +322,7 @@ test('round 26: pad names, with GW\'s short forms written out and nothing else c
     ['Aos: Shattered Dominion: 60 & 90Mm Oval', 'Age of Sigmar: Shattered Dominion: 60 & 90mm Oval'],
     ['Necrons Lokhusts Heavy Destroyer', 'Necrons Lokhusts Heavy Destroyer'],
     ['Combat Patrol: Dark Angels', 'Combat Patrol: Dark Angels'],
+    ['Warhammer 40000: Introductory Set (Eng)', 'Warhammer 40,000: Introductory Set'],
   ];
   for (const [from, to] of cases) assert.equal(padTitle(from), to, from);
   // a paint's colour within its range, and its size
@@ -363,7 +364,23 @@ test('round 26: what goes in from the pad, and its type and tags as the live GW 
   assert.deepEqual(pot.tags, ['Warhammer', 'Citadel', 'Paints', 'Warhammer Colour']);
   // kinds: books, gaming gear, brushes and tools, sprays
   const type = (race, system = 'Warhammer 40K', desc = 'Something') => ({ type: padType({ race, system }), tags: padTags({ race, system, desc }) });
-  assert.deepEqual(type('Black Library - Warhammer 40K'), { type: 'Books', tags: ['Warhammer', 'Warhammer 40K', 'Black Library'] });
+  // (books are War Game, as the live listings and the Warhammer skill have them)
+  assert.deepEqual(type('Black Library - Warhammer 40K'), { type: 'War Game', tags: ['Warhammer', 'Warhammer 40K', 'Black Library'] });
+  // a paint set with miniatures: Paints & Hobby, with its game and faction, as "Space Marines Intercessors + Paints Set"
+  assert.deepEqual({ type: padType({ race: '40K - Xenos - Orks', system: 'Warhammer 40K', desc: 'Orks + Paints Eng/Spa/Port/Latv/Rom' }), tags: padTags({ race: '40K - Xenos - Orks', system: 'Warhammer 40K', desc: 'Orks + Paints Eng/Spa/Port/Latv/Rom' }) },
+    { type: 'Paints & Hobby', tags: ['Warhammer', 'Warhammer 40K', 'Orks', 'Citadel', 'Warhammer Colour'] });
+  assert.equal(padType({ race: 'AOS - Generic', system: 'Age Of Sigmar', desc: 'Aos Paints+Tools Eng/Spa/Port/Latv/Rom' }), 'Paints & Hobby');
+  // starter boxes, as the live Kill Team: Starter Set, Introductory Sets and Spearhead: Seraphon
+  const starter = (desc, race, system) => padTags({ desc, race, system }).includes('Starter sets');
+  assert.equal(starter('Warhammer 40000: Introductory Set (Eng)', '40K - Generic', 'Warhammer 40K'), true);
+  assert.equal(starter('Kill Team: Starter Set (English)', 'Kill Team - Generic', 'Kill Team'), true);
+  assert.equal(starter('Spearhead: F-E Courts: Charnel Watch', 'AOS - Death - Flesh-Eater Courts', 'Age Of Sigmar'), true);
+  assert.equal(starter('Combat Patrol: Dark Angels', '40K - Space Marines - Dark Angels', 'Warhammer 40K'), true);
+  assert.equal(starter('Necromunda: Skirmish Core Set', 'Necromunda - Generic', 'Necromunda'), true);
+  assert.equal(starter('Combat Patrol Companion (English)', '40K - Generic', 'Warhammer 40K'), false);
+  assert.equal(starter('Codex: Orks (English)', '40K - Xenos - Orks', 'Warhammer 40K'), false);
+  // no tag ever has a comma (Shopify splits it in two)
+  assert.deepEqual(padTags({ desc: 'X', race: '40K - Xenos - Orks, Snakebites', system: 'Warhammer 40K' }), ['Warhammer', 'Warhammer 40K', 'Orks Snakebites']);
   assert.deepEqual(type('Hobby - Play - Figure Case', 'Hobby', 'Warhammer Battle Case'), { type: 'Dice & Accessories', tags: ['Warhammer', 'Accessories'] });
   assert.deepEqual(type('Brush - Base', 'Paint', 'Warhammer Pro: Base Brush Small'), { type: 'Paints & Hobby', tags: ['Warhammer', 'Accessories', 'Citadel', 'Warhammer Pro'] });
   assert.deepEqual(type('Hobby - Build - Glue', 'Hobby', 'Wh Colour: Plastic Glue (15G) (Eu/Au)'), { type: 'Paints & Hobby', tags: ['Warhammer', 'Accessories', 'Citadel', 'Warhammer Colour'] });
@@ -514,7 +531,7 @@ test('round 26: applying: updates and stops, then new products on the till, then
   // each paint range is one product: made with its first 25 colours, the rest added to it
   const base = productOf('99189950002');
   assert.equal(base.title, 'Warhammer Colour Base Paints');
-  assert.equal(base.input.productOptions[0].name, 'Colour');
+  assert.equal(base.input.productOptions[0].name, 'Colours');
   assert.equal(base.input.variants.length, APPLY_BATCH.rangeFirst);
   assert.deepEqual(base.input.tags, ['Warhammer', 'Citadel', 'Paints', 'Warhammer Colour']);
   assert.equal(base.input.descriptionHtml, '<p>Warhammer Colour Base Paints</p>');
