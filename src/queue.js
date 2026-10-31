@@ -23,8 +23,11 @@ import { wishlistProductId } from './wishlist.js';
 export const QUEUE_MAX = 30;
 /** A member watches up to this many games */
 export const WATCH_MAX = 50;
-/** Postage by area, in cents: the website's shipping rates (config LIBRARY_POSTAGE changes them) */
-export const POSTAGE_DEFAULT = { auckland: 1000, 'auckland-rural': 1500, nationwide: 2000, 'nationwide-rural': 3000 };
+/**
+ * Postage by area, in cents: the website's shipping rates (config LIBRARY_POSTAGE changes them). Since 31 Oct 2026 (Mo:
+ * "I wish to do $10 delivery to all nz", "Maybe add an extra $5 for rural delivery orders") $10 anywhere, $15 rural.
+ */
+export const POSTAGE_DEFAULT = { auckland: 1000, 'auckland-rural': 1500, nationwide: 1000, 'nationwide-rural': 1500 };
 export const AREAS = Object.keys(POSTAGE_DEFAULT);
 export const AREA_WORDS = { auckland: 'Auckland', 'auckland-rural': 'Auckland rural', nationwide: 'Nationwide', 'nationwide-rural': 'Nationwide rural' };
 /** The postal cutoff: Wednesday (3) at 10pm, Lair time, for Thursday's post */

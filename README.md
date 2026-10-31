@@ -69,7 +69,7 @@ Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/che
 | `MEMBERSHIPS_BILLING` | `on` lets the Lair charge members' cards; anything else and it only keeps its records (switch it off to stop all charging at once) |
 | `MEMBERSHIPS_SIMPLEE_TAGS` | `off` (set 9 Oct: Simplee is going): when it isn't, someone with no Lair membership borrows on their Simplee tags |
 | `PICK_AI`, `PICK_AI_MODEL` | round 17, Help me pick: `PICK_AI` = `off` stops Workers AI tagging new library games; `PICK_AI_MODEL` names another Workers AI model for it (default `@cf/google/gemma-4-26b-a4b-it`) |
-| `LIBRARY_POSTAGE` | round 17: postal library swaps' postage by area, in cents, as JSON (`{"auckland":1000,"auckland-rural":1500,"nationwide":2000,"nationwide-rural":3000}`, the website's rates, when it isn't set) |
+| `LIBRARY_POSTAGE` | round 17: postal library swaps' postage by area, in cents, as JSON (`{"auckland":1000,"auckland-rural":1500,"nationwide":1000,"nationwide-rural":1500}`, the website's rates since 31 Oct 2026, when it isn't set) |
 | `REPORT_EMAIL` | round 19: where the weekly numbers go on Monday morning: an email address, or `off` for nowhere (`STAFF_EMAIL` when it isn't set) |
 
 ## Set up

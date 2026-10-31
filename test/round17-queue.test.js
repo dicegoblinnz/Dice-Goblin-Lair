@@ -218,9 +218,9 @@ test('round 17 queue: the words, word for word (the contract\'s table), and the 
     watchFull: "You're watching 50 games already. Stop watching one to add another.",
   };
   for (const [key, words] of Object.entries(table)) assert.equal(QUEUE_MESSAGES[key], words, key);
-  assert.deepEqual(POSTAGE_DEFAULT, { auckland: 1000, 'auckland-rural': 1500, nationwide: 2000, 'nationwide-rural': 3000 });
+  assert.deepEqual(POSTAGE_DEFAULT, { auckland: 1000, 'auckland-rural': 1500, nationwide: 1000, 'nationwide-rural': 1500 });
   // LIBRARY_POSTAGE (config) changes an area's price; anything that isn't a whole number of cents keeps the website's
-  assert.deepEqual(libraryPostage({ LIBRARY_POSTAGE: '{"auckland":1200,"nationwide":"lots","nationwide-rural":-5}' }), { auckland: 1200, 'auckland-rural': 1500, nationwide: 2000, 'nationwide-rural': 3000 });
+  assert.deepEqual(libraryPostage({ LIBRARY_POSTAGE: '{"auckland":1200,"nationwide":"lots","nationwide-rural":-5}' }), { auckland: 1200, 'auckland-rural': 1500, nationwide: 1000, 'nationwide-rural': 1500 });
   assert.deepEqual(libraryPostage({ LIBRARY_POSTAGE: 'not json' }), POSTAGE_DEFAULT);
 });
 
@@ -651,7 +651,7 @@ test('round 17 queue: confirm makes one checkout (a draft order for the member: 
   assert.deepEqual([a.data.checkoutUrl, b.data.checkoutUrl, shop.made.length], ['https://shop.test/checkouts/801', 'https://shop.test/checkouts/801', 1]);
   // Nationwide rural instead: a new checkout at its price, the old one's link stops working, and it's remembered
   const rural = await confirm(send.id, { area: 'nationwide-rural' });
-  assert.deepEqual([rural.data.checkoutUrl, rural.data.send.postage, shop.made[1].postage, shop.made[1].areaWords], ['https://shop.test/checkouts/802', 3000, 3000, 'Nationwide rural']);
+  assert.deepEqual([rural.data.checkoutUrl, rural.data.send.postage, shop.made[1].postage, shop.made[1].areaWords], ['https://shop.test/checkouts/802', 1500, 1500, 'Nationwide rural']);
   await settle();
   assert.deepEqual(shop.deleted, ['gid://shopify/DraftOrder/801']);
   assert.equal(lair.queueSettings(KIRI).area, 'nationwide-rural');
