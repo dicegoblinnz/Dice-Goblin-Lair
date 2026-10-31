@@ -171,7 +171,7 @@ export function padTitle(desc) {
     .replace(/\b(\d+)Mm\b/g, '$1mm')
     .replace(/\b(\d+)(St|Nd|Rd|Th)\b/g, (m, n, s) => `${n}${s.toLowerCase()}`);
   // letters the pad lower-cases that are capitals: "Gw", "Xl", "Sbg"
-  text = text.replace(/\bGw\b/g, 'GW').replace(/\bXl\b/g, 'XL').replace(/\bSbg\b/g, 'SBG').replace(/\bX(\d+)\b/g, 'x$1')
+  text = text.replace(/\bWarhammer 40000\b/g, 'Warhammer 40,000').replace(/\bGw\b/g, 'GW').replace(/\bXl\b/g, 'XL').replace(/\bSbg\b/g, 'SBG').replace(/\bX(\d+)\b/g, 'x$1')
     .replace(/\bMk(i{1,3}|iv|vi{0,3}|ix|x)\b/gi, (m, n) => `Mk${n.toUpperCase()}`);
   return smallWords(text).replace(/\s+/g, ' ').trim();
 }
@@ -194,13 +194,20 @@ export function paintColour(desc, title = padTitle(desc)) {
   return title.replace(/^[^:]{1,20}:\s*/, '').replace(/\s*\(\d+ml\)\s*$/i, '').trim() || title;
 }
 
-/** Shopify's product type for a pad line, from the shop's own types (its sections are built on them) */
+/** A paint set with miniatures or tools: "Orks + Paints", "Aos Skaven + Paint Set", "40K Paints + Tools" */
+const PAINT_SET = /\+\s*Paints?\b|\bPaints?\s*\+/i;
+/** A starter box: a starter, introductory or core set, a Combat Patrol or a Spearhead */
+const STARTER = /\b(?:Starter|Introductory|Core) Set\b|^(?:Spearhead|Combat Patrol):/i;
+
+/**
+ * Shopify's product type for a pad line, as the live GW listings have them: kits, sets and books War Game; paints,
+ * paint sets, brushes, glue and tools Paints & Hobby; dice, cases and gaming accessories Dice & Accessories
+ */
 export function padType(row) {
   const system = String(row?.system || '');
   const race = String(row?.race || '');
-  if (/^Black Library\b/i.test(race)) return 'Books';
   if (/^Hobby - Play\b/i.test(race)) return 'Dice & Accessories';
-  if (/^(?:Paint|Hobby)$/i.test(system) || /^(?:Paint|Brush|Spray|Hobby)\b/i.test(race)) return 'Paints & Hobby';
+  if (/^(?:Paint|Hobby)$/i.test(system) || /^(?:Paint|Brush|Spray|Hobby)\b/i.test(race) || PAINT_SET.test(String(row?.desc || ''))) return 'Paints & Hobby';
   return 'War Game';
 }
 
@@ -244,19 +251,26 @@ export function padTags(row, title = padTitle(row?.desc)) {
     tags.add('Citadel').add('Paints').add(/WH Pro/i.test(race) ? 'Warhammer Pro' : 'Warhammer Colour');
   } else if (/^Spray\b/i.test(race)) {
     tags.add('Citadel').add('Paints');
+  } else if (PAINT_SET.test(String(row?.desc || ''))) {
+    // a paint set with miniatures: its game and faction, as a kit has, and Citadel's paints
+    const faction = padFaction(row);
+    if (faction) tags.add(faction);
+    tags.add('Citadel').add('Warhammer Colour');
   } else if (type === 'Paints & Hobby') {
     tags.add('Accessories').add('Citadel');
     if (brand) tags.add(brand);
   } else if (type === 'Dice & Accessories') {
     tags.add('Accessories');
-  } else if (type === 'Books') {
+  } else if (/^Black Library\b/i.test(race)) {
     tags.add('Black Library');
   } else {
     const faction = padFaction(row);
     if (faction) tags.add(faction);
   }
+  if (STARTER.test(title)) tags.add('Starter sets');
   if (row?.release) tags.add(NEW_TAG);
-  return [...tags];
+  // a comma splits a tag in two in Shopify ("Warhammer 40,000" became "Warhammer 40" and "000")
+  return [...tags].map((t) => t.replace(/,/g, '').trim()).filter(Boolean);
 }
 
 const cents = (value) => {
@@ -749,7 +763,7 @@ export const gwPadMethods = {
     ).toArray();
     const names = this.gwColourNames(key);
     const codes = rows.map((p) => p.code);
-    const variants = rows.map((p) => this.gwVariantInput(p, ids, 'Colour', names.get(p.code) || p.colour));
+    const variants = rows.map((p) => this.gwVariantInput(p, ids, 'Colours', names.get(p.code) || p.colour));
     const batch = this.gwClaim(codes, now);
     let results;
     try {
@@ -915,7 +929,7 @@ export const gwPadMethods = {
       status: 'ACTIVE',
       descriptionHtml: `<p>${escapeHtml(range.title)}</p>`,
       seo: { description: seoLine(range.title) },
-      productOptions: [{ name: 'Colour', values: variants.map((v) => ({ name: v.optionValues[0].name })) }],
+      productOptions: [{ name: 'Colours', values: variants.map((v) => ({ name: v.optionValues[0].name })) }],
       variants,
     };
   },
