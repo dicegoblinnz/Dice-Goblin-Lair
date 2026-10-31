@@ -191,6 +191,15 @@ export const GW_TABLES = [
   'CREATE INDEX IF NOT EXISTS gw_orderins_order ON gw_orderins (order_id)',
 ];
 
+/**
+ * Round 26: each ordered-in line's release date (its product's custom.gw_release_date when it was sold), so an advance
+ * order that arrives before release day waits for it (GW's trade terms 9.3: nothing to a customer before release day).
+ * Made when missing (lair.js); null for lines before then.
+ */
+export const GW_COLUMNS = [['gw_orderins', 'release', 'TEXT']];
+/** On release day, an order that's in is told from this hour (Auckland), not in the middle of the night */
+export const GW_RELEASE_HOUR = 8;
+
 const OPEN = 'quantity > arrived + cancelled';
 
 export const gwOrderMethods = {
@@ -257,9 +266,10 @@ export const gwOrderMethods = {
         lineQuantity: quantity, quantity: ordered, pack: Math.max(1, Math.floor(Number(variant.pack) || 1)), price: cents(item.price), ...when,
       };
       this.write(
-        `INSERT OR IGNORE INTO gw_orderins (id, order_id, line_id, variant_id, code, title, line_quantity, quantity, pack, price, cutoff, promise, placed_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        row.id, orderId, row.lineId, row.variantId, row.code, row.title, row.lineQuantity, row.quantity, row.pack, row.price, row.cutoff, row.promise, placedAt, now,
+        `INSERT OR IGNORE INTO gw_orderins (id, order_id, line_id, variant_id, code, title, line_quantity, quantity, pack, price, cutoff, promise, release, placed_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        row.id, orderId, row.lineId, row.variantId, row.code, row.title, row.lineQuantity, row.quantity, row.pack, row.price, row.cutoff, row.promise,
+        /^\d{4}-\d{2}-\d{2}$/.test(String(variant.release || '')) ? variant.release : null, placedAt, now,
       );
       lines.push(row);
     }
@@ -303,13 +313,19 @@ export const gwOrderMethods = {
 
   /**
    * Orders with nothing left to come: when something came in, the customer (a pickup or counter sale) and the shop hear,
-   * and when it was all taken off there's nothing to say. Returns the names of the orders that are in. No awaits.
+   * and when it was all taken off there's nothing to say. Round 26: an advance order that's in before its release day
+   * waits until 8am on release day (maintenance looks again each run), so nothing is collected or posted early.
+   * Returns the names of the orders that are in. No awaits.
    */
   gwSettle(orderIds, now = Date.now()) {
     const ready = [];
+    const time = new LairTime(this.rulesCache?.tz || TZ);
+    const today = time.key(now);
+    const early = (release) => Boolean(release) && (release > today || (release === today && time.parts(now).h < GW_RELEASE_HOUR));
     for (const orderId of orderIds) {
       const { order, lines } = this.gwOrderRows(orderId);
       if (!order || order.ready_at || lines.some((l) => l.quantity > l.arrived + l.cancelled)) continue;
+      if (lines.some((l) => l.arrived > 0 && early(l.release))) continue;
       this.write('UPDATE gw_orders SET ready_at = ? WHERE order_id = ?', now, orderId);
       if (lines.some((l) => l.arrived > 0)) ready.push({ order, lines: lines.filter((l) => l.arrived > 0) });
     }
@@ -377,6 +393,15 @@ export const gwOrderMethods = {
     let marked = 0;
     for (const row of unmarked) if (await this.gwMark(row.order_id)) marked += 1;
     if (marked) result.marked = marked;
+    // Round 26: advance orders that came in before release day, told once it's here (gwSettle holds them till then)
+    const held = this.sql.exec(
+      `SELECT order_id FROM gw_orders WHERE ready_at IS NULL AND units > 0
+       AND order_id NOT IN (SELECT order_id FROM gw_orderins WHERE ${OPEN}) ORDER BY placed_at LIMIT 50`,
+    ).toArray().map((r) => r.order_id);
+    if (held.length) {
+      const released = this.gwSettle(held, now);
+      if (released.length) result.released = released;
+    }
     const before = this.sql.exec(`SELECT order_id, line_id, variant_id FROM gw_orderins WHERE ${OPEN} ORDER BY placed_at, id LIMIT ?`, MOST_OPEN).toArray();
     if (!before.length) return Object.keys(result).length ? result : null;
     const ids = [...new Set(before.flatMap((r) => [r.variant_id, r.order_id, lineGid(r.line_id)]))];

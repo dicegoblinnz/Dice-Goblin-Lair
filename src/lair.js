@@ -72,7 +72,9 @@ import { counterMethods, counterSale, counterSource, customSale } from './counte
 import { HOLD_COLUMNS, HOLD_TABLES, holdMethods, timeOf } from './holds.js';
 // Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
 import { NEW_PLAYER_COLUMNS, NEW_PLAYER_STAMP_COLUMNS, NEW_PLAYER_TABLES, WELCOME, WELCOME_WORDS, cleanAd, newPlayerMethods } from './newplayers.js';
-import { GW_TABLES, gwOrderMethods } from './gw-orders.js';
+import { GW_COLUMNS, GW_TABLES, gwOrderMethods } from './gw-orders.js';
+// Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)
+import { GW_PAD_TABLES, gwPadMethods } from './gw-pad.js';
 import { dateTables } from './core.js';
 
 const FALLBACK_ROOMS = [
@@ -87,6 +89,12 @@ const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'r
 const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes', read_products: 'library copies, scanning library games and tab items', read_inventory: 'library copies on the shelf', write_metaobjects: 'staff adding and editing events', write_files: 'event pictures' };
 // Round 9, team: a member's store credit balance on their staff page
 FEATURE_SCOPES.read_store_credit_accounts = 'store credit balances on the staff member page';
+// Round 25: Games Workshop orders tagged Ordered in, with a note; round 26: the staff page's Warhammer tab adding GW's
+// order pad (new products stocked at 0 and on the till, prices and costs kept current)
+FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in';
+FEATURE_SCOPES.write_products = "adding Games Workshop's order pad (the Warhammer tab)";
+FEATURE_SCOPES.write_inventory = 'new Games Workshop products stocked at 0, and their costs';
+FEATURE_SCOPES.write_publications = 'new Games Workshop products on the till';
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -1087,6 +1095,16 @@ export class Lair {
     for (const statement of NEW_PLAYER_TABLES) this.sql.exec(statement);
     // Round 25: Games Workshop items ordered in (src/gw-orders.js)
     for (const statement of GW_TABLES) this.sql.exec(statement);
+    // Round 26: the order pad, the shop's GW variants, the plan, the paint ranges' products and releases still hidden
+    // (src/gw-pad.js); and each ordered-in line's release date, so a pre-order is never handed over early (made when missing)
+    for (const statement of GW_PAD_TABLES) this.sql.exec(statement);
+    for (const [table, column, type] of GW_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1877,8 +1895,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1941,6 +1959,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'pick' && b === 'report' && !c) return json(this.pickReport(url, who));
       if (request.method === 'GET' && a === 'pick' && b && !c) return json(await this.sharedPicks(b, who));
       if (request.method === 'GET' && a === 'me' && b === 'picks' && !c) return json(this.myPicks(who));
+      // Round 26: the Warhammer tab: where the pad's import stands, and the plan's lines (src/gw-pad.js)
+      if (request.method === 'GET' && a === 'gw' && (!b || b === 'plan') && !c) return json(this.gwPlanView(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
@@ -1965,6 +1985,13 @@ export class Lair {
       if (a === 'me' && b === 'wishlist' && c === 'remove' && !d) return json(this.removeFromWishlist(body, who));
       // Round 17: Help me pick (src/pick.js): the quiz, its swipe round, a session's events, save and email, ratings, and
       // the staff check list and sync
+      // Round 26: the Warhammer tab: the pad a part at a time, reading the shop, the plan, applying it, and a release's
+      // on-sale day (src/gw-pad.js)
+      if (a === 'gw' && b === 'pad' && !c) return json(this.gwPadUpload(body, who));
+      if (a === 'gw' && b === 'shop' && !c) return json(await this.gwShopSync(body, who));
+      if (a === 'gw' && b === 'plan' && !c) return json(this.gwPlan(who));
+      if (a === 'gw' && b === 'apply' && !c) return json(await this.gwApply(who));
+      if (a === 'gw' && b === 'releases' && c && !d) return json(this.gwReleaseDay(decodeURIComponent(c), body, who));
       if (a === 'pick' && !b) return json(await this.pick(body, who, client));
       if (a === 'pick' && b === 'swipes' && !c) return json(await this.pickSwipes(body, who, client));
       if (a === 'pick' && b === 'sync' && !c) return json(await this.staffPickSync(who));
@@ -10556,6 +10583,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not check Games Workshop orders', error);
     }
+    // Round 26 (src/gw-pad.js): new releases whose pre-order time has come go on sale
+    try {
+      const gwReleases = await this.gwActivateReleases(Date.now());
+      if (gwReleases) result.gwReleases = gwReleases;
+    } catch (error) {
+      console.error('Lair: could not put new Games Workshop releases on sale', error);
+    }
     // Round 20: the next two weeks of public TTRPG sessions, for the TTRPG page's plain list (src/sessions-feed.js). After
     // the series steps above, so a weekly game's next session is already there.
     try {
@@ -10753,3 +10787,5 @@ Object.assign(Lair.prototype, holdMethods);
 Object.assign(Lair.prototype, newPlayerMethods);
 // Round 25: Games Workshop items ordered in (src/gw-orders.js)
 Object.assign(Lair.prototype, gwOrderMethods);
+// Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)
+Object.assign(Lair.prototype, gwPadMethods);
