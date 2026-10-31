@@ -157,12 +157,17 @@ function installShopify() {
     calls.push(['add', productId, list.map((v) => v.sku)]);
     await tick();
     const p = products.get(productId);
-    return list.map((v) => {
+    const made = list.map((v) => {
       const vid = newId('ProductVariant');
       variants.set(vid, { id: vid, sku: v.sku, price: v.price, cost: v.inventoryItem?.cost ?? null, barcode: v.barcode || '', policy: v.inventoryPolicy, pack: Number(v.metafields?.[0]?.value || 1), productId, option: v.optionValues[0].name });
       p.variants.push(vid);
       return { codes: [v.sku], productId };
     });
+    if (trouble.add === 'lost') {
+      trouble.add = null;
+      throw new Error('The operation was aborted due to timeout');
+    }
+    return made;
   };
   lair.shopify.gwPublish = async (ids, posId) => {
     calls.push(['publish', ids]);
@@ -175,7 +180,8 @@ function installShopify() {
   lair.shopify.gwFindSkus = async (codes) => {
     calls.push(['find', codes]);
     const found = new Map();
-    for (const code of codes) {
+    // (the real one looks for 40 at a time)
+    for (const code of codes.slice(0, 40)) {
       const v = variantOf(code);
       if (v) found.set(code, { variantId: v.id, productId: v.productId });
     }
@@ -619,6 +625,100 @@ test('round 26: a batch Shopify never answered is looked for by SKU before anyth
     assert.deepEqual([...productOf(code).published], [POS]);
     assert.equal([...variants.values()].filter((v) => v.sku === code).length, 1);
   }
+  // (from the review) the lost batch had the release still to come, made hidden: it still goes on sale on its
+  // pre-order day
+  assert.ok(claimed.includes('99120100902'));
+  assert.equal(productOf('99120100902').status, 'DRAFT');
+  assert.deepEqual(ok(await call('GET', 'gw')).releases.map((r) => [r.code, r.onSale, r.onSaleAt]), [['99120100902', '2026-11-14', at('2026-11-14', 10)]]);
+  nowIs(at('2026-11-14', 10, 5));
+  assert.deepEqual(await lair.gwActivateReleases(Date.now()), { activated: ['Combat Patrol: Test Marines'] });
+  assert.equal(productOf('99120100902').status, 'ACTIVE');
+});
+
+test('round 26: a release GW moves on a later pad moves its on-sale day with it', async () => {
+  ok(await upload(padRows()));
+  await readShop();
+  ok(await call('POST', 'gw/plan', {}));
+  await applyAll();
+  assert.equal(ok(await call('GET', 'gw')).releases[0].onSale, '2026-11-14');
+  // the next week's pad: GW has moved it to Saturday 5 December
+  const later = padRows().map((r) => (r.code === '99120100902' ? { ...r, release: 46361 } : r));
+  ok(await upload(later));
+  await readShop();
+  const moved = ok(await call('POST', 'gw/plan', {}));
+  assert.deepEqual(moved.releases.map((r) => [r.release, r.onSale, r.onSaleAt]), [['2026-12-05', '2026-11-28', at('2026-11-28', 10)]]);
+  assert.deepEqual(JSON.parse(plan(99120100902).changes).release, ['2026-11-21', '2026-12-05']);
+  await applyAll();
+  assert.equal(productOf('99120100902').release, '2026-12-05');
+  // so it isn't on sale at the old pre-order day, only the new one
+  nowIs(at('2026-11-14', 10, 5));
+  assert.equal(await lair.gwActivateReleases(Date.now()), null);
+  assert.equal(productOf('99120100902').status, 'DRAFT');
+  nowIs(at('2026-11-28', 10, 5));
+  assert.deepEqual(await lair.gwActivateReleases(Date.now()), { activated: ['Combat Patrol: Test Marines'] });
+  // and moved earlier, past its pre-order day already: on sale at the next maintenance
+  nowIs(NOW);
+});
+
+test('round 26: a release GW brings forward goes on sale at the next maintenance once its new pre-order day has passed', async () => {
+  ok(await upload(padRows()));
+  await readShop();
+  ok(await call('POST', 'gw/plan', {}));
+  await applyAll();
+  // Monday 9 November: the pad says it's out Saturday 14 November, so its pre-order day (the 7th) has passed
+  nowIs(at('2026-11-09', 9));
+  ok(await upload(padRows().map((r) => (r.code === '99120100902' ? { ...r, release: 46340 } : r))));
+  await readShop();
+  const moved = ok(await call('POST', 'gw/plan', {}));
+  assert.deepEqual(moved.releases.map((r) => [r.release, r.onSale]), [['2026-11-14', '2026-11-07']]);
+  assert.deepEqual(await lair.gwActivateReleases(Date.now()), { activated: ['Combat Patrol: Test Marines'] });
+});
+
+test('round 26: a lost batch of 50 paint colours is looked for 40 at a time, and nothing is added twice', async () => {
+  // a pad with 80 Base colours: the range's product is made with 25, then 50 are added (lost), then 5
+  const rows = padRows().filter((r) => r.race !== BASE);
+  for (let n = 1; n <= 80; n += 1) rows.push(paint(n + 200, BASE, `B: Shade ${String(n).padStart(2, '0')} 12Ml Row`));
+  ok(await upload(rows));
+  await readShop();
+  ok(await call('POST', 'gw/plan', {}));
+  // updates, the kits, then the Base range's product with its first 25 colours
+  for (let i = 0; i < 200 && !lair.sql.exec("SELECT key FROM gw_ranges WHERE key = 'wh-colour-base'").toArray().length; i += 1) ok(await call('POST', 'gw/apply', {}));
+  trouble.add = 'lost';
+  for (let i = 0; i < 5 && trouble.add; i += 1) ok(await call('POST', 'gw/apply', {}));
+  assert.equal(trouble.add, null, 'the 50 were sent');
+  const lost = lair.sql.exec("SELECT code FROM gw_plan WHERE status = 'sending'").toArray().map((r) => r.code);
+  assert.equal(lost.length, APPLY_BATCH.rangeMore);
+  nowIs(NOW + STUCK_AFTER + 1000);
+  await applyAll();
+  for (const code of lost) {
+    assert.equal(plan(code).status, 'done', code);
+    assert.equal([...variants.values()].filter((v) => v.sku === code).length, 1, code);
+  }
+  assert.equal(productOf(String(99189950201)).variants.length, 80);
+  assert.equal(ok(await call('GET', 'gw')).left, 0);
+});
+
+test('round 26: a new pad waits while changes are still on their way to Shopify or the till', async () => {
+  ok(await upload(padRows()));
+  await readShop();
+  ok(await call('POST', 'gw/plan', {}));
+  ok(await call('POST', 'gw/apply', {}));
+  // made, but not yet on the till
+  trouble.publish = true;
+  ok(await call('POST', 'gw/apply', {}));
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM gw_plan WHERE status = 'publish'").one().n, APPLY_BATCH.create);
+  assert.equal(said(await call('POST', 'gw/pad', { date: '2026-11-02', part: 1, parts: 9, rows: padRows().slice(0, 60) })), `409 ${W.unfinished}`);
+  trouble.publish = false;
+  ok(await call('POST', 'gw/apply', {}));
+  // a batch whose answer was lost: the same until it's been looked for
+  trouble.create = 'lost';
+  ok(await call('POST', 'gw/apply', {}));
+  assert.equal(said(await call('POST', 'gw/pad', { date: '2026-11-02', part: 1, parts: 9, rows: padRows().slice(0, 60) })), `409 ${W.unfinished}`);
+  nowIs(NOW + STUCK_AFTER + 1000);
+  ok(await call('POST', 'gw/apply', {}));
+  ok(await call('POST', 'gw/apply', {}));
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM gw_plan WHERE status IN ('sending', 'publish')").one().n, 0);
+  ok(await upload(padRows()));
 });
 
 test('round 26: Shopify busy, turning a product down, or missing a permission', async () => {

@@ -45,6 +45,7 @@ export const PAD_WORDS = {
   noShop: "Check the shop first: the Lair hasn't read Shopify's Games Workshop products since the pad came in.",
   shopAgain: 'Check the shop again first: products have changed since the Lair last read it.',
   sending: 'Wait a moment: changes are still on their way to Shopify.',
+  unfinished: 'Finish updating the shop first: some changes are still on their way to Shopify or the till. Carry on updating the shop, then add the new pad.',
   noPlan: 'Look over the plan first.',
   stale: 'A new pad came in since this plan was made. Check the shop again, then look over the new plan.',
   busy: 'Shopify is busy. Carrying on in a moment.',
@@ -68,8 +69,10 @@ export const PAD_MIN_ROWS = 500;
 export const SHOP_PAGES = 2;
 /** Products a /gw/apply request changes or makes, paint colours it puts on a range's product (made, then added to) */
 export const APPLY_BATCH = { update: 20, create: 5, rangeFirst: 25, rangeMore: 50, publish: 10 };
-/** A batch with Shopify this long with no answer is looked for before it's sent again */
+/** A batch with Shopify this long with no answer is looked for before it's sent again, up to FIND_MAX at a time (as many
+    SKUs as one Shopify search takes: src/shopify.js gwFindSkus) */
 export const STUCK_AFTER = 2 * 60_000;
+export const FIND_MAX = 40;
 /** Tries before a change is left as an error for staff to see */
 const MOST_TRIES = 3;
 /** A new release goes on sale at 10am NZ on its pre-order day, a week before release unless staff change it */
@@ -396,6 +399,11 @@ export const gwPadMethods = {
     if (part > 1 && (!state.upload || body.upload !== state.upload || state.parts !== parts || (state.part !== part - 1 && state.part !== part))) {
       throw new RuleError(PAD_WORDS.part, 409);
     }
+    // (the review, 1 Nov 2026) a new pad clears the plan, and with it what's still on its way to Shopify or the till:
+    // made but not yet listed there, or not yet looked for. It waits for those.
+    if (part === 1 && this.sql.exec("SELECT COUNT(*) AS n FROM gw_plan WHERE status IN ('sending', 'publish')").one().n) {
+      throw new RuleError(PAD_WORDS.unfinished, 409);
+    }
     const upload = part === 1 ? crypto.randomUUID().slice(0, 8) : state.upload;
     if (part === 1) {
       this.write('DELETE FROM gw_pad');
@@ -536,6 +544,16 @@ export const gwPadMethods = {
        SELECT s.sku, 'drop', s.product_title, json_object('variantId', s.variant_id, 'productId', s.product_id)
        FROM gw_shop s LEFT JOIN gw_pad p ON p.code = s.sku WHERE p.code IS NULL AND s.policy = 'CONTINUE'`,
     );
+    // (the review, 1 Nov 2026) a hidden release GW has moved: its on-sale day moves with it (a week before the new release
+    // day, as when it was made), so it never goes on sale at the old pre-order day. Today's on the Lair's own record, so
+    // it follows GW's latest pad whether or not this plan is applied.
+    const moved = this.sql.exec(
+      `SELECT g.code, p.release FROM gw_releases g JOIN gw_pad p ON p.code = g.code
+       WHERE g.activated_at IS NULL AND p.release IS NOT NULL AND p.release != g.release`,
+    ).toArray();
+    for (const r of moved) {
+      this.write('UPDATE gw_releases SET release = ?, on_sale_at = ?, error = NULL WHERE code = ?', r.release, this.gwOnSaleAt(addDays(r.release, -ON_SALE_DAYS)), r.code);
+    }
     setMeta(this, 'gw-plan', { at: Date.now(), upload: pad.upload, date: pad.date });
     return this.gwPlanSummary();
   },
@@ -597,7 +615,7 @@ export const gwPadMethods = {
     if (!pad?.complete || plan.upload !== pad.upload) throw new RuleError(PAD_WORDS.stale, 409);
     const ids = this.gwIds();
     const now = Date.now();
-    const stuck = this.sql.exec("SELECT * FROM gw_plan WHERE status = 'sending' AND sent_at < ? ORDER BY sent_at LIMIT 50", now - STUCK_AFTER).toArray();
+    const stuck = this.sql.exec("SELECT * FROM gw_plan WHERE status = 'sending' AND sent_at < ? ORDER BY sent_at LIMIT ?", now - STUCK_AFTER, FIND_MAX).toArray();
     if (stuck.length) return this.gwResolve(stuck);
     const unpublished = this.sql.exec("SELECT DISTINCT product_id FROM gw_plan WHERE status = 'publish' AND product_id IS NOT NULL LIMIT ?", APPLY_BATCH.publish).toArray();
     if (unpublished.length) return this.gwPublishMade(unpublished.map((r) => r.product_id), ids);
@@ -733,14 +751,8 @@ export const gwPadMethods = {
     // --- no awaits from here on ---
     const later = Date.now();
     for (const r of results) {
-      const made = products.find((p) => p.codes[0] === r.codes[0]);
       const p = rows.find((x) => x.code === r.codes[0]);
-      if (!r.error && r.productId && made?.draft && p) {
-        this.write(
-          'INSERT OR REPLACE INTO gw_releases (code, product_id, title, release, on_sale_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-          p.code, r.productId, p.title, p.release, made.onSaleAt, later,
-        );
-      }
+      if (!r.error && r.productId && p) this.gwKeepRelease(p, r.productId, now);
     }
     const settled = this.gwSettleBatch(batch, results, later);
     return this.gwApplied(settled.done, settled.errors);
@@ -813,6 +825,11 @@ export const gwPadMethods = {
       const hit = found.get(row.code);
       if (hit) {
         this.write("UPDATE gw_plan SET status = 'publish', product_id = ?, error = NULL WHERE code = ?", hit.productId, row.code);
+        // (the review, 1 Nov 2026) a release still to come was made hidden: it still goes on sale on its pre-order day
+        if (row.action === 'create') {
+          const p = this.sql.exec('SELECT * FROM gw_pad WHERE code = ?', row.code).toArray()[0];
+          if (p) this.gwKeepRelease(p, hit.productId, row.sent_at);
+        }
         if (row.action === 'range' && row.range_key) {
           this.write('INSERT OR IGNORE INTO gw_ranges (key, product_id, title, created_at) VALUES (?, ?, ?, ?)', row.range_key, hit.productId, RANGE_BY_KEY[row.range_key]?.title || row.range_key, now);
         }
@@ -887,13 +904,31 @@ export const gwPadMethods = {
   },
 
   /**
+   * Whether a pad line made at `madeAt` is made hidden (a release still to come, before its pre-order day) and when it
+   * goes on sale: { draft, onSaleAt }. No awaits.
+   */
+  gwReleaseOf(p, madeAt) {
+    const future = Boolean(p.release && p.release > this.gwToday(madeAt));
+    const onSaleAt = future ? this.gwOnSaleAt(addDays(p.release, -ON_SALE_DAYS)) : null;
+    return { draft: future && onSaleAt > madeAt, onSaleAt };
+  },
+
+  /** A product made hidden, kept to go on sale on its pre-order day (maintenance: gwActivateReleases). No awaits. */
+  gwKeepRelease(p, productId, madeAt) {
+    const { draft, onSaleAt } = this.gwReleaseOf(p, madeAt);
+    if (!draft) return;
+    this.write(
+      'INSERT OR IGNORE INTO gw_releases (code, product_id, title, release, on_sale_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      p.code, productId, p.title, p.release, onSaleAt, Date.now(),
+    );
+  },
+
+  /**
    * A pad line as its own product: { input (productSet's), draft, onSaleAt }. On the till only until it has GW's picture;
    * a release still to come is a draft until 10am on its pre-order day (on sale now when that's passed).
    */
   gwProductInput(p, ids, now = Date.now()) {
-    const future = Boolean(p.release && p.release > this.gwToday(now));
-    const onSaleAt = future ? this.gwOnSaleAt(addDays(p.release, -ON_SALE_DAYS)) : null;
-    const draft = future && onSaleAt > now;
+    const { draft, onSaleAt } = this.gwReleaseOf(p, now);
     let tags = [];
     try {
       tags = JSON.parse(p.tags || '[]');

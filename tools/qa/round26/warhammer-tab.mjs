@@ -1,11 +1,13 @@
 // Round 26 (1 Nov 2026), the staff page's Warhammer tab on the theme mock (contract v26-gw-pad), with the real Lair app
 // in this process (node:sqlite) and a pretend Shopify behind it. The owner picks GW's real order pad, it's read in the
-// browser (SheetJS, served here from its npm copy so its integrity hash is checked), sent a part at a time, the shop is
-// read, the plan shows what changes, and Update the shop runs to the end with a progress bar. A helper never sees the
-// tab. A release still hidden shows with its on-sale day, which can be changed. No sideways scroll at 320, 390 and 1280,
-// no console errors, axe on the tab.
-// Usage: DG_THEME=/path/to/theme PAD=/path/to/pad.xlsx SHEETJS=/path/to/xlsx.mini.min.js [AXE=/path/to/axe.min.js]
+// browser (the browser's own unzip and XML reader: every line matches what the pad's own rows say, PAD_ROWS), sent a part
+// at a time, the shop is read, the plan shows what changes, and Update the shop runs to the end with a progress bar. A
+// helper never sees the tab. A release still hidden shows with its on-sale day, which can be changed. No sideways scroll
+// at 320, 390 and 1280, no console errors, axe on the tab.
+// Usage: DG_THEME=/path/to/theme PAD=/path/to/pad.xlsx PAD_ROWS=/path/to/pad-rows.json [AXE=/path/to/axe.min.js]
 //        [PORT=4991] [OUT=dir] node tools/qa/round26/warhammer-tab.mjs
+// PAD_ROWS: the pad's rows as read by another reader (openpyxl): [{ code, desc, system, race, pack, barcode, nz_trade,
+// nz_mrp, release ('YYYY-MM-DD hh:mm:ss' or null) }]
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -19,9 +21,9 @@ const { rulesFromSettings, DEFAULT_HOURS, STAFF_PERMS } = await import('../../..
 const PORT = Number(process.env.PORT || 4991);
 const BASE = `http://localhost:${PORT}`;
 const PAD = process.env.PAD;
-const SHEETJS = process.env.SHEETJS;
-if (!PAD || !fs.existsSync(PAD) || !SHEETJS || !fs.existsSync(SHEETJS)) {
-  console.error('Set PAD to GW\'s order pad (.xlsx) and SHEETJS to xlsx.mini.min.js (npm pack xlsx@0.18.5).');
+const PAD_ROWS = process.env.PAD_ROWS;
+if (!PAD || !fs.existsSync(PAD) || !PAD_ROWS || !fs.existsSync(PAD_ROWS)) {
+  console.error('Set PAD to GW\'s order pad (.xlsx) and PAD_ROWS to its rows as JSON.');
   process.exit(2);
 }
 const OWNER = { id: 7001, first_name: 'Mo', name: 'Mo Ashgrove', email: 'mo@example.com', phone: '', tags: ['staff'] };
@@ -125,15 +127,17 @@ m.mockState.before = async (req, res, url) => {
 const server = await m.serve(PORT);
 const browser = await chromium.launch();
 const settle = (page, ms = 400) => page.waitForTimeout(ms);
+const outside = [];
 const VIEWPORTS = { small: { width: 320, height: 640 }, phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
 
 async function open(size, who) {
   const phone = size !== 'desktop';
   const ctx = await browser.newContext({ viewport: VIEWPORTS[size], deviceScaleFactor: phone ? 2 : 1, isMobile: phone, hasTouch: phone });
-  // SheetJS from its npm copy (this machine can't reach the CDN); the page still checks its integrity hash
-  await ctx.route('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.mini.min.js', (route) => route.fulfill({
-    status: 200, contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: fs.readFileSync(SHEETJS),
-  }));
+  // nothing from outside the shop: the pad is read with the browser's own tools
+  await ctx.route(/^https?:\/\/(?!localhost)/, (route) => {
+    outside.push(route.request().url());
+    return route.abort();
+  });
   const page = watch(await ctx.newPage());
   m.mockState.customer = who;
   await page.goto(`${BASE}/pages/lair-staff`, { waitUntil: 'networkidle', timeout: 60000 });
@@ -176,6 +180,22 @@ const tabState = (page) => page.evaluate(() => {
   await page.click('[data-wh-pad] button[type="submit"]');
   st = await tabState(page);
   check(`${tag} no file: says to pick GW's pad`, st.error === 'Pick GW’s order pad first: the .xlsx file from GW’s trade site.', st);
+  // the browser's reader against another reader's rows: every line, every field the Lair uses
+  const read = await page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return customElements.get('staff-warhammer').readPad(new File([bytes], 'pad.xlsx'));
+  }, fs.readFileSync(PAD).toString('base64'));
+  const want = JSON.parse(fs.readFileSync(PAD_ROWS, 'utf8')).filter((r) => String(r.code ?? '').trim());
+  const serial = (key) => (key ? Math.round((Date.UTC(...key.slice(0, 10).split('-').map((x, i) => (i === 1 ? x - 1 : +x))) - Date.UTC(1899, 11, 30)) / 864e5) : null);
+  const same = (a, b) => (a == null || a === '' ? b == null || b === '' : String(a).trim() === String(b ?? '').trim());
+  const differ = [];
+  want.forEach((w, i) => {
+    const r = read[i] || {};
+    for (const [key, theirs] of [['code', w.code], ['desc', String(w.desc ?? '').trim()], ['system', w.system], ['race', w.race], ['pack', w.pack], ['barcode', w.barcode], ['nz_trade', w.nz_trade], ['nz_mrp', w.nz_mrp], ['release', serial(w.release)]]) {
+      if (!same(r[key], theirs)) differ.push(`${i} ${key}: ${JSON.stringify(r[key])} vs ${JSON.stringify(theirs)}`);
+    }
+  });
+  check(`${tag} the browser reads every pad line as another reader does (${want.length} lines)`, read.length === want.length && !differ.length, { read: read.length, want: want.length, differ: differ.slice(0, 8) });
   // the real pad
   await page.setInputFiles('#wh-file', PAD);
   const t0 = Date.now();
@@ -270,6 +290,7 @@ for (const size of ['small', 'desktop']) {
   await ctx.close();
 }
 
+check('nothing loaded from outside the shop', !outside.length, outside.slice(0, 5));
 await browser.close();
 server.close();
 const { pass, fail } = totals();

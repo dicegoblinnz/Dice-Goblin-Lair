@@ -1071,7 +1071,10 @@ export class ShopifyAdmin {
     });
   }
 
-  /** Round 26: GW variants with these SKUs (up to 40), for a batch Shopify never answered: Map of sku → { variantId, productId } */
+  /**
+   * Round 26: GW variants with these SKUs (up to 40, gw-pad.js FIND_MAX), for a batch Shopify never answered: Map of sku →
+   * { variantId, productId }
+   */
   async gwFindSkus(codes) {
     const list = [...new Set(codes.map((c) => String(c).trim()).filter((c) => /^\d{8,13}$/.test(c)))].slice(0, 40);
     if (!list.length) return new Map();

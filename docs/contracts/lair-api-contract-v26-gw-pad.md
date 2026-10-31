@@ -44,7 +44,9 @@ As the 56 live GW listings (31 Oct 2026):
 
 A product whose release date is after today is made as a draft (hidden everywhere, the till too) and goes on sale at
 10am NZ on its pre-order day: 7 days before release unless staff move it (`POST /gw/releases/:code`). Maintenance (every
-10 minutes) makes it active then. A paint colour still to be released waits for a later pad (`later` in the plan), so it
+10 minutes) makes it active then. One made in a batch whose answer was lost is kept the same way once it's found by SKU.
+When a later pad moves its release date, its on-sale day moves with it (7 days before the new date, whatever staff had
+set), at the plan, so it never goes on sale at the old pre-order day. A paint colour still to be released waits for a later pad (`later` in the plan), so it
 never shows on its range's product early. Round 25's It's in email, and the shop's list of parcels and pickups, wait for
 8am on release day for an order with an advance-order line that's in early (`gw_orderins.release`).
 
@@ -57,6 +59,10 @@ All answers are JSON; errors are `{ error }` with the words below.
 The pad a part at a time, in order (part 1 has no `upload`; every later part sends the one part 1's answer gave). At
 most 200 rows a part; the staff page sends 60. `date` is the pad's date (`YYYY-MM-DD`, else today). A part sent again is
 kept again. Part 1 clears the last pad and plan.
+
+Part 1 is turned away (409, "Finish updating the shop first: some changes are still on their way to Shopify or the
+till. Carry on updating the shop, then add the new pad.") while any change is still with Shopify or made but not yet
+on the till, since a new pad clears the plan.
 
 Each row (the pad's Export sheet, header row 4): `{ code (Product Code), desc (Description), system, race, ss (SS Code),
 module, release (Release Date: an Excel day number or a date), minstock (Minimum Stock Level), pack (Qty in Pack),
@@ -92,8 +98,8 @@ changes }`), `page` and `more`.
 
 ### POST /gw/apply
 
-The next batch: a batch Shopify never answered (looked for by SKU after 2 minutes: found ones only need to be on the
-till, the rest go back on the list), then products made but not yet on the till, then updates and stops (20 products),
+The next batch: a batch Shopify never answered (looked for by SKU after 2 minutes, 40 at a time: found ones only need
+to be on the till, the rest go back on the list), then products made but not yet on the till, then updates and stops (20 products),
 new products (5), paint colours (a range's product made with 25, then 50 at a time). → `{ done, left, errors: [{ code,
 title, error }], wait, busy, summary }`. Call again until `left` is 0, waiting `wait` ms first. `busy` is "Shopify is
 busy. Carrying on in a moment." A change Shopify turns down is tried 3 times, then left as an error; a missing
