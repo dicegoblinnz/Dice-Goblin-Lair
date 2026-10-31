@@ -115,12 +115,12 @@ lair.shopify.gwScheduleSave = async (shopId, value, digest) => {
   return { ok: true };
 };
 lair.shopify.gwReceiveLookup = async (codes) => new Map([...stock].filter(([, v]) => codes.includes(v.code)).map(([id, v]) => [v.code, { variantId: id, inventoryItemId: itemOf(id), tracked: true, title: v.title }]));
-// a part Shopify doesn't answer (fails: how many times in a row)
-let failNext = 0;
+// part 2 of a delivery Shopify doesn't answer (how many times in a row)
+let failPart2 = 0;
 lair.shopify.gwAdjust = async (changes, locationId, key) => {
   adjustCalls.push(key);
-  if (failNext > 0) {
-    failNext -= 1;
+  if (failPart2 > 0 && /-2$/.test(key)) {
+    failPart2 -= 1;
     throw new Error('The network connection was lost.');
   }
   if (adjustKeys.has(key)) return { ok: true };
@@ -433,12 +433,7 @@ const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: 'UTC', weekday
   check(`${tag} 30 lines counted`, (await text(page, '[data-gw-total]')) === '30 items in 30 lines');
   // part 1 goes in; Shopify doesn't answer part 2 (three tries)
   const before = adjustCalls.length;
-  page.on('request', (req) => {
-    if (req.url().includes('/gw/receive') && JSON.parse(req.postData() || '{}').part === 2 && failNext === 0 && !page.failedOnce) {
-      page.failedOnce = true;
-      failNext = 3;
-    }
-  });
+  failPart2 = 3;
   await page.click('[data-gw-ask]');
   await page.click('[data-gw-send]');
   await page.waitForSelector('[data-gw-retry]', { timeout: 30000 });
@@ -458,7 +453,7 @@ const day = (key) => new Intl.DateTimeFormat('en-NZ', { timeZone: 'UTC', weekday
   const parts = adjustCalls.slice(before);
   const counts = [...stock.entries()].filter(([id]) => Number(id.split('/').pop()) > 800).map(([, v]) => v.available);
   check(`${tag} done: 30 items, each code added once (part 2's key sent again, never twice)`, done.includes('30 items in 30 lines') && counts.every((n) => n === 1)
-    && new Set(parts).size === 2, { done: done.slice(0, 200), parts, counts });
+    && new Set(parts).size === 2 && failPart2 === 0, { done: done.slice(0, 200), parts, counts });
   check(`${tag} no console errors`, !page.errors.length, page.errors);
   await ctx.close();
 }
