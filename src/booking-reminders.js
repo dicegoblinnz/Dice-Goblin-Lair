@@ -14,10 +14,12 @@
  *   nothing to pay; never on the day itself. A booking that moves gets one again for its new time: reminded_start is the
  *   start it went for. At most REMINDERS_A_RUN a run, with the event reminders' batch rules: claimed before it's sent,
  *   and unmarked for the next run when Resend is down or busy (5xx, 429).
- * - Theme settings › Lair bookings › "Email a reminder two days before each booking" (lair_booking_reminders, on unless
- *   it's off) stops them. None go while the Lair has only its built-in rules (Shopify unread): a later run catches up.
+ * - Theme settings › Lair bookings › "Email a reminder two days before each booking" (lair_booking_reminders): they go
+ *   only once the live theme's settings say true, so a Lair deployed before its theme sends none. None go while the
+ *   Lair has only its built-in rules (Shopify unread): a later run catches up.
  * - The cancel link: claiming a reminder gives its booking or sign-up a random cancel_key (kept from then on), and the
- *   email's link (/pages/my-lair?cancel=<code>&key=<key>) works without logging in. POST /cancel-links/view says what it
+ *   email's link (/pages/my-lair#cancel=<code>&key=<key>: in the fragment, which browsers never send to a server, so the
+ *   key is in no one's logs) works without logging in. POST /cancel-links/view says what it
  *   is and whether it can be cancelled now; POST /cancel-links/cancel cancels it by the person's own path in My Lair
  *   (cancelOwnBooking and cancelOwnJoin in lair.js), with its rules and side effects. The key only ever cancels.
  * - GET /ics/b/<booking id>.ics: a seat or table as a calendar file, with nothing about the person in it.
@@ -63,13 +65,17 @@ export const BOOKING_REMINDER_WORDS = {
   place: (title, people) => (people > 1 ? `Your ${people} places at ${title} are saved.` : `Your place at ${title} is saved.`),
   /** The preheader's second sentence, while it's free to cancel */
   freeUntil: (until) => `Cancel free until ${until}.`,
-  /** "On your tab" */
+  /** What it costs: a member's "On your tab", a guest's "To pay" (a guest has no tab) */
+  tab: 'On your tab',
+  toPay: 'To pay',
   due: (amount) => `${amount}, paid at the counter on the day`,
   part: (due, paid, amount) => `${due} left to pay at the counter on the day (${paid} of ${amount} paid)`,
   paid: (amount) => `${amount}, paid already. Thank you!`,
   paidOnline: (amount) => `${amount}, paid online. Thank you!`,
   covered: (people) => `Nothing: your GM's paying for your ${people > 1 ? 'seats' : 'seat'}`,
   nothing: 'Nothing to pay',
+  /** a guest's, under "To pay" */
+  nothingGuest: 'Nothing',
   /** What cancelling frees up */
   back: {
     seat: (people) => (people > 1 ? 'your seats go back on the board for someone else' : 'your seat goes back on the board for someone else'),
@@ -83,8 +89,8 @@ export const BOOKING_REMINDER_WORDS = {
   afterCovered: (full) => `After that, if you can't come, the full ${full} goes on your tab.`,
   afterCoveredGuest: (full) => `After that, if you can't come, the full ${full} is yours to pay.`,
   paidBack: (until, back, amount) => `Can't make it? Cancel free until ${until} and ${back}, and you'll get your ${amount} back. After that it stays paid, even if you can't come.`,
-  anyTime: (back) => `Can't make it? Cancel in My Lair and ${back}.`,
-  anyTimeGuest: (back) => `Can't make it? Cancel with the link above and ${back}.`,
+  /** nothing to pay, or nothing locks: members and guests alike, since the cancel link is right there */
+  anyTime: (back) => `Can't make it? Cancel any time before it starts and ${back}.`,
   /** The button and the links under it */
   calendar: 'Add to my calendar',
   google: 'Google Calendar',
@@ -140,7 +146,7 @@ export const bookingReminderMethods = {
    * next run). No awaits. → { at, items: [{ table, id }], letters, summary: { sent, seats, tables, signUps } } or null.
    */
   claimBookingReminders(rules, now) {
-    if (!emailReady(this.env) || rules?.bookingReminders === false || !this.eventsKnown()) return null;
+    if (!emailReady(this.env) || rules?.bookingReminders !== true || !this.eventsKnown()) return null;
     const time = new LairTime(rules.tz);
     const hour = time.parts(now).h;
     if (hour < REMIND_FROM_HOUR || hour >= REMIND_UNTIL_HOUR) return null;
@@ -232,7 +238,7 @@ export const bookingReminderMethods = {
 
   /**
    * The reminder (D1, warm first; Gobgob signs it): "See you Sunday, Ria?", what's saved and who's counting on them, the
-   * details as its confirmation had them (when, the game, table or event, where, what's on their tab, and the loyalty
+   * details as its confirmation had them (when, the game, table or event, where, what it costs, and the loyalty
    * card once that's merged), Add to my calendar, Google Calendar, My Lair (members), the cancel link while the rules let
    * them cancel online, and what cancelling means, from cancelRule. d: a claimed reminder. No awaits.
    */
@@ -277,7 +283,8 @@ export const bookingReminderMethods = {
     const myLair = this.page('myLair');
     const links = [{ label: W.google, url: this.reminderGoogleLink(d, rules) }];
     if (x.customerId) links.push({ label: W.myLair, url: `${myLair}?view=ml-${prefix}-${encodeURIComponent(x.ref)}` });
-    if (canCancel) links.push({ label: W.cancel[type](people), url: `${myLair}?cancel=${encodeURIComponent(x.ref)}&key=${d.key}` });
+    // the code and key in the fragment: browsers never send it, so it's in no server's logs (Shopify's included)
+    if (canCancel) links.push({ label: W.cancel[type](people), url: `${myLair}#cancel=${encodeURIComponent(x.ref)}&key=${d.key}` });
     const ics = type === 'signup' ? this.icsLink(o) : `${String(this.env.PUBLIC_URL || 'https://dice-goblin-lair.dicegoblinnz.workers.dev').replace(/\/$/, '')}/ics/b/${encodeURIComponent(x.id)}.ics`;
     return this.letter(x.email, W.subject(day, clockLabel(time.minutesOf(d.start))), {
       title: W.title(day, firstName(x.name)),
@@ -290,30 +297,36 @@ export const bookingReminderMethods = {
     });
   },
 
-  /** The reminder's "On your tab" row (a sign-up with nothing to pay says what its event says about entry). No awaits. */
+  /**
+   * The reminder's row for what it costs: a member's "On your tab", a guest's "To pay" (a guest has no tab); a sign-up
+   * with nothing to pay says what its event says about entry. No awaits.
+   */
   reminderTabRow(d, rules) {
     const W = BOOKING_REMINDER_WORDS;
     const { x, type, game, o } = d;
+    const member = Boolean(x.customerId);
+    const label = member ? W.tab : W.toPay;
     const people = Math.max(1, Number(x.people) || 1);
     const amount = x.amount || 0;
     const paidSoFar = x.paidAmount || 0;
     const due = owing(x);
-    if (type === 'seat' && x.coveredBy && !game?.free) return ['On your tab', W.covered(people)];
-    if (x.paid && x.pay === 'now' && amount > 0) return ['On your tab', W.paidOnline(money(paidSoFar || amount))];
-    if (amount > 0 && !x.waived && due === 0) return ['On your tab', W.paid(money(paidSoFar || amount))];
-    if (due > 0 && paidSoFar > 0) return ['On your tab', W.part(money(due), money(paidSoFar), money(amount))];
-    if (due > 0) return ['On your tab', W.due(money(due))];
+    if (type === 'seat' && x.coveredBy && !game?.free) return [label, W.covered(people)];
+    if (x.paid && x.pay === 'now' && amount > 0) return [label, W.paidOnline(money(paidSoFar || amount))];
+    if (amount > 0 && !x.waived && due === 0) return [label, W.paid(money(paidSoFar || amount))];
+    if (due > 0 && paidSoFar > 0) return [label, W.part(money(due), money(paidSoFar), money(amount))];
+    if (due > 0) return [label, W.due(money(due))];
     if (type === 'signup' && !amount && !x.waived) {
       const said = this.eventPriceLine(o, (rules.events || []).find((e) => e.id === o.eventId) || {});
       if (said) return ['Entry', said];
     }
-    return ['On your tab', W.nothing];
+    return [label, member ? W.nothing : W.nothingGuest];
   },
 
   /**
    * What cancelling means, from cancelRule, never promising what the rules don't allow: free until the deadline (then
    * on their tab, theirs to pay, or the full price for a seat their GM pays for), any time before it starts (nothing to
-   * pay, nothing locks), or locked in already (the tab's words). Paid online before round 15: its confirmation's words.
+   * pay, nothing locks: the cancel link is right there, members and guests alike), or locked in already (the tab's
+   * words). One waived still locks, so it keeps its deadline. Paid online before round 15: its confirmation's words.
    * No awaits.
    */
   reminderCancelLine(d, rules, rule, until) {
@@ -328,7 +341,7 @@ export const bookingReminderMethods = {
       if (covered) return GM_COVER_WORDS.seatLocked(rules.refundHours);
       return member ? TAB_WORDS.lockedNow(rules.refundHours) : TAB_WORDS.lockedNowGuest(rules.refundHours);
     }
-    if (!rule.lockable) return member ? W.anyTime(back) : W.anyTimeGuest(back);
+    if (!rule.lockable) return W.anyTime(back);
     if (covered) {
       const full = money(seatPriceOf(game, rules) * people);
       return `${W.cancelFree(until, back)} ${member ? W.afterCovered(full) : W.afterCoveredGuest(full)}`;

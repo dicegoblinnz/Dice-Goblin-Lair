@@ -1111,8 +1111,9 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // counter; each event says how it's paid).
     payOnline: settings.lair_pay_online !== false,
     refundHours: Number(settings.lair_refund_hours ?? 24),
-    // Round 29: "Email a reminder two days before each booking" (src/booking-reminders.js): on unless it's off
-    bookingReminders: settings.lair_booking_reminders !== false,
+    // Round 29: "Email a reminder two days before each booking" (src/booking-reminders.js): on only once the live
+    // theme's settings say true, so a Lair deployed before its theme (no key yet) sends none
+    bookingReminders: settings.lair_booking_reminders === true,
     prices,
     rooms: builtRooms,
     events,

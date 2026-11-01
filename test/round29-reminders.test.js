@@ -62,7 +62,9 @@ const EVENTS = [
   { id: 'quiz', title: 'Trivia night', type: 'social', start: at(SUN, 19), end: at(SUN, 21), tables: '', capacity: 20, entryFee: 500 },
   { id: 'warhammer', title: 'Warhammer night', type: 'wargame', start: at(SUN, 16), end: at(SUN, 21), tables: '', gameTables: 'T14+T15, T16+T17' },
 ];
-const SETTINGS = { lair_hours: DEFAULT_HOURS, lair_shop_tables: '', store_phone: '021 159 6894' };
+// The live theme's settings before round 29 (no lair_booking_reminders), and with reminders switched on
+const SHOP_SETTINGS = { lair_hours: DEFAULT_HOURS, lair_shop_tables: '', store_phone: '021 159 6894' };
+const SETTINGS = { ...SHOP_SETTINGS, lair_booking_reminders: true };
 const rulesWith = (more = {}, events = EVENTS) => rulesFromSettings({ ...SETTINGS, ...more }, ROOMS, events, { address: ADDRESS });
 // People by their Shopify customer IDs (made up): the main account, a trusted GM (Ellie) and four members
 const OWNER = '9001';
@@ -130,10 +132,10 @@ const only = (to) => {
 const preheader = (m) => (m.html.match(/<div style="display:none;[^"]*">([^<]*)<\/div>/) || [])[1]?.replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 /** A link's address in the plain text ("Cancel my seat: https://…") */
 const linkIn = (m, label) => (m.text.match(new RegExp(`^${label}: (\\S+)$`, 'm')) || [])[1] || null;
-/** The cancel link's code and key */
+/** The cancel link's code and key, from its fragment (#cancel=…&key=…) */
 const keyOf = (m) => {
-  const url = new URL(linkIn(m, 'Cancel my (?:seat|seats|table|sign-up)'));
-  return { ref: url.searchParams.get('cancel'), key: url.searchParams.get('key') };
+  const hash = new URLSearchParams(new URL(linkIn(m, 'Cancel my (?:seat|seats|table|sign-up)')).hash.slice(1));
+  return { ref: hash.get('cancel'), key: hash.get('key') };
 };
 const view = (body, client = '203.0.113.9') => call('POST', 'cancel-links/view', body, '', { 'X-Lair-Client': client });
 const cancelBy = (body, client = '203.0.113.9') => call('POST', 'cancel-links/cancel', body, '', { 'X-Lair-Client': client });
@@ -400,16 +402,19 @@ test('round 29: daylight saving starts on Sunday 26 September 2027: a game that 
   assert.match(m.text, /Cancel free until 5pm Saturday and your seat goes back on the board for someone else\./);
 });
 
-test('round 29: the kill switch: Theme settings › Lair bookings › "Email a reminder two days before each booking" off sends none; absent means on', async () => {
-  assert.equal(rulesFromSettings({}, ROOMS, []).bookingReminders, true, 'absent: on');
+test('round 29: the switch: reminders go only once the live theme\'s settings say true (lair_booking_reminders); absent (a Lair deployed before its theme) or false sends none', async () => {
+  assert.equal(rulesFromSettings({}, ROOMS, []).bookingReminders, false, 'absent: off');
   assert.equal(rulesFromSettings({ lair_booking_reminders: true }, ROOMS, []).bookingReminders, true);
   assert.equal(rulesFromSettings({ lair_booking_reminders: false }, ROOMS, []).bookingReminders, false);
   const g = await game();
   await seat(g.id, RIA, 'Ria Moana');
+  lair.rulesCache = rulesFromSettings(SHOP_SETTINGS, ROOMS, EVENTS, { address: ADDRESS });
+  assert.equal(went(await runAt(at(FRI, 9))), 0, 'no key (the live theme before its round 29 update): none');
   lair.rulesCache = rulesWith({ lair_booking_reminders: false });
-  assert.equal(went(await runAt(at(FRI, 9))), 0);
+  assert.equal(went(await runAt(at(FRI, 9, 5))), 0, 'false: none');
   lair.rulesCache = rulesWith({ lair_booking_reminders: true });
-  assert.equal(went(await runAt(at(FRI, 9, 10))), 1);
+  assert.equal(went(await runAt(at(FRI, 9, 10))), 1, 'true: it goes');
+  assert.equal(reminders().length, 1);
 });
 
 /* ---------------- what it says ---------------- */
@@ -439,7 +444,8 @@ test('round 29: a member\'s seat: "See you Sunday, Ria?", her GM and 3 players c
   assert.equal(linkIn(m, 'See it in My Lair'), `${MY_LAIR}?view=ml-st-${ria.ref}`);
   const key = row(ria.id).cancel_key;
   assert.match(key, /^[0-9a-f]{32}$/, 'a random key, made when the reminder was claimed');
-  assert.equal(linkIn(m, 'Cancel my seat'), `${MY_LAIR}?cancel=${ria.ref}&key=${key}`);
+  assert.equal(linkIn(m, 'Cancel my seat'), `${MY_LAIR}#cancel=${ria.ref}&key=${key}`);
+  assert.equal(new URL(linkIn(m, 'Cancel my seat')).search, '', 'nothing in the query: the key is in the fragment, which browsers never send to a server');
   assert.match(m.text, /\n\nCan't make it\? Cancel free until 6pm Saturday and your seat goes back on the board for someone else\. After that, the \$15 stays on your tab\.\n\nSee you at the Lair!\nGobgob, the Dice Goblin\n/);
 });
 
@@ -469,7 +475,7 @@ test('round 29: a seat the GM pays for: nothing on their tab, and after the dead
   assert.ok(linkIn(m, 'Cancel my seat'));
 });
 
-test('round 29: a free seat (nothing to pay, nothing locks): cancel in My Lair any time before it starts', async () => {
+test('round 29: a free seat (nothing to pay, nothing locks): cancel any time before it starts, with the link right there', async () => {
   const g = await game({ title: 'Monster of the Week', system: 'Monster of the Week' });
   ok(await call('POST', `games/${g.id}/free`, { free: true }, OWNER));
   await seat(g.id, LEO, 'Leo Park');
@@ -477,13 +483,38 @@ test('round 29: a free seat (nothing to pay, nothing locks): cancel in My Lair a
   const m = only('leo@example.com');
   assert.match(m.text, /Game: +Monster of the Week\n/, 'a game named for its system says it once');
   assert.match(m.text, /On your tab: +Nothing to pay\n/);
-  assert.match(m.text, /\n\nCan't make it\? Cancel in My Lair and your seat goes back on the board for someone else\.\n\n/);
-  assert.doesNotMatch(m.text, /Cancel free until/);
+  assert.match(m.text, /\n\nCan't make it\? Cancel any time before it starts and your seat goes back on the board for someone else\.\n\n/);
+  assert.doesNotMatch(m.text, /Cancel free until|Cancel in My Lair/);
   assert.equal(preheader(m), 'Your seat at Monster of the Week is saved. Sunday 8 November, 6pm to 10pm.');
   assert.ok(linkIn(m, 'Cancel my seat'), 'it can still be cancelled online');
 });
 
-test('round 29: a member\'s table and a guest\'s: "Your table for 4 is saved."; the guest\'s has no My Lair link, its own cancel link and "yours to pay", with no reply-or-call line', async () => {
+test('round 29: nothing to pay or nothing locks: "Cancel any time before it starts" for a table and a sign-up too, guests the same as members (the link is right there); a guest\'s free seat is "To pay: Nothing"', async () => {
+  const free = await game({ title: 'Monster of the Week', system: 'Monster of the Week' });
+  ok(await call('POST', `games/${free.id}/free`, { free: true }, OWNER));
+  await seat(free.id, '', 'Sam Jones');
+  // a guest's table booked before round 15 started: its old rules, so nothing locks
+  const old = await table('', 'Jo Smith', { people: 2 });
+  lair.sql.exec('UPDATE bookings SET created_at = ? WHERE id = ?', lair.lockFrom - 24 * HOUR, old.id);
+  await signUp('', 'Tia Brown', `alley@${SAT}`, { people: 2 });
+  await runAt(at(THU, 9));
+  await runAt(at(FRI, 9));
+  const s = only('sam@example.com');
+  assert.match(s.text, /To pay: +Nothing\n/);
+  assert.match(s.text, /\n\nCan't make it\? Cancel any time before it starts and your seat goes back on the board for someone else\.\n\n/);
+  const j = only('jo@example.com');
+  assert.match(j.text, /To pay: +\$20, paid at the counter on the day\n/);
+  assert.match(j.text, /\n\nCan't make it\? Cancel any time before it starts and your table goes back for someone else\.\n\n/);
+  const t = only('tia@example.com');
+  assert.match(t.text, /Entry: +Free entry\n/);
+  assert.match(t.text, /\n\nCan't make it\? Cancel any time before it starts and your places go to someone else\.\n\n/);
+  for (const x of [s, j, t]) {
+    assert.doesNotMatch(x.text, /Cancel in My Lair|link above|On your tab/);
+    assert.ok(linkIn(x, 'Cancel my (?:seat|table|sign-up)'), `${x.to}: the cancel link is in the email`);
+  }
+});
+
+test('round 29: a member\'s table and a guest\'s: "Your table for 4 is saved."; the guest\'s has no My Lair link, "To pay" (no tab), its own cancel link and "yours to pay", with no reply-or-call line', async () => {
   const kais = await table(KAI, 'Kai Tane');
   const sams = await table('', 'Sam Jones', { tables: ['T4'], people: 2, start: at(SUN, 14), end: at(SUN, 16) });
   await runAt(at(FRI, 9));
@@ -496,15 +527,16 @@ test('round 29: a member\'s table and a guest\'s: "Your table for 4 is saved."; 
   assert.match(k.text, /On your tab: +\$40, paid at the counter on the day\n/);
   assert.equal(linkIn(k, 'Add to my calendar'), `https://lair.example.com/ics/b/${kais.id}.ics`);
   assert.equal(linkIn(k, 'See it in My Lair'), `${MY_LAIR}?view=ml-bk-${kais.ref}`);
-  assert.equal(linkIn(k, 'Cancel my table'), `${MY_LAIR}?cancel=${kais.ref}&key=${row(kais.id).cancel_key}`);
+  assert.equal(linkIn(k, 'Cancel my table'), `${MY_LAIR}#cancel=${kais.ref}&key=${row(kais.id).cancel_key}`);
   assert.match(k.text, /Can't make it\? Cancel free until 2pm Saturday and your table goes back for someone else\. After that, the \$40 stays on your tab\./);
   assert.match(new URL(linkIn(k, 'Google Calendar')).searchParams.get('text'), /^Table for 4 at Dice Goblin$/);
 
   const s = only('sam@example.com');
   assert.match(s.text, /^SEE YOU SUNDAY, SAM\?\n\nYour table for 2 is saved\.\n\n/);
-  assert.match(s.text, /On your tab: +\$20, paid at the counter on the day\n/);
+  assert.match(s.text, /To pay: +\$20, paid at the counter on the day\n/);
+  assert.doesNotMatch(s.text, /On your tab/, 'a guest has no tab');
   assert.equal(linkIn(s, 'See it in My Lair'), null, 'no account, so no My Lair');
-  assert.equal(linkIn(s, 'Cancel my table'), `${MY_LAIR}?cancel=${sams.ref}&key=${row(sams.id).cancel_key}`);
+  assert.equal(linkIn(s, 'Cancel my table'), `${MY_LAIR}#cancel=${sams.ref}&key=${row(sams.id).cancel_key}`);
   assert.match(s.text, /\n\nCan't make it\? Cancel free until 2pm Saturday and your table goes back for someone else\. After that it's yours to pay, even if you can't come\.\n\n/);
   assert.doesNotMatch(s.text, /reply to this email|give us a call/i);
 });
@@ -535,15 +567,15 @@ test('round 29: event sign-ups: "Your 3 places at …", "Your place at Oddity Al
   assert.match(l.text, /Entry: +Free entry\n/);
   assert.equal(linkIn(l, 'Add to my calendar'), `https://lair.example.com/ics/alley%40${SAT}.ics`);
   assert.equal(linkIn(l, 'See it in My Lair'), `${MY_LAIR}?view=ml-ej-${leos.ref}`);
-  assert.equal(linkIn(l, 'Cancel my sign-up'), `${MY_LAIR}?cancel=${leos.ref}&key=${joinRow(leos.id).cancel_key}`);
-  assert.match(l.text, /\n\nCan't make it\? Cancel in My Lair and your place goes to someone else\.\n\n/);
+  assert.equal(linkIn(l, 'Cancel my sign-up'), `${MY_LAIR}#cancel=${leos.ref}&key=${joinRow(leos.id).cancel_key}`);
+  assert.match(l.text, /\n\nCan't make it\? Cancel any time before it starts and your place goes to someone else\.\n\n/);
   await runAt(at(FRI, 9));
   const r = only('ria@example.com');
   assert.equal(r.subject, 'See you Sunday at midday?');
   assert.match(r.text, /Your 3 places at Blood on the Clocktower are saved\./);
   assert.match(r.text, /On your tab: +\$30, paid at the counter on the day\n/);
   assert.match(r.text, /Coming: +Ria Moana, 2 friends\n/);
-  assert.equal(linkIn(r, 'Cancel my sign-up'), `${MY_LAIR}?cancel=${rias.ref}&key=${joinRow(rias.id).cancel_key}`);
+  assert.equal(linkIn(r, 'Cancel my sign-up'), `${MY_LAIR}#cancel=${rias.ref}&key=${joinRow(rias.id).cancel_key}`);
   assert.match(r.text, /Can't make it\? Cancel free until midday Saturday and your places go to someone else\. After that, the \$30 stays on your tab\./);
 });
 

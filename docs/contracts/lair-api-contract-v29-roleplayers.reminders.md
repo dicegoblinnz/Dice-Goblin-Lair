@@ -47,8 +47,10 @@ the Monday lines in `src/report.js` and the public `/ics/b/` route in `src/index
   429): the mark comes off, so the next run tries again (still in the window). Anything else (an address Resend refused)
   isn't tried again. At most 100 a run (one batch); any more go in the next run, 10 minutes later.
 - **The switch:** Theme settings › Lair bookings › Reminders › "Email a reminder two days before each booking"
-  (`lair_booking_reminders`, a checkbox; on unless it's off, so a store without it set sends them). Info: "One-off TTRPG
-  seats, table bookings and event sign-ups. Saved weekly seats don't get one." `rules.bookingReminders`.
+  (`lair_booking_reminders`, a checkbox, unticked by default). Info: "One-off TTRPG seats, table bookings and event
+  sign-ups. Saved weekly seats don't get one." `rules.bookingReminders` is true only when the **live** theme's settings
+  (`config/settings_data.json` › `current`) say `true`: absent (a Lair deployed before its theme) or false sends none,
+  so the Lair never sends a cancel link to a page without the cancel card. The website lab's settings have it true.
 - None go while the Lair has only its built-in rules (Shopify unread): a later run, or the catch-up, sends them.
 
 ### The 10-minute run, and `POST /internal/reminders`
@@ -86,16 +88,17 @@ deadline in Lair time ("6pm Saturday", 2.4), `<$>` an amount ("$15", "$12.50").
   - sign-up: Event "Oddity Alley"; Coming (more than one: "Ria Moana, 2 friends")
   - Where: the round 11 words: "Dice Goblin, <store address>" then "Upstairs in Royal Oak Mall, above Whitcoulls. The
     lift is next to Whitcoulls." and, on a Saturday or Sunday, "On weekends the lift runs during mall hours, 10am to 5pm."
-  - On your tab: "$15, paid at the counter on the day" / a seat the GM pays for: "Nothing: your GM's paying for your
-    seat" ("seats") / "Nothing to pay" / paid: "$15, paid already. Thank you!" / paid online before round 15: "$15, paid
-    online. Thank you!" / part paid: "$5 left to pay at the counter on the day ($15 of $20 paid)". A sign-up with nothing
-    to pay says what its event says instead: Entry "Free entry", or its price note ("A booster pack…").
+  - On your tab (a member's) or To pay (a guest's, who has no tab): "$15, paid at the counter on the day" / a seat the
+    GM pays for: "Nothing: your GM's paying for your seat" ("seats") / nothing: a member's "Nothing to pay", a guest's
+    "Nothing" / paid: "$15, paid already. Thank you!" / paid online before round 15: "$15, paid online. Thank you!" /
+    part paid: "$5 left to pay at the counter on the day ($15 of $20 paid)". A sign-up with nothing to pay says what its
+    event says instead: Entry "Free entry", or its price note ("A booster pack…").
   - Loyalty card: the loyalty card round's `cardLine(customerId, rules)` (a member's; left out without it).
 - **Button:** "Add to my calendar": a seat or table `GET /ics/b/<booking id>.ics` (2.5), a sign-up its event date's
   round 11 file `GET /ics/<date id>.ics`.
 - **Links:** "Google Calendar" · "See it in My Lair" (members only: `/pages/my-lair?view=ml-st-<code>`, tables
   `ml-bk-<code>`, sign-ups `ml-ej-<code>`, the ticket ids in `assets/my-lair.js`) · "Cancel my seat" ("Cancel my seats",
-  "Cancel my table", "Cancel my sign-up"): `/pages/my-lair?cancel=<code>&key=<key>` (2.6), for members and guests,
+  "Cancel my table", "Cancel my sign-up"): `/pages/my-lair#cancel=<code>&key=<key>` (2.6), for members and guests,
   only while the rules let it be cancelled online now. Google Calendar for a seat or table: the title (2.5), times,
   "See it in My Lair: https://www.dicegoblin.nz/pages/my-lair" and the place; for a sign-up, round 11's.
 - **Outro** (what cancelling means, from `cancelRule`; `<back>` is "your seat goes back on the board for someone else"
@@ -109,9 +112,12 @@ deadline in Lair time ("6pm Saturday", 2.4), `<$>` an amount ("$15", "$12.50").
     full `<$ the seat's price>` goes on your tab." (a guest: "… the full `<$>` is yours to pay.")
   - paid already (at the counter): "Can't make it? Cancel free until `<until>` and `<back>`, and you'll get your `<$>`
     back. After that it stays paid, even if you can't come."
-  - waived (nothing due): "Can't make it? Cancel free until `<until>` and `<back>`."
-  - nothing to pay, or nothing locks (a free seat, one booked before round 15, an event date that's gone): a member
-    "Can't make it? Cancel in My Lair and `<back>`."; a guest "Can't make it? Cancel with the link above and `<back>`."
+  - waived (nothing due, but it still locks, so it keeps its deadline): "Can't make it? Cancel free until `<until>` and
+    `<back>`."
+  - nothing to pay, or nothing locks (a free seat or event, one booked before round 15, an event date that's gone),
+    members and guests alike, since the cancel link is right there: "Can't make it? Cancel any time before it starts
+    and `<back>`." ("Can't make it? Cancel any time before it starts and your seat goes back on the board for someone
+    else.", "… and your table goes back for someone else.", "… and your place goes to someone else.")
   - already locked when it goes (never with the 24-hour cut-off, which is at least 27 hours after a reminder; only a
     longer one could): `TAB_WORDS.lockedNow` (a member) or `lockedNowGuest`; a seat the GM pays for,
     `GM_COVER_WORDS.seatLocked`. No cancel link.
@@ -145,8 +151,9 @@ Saturday**, and one on 26 September 2027 until **5pm Saturday**, as the lock its
 
 ## 2.6 The cancel link: one tap, no login
 
-The email's link is `/pages/my-lair?cancel=<code>&key=<key>` (the booking's or sign-up's code, like `RM-OWLBEAR-17`,
-and its `cancel_key`). Both routes are public, through the store's app proxy (`/apps/liar/cancel-links/…`), with the
+The email's link is `/pages/my-lair#cancel=<code>&key=<key>` (the booking's or sign-up's code, like `RM-OWLBEAR-17`,
+and its `cancel_key`). They ride in the fragment, which browsers never send to a server, so the key is in no server's
+logs, Shopify's included. Both routes are public, through the store's app proxy (`/apps/liar/cancel-links/…`), with the
 code and key in the JSON body, never an address. Nobody is looked up: logged in or not, they work the same. The key
 only ever cancels.
 
@@ -180,8 +187,12 @@ only ever cancels.
 
 ### The website (`assets/lair-cancel-link.js`, `<lair-cancel-link>` on My Lair, outside the logged-in part)
 - `snippets/cancel-link-early.liquid`, first in `layout/theme.liquid`'s head on the My Lair page, takes `cancel` and
-  `key` out of the address (`history.replaceState`) before any other script runs, so no analytics or ad script, no later
-  request's Referer, and no refresh sees them. They wait in `window.DGCancelLink`, read once.
+  `key` out of the fragment (`history.replaceState`) before any other script runs, so no analytics or ad script, none of
+  the page's own (My Lair's hash router included), no later request's Referer and no refresh sees them. They wait in
+  `window.DGCancelLink`, read once.
+- A link opened in a tab that's on My Lair already changes only the fragment (no new page). The snippet's listeners
+  for `popstate` and `hashchange` are the page's first, so they take the code and key, stop the event before any other
+  listener of the page's (My Lair's router included) gets it, and tell the card (`dg:cancel-link`), which asks afresh.
 - The card: "Can't make it?", then "Give up your seat at Candlekeep Mysteries, Sunday 8 November, 6pm?" ("Give up your
   2 seats at …", "Cancel your table for 2, …?", "Cancel your table for 2 at Warhammer night, …?", "Cancel your place at
   …?", "Cancel your 2 places at …?"), "It's free to cancel until 6pm Saturday." (or "You can cancel any time before it
@@ -219,4 +230,7 @@ Two lines in the weekly email, after "No-shows", so Mo can judge whether reminde
 ## 2.8 Before it goes live
 
 - A security review of the cancel link (keyed, public, cancels without a login): see the round's report.
-- Mo turns the switch off in Theme settings if he wants it paused; it's on by default.
+- Going live means the live theme's settings saying `"lair_booking_reminders": true` (ticking the box in Theme settings,
+  or the lab's `settings_data.json` going live with it), after the theme with the cancel card is live. Until then the
+  Lair sends none. Unticking it stops them.
+- Keep click tracking off for the sending domain in Resend: a tracked link goes through Resend's servers, key and all.
