@@ -24,7 +24,7 @@ import {
 import { customerIdNumber, dateLabel, firstName, longDay, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
 import { accountLine, tabItems } from './lines.js';
 import { FOUND_US, FOUND_US_WORDS, askFoundUs } from './foundus.js';
-import { cardFullWords, cardHeading, freshWords, loyaltyCard, rollWords, stampCount, stampNote, stampRows, stampsLeft, welcomeWords } from './loyalty.js';
+import { cardFullWords, cardHeading, freshWords, headStartWords, loyaltyCard, rollWords, stampCount, stampNote, stampRows, stampsLeft, welcomeWords } from './loyalty.js';
 import { saleStrip } from './sale.js';
 import { amountProblem, bookerPayer, paidSummary, parseDollars, paymentsLine, pendingState, personShare, shareSummary, WAITING } from './split.js';
 import {
@@ -574,6 +574,8 @@ function MoneySection({ row, plan }) {
  * for each stamp and a grey ring for each space left, then the count in big type ("7 of 10 stamps", with "New stamp"
  * when this screen saw one land), what's left to the d20 roll, any rolls waiting in My Lair, and when stamps land. On a
  * member's card, "Add a stamp" for a session the Lair app doesn't know about, and "Undo that stamp" after one.
+ * Round 29 (Mo, 2 Nov 2026: "12 slots, 2 from Gobgob"): from a Lair app with the head start, three rows of four, the
+ * first two Gobgob's gold stars, the count "9 of 12", and a line staff can pass on about the gold.
  * @param {{ card: import('./loyalty.js').Card, fresh?: number, note: string, ctx: Ctx, stamping?: { added: boolean } | null }} props
  *   fresh: stamps this screen saw land; note: stampNote's line; stamping: staff can add a stamp here (added: one was,
  *   so Undo shows)
@@ -582,6 +584,8 @@ function LoyaltySection({ card, fresh = 0, note, ctx, stamping = null }) {
   const rolls = rollWords(card);
   // round 24: a welcome code's roll, theirs once they've paid for a session
   const welcome = welcomeWords(card);
+  // round 29: why the first two are gold ('' from an older Lair app)
+  const head = headStartWords(card);
   const busyNow = Boolean(ctx.busy);
   return (
     <s-section heading={cardHeading(card)}>
@@ -592,6 +596,8 @@ function LoyaltySection({ card, fresh = 0, note, ctx, stamping = null }) {
               {row.map((mark, i) =>
                 mark === 'off' ? (
                   <s-icon key={i} type="circle" tone="neutral" color="subdued" size="large-100" />
+                ) : mark === 'head' ? (
+                  <s-icon key={i} type="star-circle" tone="caution" color="strong" size="large-100" />
                 ) : (
                   <s-icon key={i} type="star-filled" tone="success" color="strong" size="large-100" />
                 ),
@@ -605,6 +611,7 @@ function LoyaltySection({ card, fresh = 0, note, ctx, stamping = null }) {
             {fresh ? <s-badge tone="success">{freshWords(fresh)}</s-badge> : null}
           </s-stack>
           <s-text>{stampsLeft(card)}</s-text>
+          {head ? <s-text color="subdued">{head}</s-text> : null}
           {rolls ? <s-text type="strong">{rolls}</s-text> : null}
           {welcome ? <s-text>{welcome}</s-text> : null}
           {note ? <s-text color="subdued">{note}</s-text> : null}
