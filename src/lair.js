@@ -78,6 +78,10 @@ import { GW_PAD_TABLES, gwPadMethods } from './gw-pad.js';
 // Round 27: the rest of the Warhammer tab: this week's order, the box coming in, order dates (src/gw-week.js)
 import { GW_WEEK_TABLES, gwWeekMethods } from './gw-week.js';
 import { dateTables } from './core.js';
+// Round 29: a reminder two days before each one-off booking, its cancel link and calendar file (src/booking-reminders.js),
+// and paying online's words, which the reminder repeats
+import { BOOKING_REMINDER_COLUMNS, BOOKING_REMINDER_INDEXES, bookingReminderMethods } from './booking-reminders.js';
+import { ONLINE_WORDS } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -118,7 +122,7 @@ const LOCKED_IN = 'Your spot is cancelled. You paid online, so have a chat with 
 // Round 15: no code of its own to show: it's on their tab, paid at the counter on the day (TAB_WORDS)
 const COUNTER = TAB_WORDS.onTab;
 const SHOW_CODE = TAB_WORDS.nothingToPay;
-const LOCKED_IN_EMAIL = "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.";
+const LOCKED_IN_EMAIL = ONLINE_WORDS.lockedIn;
 const SPLIT = 'Splitting the bill? Each friend can pay their share at the counter.';
 /** A session pass sold as a product: an order line with this SKU makes `quantity` passes of N sessions each. */
 const PASS_SKU = /^LAIR-PASS-(\d{1,3})$/i;
@@ -1109,6 +1113,19 @@ export class Lair {
         this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
     }
+    // Round 29: when each booking's and sign-up's reminder went, for which start, and its cancel link's key (made when
+    // missing, src/booking-reminders.js)
+    for (const [table, column, type] of BOOKING_REMINDER_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of BOOKING_REMINDER_INDEXES) this.sql.exec(statement);
+    // and when they first started: a catch-up the next day is only for a reminder day they were running on
+    this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('booking-reminders-from', ?)", String(Date.now()));
+    this.bookingRemindersFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'booking-reminders-from'").toArray()[0]?.value) || 0;
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1851,6 +1868,8 @@ export class Lair {
         if (request.method === 'GET' && b === 'img') return this.image(c);
         // Round 11: an event date as a calendar file, for the reminder email's Add to calendar (public: GET /ics/<id>.ics)
         if (request.method === 'GET' && b === 'eventics') return this.eventIcs(decodeURIComponent(c || ''));
+        // Round 29: a seat or table as a calendar file, for its reminder's Add to my calendar (public: GET /ics/b/<id>.ics)
+        if (request.method === 'GET' && b === 'bookingics') return this.bookingIcs(decodeURIComponent(c || ''));
         // Round 13: a followed game's calendar on the Lair app's own address (public: GET /feeds/<key>.ics)
         if (request.method === 'GET' && b === 'feed') return this.eventFeed(c || '');
         if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
@@ -1900,7 +1919,7 @@ export class Lair {
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
           || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw'].includes(a));
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1911,6 +1930,13 @@ export class Lair {
       if (request.method === 'POST' && a === 'steps' && !b && !c) {
         const input = await request.json().catch(() => ({}));
         return json(this.countStep(input, request.headers.get('X-Lair-Client') || ''));
+      }
+      // Round 29: a reminder's cancel link (src/booking-reminders.js), for whoever has its key, logged in or not. Before
+      // anyone is looked up: who's logged in changes nothing, and the key (in the body, never the address) only cancels.
+      if (request.method === 'POST' && a === 'cancel-links' && ['view', 'cancel'].includes(b) && !c) {
+        const input = await request.json().catch(() => ({}));
+        const from = request.headers.get('X-Lair-Client') || '';
+        return json(b === 'view' ? await this.cancelLinkView(input, from) : await this.cancelByLink(input, from));
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
@@ -2639,9 +2665,7 @@ export class Lair {
       : `${dollars(booking.amount)}, ${booking.customerId ? 'on your tab' : 'pay at the counter on the day'}`;
     // A game spot paid online is locked in. A table the first release took payment for online keeps its old policy.
     const lockedIn = online && Boolean(booking.occurrenceId);
-    const changes = lockedIn ? LOCKED_IN_EMAIL : online
-      ? `Need to cancel? Do it in My Lair or call us at least ${rules.refundHours} hours before, and you'll get your money back. After that the fee can't be refunded.`
-      : null;
+    const changes = lockedIn ? LOCKED_IN_EMAIL : online ? ONLINE_WORDS.refund(rules.refundHours) : null;
     // what's to pay and how, and until when they can cancel (round 15), or a paid online booking's old words
     const [pay, cancel] = changes ? [dueOf(booking) > 0 ? COUNTER : SHOW_CODE, changes] : this.tabLines(booking, rules, { spot: game ? 'seat' : booking.occurrenceId ? 'game table' : 'table' });
     const tables = `${booking.tables.length > 1 ? 'Tables' : 'Table'} ${booking.tables.join(', ')}`;
@@ -2869,6 +2893,51 @@ export class Lair {
     return [...bookings, ...joins].sort((x, y) => x.start - y.start || String(x.id).localeCompare(String(y.id)));
   }
 
+  /**
+   * Someone cancelling their own table or seat: from My Lair (updateBooking, once it's checked they're its owner and it
+   * hasn't started) and, round 29, from their reminder's cancel link (src/booking-reminders.js cancelByLink, once it's
+   * checked the key). One path, so both keep the same rules and side effects: locked in refundHours before it starts
+   * (it stays on their tab), the refund rules, staff told about money due back, the library game let go, the GM told
+   * and the GM's charge for the seat stopped. Cancelled already: as it is. No awaits.
+   */
+  cancelOwnBooking(booking, rules, now) {
+    if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
+    // Round 15: locked in 24 hours before it starts: it stays on their tab, and only staff take it off
+    if (this.cancelRule(booking, rules, now).locked) {
+      throw new RuleError(booking.coveredBy ? GM_COVER_WORDS.seatLocked(rules.refundHours) : TAB_WORDS.locked(rules.refundHours), 409);
+    }
+    // An event game spot paid online is locked in: cancelling frees the spot and staff decide on a refund. Anything
+    // else paid online (from before everything moved to the counter) keeps the cancellation policy it was sold with.
+    const lockedIn = Boolean(booking.occurrenceId && booking.paidAmount > 0 && booking.pay === 'now');
+    // Round 15: paid at the counter ahead of time (paying for a few at once) and cancelled in time: it comes back
+    const ahead = !lockedIn && booking.pay !== 'now' && booking.paidAmount > 0
+      ? { due: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid at the counter ahead of time, cancelled in time' }
+      : null;
+    const refund = lockedIn
+      ? { due: false, ask: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
+      : ahead || refundFor(booking, rules, now);
+    booking.status = 'cancelled';
+    booking.holdUntil = null;
+    if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
+    this.saveBooking(booking, now);
+    this.dropDraft(booking);
+    // Round 17: its library game is let go
+    if (booking.game) this.bookingGameSync(booking.id, now);
+    if (refund.due) {
+      this.notifyStaff(`Refund due: ${booking.ref}`, {
+        title: 'Refund due',
+        intro: ahead
+          ? `${booking.name} cancelled ${booking.ref} in time, and they'd paid ${dollars(refund.amount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`
+          : `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
+        details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
+      });
+    } else if (lockedIn) this.askAboutRefund(booking, rules, 'game spot');
+    if (booking.kind === 'gm-seat') this.tellGmSeatDropped(booking, rules);
+    // Round 21: a seat its GM was paying for: the GM's charge goes with it
+    if (booking.coveredBy) this.syncCover(booking.id, now);
+    return { booking: this.ownView(this.booking(booking.id)), refund, ...(lockedIn ? { notice: LOCKED_IN } : {}) };
+  }
+
   async updateBooking(id, patch, who) {
     const rules = await this.rules();
     // --- no awaits from here on ---
@@ -2892,41 +2961,8 @@ export class Lair {
       // Round 21: a GM's charge for a player's seat goes from the session ("Stop paying"), not as a booking
       if (own && booking.kind === 'gm-cover') throw new RuleError(GM_COVER_WORDS.stopFirst, 409);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
-      if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
-      // Round 15: locked in 24 hours before it starts: it stays on their tab, and only staff take it off
-      if (this.cancelRule(booking, rules, now).locked) {
-        throw new RuleError(booking.coveredBy ? GM_COVER_WORDS.seatLocked(rules.refundHours) : TAB_WORDS.locked(rules.refundHours), 409);
-      }
-      // An event game spot paid online is locked in: cancelling frees the spot and staff decide on a refund. Anything
-      // else paid online (from before everything moved to the counter) keeps the cancellation policy it was sold with.
-      const lockedIn = Boolean(booking.occurrenceId && booking.paidAmount > 0 && booking.pay === 'now');
-      // Round 15: paid at the counter ahead of time (paying for a few at once) and cancelled in time: it comes back
-      const ahead = !lockedIn && booking.pay !== 'now' && booking.paidAmount > 0
-        ? { due: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid at the counter ahead of time, cancelled in time' }
-        : null;
-      const refund = lockedIn
-        ? { due: false, ask: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
-        : ahead || refundFor(booking, rules, now);
-      booking.status = 'cancelled';
-      booking.holdUntil = null;
-      if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
-      this.saveBooking(booking, now);
-      this.dropDraft(booking);
-      // Round 17: its library game is let go
-      if (booking.game) this.bookingGameSync(booking.id, now);
-      if (refund.due) {
-        this.notifyStaff(`Refund due: ${booking.ref}`, {
-          title: 'Refund due',
-          intro: ahead
-            ? `${booking.name} cancelled ${booking.ref} in time, and they'd paid ${dollars(refund.amount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`
-            : `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
-          details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
-        });
-      } else if (lockedIn) this.askAboutRefund(booking, rules, 'game spot');
-      if (booking.kind === 'gm-seat') this.tellGmSeatDropped(booking, rules);
-      // Round 21: a seat its GM was paying for: the GM's charge goes with it
-      if (booking.coveredBy) this.syncCover(booking.id, now);
-      return { booking: this.ownView(this.booking(booking.id)), refund, ...(lockedIn ? { notice: LOCKED_IN } : {}) };
+      // Round 29: the person's own cancel, the same from My Lair and from their reminder's cancel link
+      return this.cancelOwnBooking(booking, rules, now);
     }
     // Round 21: a GM's charge for a player's seat follows the seat (src/gm-cover.js): staff take it off with "Stop paying"
     // on the session, but can mark it paid, waive it or mark it refunded here (money back: chargeRefunded)
@@ -6275,11 +6311,28 @@ export class Lair {
     if (guest) throw new RuleError(GUEST_MESSAGES.guestOnly, 403);
     if (who.staff && !staffJoin && !own) throw new RuleError(TEAM_WORDS.notYours, 403);
     if (!staffJoin && !own) throw new RuleError('Only staff can change that sign-up.', 403);
+    // Round 29: the person's own cancel, the same from My Lair and from their reminder's cancel link
+    return staffJoin ? this.joinCancelled(join, rules, now, { staffJoin: true }) : this.cancelOwnJoin(join, rules, now);
+  }
+
+  /**
+   * Someone cancelling their own sign-up: from My Lair (cancelJoin, once it's checked it's theirs) and, round 29, from
+   * their reminder's cancel link (src/booking-reminders.js cancelByLink, once it's checked the key). Locked in
+   * refundHours before it starts (a free one, or one from before round 15, once it's started): staff take it off.
+   * Cancelled already: as it is. No awaits.
+   */
+  cancelOwnJoin(join, rules, now) {
     if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
     // Round 15: locked in 24 hours before it starts (a free one, or one from before round 15, once it's started):
     // staff take it off
-    if (!staffJoin && this.cancelRule(join, rules, now).locked) throw new RuleError(TAB_WORDS.locked(rules.refundHours), 409);
-    if (!staffJoin && join.start <= now) throw new RuleError(TAB_WORDS.started, 409);
+    if (this.cancelRule(join, rules, now).locked) throw new RuleError(TAB_WORDS.locked(rules.refundHours), 409);
+    if (join.start <= now) throw new RuleError(TAB_WORDS.started, 409);
+    return this.joinCancelled(join, rules, now, { staffJoin: false });
+  }
+
+  /** A sign-up cancelled, by staff (staffJoin) or its person: what's owed back, the row, and staff told. No awaits. */
+  joinCancelled(join, rules, now, { staffJoin }) {
+    if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
     const paid = join.paidAmount > 0;
     let refund;
     let flag = join.refund;
@@ -10739,6 +10792,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not send event reminders', error);
     }
+    // Round 29: a reminder two days before each one-off booking, from 9am to 9pm at the Lair, each once (src/booking-reminders.js)
+    try {
+      const booked = this.sendBookingReminders(rules, Date.now());
+      if (booked?.sent) result.bookingReminders = booked;
+    } catch (error) {
+      console.error('Lair: could not send booking reminders', error);
+    }
     // Round 10: library memberships: /setup?key=…&memberships=plans sets up the plans, then the upkeep bills what's due,
     // retries failed payments and ends what should end (it never throws)
     if (membershipsSetup) {
@@ -10817,3 +10877,5 @@ Object.assign(Lair.prototype, gwOrderMethods);
 Object.assign(Lair.prototype, gwPadMethods);
 // Round 27: the rest of the Warhammer tab (src/gw-week.js)
 Object.assign(Lair.prototype, gwWeekMethods);
+// Round 29: a reminder two days before each one-off booking, its cancel link and calendar file (src/booking-reminders.js)
+Object.assign(Lair.prototype, bookingReminderMethods);
