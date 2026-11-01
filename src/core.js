@@ -1105,6 +1105,15 @@ export const TAB_WORDS = {
   lockedNowGuest: (hours) => `It's less than ${hours} hours away, so it's locked in: it's yours to pay, even if you can't come. Let us know if something comes up.`,
 };
 
+/** Round 29: what cancelling means for something paid online before round 15, as its confirmation said (the reminder
+    two days before says the same) */
+export const ONLINE_WORDS = {
+  /** an event game spot or sign-up paid online: locked in, staff decide on a refund */
+  lockedIn: "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.",
+  /** a table the first release took payment for online: its old refund policy */
+  refund: (hours) => `Need to cancel? Do it in My Lair or call us at least ${hours} hours before, and you'll get your money back. After that the fee can't be refunded.`,
+};
+
 export function rulesFromSettings(settings = {}, rooms = [], events = [], shop = {}) {
   const prices = {
     table: Math.round(Number(settings.price_table ?? 10) * 100),
@@ -1132,6 +1141,8 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // counter; each event says how it's paid).
     payOnline: settings.lair_pay_online !== false,
     refundHours: Number(settings.lair_refund_hours ?? 24),
+    // Round 29: "Email a reminder two days before each booking" (src/booking-reminders.js): on unless it's off
+    bookingReminders: settings.lair_booking_reminders !== false,
     prices,
     rooms: builtRooms,
     events,

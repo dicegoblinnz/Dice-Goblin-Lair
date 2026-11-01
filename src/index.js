@@ -10,6 +10,8 @@
 //                            the library membership plans, the damage charge product and their webhooks
 //   /img/<id>                a GM's game picture (public, cached)
 //   /ics/<date id>.ics       an event date as a calendar file, for the reminder email's Add to calendar (public)
+//   /ics/b/<booking id>.ics  round 29: a seat or table as a calendar file, for its booking reminder (public; the
+//                            booking's own random id, never its code)
 //   /feeds/<key>.ics         round 13: a followed game's calendar, every date of its events (public; also through the
 //                            app proxy at www.dicegoblin.nz/apps/liar/feeds/<key>.ics, which the Our games page uses)
 //   /health                  uptime check
@@ -186,6 +188,10 @@ export default {
       if (res.ok && cache) ctx?.waitUntil?.(cache.put(request, res.clone()));
       return res;
     }
+
+    // Round 29: a seat or table as a calendar file (the booking reminder's Add to my calendar), by the booking's own id
+    const bookingIcs = request.method === 'GET' ? url.pathname.match(/^\/ics\/b\/(bk_[A-Za-z0-9]{8,40})\.ics$/) : null;
+    if (bookingIcs) return lair(env).fetch(new Request(`${url.origin}/internal/bookingics/${bookingIcs[1]}`, { headers: { 'X-Lair-Internal': '1' } }));
 
     // Round 11: an event date as a calendar file (the reminder email's Add to calendar): public, like the calendar page
     const ics = request.method === 'GET' ? url.pathname.match(/^\/ics\/([A-Za-z0-9._%@-]{3,200})\.ics$/) : null;

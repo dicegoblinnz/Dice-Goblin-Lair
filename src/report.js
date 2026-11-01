@@ -91,6 +91,8 @@ export const REPORT_WORDS = {
   week: 'Weeks run Monday to Sunday at the Lair.',
   // Round 24 (contract v24-new-players)
   newPlayer: 'A new player has an account and made their first visit that week. Each is counted once: by the welcome code they used, else the ad link they first came by, else what they told us when asked how they found us.',
+  // Round 29 (contract v29-roleplayers section 2)
+  oneOff: "A one-off booking is a TTRPG seat (not a weekly saved one), a table or an event sign-up. A seat or table is a no-show when staff mark it one; a sign-up when it's over and wasn't checked in or paid.",
 };
 const ANSWER_WORDS = new Map(FOUND_US_ANSWERS);
 
@@ -166,6 +168,8 @@ export const reportMethods = {
         visits: 0, checkIns: { checkedIn: 0, paidOnly: 0, notRecorded: 0, rate: null }, noShows: 0,
         bookingsMade: { online: 0, staff: 0, saved: 0 }, newMembers: 0, ttrpg: { sessions: 0, seats: 0, taken: 0 },
         newPlayers: { total: 0, codes: {}, ads: {}, answers: {}, unknown: 0 },
+        // Round 29: booking reminders that went, and one-off bookings with their no-shows
+        bookingReminders: { sent: 0 }, oneOff: { bookings: 0, noShows: 0, seats: 0, tables: 0, signUps: 0 },
         library: { loansOut: 0 },
         steps: Object.fromEntries(STEP_FLOWS.map((flow) => [flow, Object.fromEntries(STEP_NAMES.map((s) => [s, 0]))])),
       };
@@ -200,6 +204,33 @@ export const reportMethods = {
     for (const row of rows) {
       const c = row.checkIns;
       c.rate = pct(c.checkedIn, c.checkedIn + c.paidOnly + c.notRecorded);
+    }
+
+    // Round 29 (src/booking-reminders.js): whether the reminders two days before work. The reminders that went, by the
+    // week they went (one Resend didn't take was unmarked, so it isn't here); and one-off bookings by the session's week
+    // (TTRPG seats with no weekly seat behind them, tables, event sign-ups made ahead), with their no-shows: a seat or
+    // table staff marked one, or a sign-up that's over and wasn't checked in or paid (sign-ups have no no-show mark)
+    for (const r of this.sql.exec(
+      `SELECT reminded_at AS at FROM bookings WHERE reminded_at >= ? AND reminded_at < ?
+       UNION ALL
+       SELECT reminded_at FROM event_joins WHERE reminded_at >= ? AND reminded_at < ?`,
+      start, until, start, until,
+    ).toArray()) add(r.at, (row) => { row.bookingReminders.sent += 1; });
+    for (const r of this.sql.exec(
+      `SELECT b.starts_at AS at, CASE WHEN b.kind = 'table' THEN 'tables' ELSE 'seats' END AS kind, CASE WHEN b.status = 'noshow' THEN 1 ELSE 0 END AS missed
+         FROM bookings b WHERE (b.kind = 'table' OR (b.kind = 'gm-seat' AND b.series_id IS NULL)) AND b.status NOT IN ('cancelled', 'held')
+          AND b.starts_at >= ? AND b.starts_at < ?
+       UNION ALL
+       SELECT j.starts_at, 'signUps', CASE WHEN j.status != 'attended' AND j.ends_at <= ? AND NOT ${paidOnTheDay('j')} THEN 1 ELSE 0 END
+         FROM event_joins j WHERE j.status NOT IN ('cancelled', 'held') AND COALESCE(j.source, '') != 'walk-in' AND j.starts_at >= ? AND j.starts_at < ?`,
+      start, until, now, start, until,
+    ).toArray()) {
+      add(r.at, (row) => {
+        row.oneOff.bookings += 1;
+        if (!r.missed) return;
+        row.oneOff.noShows += 1;
+        row.oneOff[r.kind] += 1;
+      });
     }
 
     // bookings and sign-ups made, by the week they were made: online, by staff, or saved by Gobgob for a weekly regular
@@ -453,6 +484,18 @@ export const reportMethods = {
     return `${n.total}${then ? ` (${then.total} the week before)` : ''}${parts.length ? `: ${parts.join(', ')}` : ''}`;
   },
 
+  /**
+   * Round 29: a week's one-off bookings and their no-shows, beside the week before: "3 of 6, 50% (20% the week before): 1
+   * TTRPG seat, 1 table, 1 event sign-up not checked in or paid". No awaits.
+   */
+  oneOffWords(o, then) {
+    const share = (x) => `${pct(x.noShows, x.bookings)}%`;
+    const prev = !then ? '' : then.bookings ? ` (${share(then)} the week before)` : ' (no one-off bookings the week before)';
+    if (!o?.bookings) return `No one-off bookings${prev}`;
+    const parts = [plural(o.seats, 'TTRPG seat', 'TTRPG seats'), plural(o.tables, 'table', 'tables'), `${plural(o.signUps, 'event sign-up', 'event sign-ups')} not checked in or paid`];
+    return `${o.noShows} of ${o.bookings}, ${share(o)}${prev}: ${parts.join(', ')}`;
+  },
+
   /** The weekly email's words: { subject, body: { title, intro, details, outro } }. No awaits. */
   weeklyReportContent(last, before, report) {
     const was = (then) => (then == null ? '' : ` (${then} the week before)`);
@@ -463,6 +506,9 @@ export const reportMethods = {
       ['Visits, friends included', `${last.visits}${was(before?.visits)}`],
       ['Check-ins recorded', c.rate == null ? 'No sessions to check in' : `${c.rate}% (${plural(c.notRecorded, 'session', 'sessions')} with no check-in or payment, ${c.paidOnly} paid without a check-in)`],
       ['No-shows', String(last.noShows)],
+      // Round 29: whether the reminders two days before a booking work
+      ['Booking reminders sent', `${last.bookingReminders?.sent ?? 0}${was(before?.bookingReminders?.sent)}`],
+      ['No-shows on one-off bookings', this.oneOffWords(last.oneOff, before?.oneOff)],
       ['Bookings and sign-ups made', `${last.bookingsMade.online} online, ${last.bookingsMade.staff} by staff, ${last.bookingsMade.saved} saved for weekly regulars`],
       ['New to the Lair app', `${last.newMembers}${was(before?.newMembers)}`],
       // Round 24: "3 (1 the week before): 1 by welcome code (SCROLL-ROLL 1), 1 by ad link (google/paid 1), 1 told us (Walked past 1)"
