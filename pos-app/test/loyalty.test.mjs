@@ -147,7 +147,7 @@ test('round 29: the count says "X of 12" and what’s left is still the stamps t
   assert.equal(stampWords(at(9)), '11 of 12. One more fills it.');
   assert.equal(stampWords(at(7)), '9 of 12.');
   assert.equal(stampWords(at(0)), 'A new card: 2 of 12, with Gobgob’s head start.');
-  assert.equal(headStartWords(at(7)), 'The first 2 are Gobgob’s head start: a roll is still 10 paid visits.');
+  assert.equal(headStartWords(at(7)), 'The first 2 are Gobgob’s head start: a roll is still 10 visits.');
   const older = loyaltyCard({ stamps: 7, cardSize: 10, rollsAvailable: 0, card: 2 });
   assert.ok(older);
   if (!older) return;

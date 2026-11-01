@@ -21,7 +21,7 @@ const PORT = Number(process.env.PORT || 4989);
 const BASE = `http://localhost:${PORT}`;
 const VIEWPORTS = { small: { width: 320, height: 640 }, phone: { width: 390, height: 844 }, desktop: { width: 1280, height: 800 } };
 const sizes = process.argv[2] ? [process.argv[2]] : ['small', 'phone', 'desktop'];
-const NOTE = "Gold is Gobgob's head start: every card begins with 2, so a roll is still 10 paid visits.";
+const NOTE = "Gold is Gobgob's head start: every card begins with 2, so a roll is still 10 visits.";
 const LINE = (on, slots = 12) => `Your loyalty card: ${on} of ${slots}. Stamps land when you check in.`;
 
 const server = await m.serve(PORT);

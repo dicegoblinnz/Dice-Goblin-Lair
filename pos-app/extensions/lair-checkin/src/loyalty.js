@@ -105,12 +105,12 @@ export function stampsLeft(card) {
 
 /**
  * Round 29: why the first slots are gold, for staff to pass on: "The first 2 are Gobgob’s head start: a roll is still
- * 10 paid visits." '' for a card without a head start (an older Lair app).
+ * 10 visits." '' for a card without a head start (an older Lair app).
  * @param {Card} card
  */
 export function headStartWords(card) {
   const head = headOf(card);
-  return head ? `The first ${head} are Gobgob’s head start: a roll is still ${card.size} paid visits.` : '';
+  return head ? `The first ${head} are Gobgob’s head start: a roll is still ${card.size} visits.` : '';
 }
 
 /**
