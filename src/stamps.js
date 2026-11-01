@@ -148,15 +148,12 @@ export const stampMethods = {
 
   /**
    * A card as the counter shows it: { stamps, cardSize, rollsAvailable, card }, or null for nobody. Round 24: and
-   * rollsWaiting, a welcome code's rolls waiting for their first paid session, only while some do. No awaits.
+   * rollsWaiting, a welcome code's rolls waiting for their first paid session, only while some do. Round 29: and cards,
+   * and the head start's slots, headStart and onCard, as every card has them (staffCard in lair.js). No awaits.
    */
   posLoyalty(customerId, rules = this.rulesCache) {
     if (!customerId) return null;
-    const card = this.loyaltyOf(customerId, rules);
-    return {
-      stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card,
-      ...(card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}),
-    };
+    return this.staffCard(customerId, rules, { waiting: true });
   },
 
   /**

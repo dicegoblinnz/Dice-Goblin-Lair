@@ -9,9 +9,11 @@ import {
   checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings,
   SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
-  CARD_SIZE, financialYear, financialYearFrom, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
+  financialYear, financialYearFrom, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
   eventDays, LOYALTY_PICKS, LOYALTY_SURE, PICK_WORDS, loyaltySureMessage,
 } from './core.js';
+// Round 29: the head-start card (12 slots, 2 of them Gobgob's), as every screen and email shows it
+import { CARD_ROW, cardSoFar, cardView } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
 import { hoursSummary, renderEmail } from './email.js';
@@ -2646,6 +2648,8 @@ export class Lair {
     const [pay, cancel] = changes ? [dueOf(booking) > 0 ? COUNTER : SHOW_CODE, changes] : this.tabLines(booking, rules, { spot: game ? 'seat' : booking.occurrenceId ? 'game table' : 'table' });
     const tables = `${booking.tables.length > 1 ? 'Tables' : 'Table'} ${booking.tables.join(', ')}`;
     const event = booking.occurrenceId ? findOccurrence(rules, booking.occurrenceId) : null;
+    // Round 29: a member's card, "9 of 12 so far" (a guest's booking has no row: cardLine is null)
+    const cardRow = [CARD_ROW, this.cardLine(booking.customerId, rules)];
     let subject;
     let content;
     if (game) {
@@ -2655,7 +2659,7 @@ export class Lair {
         intro: `Kia ora ${booking.name}, you're in for ${game.title}${game.gm ? ` with GM ${game.gm}` : ''}. Gobgob has pulled up a chair for you.`,
         details: [
           ['Game', `${game.title}${game.system ? ` (${game.system})` : ''}`], ['When', when], ['Players', this.partyLine(booking.party)], ['Where', tables],
-          ['Fee', fee],
+          ['Fee', fee], cardRow,
         ],
         outro: [
           pay, cancel,
@@ -2676,7 +2680,7 @@ export class Lair {
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
           ['When', when], ['Where', tables], ['People', String(booking.people)], ...(played ? played.details : []),
-          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee],
+          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee], cardRow,
         ],
         outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), cancel],
       };
@@ -4112,6 +4116,8 @@ export class Lair {
           ['Game', game.title], ['Players', this.partyLine(players)], ['Next session', booked.length ? this.when(next, rules) : ''],
           ['Already full', full.length ? this.when(next, rules) : ''],
           ['Fee', seatPriceOf(game, rules) ? `${dollars(seatPriceOf(game, rules) * people)} a session, on your tab` : 'Free'],
+          // Round 29: their card, "9 of 12 so far"
+          [CARD_ROW, this.cardLine(who.customerId, rules)],
         ],
         // Round 15: each session on their tab, no code to show; cancelled up to 24 hours before
         outro: [
@@ -5602,12 +5608,12 @@ export class Lair {
         ? `${x.playerOf.name} booked them into a game at ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''}${x.due ? `, their share ${dollars(x.due)}` : ''})`
         : `${x.guestOf.name} signed them up for ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''})`)).join('; ')}.`;
     }
-    // Round 22: their loyalty card, so staff can add a stamp from the check-in card (contract v22-stamps)
-    const card = member ? this.loyaltyOf(customerId, rules) : null;
+    // Round 22: their loyalty card, so staff can add a stamp from the check-in card (contract v22-stamps); round 29: with
+    // the head start's slots, headStart and onCard, as every card has them (staffCard)
     return {
       found: true, kind: 'member', type: 'member', checkedIn: false, customer: { id: String(customerId) },
       member: { customerId: String(customerId), name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null },
-      ...(card ? { loyalty: { stamps: card.stamps, cardSize: card.cardSize, cards: card.cards, rollsAvailable: card.rolls.available, card: card.card } } : {}),
+      ...(member ? { loyalty: this.staffCard(customerId, rules) } : {}),
       rows: [...[...rows, ...along].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name)), ...owed], passes: this.activePasses(customerId, now), due,
       bookings: rows.map((x) => ({
         kind: x.type, id: x.id, ref: x.ref, title: x.title, start: x.start, end: x.end, people: x.people, tables: x.tables, status: x.status,
@@ -5737,8 +5743,6 @@ export class Lair {
     if (found.type === 'member') {
       const customerId = found.item.customer_id;
       const { member, today, owed } = this.memberDay(customerId, rules, now);
-      // loyalty (round 6): their card, for the counter to show (display only)
-      const card = this.loyaltyOf(customerId, rules);
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
         // round 24: "How did you find us?": their answer (or null), and newHere, true on a new player's first day at the
@@ -5747,9 +5751,10 @@ export class Lair {
         // round 9: after their owed rows, what a monthly account owes from earlier days (none for pay-each-visit members);
         // round 15: a monthly account's owed rows are on it (onAccount)
         rows: [...today, ...this.onAccountRows(customerId, owed), ...this.accountOwedRows(customerId, rules, now)], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
-        // round 7: card is the number of the card they're on
-        // round 24: rollsWaiting, a welcome code's rolls waiting for their first paid session (only there while some do)
-        loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card, ...(card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}) },
+        // loyalty (round 6): their card, for the counter to show (display only). Round 7: card is the number of the card
+        // they're on; round 24: rollsWaiting, a welcome code's rolls waiting for their first paid session (only there
+        // while some do); round 29: cards, and the head start's slots, headStart and onCard (staffCard)
+        loyalty: this.staffCard(customerId, rules, { waiting: true }),
         // round 9: their billing ({ billing: 'visit' }, or a monthly account's limit and what's owed)
         account: this.accountSummary(customerId, rules, now),
       };
@@ -6242,7 +6247,8 @@ export class Lair {
       intro: `Kia ora ${join.name}, you're signed up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
       details: [
         ['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Coming', join.people > 1 ? this.comingLine(join) : ''],
-        ['Entry', fee],
+        // Round 29: a member's card, "9 of 12 so far" (none on a guest's sign-up)
+        ['Entry', fee], [CARD_ROW, this.cardLine(join.customerId, rules)],
       ],
       outro: [pay, cancel],
       button: { label: 'See it in My Lair', url: this.page('myLair') },
@@ -7105,7 +7111,8 @@ export class Lair {
 
   /**
    * A member's loyalty card (GET /me, the roll, staff views): { stamps (0-9 on this card), cardSize, cards (full cards),
-   * card (round 7: the number of the card they're on, cards + 1), rolls: { available, earned: { cards, welcome,
+   * card (round 7: the number of the card they're on, cards + 1), slots, headStart, onCard (round 29, the head start:
+   * 12 slots, Gobgob's 2 and the stamps on this card, cardView), rolls: { available, earned: { cards, welcome,
    * birthday, staff, codes }, used }, sure }. A full card earns a roll and the next card starts at once; so do the welcome
    * rolls given in round 6, birthday gifts' rolls, rolls staff give and (round 7) loot codes' rolls. used: loyalty rolls
    * spent, rolled or taken as the sure $10 (the old spend dice's rolls never count). sure (round 23): the store credit,
@@ -7126,7 +7133,8 @@ export class Lair {
     const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty'", id).one().n;
     const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes - used);
     const rolls = { available, earned, used, ...(welcome.waiting ? { waiting: welcome.waiting } : {}) };
-    const card = { stamps, cardSize: CARD_SIZE, cards, card: cards + 1, rolls, sure: LOYALTY_SURE };
+    // round 29: how the card looks (12 slots, Gobgob's 2 on every card) comes with it; how it counts doesn't change
+    const card = { ...cardView({ stamps, cards }), rolls, sure: LOYALTY_SURE };
     if (!details) return card;
     const recent = this.stampedSessions(id, 10).map((s) => ({ at: s.at, title: this.stampTitle(s, rules), people: s.people }));
     const history = this.sql
@@ -7155,6 +7163,29 @@ export class Lair {
     if (s.kind === 'stamp-staff') return STAMP_WORDS.staffTitle;
     if (s.occurrence_id) return (rules && findOccurrence(rules, s.occurrence_id)?.title) || 'Event game spot';
     return this.tablesTitle(parse(s.tables, []));
+  }
+
+  /**
+   * Round 29 (contract v29-roleplayers, section 1): a member's card as the staff page and the counter show it (the
+   * check-in card, GET /members and a member's page, the stamp routes, and every POS answer with a card): the card's
+   * fields as GET /me has them (cardView: stamps, cardSize, cards, card, slots, headStart, onCard) and rollsAvailable.
+   * waiting (the counter): round 24's rollsWaiting, only while a welcome code's rolls wait. No awaits.
+   */
+  staffCard(customerId, rules = this.rulesCache, { waiting = false } = {}) {
+    const card = this.loyaltyOf(customerId, rules);
+    return { ...cardView(card), rollsAvailable: card.rolls.available, ...(waiting && card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}) };
+  }
+
+  /**
+   * Round 29: a member's card in one line, for the "Loyalty card" row (CARD_ROW) of their booking emails: "9 of 12 so
+   * far. Stamps land when you check in." null when the booking isn't a member's (a guest's, or no Lair member with that
+   * customer ID), and renderEmail leaves a row with nothing in it out. The booking reminders and the day-after email
+   * (the roleplayers plan's Phase 1) use it too. No awaits.
+   */
+  cardLine(customerId, rules = this.rulesCache) {
+    const id = customerId == null ? '' : String(customerId);
+    if (!/^\d{1,20}$/.test(id) || !this.memberRow(id)) return null;
+    return cardSoFar(this.loyaltyOf(id, rules));
   }
 
   /** The old dice's `rolls` (GET /me, the POS member lookup), for clients from before round 6: it mirrors the loyalty rolls. */
@@ -9224,11 +9255,11 @@ export class Lair {
    * A member as staff see them. rollsFromSpend, rollsGifted and rollsUsed are the old spend dice's (staff history only).
    * Round 6 adds loyalty ({ stamps, cards, rollsAvailable }), customerSince ('YYYY-MM-DD' staff set, or null),
    * yearsWithUs and spendFy (the financial year so far). Round 7 adds the player profile (mobile, pronouns,
-   * favouriteGames, about) and loyalty.card (the card they're on).
+   * favouriteGames, about) and loyalty.card (the card they're on). Round 29: loyalty is staffCard's, with cardSize and
+   * the head start's slots, headStart and onCard.
    */
   memberView(row, now = Date.now()) {
     const spend = this.spendOf(row.customer_id, now);
-    const card = this.loyaltyOf(row.customer_id);
     return {
       customerId: row.customer_id, name: row.name || '', firstName: row.first_name || '', email: row.email || '', birthday: row.birthday || '',
       spendYear: spend.year, spendTotal: spend.total, rollsFromSpend: Math.floor(spend.total / ROLL_EVERY), rollsGifted: this.giftedRolls(row.customer_id),
@@ -9236,7 +9267,7 @@ export class Lair {
       lastSeen: row.last_seen || null, code: row.code || null,
       // Dice prizes Shopify couldn't add: staff give them at the counter (POST /prizes/:id/done)
       pendingPrizes: this.memberPrizes(row.customer_id, { pending: true }),
-      loyalty: { stamps: card.stamps, cards: card.cards, rollsAvailable: card.rolls.available, card: card.card },
+      loyalty: this.staffCard(row.customer_id),
       customerSince: row.customer_since || null, yearsWithUs: this.yearsWithUs(row, now), spendFy: this.spendFy(row.customer_id, now),
       mobile: row.mobile || '', pronouns: row.pronouns || '', favouriteGames: parse(row.favourite_games, []), about: row.about || '',
     };
