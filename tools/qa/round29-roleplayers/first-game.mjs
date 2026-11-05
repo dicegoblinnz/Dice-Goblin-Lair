@@ -102,6 +102,9 @@ lair.taggedPerson = async (id) => ({ customerId: id || null, staff: String(id) =
 lair.shopify.orderSpend = async () => null;
 lair.shopify.orderBuyer = async () => null;
 lair.shopify.customerEmail = async () => null;
+// nobody in this check is in Shopify's email marketing list, so the email the day after goes and a stop has nothing to change
+lair.shopify.marketingByEmail = async () => null;
+lair.shopify.unsubscribeMarketing = async () => true;
 lair.accountEmail = async () => ({ fetched: false, email: '' });
 lair.checkGiftCodes = async () => 0;
 const mails = [];
@@ -546,7 +549,7 @@ for (const size of sizes) {
     check(`${tag} the key is out of the address before the page's own scripts run`, !seen.includes('#unsubscribe') && !page.url().includes(key), [seen, page.url()]);
     check(`${tag} … and never in a request's address or Referer`, !requests.some((r) => r.url.includes(key) || r.referer.includes(key)), requests.filter((r) => r.url.includes(key) || r.referer.includes(key)));
     let c = await cardOf(page);
-    check(`${tag} the card asks once: "Stop emails like this one?"`, c.title === 'Stop emails like this one?' && c.line === "It's the email Gobgob sends the day after a first game. Once you stop them, you won't get another." && c.yes === 'Yes, stop these emails' && c.actions, c);
+    check(`${tag} the card asks once: "Stop news emails from Dice Goblin?", saying it stops all of them (the law's unsubscribe) and booking emails still come`, c.title === 'Stop news emails from Dice Goblin?' && c.line === "That's this email after a first game and any other news from Dice Goblin. Booking confirmations and reminders still come." && c.yes === 'Yes, stop these emails' && c.actions, c);
     check(`${tag} opening it stops nothing (email scanners open links)`, stops().length === 0, stops());
     check(`${tag} focus is on the card's question, above My Lair's page`, await page.evaluate(() => document.activeElement?.id) === 'stop-link-title');
     check(`${tag} no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
@@ -556,7 +559,7 @@ for (const size of sizes) {
     await page.waitForFunction(() => /Done\./.test(document.querySelector('.stop-link__said')?.textContent || ''), null, { timeout: 15000 });
     c = await cardOf(page);
     const kept = stops();
-    check(`${tag} one tap: "Done. No more emails like that one." and that booking emails still come`, c.said === 'Done. No more emails like that one.' && c.still === "Booking confirmations and reminders still come, so you know what's booked." && !c.actions && c.title === 'Emails after a first game', c);
+    check(`${tag} one tap: "Done. No more news emails from Dice Goblin." and that booking emails still come`, c.said === 'Done. No more news emails from Dice Goblin.' && c.still === "Booking confirmations and reminders still come, so you know what's booked." && !c.actions && c.title === 'News emails from Dice Goblin', c);
     check(`${tag} … straight away, kept by email (lower case), with the code and how`, kept.length === 1 && kept[0].email === sam.email.toLowerCase() && kept[0].ref === sam.ref && kept[0].via === 'link', kept);
     await axe(page, `${tag} the unsubscribe card, done`, 'lair-unsubscribe');
     await shot(page, `8-${size}-unsubscribe-done`, 'lair-unsubscribe');
@@ -565,18 +568,18 @@ for (const size of sizes) {
     await page.goto(`${BASE}${local}`, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => /already/.test(document.querySelector('.stop-link__said')?.textContent || ''), null, { timeout: 15000 });
     c = await cardOf(page);
-    check(`${tag} the link again: "You've already stopped these. No more emails like that one."`, c.said === "You've already stopped these. No more emails like that one." && !c.actions, c);
+    check(`${tag} the link again: "You've already stopped these. No more news emails from Dice Goblin."`, c.said === "You've already stopped these. No more news emails from Dice Goblin." && !c.actions, c);
     // the link again in the tab that's on My Lair already (only the #fragment changes: no new page), its stop taken off
     // first: the head snippet takes the code and key before any of the page's own listeners (My Lair's router included)
     // gets the change, and the card asks afresh
     lair.sql.exec('DELETE FROM followup_stops');
     await page.evaluate(() => { window.__early = []; window.__late = []; });
     await page.goto(`${BASE}${local}`, { waitUntil: 'networkidle' });
-    await page.waitForFunction(() => /Stop emails/.test(document.querySelector('.stop-link__title')?.textContent || ''), null, { timeout: 15000 }).catch(() => {});
+    await page.waitForFunction(() => /Stop news emails/.test(document.querySelector('.stop-link__title')?.textContent || ''), null, { timeout: 15000 }).catch(() => {});
     c = await cardOf(page);
     const tab = await page.evaluate(() => ({ early: window.__early || [], late: window.__late || [], now: window.location.href }));
     check(`${tag} the link in a tab that's on My Lair already (only the #fragment changes): taken before any of the page's own listeners gets it (My Lair's router included), and the card asks afresh`,
-      tab.early.some((a) => a.includes('#unsubscribe=')) && !tab.late.some((a) => a.includes('unsubscribe') || a.includes(key)) && !tab.now.includes('#unsubscribe') && c.title === 'Stop emails like this one?' && c.actions, { c, tab });
+      tab.early.some((a) => a.includes('#unsubscribe=')) && !tab.late.some((a) => a.includes('unsubscribe') || a.includes(key)) && !tab.now.includes('#unsubscribe') && c.title === 'Stop news emails from Dice Goblin?' && c.actions, { c, tab });
     // a wrong key, opened in the tab that's on My Lair already (only the #fragment changes: no new page)
     await page.evaluate((h) => { window.location.hash = h; }, `#unsubscribe=${encodeURIComponent(sam.ref)}.${'0'.repeat(32)}`);
     await page.waitForSelector('.stop-link__call:not([hidden])', { timeout: 15000 });
@@ -595,7 +598,7 @@ for (const size of sizes) {
     await page.evaluate((h) => { window.location.hash = h; }, `#unsubscribe=${encodeURIComponent(sam.ref)}.${'0'.repeat(32)}`);
     await settle(page, 3000);
     c = await cardOf(page);
-    check(`${tag} a link's slow answer never lands on the card of a link opened after it`, slow === 2 && c.error === UNSUBSCRIBE_WORDS.wrong && !c.actions && c.title !== 'Stop emails like this one?', { c, slow });
+    check(`${tag} a link's slow answer never lands on the card of a link opened after it`, slow === 2 && c.error === UNSUBSCRIBE_WORDS.wrong && !c.actions && c.title !== 'Stop news emails from Dice Goblin?', { c, slow });
     await page.unroute('**/apps/liar/unsubscribe/view');
     // a refresh: no link any more, so nothing shows
     await page.reload({ waitUntil: 'networkidle' });

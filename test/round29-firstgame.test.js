@@ -206,11 +206,18 @@ afterEach(() => {
 
 test('round 29, first game: the columns are made on start (first_game, the consent and its time, when the email went and its key) and so is the stop list', () => {
   const columns = lair.sql.exec("SELECT name FROM pragma_table_info('bookings')").toArray().map((c) => c.name);
-  for (const column of ['first_game', 'followup_ok', 'followup_ok_at', 'followup_at', 'followup_key']) assert.ok(columns.includes(column), `bookings.${column}`);
+  for (const column of ['first_game', 'followup_ok', 'followup_ok_at', 'followup_at', 'followup_key', 'followup_skipped']) assert.ok(columns.includes(column), `bookings.${column}`);
   const stops = lair.sql.exec("SELECT name FROM pragma_table_info('followup_stops')").toArray().map((c) => c.name);
-  assert.deepEqual(stops.sort(), ['at', 'email', 'ref', 'via']);
+  assert.deepEqual(stops.sort(), ['at', 'email', 'ref', 'shopify_at', 'shopify_error', 'shopify_tries', 'via']);
   // a second start changes nothing
   assert.doesNotThrow(() => lair.migrate());
+  // the stop list as it went live on 6 Nov 2026 (no Shopify columns): the next start adds them, keeping its stops
+  const ctx = fakeCtx();
+  ctx.storage.sql.exec('CREATE TABLE followup_stops (email TEXT PRIMARY KEY, at INTEGER NOT NULL, ref TEXT, via TEXT)');
+  ctx.storage.sql.exec("INSERT INTO followup_stops (email, at, ref, via) VALUES ('ria@example.com', 1, 'RM-OWLBEAR-17', 'link')");
+  const upgraded = new Lair(ctx, { CURRENCY: 'NZD', SHOP: 'example-shop.myshopify.com' });
+  const after = upgraded.sql.exec('SELECT * FROM followup_stops').toArray().map((r) => ({ ...r }));
+  assert.deepEqual(after, [{ email: 'ria@example.com', at: 1, ref: 'RM-OWLBEAR-17', via: 'link', shopify_at: null, shopify_tries: null, shopify_error: null }]);
 });
 
 /* ---------------- GET /me: has this member played? ---------------- */
@@ -721,6 +728,119 @@ test('round 29, first game: the one-click header (List-Unsubscribe-Post) stops i
   // a wrong key there: 404, and nothing stopped
   const wrong = await worker.fetch(new Request(target.replace(key, 'a'.repeat(32)), { method: 'POST', body: 'List-Unsubscribe=One-Click', headers: { 'CF-Connecting-IP': '203.0.113.51' } }), env);
   assert.equal(wrong.status, 404);
+  assert.equal(await posted.text(), 'Done. No more news emails from Dice Goblin.');
+});
+
+/** Shopify's email marketing settings, as the Lair app reads and changes them (made up), with what it was asked */
+function shopifyMarketing(people) {
+  Object.defineProperty(lair.shopify, 'configured', { get: () => true, configurable: true });
+  const seen = { asked: [], changed: [], fail: null, failRead: null };
+  lair.shopify.marketingByEmail = async (email) => {
+    seen.asked.push(email);
+    if (seen.failRead) throw new Error(seen.failRead);
+    return people[email] ? { ...people[email] } : null;
+  };
+  lair.shopify.unsubscribeMarketing = async (customerId, at) => {
+    if (seen.fail) throw new Error(seen.fail);
+    seen.changed.push([customerId, at]);
+    return true;
+  };
+  return seen;
+}
+
+test('round 29, first game: an unsubscribe withdraws consent to all of Dice Goblin\'s marketing emails (the Unsolicited Electronic Messages Act 2007, sections 9(2) and 11(1)(a)), so it reaches Shopify: the customer with that email is set to unsubscribed when subscribed or pending, straight after the tap, and tried again by the 10-minute run until Shopify takes it', async () => {
+  await riasFirstGame();
+  await runAt(at(MON2, 9));
+  const link = stopOf(only('ria@example.com'));
+  // Ria gets Dice Goblin's news emails through Shopify; the Lair app can't change it yet (the permission isn't approved)
+  const shop = shopifyMarketing({ 'ria@example.com': { customerId: RIA, state: 'SUBSCRIBED', at: NOW - 30 * DAY } });
+  shop.fail = 'Shopify API: Access denied for customerEmailMarketingConsentUpdate field';
+  const waits = [];
+  lair.ctx.waitUntil = (promise) => waits.push(promise);
+  ok(await stopNow({ ref: link.ref, key: link.key }));
+  const tappedAt = Date.now();
+  await Promise.all(waits);
+  assert.deepEqual(shop.asked, ['ria@example.com'], 'asked straight after the tap');
+  assert.deepEqual(shop.changed, []);
+  let kept = lair.sql.exec('SELECT * FROM followup_stops').one();
+  assert.equal(kept.shopify_at, null, 'not in Shopify yet');
+  assert.match(kept.shopify_error, /Access denied/);
+  assert.equal(kept.shopify_tries, 1);
+  // the next 10-minute run, once the permission is approved: unsubscribed in Shopify, as of the tap
+  shop.fail = null;
+  nowIs(tappedAt + 10 * 60_000);
+  assert.deepEqual(await lair.pushStopsToShopify(Date.now()), { done: 1, failed: 0 });
+  assert.deepEqual(shop.changed, [[RIA, tappedAt]]);
+  kept = lair.sql.exec('SELECT * FROM followup_stops').one();
+  assert.equal(kept.shopify_at, Date.now());
+  assert.equal(kept.shopify_error, null);
+  // done once: the run after has nothing to do
+  assert.equal(await lair.pushStopsToShopify(Date.now() + 10 * 60_000), null);
+  assert.equal(shop.changed.length, 1);
+});
+
+test('round 29, first game: nothing to change in Shopify for someone it doesn\'t have, or who isn\'t subscribed there, and pending counts as subscribed', async () => {
+  await riasFirstGame();
+  nowIs(NOW);
+  const g2 = await game({ title: 'Lost Mine', schedule: 'one-shot', tables: ['T10'] });
+  await checkIn(await seat(g2.id, KAI, 'Kai Tane', { firstGame: true, followUp: true }));
+  nowIs(NOW);
+  const g3 = await game({ title: 'Tomb of Annihilation', schedule: 'one-shot', tables: ['T11'] });
+  nowIs(NOW);
+  await checkIn(await seat(g3.id, '', 'Sam Jones', { firstGame: true, followUp: true }));
+  await runAt(at(MON2, 9));
+  const shop = shopifyMarketing({
+    'ria@example.com': { customerId: RIA, state: 'NOT_SUBSCRIBED', at: null },
+    'kai@example.com': { customerId: KAI, state: 'PENDING', at: NOW - DAY },
+  });
+  const waits = [];
+  lair.ctx.waitUntil = (promise) => waits.push(promise);
+  for (const to of ['ria@example.com', 'kai@example.com', 'sam@example.com']) {
+    const link = stopOf(only(to));
+    ok(await stopNow({ ref: link.ref, key: link.key }));
+  }
+  await Promise.all(waits);
+  assert.deepEqual(shop.asked.sort(), ['kai@example.com', 'ria@example.com', 'sam@example.com'], 'each asked about once, one push after another');
+  assert.deepEqual(shop.changed.map(([id]) => id), [KAI], 'only the pending one changes');
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM followup_stops WHERE shopify_at IS NULL').one().n, 0);
+});
+
+test('round 29, first game: the email the day after skips someone who unsubscribed from Dice Goblin\'s emails in Shopify after ticking the box (or whose address Shopify marks invalid), never someone who unsubscribed before; Shopify not answering: none go this run, and the next run tries again', async () => {
+  // Ria ticked the box on Monday (NOW); Kai too; Mia too
+  const { s } = await riasFirstGame();
+  nowIs(NOW);
+  const g2 = await game({ title: 'Lost Mine', schedule: 'one-shot', tables: ['T10'] });
+  const kais = await seat(g2.id, KAI, 'Kai Tane', { firstGame: true, followUp: true });
+  await checkIn(kais);
+  nowIs(NOW);
+  const g3 = await game({ title: 'Tomb of Annihilation', schedule: 'one-shot', tables: ['T11'] });
+  const mias = await seat(g3.id, MIA, 'Mia Chen', { firstGame: true, followUp: true });
+  await checkIn(mias);
+  const ticked = row(s.id).followup_ok_at;
+  const shop = shopifyMarketing({
+    // unsubscribed in Shopify on Wednesday, after ticking the box: no email
+    'ria@example.com': { customerId: RIA, state: 'UNSUBSCRIBED', at: ticked + 2 * DAY },
+    // unsubscribed long before ticking it: the box is fresh consent to this one email
+    'kai@example.com': { customerId: KAI, state: 'UNSUBSCRIBED', at: ticked - 300 * DAY },
+    // an address Shopify marks invalid: no email
+    'mia@example.com': { customerId: MIA, state: 'INVALID', at: null },
+  });
+  // Shopify not answering at 9am: none go, nothing is marked
+  shop.failRead = 'Shopify API error 503';
+  assert.deepEqual(await runAt(at(MON2, 9)), { sent: 0 });
+  assert.equal(nextDays().length, 0);
+  assert.equal(row(s.id).followup_at, null);
+  // 9:10: it answers
+  shop.failRead = null;
+  const run = await runAt(at(MON2, 9, 10));
+  assert.equal(run.sent, 1);
+  assert.deepEqual(nextDays().map((m) => m.to), ['kai@example.com']);
+  // Ria's and Mia's are settled, never asked about again
+  assert.ok(row(s.id).followup_at && row(mias.id).followup_at, 'marked, so the next runs leave them');
+  const asked = shop.asked.length;
+  assert.equal((await runAt(at(MON2, 9, 20))).sent, 0);
+  assert.equal(shop.asked.length, asked);
+  assert.equal(row(s.id).followup_key, null, 'no email went, so no unsubscribe key');
 });
 
 /* ---------------- Monday's numbers ---------------- */

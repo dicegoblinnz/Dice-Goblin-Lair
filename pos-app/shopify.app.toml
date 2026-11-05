@@ -28,7 +28,7 @@ automatically_update_urls_on_dev = false
 # Games Workshop order pad to Shopify (new products stocked at 0 and listed on the till, prices and costs kept current).
 # read_products and read_inventory stay listed, as the Lair's health check looks for them. Mo approves the new ones once
 # in Shopify admin.
-scopes = "read_customers,read_metaobjects,read_themes,read_orders,write_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory,write_metaobjects,write_files,read_store_credit_accounts,write_products,write_inventory,write_publications"
+scopes = "read_customers,write_customers,read_metaobjects,read_themes,read_orders,write_orders,write_draft_orders,write_store_credit_account_transactions,write_app_proxy,write_discounts,read_products,read_inventory,write_metaobjects,write_files,read_store_credit_accounts,write_products,write_inventory,write_publications"
 use_legacy_install_flow = false
 
 [auth]

@@ -46,16 +46,24 @@ import { seatPriceOf } from './gm-sessions.js';
 export const FIRST_GAME_COLUMNS = [
   ['bookings', 'first_game', 'INTEGER'], ['bookings', 'followup_ok', 'INTEGER'], ['bookings', 'followup_ok_at', 'INTEGER'],
   ['bookings', 'followup_at', 'INTEGER'], ['bookings', 'followup_key', 'TEXT'],
+  // its email didn't go: 'shopify' (they've since unsubscribed from Dice Goblin's emails in Shopify, or Shopify marks the
+  // address invalid); followup_at says when that was settled
+  ['bookings', 'followup_skipped', 'TEXT'],
+  // the stop list reaching Shopify: when it did, how many tries have failed, and the last failure
+  ['followup_stops', 'shopify_at', 'INTEGER'], ['followup_stops', 'shopify_tries', 'INTEGER'], ['followup_stops', 'shopify_error', 'TEXT'],
 ];
 /**
  * The emails people have stopped (lower case), when, the code of the booking whose link they used and how ('link' or
- * 'one-click'); and the bookings the next-day run and Monday's numbers look for (only first games are in these)
+ * 'one-click'); and the bookings the next-day run and Monday's numbers look for (only first games are in these). Made
+ * before FIRST_GAME_COLUMNS are added (lair.js), so the stop list's columns have a table to go on.
  */
 export const FIRST_GAME_TABLES = [
   'CREATE TABLE IF NOT EXISTS followup_stops (email TEXT PRIMARY KEY, at INTEGER NOT NULL, ref TEXT, via TEXT)',
   'CREATE INDEX IF NOT EXISTS bookings_followup_due ON bookings (starts_at) WHERE first_game = 1 AND followup_ok = 1 AND followup_at IS NULL',
   'CREATE INDEX IF NOT EXISTS bookings_first_game ON bookings (starts_at) WHERE first_game = 1',
 ];
+/** Stops sent to Shopify in one go (each is a look-up and, when they're subscribed there, a change) */
+const STOPS_A_RUN = 20;
 /** "This week": the front door's cards and the email's counts look this far ahead */
 export const BEGINNER_DAYS = 7;
 /** Wrong unsubscribe links from one place in this time, CANCEL_TRIES of them, before it's asked to wait (as cancel links) */
@@ -101,8 +109,8 @@ export const UNSUBSCRIBE_WORDS = {
   /** A wrong key, a code that isn't a first game's email, or either left out: never saying which */
   wrong: "That link doesn't work. Check you have the whole link from your email.",
   tooMany: CANCEL_LINK_WORDS.tooMany,
-  /** The one-click POST's plain answer */
-  done: 'Done. No more emails like that one.',
+  /** The one-click POST's plain answer: it stops all of Dice Goblin's marketing emails, as the law says it does */
+  done: 'Done. No more news emails from Dice Goblin.',
 };
 
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
@@ -164,9 +172,15 @@ export const firstGameMethods = {
   },
 
   /* ---------------- the email the day after ---------------- */
-  /** The 10-minute run's next-day emails: claims the ones due at `now` and sends them in the background. → { sent } or null. No awaits. */
-  sendNextDay(rules, now) {
-    const claim = this.claimNextDay(rules, now);
+  /**
+   * The 10-minute run's next-day emails: asks Shopify about the ones due (nextDaySkips), then claims them and sends them
+   * in the background. Shopify not answering: none go this run, and the next run asks again. → { sent } or null.
+   */
+  async sendNextDay(rules, now) {
+    const skips = await this.nextDaySkips(rules, now);
+    if (!skips) return null;
+    // --- no awaits from here ---
+    const claim = this.claimNextDay(rules, now, skips);
     if (!claim) return null;
     this.later(this.deliverNextDay(claim));
     return claim.summary;
@@ -175,25 +189,81 @@ export const firstGameMethods = {
   /** POST /internal/next-day { at }: the same run at a fixed time (the checks' clock), waiting for the send. → { sent, ok } or { sent: 0 } */
   async nextDayAt(at) {
     const rules = await this.rules();
+    const skips = await this.nextDaySkips(rules, at);
+    if (!skips) return { sent: 0 };
     // --- no awaits until they're claimed ---
-    const claim = this.claimNextDay(rules, at);
+    const claim = this.claimNextDay(rules, at, skips);
     if (!claim) return { sent: 0 };
     const result = await this.deliverNextDay(claim);
     return { ...claim.summary, ok: Boolean(result.ok) };
   },
 
   /**
+   * Which of the ones due Shopify rules out. Using an unsubscribe withdraws consent to all of Dice Goblin's marketing
+   * emails (the Unsolicited Electronic Messages Act 2007, sections 9(2) and 11(1)(a)), so the box counts only until they
+   * unsubscribe: no email when Shopify has their email unsubscribed since they ticked it (or at a time it doesn't
+   * know), or marked invalid or redacted. Unsubscribed before they ticked it: the box is fresh consent to this one email.
+   * Asked before the claim (every await first). → a Map of booking id → 'shopify' (settled without an email); empty
+   * without Shopify set up; null when Shopify doesn't answer.
+   */
+  async nextDaySkips(rules, now) {
+    const skips = new Map();
+    const due = this.nextDayDue(rules, now);
+    if (!due.length || !this.shopify.configured) return skips;
+    const known = new Map();
+    for (const d of due) {
+      const mail = lowerEmail(d.x.email);
+      if (known.has(mail)) continue;
+      try {
+        known.set(mail, await this.shopify.marketingByEmail(mail));
+      } catch (error) {
+        console.error('Lair: could not read email marketing settings from Shopify', error);
+        return null;
+      }
+    }
+    for (const d of due) {
+      const m = known.get(lowerEmail(d.x.email));
+      if (!m) continue;
+      const ticked = Number(d.row.followup_ok_at) || 0;
+      if (m.state === 'INVALID' || m.state === 'REDACTED' || (m.state === 'UNSUBSCRIBED' && (m.at ?? Infinity) >= ticked)) skips.set(d.x.id, 'shopify');
+    }
+    return skips;
+  },
+
+  /**
    * Which next-day emails are due at `now`, Lair time, marked as sent (with their unsubscribe key) before anything goes:
-   * first games ('gm-seat', first_game 1) with the box ticked (followup_ok 1), checked in ('seated', or 'done' once
-   * they've left), that started on the Lair day before today, with an email that hasn't stopped these, and not taken up
-   * already (nextDayTaken). Only from 9am to 9pm, once each, at most REMINDERS_A_RUN a run. No awaits.
+   * nextDayDue's, less the ones Shopify ruled out (skips: settled here, with no email and no key, so they're never asked
+   * about again). Once each, at most REMINDERS_A_RUN a run. No awaits.
    * → { at, ids, letters, summary: { sent } } or null.
    */
-  claimNextDay(rules, now) {
-    if (!emailReady(this.env) || !this.eventsKnown()) return null;
+  claimNextDay(rules, now, skips = new Map()) {
+    const found = this.nextDayDue(rules, now);
+    if (!found.length) return null;
+    // --- the ones Shopify ruled out are settled first: they never go ---
+    for (const d of found) {
+      if (skips.has(d.x.id)) this.write('UPDATE bookings SET followup_at = ?, followup_skipped = ? WHERE id = ? AND followup_at IS NULL', now, skips.get(d.x.id), d.x.id);
+    }
+    const due = found.filter((d) => !skips.has(d.x.id));
+    if (!due.length) return null;
+    // --- marked as sent first, with its key: it never goes twice, and a retry keeps the key ---
+    for (const d of due) {
+      d.key = d.row.followup_key || crypto.randomUUID().replace(/-/g, '');
+      this.write('UPDATE bookings SET followup_at = ?, followup_key = COALESCE(followup_key, ?) WHERE id = ? AND followup_at IS NULL', now, d.key, d.x.id);
+    }
+    return { at: now, ids: due.map((d) => d.x.id), letters: due.map((d) => this.nextDayLetter(d, rules, now)), summary: { sent: due.length } };
+  },
+
+  /**
+   * Who's due at `now`, Lair time (nothing marked): first games ('gm-seat', first_game 1) with the box ticked
+   * (followup_ok 1), checked in ('seated', or 'done' once they've left), that started on the Lair day before today, with
+   * an email that hasn't stopped these, and not taken up already (nextDayTaken). Only from 9am to 9pm, at most
+   * REMINDERS_A_RUN. No awaits. → [{ x, row, game }]
+   */
+  nextDayDue(rules, now) {
+    if (!emailReady(this.env) || !this.eventsKnown()) return [];
     const time = new LairTime(rules.tz);
     const hour = time.parts(now).h;
-    if (hour < REMIND_FROM_HOUR || hour >= REMIND_UNTIL_HOUR) return null;
+    if (hour < REMIND_FROM_HOUR || hour >= REMIND_UNTIL_HOUR) return [];
     const today = time.key(now);
     const rows = this.sql
       .exec(
@@ -211,13 +281,7 @@ export const firstGameMethods = {
       if (this.nextDayTaken(x, game)) continue;
       due.push({ x, row, game });
     }
-    if (!due.length) return null;
-    // --- marked as sent first, with its key: it never goes twice, and a retry keeps the key ---
-    for (const d of due) {
-      d.key = d.row.followup_key || crypto.randomUUID().replace(/-/g, '');
-      this.write('UPDATE bookings SET followup_at = ?, followup_key = COALESCE(followup_key, ?) WHERE id = ? AND followup_at IS NULL', now, d.key, d.x.id);
-    }
-    return { at: now, ids: due.map((d) => d.x.id), letters: due.map((d) => this.nextDayLetter(d, rules, now)), summary: { sent: due.length } };
+    return due;
   },
 
   /**
@@ -398,8 +462,48 @@ export const firstGameMethods = {
     const x = this.unsubscribeItem(input, client, now);
     const mail = lowerEmail(x.email);
     const already = this.followupStopped(mail);
-    if (mail && !already) this.write('INSERT OR IGNORE INTO followup_stops (email, at, ref, via) VALUES (?, ?, ?, ?)', mail, now, x.ref, via);
+    if (mail && !already) {
+      this.write('INSERT OR IGNORE INTO followup_stops (email, at, ref, via) VALUES (?, ?, ?, ?)', mail, now, x.ref, via);
+      // on to Shopify's email marketing setting, in the background (the 10-minute run tries again if it can't)
+      this.later(this.pushStopsToShopify(now));
+    }
     return { ok: true, already };
+  },
+
+  /**
+   * The stop list reaching Shopify. Someone who used "Don't send me emails like this" has withdrawn consent to all of
+   * Dice Goblin's marketing emails (the Unsolicited Electronic Messages Act 2007, sections 9(2) and 11(1)(a)), not just
+   * these, so the customer with that email is set to unsubscribed in Shopify's email marketing setting (Shopify's one
+   * list of who may get them) when it has them subscribed or pending. Straight after the tap, then by the 10-minute run
+   * until Shopify takes it (Shopify down, or the write_customers permission not approved yet). One push at a time, each
+   * after the last, so no stop is sent twice. → { done, failed }, or null with nothing to send or no Shopify.
+   */
+  pushStopsToShopify(now = Date.now()) {
+    const run = (this.stopsPush || Promise.resolve()).catch(() => null).then(() => this.pushStopsOnce(now));
+    this.stopsPush = run;
+    return run;
+  },
+
+  /** One push of the stops not in Shopify yet, at most STOPS_A_RUN: every await first, then the marks. → as pushStopsToShopify */
+  async pushStopsOnce(now) {
+    if (!this.shopify.configured) return null;
+    const rows = this.sql.exec('SELECT email, at FROM followup_stops WHERE shopify_at IS NULL ORDER BY at LIMIT ?', STOPS_A_RUN).toArray();
+    if (!rows.length) return null;
+    const done = [];
+    const failed = [];
+    for (const r of rows) {
+      try {
+        const m = await this.shopify.marketingByEmail(r.email);
+        if (m && (m.state === 'SUBSCRIBED' || m.state === 'PENDING')) await this.shopify.unsubscribeMarketing(m.customerId, r.at);
+        done.push(r.email);
+      } catch (error) {
+        failed.push({ email: r.email, error: String(error?.message || error).slice(0, 300) });
+      }
+    }
+    // --- no awaits from here ---
+    for (const email of done) this.write('UPDATE followup_stops SET shopify_at = ?, shopify_error = NULL WHERE email = ? AND shopify_at IS NULL', now, email);
+    for (const f of failed) this.write('UPDATE followup_stops SET shopify_tries = COALESCE(shopify_tries, 0) + 1, shopify_error = ? WHERE email = ? AND shopify_at IS NULL', f.error, f.email);
+    return { done: done.length, failed: failed.length };
   },
 
   /**
