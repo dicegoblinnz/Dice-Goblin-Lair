@@ -70,6 +70,7 @@ Shopify POS (counter iPad) → POS extension → /pos/today, /pos/scan, /pos/che
 | `THEME_ID` | the preview theme to read the booking settings from until the new theme is published. Once the live theme has the booking settings the app uses it by itself; the `rules` row in `status` names the theme it read |
 | `RESEND_API_KEY`, `FROM_EMAIL`, `REPLY_TO`, `STAFF_EMAIL` | booking emails through Resend (optional) |
 | `MEMBERSHIPS_CLIENT_ID` | Lair Memberships' client ID (round 10). Its secret, `MEMBERSHIPS_CLIENT_SECRET`, is a Worker secret only: never in this table or GitHub |
+| `DISCORD_WARHAMMER_WEBHOOK` | round 30: the Warhammer channel's Discord webhook, where open games are posted without names (contract v30-open-games). A Worker secret only: never in this table or GitHub. Not set: nothing is posted |
 | `MEMBERSHIPS_PRODUCT_ID` | the membership product setup puts the Grab, Stash and Hoard plans on |
 | `MEMBERSHIPS_FEE_VARIANT_ID` | only if you make the damage charge product yourself (setup makes one otherwise) |
 | `MEMBERSHIPS_BILLING` | `on` lets the Lair charge members' cards; anything else and it only keeps its records (switch it off to stop all charging at once) |

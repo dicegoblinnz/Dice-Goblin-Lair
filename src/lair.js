@@ -86,6 +86,8 @@ import { BOOKING_REMINDER_COLUMNS, BOOKING_REMINDER_INDEXES, bookingReminderMeth
 import { ONLINE_WORDS } from './core.js';
 // Round 29, item 3: a first game for beginners (contract v29-roleplayers section 3)
 import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMethods } from './first-game.js';
+// Round 30: open games, a game night's pair listed as looking for a game (contract v30-open-games)
+import { OPEN_GAME_TABLES, OPEN_GAME_WORDS, openGameMethods } from './open-games.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1141,6 +1143,8 @@ export class Lair {
       }
     }
     for (const statement of FIRST_GAME_TABLES) this.sql.exec(statement);
+    // Round 30: open games (src/open-games.js)
+    for (const statement of OPEN_GAME_TABLES) this.sql.exec(statement);
     // and when they first started: a catch-up the next day is only for a reminder day they were running on
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('booking-reminders-from', ?)", String(Date.now()));
     this.bookingRemindersFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'booking-reminders-from'").toArray()[0]?.value) || 0;
@@ -1915,6 +1919,8 @@ export class Lair {
         // Round 29: the email the day after a first game, at a fixed time (src/first-game.js), and its one-click
         // unsubscribe from the Lair's own address (index.js: /unsubscribe/<code>/<key>)
         if (b === 'next-day') return json(await this.nextDayAt(Number(body.at) || Date.now()));
+        // Round 30: open games' afternoon emails and Discord posts, at a fixed time (src/open-games.js)
+        if (b === 'open-games') return json(await this.openGamesAt(Number(body.at) || Date.now()));
         if (b === 'unsubscribe') return this.oneClickUnsubscribe(body);
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
@@ -1943,8 +1949,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1977,6 +1983,8 @@ export class Lair {
       // 17 Oct 2026 (contract v18-private): the private game an invite link is for
       if (request.method === 'GET' && a === 'games' && b === 'invite' && c && !parts[3]) return json(await this.gameByInvite(decodeURIComponent(c), who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
+      // Round 30: the open games of the next four game nights (src/open-games.js); first names to members only
+      if (request.method === 'GET' && a === 'open-games' && !b) return json(await this.openGamesList(url, who));
       // Round 16: the wishlist, newest first (src/wishlist.js)
       if (request.method === 'GET' && a === 'me' && b === 'wishlist' && !c) return json(this.memberWishlist(who));
       // Round 17: the borrow queue, and the staff's postal swaps (src/queue.js)
@@ -2185,6 +2193,9 @@ export class Lair {
       if (a === 'events' && b && b !== 'joins' && c === 'joins' && !d) return json(await this.staffJoin(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'attend') return json(await this.attendEvent(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'reserve') return json(await this.reserveSpot(decodeURIComponent(b), body, who, client));
+      // Round 30: join an open game as its opponent, or drop out of one (src/open-games.js)
+      if (a === 'open-games' && b && c === 'join' && !d) return json(await this.joinOpenGame(decodeURIComponent(b), who));
+      if (a === 'open-games' && b && c === 'leave' && !d) return json(await this.leaveOpenGame(decodeURIComponent(b), who));
       // Round 22 (contract v22-holds): the tables one date of an event holds
       if (a === 'events' && b && b !== 'joins' && c === 'hold' && !d) return json(await this.holdEventDate(decodeURIComponent(b), body, who));
       // Round 9, play: "I'm interested" in a TTRPG session, "Maybe" for an event date, and taking it back
@@ -2742,10 +2753,11 @@ export class Lair {
           ? `Kia ora ${booking.name}, you've got a game spot at ${event.title}. Gobgob has saved your tables.`
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
-          ['When', when], ['Where', tables], ['People', String(booking.people)], ...(played ? played.details : []),
-          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee], cardRow,
+          ['When', when], ['Where', tables], ['People', played?.people || String(booking.people)], ...(played ? played.details : []),
+          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played?.fee && !booking.paid ? played.fee : fee], cardRow,
         ],
-        outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), cancel],
+        // Round 30: a listed game says where it's listed and that they'll hear when someone joins
+        outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), ...(played?.note ? [played.note] : []), cancel],
       };
       // Round 11: and every other player with an email hears about it, once
       if (played) this.tellGamePlayers(booking, rules);
@@ -2855,7 +2867,9 @@ export class Lair {
     // (round 21: a seat its GM pays for costs its players nothing, but it's locked in like any seat: on the GM's charge,
     // or a no-show's own price)
     const amount = x.kind === 'gm-seat' && x.coveredBy ? Math.max(x.amount || 0, this.coverAmountOf(x)) : x.amount || 0;
-    const lockable = this.tabRules(x, now) && amount > 0 && !lateSeat && !gone;
+    // Round 30: a listed game nobody has joined yet is free to cancel right up until it starts (src/open-games.js)
+    const looking = x.kind === 'table' && Boolean(x.occurrenceId) && this.openGameLooking(x.id);
+    const lockable = this.tabRules(x, now) && amount > 0 && !lateSeat && !gone && !looking;
     const until = lockable ? cancelUntil(x, rules) : x.start;
     return { cancelUntil: until, locked: lockable && now >= until, lockable };
   }
@@ -2964,6 +2978,8 @@ export class Lair {
     if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
     this.saveBooking(booking, now);
     this.dropDraft(booking);
+    // Round 30: a listed game: whoever had joined hears it's off, and its Discord post goes (src/open-games.js)
+    this.openGameCancelled(booking, rules, now);
     // Round 17: its library game is let go
     if (booking.game) this.bookingGameSync(booking.id, now);
     if (refund.due) {
@@ -6272,9 +6288,13 @@ export class Lair {
     const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
     if (!who.staff) this.checkEmailLimit(email, now);
+    // Round 30: listed as looking for a game (src/open-games.js): a member, 1 v 1, a game and size from the lists. Until
+    // someone joins it's the booker alone (people 1, their own share), so a game nobody joined never owes more.
+    const looking = this.openGameFrom(input, people, who, occurrence);
+    const seated = looking ? 1 : people;
     // Round 11: the pair they picked, and the other players (after the rate limit, so trying member codes counts towards it)
     const wanted = this.pickedSpot(spots, input.spot);
-    const players = this.gamePlayersFrom(input.players, people, { who, email });
+    const players = looking ? [] : this.gamePlayersFrom(input.players, people, { who, email });
     const open = this.freeSpots(occurrence, rules, this.state(occurrence.start - 1, occurrence.end + 1));
     if (!open.length) throw new RuleError('All the game tables are taken for this one. Try another date.', 409);
     if (wanted && !open.some((s) => spotKey(s) === spotKey(wanted))) throw new RuleError(PLAYER_WORDS.taken(spotLabel(wanted)), 409);
@@ -6284,14 +6304,16 @@ export class Lair {
     const unit = occurrence.entryFee || room.price;
     const plan = this.paymentPlan();
     const { payNow } = plan;
+    // Round 30: each player of an open game pays their own at the counter, so a game paid online can't be listed
+    if (looking && payNow) throw new RuleError(OPEN_GAME_WORDS.online);
     // Round 9: paid at the counter on a monthly account: not over its credit limit
-    if (!payNow) this.checkAccountLimit(who.customerId, unit * people, rules, now, 'book');
+    if (!payNow) this.checkAccountLimit(who.customerId, unit * seated, rules, now, 'book');
     // usePass: a session pass covers a game spot's price a person at check-in, like a table.
     const pass = input.usePass ? this.passForBooking(input.usePass, who, now) : null;
     const spotId = makeId('bk');
     const booking = {
-      id: spotId, ref: this.newCode(name, 'booking', spotId, now), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
-      name, email, phone, notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: unit * people,
+      id: spotId, ref: this.newCode(name, 'booking', spotId, now), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people: seated,
+      name, email, phone, notes: trimmed(input.notes, 500), activity: 'wargame', extras: ['wargame'], amount: unit * seated,
       occurrenceId: occurrence.id, pay: payNow ? 'now' : 'day', paid: false, status: payNow ? 'held' : 'confirmed',
       holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, customerId: who.customerId || null, passId: pass?.id || null,
       // Round 11: with named players, each pays their own share at the counter
@@ -6300,11 +6322,14 @@ export class Lair {
     this.saveBooking(booking, now);
     // Round 11: the other players (their emails go with the confirmation: confirm)
     this.saveGamePlayers(booking, players, now);
+    // Round 30: the listed game (its Discord post goes once the booking's answer is on its way)
+    const openGameId = looking ? this.saveOpenGame(booking, looking, now) : null;
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // Round 24: the ad tags of the link they came by (src/newplayers.js)
     this.tagAd('bookings', spotId, who.customerId || null, cleanAd(input.ad), now);
     // --- saved: the spot is ours ---
     const result = await this.payOrConfirm(booking, rules, { ...plan, title: `Game spot at ${occurrence.title} (${free[0].join(', ')})` });
+    if (openGameId) this.later(this.syncOpenGamePost(openGameId));
     // Round 11: the booker's answer lists the players (with the emails they typed)
     const saved = this.booking(booking.id);
     // Round 28: "Booked a session" for the ad platforms (src/newplayers.js bookedTrack)
@@ -10891,6 +10916,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not send the next-day emails', error);
     }
+    // Round 30: open games: the afternoon email to a booker nobody has joined, and Discord posts not right yet (src/open-games.js)
+    try {
+      const open = await this.openGamesAt(Date.now());
+      if (open.nudged || open.posted) result.openGames = open;
+    } catch (error) {
+      console.error('Lair: could not look after open games', error);
+    }
     // Round 29: unsubscribes from it reach Shopify's email marketing setting, tried again until they do (src/first-game.js)
     try {
       const stops = await this.pushStopsToShopify(Date.now());
@@ -10980,3 +11012,5 @@ Object.assign(Lair.prototype, gwWeekMethods);
 Object.assign(Lair.prototype, bookingReminderMethods);
 // Round 29, item 3: a first game for beginners: the answer, the GM's line, the counter, the email the day after
 Object.assign(Lair.prototype, firstGameMethods);
+// Round 30: open games: listing, the list, joining and dropping out, the afternoon email and Discord (src/open-games.js)
+Object.assign(Lair.prototype, openGameMethods);

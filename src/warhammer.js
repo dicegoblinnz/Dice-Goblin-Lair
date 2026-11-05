@@ -183,10 +183,15 @@ export const gamePlayerMethods = {
     return [{ name: trimmed(b.name, 80) || 'The booker', role: 'booker', member: Boolean(b.customerId), invited: false }, ...list];
   },
 
-  /** A booking with its game's players added (for its booker), when it has any: gameSize ('1 v 1' or '2 v 2') too */
+  /**
+   * A booking with its game's players added (for its booker), when it has any: gameSize ('1 v 1' or '2 v 2') too. Round 30:
+   * a listed game (src/open-games.js) has openGame too, and is 1 v 1 even while it's the booker alone.
+   */
   withGamePlayers(view, b) {
     const players = b.occurrenceId ? this.gamePlayersOf(b, { booker: true }) : [];
-    return players.length ? { ...view, gamePlayers: players, gameSize: GAME_SIZES[b.people] || null } : view;
+    const open = b.occurrenceId ? this.openGameOwnView(b) : null;
+    const out = players.length ? { ...view, gamePlayers: players, gameSize: GAME_SIZES[b.people] || null } : view;
+    return open ? { ...out, openGame: open, gameSize: GAME_SIZES[2] } : out;
   },
 
   /** For staff views of a booking (the floor, check-in rows, the POS): its players with emails and codes, when it has any */
@@ -213,6 +218,9 @@ export const gamePlayerMethods = {
    * the fee a person, and the split-bill line. null for any other booking.
    */
   gameEmailParts(b) {
+    // Round 30: a listed game nobody has joined yet: the game, and that Gobgob's finding an opponent (src/open-games.js)
+    const open = b.occurrenceId ? this.openGameOf(b.id) : null;
+    if (open && !open.player_id) return this.openGameEmailParts(open);
     const rows = b.occurrenceId ? this.gamePlayerRows(b.id) : [];
     if (!rows.length) return null;
     const unit = Math.round((b.amount || 0) / Math.max(1, b.people || 1));
@@ -360,6 +368,11 @@ export const gamePlayerMethods = {
         title: findOccurrence(rules, b.occurrenceId)?.title || '', playerOf: { name: firstName(b.name) }, canCancel: false, role: r.player_role,
         gameSize: GAME_SIZES[b.people] || null, gamePlayers: this.gamePlayersOf(b, { viewer: customerId, withBooker: true }),
         ...(member?.code ? { ticketCode: member.code } : {}),
+        // Round 30: an open game they joined: until when they can drop out online (POST /open-games/:id/leave)
+        ...(() => {
+          const open = this.openGamePlayerView(b, rules);
+          return open ? { openGame: open } : {};
+        })(),
       };
     });
   },
