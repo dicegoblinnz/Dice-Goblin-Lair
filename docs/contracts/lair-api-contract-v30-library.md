@@ -12,8 +12,11 @@ Round 30, 6 November 2026, from two of Mo's decisions on 2 November 2026:
 
 The code: `src/library-rules.js` (the words and the rules), with small changes in `src/lair.js`, `src/community.js`
 (walk-ins), `src/queue.js` (postal swaps), `src/shopify.js` (reading `member_free` and the tag), `src/core.js` (event
-dates, the tag's handle), `src/booking-reminders.js` (one line) and `src/pick.js` (the tag's handle now comes from
-`core.js`). Tests: `test/round30-library.test.js` (18 checks).
+dates, the tag's handle), `src/reminders.js` (the price line, 1.6a), `src/booking-reminders.js` (one line) and
+`src/pick.js` (the tag's handle now comes from `core.js`). Tests: `test/round30-library.test.js` (22 checks).
+
+Changed after the review of 6 November 2026: member guests added by code get in free too (1.4, 1.5), reminders and
+calendars say what's true for everyone (1.6a), and either source saying a game is In Store Only keeps it in (2.1).
 
 What Shopify had on 6 November 2026 (read only): the `lair_event` definition has the boolean field `member_free`
 ("Free for library members"), and the entry `board-game-night` has it `true` (monthly from Wed 11 Nov 2026, 6pm to
@@ -72,27 +75,38 @@ At any other event nothing changes, library members included.
 
 Board Game Night doesn't take sign-ups. For one that does and is free for library members:
 
-- `POST /events/:occurrenceId/join` (the account holder signs up) and `POST /events/:occurrenceId/joins` (staff add an
-  account): the account holder's **own place** is free when they're a library member (1.2); the people with them
-  (guests, named or not) pay. Sam and two friends: `amount` 2000, `memberFree: true`. Sam alone: `amount` 0. A guest
-  booking (no account) pays for every place. A guest who's a library member, on someone else's sign-up, pays through
-  that sign-up (the brief: their guests pay); to get in free they sign up themselves or walk in.
-- The monthly account limit and "Booked a session" (round 28's `track.value`) see the amount with the free place off.
+- `POST /events/:occurrenceId/join` (someone signs up) and `POST /events/:occurrenceId/joins` (staff add an account):
+  Mo's "library members free, everyone else $10", for everyone on it (guests too after the review, 6 Nov 2026):
+  - **Free:** the account holder's own place when they're a library member (1.2; `memberFree: true`), and each guest
+    added by their member code who's a library member (round 8's guests with an account; counted in `freeGuests`).
+  - **Pays:** a guest added by name, a guest who isn't a library member, and the extra people a page sends as a number.
+    A booking made without an account pays for its own place; member guests on it are still free.
+  - Each account counts once: someone who is both the account holder and a guest row on it (a sign-up that joined their
+    account later, round 8) is one free place.
+- Sam alone: `amount` 0. Sam with two friends by name: `amount` 2000, `memberFree: true`. Leo (not a member) with Sam
+  by code and Jo by name: `amount` 2000, `freeGuests: 1`. Mia (a member) with Kiri (a member) by code: `amount` 0.
+- Staff adding someone (`/joins`) adds one account and a number of people, so only that account's own place can be free.
+- The monthly account limit and "Booked a session" (round 28's `track.value`) see the amount with the free places off.
 
 ### 1.5 At the door: checking in a sign-up
 
-Entry is paid at the counter, so a sign-up at a members-free date is priced for who the account holder is **on the day**
-when it's checked in: `POST /checkin` (the staff page), the POS's `/pos/checkin` and `/pos/checkin-member` (Add
-everything to cart), Pay with cash's Got the cash (it checks in as the till does), and the floor's
-`POST /bookings/:id/update` `{ status: 'attended' }`.
+Entry is paid at the counter, so a sign-up at a members-free date is priced for who's on it **on the day** (the account
+holder and the guests added by member code, as 1.4 counts them) when it's checked in: `POST /checkin` (the staff page),
+the POS's `/pos/checkin` and `/pos/checkin-member` (Add everything to cart), Pay with cash's Got the cash (it checks in
+as the till does), and the floor's `POST /bookings/:id/update` `{ status: 'attended' }`.
 
-- Joined the library since they signed up: their own place comes off (`memberFree` becomes true), and the check-in's
-  message ends `Library member: free entry.`, or `Library member: their own entry's free.` with others on it who pay.
-- Their payment failed since: their own place goes back on, at what a place cost when they signed up (the event's entry
-  now, when theirs was the only place), and the message ends with the failed-payment words above:
+- Someone on it joined the library since: their place comes off. Someone's payment failed since: their place goes back
+  on, at what a place cost when they signed up (the event's entry now, when every place was free). It's the count of free
+  places that sets the price, so one member's payment failing while another's goes through leaves it as it was.
+- The check-in's message ends with who gets in free: `Library member: free entry.` (one person),
+  `Library member: their own entry's free.` (the account holder, with others on it who pay),
+  `Library members: free entry for 2 of the 4.`, or `Library members: free entry for all 3.`; and, for an account holder
+  whose payment failed, the words in 1.3:
   `Checked in: Kiri Smith, 1 person for Library social. Charge $10.00. Their last library payment didn't go through, so entry isn't free today.`
+  A guest's payment is never mentioned.
 - **Only while nothing's been paid, marked paid or waived on it.** One that's settled stays as it is: staff sort out
-  anything owed back by hand, as for any refund.
+  anything owed back by hand, as for any refund. The one write that re-prices it checks that again (not paid, nothing
+  paid, not waived), with nothing awaited between reading it and writing it.
 - Checked in already: nothing changes. A changed price keeps a monthly account's open bill true (`reconcileBills`, as a
   staff change to a sign-up does).
 
@@ -107,8 +121,22 @@ nothing in My Lair's `dueNow` or on a cash request, never owed after the day, ne
 card** like any checked-in session (a walk-in is checked in), the same as a free card night's walk-in: the stamping
 rules don't change. Like any free session, it isn't a first paid session for round 24's welcome codes.
 
-The reminder two days before (round 29) of a sign-up whose own place is free says `On your tab: Nothing to pay`, not
-the event's price.
+The reminder two days before (round 29) of a sign-up with nothing to pay because its places are free for library
+members says `On your tab: Nothing to pay`, not the event's price. One with places to pay for says what's on their tab,
+as before.
+
+### 1.6a What reminders and calendars say about the price (after the review, 6 Nov 2026)
+
+The event's price line (`eventPriceLine`: the reminder someone asks for with Maybe or I'm coming, and its text copy,
+the calendar file `GET /ics/<id>.ics`, the calendar feeds and the Google Calendar links) says what's true for everyone
+at a members-free event:
+
+- `Free for library members, $10 for everyone else, paid at the counter on the day` (the fee as the event has it).
+- In the reminder email to an account whose library plan lets them borrow (read when it's sent, as 1.2 reads it):
+  `Free for you as a library member` (its Google Calendar link too, since it's theirs). Anyone else gets the line above.
+- The event's price note follows on its own line as before, unless it's about members (Board Game Night's "Library
+  members free, everyone else $10" says the same, so it isn't repeated).
+- Events that aren't members-free read as before (`$10 a person, paid at the counter on the day`).
 
 ### 1.7 What each view says
 
@@ -116,7 +144,8 @@ the event's price.
   `config` (the event as `lair-config.liquid` writes it for the calendar).
 - A sign-up as its member and staff see it (`joinView`, `staffJoinView`, so `GET /me` `joins`, `GET /floor` `joins` and
   the event views) and as a check-in row (`/checkin`, `/pos/scan`, `/pos/today`): `memberFree: true` when the account
-  holder's own place is free. It's left out otherwise.
+  holder's own place is free, and `freeGuests` (how many guests on it get in free as library members). Each is left out
+  otherwise.
 
 ### 1.8 The staff Events tab: `POST /events`, `POST /events/:handle/update`
 
@@ -137,8 +166,9 @@ the event's price.
 
 ### 1.10 Storage
 
-`event_joins.member_free` (INTEGER, NOT NULL, default 0), made sure of on every start (`MEMBER_FREE_COLUMNS`): 1 when
-the account holder's own place is free as a library member. A sign-up's `amount` is what everyone else on it pays.
+Two columns on `event_joins` (INTEGER, NOT NULL, default 0), made sure of on every start (`MEMBER_FREE_COLUMNS`):
+`member_free`, 1 when the account holder's own place is free as a library member, and `free_guests`, how many of the
+guests on it get in free as library members. A sign-up's `amount` is what everyone else on it pays.
 
 ## 2. Games that stay in the Lair
 
@@ -146,16 +176,19 @@ the account holder's own place is free as a library member. A sign-up's `amount`
 
 A library game stays in the Lair when its Shopify product is tagged `In Store Only`, read the way the theme's product
 page reads it: by the tag's handle, `in-store-only` (`inStoreTagged` in `src/core.js`; any case or spacing). The Lair
-asks, in this order (`staysInLair`):
+has two sources, and **either one saying so keeps it in** (`staysInLair`):
 
 1. **Shopify's answer to the scan's own lookups**, kept 10 minutes: `LairVariantByCode` (a code the Lair hasn't seen)
    and the copies lookup `VariantCopies` (every scan, the desk's check-out and a hold marked collected), which now ask
-   for the product's `tags`. So a tag added or taken off since the catalogue last synced counts at once.
-2. Else **the catalogue** (`pick_catalog.in_store_only`, round 17), synced from Shopify's tags: only the listings that
+   for the product's `tags`. So a tag added since the catalogue last synced counts at once.
+2. **The catalogue** (`pick_catalog.in_store_only`, round 17), synced from Shopify's tags: only the listings that
    changed every 10 minutes, and all of them every 6 hours. Adding the tag changes a listing's `updatedAt`, so the next
    10-minute sync picks it up; it has had both games since 2 Nov.
 
-Neither knowing the game, it goes home as before.
+After the review (6 Nov 2026): a "no" kept from a lookup never beats the catalogue's "yes", so a game tagged just after
+a lookup said it wasn't still stays. The other way round, a tag taken off in Shopify holds the game in until the
+catalogue's next sync (up to 10 minutes; the staff page's Sync with Shopify now, `POST /pick/sync`, does it at once).
+Neither source knowing the game, it goes home as before.
 
 ### 2.2 A member's scan: `POST /library/scan`
 
@@ -218,6 +251,8 @@ holds), Help me pick's borrow mode still weights it down, and its `GET /library/
 | --- | --- |
 | Walk-in, a library member | `Library member: free entry.` |
 | Check-in, a library member with others on the sign-up | `Library member: their own entry's free.` |
+| Check-in, some on the sign-up are library members (guests added by code among them) | `Library members: free entry for <free> of the <people>.` (`Library member: free entry for 1 of the <people>.` for one guest) |
+| Check-in, everyone on the sign-up is a library member | `Library members: free entry for all <people>.` |
 | Walk-in or check-in, a payment that didn't go through | `Their last library payment didn't go through, so entry isn't free today.` |
 | The same, waiting on their bank's check | `Their last library payment is waiting on their bank's check, so entry isn't free today.` |
 | Member's scan (422) | `<title> stays in the Lair, so it can't go home. Play it at your table instead.` |
@@ -227,13 +262,18 @@ holds), Help me pick's borrow mode still weights it down, and its `GET /library/
 | Hold marked collected (`notice`) | `<title> stays in the Lair: the hold's collected for a table, and nothing goes home.` |
 | Postal swap packed or sent (422) | `<title> stays in the Lair, so it can't be posted. Cancel this swap and refund any postage.` |
 | Any other loan (422) | `<title> stays in the Lair, so it can't go home.` |
+| A members-free event's price line (reminders, calendars) | `Free for library members, <fee> for everyone else, paid at the counter on the day` |
+| The same, in a library member's own reminder | `Free for you as a library member` |
 
-The member's words are Gobgob's plain voice for an error (no "friend"); the rest are staff's.
+The member's words are Gobgob's plain voice for an error (no "friend"); the reminder's lines are his plain voice too
+(the email's row is `Entry`); the rest are staff's.
 
 ## 4. Tests
 
-`test/round30-library.test.js`, 18 checks named for the rules, each seen failing for the right reason before the change
-and each rule broken once afterwards to see its check fail. `test/round7-b.test.js`'s `GET /events` check pins the
+`test/round30-library.test.js`, 22 checks named for the rules, each seen failing for the right reason before the change
+and each rule broken once afterwards to see its check fail. After the review: four new checks (the reminder's words,
+member guests by code, a holder who is also a guest counting once, and a cached "no" never beating the catalogue's
+"yes"), and the Shopify lookups check now expects a catalogue "yes" to keep a game in while Shopify's answer says no. `test/round7-b.test.js`'s `GET /events` check pins the
 event's exact view and config, so it now expects `memberFree: false` in both (the new field, not a changed rule).
 
 ## 5. Going live

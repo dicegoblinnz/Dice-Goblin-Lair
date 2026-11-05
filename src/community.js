@@ -327,7 +327,7 @@ export const communityMethods = {
     );
     const join = this.joinById(id);
     const full = occurrence.capacity && taken + 1 > occurrence.capacity;
-    const words = entry ? this.entryWords(entry) : '';
+    const words = entry ? this.entryWords({ holder: entry, free: entry.free ? 1 : 0 }, 1) : '';
     return {
       join: { ...this.staffJoinView(join), source: 'walk-in' }, row: this.joinRow(join),
       message: `Walk-in added and checked in: ${name} for ${occurrence.title}.${fee ? ` Charge ${money(fee)}.` : ''}${words ? ` ${words}` : ''}`,

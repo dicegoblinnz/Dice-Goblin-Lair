@@ -1307,8 +1307,9 @@ export class Lair {
       phone: r.phone || '',
       // round 15: staff let them off it (waived), and when it was made (what's locked in and owed goes by it)
       waived: Boolean(r.waived), createdAt: r.created_at || null,
-      // round 30: the account holder's own place is free, as a library member (src/library-rules.js)
-      memberFree: r.member_free === 1,
+      // round 30: the account holder's own place is free, as a library member, and how many guests on it get in free as
+      // library members too (src/library-rules.js)
+      memberFree: r.member_free === 1, freeGuests: Number(r.free_guests) || 0,
     };
   }
 
@@ -1328,8 +1329,8 @@ export class Lair {
       id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, name: j.name, status: j.status,
       pay: j.pay, paid: j.paid, amount: j.amount, payment: j.pay === 'now' ? 'online' : 'store', refund: j.refund || null,
       paidAmount: j.paidAmount || 0, due: dueOf(j),
-      // Round 30: the account holder got in free as a library member (said only when they did)
-      ...(j.memberFree ? { memberFree: true } : {}),
+      // Round 30: the account holder got in free as a library member, and how many guests did (each said only when so)
+      ...(j.memberFree ? { memberFree: true } : {}), ...(j.freeGuests ? { freeGuests: j.freeGuests } : {}),
       guests: (guests || this.joinGuests(j.id)).map((g) => ({ name: g.name, member: Boolean(g.customer_id) })),
       // Round 15: until when they can cancel it themselves, whether it's locked in now, and owed or waived
       ...this.lockView(j), owed: this.joinOwed(j), waived: Boolean(j.waived),
@@ -5626,8 +5627,8 @@ export class Lair {
       customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
       gameId: null, occurrenceId: j.occurrenceId, seriesId: null, owed: this.joinOwed(j, now), waived: Boolean(j.waived),
       guests: (guests || this.joinGuests(j.id)).map((g) => this.staffGuest(g)),
-      // Round 30: the account holder's own place is free, as a library member (said only when it is)
-      ...(j.memberFree ? { memberFree: true } : {}),
+      // Round 30: the account holder's own place is free, as a library member, and how many guests' are (said only when so)
+      ...(j.memberFree ? { memberFree: true } : {}), ...(j.freeGuests ? { freeGuests: j.freeGuests } : {}),
     };
   }
 
@@ -6072,9 +6073,11 @@ export class Lair {
     // it's paid), or either. No fee, nothing to pay.
     const fee = occurrence.entryFee || 0;
     // Round 30: at an event free for library members, the account holder's own place is free while their library plan
-    // lets them borrow; the people with them pay (src/library-rules.js)
-    const holderFree = this.memberFreeDate(occurrence) && this.libraryEntry(who.customerId, who.tags, now).free;
-    const amount = fee * (people - (holderFree ? 1 : 0));
+    // lets them borrow, and so is each guest's added by member code whose plan does (the review, 6 Nov 2026); guests
+    // added by name, and anyone else, pay (src/library-rules.js freePlaces)
+    const places = this.memberFreeDate(occurrence) ? this.freePlaces(who.customerId, guests, now, who.tags) : null;
+    const holderFree = Boolean(places?.holderFree);
+    const amount = fee * Math.max(0, people - (places?.free || 0));
     const plan = this.paymentPlan();
     const { payNow } = plan;
     // Round 9: paid at the counter on a monthly account: not over its credit limit (paid online now, nothing goes on it)
@@ -6084,13 +6087,14 @@ export class Lair {
       id: joinId, ref: this.newCode(name, 'join', joinId, now), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
       end: occurrence.end, people, name, email, note: String(input.note || '').trim().slice(0, 300), status: payNow ? 'held' : 'confirmed',
       pay: payNow ? 'now' : 'day', paid: false, amount, holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, memberFree: holderFree,
+      freeGuests: places?.freeGuests || 0,
     };
     this.write(
       `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, pay, paid, amount,
-         hold_until, created_at, updated_at, phone, member_free)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+         hold_until, created_at, updated_at, phone, member_free, free_guests)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, join.status, who.customerId || null,
-      join.pay, join.amount, join.holdUntil, now, now, phone, holderFree ? 1 : 0,
+      join.pay, join.amount, join.holdUntil, now, now, phone, holderFree ? 1 : 0, join.freeGuests,
     );
     for (const g of guests) {
       this.write('INSERT INTO event_join_guests (id, join_id, customer_id, name, code, created_at) VALUES (?, ?, ?, ?, ?, ?)', makeId('eg'), join.id, g.customerId, g.name, g.code, now);

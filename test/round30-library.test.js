@@ -332,7 +332,7 @@ test("a library member's free entry stamps their loyalty card the way a free eve
   assert.deepEqual([SAM, LEO].map((id) => lair.paidSession(id, lair.stampTally(id).sessions, clock)), [false, false]);
 });
 
-test("signing up for a members-free event: a library member's own place is free and their guests pay; a non-member, or a member whose payment failed, pays for every place", async () => {
+test("signing up for a members-free event: a library member's own place is free and guests added by name pay; a non-member, or a member whose payment failed, pays for every place", async () => {
   const codes = await members();
   membership(SAM, 'active');
   membership(KIRI, 'past_due');
@@ -411,6 +411,90 @@ test("a members-free sign-up's reminder two days before says there's nothing to 
   const row = (j) => lair.reminderTabRow({ x: lair.joinById(j.id), type: 'signup', game: null, o }, rules);
   assert.deepEqual(row(sam), ['On your tab', 'Nothing to pay']);
   assert.deepEqual(row(leo), ['On your tab', '$10, paid at the counter on the day']);
+});
+
+test("a members-free event's reminder says what's true for everyone (free for library members, $10 for everyone else), and to a library member that it's free for them (the review, 6 Nov 2026)", async () => {
+  await members();
+  membership(SAM, 'active');
+  membership(KIRI, 'past_due');
+  // Board Game Night's price note as Shopify has it; a members-free event whose note says something else
+  useRules([{ ...BGN, priceNote: 'Library members free, everyone else $10' }, POKE, MAGIC, { ...SOCIAL, priceNote: 'Snacks on the house' }, QUIZ]);
+  const rules = lair.rulesCache;
+  const occurrence = (id) => findOccurrence(rules, id);
+  const eventOf = (id) => rules.events.find((e) => e.id === id.split('@')[0]);
+  const line = (id) => lair.eventPriceLine(occurrence(id), eventOf(id));
+  // for everyone (the calendar file, the calendar feed, Google Calendar): the note isn't said twice
+  assert.equal(line(BGN_TODAY), 'Free for library members, $10 for everyone else, paid at the counter on the day');
+  assert.equal(line(SOCIAL_DAY), 'Free for library members, $10 for everyone else, paid at the counter on the day\nSnacks on the house');
+  // an event that isn't members-free reads as before
+  assert.equal(line(POKE_TODAY), '$10 a person, paid at the counter on the day');
+  const ics = await (await lair.eventIcs(BGN_TODAY)).text();
+  assert.match(ics.replace(/\r\n /g, ''), /DESCRIPTION:Free for library members\\, \$10 for everyone else\\, paid at the counter on the day/);
+  // the reminder email someone asked for ("I'm coming"): a library member who can borrow is told it's free for them;
+  // a member whose payment didn't go through, and anyone without an account, get the line for everyone
+  const entry = (customerId) => {
+    const row = { id: `in-${customerId || 'guest'}`, customer_id: customerId, email: 'someone@example.com', name: 'Someone', level: 'coming', target_id: BGN_TODAY, remove_key: 'k' };
+    const letter = lair.reminderLetter(row, occurrence(BGN_TODAY), rules, 'tomorrow');
+    const google = new URL(letter.text.match(/https:\/\/calendar\.google\.com\S+/)[0]).searchParams.get('details') || '';
+    return [letter.text.match(/^Entry:\s+(.*)$/m)?.[1], google.includes('Free for you as a library member')];
+  };
+  assert.deepEqual(entry(SAM), ['Free for you as a library member', true]);
+  assert.deepEqual(entry(KIRI), ['Free for library members, $10 for everyone else, paid at the counter on the day', false]);
+  assert.deepEqual(entry(null), ['Free for library members, $10 for everyone else, paid at the counter on the day', false]);
+});
+
+test("a guest who's a library member, added by their member code, gets in free too; a guest added by name, or who isn't a member, pays; at the door each is priced for who they are that day (the review, 6 Nov 2026)", async () => {
+  const codes = await members();
+  for (const id of [SAM, MIA, KIRI, NIKAU]) membership(id, 'active');
+  membership(TAMA, 'past_due');
+  // Leo (not a member) brings Sam (a member) and Tama (her payment failed) by code, and Jo by name: Sam's free
+  const leo = (await signUp(SOCIAL_DAY, LEO, { guests: [{ code: codes[SAM] }, { code: codes[TAMA] }, { name: 'Jo' }] })).data.join;
+  assert.deepEqual([leo.people, leo.amount, Boolean(leo.memberFree), leo.freeGuests], [4, 3000, false, 1]);
+  // Mia (a member) brings Kiri (a member): nothing to pay
+  const mia = (await signUp(SOCIAL_DAY, MIA, { guests: [{ code: codes[KIRI] }] })).data.join;
+  assert.deepEqual([mia.people, mia.amount, mia.due, mia.memberFree, mia.freeGuests], [2, 0, 0, true, 1]);
+  // Nikau (a member) brings Ari (not a member) by code: Ari pays
+  const nikau = (await signUp(SOCIAL_DAY, NIKAU, { guests: [{ code: codes[ARI] }] })).data.join;
+  assert.deepEqual([nikau.amount, nikau.memberFree, nikau.freeGuests], [1000, true, undefined]);
+  // staff see who's free on the floor's sign-ups
+  const floor = (await call('GET', `floor?from=${at('2026-11-14', 0)}&to=${at('2026-11-15', 0)}`, null, 'staff')).data;
+  assert.deepEqual(floor.joins.filter((j) => j.id === leo.id).map((j) => [j.amount, j.freeGuests]), [[3000, 1]]);
+  // before Saturday: Tama's payment goes through, Kiri's fails, and Ari's sign-up is waived; then Ari joins the library
+  lair.sql.exec("UPDATE memberships SET status = 'active' WHERE customer_id = ?", TAMA);
+  lair.sql.exec("UPDATE memberships SET status = 'past_due' WHERE customer_id = ?", KIRI);
+  assert.equal((await call('POST', `bookings/${nikau.id}/update`, { waived: true }, 'staff')).status, 200);
+  membership(ARI, 'active');
+  clock = at('2026-11-14', 13, 45);
+  const checkIn = (j) => call('POST', 'checkin', { id: j.id, type: 'join' }, 'staff');
+  // Leo's: Sam and Tama both get in free now
+  const leoIn = await checkIn(leo);
+  assert.equal(leoIn.data.message, 'Checked in: Leo Tane, 4 people for Library social. Charge $20.00. Library members: free entry for 2 of the 4.');
+  assert.deepEqual([lair.joinById(leo.id).amount, lair.joinById(leo.id).freeGuests], [2000, 2]);
+  // Mia's: Kiri pays now; Mia's own entry is still free
+  const miaIn = await checkIn(mia);
+  assert.equal(miaIn.data.message, "Checked in: Mia Rua, 2 people for Library social. Charge $10.00. Library member: their own entry's free.");
+  assert.deepEqual([lair.joinById(mia.id).amount, lair.joinById(mia.id).freeGuests], [1000, 0]);
+  // Nikau's was waived: it stays as it is
+  await checkIn(nikau);
+  assert.deepEqual([lair.joinById(nikau.id).amount, lair.joinById(nikau.id).freeGuests, lair.joinById(nikau.id).waived], [1000, 0, true]);
+  // the words when everyone on it is a library member, and when one guest is (the account holder isn't)
+  assert.equal(LIBRARY_ENTRY_WORDS.freeAll(3), 'Library members: free entry for all 3.');
+  assert.equal(lair.entryWords({ holder: { free: false, plan: null }, free: 1 }, 2), 'Library member: free entry for 1 of the 2.');
+});
+
+test('a library member who is both the account holder and a guest on one sign-up (it joined their account later) gets one free place, not two', async () => {
+  const codes = await members();
+  membership(SAM, 'active');
+  // signed up without an account, with Sam (a member) by code and Jo by name: Sam's place is free
+  const made = await call('POST', `events/${SOCIAL_DAY}/join`, { name: 'Sam Jones', email: 'sam@example.com', phone: MOBILE, guests: [{ code: codes[SAM] }, { name: 'Jo' }] }, '');
+  assert.equal(made.status, 200, said(made));
+  assert.deepEqual([made.data.join.people, made.data.join.amount, made.data.join.freeGuests], [3, 2000, 1]);
+  // then it joins Sam's account (he logs in with its email, round 8): he's the account holder and still a guest row
+  lair.sql.exec('UPDATE event_joins SET customer_id = ? WHERE id = ?', SAM, made.data.join.id);
+  clock = at('2026-11-14', 13, 45);
+  const checked = await call('POST', 'checkin', { id: made.data.join.id, type: 'join' }, 'staff');
+  assert.equal(checked.data.message, "Checked in: Sam Jones, 3 people for Library social. Charge $20.00. Library member: their own entry's free.");
+  assert.deepEqual([lair.joinById(made.data.join.id).amount, lair.joinById(made.data.join.id).memberFree, lair.joinById(made.data.join.id).freeGuests], [2000, true, 0]);
 });
 
 /* ================ 2. Games that stay in the Lair ================ */
@@ -534,7 +618,7 @@ test("staff can't lend an in-store-only game: not to someone new, not to a membe
   assert.deepEqual([catan.status, catan.data.lent, catan.data.loan.title], [200, true, 'Catan']);
 });
 
-test("the scan's own Shopify lookups read the In Store Only tag, so a catalogue that's behind never lets a game go home, or keeps one in", async () => {
+test("the scan's own Shopify lookups read the In Store Only tag, so a catalogue that's behind never lets a game go home", async () => {
   await members();
   membership(SAM, 'active', { tier: 'hoard' });
   library();
@@ -547,8 +631,12 @@ test("the scan's own Shopify lookups read the In Store Only tag, so a catalogue 
   lair.saveLibraryGame({ variantId: MVM.variantId, productId: MVM.productId, title: MVM.title, handle: MVM.handle, shelfCode: MVM.code }, Date.now());
   const mvm = await scan(MVM.code, SAM);
   assert.deepEqual([mvm.status, mvm.data.error], [422, IN_STORE_WORDS.scan(MVM.title)]);
-  // and the other way: Catan's tag was taken off in Shopify since the catalogue last synced: Shopify's answer wins
+  // and the other way: Catan's tag was taken off in Shopify, but the catalogue still has it: either saying so keeps it in
+  // (the review, 6 Nov 2026), so it stays until the catalogue's next sync (within 10 minutes, or Sync with Shopify now)
   lair.sql.exec('UPDATE pick_catalog SET in_store_only = 1 WHERE product_id = ?', CATAN.productId);
+  const kept = await scan(CATAN.code, SAM);
+  assert.deepEqual([kept.status, kept.data.error], [422, IN_STORE_WORDS.scan(CATAN.title)]);
+  lair.sql.exec('UPDATE pick_catalog SET in_store_only = 0 WHERE product_id = ?', CATAN.productId); // the next sync
   const catan = await scan(CATAN.code, SAM);
   assert.deepEqual([catan.status, catan.data.result], [200, 'borrowed']);
   // an answer that says nothing about tags (older than 10 minutes, or none): the catalogue says
@@ -557,6 +645,27 @@ test("the scan's own Shopify lookups read the In Store Only tag, so a catalogue 
   const azul = await scan(AZUL.code, SAM);
   assert.deepEqual([azul.status, azul.data.error], [422, IN_STORE_WORDS.scan(AZUL.title)]);
   assert.equal(loans(), 1, 'only Catan went home');
+});
+
+test("a game tagged In Store Only just after Shopify last said it wasn't stays in: a 'no' kept from a lookup in the last 10 minutes never beats the catalogue's newer 'yes' (the review, 6 Nov 2026)", async () => {
+  await members();
+  membership(SAM, 'active', { tier: 'hoard' });
+  library();
+  catalogue(CATAN, AZUL);
+  // a game the Lair knows, so a scan asks Shopify only for its copies
+  lair.saveLibraryGame({ variantId: AZUL.variantId, productId: AZUL.productId, title: AZUL.title, handle: AZUL.handle, shelfCode: AZUL.code }, Date.now());
+  // a library page asks for its copies: Shopify says it isn't In Store Only, and that's kept for 10 minutes
+  const status = await call('GET', `library/status?ids=${AZUL.variantId}`, null, SAM);
+  assert.equal(status.status, 200, said(status));
+  // a minute later staff tag it in Shopify, and the catalogue's next sync has the tag
+  clock += MIN;
+  inStore.set(AZUL.variantId, true);
+  catalogue(CATAN, { ...AZUL, tags: [...AZUL.tags, 'In Store Only'] });
+  // a scan inside the 10 minutes: the copies answer is the kept "no", but the catalogue's "yes" keeps it in
+  clock += 4 * MIN;
+  const azul = await scan(AZUL.code, SAM);
+  assert.deepEqual([azul.status, azul.data.error], [422, IN_STORE_WORDS.scan(AZUL.title)]);
+  assert.equal(loans(), 0, 'nothing went home');
 });
 
 test("Shopify's answers carry the In Store Only tag: LairVariantByCode and the copies lookup (VariantCopies) read each product's tags, as the theme does (its handle, in-store-only)", async () => {
