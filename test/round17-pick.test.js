@@ -882,7 +882,7 @@ test('the card: the game, its shelf in parts, where it stands, add-ons, the vide
   assert.deepEqual(Object.keys(card), ['productId', 'variantId', 'handle', 'title', 'image', 'summary', 'blurb', 'shelfCode', 'shelf', 'players', 'time', 'weight', 'brain', 'age', 'mode',
     'vibes', 'themes', 'reading', 'access', 'table', 'video', 'inStoreOnly', 'missingPieces', 'missingNote', 'availability', 'staffPick', 'isNew', 'underplayed', 'addOns', 'shopCopy', 'rpg']);
   assert.deepEqual([card.productId, card.variantId, card.title, card.shelfCode, card.shelf, card.brain, card.missingPieces, card.missingNote], [G.catan, variantOf(G.catan), 'Catan', 'DGL34-M011', { section: 'DGL34', size: 'M', number: 11 }, 'some', true, 'One sheep missing']);
-  assert.deepEqual(card.availability, { copies: 1, available: 0, held: 0, out: 1, nextFree: null, mine: null, atHome: null });
+  assert.deepEqual(card.availability, { copies: 1, available: 0, held: 0, out: 1, nextFree: null, mine: null, atHome: null, heldFor: null });
   assert.deepEqual(card.addOns, [{ productId: G.seafarers, title: 'Catan: Seafarers', handle: 'catan-seafarers', available: 1 }]);
   assert.equal(card.video, 'https://www.youtube.com/watch?v=abc123XYZ_-');
   assert.equal(card.shopCopy, null);

@@ -610,6 +610,105 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 31 (contract v31-library-filters): up to 50 products as the shop's filters need them: what each listing says
+   * (custom.players and custom.play_time text, tags, its Library copy, its age groups (shopify.recommended-age-group, a
+   * list of entries), whether it's sold on a plan or is a gift card) and what its filters say now (custom.plays_with,
+   * play_time_band, suits_age, how_you_play, on_shelf and difficulty). Needs read_products. → Map productId → { productId,
+   * title, handle, tags, sellingPlan, giftCard, playersText, timeText, libraryCopy (digits, or null), ageGroups (gids),
+   * current: { plays_with, play_time_band, suits_age, how_you_play (lists, or null), on_shelf (true, false or null),
+   * difficulty (text, or null) } }; a product Shopify doesn't have is left out.
+   */
+  async filterProducts(productIds) {
+    const ids = [...new Set(productIds.map(String))].slice(0, 50);
+    if (!ids.length) return new Map();
+    const field = (alias, namespace, key) => `${alias}: metafield(namespace: "${namespace}", key: "${key}") { value }`;
+    const data = await this.graphql(
+      `query LairFilterProducts($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title handle tags requiresSellingPlan isGiftCard
+        ${field('players', 'custom', 'players')} ${field('playTime', 'custom', 'play_time')} ${field('libraryCopy', 'custom', 'library_copy')}
+        ${field('ageGroup', 'shopify', 'recommended-age-group')} ${field('difficulty', 'custom', 'difficulty')} ${field('playsWith', 'custom', 'plays_with')}
+        ${field('playTimeBand', 'custom', 'play_time_band')} ${field('suitsAge', 'custom', 'suits_age')} ${field('howYouPlay', 'custom', 'how_you_play')}
+        ${field('onShelf', 'custom', 'on_shelf')} } } }`,
+      { ids: ids.map((id) => `gid://shopify/Product/${id}`) },
+    );
+    const list = (m) => {
+      if (m?.value == null) return null;
+      try {
+        const values = JSON.parse(m.value);
+        return Array.isArray(values) ? values.map(String) : null;
+      } catch {
+        return null;
+      }
+    };
+    const out = new Map();
+    for (const n of data.nodes || []) {
+      if (!n?.id) continue;
+      const productId = String(n.id).split('/').pop();
+      out.set(productId, {
+        productId, title: String(n.title || '').trim(), handle: String(n.handle || ''), tags: (n.tags || []).map(String),
+        sellingPlan: n.requiresSellingPlan === true, giftCard: n.isGiftCard === true,
+        playersText: String(n.players?.value ?? '').trim() || null, timeText: String(n.playTime?.value ?? '').trim() || null,
+        libraryCopy: n.libraryCopy?.value ? String(n.libraryCopy.value).split('/').pop() : null, ageGroups: list(n.ageGroup) || [],
+        current: {
+          plays_with: list(n.playsWith), play_time_band: list(n.playTimeBand), suits_age: list(n.suitsAge), how_you_play: list(n.howYouPlay),
+          on_shelf: n.onShelf?.value === 'true' ? true : n.onShelf?.value === 'false' ? false : null,
+          difficulty: String(n.difficulty?.value ?? '').trim() || null,
+        },
+      });
+    }
+    return out;
+  }
+
+  /** Round 31: what On the shelf now (custom.on_shelf) says for up to 50 products. → Map productId → true, false or null (unset) */
+  async shelfValues(productIds) {
+    const ids = [...new Set(productIds.map(String))].slice(0, 50);
+    if (!ids.length) return new Map();
+    const data = await this.graphql(
+      'query LairShelfValues($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id onShelf: metafield(namespace: "custom", key: "on_shelf") { value } } } }',
+      { ids: ids.map((id) => `gid://shopify/Product/${id}`) },
+    );
+    return new Map((data.nodes || []).filter((n) => n?.id).map((n) => [
+      String(n.id).split('/').pop(), n.onShelf?.value === 'true' ? true : n.onShelf?.value === 'false' ? false : null,
+    ]));
+  }
+
+  /** Round 31: the labels of up to 50 age group entries (Shopify's shopify--recommended-age-group). Needs read_metaobjects. → Map gid → label */
+  async ageGroupLabels(gids) {
+    const ids = [...new Set(gids.map(String))].slice(0, 50);
+    if (!ids.length) return new Map();
+    const data = await this.graphql(
+      'query LairAgeGroups($ids: [ID!]!) { nodes(ids: $ids) { ... on Metaobject { id handle label: field(key: "label") { value } } } }',
+      { ids },
+    );
+    return new Map((data.nodes || []).filter((n) => n?.id).map((n) => [String(n.id), String(n.label?.value || '').trim() || null]));
+  }
+
+  /**
+   * Round 31: product metafields written (metafieldsSet, up to 25: Shopify's limit; all or nothing). Needs write_products.
+   * → { userErrors } (none when they were all written)
+   */
+  async setProductMetafields(metafields) {
+    if (metafields.length > 25) throw new Error('At most 25 metafields can be written at a time.');
+    const data = await this.graphql(
+      'mutation LairFilterSet($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message code } } }',
+      { metafields },
+    );
+    const userErrors = data.metafieldsSet?.userErrors || [];
+    // an answer with nothing written and nothing wrong isn't taken as written
+    if (!userErrors.length && (data.metafieldsSet?.metafields || []).length !== metafields.length) return { userErrors: [{ message: "Shopify didn't say they were written" }] };
+    return { userErrors };
+  }
+
+  /** Round 31: product metafields taken off (metafieldsDelete, up to 25 { ownerId, namespace, key }). Needs write_products. → { userErrors } */
+  async deleteProductMetafields(metafields) {
+    if (metafields.length > 25) throw new Error('At most 25 metafields can be taken off at a time.');
+    const data = await this.graphql(
+      'mutation LairFilterDelete($metafields: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $metafields) { deletedMetafields { key namespace ownerId } userErrors { field message } } }',
+      { metafields },
+    );
+    return { userErrors: data.metafieldsDelete?.userErrors || [] };
+  }
+
+  /**
    * Round 17: a products query read page by page (its nodes, in order), up to `pages` pages. A page Shopify throttles is
    * asked again once its bucket has room (up to 5 tries), and between pages it waits for room for the next one, so a
    * full sync never runs the store's bucket dry (the review, 16 Oct 2026).
