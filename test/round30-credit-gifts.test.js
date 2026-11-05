@@ -326,6 +326,25 @@ test('gifts (round 30): no answer adding it to the friend: staff hear and check,
   assert.deepEqual(changes, [[MIA, -1000], [KAI, 1000]], 'settling moves nothing');
 });
 
+test('gifts (round 30, from the review): the friend only sees a gift staff are checking when it may have reached them, not one that never went their way', async () => {
+  // Shopify wouldn't add it to Kai's, and didn't answer as it went back on Mia's: staff check where it is (stage back)
+  says.push(null, 'refuse', 'lost');
+  ok(await send(MIA, { code: codeOf(KAI), amount: 1000 }));
+  const [back] = await gifts(MIA);
+  assert.equal(back.status, 'checking');
+  assert.deepEqual(await gifts(KAI), [], 'Shopify said no to Kai: it never reached him');
+  const kais = ok(await call('GET', `members/${KAI}/credit`, null, OWNER)).history.filter((h) => h.kind === 'gift');
+  assert.deepEqual(kais, [], 'nor on his member page');
+  const mias = ok(await call('GET', `members/${MIA}/credit`, null, OWNER)).history.filter((h) => h.kind === 'gift');
+  assert.deepEqual(mias.map((h) => [h.amount, h.check, h.stage]), [[-1000, true, 'back']], "on Mia's, for staff to check");
+  ok(await call('POST', `credit-gifts/${back.id}/settle`, { outcome: 'returned' }, OWNER));
+  // the answer adding it to the friend's was lost (stage give): it may be on Kai's, so he sees it on its way
+  nowIs(NOW + HOUR);
+  says.push(null, 'silent');
+  ok(await send(MIA, { code: codeOf(KAI), amount: 500 }));
+  assert.deepEqual((await gifts(KAI)).map((g) => [g.direction, g.amount, g.status]), [['received', 500, 'checking']]);
+});
+
 /* ---------------- one at a time, lookups, notes, privacy ---------------- */
 
 test('gifts (round 30): two taps at once send once; one still with Shopify holds the next', async () => {

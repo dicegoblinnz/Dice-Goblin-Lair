@@ -29,7 +29,8 @@
  *  - 'credited': on the GM's store credit
  *  - 'staff': kept from a staff GM (amount 0; note says what it would have been)
  *  - 'manual': the GM has no account in the Lair, so staff add it in Shopify admin (they get an email)
- *  - 'retry': Shopify said no, so nothing moved; tried again next run, GM_CREDIT.maxTries times in all
+ *  - 'retry': Shopify said no, so nothing moved; tried again GM_CREDIT.retryAfter (10 minutes) later at the soonest,
+ *    GM_CREDIT.maxTries times in all
  *  - 'failed': Shopify said no every time (staff get an email)
  *  - 'check': Shopify didn't answer, so it may have gone; never tried again by itself (staff get an email)
  *
@@ -52,8 +53,10 @@ export const GM_CREDIT = Object.freeze({
   // unanswered (the Lair restarted mid-call)
   timeoutMs: 20_000,
   sendingStale: 30 * 60_000,
-  // Shopify said no: tried again each run, this many times in all
+  // Shopify said no: tried again this many times in all, each at least retryAfter after the last (round 30: a payment
+  // starts a run of its own, so without the wait a busy Shopify could use every try up in a couple of minutes)
   maxTries: 5,
+  retryAfter: 10 * 60_000,
 });
 
 /** Whether a session's GM credit adds itself (round 21), rather than waiting for "Session done" */
@@ -197,10 +200,11 @@ export const gmCreditMethods = {
    * The seats ready for their GM's credit now: in a round 21 session that has started (round 30: it was one that was
    * over) and isn't cancelled, free or without a GM fee, that nobody credited with "Session done" (a credits row of
    * theirs, or credited set with nothing in the ledger: a tap whose answer never came back); paid (amount over $0: a
-   * free seat isn't a paying player's) and not cancelled or a no-show; not decided yet, or Shopify said no last time.
-   * gameId: just that session's. No awaits.
+   * free seat isn't a paying player's) and not cancelled or a no-show; not decided yet, or Shopify said no last time
+   * and that was GM_CREDIT.retryAfter ago or more (retryNow: whenever it was, for staff's Session done). gameId: just
+   * that session's. No awaits.
    */
-  gmCreditReady(now, rules, gameId = null) {
+  gmCreditReady(now, rules, gameId = null, { retryNow = false } = {}) {
     return this.sql
       .exec(
         `SELECT b.id AS booking_id, b.game_id AS game_id, b.people AS people, g.gm_customer_id AS gm,
@@ -212,10 +216,10 @@ export const gmCreditMethods = {
             AND COALESCE(g.gm_fee, ?) > 0
             AND NOT EXISTS (SELECT 1 FROM credits c WHERE c.game_id = g.id AND COALESCE(c.by, '') != 'auto')
             AND NOT (g.credited IS NOT NULL AND NOT EXISTS (SELECT 1 FROM gm_credit_seats x WHERE x.game_id = g.id))
-            AND (s.booking_id IS NULL OR s.status = 'retry')
+            AND (s.booking_id IS NULL OR (s.status = 'retry' AND s.updated_at <= ?))
             ${gameId ? 'AND g.id = ?' : ''}
           ORDER BY g.ends_at, b.created_at, b.id LIMIT ?`,
-        rules.prices.gmCredit, GM_CREDIT.autoFrom, now, rules.prices.gmCredit, ...(gameId ? [gameId] : []), GM_CREDIT.seatsPerRun,
+        rules.prices.gmCredit, GM_CREDIT.autoFrom, now, rules.prices.gmCredit, retryNow ? now : now - GM_CREDIT.retryAfter, ...(gameId ? [gameId] : []), GM_CREDIT.seatsPerRun,
       )
       .toArray();
   },
@@ -224,14 +228,15 @@ export const gmCreditMethods = {
    * The 10-minute run, a payment's run (gmCreditSoon) and "Session done" on a round 21 session that's started: every seat
    * ready for its GM's credit gets it, one store credit for each GM. gameId: just that session's seats. Returns
    * { credited, amount, staff, manual, retry, failed, check } (players each, amount in cents) when anything was decided,
-   * else null. Never throws for Shopify: what Shopify says is recorded on the seats.
+   * else null. Never throws for Shopify: what Shopify says is recorded on the seats. retryNow: seats Shopify said no to
+   * are tried again however recently that was (staff's Session done; the runs wait GM_CREDIT.retryAfter).
    */
-  async autoGmCredit(now = Date.now(), { gameId = null } = {}) {
+  async autoGmCredit(now = Date.now(), { gameId = null, retryNow = false } = {}) {
     if (!this.shopify?.configured) return null;
     const rules = await this.rules();
     const out = { credited: 0, amount: 0, staff: 0, manual: 0, retry: 0, failed: 0, check: 0 };
     this.staleGmCredits(Date.now(), out);
-    const ready = this.gmCreditReady(now, rules, gameId);
+    const ready = this.gmCreditReady(now, rules, gameId, { retryNow });
     const gms = [...new Set(ready.map((r) => String(r.gm || '')))];
     // GMs with no account: staff add it in Shopify admin
     if (gms.includes('')) this.gmCreditManual(ready.filter((r) => !r.gm), rules, out);
@@ -240,7 +245,7 @@ export const gmCreditMethods = {
       // (as "Session done": a GM whose tags couldn't be read isn't paid while the setting could keep it from them)
       if (person?.tagsFailed && !person.staff && this.staffGmMode() !== 'earn') continue;
       // --- no awaits from here until the seats are claimed ---
-      const mine = this.gmCreditReady(Date.now(), rules, gameId).filter((r) => String(r.gm || '') === gm);
+      const mine = this.gmCreditReady(Date.now(), rules, gameId, { retryNow }).filter((r) => String(r.gm || '') === gm);
       if (!mine.length) continue;
       const batch = makeId('gc');
       const at = Date.now();
@@ -487,7 +492,8 @@ export const gmCreditMethods = {
     const read = () => this.sql.exec('SELECT booking_id, status, people, amount, note, batch, updated_at FROM gm_credit_seats WHERE game_id = ? ORDER BY updated_at DESC, booking_id', game.id).toArray();
     const key = (r) => `${r.status}|${r.batch || ''}|${r.updated_at}`;
     const was = new Map(read().map((r) => [r.booking_id, key(r)]));
-    await this.autoGmCredit(now, { gameId: game.id });
+    // (a tap is staff asking for it now: a seat Shopify said no to is tried again straight away)
+    await this.autoGmCredit(now, { gameId: game.id, retryNow: true });
     const seats = read();
     const sum = (list) => ({ players: list.reduce((n, s) => n + s.people, 0), amount: list.reduce((n, s) => n + s.amount, 0) });
     const order = ['check', 'failed', 'retry', 'manual', 'staff', 'credited'];
@@ -606,7 +612,9 @@ export const gmCreditMethods = {
    */
   gmSeatCredits(game) {
     const ledger = new Map(this.sql.exec('SELECT booking_id, status FROM gm_credit_seats WHERE game_id = ?', game.id).toArray().map((r) => [r.booking_id, r.status]));
-    const none = game.free || !((game.gmFee ?? 1) > 0);
+    // (a session with no fee of its own takes the shop's, as the runs do: round 30's review)
+    const fee = game.gmFee ?? this.rulesCache?.prices.gmCredit ?? 500;
+    const none = game.free || !(fee > 0);
     // a staff GM's sessions follow the team's setting (as gmCreditLine reads it: never waiting on Shopify)
     const id = game.gmCustomerId ? String(game.gmCustomerId) : '';
     const staff = Boolean(id) && (Boolean(this.helperRow(id)) || Boolean(this.people?.get(id)?.person?.staff));
@@ -614,7 +622,7 @@ export const gmCreditMethods = {
     const kept = Boolean(rule && !rule.credit);
     return {
       // what the GM gets for each person who pays (cents): the fee, or 0 when there's none for them to get
-      each: none || kept || !id ? 0 : game.gmFee ?? this.rulesCache?.prices.gmCredit ?? 500,
+      each: none || kept || !id ? 0 : fee,
       of: (seat) => {
         const status = ledger.get(seat.id);
         if (status === 'credited') return 'credited';

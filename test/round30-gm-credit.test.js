@@ -255,6 +255,45 @@ test('GM credit (round 30): Session done before a session starts says why; once 
   assert.deepEqual(credited, [[RANGI, 500]]);
 });
 
+test('GM credit (round 30, from the review): a GM credit Shopify said no to waits 10 minutes before it\'s tried again, however many players pay meanwhile', async () => {
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia');
+  const kais = await seat(id, KAI, 'Kai');
+  const rias = await seat(id, RIA, 'Ria');
+  let refuse = true;
+  lair.shopify.creditCustomer = async (customerId, cents) => {
+    creditCalls.push([customerId, cents]);
+    if (refuse) throw Object.assign(new Error('Too many requests'), { refused: true });
+    credited.push([customerId, cents]);
+    return { amount: { amount: (cents / 100).toFixed(2) } };
+  };
+  const tries = () => Object.fromEntries(lair.sql.exec('SELECT booking_id, status, tries FROM gm_credit_seats WHERE game_id = ?', id).toArray().map((r) => [r.booking_id, `${r.status} ${r.tries}`]));
+  // 6:20pm: Mia pays, and Shopify says no (it's busy): her seat waits to be tried again
+  nowIs(at('2026-10-27', 18, 20));
+  await pay(mias);
+  await settled();
+  assert.deepEqual(tries(), { [mias.id]: 'retry 1' });
+  // Kai and Ria pay over the next few minutes: only their own seats are tried, never Mia's again this soon
+  nowIs(at('2026-10-27', 18, 22));
+  await pay(kais);
+  await settled();
+  nowIs(at('2026-10-27', 18, 25));
+  await pay(rias);
+  await settled();
+  assert.deepEqual(tries(), { [mias.id]: 'retry 1', [kais.id]: 'retry 1', [rias.id]: 'retry 1' }, 'a payment never spends another seat\'s tries');
+  assert.equal(await lair.autoGmCredit(Date.now()), null, 'the 10-minute run straight after: nothing is due again yet');
+  // 10 minutes after Mia's try, Shopify takes it: her seat goes, and the others in their turn
+  refuse = false;
+  nowIs(at('2026-10-27', 18, 30));
+  await lair.autoGmCredit(Date.now());
+  assert.deepEqual(tries(), { [mias.id]: 'credited 1', [kais.id]: 'retry 1', [rias.id]: 'retry 1' });
+  nowIs(at('2026-10-27', 18, 35));
+  await lair.autoGmCredit(Date.now());
+  assert.deepEqual(tries(), { [mias.id]: 'credited 1', [kais.id]: 'credited 1', [rias.id]: 'credited 1' });
+  assert.deepEqual(credited, [[RANGI, 500], [RANGI, 1000]]);
+  assert.deepEqual(alerts.filter((a) => /by hand/.test(a.subject)), [], 'nothing for staff to add by hand');
+});
+
 test('GM credit (round 30): a session cancelled after its GM had credit for it tells staff, who decide; nothing is taken back by itself', async () => {
   const id = await list();
   const mias = await seat(id, MIA, 'Mia');
@@ -297,6 +336,14 @@ test('GM credit (round 30): a GM\'s games in My Lair say what they get for each 
   const each = async (who) => Object.fromEntries(ok(await call('GET', 'me', null, who)).games.map((g) => [g.id, g.gmCreditEach]));
   assert.deepEqual(await each(RANGI), { [priced]: 500, [tenner]: 1000, [noFee]: 0, [free]: 0 });
   assert.deepEqual(await each(ANA), { [anas]: 0 }, 'Ana is on the team, and its setting says staff GMs never get it');
+  // (from the review) a session with no fee of its own takes the shop's: with the shop's at $0, there's none, and a paid
+  // player's fee isn't "on its way" either
+  lair.sql.exec('UPDATE games SET gm_fee = NULL WHERE id = ?', priced);
+  const mias = await seat(priced, MIA, 'Mia');
+  await pay(mias);
+  lair.rulesCache.prices.gmCredit = 0;
+  const game = ok(await call('GET', 'me', null, RANGI)).games.find((g) => g.id === priced);
+  assert.deepEqual([game.gmCreditEach, game.players.map((p) => [p.name, p.paid, p.gmCredit])], [0, [['Mia', true, null]]]);
 });
 
 /* ---------------- the plain RPG Session pays the player's seat ---------------- */

@@ -29,7 +29,8 @@ A member sends some of their store credit to another member, by the friend's mem
 | `POST /proxy/credit-gifts/:id/settle` | staff with Money | `{ outcome }`: what happened to a gift Shopify didn't confirm, as staff found it in Shopify admin: `sent` (it's on the friend's store credit, there or added by hand: both are emailed), `returned` (it's back on the sender's) or `failed` (nothing came off). Moves nothing → `{ gift }` (the staff view, 1.4) |
 
 `GET /proxy/me` adds:
-- `creditGifts`: their last 10 gifts, sent and received (received once it may have reached them), newest first, each
+- `creditGifts`: their last 10 gifts, sent and received (received once it may have reached them: on their store
+  credit, going on it now, or staff checking whether it went on it; never one Shopify turned away from them), newest first, each
   `{ id, direction: 'sent' | 'received', name, amount, note, status, at }`. `name` is the other side's ("Kai T.");
   `status` is `sent` (on the friend's store credit), `checking` (still with Shopify, or staff are checking), `failed`
   (nothing moved) or `returned` (it came off and went back: nothing moved in the end).
@@ -38,7 +39,9 @@ A member sends some of their store credit to another member, by the friend's mem
 `GET /proxy/members/:customerId/credit` (Money) lists gifts in `history` beside the staff changes and damage charges,
 newest first: `{ id: 'gift:<id>', giftId, kind: 'gift', amount (minus sent, plus received), note ("Gift to Kai T.: ..."
 or "Gift from Mia C."), status: 'done' | 'pending' | 'failed', check, stage, balanceAfter: null, message, at, by: null,
-from, to }`. `check: true` is a gift waiting for staff (1.3), with `stage` the change whose answer was lost.
+from, to }`. `check: true` is a gift waiting for staff (1.3), with `stage` the change whose answer was lost. A friend's
+page lists it the same way as their My Lair (above): a check about taking it off, or putting it back, is on the sender's
+page only.
 
 ### 1.2 Limits
 
@@ -122,6 +125,9 @@ the GM pays for give nothing). `src/gm-credit.js`, `src/counter.js`; tests `test
   after its fee went to the GM: staff get an email ("... got $5.00 GM credit for Mia's seat, but that seat was
   cancelled. If Rangi shouldn't keep it, take it off their store credit on their member page."). Nothing is taken back
   by itself, as round 21.
+- **Shopify said no:** a seat is tried again 10 minutes later at the soonest (`GM_CREDIT.retryAfter`), 5 tries in all,
+  however many payments start runs meanwhile, so a busy Shopify can't use the tries up in a couple of minutes. Session
+  done tries again at once.
 - **Session done** (`POST /games/:id/credit`) before a session from 26 October has started: 409 `notStarted`.
 - `GET /me` `games` (the sessions they run) add `gmCreditEach`: what the GM gets for each person who pays, in cents
   (the fee; 0 for a free session, a $0 fee, a session from before 26 October, or a staff GM the team's setting keeps it

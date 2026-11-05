@@ -479,6 +479,9 @@ test('GM credit (round 21): Shopify said no: tried again each run, and after 5 t
   assert.deepEqual(creditRows(id), []);
   assert.equal(creditedOf(id), null);
   shopifySays = null;
+  // (round 30, from its review: tried again in the next 10-minute run, never sooner)
+  assert.equal(await lair.autoGmCredit(Date.now() + GM_CREDIT.retryAfter - 1), null, 'not yet');
+  nowIs(at('2026-10-27', 22, 20));
   assert.equal((await lair.autoGmCredit(Date.now())).credited, 1);
   assert.deepEqual(ledger(id).map((r) => [r.status, r.tries]), [['credited', 1]]);
   // another session refused every time: 5 tries, then staff hear, and it's never tried again
@@ -486,7 +489,10 @@ test('GM credit (round 21): Shopify said no: tried again each run, and after 5 t
   await seat(other, KAI, 'Kai', { paid: true });
   nowIs(at('2026-10-28', 22, 10));
   shopifySays = 'refuse';
-  for (let i = 1; i <= 4; i += 1) assert.equal((await lair.autoGmCredit(Date.now())).retry, 1, `try ${i}`);
+  for (let i = 1; i <= 4; i += 1) {
+    assert.equal((await lair.autoGmCredit(Date.now())).retry, 1, `try ${i}`);
+    nowIs(Date.now() + GM_CREDIT.retryAfter);
+  }
   assert.equal((await lair.autoGmCredit(Date.now())).failed, 1);
   assert.deepEqual(ledger(other).map((r) => [r.status, r.tries]), [['failed', 5]]);
   assert.deepEqual(alerts.map((a) => a.subject), ['GM credit to add by hand: Rangi Hohaia']);

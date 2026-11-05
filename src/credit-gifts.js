@@ -108,8 +108,10 @@ export const CREDIT_GIFT_WORDS = {
 
 // the statuses still with Shopify (or waiting to be looked for there): a sender has one of these at a time
 const MOVING = ['taking', 'giving', 'returning', 'checking'];
-// the statuses whose gift may have reached the friend (they see it in My Lair, and staff on their page)
-const REACHED = ['sent', 'giving', 'check'];
+// the gifts that may have reached the friend (they see them in My Lair, and staff on their page): on their store credit,
+// going on it now, or staff checking whether it went on it. One staff check about taking it off the sender, or putting
+// it back on the sender's, never went the friend's way (round 30's review)
+const REACHED = "(status IN ('sent', 'giving') OR (status = 'check' AND stage = 'give'))";
 
 /** A note as kept: one line, no control characters, spaces tidied. No awaits. */
 function cleanNote(value) {
@@ -162,9 +164,9 @@ export const creditGiftMethods = {
     const id = String(customerId);
     return this.sql
       .exec(
-        `SELECT * FROM credit_gifts WHERE from_id = ? OR (to_id = ? AND status IN (${REACHED.map(() => '?').join(', ')}))
+        `SELECT * FROM credit_gifts WHERE from_id = ? OR (to_id = ? AND ${REACHED})
           ORDER BY created_at DESC, rowid DESC LIMIT ?`,
-        id, id, ...REACHED, CREDIT_GIFT.listed,
+        id, id, CREDIT_GIFT.listed,
       )
       .toArray()
       .map((row) => this.creditGiftView(row, id));
@@ -185,9 +187,9 @@ export const creditGiftMethods = {
     const id = String(customerId);
     return this.sql
       .exec(
-        `SELECT * FROM credit_gifts WHERE from_id = ? OR (to_id = ? AND status IN (${REACHED.map(() => '?').join(', ')}))
+        `SELECT * FROM credit_gifts WHERE from_id = ? OR (to_id = ? AND ${REACHED})
           ORDER BY created_at DESC, rowid DESC LIMIT 20`,
-        id, id, ...REACHED,
+        id, id,
       )
       .toArray()
       .map((row) => {
