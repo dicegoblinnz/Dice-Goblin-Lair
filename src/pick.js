@@ -15,7 +15,7 @@
  * Nothing here changes what the floor shows, so writes go straight to this.sql (not this.write, which drops the floor's
  * cache): a busy night of quizzes never slows the staff floor.
  */
-import { HOUR, MIN, RuleError, addDays, lairTime } from './core.js';
+import { HOUR, MIN, RuleError, addDays, heldFor, lairTime } from './core.js';
 // Round 30: Shopify's handle for a tag ("In Store Only" → "in-store-only"), the one rule core.js keeps for every reader
 import { tagHandle } from './core.js';
 import { emailReady, safeEqual } from './shopify.js';
@@ -1266,6 +1266,8 @@ export const pickMethods = {
       out.set(g.productId, {
         copies, available, held: holds.length, out: home.length, nextFree: !available && holds.length ? holds[0].until : null,
         mine: mine ? { id: mine.id, until: mine.until } : null, atHome: atHome ? { id: atHome.id, outAt: atHome.outAt } : null,
+        // round 31: who the soonest hold is for ('table' or 'member'), as GET /library/status says
+        heldFor: heldFor(holds),
       });
     }
     return out;

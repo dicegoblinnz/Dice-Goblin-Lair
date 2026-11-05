@@ -9,12 +9,12 @@ import {
   checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings,
   SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
-  financialYear, financialYearFrom, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
+  financialYear, financialYearFrom, heldFor, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
   eventDays, LOYALTY_PICKS, LOYALTY_SURE, PICK_WORDS, loyaltySureMessage,
 } from './core.js';
 // Round 29: the head-start card (12 slots, 2 of them Gobgob's), as every screen and email shows it
 import { CARD_ROW, cardSoFar, cardView } from './core.js';
-import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
+import { ShopifyAdmin, emailReady, externalCalls, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
 import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
@@ -91,6 +91,9 @@ import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMetho
 // Round 30: library members get in free at events marked so, and games that stay in the Lair never go home
 // (src/library-rules.js, contract v30-library)
 import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './library-rules.js';
+// Round 31: the library shelves' and the shop's board games' filters in Shopify, and On the shelf now (src/shop-filters.js,
+// contract v31-library-filters)
+import { FILTER_LIMITS, SHELF_WRITES, SHOP_FILTER_TABLES, callBudget, shopFilterMethods } from './shop-filters.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -107,7 +110,7 @@ FEATURE_SCOPES.read_store_credit_accounts = 'store credit balances on the staff 
 // Round 25: Games Workshop orders tagged Ordered in, with a note; round 26: the staff page's Warhammer tab adding GW's
 // order pad (new products stocked at 0 and on the till, prices and costs kept current)
 FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in';
-FEATURE_SCOPES.write_products = "adding Games Workshop's order pad (the Warhammer tab)";
+FEATURE_SCOPES.write_products = "adding Games Workshop's order pad (the Warhammer tab), and the shop's filters and On the shelf now (round 31)";
 FEATURE_SCOPES.write_inventory = 'new Games Workshop products stocked at 0, and their costs';
 FEATURE_SCOPES.write_publications = 'new Games Workshop products on the till';
 // Round 29: an unsubscribe from the email the day after a first game reaches Shopify's email marketing setting
@@ -1168,6 +1171,9 @@ export class Lair {
         this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
     }
+    // Round 31: what Shopify's On the shelf now says, games waiting for their filters, and shop games' library twins (made
+    // when missing, src/shop-filters.js)
+    for (const statement of SHOP_FILTER_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1226,6 +1232,9 @@ export class Lair {
   /** Every write goes through here, so cached floor data is dropped the moment anything changes. */
   write(query, ...bindings) {
     this.sql.exec(query, ...bindings);
+    // Round 31: a library hold or loan changed, so On the shelf now is checked within a minute (the alarm: it never fails
+    // or waits on the write that's already saved, src/shop-filters.js)
+    if (SHELF_WRITES.test(query)) this.shelfTouched();
     // Round 19: when a booking or sign-up was first paid, and when a member first used the app (the weekly numbers). It
     // never fails the write that's already saved.
     if (STAMP_WRITES.test(query)) {
@@ -1911,7 +1920,28 @@ export class Lair {
   }
 
   /* ---------------- HTTP ---------------- */
+  /**
+   * Round 31: the Durable Object's alarm (its one alarm, src/shop-filters.js's wakeAt): On the shelf now where a hold or
+   * loan changed, games staff saved on Check games, a whole run under way, and the next hold to end, with this
+   * invocation's own outside calls. Never throws, so Cloudflare doesn't run it again on its own; the work sets the next
+   * alarm itself, and when the alarm itself fails it's set again 5 minutes on.
+   */
+  async alarm() {
+    const callsAtStart = externalCalls.count;
+    // the alarm that went off isn't set any more, so the retry below always lands (from the review, 6 Nov 2026)
+    this.alarmAt = null;
+    try {
+      await this.useConfig();
+      await this.filterAlarm(Date.now(), callsAtStart);
+    } catch (error) {
+      console.error('Lair: the alarm failed', error);
+      this.wakeAt(Date.now() + FILTER_LIMITS.alarmRetry);
+    }
+  }
+
   async fetch(request) {
+    // Round 31: the outside calls made before this request (Cloudflare's free plan allows 50 an invocation)
+    const callsAtStart = externalCalls.count;
     const url = new URL(request.url);
     const parts = url.pathname.split('/').filter(Boolean);
     try {
@@ -2053,6 +2083,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'pick' && b === 'game' && c && !parts[3]) return json(await this.pickGameCard(c, who, client));
       if (request.method === 'GET' && a === 'pick' && b === 'games' && !c) return json(this.staffPickGames(url, who));
       if (request.method === 'GET' && a === 'pick' && b === 'report' && !c) return json(this.pickReport(url, who));
+      // Round 31: the last run of the shop's filters, and the games with gaps (src/shop-filters.js)
+      if (request.method === 'GET' && a === 'pick' && b === 'filters' && !c) return json(this.shopFiltersView(who));
       if (request.method === 'GET' && a === 'pick' && b && !c) return json(await this.sharedPicks(b, who));
       if (request.method === 'GET' && a === 'me' && b === 'picks' && !c) return json(this.myPicks(who));
       // Round 26: the Warhammer tab: where the pad's import stands, and the plan's lines (src/gw-pad.js)
@@ -2104,7 +2136,14 @@ export class Lair {
       if (a === 'pick' && !b) return json(await this.pick(body, who, client));
       if (a === 'pick' && b === 'swipes' && !c) return json(await this.pickSwipes(body, who, client));
       if (a === 'pick' && b === 'sync' && !c) return json(await this.staffPickSync(who));
-      if (a === 'pick' && b === 'games' && c && !d) return json(this.staffPickEdit(c, body, who));
+      // Round 31: the shop's filters and On the shelf now, written to Shopify now (src/shop-filters.js)
+      if (a === 'pick' && b === 'filters' && !c) return json(await this.staffShopFilters(who, callsAtStart));
+      if (a === 'pick' && b === 'games' && c && !d) {
+        const saved = this.staffPickEdit(c, body, who);
+        // Round 31: and its filters, and its shop twin's, go to Shopify straight after (the alarm, src/shop-filters.js)
+        this.filtersAfterSave(saved.game?.productId, Date.now());
+        return json(saved);
+      }
       if (a === 'pick' && b && c === 'event' && !d) return json(this.pickEvent(b, body));
       if (a === 'pick' && b && c === 'save' && !d) return json(this.savePicks(b, body, who));
       if (a === 'pick' && b && c === 'email' && !d) return json(await this.emailPicks(b, body, who, client));
@@ -8648,7 +8687,9 @@ export class Lair {
    * mine, atHome }. copies: Shopify's (shopifyCopies), else the copies a page last sent with a hold, else 1. out (round
    * 7): copies at home with members. available = copies less active holds and copies out, never below 0. nextFree:
    * when none is available and something's held, the soonest an active hold ends (ms), else null. mine: { id, until }
-   * when the logged-in member holds a copy; atHome: { id, outAt } when they have one at home; else null.
+   * when the logged-in member holds a copy; atHome: { id, outAt } when they have one at home; else null. Round 31:
+   * heldFor, who the soonest-ending active hold is for: 'table' (a table booking's game), 'member' (a member's reserve),
+   * or null with none, so a page can say "Held for a table until 9pm" or "Reserved until Thursday".
    */
   async libraryStatus(url, who) {
     const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map((x) => this.variantIdOf(x)).filter(Boolean))];
@@ -8670,6 +8711,7 @@ export class Lair {
       games[id] = {
         copies, held: holds.length, out: out.length, available, nextFree: !available && holds.length ? holds[0].until : null,
         mine: mine ? { id: mine.id, until: mine.until } : null, atHome: home ? { id: home.id, outAt: home.outAt } : null,
+        heldFor: heldFor(holds),
       };
     }
     return { games };
@@ -10749,6 +10791,8 @@ export class Lair {
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
   async checkConnection(webhookUrl, { force = false, testEmail = false, membershipsUrl = null, membershipsSetup = false } = {}) {
+    // Round 31: the outside calls made before this run (Cloudflare's free plan allows 50 an invocation, src/shop-filters.js)
+    const callsAtStart = externalCalls.count;
     if (force) this.rulesCache = null;
     const rules = await this.rules();
     const result = {
@@ -11055,6 +11099,16 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not delete old quiz sessions', error);
     }
+    // Round 31 (src/shop-filters.js), after the catalogue sync above: a whole run starts when one's due (the first fill
+    // after a deploy, then each night's from 3am), then On the shelf now where it changed (the alarm's safety net), games
+    // staff saved and the run under way, with what's left of this run's outside calls; the alarm carries the rest
+    try {
+      const started = this.startDueFilterRun(Date.now());
+      const upkeep = await this.filterWork(() => this.filterUpkeep(Date.now(), callBudget(callsAtStart)));
+      if (started || upkeep) result.shopFilters = { ...(started ? { started } : {}), ...(upkeep || {}) };
+    } catch (error) {
+      console.error('Lair: could not keep the shop filters in Shopify', error);
+    }
     this.note({ connection: result });
     return result;
   }
@@ -11117,3 +11171,5 @@ Object.assign(Lair.prototype, firstGameMethods);
 Object.assign(Lair.prototype, libraryRuleMethods);
 // Round 30: store credit gifts (src/credit-gifts.js)
 Object.assign(Lair.prototype, creditGiftMethods);
+// Round 31: the shop's filters in Shopify, and On the shelf now (src/shop-filters.js)
+Object.assign(Lair.prototype, shopFilterMethods);

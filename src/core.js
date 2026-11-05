@@ -948,6 +948,11 @@ export const HOLD_DAYS = 3;
 
 /** When a hold made at `ms` ends, in Lair time (right across daylight saving changes: the days are counted, not hours) */
 export const holdUntil = (time, ms) => time.at(addDays(time.key(ms), HOLD_DAYS), 0);
+/**
+ * Round 31 (contract v31-library-filters): who a game's soonest-ending active hold is for, from its holds soonest end first
+ * (rowToHold's): 'table' for a table booking's game, 'member' for a member's reserve, null with none
+ */
+export const heldFor = (holds) => (holds?.length ? (holds[0].kind === 'booking' ? 'table' : 'member') : null);
 
 /* ---------- staff table holds that repeat (round 8) ---------- */
 /** How often a staff table hold can repeat, in days */

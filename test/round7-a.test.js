@@ -664,14 +664,14 @@ test('library (6): holds last until midnight on the third day; collected games a
     assert.equal((await call('POST', `library/holds/${hold.id}/update`, { status: 'collected' }, '1001')).status, 403);
     const collected = (await call('POST', `library/holds/${hold.id}/update`, { status: 'collected' }, 'staff')).data;
     assert.deepEqual([collected.hold.status, collected.hold.loanId, collected.loan.status, collected.loan.holdId, collected.loan.customerId, collected.loan.days], ['collected', collected.loan.id, 'out', hold.id, '1001', 0]);
-    assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: collected.loan.id, outAt: NOW } });
+    assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: collected.loan.id, outAt: NOW }, heldFor: null });
     // Kiri holds the other copy; Leo is told when it's back; once both are at home there's no date to give
     const kiris = (await reserve({}, '1002')).data.hold;
     assert.deepEqual([(await reserve({}, '1003')).status, (await reserve({}, '1003')).data.error], [409, "Every copy is reserved or out on loan right now. It's back on the shelf by midnight Thu if nobody collects it."]);
-    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 1, out: 1, available: 0, nextFree: at('2026-10-09', 0), mine: null, atHome: null });
+    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 1, out: 1, available: 0, nextFree: at('2026-10-09', 0), mine: null, atHome: null, heldFor: 'member' });
     const kiriLoan = (await call('POST', `library/holds/${kiris.id}/update`, { status: 'collected' }, 'staff')).data.loan;
     assert.deepEqual((await reserve({}, '1003')).data.error, 'Every copy is out on loan right now. Check back soon, friend.');
-    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 0, out: 2, available: 0, nextFree: null, mine: null, atHome: null });
+    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 0, out: 2, available: 0, nextFree: null, mine: null, atHome: null, heldFor: null });
     // Put back to held (it never went home): the loan goes, and the hold gets a fresh until
     Date.now = () => at('2026-10-07', 10);
     const back = (await call('POST', `library/holds/${kiris.id}/update`, { status: 'held' }, 'staff')).data;
@@ -828,7 +828,7 @@ test('library (16 Oct 2026, Mo: "user can only scan games to add to their librar
     assert.deepEqual(again.data, { result: 'at-home', loan, library: borrowed.library, message: atHome }, `action ${action}`);
   }
   assert.deepEqual(loans(), out, 'still the one loan, still out: no second borrow');
-  assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: loan.id, outAt: NOW } }, 'the game\'s page still has it at home with him');
+  assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: loan.id, outAt: NOW }, heldFor: null }, 'the game\'s page still has it at home with him');
   // My Library's "Back on the shelf" isn't for members any more: the one it's with, anyone else and nobody logged in get
   // the counter's words; a helper without the Library permission is a member here too. It stays out.
   const counter = "Staff check games back in at the counter. Bring it in and we'll scan it back onto the shelf.";
