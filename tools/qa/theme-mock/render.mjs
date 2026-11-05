@@ -776,6 +776,51 @@ if (hasTemplate('page.our-games')) {
   linklists['dg-main-menu'].links.splice(4, 0, link('Our games', '/pages/our-games'));
   linklists['dg-footer-lair'].links.splice(3, 0, link('Our games', '/pages/our-games'));
 }
+/* ---- round 31, Christmas gifts (6 Nov 2026, contract v31-gifts), on a theme that has them: the gifts page
+   (page.gifts, "who it's for"), the two experience gifts and the gift card as they are in Shopify (titles, prices, SKUs,
+   template suffixes; drafts there until they go live), and the store's All dice collection for the Not sure tile ---- */
+if (hasTemplate('page.gifts')) {
+  const giftProduct = (id, handle, title, dollars, suffix, sku, description, extra = {}) => {
+    const p = product(handle, title, 'Dice Goblin NZ', dollars, dollars, null, true, 1, 1200, 1200, { description, ...extra });
+    p.id = id;
+    p.template_suffix = suffix;
+    p.type = extra.type || 'Experience gift';
+    Object.assign(p.variants[0], { sku, inventory_management: null, requires_shipping: false, available: true });
+    p.available = true;
+    return p;
+  };
+  const firstGame = giftProduct(10299259715687, 'your-first-roleplaying-game', 'Your first roleplaying game', 30, 'gift-first-game', 'LAIR-XP-FIRSTGAME',
+    '<p><strong>Someone you know has said "I\'d love to try D&amp;D" at least three times. This is their seat.</strong></p><p><strong>Your first roleplaying game</strong> is one seat at any game at the Lair that takes beginners, plus a set of dice to keep. Most beginner games are Dungeons &amp; Dragons, and each one says how a beginner gets a character: ready to play, made together at the table, or brought along.</p>');
+  const paintGift = giftProduct(10299259879527, 'learn-to-paint-gift', 'Learn to paint gift', 10, 'gift-paint', 'LAIR-XP-PAINT',
+    '<p><strong>Grey plastic goes in. A tiny painted hero comes out.</strong></p><p><strong>Learn to paint</strong> is a seat at the Lair\'s painting class for beginners, the first Thursday of the month from 6 to 8pm. The Lair\'s paints and brushes and a miniature from the shelf are all included, and the crew on shift shows the basics, then helps when they\'re stuck.</p>');
+  const card = giftProduct(10299300000001, 'dice-goblin-gift-card', 'Dice Goblin gift card', 25, 'gift-card', 'GIFT-CARD-25',
+    '<p><strong>For the person who already owns every game you can think of.</strong></p><p>A <strong>Dice Goblin gift card</strong> works on anything we sell, online or at the counter: board games, dice, trading cards, paint, a table at the Lair, even bubble tea. They don\'t need an account, just the code.</p>',
+    { type: 'Gift card' });
+  card['gift_card?'] = true;
+  const amounts = [25, 50, 100, 200];
+  card.variants = amounts.map((d, i) => {
+    const media = img(`gift-card-${d}__1200x1200`, 1200, 1200, `A $${d} Dice Goblin gift card`);
+    media.preview_image = media;
+    return { id: 51300000000001 + i, title: `$${d}`, price: d * 100, compare_at_price: null, available: true, inventory_management: null, inventory_quantity: 0, options: [`$${d}`], option1: `$${d}`, featured_media: media, sku: `GIFT-CARD-${d}`, requires_shipping: false, quantity_rule: {} };
+  });
+  card.media = [card.featured_media, ...card.variants.map((v) => v.featured_media)];
+  card.has_only_default_variant = false;
+  card.price_min = 2500;
+  card.price_max = 20000;
+  card.price_varies = true;
+  card.options_with_values = [{ name: 'Amount', position: 1, selected_value: '$25', values: amounts.map((d) => `$${d}`) }];
+  card.selected_or_first_available_variant = card.variants[0];
+  for (const p of [firstGame, paintGift, card]) allProducts[p.handle] = p;
+  const dice = [
+    product('oakie-doakie-solid-dice-set', 'Oakie Doakie Solid dice set', 'Oakie Doakie Dice', 10.99, 10.99, null, true, 12, 1000, 1000),
+    product('marble-dice-set', 'Marble dice set', 'Dice Goblin NZ', 15.99, 15.99, null, true, 8, 1000, 1000),
+    product('gemidice-dice-set', 'Gemidice dice set', 'Gemidice', 25.99, 25.99, null, true, 4, 1000, 1000),
+  ];
+  for (const p of dice) allProducts[p.handle] = p;
+  collections['all-dice'] = coll('all-dice', 'All dice (buy 2, get the 3rd free)', dice, 55);
+  pages.gifts = { handle: 'gifts', title: 'Gifts', url: '/pages/gifts', content: '' };
+  PAGES['/pages/gifts'] = () => renderPage('page.gifts', { page: pages.gifts, template: { name: 'page', suffix: 'gifts' }, request: { page_type: 'page', locale: { iso_code: 'en' }, origin: '' } });
+}
 export const PRIZE_VARIANT = 50363551023207;
 /* ---- my-lair round 4 (ml3 worktree): the self-serve tab. The "Tab menu" products are real store data (prices in NZD,
    variant ids and barcodes as in Shopify). They're Unlisted there: reachable by handle, hidden from search, so search
@@ -857,6 +902,11 @@ collections.all = coll('all', 'All products', [...arrivals, ...boardGames], feed
 const variantIndex = new Map(feedProducts.flatMap((p) => p.variants.map((v) => [Number(v.id), { product: p, variant: v }])));
 // round 25: the GW kits can go in the live cart too (quick add on /collections/war-game, the cart's Ordered in notes)
 for (const p of [gwInStore, gwOrderedIn, gwLastOne, gwDropped]) for (const v of p.variants) variantIndex.set(Number(v.id), { product: p, variant: v });
+// round 31: the gifts can go in the live cart too (the gift card with its recipient)
+for (const handle of ['your-first-roleplaying-game', 'learn-to-paint-gift', 'dice-goblin-gift-card', 'oakie-doakie-solid-dice-set', 'marble-dice-set', 'gemidice-dice-set']) {
+  const p = allProducts[handle];
+  if (p) for (const v of p.variants) variantIndex.set(Number(v.id), { product: p, variant: v });
+}
 /* ---- round 16, the game page: product types as the store has them (games are Board Games or Card Games, library copies
    included), descriptions laid out like the shop's write-ups (a hook, the "<Title> is a …" summary, Gobgob's favourite
    bit, the 👥 ⏱ 🎂 stats line, the 🛒 or 📚 line and the 🎥 video link), custom.difficulty, type tags, and the library

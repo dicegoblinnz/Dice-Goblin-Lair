@@ -195,7 +195,8 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   const wallet = flat(await page.locator('.ml-sum--wallet').innerText());
   const coming = await page.locator('[data-coming] .ml-coming__item').count();
   check(tag, 'Bookings card: how many are coming up, and the next three as rows', sums.bookings === `${coming} coming up` && (await page.locator('.ml-sum--bookings [data-next] .ml-row').count()) === Math.min(3, coming), `${sums.bookings} vs ${coming}`);
-  const sessions = (data.passes || []).filter((p) => (p.status || 'active') === 'active').reduce((sum, p) => sum + Math.max(0, Number(p.sessionsLeft) || 0), 0);
+  // (round 31: an experience gift, a pass with a kind, is a gift to use, not sessions on a pass)
+  const sessions = (data.passes || []).filter((p) => !p.kind && (p.status || 'active') === 'active').reduce((sum, p) => sum + Math.max(0, Number(p.sessionsLeft) || 0), 0);
   const ready = data.loyalty.rolls.available;
   const giftsReady = (data.gifts || []).filter((g) => g.state === 'ready').length;
   check(tag, 'Wallet card: store credit, sessions on passes, rolls ready, gifts ready', wallet.includes('$5') && wallet.includes(`${sessions} sessions on passes`) && wallet.includes(`${ready} roll${ready === 1 ? '' : 's'} ready`) && wallet.includes(`${giftsReady} gift${giftsReady === 1 ? '' : 's'} ready`), wallet);

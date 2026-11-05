@@ -385,9 +385,12 @@ test('round 31, gifts: Your first roleplaying game covers one person\'s whole TT
   const s = await seat(g.id, RIA);
   assert.equal(bookingRow(s.id).amount, 1500, 'a $15 seat: $10 table and $5 for the GM');
   nowIs(at(SUN, 18, 5));
+  // scanned on its own first, the gift's code says what it is and that it's ready (not "1 session left of 1")
+  const scanned = ok(await call('POST', 'checkin', { code }, OWNER));
+  assert.deepEqual([scanned.kind, scanned.pass.kind, scanned.message], ['pass', 'first-game', 'Gift: Your first roleplaying game, ready to use.']);
   const r = ok(await posCheckIn(s.id, 'booking', code));
   assert.equal(r.checkedIn, true);
-  assert.deepEqual([r.pass.code, r.pass.used, r.pass.left, r.pass.covered], [code, 1, 0, 1500]);
+  assert.deepEqual([r.pass.code, r.pass.used, r.pass.left, r.pass.covered, r.pass.kind], [code, 1, 0, 1500, 'first-game']);
   assert.equal(r.notice, GIFT_WORDS.dice);
   assert.deepEqual(r.lines, [], 'nothing to ring up for the seat');
   const after = bookingRow(s.id);
@@ -397,6 +400,7 @@ test('round 31, gifts: Your first roleplaying game covers one person\'s whole TT
   assert.deepEqual(lair.gmCreditReady(Date.now(), lair.rulesCache, g.id).map((x) => x.booking_id), [s.id]);
   assert.equal(creditSoon, 1);
   assert.equal((await passNamed(code)).status, 'used');
+  assert.equal(ok(await call('POST', 'checkin', { code }, OWNER)).message, 'Gift: Your first roleplaying game, used.');
   // undo: the seat owes its $15 again, and the gift is back
   const use = (await passNamed(code)).uses[0];
   assert.deepEqual([use.bookingId, use.joinId, use.people, use.covered], [s.id, null, 1, 1500]);
@@ -462,7 +466,7 @@ test('round 31, gifts: Learn to paint covers one person\'s entry on a Learn to p
   nowIs(at('2026-12-03', 18, 5));
   const r = ok(await staffCheckIn(j.id, 'join', code));
   assert.equal(r.checkedIn, true);
-  assert.deepEqual([r.pass.code, r.pass.used, r.pass.left, r.pass.covered], [code, 1, 0, 1000]);
+  assert.deepEqual([r.pass.code, r.pass.used, r.pass.left, r.pass.covered, r.pass.kind], [code, 1, 0, 1000, 'paint']);
   assert.deepEqual([r.row.covered, r.row.due, r.row.paid], [1000, 1000, false], 'their friend still pays $10');
   assert.equal(r.row.pass.code, code);
   assert.equal(r.notice, null);

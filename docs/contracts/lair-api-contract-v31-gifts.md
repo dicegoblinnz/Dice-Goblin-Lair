@@ -112,12 +112,17 @@ On anything it isn't for, nothing is used and `notice` says why:
 
 Past its use-by: "Pass DG-… expired on 6 November 2029, so it wasn't used." (as any pass).
 
+The answer's `pass` adds `kind` when a gift was used (`{ code, label, used, left, covered, useId, kind }`), so the
+counter says "gift" rather than counting sessions. A gift's code scanned on its own (`POST /checkin { code }`) answers
+`kind` `pass` as any pass, with `message` "Gift: Your first roleplaying game, ready to use." (or "…, used.", "…,
+expired.", "…, cancelled.").
+
 ### 3.2 A sign-up: the same routes, `type` `join`
 
 Before this, a pass on a sign-up was always "Passes don't cover event entry, so no pass was used." A **session pass**
 still is. A Learn to paint gift on a Learn to paint sign-up covers one person's entry (its amount over the people paying
 on it), saved on the sign-up; checked in already, it can still be used, as on a booking. The answer's `pass` is
-`{ code, label, used, left, covered, useId }` as for a booking.
+`{ code, label, used, left, covered, useId, kind }` as for a booking.
 
 A sign-up now has, everywhere it's shown to staff (check-in rows, the floor, the POS): `covered` (what gifts covered),
 `due` less it, and `pass` (`{ code, label, left, kind }`, the gift saved or used on it, or null). The counter's line says

@@ -5553,10 +5553,12 @@ export class Lair {
     if (found.type === 'member') return this.memberCard(found.item.customer_id, rules, now, { owed, guests });
     if (found.type === 'pass') {
       const pass = this.passView(found.item, { now });
+      // (round 31: a gift says whether it's ready, not how many sessions it has)
+      const ready = { active: 'ready to use', used: 'used', expired: 'expired', void: 'cancelled' }[pass.status] || pass.status;
       return {
         found: true, kind: 'pass', type: 'pass', checkedIn: false, row: null, pass, notice: null, due: 0,
         customer: found.item.customerId ? { id: found.item.customerId } : null,
-        message: `${pass.label}: ${plural(pass.sessionsLeft, 'session', 'sessions')} left of ${pass.sessionsTotal}.`,
+        message: pass.kind ? `Gift: ${pass.name}, ${ready}.` : `${pass.label}: ${plural(pass.sessionsLeft, 'session', 'sessions')} left of ${pass.sessionsTotal}.`,
       };
     }
     if (found.type === 'booking') return this.checkInBooking(found.item, rules, now, options);
@@ -8603,7 +8605,8 @@ export class Lair {
     if (gift) notice = [sessions < unpaid ? GIFT_WORDS.onePerson(unpaid) : null, gift === 'first-game' ? GIFT_WORDS.dice : null].filter(Boolean).join(' ') || null;
     // (a TTRPG seat paid in full this way gives its GM their fee, as any payment does: src/gm-credit.js)
     if (gift && booking.kind === 'gm-seat' && settled(next)) this.gmCreditSoon();
-    return { pass: { code: p.code, label: p.label, used: sessions, left: left - sessions, covered, useId }, notice };
+    // (a gift's kind too, so the counter says "gift" rather than counting sessions)
+    return { pass: { code: p.code, label: p.label, used: sessions, left: left - sessions, covered, useId, ...(gift ? { kind: gift } : {}) }, notice };
   }
 
   /**
@@ -8646,7 +8649,7 @@ export class Lair {
     this.write('UPDATE event_joins SET covered = ?, pass_id = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, p.id, settled(next) ? 1 : 0, now, join.id);
     // a bill with this sign-up on it stays true, as when staff change one
     this.reconcileBills(rules, now);
-    return { pass: { code: p.code, label: p.label, used: 1, left: left - 1, covered, useId }, notice: null };
+    return { pass: { code: p.code, label: p.label, used: 1, left: left - 1, covered, useId, kind: gift }, notice: null };
   }
 
   /* ---------------- library holds (round 6): reserving a board game ---------------- */

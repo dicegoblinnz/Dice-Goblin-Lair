@@ -160,7 +160,8 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
     && /Show this at the counter to claim it/.test(wallet), wallet.slice(0, 160));
 
   // ---------- a session gift: claimed, it reads "A gift" ----------
-  const code = await page.evaluate(() => (window.Lair.store.backend.passList().find((p) => p.source === 'gift' && !p.customerId) || {}).code || '');
+  // (a session gift: since round 31 the demo also has an experience gift nobody has claimed, which has a kind)
+  const code = await page.evaluate(() => (window.Lair.store.backend.passList().find((p) => p.source === 'gift' && !p.kind && !p.customerId) || {}).code || '');
   await page.fill('#ml-claim-code', code);
   await page.click('[data-claim] button[type="submit"]');
   await page.waitForSelector('[data-claim-message]:not([hidden])', { timeout: 5000 });
