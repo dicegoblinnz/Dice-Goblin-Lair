@@ -157,10 +157,11 @@ test('round 22: the words, word for word, and the rules', () => {
     badKey: "That tap didn't come through properly. Try again.",
     notFound: "That stamp isn't on their card any more. Scan their code again.",
     notTheirs: "That stamp is on someone else's card. Scan their code again.",
-    notHere: "That stamp didn't come from the counter, so take it back on the staff page, under Members.",
     ownCard: "You can't add stamps to your own card. Ask the main account.",
     oneAtATime: 'More than one stamp at a time needs the Members permission. Ask the main account to tick it on the Team tab.',
-    daily: "That's 2 stamps added at the counter or check-in for them today. Any more go on the staff page, under Members.",
+    daily: "That's 2 stamps added at check-in for them today. Any more go on the staff page, under Members.",
+    // round 30 (Mo, 6 Nov 2026): the counter tablet faces customers, so it never adds or takes back stamps
+    counter: "Stamps aren't added or taken back at the counter any more: each session adds its own once it's checked in or paid. Staff change stamps on the staff page, under Members.",
     staffTitle: 'A stamp from Gobgob',
     saleTitle: 'A session at the counter',
   });
@@ -357,7 +358,7 @@ test('session products (round 22): a Session rung up at the counter stamps the s
   assert.deepEqual(detail.stamps.map((s) => [s.kind, s.count, s.title, s.orderName, s.addedBy, s.undoneAt]), [
     ['sale', 1, 'Dice Goblin Day Pass', '#8002', null, null], ['sale', 1, 'Dice Goblin Day Pass', '#8002', null, null], ['sale', 1, 'RPG Session', '#8001', null, null],
   ]);
-  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: detail.stamps[0].id })), `409 ${W.notHere}`);
+  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: detail.stamps[0].id })), `410 ${W.counter}`);
   const back = ok(await call('POST', `members/${MIA}/stamps/${detail.stamps[0].id}/undo`, {}, OWNER));
   assert.deepEqual([back.already, back.member.loyalty.stamps, back.member.stamps[0].undoneBy], [false, 2, 'Mo']);
   assert.equal(stamps(MIA), 2);
@@ -425,51 +426,29 @@ test('paid sessions (round 22, after review): a GM who pays a guest\'s seat in t
 
 /* ---------------- stamps staff add ---------------- */
 
-test('staff stamps (round 22): at the counter, one a tap; the same tap again adds nothing; Undo takes it back', async () => {
-  const added = ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' }));
-  assert.deepEqual([added.repeated, added.stamp.kind, added.stamp.count, added.stamp.title, added.stamp.addedBy, added.stamp.undoneAt], [false, 'staff', 1, W.staffTitle, 'the counter', null]);
-  assert.deepEqual(added.loyalty, { stamps: 1, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 3 });
-  // the answer was lost and the counter asked again with the same key: nothing more
-  const repeat = ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' }));
-  assert.deepEqual([repeat.repeated, repeat.stamp.id, repeat.loyalty.stamps], [true, added.stamp.id, 1]);
+test('the counter (round 30, Mo 6 Nov 2026): no Add a stamp at the counter: the tablet faces customers, and sessions stamp by themselves', async () => {
+  // Mo: "the lair app inside the POS system needs to not have the option to add a stamp as that is customer facing and I
+  // have some adding theirs even though one gets added everytime they buy a session"
+  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' })), `410 ${W.counter}`);
+  assert.equal(said(await pos('stamp', { customerId: MIA })), `410 ${W.counter}`, 'an older screen without a key');
+  assert.equal(said(await pos('stamp', {})), `410 ${W.counter}`);
+  assert.equal(stamps(MIA), 0);
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM loyalty_stamps').one().n, 0, 'nothing written');
+  // a stamp the counter added before this stays on their card for staff to judge: the member's page lists it as the
+  // counter's, and only the staff page takes it back (the counter can't, even its own)
+  lair.addStamps(MIA, { count: 1, key: 'old-counter-tap-0001' }, 'pos:42', at('2026-10-25', 9));
   assert.equal(stamps(MIA), 1);
-  // a new tap is a new stamp
-  ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0002' }));
-  assert.equal(stamps(MIA), 2);
-  // after review: two a member a day from the counter (one a tap, for a session the Lair app doesn't know about), so ten
-  // taps can't fill a card; without a key (older screens) it's the same
-  assert.equal(said(await pos('stamp', { customerId: MIA })), `409 ${W.daily}`);
-  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0005' })), `409 ${W.daily}`);
-  // the same key for someone else, a key that isn't one, nobody, and no account
-  assert.equal(said(await pos('stamp', { customerId: KAI, key: 'tap-aaaa-0001' })), `409 ${W.notTheirs}`);
-  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'x' })), `422 ${W.badKey}`);
-  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'has spaces in it' })), `422 ${W.badKey}`);
-  assert.equal(said(await pos('stamp', { key: 'tap-aaaa-0003' })), `404 ${W.noMember}`);
-  assert.equal(said(await pos('stamp', { customerId: '4040', key: 'tap-aaaa-0004' })), `404 ${W.noMember}`);
-  assert.equal(stamps(MIA), 2);
-  assert.equal(stamps(KAI), 0);
-  // Undo: gone from the card; again, nothing more; someone else's or a stamp that isn't there
-  const undone = ok(await pos('stamp-undo', { customerId: MIA, id: added.stamp.id }));
-  assert.deepEqual([undone.already, undone.loyalty.stamps, undone.stamp.undoneBy, Boolean(undone.stamp.undoneAt)], [false, 1, 'the counter', true]);
-  assert.equal(ok(await pos('stamp-undo', { customerId: MIA, id: added.stamp.id })).already, true);
+  const page = ok(await call('GET', `members/${MIA}`, null, OWNER)).member;
+  const theirs = page.stamps.find((s) => s.addedBy === 'the counter');
+  assert.ok(theirs);
+  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: theirs.id })), `410 ${W.counter}`);
   assert.equal(stamps(MIA), 1);
-  assert.equal(said(await pos('stamp-undo', { customerId: KAI, id: repeat.stamp.id })), `409 ${W.notTheirs}`);
-  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: 'st_nothere' })), `404 ${W.notFound}`);
-  // the same key after Undo is still the first tap: it never adds it again
-  assert.equal(ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' })).repeated, true);
-  assert.equal(stamps(MIA), 1);
-  // a stamp taken back doesn't count towards the day's two: one more tap works
-  ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0006' }));
-  assert.equal(stamps(MIA), 2);
-  // My Lair lists them as Gobgob's, without the undone one
-  assert.deepEqual((await card(MIA)).recent.map((r) => [r.title, r.people]), [[W.staffTitle, 1], [W.staffTitle, 1]]);
-  // tomorrow the counter can add two more
-  nowIs(at('2026-10-26', 10));
-  ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0007' }));
-  assert.equal(stamps(MIA), 3);
+  const back = ok(await call('POST', `members/${MIA}/stamps/${theirs.id}/undo`, {}, OWNER));
+  assert.deepEqual([back.already, back.member.loyalty.stamps, back.stamp.undoneBy], [false, 0, 'Mo']);
+  assert.equal(stamps(MIA), 0);
 });
 
-test('staff stamps (round 22, after review): a helper never stamps their own card; without Members, one at a time and two a day with the counter; the counter takes back only its own', async () => {
+test('staff stamps (round 22, after review): a helper never stamps their own card; without Members, one at a time and two a day at check-in', async () => {
   // Hemi (Check-in only) and his own card: no, one at a time or more
   assert.equal(said(await call('POST', `members/${HEMI}/stamps`, { count: 1 }, HEMI)), `403 ${W.ownCard}`);
   assert.equal(said(await call('POST', `members/${HEMI}/stamps`, { count: 10 }, HEMI)), `403 ${W.ownCard}`);
@@ -479,10 +458,9 @@ test('staff stamps (round 22, after review): a helper never stamps their own car
   const one = ok(await call('POST', `members/${MIA}/stamps`, { count: 1, key: 'hemi-tap-0001' }, HEMI));
   assert.equal(one.stamp.addedBy, 'Hemi');
   assert.equal(lair.sql.exec('SELECT created_by FROM loyalty_stamps WHERE id = ?', one.stamp.id).one().created_by, `checkin:${HEMI}`);
-  // the counter's tap and Hemi's share the day's two
-  ok(await pos('stamp', { customerId: MIA, key: 'counter-tap-0001' }));
+  // two a member a day at check-in; a stamp the counter added earlier today (before round 30) counts towards them
+  lair.addStamps(MIA, { count: 1, key: 'old-counter-tap-0002' }, 'pos:42', Date.now());
   assert.equal(said(await call('POST', `members/${MIA}/stamps`, { count: 1 }, HEMI)), `409 ${W.daily}`);
-  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'counter-tap-0002' })), `409 ${W.daily}`);
   assert.equal(stamps(MIA), 2);
   // the main account (and helpers with Members) aren't limited: a member's page, with a note
   ok(await call('POST', `members/${MIA}/stamps`, { count: 5, note: 'A league night the Lair missed' }, OWNER));
@@ -493,13 +471,6 @@ test('staff stamps (round 22, after review): a helper never stamps their own car
   assert.equal(said(await call('POST', `members/${HEMI}/stamps`, { count: 1 }, HEMI)), `403 ${W.ownCard}`);
   ok(await call('POST', `members/${MIA}/stamps`, { count: 3 }, HEMI));
   assert.equal(stamps(MIA), 10);
-  // the counter can't take back a stamp added on the staff page (the main account's five), only its own
-  const page = ok(await call('GET', `members/${MIA}`, null, OWNER)).member;
-  const mos = page.stamps.find((s) => s.count === 5);
-  const counters = page.stamps.find((s) => s.addedBy === 'the counter');
-  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: mos.id })), `409 ${W.notHere}`);
-  assert.equal(said(await pos('stamp-undo', { customerId: MIA, id: one.stamp.id })), `409 ${W.notHere}`, "Hemi's check-in stamp is the staff page's to take back");
-  assert.equal(ok(await pos('stamp-undo', { customerId: MIA, id: counters.id })).already, false);
 });
 
 test('staff stamps (round 22): on a member\'s page, 1 to 10 with a note, for staff with Check-in or Members; Undo there; ten fill a card', async () => {

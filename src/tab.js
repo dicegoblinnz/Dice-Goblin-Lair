@@ -406,6 +406,8 @@ export const runningTabMethods = {
     }
     // a bill with any of these on it stays true
     this.reconcileBills(rules, now);
+    // Round 30: a TTRPG seat among them gives its GM their fee now, once its session has started (src/gm-credit.js)
+    this.gmCreditSoon();
     return { paid, total: paid.reduce((sum, p) => sum + p.amount, 0), account: this.memberAccount(id, rules, now, { staff: true }) };
   },
 

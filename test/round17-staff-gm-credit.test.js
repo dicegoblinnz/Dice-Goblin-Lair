@@ -527,16 +527,16 @@ test('GET /me (round 17): someone on the team sees how the setting touches them;
   assert.equal((await me(ANA)).staffGmCredit, null);
 });
 
-test('GM emails (round 17): the "Your credit" line follows the setting for a staff GM', async () => {
+test('GM emails (round 17, round 30): the "Your credit" line follows the setting for a staff GM, and says it comes as players pay', async () => {
   const rules = lair.rulesCache;
   const game = (over = {}) => ({ gmCustomerId: ANA, gmFee: 500, start: at('2026-10-17', 12), end: at('2026-10-17', 16), ...over });
   assert.equal(lair.gmCreditLine(game(), rules), "None: you're on the Dice Goblin team, and staff don't earn GM credit for the sessions they run");
-  assert.equal(lair.gmCreditLine(game({ gmCustomerId: RANGI }), rules), '$5.00 store credit for each paying player, after the session');
+  assert.equal(lair.gmCreditLine(game({ gmCustomerId: RANGI }), rules), '$5.00 store credit for each paying player, as they pay');
   assert.equal(lair.gmCreditLine(game({ gmFee: 0 }), rules), "None: you're covering your players' GM fee, so they pay just the table fee");
   await setMode('shifts');
   await setHours(ANA, [{ day: 'sat', from: '10:00', to: '13:00' }]);
   assert.equal(lair.gmCreditLine(game(), rules), "None for this session: it's in your hours (Sat 10am–1pm). Staff don't earn GM credit in their hours");
-  assert.equal(lair.gmCreditLine(game({ start: at('2026-10-17', 13), end: at('2026-10-17', 17) }), rules), "$5.00 store credit for each paying player, after the session (it's outside your hours)");
+  assert.equal(lair.gmCreditLine(game({ start: at('2026-10-17', 13), end: at('2026-10-17', 17) }), rules), "$5.00 store credit for each paying player, as they pay (it's outside your hours)");
   await setMode('earn');
-  assert.equal(lair.gmCreditLine(game(), rules), '$5.00 store credit for each paying player, after the session');
+  assert.equal(lair.gmCreditLine(game(), rules), '$5.00 store credit for each paying player, as they pay');
 });

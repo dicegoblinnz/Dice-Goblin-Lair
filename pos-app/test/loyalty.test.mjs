@@ -1,6 +1,8 @@
 // The loyalty card at the counter: its stamps, rolls waiting, and the moment a card fills: `npm test` in pos-app.
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
+import * as loyalty from '../extensions/lair-checkin/src/loyalty.js';
 import {
   cardFilled,
   cardFullWords,
@@ -10,9 +12,7 @@ import {
   headStartWords,
   loyaltyCard,
   rollWords,
-  stampAddedWords,
   stampCount,
-  stampKey,
   stampMarks,
   stampNote,
   stampRows,
@@ -98,7 +98,8 @@ test('round 22: the stamps that landed between two looks, across a full card too
 });
 
 test('round 22: when stamps land, in words under the card', () => {
-  assert.equal(stampNote(), 'Check-ins and payments add stamps by themselves. Add one here for a session the Lair app doesn’t know about.');
+  // round 30: the member's card says how stamps land, and nothing about adding one (the counter can't)
+  assert.equal(stampNote(), 'Sessions add their stamps by themselves once they’re checked in or paid.');
   assert.equal(stampNote({ people: 1, status: 'confirmed', paid: false }), 'Checking in or paying adds this session’s stamp.');
   assert.equal(stampNote({ people: 3, status: 'confirmed', paid: false }), 'Checking in or paying adds this session’s stamps.');
   assert.equal(stampNote({ people: 1, status: 'seated', arrivedAt: 1 }), 'This session’s stamp is on their card.');
@@ -108,13 +109,20 @@ test('round 22: when stamps land, in words under the card', () => {
   assert.equal(stampNote({ people: 1, status: 'cancelled' }), '');
 });
 
-test('round 22: the toast when staff add a stamp, and a different key for every tap', () => {
-  assert.equal(stampAddedWords({ stamps: 8, cardSize: 10, rollsAvailable: 0, card: 1 }, 'Sam'), 'Stamp added: 8 of 10.');
-  assert.equal(stampAddedWords({ stamps: 0, cardSize: 10, rollsAvailable: 1, card: 2 }, 'Sam'), "Stamp added: Sam's loyalty card is full!");
-  assert.equal(stampAddedWords(null, 'Sam'), 'Stamp added.');
-  const keys = new Set(Array.from({ length: 50 }, () => stampKey()));
-  assert.equal(keys.size, 50);
-  for (const key of keys) assert.match(key, /^[A-Za-z0-9_-]{8,64}$/, 'what the Lair app takes as a key');
+test('round 30 (Mo, 6 Nov 2026): no Add a stamp at the counter: the tablet faces customers, and sessions stamp by themselves', () => {
+  // Mo: "the lair app inside the POS system needs to not have the option to add a stamp as that is customer facing and I
+  // have some adding theirs even though one gets added everytime they buy a session"
+  const dir = new URL('../extensions/lair-checkin/src/', import.meta.url);
+  // what staff and customers can see: the code without its comments (which may say what's gone)
+  const seen = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
+  const screens = readdirSync(dir).filter((name) => /\.(jsx?|tsx?)$/.test(name)).map((name) => [name, seen(readFileSync(new URL(name, dir), 'utf8'))]);
+  assert.ok(screens.length > 5, 'the extension is there to read');
+  for (const [name, text] of screens) {
+    assert.doesNotMatch(text, /Add a stamp|Undo that stamp|Stamp added/, `${name} offers no stamp buttons`);
+    assert.doesNotMatch(text, /\/pos\/stamp/, `${name} never asks the Lair app for a stamp`);
+  }
+  assert.equal(typeof loyalty.stampKey, 'undefined', 'no keys for taps that no longer exist');
+  assert.equal(typeof loyalty.stampAddedWords, 'undefined');
 });
 
 /* ---------------- round 29, the head start (Mo, 2 Nov 2026, mockup A: "12 slots, 2 from Gobgob") ----------------

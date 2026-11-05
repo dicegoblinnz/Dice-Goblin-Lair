@@ -1394,8 +1394,10 @@ export class ShopifyAdmin {
    * Returns { id, balanceAfter (cents, or null) }. A take-off bigger than the balance fails with Shopify's
    * INSUFFICIENT_FUNDS (error.code).
    */
-  async changeStoreCredit(customerId, cents, currency) {
+  async changeStoreCredit(customerId, cents, currency, { timeout = null } = {}) {
     const take = cents < 0;
+    // Round 30: timeout (ms) gives up after that long, as a lost answer (store credit gifts)
+    const options = timeout ? { timeout } : {};
     const money = { amount: (Math.abs(cents) / 100).toFixed(2), currencyCode: currency };
     const fields = 'storeCreditAccountTransaction { id amount { amount currencyCode } balanceAfterTransaction { amount currencyCode } } userErrors { field message code }';
     // (a change Shopify made but answered with a denied field still counts as made: madeAnyway)
@@ -1403,10 +1405,12 @@ export class ShopifyAdmin {
       ? this.graphql(
         `mutation LairCreditTake($id: ID!, $debitInput: StoreCreditAccountDebitInput!) { storeCreditAccountDebit(id: $id, debitInput: $debitInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, debitInput: { debitAmount: money } },
+        options,
       )
       : this.graphql(
         `mutation LairCreditAdd($id: ID!, $creditInput: StoreCreditAccountCreditInput!) { storeCreditAccountCredit(id: $id, creditInput: $creditInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: money, notify: false } },
+        options,
       ));
     const result = take ? data?.storeCreditAccountDebit : data?.storeCreditAccountCredit;
     // no answer for it at all: it may or may not have moved (the caller looks before doing anything again)
