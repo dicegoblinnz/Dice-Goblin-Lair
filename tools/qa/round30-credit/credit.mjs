@@ -149,7 +149,8 @@ for (const size of sizes) {
   await axeFree(page, `${tag} the store credit card, sent`, '#ml-credit');
   check(`${tag} no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
 
-  // a lost answer: the gift went, the answer didn't come back. Trying again gets the same gift back: sent once
+  // a lost answer: the gift went, the answer didn't come back. Trying again gets the same gift back: sent once. The
+  // Lair app's answer to the repeat has no balance when Shopify didn't say one: the page takes the gift off itself
   await page.evaluate(() => {
     const be = window.Lair.store.backend;
     const real = be.sendCreditGift.bind(be);
@@ -161,7 +162,7 @@ for (const size of sizes) {
         lost = true;
         throw new TypeError('Failed to fetch');
       }
-      return answer;
+      return { ...answer, balance: null };
     };
   });
   await page.fill('#ml-send-code', friend.code);
@@ -181,7 +182,9 @@ for (const size of sizes) {
   w = await wallet(page);
   const keys = await page.evaluate(() => window.__keys);
   const demo = await page.evaluate(() => window.Lair.store.backend.state.creditGifts.filter((g) => g.amount === 200).length);
-  check(`${tag} trying again sends the same key: one $2 gift, $15.50 left`, keys.length === 2 && keys[0] === keys[1] && demo === 1 && w.amount === '$15.50' && /^To Sam T\./.test(w.rows[0]) && /−\$2$/.test(w.rows[0]), { keys, demo, w });
+  check(`${tag} trying again sends the same key: one $2 gift, $15.50 left (no balance in the answer), and it says the gift had gone`,
+    keys.length === 2 && keys[0] === keys[1] && demo === 1 && w.amount === '$15.50' && w.sum === '$15.50' && /^To Sam T\./.test(w.rows[0]) && /−\$2$/.test(w.rows[0])
+    && w.message === 'Your $2 gift to Sam T. had already gone through. It’s on their account now.', { keys, demo, w });
   // a code changed after Find them asks again
   await page.fill('#ml-send-code', friend.code);
   await page.click('[data-send-find]');
@@ -194,7 +197,7 @@ for (const size of sizes) {
   await page.evaluate(() => {
     const be = window.Lair.store.backend;
     const c = window.Lair.store.cfg.customer;
-    be.editLoyalty(String(c.id), (L) => { L.staff = (L.staff || 0) + 1; });
+    be.editLoyalty(String(c.id), (L) => { L.staff = (L.staff || 0) + 2; });
     be.commit();
   }).catch(() => {});
   await myLair(page, RUBY, '/pages/my-lair#home');
@@ -206,6 +209,23 @@ for (const size of sizes) {
     const after = await wallet(page);
     const cents = (s) => Math.round(Number(String(s).replace(/[$,]/g, '')) * 100);
     check(`${tag} the sure $10: the Wallet's store credit goes up by $10 at once (${before} to ${after.amount}), and Home's summary`, cents(after.amount) === cents(before) + 1000 && cents(after.sum) === cents(before) + 1000, { before, after });
+    // an answer without the balance (Shopify didn't say it): the prize is added to what the page shows
+    await page.evaluate(() => {
+      const be = window.Lair.store.backend;
+      const real = be.roll.bind(be);
+      be.roll = async (input) => {
+        const answer = await real(input);
+        const { balance, ...rest } = answer;
+        return rest;
+      };
+    });
+    const again = await page.$('[data-roll-slots] [data-roll-sure]');
+    if (again) {
+      await again.click();
+      await settle(page, 1500);
+      const third = await wallet(page);
+      check(`${tag} a roll's answer without the balance: the $10 is added to what shows (${after.amount} to ${third.amount})`, cents(third.amount) === cents(after.amount) + 1000 && cents(third.sum) === cents(after.amount) + 1000, { after, third });
+    } else check(`${tag} a second roll to take as the sure $10`, false, 'no Take $10 instead button');
   } else check(`${tag} a roll to take as the sure $10`, false, 'no Take $10 instead button');
   check(`${tag} My Lair: no console errors`, page.errors.length === 0, page.errors);
   await page.close();
