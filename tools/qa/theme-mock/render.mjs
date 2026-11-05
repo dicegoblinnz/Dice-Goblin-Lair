@@ -1163,6 +1163,16 @@ async function shopJson(req, res, url) {
   return true;
 }
 
+/* Round 31 (Warhammer and hobby chat): any /pages/<handle> with a template of its own (templates/page.<handle>.json)
+   and no route above, rendered as Shopify would (the hobby page, page.warhammer) */
+function pageWithTemplate(url) {
+  const found = url.pathname.match(/^\/pages\/([a-z0-9-]+)$/);
+  if (!found || !hasTemplate(`page.${found[1]}`)) return null;
+  const handle = found[1];
+  const page = pages[handle] || { handle, title: handle.replace(/-/g, ' '), url: url.pathname, content: '' };
+  return () => renderPage(`page.${handle}`, { page, template: { name: 'page', suffix: handle }, request: { page_type: 'page', locale: { iso_code: 'en' }, origin: '' } });
+}
+
 export function serve(port = 4173) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -1191,7 +1201,7 @@ export function serve(port = 4173) {
         res.end(JSON.stringify(librarySuggest(url)));
         return;
       }
-      const page = shopCollectionRoute(url) || PAGES[url.pathname] || libraryRoute(url); // r7 shell: shop collections read their filters first
+      const page = shopCollectionRoute(url) || PAGES[url.pathname] || libraryRoute(url) || pageWithTemplate(url); // r7 shell: shop collections read their filters first
       if (!page) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end('{}');
