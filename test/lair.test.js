@@ -4991,7 +4991,9 @@ test('session gifts (round 6): LAIR-GIFT-N lines make unlinked gift passes, once
       ['Gift: 5 sessions', 5, 'gift', 1000, 5000, '#1600', 'A gift from Sam', 'active'],
       ['Gift: 10 sessions', 10, 'gift', 1000, 9000, '#1600', 'A gift from Sam', 'active'],
     ]);
-    assert.ok(passes.every((p) => !p.holder.customerId && !p.holder.name && !p.holder.email && /^DG-[A-Z]+-\d{1,2}$/.test(p.code)), 'unlinked, whoever bought them');
+    // (round 31, contract v31-gifts: a gift's code is a bearer code worth money, so it's DG, a word and 4 letters or digits,
+    // not a booking's DG-WORD-12: test/round31-gifts.test.js)
+    assert.ok(passes.every((p) => !p.holder.customerId && !p.holder.name && !p.holder.email && /^DG-[A-Z]+-[A-HJKMNP-Z2-9]{4}$/.test(p.code)), 'unlinked, whoever bought them');
     await settle();
     assert.equal(mail.sent.length, 1);
     const [email] = mail.sent;

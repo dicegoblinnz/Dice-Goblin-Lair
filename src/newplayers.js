@@ -197,7 +197,8 @@ export const newPlayerMethods = {
       // after it's started, or once they're here
       if (r.via !== 'here' && !(Number(r.at) <= now)) continue;
       const row = this.sql
-        .exec(join ? 'SELECT customer_id, paid, paid_amount, 0 AS covered FROM event_joins WHERE id = ?' : 'SELECT customer_id, paid, paid_amount, covered FROM bookings WHERE id = ?', r.id)
+        // (round 31: a gift may cover a sign-up, as a session pass covers a booking)
+        .exec(join ? 'SELECT customer_id, paid, paid_amount, COALESCE(covered, 0) AS covered FROM event_joins WHERE id = ?' : 'SELECT customer_id, paid, paid_amount, covered FROM bookings WHERE id = ?', r.id)
         .toArray()[0];
       if (!row) continue;
       const kind = join ? 'join' : 'booking';

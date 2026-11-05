@@ -52,7 +52,9 @@ export function hoursSummary(hours) {
  *   preheader  the grey line email apps show after the subject (defaults to the first paragraph)
  *   intro      paragraph(s) under the title
  *   quote      a block of someone else's words (a GM's message), shown as typed
- *   codes      [{ code, lines }]: codes to hand on (a session gift's), each in big letters in its own box with its lines
+ *   codes      [{ code, lines, label?, strong? }]: codes to hand on (a session gift's), each in big letters in its own box with
+ *              its lines; round 31 (a gift's box, as drawn): label, small capitals above the code (what it is), and
+ *              strong, a bold last line (its use-by date)
  *   details    [[label, value], …] for the details table; rows without a value are left out
  *   button     { label, url }
  *   links      [{ label, url }]: small links in a line under the button (round 11: "Google Calendar", the event's page)
@@ -72,7 +74,8 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const extras = (Array.isArray(links) ? links : []).filter((l) => l && safeUrl(l.url) && String(l.label ?? '').trim()).map((l) => ({ label: String(l.label).trim(), url: safeUrl(l.url) }));
   const before = list(intro);
   const after = list(outro);
-  const boxes = (codes || []).filter((c) => c && String(c.code ?? '').trim()).map((c) => ({ code: String(c.code).trim(), lines: list(c.lines) }));
+  const boxes = (codes || []).filter((c) => c && String(c.code ?? '').trim())
+    .map((c) => ({ code: String(c.code).trim(), lines: list(c.lines), label: String(c.label ?? '').trim(), strong: String(c.strong ?? '').trim() }));
   // Round 17: game cards (a picture, the title linked to its page, and a line or two)
   const games = (Array.isArray(cards) ? cards : []).filter((g) => g && String(g.title ?? '').trim())
     .map((g) => ({ title: String(g.title).trim(), image: safeUrl(g.image), url: safeUrl(g.url), lines: list(g.lines) }));
@@ -102,8 +105,9 @@ ${rows.map(([label, value]) => `<tr><td style="padding:10px 12px 10px 0;border-t
 ${before.map((t) => p(t)).join('\n')}
 ${said ? `<div style="margin:4px 0 18px;padding:14px 16px;background:${C.quote};border-left:4px solid ${C.button};border-radius:6px;font:16px/1.55 ${FONT};color:${C.ink};">${lines(said)}</div>` : ''}
 ${boxes.map((b) => `<div style="margin:4px 0 16px;padding:18px 16px;background:${C.quote};border:2px dashed ${C.button};border-radius:10px;text-align:center;">
-<div style="font:800 30px/1.2 ${FONT};letter-spacing:0.06em;color:${C.ink};word-break:break-word;">${escapeHtml(b.code)}</div>
+${b.label ? `<p style="margin:0 0 6px;font:700 13px/1.4 ${FONT};letter-spacing:0.04em;color:${C.muted};">${escapeHtml(b.label)}</p>\n` : ''}<div style="font:800 30px/1.2 ${FONT};letter-spacing:0.06em;color:${C.ink};word-break:break-word;">${escapeHtml(b.code)}</div>
 ${b.lines.map((t) => `<p style="margin:8px 0 0;font:15px/1.5 ${FONT};color:${C.ink};">${lines(t)}</p>`).join('\n')}
+${b.strong ? `<p style="margin:8px 0 0;font:700 15px/1.5 ${FONT};color:${C.ink};">${lines(b.strong)}</p>` : ''}
 </div>`).join('\n')}
 ${games.map((g) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;border-collapse:collapse;"><tr>
 ${g.image ? `<td style="width:96px;padding:0 14px 0 0;vertical-align:top;">${g.url ? `<a href="${escapeHtml(g.url)}">` : ''}<img src="${escapeHtml(g.image)}" width="96" alt="${escapeHtml(g.title)}" style="display:block;width:96px;max-width:96px;height:auto;border:0;border-radius:8px;">${g.url ? '</a>' : ''}</td>` : ''}
@@ -127,7 +131,7 @@ ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
     String(title).toUpperCase(),
     ...before,
     said ? said.split(/\r?\n/).map((l) => `> ${l}`).join('\n') : null,
-    ...boxes.map((b) => [`    ${b.code}`, ...b.lines.map((t) => `    ${t}`)].join('\n')),
+    ...boxes.map((b) => [b.label ? `    ${b.label}` : null, `    ${b.code}`, ...b.lines.map((t) => `    ${t}`), b.strong ? `    ${b.strong}` : null].filter(Boolean).join('\n')),
     ...games.map((g) => [g.title, ...g.lines, g.url].filter(Boolean).join('\n')),
     detailsAfter ? null : textRows,
     link ? `${link.label}: ${link.url}` : null,

@@ -398,7 +398,8 @@ export const runningTabMethods = {
     for (const { type, x } of due) {
       const amount = dueOf(x);
       if (type === 'join') {
-        this.write('UPDATE event_joins SET paid = 1, paid_amount = ?, updated_at = ? WHERE id = ?', Math.max(x.paidAmount || 0, x.amount || 0), now, x.id);
+        // (round 31: less what a gift covered, as a booking's is)
+        this.write('UPDATE event_joins SET paid = 1, paid_amount = ?, updated_at = ? WHERE id = ?', Math.max(x.paidAmount || 0, (x.amount || 0) - (x.covered || 0)), now, x.id);
       } else {
         this.write('UPDATE bookings SET paid = 1, paid_amount = ?, updated_at = ? WHERE id = ?', Math.max(x.paidAmount || 0, (x.amount || 0) - (x.covered || 0)), now, x.id);
       }

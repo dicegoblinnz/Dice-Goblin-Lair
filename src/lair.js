@@ -94,6 +94,9 @@ import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './libra
 // Round 31: the library shelves' and the shop's board games' filters in Shopify, and On the shelf now (src/shop-filters.js,
 // contract v31-library-filters)
 import { FILTER_LIMITS, SHELF_WRITES, SHOP_FILTER_TABLES, callBudget, shopFilterMethods } from './shop-filters.js';
+// Round 31: experience gifts (Your first roleplaying game, Learn to paint), every gift's 3-year use-by and long codes
+// (src/experience-gifts.js, contract v31-gifts)
+import { GIFT_COLUMNS, GIFT_INDEXES, GIFT_KINDS, GIFT_WORDS, experienceGiftMethods, giftDay, giftKindOfSku, giftUseBy } from './experience-gifts.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1131,6 +1134,16 @@ export class Lair {
     for (const statement of GW_WEEK_TABLES) this.sql.exec(statement);
     // Round 30: store credit gifts from one member to another (src/credit-gifts.js), made when missing
     for (const statement of CREDIT_GIFT_TABLES) this.sql.exec(statement);
+    // Round 31: a pass's gift kind and who it's from, what gifts covered on a sign-up, and a use's sign-up and note (made
+    // when missing, src/experience-gifts.js)
+    for (const [table, column, type] of GIFT_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of GIFT_INDEXES) this.sql.exec(statement);
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -1332,6 +1345,8 @@ export class Lair {
       // round 30: the account holder's own place is free, as a library member, and how many guests on it get in free as
       // library members too (src/library-rules.js)
       memberFree: r.member_free === 1, freeGuests: Number(r.free_guests) || 0,
+      // round 31: what gifts covered on it, and the gift saved or used on it (src/experience-gifts.js)
+      covered: Number(r.covered) || 0, passId: r.pass_id || null,
     };
   }
 
@@ -1382,6 +1397,8 @@ export class Lair {
     return {
       ...this.joinView(j, list), email: j.email, note: j.note, arrivedAt: j.arrivedAt, customerId: j.customerId || null, orderId: j.orderId || null,
       due: dueOf(j), payments: payments || this.paymentsOf('join', j.id), phone: j.phone || '', guests: list.map((g) => this.staffGuest(g)),
+      // Round 31: what a gift covered on it, and the gift saved or used on it (src/experience-gifts.js)
+      covered: j.covered || 0, pass: this.savedPass(j),
     };
   }
 
@@ -2164,6 +2181,8 @@ export class Lair {
       if (a === 'passes' && b === 'uses' && c && d === 'undo') return json(await this.undoPassUse(decodeURIComponent(c), who));
       if (a === 'passes' && b && c === 'update') return json(await this.updatePass(decodeURIComponent(b), body, who));
       if (a === 'passes' && b && c === 'apply') return json(await this.applyPass(decodeURIComponent(b), body, who));
+      // Round 31: "Use it now": a gift used with nothing booked (src/experience-gifts.js)
+      if (a === 'passes' && b && c === 'use' && !d) return json(await this.useGiftNow(decodeURIComponent(b), body, who));
       if (a === 'groups' && !b) return json(await this.createGroup(body, who));
       if (a === 'groups' && b && c === 'update') return json(await this.updateGroup(decodeURIComponent(b), body, who));
       if (a === 'groups' && b && c === 'members') return json(await this.groupMembers(decodeURIComponent(b), body, who));
@@ -2636,7 +2655,7 @@ export class Lair {
     // Round 9: on a monthly account, not over its credit limit (staff booking for someone, the override, skip this)
     if (!override) this.checkAccountLimit(who.customerId, booking.amount, rules, now, 'book');
     // usePass: the member's own session pass (staff may use any active one), saved for the check-in.
-    const pass = input.usePass && ['table', 'gm-seat'].includes(kind) ? this.passForBooking(input.usePass, who, now) : null;
+    const pass = input.usePass && ['table', 'gm-seat'].includes(kind) ? this.passForBooking(input.usePass, who, now, kind) : null;
     // Round 17: a library game to bring to the table (src/queue.js), held from 3 days before
     const tableGame = kind === 'table' && input.game ? this.bookingGamePick(input.game) : null;
     // Tables, walk-ins and game seats are paid at the counter on the day (show the code, we ring it up): `pay` is ignored.
@@ -3276,7 +3295,8 @@ export class Lair {
     let { paid, refund, paidAmount, waived } = join;
     if (typeof patch.paid === 'boolean') {
       paid = patch.paid;
-      paidAmount = paid ? Math.max(paidAmount || 0, join.amount || 0) : this.paidSoFar('join', join.id);
+      // (round 31: less what a gift covered, as a booking's is less what passes covered)
+      paidAmount = paid ? Math.max(paidAmount || 0, (join.amount || 0) - (join.covered || 0)) : this.paidSoFar('join', join.id);
     }
     if (typeof patch.refunded === 'boolean') {
       if (patch.refunded && !paid && !(paidAmount > 0)) throw new RuleError('Only a paid sign-up can be marked as refunded.');
@@ -4979,6 +4999,7 @@ export class Lair {
     const tabs = new Set();
     const passLines = [];
     const giftLines = [];
+    const unknownGifts = [];
     (order.line_items || []).forEach((item, index) => {
       const props = item.properties || [];
       const lineId = String(item.id ?? item.admin_graphql_api_id ?? `line-${index}`);
@@ -5004,6 +5025,14 @@ export class Lair {
       const gift = String(item.sku ?? '').trim().match(GIFT_SKU);
       if (gift && Number(gift[1]) > 0 && quantity > 0) {
         giftLines.push({ lineId, sessions: Number(gift[1]), quantity: Math.min(quantity, PASSES_A_LINE), each: Math.round(lineAmount(item) / quantity) });
+      }
+      // Round 31: an experience gift (LAIR-XP-<KIND>) makes a one-use gift of that kind a unit, whoever bought it; a kind
+      // the Lair doesn't know makes nothing and is noted for the health check (src/experience-gifts.js)
+      const xp = giftKindOfSku(item.sku);
+      if (typeof xp === 'string' && quantity > 0) {
+        giftLines.push({ lineId, kind: xp, sessions: 1, quantity: Math.min(quantity, PASSES_A_LINE), each: Math.round(lineAmount(item) / quantity) });
+      } else if (xp?.unknown && quantity > 0) {
+        unknownGifts.push(xp.unknown);
       }
     });
     // Round 22: sessions rung up by hand at the counter (a SKU starting LAIR-SESSION): a stamp a unit for the sale's
@@ -5074,6 +5103,10 @@ export class Lair {
     const passes = this.issueOrderPasses(orderId, passLines, buyer, { pos, rules, now: Date.now() });
     const gifts = this.issueGiftPasses(orderId, giftLines, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules, now: Date.now() });
     if (gifts.length) this.sendGiftCodes(gifts, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules });
+    // Round 31: a LAIR-XP line the Lair doesn't know (a product made before the Lair knew its kind): noted, never guessed at
+    if (unknownGifts.length) {
+      this.note({ unknownGift: { skus: [...new Set(unknownGifts)].slice(0, 5), order: spend?.name || giver.orderName || orderId, at: new Date().toISOString() } });
+    }
     // Round 7: a birthday gift's product code on this order (online or at the POS) has been used
     const giftCodes = this.markGiftCodesUsed(spend, Date.now());
     // Round 22: the sessions rung up by hand stamp the sale's customer (src/stamps.js), once per order, line and unit
@@ -5122,21 +5155,28 @@ export class Lair {
    * Session gifts bought on an order (round 6): each unit of a LAIR-GIFT-N line is an unlinked pass of N sessions, for
    * the buyer to give away and the friend to claim in My Lair: "Gift: N sessions", source 'gift', covering the table fee,
    * no holder, noted "A gift from <first name>" when it's known, made once per order, line and unit (the same unique
-   * key as passes, so a webhook sent again makes nothing new). Its code starts DG (it isn't the buyer's). No awaits.
-   * Returns [{ code, sessions }].
+   * key as passes, so a webhook sent again makes nothing new). No awaits. Returns [{ code, kind, sessions, expiresAt }].
+   * Round 31 (src/experience-gifts.js): a LAIR-XP-<KIND> line's units are one-use gifts of that kind ("Gift: Learn to
+   * paint", kind 'paint', covering its experience whatever it costs on the day, so cover is 0); every gift lasts until
+   * the end of its sale day 3 years on (giftUseBy), keeps the buyer's first name (gift_from) and has a long code
+   * (newGiftCode: DG-GRIFFIN-7KQ4), since whoever types it first gets it.
    */
   issueGiftPasses(orderId, giftLines, giver, { orderName, rules, now }) {
     const made = [];
     for (const { line, unit } of this.passUnitsToMake(orderId, giftLines)) {
       const id = makeId('ps');
-      const code = this.newCode('', 'pass', id, now);
+      const code = this.newGiftCode(id, now);
+      const kind = GIFT_KINDS[line.kind] ? line.kind : null;
+      const expiresAt = giftUseBy(now, rules.tz);
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
-           created_by, expires_at, status, source, order_id, order_name, order_line, order_unit) VALUES (?, ?, ?, ?, 0, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, 'active', 'gift', ?, ?, ?, ?)`,
-        id, code, `Gift: ${plural(line.sessions, 'session', 'sessions')}`, line.sessions, rules.prices.table,
-        giver.firstName ? `A gift from ${giver.firstName}` : null, line.each, now, `order:${orderName || orderId}`, orderId, orderName || null, line.lineId, unit,
+           created_by, expires_at, status, source, order_id, order_name, order_line, order_unit, kind, gift_from)
+         VALUES (?, ?, ?, ?, 0, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, 'active', 'gift', ?, ?, ?, ?, ?, ?)`,
+        id, code, kind ? GIFT_KINDS[kind].label : `Gift: ${plural(line.sessions, 'session', 'sessions')}`, kind ? 1 : line.sessions, kind ? 0 : rules.prices.table,
+        giver.firstName ? `A gift from ${giver.firstName}` : null, line.each, now, `order:${orderName || orderId}`, expiresAt, orderId, orderName || null, line.lineId, unit,
+        kind, trimmed(giver.firstName, 40) || null,
       );
-      made.push({ code, sessions: line.sessions });
+      made.push({ code, kind, sessions: kind ? 1 : line.sessions, expiresAt });
     }
     return made;
   }
@@ -5148,8 +5188,16 @@ export class Lair {
    */
   sendGiftCodes(gifts, giver, { orderName, rules }) {
     if (!emailReady(this.env)) return;
+    // Round 31: an order with an experience gift on it gets "Your gift is ready", as drawn (src/experience-gifts.js)
+    if (gifts.some((g) => g.kind)) {
+      this.sendExperienceGifts(gifts, giver, { orderName, rules });
+      return;
+    }
     const many = gifts.length > 1;
-    const codes = gifts.map((g) => ({ code: g.code, lines: [`${plural(g.sessions, 'session', 'sessions')} at the Dice Goblin Lair`, GIFT_REDEEM] }));
+    // (round 31: each with its use-by, which the Fair Trading Act wants shown)
+    const codes = gifts.map((g) => ({
+      code: g.code, lines: [`${plural(g.sessions, 'session', 'sessions')} at the Dice Goblin Lair`, GIFT_REDEEM, ...(g.expiresAt ? [`Use by ${giftDay(g.expiresAt, rules.tz)}`] : [])],
+    }));
     const cover = `Each session covers one person's table fee (up to ${money(rules.prices.table)}) at the Dice Goblin Lair.`;
     const toStaff = (why) => this.notifyStaff(`Session gift codes to pass on${orderName ? `: ${orderName}` : ''}`, {
       title: 'Session gift codes to pass on',
@@ -5589,8 +5637,12 @@ export class Lair {
     return result(fresh, { checkedIn: true, already, ...(already ? { reason: 'already' } : {}), message, notice: used.notice, pass: used.pass });
   }
 
-  /** Check in an event sign-up. Passes never cover event entry. Like checkInBooking. No awaits. */
-  checkInJoin(join, rules, now, { force = false, pass: choice, sameDay = false } = {}) {
+  /**
+   * Check in an event sign-up. Passes never cover event entry. Like checkInBooking. No awaits. Round 31: a gift does, on
+   * what it's for (useGiftOnJoin: Learn to paint), chosen at check-in or saved on the sign-up; someone already in stays
+   * in, and a gift can still be used.
+   */
+  checkInJoin(join, rules, now, { force = false, pass: choice, sameDay = false, by = null } = {}) {
     const time = new LairTime(rules.tz);
     const base = { found: true, kind: 'join', type: 'join', customer: join.customerId ? { id: join.customerId } : null, pass: null };
     const result = (item, extra) => {
@@ -5611,10 +5663,10 @@ export class Lair {
     // (src/library-rules.js memberEntryAtDoor)
     const door = already ? { words: '' } : this.memberEntryAtDoor(join, rules, now);
     if (!already) this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, hold_until = NULL, updated_at = ? WHERE id = ?", now, now, join.id);
+    const used = this.useGiftOnJoin(this.joinById(join.id), choice, rules, now, by);
     const fresh = this.joinById(join.id);
-    const notice = choice && choice !== 'none' ? "Passes don't cover event entry, so no pass was used." : null;
     const message = already ? `Already checked in: ${label(fresh)}.${this.payWords(fresh)}` : `Checked in: ${label(fresh)}.${this.payWords(fresh)}${door.words ? ` ${door.words}` : ''}`;
-    return result(fresh, { checkedIn: true, already, ...(already ? { reason: 'already' } : {}), message, notice });
+    return result(fresh, { checkedIn: true, already, ...(already ? { reason: 'already' } : {}), message, notice: used.notice, pass: used.pass });
   }
 
   /**
@@ -5690,16 +5742,18 @@ export class Lair {
   }
 
   /**
-   * An event sign-up as a check-in row. Its entry fee is never covered by a pass. payments: see bookingRow. Round 8: guests,
+   * An event sign-up as a check-in row. Its entry fee is never covered by a pass (round 31: a gift may: covered, and pass,
+   * the gift saved or used on it). payments: see bookingRow. Round 8: guests,
    * who's coming with them, as staff see them (staffGuest); guests: the sign-up's guest rows when a list has them (guestsIn).
    * Round 15: owed (it's over and unpaid: joinOwed) and waived, as a booking's row has them.
    */
   joinRow(j, { payments = null, guests = null, now = Date.now() } = {}) {
     return {
       id: j.id, type: 'join', kind: 'join', ref: j.ref, name: j.name || '', people: j.people, tables: [], start: j.start, end: j.end,
-      status: j.status, arrivedAt: j.arrivedAt || null, paid: j.paid, amount: j.amount || 0, covered: 0, due: dueOf(j),
+      status: j.status, arrivedAt: j.arrivedAt || null, paid: j.paid, amount: j.amount || 0, covered: j.covered || 0, due: dueOf(j),
       paidAmount: j.paidAmount || 0, payments: payments || this.paymentsOf('join', j.id), split: false,
-      customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
+      // (round 31: a gift may cover its entry: Learn to paint)
+      customerId: j.customerId || null, pass: this.savedPass(j), refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
       gameId: null, occurrenceId: j.occurrenceId, seriesId: null, owed: this.joinOwed(j, now), waived: Boolean(j.waived),
       guests: (guests || this.joinGuests(j.id)).map((g) => this.staffGuest(g)),
       // Round 30: the account holder's own place is free, as a library member, and how many guests' are (said only when so)
@@ -6020,7 +6074,7 @@ export class Lair {
     for (const j of joins) {
       // Round 15: a sign-up that ended today unpaid is owed: it's with the owed rows
       if (this.joinOwed(j, now) && mine(j)) continue;
-      take(this.checkInJoin(j, rules, now, { sameDay: true }));
+      take(this.checkInJoin(j, rules, now, { by, sameDay: true }));
     }
     // Round 11: the games they're a named player in today: checked in, with their own share to pay
     for (const { player } of this.playerGamesToday(customerId, rules, now)) take(this.checkInPlayer(player.id, rules, now, { by, sameDay: true }));
@@ -6057,7 +6111,7 @@ export class Lair {
     else if (row.playerOf) title = `Game spot share: ${name(row.title)} (${row.ref}, ${name(row.name, 24)})`;
     else if (row.occurrenceId) title = `Game spot: ${name(row.title)} (${row.ref})`;
     else title = `Table fee: ${row.ref} (${row.tables.join(', ')}, ${plural(row.people, 'person', 'people')})`;
-    if (row.covered > 0 && !row.owed) title += ` (pass covered ${money(row.covered)})`;
+    if (row.covered > 0 && !row.owed) title += ` (${row.pass?.kind ? 'gift' : 'pass'} covered ${money(row.covered)})`;
     return { title: title.slice(0, 120), price: (row.due / 100).toFixed(2), quantity: 1, taxable: true, properties: { _booking: row.ref, ...(row.playerOf ? { _share: '1' } : {}) } };
   }
 
@@ -6395,7 +6449,7 @@ export class Lair {
     // Round 9: paid at the counter on a monthly account: not over its credit limit
     if (!payNow) this.checkAccountLimit(who.customerId, unit * people, rules, now, 'book');
     // usePass: a session pass covers a game spot's price a person at check-in, like a table.
-    const pass = input.usePass ? this.passForBooking(input.usePass, who, now) : null;
+    const pass = input.usePass ? this.passForBooking(input.usePass, who, now, 'spot') : null;
     const spotId = makeId('bk');
     const booking = {
       id: spotId, ref: this.newCode(name, 'booking', spotId, now), kind: 'table', tables: free[0], room: room.id, start: occurrence.start, end: occurrence.end, people,
@@ -7613,7 +7667,9 @@ export class Lair {
     // straight through, and counts the try itself)
     if (this.findCode(text)?.type === 'pass') {
       const { pass } = await this.claimPass({ code: text }, who);
-      return { kind: 'pass', pass, message: `Added to your wallet: ${pass.label}.` };
+      // (round 31: a gift says what it is and when to use it by)
+      const message = pass.name && pass.expiresAt ? GIFT_WORDS.added(pass.name, giftDay(pass.expiresAt, rules.tz)) : `Added to your wallet: ${pass.label}.`;
+      return { kind: 'pass', pass, message };
     }
     this.claimHits = this.claimHits || new Map();
     if (this.claimHits.size > 2000) this.claimHits.clear();
@@ -7811,6 +7867,8 @@ export class Lair {
       source: r.source || 'staff', orderId: r.order_id || null, orderName: r.order_name || null,
       // Round 7: the group it belongs to (any member of the group can use it), or null
       groupId: r.group_id || null,
+      // Round 31: an experience gift's kind ('first-game', 'paint'; null for any other pass) and its buyer's first name
+      kind: r.kind || null, giftFrom: r.gift_from || null,
     };
   }
 
@@ -7840,14 +7898,19 @@ export class Lair {
    * made has no note here, and a bought pass's note gives only how it was bought, even after staff add to it ('' once
    * they've replaced that). orderName is null for passes that weren't bought.
    */
-  memberPassView(p, now = Date.now()) {
+  memberPassView(p, now = Date.now(), rules = this.rulesCache) {
     const bought = p.source === 'order';
+    const gift = GIFT_KINDS[p.kind] || null;
     return {
       code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed), cover: p.cover,
       expiresAt: p.expiresAt, status: this.passStatus(p, now), source: p.source, orderName: bought ? p.orderName || null : null,
       ...(bought ? { note: this.boughtNote(p.note) } : {}),
       // Round 7: a group's pass, which shows in each member's Wallet with the group's name ("Warhammer League group")
       group: this.passGroup(p),
+      // Round 31: a gift's kind and name, who it's from (their first name; null when the order didn't say), and for Learn
+      // to paint the next class ({ occurrenceId, title, start, full }, or null)
+      ...(gift ? { kind: p.kind, name: gift.name } : {}), ...(p.source === 'gift' ? { from: p.giftFrom || null } : {}),
+      ...(p.kind === 'paint' ? { next: this.nextGiftClass('paint', rules, now) } : {}),
     };
   }
 
@@ -7874,17 +7937,28 @@ export class Lair {
   passView(p, { uses = true, now = Date.now() } = {}) {
     // Round 7: a group's pass reads as the group: { customerId: null, name: <group name>, email: '' }
     const group = this.passGroup(p);
+    const gift = GIFT_KINDS[p.kind] || null;
     const view = {
       id: p.id, code: p.code, label: p.label, sessionsTotal: p.sessionsTotal, sessionsUsed: p.sessionsUsed, sessionsLeft: Math.max(0, p.sessionsTotal - p.sessionsUsed),
       cover: p.cover, holder: group ? { customerId: null, name: group.name, email: '' } : { customerId: p.customerId, name: p.holderName, email: p.holderEmail },
       note: p.note, pricePaid: p.pricePaid, expiresAt: p.expiresAt, status: this.passStatus(p, now), createdAt: p.createdAt, source: p.source, orderName: p.orderName,
       group,
+      // Round 31: a gift's kind, its name and what it covers (staff's words), and who a gift is from (null when unknown)
+      ...(gift ? { kind: p.kind, name: gift.name, covers: gift.staff } : {}), ...(p.source === 'gift' ? { from: p.giftFrom || null } : {}),
     };
     if (uses) {
+      // (round 31: a use on a sign-up has its join_id, and one with nothing booked neither, with staff's note)
       view.uses = this.sql
-        .exec('SELECT u.*, b.ref AS ref FROM pass_uses u LEFT JOIN bookings b ON b.id = u.booking_id WHERE u.pass_id = ? ORDER BY u.at DESC', p.id)
+        .exec(
+          `SELECT u.*, COALESCE(b.ref, j.ref) AS ref FROM pass_uses u LEFT JOIN bookings b ON b.id = u.booking_id LEFT JOIN event_joins j ON j.id = u.join_id
+            WHERE u.pass_id = ? ORDER BY u.at DESC`,
+          p.id,
+        )
         .toArray()
-        .map((u) => ({ id: u.id, bookingId: u.booking_id, ref: u.ref || '', people: u.people, covered: u.covered, at: u.at, undone: u.undone_at || null }));
+        .map((u) => ({
+          id: u.id, bookingId: u.booking_id || null, joinId: u.join_id || null, ref: u.ref || '', people: u.people, covered: u.covered, at: u.at,
+          undone: u.undone_at || null, note: u.note || '',
+        }));
     }
     return view;
   }
@@ -7897,7 +7971,8 @@ export class Lair {
       p = this.passRow(b.passId);
       memo?.set(b.passId, p);
     }
-    return p ? { code: p.code, label: p.label, left: Math.max(0, p.sessionsTotal - p.sessionsUsed) } : null;
+    // (round 31: and a gift's kind, so the counter and receipts can say "gift")
+    return p ? { code: p.code, label: p.label, left: Math.max(0, p.sessionsTotal - p.sessionsUsed), ...(GIFT_KINDS[p.kind] ? { kind: p.kind } : {}) } : null;
   }
 
   /** A booking's saved pass as the person who booked sees it: { code, label, sessionsLeft } */
@@ -7910,7 +7985,7 @@ export class Lair {
    * A member's passes for My Lair: active ones, and ones used up in the last 30 days. Round 7: their own, plus the passes
    * of the active groups they're in (each with its group).
    */
-  memberPasses(customerId, now) {
+  memberPasses(customerId, now, rules = this.rulesCache) {
     return this.sql
       .exec(
         `SELECT p.*, (SELECT MAX(u.at) FROM pass_uses u WHERE u.pass_id = p.id AND u.undone_at IS NULL) AS last_used
@@ -7922,7 +7997,7 @@ export class Lair {
         const status = this.passStatus(this.rowToPass(r), now);
         return status === 'active' || (status === 'used' && (r.last_used || 0) > now - 30 * 24 * HOUR);
       })
-      .map((r) => this.memberPassView(this.rowToPass(r), now));
+      .map((r) => this.memberPassView(this.rowToPass(r), now, rules));
   }
 
   /**
@@ -8082,7 +8157,8 @@ export class Lair {
     const now = Date.now();
     const p = this.passRow(id);
     if (!p) throw new RuleError('That pass could not be found.', 404);
-    const f = this.passFields(input, rules, now, p);
+    // (round 31: a gift covers its experience whatever it costs, so what a session covers isn't its to change)
+    const f = this.passFields(GIFT_KINDS[p.kind] ? { ...input, cover: null } : input, rules, now, p);
     if (f.picked) this.makeMember(f.picked, now);
     const columns = {
       label: 'label', sessionsTotal: 'sessions_total', note: 'note', expiresAt: 'expires_at', status: 'status', pricePaid: 'price_paid', cover: 'cover',
@@ -8104,15 +8180,27 @@ export class Lair {
     const bookingId = trimmed(input.bookingId, 80);
     const booking = bookingId ? this.booking(bookingId) : null;
     if (!booking) {
-      if (bookingId && this.joinById(bookingId)) throw new RuleError('Passes cover table sessions, not event entry.');
+      const join = bookingId ? this.joinById(bookingId) : null;
+      // Round 31: a Learn to paint gift is saved on a Learn to paint sign-up, for its check-in (src/experience-gifts.js)
+      if (join && GIFT_KINDS[p.kind] && this.giftFits(p.kind, { type: 'join', eventId: join.eventId, title: join.title })) {
+        this.write('UPDATE event_joins SET pass_id = ?, updated_at = ? WHERE id = ?', p.id, now, join.id);
+        return { join: this.staffJoinView(this.joinById(join.id)), pass: this.passView(p, { now }) };
+      }
+      if (join) throw new RuleError(GIFT_KINDS[p.kind] ? GIFT_WORDS.notFor(p.kind) : 'Passes cover table sessions, not event entry.');
       throw new RuleError('That booking could not be found.', 404);
     }
     if (booking.kind === 'gm') throw new RuleError("The GM's own table has nothing to pay.");
+    // Round 31: a gift goes only on what it's for
+    if (GIFT_KINDS[p.kind] && !this.giftFits(p.kind, { type: 'booking', kind: booking.kind })) throw new RuleError(GIFT_WORDS.notFor(p.kind));
     this.write('UPDATE bookings SET pass_id = ?, updated_at = ? WHERE id = ?', p.id, now, booking.id);
     return { booking: this.staffBooking(this.booking(booking.id)), pass: this.passView(p, { now }) };
   }
 
-  /** POST /passes/uses/:useId/undo (staff): the sessions go back on the pass, and the booking owes what the pass covered. */
+  /**
+   * POST /passes/uses/:useId/undo (staff): the sessions go back on the pass, and the booking owes what the pass covered.
+   * Round 31: a gift's use on a sign-up (join_id) gives the sign-up back what it covered, and one with nothing booked
+   * just goes back on the gift.
+   */
   async undoPassUse(useId, who) {
     this.requireStaff(who, ['checkin', 'money']);
     const rules = await this.rules();
@@ -8123,14 +8211,22 @@ export class Lair {
     if (!use.undone_at) {
       this.write('UPDATE pass_uses SET undone_at = ? WHERE id = ?', now, use.id);
       this.write('UPDATE passes SET sessions_used = MAX(0, sessions_used - ?) WHERE id = ?', use.people, use.pass_id);
-      const booking = this.booking(use.booking_id);
+      const booking = use.booking_id ? this.booking(use.booking_id) : null;
       if (booking) {
         const next = { ...booking, covered: Math.max(0, booking.covered - use.covered) };
         this.write('UPDATE bookings SET covered = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, settled(next) ? 1 : 0, now, booking.id);
       }
+      const join = use.join_id ? this.joinById(use.join_id) : null;
+      if (join) {
+        const next = { ...join, covered: Math.max(0, (join.covered || 0) - use.covered) };
+        this.write('UPDATE event_joins SET covered = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, settled(next) ? 1 : 0, now, join.id);
+        // a bill with this sign-up on it stays true, as when staff change one
+        this.reconcileBills(rules, now);
+      }
     }
-    const booking = this.booking(use.booking_id);
-    return { pass: this.passView(this.passRow(use.pass_id), { now }), row: booking ? this.bookingRow(booking, rules) : null };
+    const booking = use.booking_id ? this.booking(use.booking_id) : null;
+    const join = !booking && use.join_id ? this.joinById(use.join_id) : null;
+    return { pass: this.passView(this.passRow(use.pass_id), { now }), row: booking ? this.bookingRow(booking, rules) : join ? this.joinRow(join) : null };
   }
 
   /** POST /me/passes/claim { code } (logged in): link a pass nobody has claimed yet to this member. */
@@ -8167,7 +8263,7 @@ export class Lair {
    * the booking for its check-in. Staff may use any active pass; anyone else's is a 403. Round 7: a member may use the
    * pass of an active group they're in. No awaits.
    */
-  passForBooking(code, who, now) {
+  passForBooking(code, who, now, forKind = null) {
     const p = this.passByCode(code);
     // Round 9: staff who make bookings, check people in or run passes may use any pass
     const anyPass = this.can(who, ['checkin', 'tables', 'money']);
@@ -8178,6 +8274,9 @@ export class Lair {
     if (status === 'void') throw new RuleError('That pass has been cancelled. Ask us at the counter.', 409);
     if (status === 'expired') throw new RuleError('That pass has expired. Ask us at the counter about a new one.', 409);
     if (status === 'used') throw new RuleError('That pass has no sessions left. Book without it, or ask us about a new one.', 409);
+    // Round 31: a gift goes only on what it's for (Your first roleplaying game: a TTRPG seat; Learn to paint: never a
+    // booking), forKind being the booking's kind ('table', 'gm-seat', or 'spot' for an event's game table)
+    if (GIFT_KINDS[p.kind] && !this.giftFits(p.kind, { type: 'booking', kind: forKind })) throw new RuleError(GIFT_WORDS.notFor(p.kind), 422);
     return p;
   }
 
@@ -8462,6 +8561,9 @@ export class Lair {
    * person's coverable part up to the pass's cover; sessions used = the people not covered or paid yet, up to the
    * sessions left. Nothing already paid is covered, and a void or expired pass is skipped with a notice. Returns
    * { pass: { code, label, used, left, covered, useId } | null, notice }. No awaits.
+   * Round 31 (src/experience-gifts.js): a gift covers only what it's for, and the whole of it for one person whatever it
+   * costs on the day: Your first roleplaying game, a TTRPG seat's price, GM's fee and all (so its GM is credited as for
+   * any paid seat), with the dice reminder for staff. It's never used on anything else, and the counter is told why.
    */
   usePassAtCheckIn(booking, choice, rules, now, by = null) {
     if (choice === 'none') return { pass: null, notice: null };
@@ -8469,6 +8571,8 @@ export class Lair {
     const p = explicit ? this.passByCode(choice) : this.passRow(booking.passId);
     if (!p) return { pass: null, notice: explicit ? 'No pass with that code, so no pass was used. Check the code and try again.' : null };
     if (booking.kind === 'gm') return { pass: null, notice: explicit ? "The GM's own table has nothing to pay, so no pass was used." : null };
+    const gift = GIFT_KINDS[p.kind] ? p.kind : null;
+    if (gift && !this.giftFits(gift, { type: 'booking', kind: booking.kind })) return { pass: null, notice: GIFT_WORDS.notFor(gift) };
     if (dueOf(booking) <= 0) {
       return { pass: null, notice: explicit ? `${booking.paid ? 'This booking is already paid' : 'Nothing is left to pay on this booking'}, so no pass was used.` : null };
     }
@@ -8485,7 +8589,8 @@ export class Lair {
     const unpaid = Math.min(Math.max(0, (booking.people || 1) - coveredPeople), Math.ceil(owed / unit));
     if (unpaid <= 0) return { pass: null, notice: null };
     if (!left) return { pass: null, notice: `Pass ${p.code} has no sessions left, so it wasn't used.` };
-    const per = Math.min(p.cover, this.coverablePerPerson(booking, rules));
+    // (round 31: a gift covers one person's whole price, whatever it is on the day; a pass, its coverable part up to its cover)
+    const per = gift ? unit : Math.min(p.cover, this.coverablePerPerson(booking, rules));
     if (per <= 0) return { pass: null, notice: explicit ? "There's no table fee on this booking for a pass to cover, so no pass was used." : null };
     const sessions = Math.min(unpaid, left);
     const covered = Math.min(sessions * per, owed);
@@ -8494,8 +8599,54 @@ export class Lair {
     this.write('UPDATE passes SET sessions_used = sessions_used + ? WHERE id = ?', sessions, p.id);
     const next = { ...booking, covered: (booking.covered || 0) + covered };
     this.write('UPDATE bookings SET covered = ?, pass_id = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, explicit ? p.id : booking.passId, settled(next) ? 1 : 0, now, booking.id);
-    const notice = sessions < unpaid ? `Pass ${p.code} had ${plural(left, 'session', 'sessions')} left, so it covered ${sessions} of ${plural(unpaid, 'person', 'people')}.` : null;
+    let notice = sessions < unpaid ? `Pass ${p.code} had ${plural(left, 'session', 'sessions')} left, so it covered ${sessions} of ${plural(unpaid, 'person', 'people')}.` : null;
+    if (gift) notice = [sessions < unpaid ? GIFT_WORDS.onePerson(unpaid) : null, gift === 'first-game' ? GIFT_WORDS.dice : null].filter(Boolean).join(' ') || null;
+    // (a TTRPG seat paid in full this way gives its GM their fee, as any payment does: src/gm-credit.js)
+    if (gift && booking.kind === 'gm-seat' && settled(next)) this.gmCreditSoon();
     return { pass: { code: p.code, label: p.label, used: sessions, left: left - sessions, covered, useId }, notice };
+  }
+
+  /**
+   * Round 31: a gift at check-in on an event sign-up (src/experience-gifts.js). choice: a pass code, 'none', or left out
+   * for the sign-up's saved gift (pass_id). Learn to paint covers one person's entry on a Learn to paint sign-up; a
+   * session pass never covers event entry, and a gift covers nothing it isn't for (the counter is told why). Nothing
+   * already paid is covered. Returns { pass: { code, label, used, left, covered, useId } | null, notice }. No awaits.
+   */
+  useGiftOnJoin(join, choice, rules, now, by = null) {
+    if (choice === 'none') return { pass: null, notice: null };
+    const explicit = typeof choice === 'string' && choice.trim() !== '';
+    const p = explicit ? this.passByCode(choice) : join.passId ? this.passRow(join.passId) : null;
+    if (!p) return { pass: null, notice: explicit ? 'No pass with that code, so no pass was used. Check the code and try again.' : null };
+    const gift = GIFT_KINDS[p.kind] ? p.kind : null;
+    if (!gift) return { pass: null, notice: "Passes don't cover event entry, so no pass was used." };
+    if (!this.giftFits(gift, { type: 'join', eventId: join.eventId, title: join.title })) return { pass: null, notice: GIFT_WORDS.notFor(gift) };
+    if (join.status === 'cancelled') return { pass: null, notice: null };
+    if (dueOf(join) <= 0) {
+      return { pass: null, notice: explicit ? `${join.paid ? 'This sign-up is already paid' : 'Nothing is left to pay on this sign-up'}, so no gift was used.` : null };
+    }
+    const status = this.passStatus(p, now);
+    if (status === 'void') return { pass: null, notice: `Pass ${p.code} is void, so it wasn't used.` };
+    if (status === 'expired') return { pass: null, notice: `Pass ${p.code} expired on ${giftDay(p.expiresAt, rules.tz)}, so it wasn't used.` };
+    const left = Math.max(0, p.sessionsTotal - p.sessionsUsed);
+    if (!left) return { pass: null, notice: `Pass ${p.code} has no sessions left, so it wasn't used.` };
+    // one person's entry: what the sign-up costs over the people paying on it (round 30: library members on it don't)
+    const paying = Math.max(1, (join.people || 1) - (join.memberFree ? 1 : 0) - (join.freeGuests || 0));
+    const owed = owing(join);
+    const unit = Math.max(1, Math.round((join.amount || 0) / paying));
+    const coveredPeople = this.sql.exec('SELECT COALESCE(SUM(people), 0) AS n FROM pass_uses WHERE join_id = ? AND undone_at IS NULL', join.id).one().n;
+    if (coveredPeople >= paying) return { pass: null, notice: null };
+    const covered = Math.min(unit, owed);
+    const useId = makeId('pu');
+    this.write(
+      "INSERT INTO pass_uses (id, pass_id, booking_id, people, covered, at, by, undone_at, join_id) VALUES (?, ?, '', 1, ?, ?, ?, NULL, ?)",
+      useId, p.id, covered, now, by, join.id,
+    );
+    this.write('UPDATE passes SET sessions_used = sessions_used + 1 WHERE id = ?', p.id);
+    const next = { ...join, covered: (join.covered || 0) + covered };
+    this.write('UPDATE event_joins SET covered = ?, pass_id = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, p.id, settled(next) ? 1 : 0, now, join.id);
+    // a bill with this sign-up on it stays true, as when staff change one
+    this.reconcileBills(rules, now);
+    return { pass: { code: p.code, label: p.label, used: 1, left: left - 1, covered, useId }, notice: null };
   }
 
   /* ---------------- library holds (round 6): reserving a board game ---------------- */
@@ -10620,7 +10771,7 @@ export class Lair {
       // Round 7: the player profile (the GM profile stays its own block, gmProfile)
       profile: this.profileView(this.memberRow(who.customerId)),
       // Session passes: active ones, and ones used up in the last 30 days
-      passes: this.memberPasses(who.customerId, now),
+      passes: this.memberPasses(who.customerId, now, rules),
       // Round 9: early access offers open to them now, each with their own claim (and only their own checkout link)
       offers: this.memberOffers(who.customerId, now),
       // Today's self-serve tab, or null
@@ -11173,3 +11324,5 @@ Object.assign(Lair.prototype, libraryRuleMethods);
 Object.assign(Lair.prototype, creditGiftMethods);
 // Round 31: the shop's filters in Shopify, and On the shelf now (src/shop-filters.js)
 Object.assign(Lair.prototype, shopFilterMethods);
+// Round 31: experience gifts: their codes, what they fit, their email and "Use it now" (src/experience-gifts.js)
+Object.assign(Lair.prototype, experienceGiftMethods);
