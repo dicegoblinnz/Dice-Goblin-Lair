@@ -84,6 +84,8 @@ import { dateTables } from './core.js';
 // and paying online's words, which the reminder repeats
 import { BOOKING_REMINDER_COLUMNS, BOOKING_REMINDER_INDEXES, bookingReminderMethods } from './booking-reminders.js';
 import { ONLINE_WORDS } from './core.js';
+// Round 29, item 3: a first game for beginners (contract v29-roleplayers section 3)
+import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMethods } from './first-game.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1125,6 +1127,16 @@ export class Lair {
       }
     }
     for (const statement of BOOKING_REMINDER_INDEXES) this.sql.exec(statement);
+    // Round 29, item 3: a seat's answer to "Is this your first roleplaying game?", the consent to the email the day after
+    // and when it went, and the emails people stopped (made when missing, src/first-game.js)
+    for (const [table, column, type] of FIRST_GAME_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of FIRST_GAME_TABLES) this.sql.exec(statement);
     // and when they first started: a catch-up the next day is only for a reminder day they were running on
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('booking-reminders-from', ?)", String(Date.now()));
     this.bookingRemindersFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'booking-reminders-from'").toArray()[0]?.value) || 0;
@@ -1224,6 +1236,9 @@ export class Lair {
       } : {}),
       // round 18: a seat booked by someone new to the Lair's TTRPG sessions
       newPlayer: Boolean(r.new_player),
+      // round 29: a seat booked as someone's first roleplaying game ("Yes, my first"); staff views only (staffBooking,
+      // bookingRow), never a customer's
+      ...(r.first_game === 1 ? { firstGame: true } : {}),
       // Round 21: a seat its GM pays for (coveredBy: the GM; coverWas: what it cost before), and a GM's charge for one
       // (kind 'gm-cover'; coverOf: the seat)
       ...(r.covered_by ? { coveredBy: String(r.covered_by), coverWas: r.cover_was ?? null } : {}),
@@ -1893,6 +1908,10 @@ export class Lair {
         if (b === 'admin-job') return json(await this.adminJob(body));
         // Round 11: the day-before reminders on their own, at a fixed time when `at` is given (the live checks' clock)
         if (b === 'reminders') return json(await this.remindersAt(Number(body.at) || Date.now()));
+        // Round 29: the email the day after a first game, at a fixed time (src/first-game.js), and its one-click
+        // unsubscribe from the Lair's own address (index.js: /unsubscribe/<code>/<key>)
+        if (b === 'next-day') return json(await this.nextDayAt(Number(body.at) || Date.now()));
+        if (b === 'unsubscribe') return this.oneClickUnsubscribe(body);
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
         if (b === 'pos' && c === 'today') return json(await this.posToday());
@@ -1921,7 +1940,7 @@ export class Lair {
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
           || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links'].includes(a));
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1939,6 +1958,13 @@ export class Lair {
         const input = await request.json().catch(() => ({}));
         const from = request.headers.get('X-Lair-Client') || '';
         return json(b === 'view' ? await this.cancelLinkView(input, from) : await this.cancelByLink(input, from));
+      }
+      // Round 29: the next-day email's "Don't send me emails like this" (src/first-game.js), for whoever has its key, logged
+      // in or not, before anyone is looked up. Seeing what it is never stops anything: only the tap (stop) does.
+      if (request.method === 'POST' && a === 'unsubscribe' && ['view', 'stop'].includes(b) && !c) {
+        const input = await request.json().catch(() => ({}));
+        const from = request.headers.get('X-Lair-Client') || '';
+        return json(b === 'view' ? this.unsubscribeView(input, from) : this.unsubscribeStop(input, from));
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
@@ -2548,13 +2574,22 @@ export class Lair {
     if (!override) this.tagAd('bookings', id, who.customerId || null, cleanAd(input.ad), now);
     if (tableGame) booking.game = this.setBookingGame(booking.id, tableGame, now).game;
     // --- saved: the table is ours ---
+    // Round 29 (src/first-game.js): a TTRPG seat keeps the answer to "Is this your first roleplaying game?" and, after
+    // "Yes, my first", the box for the email the day after, before its GM hears
+    if (kind === 'gm-seat') {
+      const answer = this.firstGameAnswer(input);
+      this.markFirstGame(id, answer, now);
+      booking.firstGame = answer.first === 1;
+    }
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
     if (game) this.tellGmNewPlayer(booking, game, rules);
+    // Round 29: the weekday its two-day reminder goes, for the confirmation's "What happens next" (null: none will)
+    const reminderDay = kind === 'gm-seat' ? this.bookingReminderDay(this.booking(id), rules, now) : undefined;
 
     const result = await this.payOrConfirm(booking, rules, { game });
     // Round 28: "Booked a session" for the ad platforms (src/newplayers.js bookedTrack), never for what staff make
     const track = override || kind === 'walkin' ? null : this.bookedTrack(result.booking, kind === 'gm-seat' ? 'ttrpg' : 'table', who.customerId || null, { now });
-    return track ? { ...result, track } : result;
+    return { ...result, ...(track ? { track } : {}), ...(reminderDay !== undefined ? { reminderDay } : {}) };
   }
 
   /** At most 6 upcoming bookings per email for anyone but staff (seats from "join every session" don't count). */
@@ -3207,9 +3242,13 @@ export class Lair {
     const when = this.when(game, rules);
     const content = {
       title: toGm ? 'A new player for your game!' : 'A new player for a game',
-      intro: toGm
-        ? `Kia ora ${game.gm}, ${seat.name} just joined ${game.title}. Gobgob's pulled up ${seat.people === 1 ? 'a chair' : `${seat.people} chairs`}.`
-        : `${seat.name} just joined ${game.gm ? `${game.gm}'s game ` : ''}${game.title}. There's no email on file for the GM, so please pass this on.`,
+      intro: [
+        toGm
+          ? `Kia ora ${game.gm}, ${seat.name} just joined ${game.title}. Gobgob's pulled up ${seat.people === 1 ? 'a chair' : `${seat.people} chairs`}.`
+          : `${seat.name} just joined ${game.gm ? `${game.gm}'s game ` : ''}${game.title}. There's no email on file for the GM, so please pass this on.`,
+        // Round 29: they said it's their first roleplaying game ("Yes, my first")
+        ...(seat.firstGame ? [FIRST_GAME_WORDS.gmLine(this.firstNameOf(seat.name))] : []),
+      ],
       details: [
         ['Name', seat.name], ['Email', seat.email], ['Phone', seat.phone], ['Seats', String(seat.people)], ['Players', this.partyLine(seat.party)],
         ['Notes', seat.notes], ['When', when], ['Seats left', `${left} of ${game.seats}`],
@@ -4132,7 +4171,13 @@ export class Lair {
       // Round 28: a seat this made is "Booked a session" for the ad platforms (one they had already isn't)
       if (got?.created) newSeat = got.seat;
       // A weekly regular's first seat is a new player: the GM hears (round 6). Seats maintenance rolls forward don't.
-      if (got?.created) this.tellGmNewPlayer(got.seat, next, rules);
+      // Round 29: that seat keeps the answer to "Is this your first roleplaying game?" (and the box), first
+      if (got?.created) {
+        const answer = this.firstGameAnswer(input);
+        this.markFirstGame(got.seat.id, answer, now);
+        got.seat.firstGame = answer.first === 1;
+        this.tellGmNewPlayer(got.seat, next, rules);
+      }
       if (!got) {
         full.push({ gameId: next.id, start: next.start });
         this.write('INSERT OR IGNORE INTO series_alerts (game_id, customer_id, at) VALUES (?, ?, NULL)', next.id, who.customerId);
@@ -5539,6 +5584,8 @@ export class Lair {
       seriesId: b.seriesId || null, owed: this.isOwed(b, now), waived: Boolean(b.waived),
       // Round 11: a game's players, for staff and the POS
       ...this.staffGamePlayers(b),
+      // Round 29: their first roleplaying game, so the counter walks them to their GM ("First game")
+      ...(b.kind === 'gm-seat' && b.firstGame ? { firstGame: true } : {}),
     };
   }
 
@@ -10343,6 +10390,9 @@ export class Lair {
     return {
       // Round 17: for someone on the team, GM credit for staff as it touches them (staffGmFor: the setting and their hours)
       customer: { id: who.customerId, staff: who.staff, gm: who.gm, staffGmCredit: this.staffGmFor(who) },
+      // Round 29 (src/first-game.js): they've had a TTRPG seat at the Lair, checked in or paid once its day came, so the
+      // TTRPG page's "Your first game" isn't for them and the join sheet doesn't ask
+      ttrpgPlayed: this.ttrpgPlayed(who.customerId, account.email || memberRow?.account_email || '', now),
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
       // Round 11: their own game tables list their players (gamePlayers, gameSize)
       bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start).map((b) => gone(b)),
@@ -10830,6 +10880,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not send booking reminders', error);
     }
+    // Round 29: the email the day after a first game, from 9am to 9pm at the Lair, each once (src/first-game.js)
+    try {
+      const nextDay = this.sendNextDay(rules, Date.now());
+      if (nextDay?.sent) result.nextDay = nextDay;
+    } catch (error) {
+      console.error('Lair: could not send the next-day emails', error);
+    }
     // Round 10: library memberships: /setup?key=…&memberships=plans sets up the plans, then the upkeep bills what's due,
     // retries failed payments and ends what should end (it never throws)
     if (membershipsSetup) {
@@ -10910,3 +10967,5 @@ Object.assign(Lair.prototype, gwPadMethods);
 Object.assign(Lair.prototype, gwWeekMethods);
 // Round 29: a reminder two days before each one-off booking, its cancel link and calendar file (src/booking-reminders.js)
 Object.assign(Lair.prototype, bookingReminderMethods);
+// Round 29, item 3: a first game for beginners: the answer, the GM's line, the counter, the email the day after
+Object.assign(Lair.prototype, firstGameMethods);

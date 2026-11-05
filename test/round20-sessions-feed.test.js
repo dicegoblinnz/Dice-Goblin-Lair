@@ -139,7 +139,7 @@ test('sessions feed (round 20): only the board\'s public sessions to come in the
   const base = { seats: 4, taken: 1, status: 'open', schedule: 'one-shot', seatPrice: 1500, gm: 'Rangi', gmBio: 'Bio', blurb: 'Notes', level: 'some' };
   const games = [
     { ...base, id: 'g-later', title: 'Later', system: 'Pathfinder 2e', start: NOW + 3 * DAY, end: NOW + 3 * DAY + 4 * HOUR },
-    { ...base, id: 'g-soon', title: 'Soon', system: 'D&D 5e', start: NOW + DAY, end: NOW + DAY + 4 * HOUR, level: 'new', schedule: 'weekly', seriesId: 'sr_1' },
+    { ...base, id: 'g-soon', title: 'Soon', system: 'D&D 5e', start: NOW + DAY, end: NOW + DAY + 4 * HOUR, level: 'new', schedule: 'weekly', seriesId: 'sr_1', characters: 'pregens' },
     { ...base, id: 'g-private', title: 'Private', private: true, start: NOW + DAY, end: NOW + DAY + HOUR },
     { ...base, id: 'g-pending', title: 'Pending', status: 'pending', start: NOW + DAY, end: NOW + DAY + HOUR },
     { ...base, id: 'g-cancelled', title: 'Cancelled', status: 'cancelled', start: NOW + DAY, end: NOW + DAY + HOUR },
@@ -155,9 +155,12 @@ test('sessions feed (round 20): only the board\'s public sessions to come in the
   assert.deepEqual(feed.sessions.map((s) => s.id), ['g-soon', 'g-full', 'g-later']);
   assert.deepEqual(feed.sessions[0], {
     id: 'g-soon', title: 'Soon', system: 'D&D 5e', start: new Date(NOW + DAY).toISOString(), end: new Date(NOW + DAY + 4 * HOUR).toISOString(),
-    schedule: 'weekly', newPlayers: true, price: 1500, seatsLeft: 3, full: false,
+    schedule: 'weekly', newPlayers: true, price: 1500, seatsLeft: 3, full: false, characters: 'pregens',
   });
   assert.deepEqual([feed.sessions[1].full, feed.sessions[1].seatsLeft, feed.sessions[1].schedule], [true, 0, 'one-shot'], 'an unknown schedule reads as a one-shot');
+  // round 29 (contract v29-roleplayers section 3): how a beginner gets a character, for the front door's cards: the GM's
+  // pick ('pregens', 'at-table' or 'bring'), else '' (not said)
+  assert.equal(feed.sessions[1].characters, '', 'none said');
   const text = JSON.stringify(feed);
   for (const word of ['Rangi', 'Bio', 'Notes', 'gm', 'blurb']) assert.ok(!text.includes(word), `nothing like "${word}" in the feed`);
   // the most it holds, and long names cut
@@ -253,7 +256,7 @@ test('sessions feed (round 20): a free session shows its usual price and seats k
   assert.ok(session.price > 0, 'never $0: free sessions are staff-only');
   assert.equal(session.seatsLeft, seen.seats - seen.taken);
   assert.equal(session.seatsLeft, 2);
-  assert.deepEqual(Object.keys(session).sort(), ['end', 'full', 'id', 'newPlayers', 'price', 'schedule', 'seatsLeft', 'start', 'system', 'title'], 'only these fields: nothing says it\'s free');
+  assert.deepEqual(Object.keys(session).sort(), ['characters', 'end', 'full', 'id', 'newPlayers', 'price', 'schedule', 'seatsLeft', 'start', 'system', 'title'], 'only these fields: nothing says it\'s free');
 });
 
 test('sessions feed (round 20): when Shopify turns the write away, the health check says why, nothing is recorded, and the next run tries again', async () => {

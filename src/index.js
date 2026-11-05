@@ -193,6 +193,18 @@ export default {
     const bookingIcs = request.method === 'GET' ? url.pathname.match(/^\/ics\/b\/(bk_[A-Za-z0-9]{8,40})\.ics$/) : null;
     if (bookingIcs) return lair(env).fetch(new Request(`${url.origin}/internal/bookingics/${bookingIcs[1]}`, { headers: { 'X-Lair-Internal': '1' } }));
 
+    // Round 29: the next-day email's one-click unsubscribe (List-Unsubscribe-Post, RFC 8058), by the booking's code and the
+    // email's key. The mail app's POST stops these emails; a GET or HEAD (someone opening it, or a scanner) only goes on to
+    // My Lair's page that asks, and stops nothing (src/first-game.js oneClickUnsubscribe)
+    const unsubscribe = url.pathname.match(/^\/unsubscribe\/([A-Za-z0-9-]{1,40})\/([A-Za-z0-9]{8,64})$/);
+    if (unsubscribe && ['GET', 'HEAD', 'POST'].includes(request.method)) {
+      return lair(env).fetch(new Request(`${url.origin}/internal/unsubscribe`, {
+        method: 'POST',
+        headers: { 'X-Lair-Internal': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref: unsubscribe[1], key: unsubscribe[2], stop: request.method === 'POST', client: request.headers.get('CF-Connecting-IP') || '' }),
+      }));
+    }
+
     // Round 11: an event date as a calendar file (the reminder email's Add to calendar): public, like the calendar page
     const ics = request.method === 'GET' ? url.pathname.match(/^\/ics\/([A-Za-z0-9._%@-]{3,200})\.ics$/) : null;
     if (ics) return lair(env).fetch(new Request(`${url.origin}/internal/eventics/${ics[1]}`, { headers: { 'X-Lair-Internal': '1' } }));

@@ -1456,12 +1456,15 @@ export const emailReady = (env) => Boolean(env.RESEND_API_KEY && env.FROM_EMAIL)
  * as it was (a receipt under its idempotency key), with the from and reply-to it was made with, whatever the settings
  * say now.
  */
-const resendEmail = (env, { to, subject, text, html = null, replyTo = null, from = null, pinned = false, attachments = null }) => {
+const resendEmail = (env, { to, subject, text, html = null, replyTo = null, from = null, pinned = false, attachments = null, headers = null }) => {
   const reply = pinned ? replyTo : replyTo || env.REPLY_TO;
   return {
     from: (pinned && from) || env.FROM_EMAIL, to: [to], subject, text, ...(html ? { html } : {}), ...(reply ? { reply_to: reply } : {}),
     // Round 25: files with it ([{ filename, content (base64) }]), like the Tuesday GW order's CSV
     ...(attachments?.length ? { attachments } : {}),
+    // Round 29: headers of its own, like the next-day email's one-click unsubscribe (List-Unsubscribe and
+    // List-Unsubscribe-Post); Resend takes them on single and batch sends
+    ...(headers && typeof headers === 'object' && Object.keys(headers).length ? { headers } : {}),
   };
 };
 /** The from and reply-to an email would go with now, to keep with one that's pinned */

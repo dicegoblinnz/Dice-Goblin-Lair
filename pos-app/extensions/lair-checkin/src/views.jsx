@@ -34,6 +34,7 @@ import {
   dayCounts,
   dueOf,
   finishedLine,
+  firstGameHint,
   gameTitle,
   gmPaysChoice,
   gmPaysFor,
@@ -429,6 +430,11 @@ function PersonView({ screen, ctx }) {
         <s-banner tone="success" heading={first ? `${first}'s in` : "They're in"}>
           {[whyNothing(row), outcome?.notice || ''].filter(Boolean).join(' ')}
         </s-banner>
+        {firstGameHint(row) ? (
+          <s-banner tone="info" heading="First game">
+            {firstGameHint(row)}
+          </s-banner>
+        ) : null}
         {fullBanner}
         {cardShown}
         {showPasses ? <PassChoice row={row} screen={screen} options={choices.options} inUse={inUse} stage={plan.stage} ctx={ctx} /> : null}
@@ -457,6 +463,7 @@ function PersonView({ screen, ctx }) {
             <s-text key={line}>{line}</s-text>
           ))}
           <Badges list={rowBadges(row, inCart, isHeld(row, cart.held))} />
+          {firstGameHint(row) ? <s-text>{firstGameHint(row)}</s-text> : null}
         </s-stack>
       </s-section>
       <MoneySection row={row} plan={plan} />

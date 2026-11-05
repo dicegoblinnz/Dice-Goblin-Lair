@@ -17,7 +17,7 @@ import { firstName, fold, money, peopleLabel, plural, shortDay, tablesLabel, tim
  *   customerId?: unknown, pass?: PassLike | null, refund?: string | null, note?: string, title?: string,
  *   players?: unknown[], party?: unknown[], gameId?: string | null, occurrenceId?: string | null,
  *   seriesId?: string | null, owed?: boolean, waived?: boolean, line?: unknown, onAccount?: boolean,
- *   gmPays?: GmPays | null, playerOf?: { name?: string } | null }} Row
+ *   gmPays?: GmPays | null, playerOf?: { name?: string } | null, firstGame?: boolean }} Row
  *   seriesId: a weekly regular's seat. owed: a regular's seat whose session ended unpaid (paid like any fee, never
  *   checked in); the Lair app sends its cart line as `line` with a member's rows. waived: staff let them off.
  *   playerOf: a named player in someone else's game (round 11): the row's due is their own share, and its cart line
@@ -29,6 +29,18 @@ import { firstName, fold, money, peopleLabel, plural, shortDay, tablesLabel, tim
  * @typedef {'waiting' | 'arrived' | 'noshow' | 'refund' | 'cancelled'} RowState
  * @typedef {{ tone: 'success' | 'warning' | 'critical' | 'info' | 'neutral', text: string }} Badge
  */
+
+/**
+ * Round 29 (Lair contract v29-roleplayers section 3): a seat booked as someone's first roleplaying game ("Yes, my
+ * first") comes with firstGame: true. The counter says so on it, and what to do: staff walk first-timers to their GM.
+ * A Lair app from before it sends no field, and nothing shows.
+ */
+export const FIRST_GAME = Object.freeze({ badge: 'First game', hint: 'Walk them to their GM, and point out drinks, the bathroom and the lift.' });
+
+/** The counter's line for a first game's seat, or '' for anyone else. @param {Row} row */
+export function firstGameHint(row) {
+  return row?.kind === 'gm-seat' && row?.firstGame === true ? FIRST_GAME.hint : '';
+}
 
 const ARRIVED = new Set(['seated', 'done', 'attended', 'arrived', 'checked-in', 'checkedin']);
 const NO_SHOW = new Set(['noshow', 'no-show']);
@@ -165,6 +177,8 @@ export function rowBadges(row, inCart = false, held = false) {
   let badges = stateBadges(row, inCart, held);
   if (gmPaysFor(row)) badges = [...badges.filter((b) => b.text !== 'Free'), { tone: 'info', text: 'GM pays' }];
   if (row?.seriesId) badges.push({ tone: 'info', text: 'Weekly' });
+  // round 29: their first roleplaying game
+  if (firstGameHint(row)) badges.push({ tone: 'info', text: FIRST_GAME.badge });
   return badges;
 }
 
