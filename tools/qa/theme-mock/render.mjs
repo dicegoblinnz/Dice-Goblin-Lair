@@ -639,6 +639,52 @@ Object.assign(PAGES, {
   '/cart': () => renderPage('cart', { cart: cartLiquid(), template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
 });
 
+/* ---------------- Round 31, retail: the Lair card's states (contract v31-retail; canvas "Retail and shopping: mockups") ----
+   Riftbound Radiance: a Booster Box (25 on the shelf), a Booster Pack (2: Only 2 left) and Showdown (sold out). The
+   Cyberpunk starter decks, both sold out (Tell me when it's back), with the Night City booster on the shelf instead (the
+   same maker, in Trading Card Games). A dice set the supplier sends: supplier.code, 100 at the supplier's location and
+   none at the Lair (its pickup location says not available): "Delivered in about 10 days". */
+const retailProduct = (handle, title, vendor, type, rows, extra = {}) => {
+  const p = product(handle, title, vendor, rows[0][2], Math.max(...rows.map((r) => r[2])), null, rows.length === 1, rows[0][1], 1000, 1000, { type, ...extra });
+  const variants = rows.map(([name, inv, dollars, more = {}], i) => {
+    const media = img(`${handle}-${slug(name)}__1000x1000`, 1000, 1000, '');
+    media.preview_image = media;
+    return {
+      id: 47300000000000 + mediaId++ * 10 + i, title: rows.length === 1 ? 'Default Title' : name, price: dollars * 100, compare_at_price: null,
+      available: inv > 0, inventory_management: 'shopify', inventory_quantity: inv, inventory_policy: 'deny', requires_shipping: true,
+      options: [rows.length === 1 ? 'Default Title' : name], option1: rows.length === 1 ? 'Default Title' : name, featured_media: media, featured_image: media,
+      image: media, sku: `R31-${String(i + 1).padStart(3, '0')}`, barcode: '', quantity_rule: {}, store_availabilities: [], ...more,
+    };
+  });
+  p.variants = variants;
+  p.media = [p.featured_media];
+  p.available = variants.some((v) => v.available);
+  p.selected_variant = null;
+  p.selected_or_first_available_variant = variants.find((v) => v.available) || variants[0];
+  if (rows.length > 1) p.optionDefs = [[extra.optionName || 'Type', variants.map((v) => v.title), true]];
+  return p;
+};
+const radiance = retailProduct('riftbound-radiance', 'Riftbound Radiance', 'Riot Games', 'Trading Card Games', [
+  ['Booster Box', 25, 240], ['Booster Pack', 2, 11], ['Showdown', 0, 60],
+]);
+const nightCity = retailProduct('cyberpunk-tcg-welcome-to-night-city-booster', 'Cyberpunk TCG - Welcome to Night City - Booster', 'WeirdCo', 'Trading Card Games', [['Booster Pack', 61, 11], ['Booster Box', 44, 360]]);
+const starterDeck = retailProduct('cyberpunk-tcg-starter-deck', 'Cyberpunk TCG - Starter Deck', 'WeirdCo', 'Trading Card Games', [
+  ['The Heist', 0, 55], ['Embracing Power', 0, 55],
+]);
+const supplierDice = retailProduct('blossom-sky-dice-set', 'Blossom Sky Dice Set', 'Dice Goblin NZ', 'Dice & Accessories', [
+  ['Default Title', 100, 90, { inventory_policy: 'continue', store_availabilities: [{ available: false, pick_up_enabled: true, pick_up_time: 'Usually ready in 2 hours', location: { name: 'Dice Goblin', id: 72250359911 } }] }],
+]);
+supplierDice.metafields = { ...supplierDice.metafields, supplier: { code: { value: '#N42' } } };
+// the shelf these three are on, as product.collections gives it (the shared Trading Card Games mock stays as it is)
+const r31Cards = coll('trading-card-games', 'Trading Card Games', [nightCity, radiance, starterDeck,
+  ...collections['trading-card-games'].products.filter((p) => ![nightCity, radiance, starterDeck].some((q) => q.handle === p.handle))], 142);
+for (const p of [radiance, nightCity, starterDeck]) p.collections = [r31Cards];
+supplierDice.collections = [];
+for (const p of [radiance, nightCity, starterDeck, supplierDice]) {
+  Object.assign(p, withVariant(p, null));
+  allProducts[p.handle] = p;
+}
+
 /* ---- library routes (library worktree): tag-filtered library collection, membership, terms, search ---- */
 const handleize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const CONTENT_DIR = path.join(HERE, '..', 'library-content');
