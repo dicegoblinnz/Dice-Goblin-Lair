@@ -236,6 +236,38 @@ for (const size of sizes) {
   await page.waitForSelector('[data-roll-slots] [data-result]', { timeout: 10000 });
   await settle(page, 900);
   check(`${tag} a roll on a card with stamps on it already: no "ready" line`, !(await page.$('[data-roll-slots] .ml-roll__next')), await page.evaluate(() => document.querySelector('[data-roll-slots]')?.textContent.replace(/\s+/g, ' ').slice(0, 200)));
+  // a brand-new member (card 1, nothing on it) rolling a roll staff gave them (or a loot code's): no card has been
+  // filled, so Gobgob never says "Card 1 is ready" (the head-start review, 2 Nov 2026: it only follows a full card)
+  const keptRecord = await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    const c = be.cfg.customer;
+    const L = be.loyaltyFor(c);
+    const was = JSON.parse(JSON.stringify(be.loyaltyOf(be.memberFor(c))));
+    // nothing stamped, no rolls given, none used: then one roll from staff
+    be.editLoyalty(String(c.id), (x) => Object.assign(x, {
+      seeded: (Number(was.seeded) || 0) - (L.cards * 10 + L.stamps), welcome: 0, birthday: 0, staff: 0, codes: 0, used: 0, welcomeCode: null,
+    }));
+    be.commit();
+    return was;
+  });
+  await giveRolls(page, 1);
+  await myLair(page, '/pages/my-lair?roll=9');
+  const fresh = await cardNow(page);
+  await page.click('[data-roll-slots] [data-roll]');
+  await page.waitForSelector('[data-roll-slots] [data-result]', { timeout: 10000 });
+  await settle(page, 900);
+  check(`${tag} a brand-new member (card 1, no stamps) rolls a roll staff gave them: no "Card 1 is ready" line`,
+    fresh.card === 1 && fresh.stamps === 0 && !(await page.$('[data-roll-slots] .ml-roll__next')),
+    { card: fresh.card, stamps: fresh.stamps, said: await page.evaluate(() => document.querySelector('[data-roll-slots] .ml-roll__next')?.textContent.trim() || '') });
+  // (back to the card the checks below expect)
+  await page.evaluate((was) => {
+    const be = window.Lair.store.backend;
+    be.editLoyalty(String(be.cfg.customer.id), (x) => {
+      for (const key of Object.keys(x)) delete x[key];
+      Object.assign(x, was);
+    });
+    be.commit();
+  }, keptRecord);
 
   // ---------- the Wallet ----------
   await myLair(page, '/pages/my-lair#wallet');
