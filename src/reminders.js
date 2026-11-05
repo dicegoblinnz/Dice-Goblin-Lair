@@ -250,7 +250,10 @@ export const reminderMethods = {
     const day = longDay(o.start, rules.tz);
     const hours = span(o, time);
     const coming = row.level === 'coming';
-    const price = this.eventPriceLine(o, ev);
+    // Round 30: at an event free for library members, a member whose plan lets them borrow is told it's free for them
+    // (src/library-rules.js libraryEntry: the memberships table, read now)
+    const member = Boolean(o.memberFree && row.customer_id && this.libraryEntry(row.customer_id).free);
+    const price = this.eventPriceLine(o, ev, { member });
     const Day = when === 'today' ? 'Today' : 'Tomorrow';
     const outro = [];
     if (o.capacity) {
@@ -275,12 +278,19 @@ export const reminderMethods = {
   },
 
   /** The price as the event says it: its entry fee and how it's paid, its price note as written, or free entry. '' when
-      the event says nothing about price. No awaits. */
-  eventPriceLine(o, ev = {}) {
+      the event says nothing about price. Round 30 (the review, 6 Nov 2026): an event free for library members says
+      what's true for everyone ("Free for library members, $10 for everyone else, …"), or, for a library member's own
+      reminder (member), that it's free for them; a price note that says the same (it's about members) isn't repeated.
+      No awaits. */
+  eventPriceLine(o, ev = {}, { member = false } = {}) {
     const note = String(ev.priceNote || '').trim();
     if (o.entryFee) {
       // round 15: everything is paid at the counter on the day (on the tab), whatever the event's old payment setting
       const how = 'paid at the counter on the day';
+      if (o.memberFree) {
+        const said = member ? 'Free for you as a library member' : `Free for library members, ${money(o.entryFee)} for everyone else, ${how}`;
+        return `${said}${note && !/\bmembers?\b/i.test(note) ? `\n${note}` : ''}`;
+      }
       return `${money(o.entryFee)} a person, ${how}${note ? `\n${note}` : ''}`;
     }
     if (ev.freeEntry) return /\bfree\b/i.test(note) ? note : `Free entry${note ? `\n${note}` : ''}`;

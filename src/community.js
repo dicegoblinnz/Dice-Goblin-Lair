@@ -277,6 +277,8 @@ export const communityMethods = {
    * signing up. Their member code (scanned or typed, any case) makes a checked-in sign-up for one (source 'walk-in'), with
    * the event's usual entry fee due at the counter like any sign-up (a free event stays free). Works for events with no
    * sign-ups too (card nights). A second one for the same person and date is refused. Returns { join, row, message, notice }.
+   * Round 30: at an event free for library members, a library member's entry is free (amount 0, memberFree) and the
+   * message says so in place of what to charge; a member whose library payment didn't go through pays, and it says why.
    */
   async attendEvent(occurrenceId, input, who) {
     this.requireStaff(who, 'checkin');
@@ -312,19 +314,23 @@ export const communityMethods = {
     }
     const taken = this.sql.exec("SELECT COALESCE(SUM(people), 0) AS n FROM event_joins WHERE occurrence_id = ? AND status != 'cancelled'", occurrence.id).one().n;
     const id = makeId('ej');
-    const fee = occurrence.entryFee || 0;
+    // Round 30 (contract v30-library): at an event free for library members (Board Game Night), a member whose library
+    // plan lets them borrow today walks in free; a membership with a payment that didn't go through pays, and is told why
+    const entry = this.memberFreeDate(occurrence) ? this.libraryEntry(customerId, null, now) : null;
+    const fee = entry?.free ? 0 : occurrence.entryFee || 0;
     this.write(
       `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, arrived_at, pay, paid,
-         amount, created_at, updated_at, source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, '', 'attended', ?, ?, 'day', 0, ?, ?, ?, 'walk-in')`,
+         amount, created_at, updated_at, source, member_free)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, '', 'attended', ?, ?, 'day', 0, ?, ?, ?, 'walk-in', ?)`,
       id, this.newCode(name, 'join', id, now), occurrence.id, occurrence.eventId, occurrence.title, occurrence.start, occurrence.end, name,
-      isEmail(member.email) ? member.email : null, customerId, now, fee, now, now,
+      isEmail(member.email) ? member.email : null, customerId, now, fee, now, now, entry?.free ? 1 : 0,
     );
     const join = this.joinById(id);
     const full = occurrence.capacity && taken + 1 > occurrence.capacity;
+    const words = entry ? this.entryWords({ holder: entry, free: entry.free ? 1 : 0 }, 1) : '';
     return {
       join: { ...this.staffJoinView(join), source: 'walk-in' }, row: this.joinRow(join),
-      message: `Walk-in added and checked in: ${name} for ${occurrence.title}.${fee ? ` Charge ${money(fee)}.` : ''}`,
+      message: `Walk-in added and checked in: ${name} for ${occurrence.title}.${fee ? ` Charge ${money(fee)}.` : ''}${words ? ` ${words}` : ''}`,
       notice: full ? `That's ${taken + 1} people for ${occurrence.capacity} places.` : null,
     };
   },

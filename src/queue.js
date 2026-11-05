@@ -18,6 +18,8 @@
 import { ACTIVE, HOUR, MIN, RuleError, addDays, holdUntil, lairTime, makeId } from './core.js';
 import { emailReady } from './shopify.js';
 import { wishlistProductId } from './wishlist.js';
+// Round 30: what's said when a game that stays in the Lair would be posted
+import { IN_STORE_WORDS } from './library-rules.js';
 
 /** A member's queue holds up to this many games (queued and held) */
 export const QUEUE_MAX = 30;
@@ -949,7 +951,8 @@ export const queueMethods = {
    * POST /library/sends/:id/update { status: 'packed' | 'sent' | 'cancelled', note? } (perm library). Packed and sent
    * need the postage paid (409 otherwise). Sent collects the hold: the game is at home with them (a loan) and its queue
    * row is done. Cancelled ends the hold (back on the shelf), stops the checkout and puts the game back in their queue
-   * (a paid one is staff's to refund). A send that's sent, cancelled or lapsed can't change (409). → { send, loan }.
+   * (a paid one is staff's to refund). A send that's sent, cancelled or lapsed can't change (409). Round 30: a game that
+   * stays in the Lair can't be packed or sent (422, IN_STORE_WORDS.post): cancelling is how it ends. → { send, loan }.
    */
   updateSend(id, input, who) {
     this.requireStaff(who, 'library');
@@ -963,6 +966,12 @@ export const queueMethods = {
     if (status && status !== send.status) {
       if (['sent', 'cancelled', 'lapsed'].includes(send.status)) throw new RuleError(QUEUE_MESSAGES.sendDone(send.status), 409);
       if (status !== 'cancelled' && !['paid', 'packed'].includes(send.status)) throw new RuleError(QUEUE_MESSAGES.unpaid, 409);
+      // Round 30: a game that stays in the Lair (tagged In Store Only) is never posted, since it would go home: staff
+      // cancel the swap instead (src/library-rules.js; the queue never holds one by post, so it's one from before its tag)
+      if (status !== 'cancelled') {
+        const held = this.holdRow(send.hold_id);
+        this.refuseGoingHome({ variantId: held?.variantId, productId: send.product_id, title: send.title || held?.title }, IN_STORE_WORDS.post);
+      }
       this.write('UPDATE library_sends SET status = ?, creating_at = NULL, updated_at = ? WHERE id = ?', status, now, send.id);
       const hold = this.holdRow(send.hold_id);
       if (status === 'sent' && hold) {

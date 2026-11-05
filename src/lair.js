@@ -86,6 +86,9 @@ import { BOOKING_REMINDER_COLUMNS, BOOKING_REMINDER_INDEXES, bookingReminderMeth
 import { ONLINE_WORDS } from './core.js';
 // Round 29, item 3: a first game for beginners (contract v29-roleplayers section 3)
 import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMethods } from './first-game.js';
+// Round 30: library members get in free at events marked so, and games that stay in the Lair never go home
+// (src/library-rules.js, contract v30-library)
+import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './library-rules.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1144,6 +1147,14 @@ export class Lair {
     // and when they first started: a catch-up the next day is only for a reminder day they were running on
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('booking-reminders-from', ?)", String(Date.now()));
     this.bookingRemindersFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'booking-reminders-from'").toArray()[0]?.value) || 0;
+    // Round 30: a sign-up whose account holder got in free as a library member (made when missing, src/library-rules.js)
+    for (const [table, column, type] of MEMBER_FREE_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1296,6 +1307,9 @@ export class Lair {
       phone: r.phone || '',
       // round 15: staff let them off it (waived), and when it was made (what's locked in and owed goes by it)
       waived: Boolean(r.waived), createdAt: r.created_at || null,
+      // round 30: the account holder's own place is free, as a library member, and how many guests on it get in free as
+      // library members too (src/library-rules.js)
+      memberFree: r.member_free === 1, freeGuests: Number(r.free_guests) || 0,
     };
   }
 
@@ -1315,6 +1329,8 @@ export class Lair {
       id: j.id, ref: j.ref, occurrenceId: j.occurrenceId, title: j.title, start: j.start, end: j.end, people: j.people, name: j.name, status: j.status,
       pay: j.pay, paid: j.paid, amount: j.amount, payment: j.pay === 'now' ? 'online' : 'store', refund: j.refund || null,
       paidAmount: j.paidAmount || 0, due: dueOf(j),
+      // Round 30: the account holder got in free as a library member, and how many guests did (each said only when so)
+      ...(j.memberFree ? { memberFree: true } : {}), ...(j.freeGuests ? { freeGuests: j.freeGuests } : {}),
       guests: (guests || this.joinGuests(j.id)).map((g) => ({ name: g.name, member: Boolean(g.customer_id) })),
       // Round 15: until when they can cancel it themselves, whether it's locked in now, and owed or waived
       ...this.lockView(j), owed: this.joinOwed(j), waived: Boolean(j.waived),
@@ -3185,6 +3201,8 @@ export class Lair {
    */
   updateJoin(join, patch, now) {
     if (['confirmed', 'attended'].includes(patch.status) && ['confirmed', 'attended'].includes(join.status) && patch.status !== join.status) {
+      // Round 30: marked here at an event free for library members: priced for who they are today, as a check-in is
+      if (patch.status === 'attended') join = this.memberEntryAtDoor(join, this.rulesCache, now).join;
       this.write(
         'UPDATE event_joins SET status = ?, arrived_at = ?, updated_at = ? WHERE id = ?',
         patch.status, patch.status === 'attended' ? join.arrivedAt || now : null, now, join.id,
@@ -5514,10 +5532,13 @@ export class Lair {
       const message = `This sign-up is for ${time.label(join.start)}, not today: ${label(join)}.`;
       return result(join, { checkedIn: false, reason: 'not-today', message, notice: message });
     }
+    // Round 30: at an event free for library members, it's priced at the door for who they are today, and says why
+    // (src/library-rules.js memberEntryAtDoor)
+    const door = already ? { words: '' } : this.memberEntryAtDoor(join, rules, now);
     if (!already) this.write("UPDATE event_joins SET status = 'attended', arrived_at = ?, hold_until = NULL, updated_at = ? WHERE id = ?", now, now, join.id);
     const fresh = this.joinById(join.id);
     const notice = choice && choice !== 'none' ? "Passes don't cover event entry, so no pass was used." : null;
-    const message = already ? `Already checked in: ${label(fresh)}.${this.payWords(fresh)}` : `Checked in: ${label(fresh)}.${this.payWords(fresh)}`;
+    const message = already ? `Already checked in: ${label(fresh)}.${this.payWords(fresh)}` : `Checked in: ${label(fresh)}.${this.payWords(fresh)}${door.words ? ` ${door.words}` : ''}`;
     return result(fresh, { checkedIn: true, already, ...(already ? { reason: 'already' } : {}), message, notice });
   }
 
@@ -5606,6 +5627,8 @@ export class Lair {
       customerId: j.customerId || null, pass: null, refund: j.refund || null, note: j.note || '', title: j.title || 'Event', players: [],
       gameId: null, occurrenceId: j.occurrenceId, seriesId: null, owed: this.joinOwed(j, now), waived: Boolean(j.waived),
       guests: (guests || this.joinGuests(j.id)).map((g) => this.staffGuest(g)),
+      // Round 30: the account holder's own place is free, as a library member, and how many guests' are (said only when so)
+      ...(j.memberFree ? { memberFree: true } : {}), ...(j.freeGuests ? { freeGuests: j.freeGuests } : {}),
     };
   }
 
@@ -6049,22 +6072,29 @@ export class Lair {
     // The entry fee is paid the way the event says (paymentPlan): at the counter, online (held for 30 minutes until
     // it's paid), or either. No fee, nothing to pay.
     const fee = occurrence.entryFee || 0;
+    // Round 30: at an event free for library members, the account holder's own place is free while their library plan
+    // lets them borrow, and so is each guest's added by member code whose plan does (the review, 6 Nov 2026); guests
+    // added by name, and anyone else, pay (src/library-rules.js freePlaces)
+    const places = this.memberFreeDate(occurrence) ? this.freePlaces(who.customerId, guests, now, who.tags) : null;
+    const holderFree = Boolean(places?.holderFree);
+    const amount = fee * Math.max(0, people - (places?.free || 0));
     const plan = this.paymentPlan();
     const { payNow } = plan;
     // Round 9: paid at the counter on a monthly account: not over its credit limit (paid online now, nothing goes on it)
-    if (!payNow) this.checkAccountLimit(who.customerId, fee * people, rules, now, 'join');
+    if (!payNow) this.checkAccountLimit(who.customerId, amount, rules, now, 'join');
     const joinId = makeId('ej');
     const join = {
       id: joinId, ref: this.newCode(name, 'join', joinId, now), occurrenceId, eventId: occurrence.eventId, title: occurrence.title, start: occurrence.start,
       end: occurrence.end, people, name, email, note: String(input.note || '').trim().slice(0, 300), status: payNow ? 'held' : 'confirmed',
-      pay: payNow ? 'now' : 'day', paid: false, amount: fee * people, holdUntil: payNow ? now + HOLD_MINUTES * MIN : null,
+      pay: payNow ? 'now' : 'day', paid: false, amount, holdUntil: payNow ? now + HOLD_MINUTES * MIN : null, memberFree: holderFree,
+      freeGuests: places?.freeGuests || 0,
     };
     this.write(
       `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, pay, paid, amount,
-         hold_until, created_at, updated_at, phone)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+         hold_until, created_at, updated_at, phone, member_free, free_guests)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)`,
       join.id, join.ref, occurrenceId, join.eventId, join.title, join.start, join.end, people, name, email, join.note, join.status, who.customerId || null,
-      join.pay, join.amount, join.holdUntil, now, now, phone,
+      join.pay, join.amount, join.holdUntil, now, now, phone, holderFree ? 1 : 0, join.freeGuests,
     );
     for (const g of guests) {
       this.write('INSERT INTO event_join_guests (id, join_id, customer_id, name, code, created_at) VALUES (?, ?, ?, ?, ?, ?)', makeId('eg'), join.id, g.customerId, g.name, g.code, now);
@@ -6158,13 +6188,16 @@ export class Lair {
     if (picked && !picked.row) this.makeMember(picked, now);
     const joinId = makeId('ej');
     const fee = occurrence.entryFee || 0;
+    // Round 30: at an event free for library members, the account they're adding gets its own place free while its
+    // library plan lets them borrow; the others on it pay (src/library-rules.js)
+    const holderFree = this.memberFreeDate(occurrence) && this.libraryEntry(customerId, null, now).free;
     this.write(
       `INSERT INTO event_joins (id, ref, occurrence_id, event_id, title, starts_at, ends_at, people, name, email, note, status, customer_id, pay, paid, amount,
-         hold_until, created_at, updated_at, phone, added_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, 'day', 0, ?, NULL, ?, ?, ?, ?)`,
+         hold_until, created_at, updated_at, phone, added_by, member_free)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, 'day', 0, ?, NULL, ?, ?, ?, ?, ?)`,
       joinId, this.newCode(name, 'join', joinId, now), occurrenceId, occurrence.eventId, occurrence.title, occurrence.start, occurrence.end, people, name,
-      email || null, trimmed(input?.note, 300), customerId ? String(customerId) : null, fee * people, now, now, phone,
-      who.customerId ? `staff:${who.customerId}` : 'staff',
+      email || null, trimmed(input?.note, 300), customerId ? String(customerId) : null, fee * (people - (holderFree ? 1 : 0)), now, now, phone,
+      who.customerId ? `staff:${who.customerId}` : 'staff', holderFree ? 1 : 0,
     );
     // --- saved: the spaces are theirs ---
     const join = this.joinById(joinId);
@@ -6494,6 +6527,8 @@ export class Lair {
       payment: eventPayment(f.payment), lockTables: String(f.lock_tables || '').trim().toLowerCase() === 'true',
       // Round 11: days in a row each date runs (Oddity Alley: Saturday and Sunday)
       days: eventDays(f.days),
+      // Round 30: "Free for library members" (member_free), read as loadLairData reads it
+      memberFree: String(f.member_free || '').trim().toLowerCase() === 'true',
     };
   }
 
@@ -6592,6 +6627,8 @@ export class Lair {
       image: f.image ? { id: f.image, url: picture?.url || null, alt: picture ? picture.alt ?? '' : null } : null,
       capacity: ev.capacity, priceNote: f.price_note || '', entryFee: Number.isFinite(fee) ? fee : null, payment: ev.payment, tables: f.tables || '',
       gameTables: f.game_tables || '', lockTables: ev.lockTables, link: f.link || '', days: ev.days,
+      // Round 30: "Free for library members"
+      memberFree: ev.memberFree,
       product: f.product ? { id: f.product, handle: ticket?.handle || null, title: ticket?.title || null } : null,
       repeatTag: this.repeatTag(ev, rules), next: dates.next, last: dates.last, booked: booked || this.eventBookings(node.handle, now),
       updatedAt: Date.parse(node.updatedAt || '') || null,
@@ -6599,6 +6636,8 @@ export class Lair {
         id: node.handle, title: f.title || '', type: f.event_type || 'other', game: f.game || '', start: f.starts_at, end: f.ends_at, repeat: ev.repeat,
         repeatUntil: ev.repeatUntil, skipDates: ev.skipDates, capacity: ev.capacity, tables: f.tables, entryFee: Number.isFinite(fee) ? fee : null,
         gameTables: f.game_tables, payment: ev.payment, lockTables: ev.lockTables, price: f.price_note, url: productUrl || f.link, link: f.link, days: ev.days,
+        // Round 30: for the calendar, once lair-config.liquid writes it too (contract v30-library)
+        memberFree: ev.memberFree,
         product: productUrl ? { url: productUrl, title: ticket.title || '', price: null, available: null, stock: null } : null,
         blurb: f.description, image: this.withWidth(picture?.url || null, 800), imageAlt: picture?.alt || '',
       },
@@ -6774,6 +6813,8 @@ export class Lair {
       set.game_tables = spots;
     }
     if (has('lockTables')) set.lock_tables = input.lockTables === true || input.lockTables === 'true' ? 'true' : 'false';
+    // Round 30: "Free for library members", a boolean like Lock these tables (and, like it, only sent when it changes)
+    if (has('memberFree')) set.member_free = input.memberFree === true || input.memberFree === 'true' ? 'true' : 'false';
     // Round 11: how many days in a row each date runs (1 to 7); 1 is stored as empty
     if (has('days')) {
       const days = Number(input.days);
@@ -8515,6 +8556,8 @@ export class Lair {
           const copies = v && v.tracked && v.quantity >= 1 ? Math.min(v.quantity, 99) : null;
           this.copiesCache.set(id, { at: Date.now(), copies });
           out.set(id, copies);
+          // Round 30: and whether it's tagged In Store Only, so a game tagged since the catalogue's last sync stays in
+          this.noteInStore(id, v?.inStoreOnly);
         }
       } catch (error) {
         this.backoff('copies');
@@ -8739,10 +8782,15 @@ export class Lair {
    * shelf early, or held again (a hold released or expired by mistake), with a fresh until. note: the staff note.
    * Round 7: collected makes the game's loan (it's at home with them) in the same write; held again takes back a loan
    * that's still out (it never went home). Returns { hold, loan } (loan: the collected hold's, as staff see it, or null).
+   * Round 30: a game that stays in the Lair (tagged In Store Only) is collected for a table: the hold ends collected with
+   * no loan, and notice says so.
    */
   async updateHold(id, input, who) {
     this.requireStaff(who, 'library');
     const rules = await this.rules();
+    // Round 30: before a hold's marked collected, what Shopify says of its game now (copies, and its In Store Only tag)
+    const asked = input?.status === 'collected' ? this.holdRow(id) : null;
+    if (asked) await this.shopifyCopies([asked.variantId]);
     // --- no awaits from here on ---
     const now = Date.now();
     const hold = this.holdRow(id);
@@ -8750,6 +8798,7 @@ export class Lair {
     const status = input?.status;
     if (status != null && !['collected', 'released', 'held'].includes(status)) throw new RuleError('A hold can be marked collected, released or held again.');
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
+    let notice = null;
     if (status === 'held') {
       this.write("UPDATE library_holds SET status = 'held', until = ?, ended_at = NULL, updated_at = ? WHERE id = ?", holdUntil(new LairTime(rules.tz), now), now, hold.id);
       this.write("DELETE FROM library_loans WHERE hold_id = ? AND status = 'out'", hold.id);
@@ -8758,7 +8807,11 @@ export class Lair {
     } else if (status === 'collected') {
       // Round 17: a table's game handed over is played there, never a loan
       if (hold.kind === 'booking') this.bookingHoldPlayed(hold, now);
-      else this.collectHold(hold, now, by);
+      // Round 30: so is a game that stays in the Lair: the hold ends collected, and nothing goes home (contract v30-library)
+      else if (this.staysInLair(hold, now)) {
+        this.collectedForTable(hold, now);
+        notice = IN_STORE_WORDS.collected(hold.title);
+      } else this.collectHold(hold, now, by);
     } else if (status) {
       const live = this.holdStatus(hold, now) === 'held';
       this.write('UPDATE library_holds SET status = ?, ended_at = ?, updated_at = ? WHERE id = ?', status, now, now, hold.id);
@@ -8768,7 +8821,7 @@ export class Lair {
     if (input?.note != null) this.write('UPDATE library_holds SET staff_note = ?, updated_at = ? WHERE id = ?', trimmed(input.note, 300) || null, now, hold.id);
     const fresh = this.holdRow(hold.id);
     const loan = fresh.status === 'collected' ? this.sql.exec('SELECT * FROM library_loans WHERE hold_id = ?', hold.id).toArray()[0] : null;
-    return { hold: this.staffHoldView(fresh, now), loan: loan ? this.staffLoanView(this.rowToLoan(loan), now) : null };
+    return { hold: this.staffHoldView(fresh, now), loan: loan ? this.staffLoanView(this.rowToLoan(loan), now) : null, ...(notice ? { notice } : {}) };
   }
 
   /**
@@ -8776,6 +8829,8 @@ export class Lair {
    * once: the hold's loan is unique). Staff's own collected time stays when it's marked collected again. No awaits.
    */
   collectHold(hold, now, by) {
+    // Round 30: never a game that stays in the Lair (updateHold collects those for a table; the scan and the desk refuse)
+    this.refuseGoingHome(hold);
     if (hold.status !== 'collected') this.write("UPDATE library_holds SET status = 'collected', ended_at = ?, updated_at = ? WHERE id = ?", now, now, hold.id);
     const game = this.libraryGame(hold.variantId);
     this.write(
@@ -8985,6 +9040,8 @@ export class Lair {
     }
     // Round 8: a barcode matches in any of its forms (sameBarcode: leading zeros don't count), a SKU ignoring case
     const variant = found.find((v) => sameBarcode(v.barcode, code)) || found.find((v) => sameBarcode(v.sku, code)) || null;
+    // Round 30: whether it's tagged In Store Only (a library game that stays in the Lair), as Shopify says now
+    if (variant) this.noteInStore(variant.variantId, variant.inStoreOnly);
     if (this.codeLookups.size > 2000) this.codeLookups.clear();
     this.codeLookups.set(key, { at: Date.now(), variant });
     return variant;
@@ -9027,6 +9084,8 @@ export class Lair {
    * lend it outside a plan; guest { name, email, mobile } for someone the Lair doesn't know (customerId ''). No awaits.
    */
   makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null, lent = false, guest = null } = {}) {
+    // Round 30: never a game that stays in the Lair (the scan and the desk refuse it first, in their own words)
+    this.refuseGoingHome(game);
     const id = makeId('ln');
     this.write(
       `INSERT INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at, returned_at,
@@ -9061,6 +9120,8 @@ export class Lair {
    *   otherwise a borrow (action 'borrow', or left out): a library plan is needed (403). Held for them: the hold is
    *     collected and the loan made. Otherwise the plan needs room (holds + games at home) and a copy must be free (409).
    *     { result: 'borrowed', loan, hold, library, message }
+   *   Round 30: a game that stays in the Lair (tagged In Store Only: staysInLair) is never borrowed: 422, with words for
+   *     a hold they have on it (collected at the counter, to play here).
    * library is their GET /me library, fresh. Every await (Shopify: the game, its copies) comes first.
    */
   async libraryScan(input, who) {
@@ -9082,6 +9143,12 @@ export class Lair {
       };
     }
     if (action === 'return') throw new RuleError("That game isn't on loan to you.", 404);
+    // Round 30: a game that stays in the Lair (tagged In Store Only) never goes home: the scan is refused, and a hold on
+    // it stays on for the counter to hand it over for a table (contract v30-library)
+    if (this.staysInLair(game, now)) {
+      const held = this.activeHolds(me, now).some((h) => h.variantId === game.variantId);
+      throw new RuleError(held ? IN_STORE_WORDS.scanHeld(game.title) : IN_STORE_WORDS.scan(game.title), 422);
+    }
     const plan = this.planOf(me, who.tags, now);
     if (!plan) throw new RuleError('Join the library to borrow games.', 403);
     this.checkPlanOpen(plan);
@@ -9137,6 +9204,8 @@ export class Lair {
    *     account it still adds to their account"): lent to someone by name, with an email or a mobile to reach them. An
    *     email the Lair knows (a member's, or their account's) lends it to that member, as with customerId. Otherwise it
    *     waits under the email and joins their account when they log in to My Lair with it (adoptGuestLoans).
+   * Round 30: a game that stays in the Lair (tagged In Store Only) is refused (422) whoever it's for, before anything's
+   * saved; with the member's hold on it, the words say to mark the hold Collected when it's handed over for a table.
    * Returns { loan (as staff see it), lent, notice }.
    */
   async checkOutLoan(input, who) {
@@ -9180,6 +9249,13 @@ export class Lair {
     const now = Date.now();
     const member = customerId ? this.memberRow(customerId) : guest.email ? this.memberForEmail(guest.email) : null;
     if (customerId && !member) throw new RuleError('No member with that customer ID.', 404);
+    // Round 30: a game that stays in the Lair (tagged In Store Only) is never lent or checked out, to anyone; a member's
+    // hold on it is marked Collected in the holds list when it's handed over for a table (contract v30-library)
+    if (this.staysInLair(game, now)) {
+      const held = member ? this.activeHolds(member.customer_id, now).find((h) => h.variantId === game.variantId) : null;
+      const first = member?.first_name || String(member?.name || '').split(/\s+/)[0] || null;
+      throw new RuleError(held ? IN_STORE_WORDS.lendHeld(game.title, first) : IN_STORE_WORDS.lend(game.title), 422);
+    }
     if (save) this.saveLibraryGame(save.game, now, save.codes);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
     const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
@@ -10980,3 +11056,5 @@ Object.assign(Lair.prototype, gwWeekMethods);
 Object.assign(Lair.prototype, bookingReminderMethods);
 // Round 29, item 3: a first game for beginners: the answer, the GM's line, the counter, the email the day after
 Object.assign(Lair.prototype, firstGameMethods);
+// Round 30: library members free at events marked so; games that stay in the Lair never go home (src/library-rules.js)
+Object.assign(Lair.prototype, libraryRuleMethods);
