@@ -417,6 +417,7 @@ test('GM credit (round 30): the one email: none for a session whose credit Shopi
   // (kept by the team's setting), and Wiremu's, paid
   const before = await list();
   const old = await seat(before, MIA, 'Mia');
+  const after = await seat(before, KAI, 'Kai');
   const empty = await list({ tables: ['B2'], title: 'Empty night' });
   await seat(empty, KAI, 'Kai');
   const anas = await list({ gm: ANA, tables: ['B3'] });
@@ -434,7 +435,11 @@ test('GM credit (round 30): the one email: none for a session whose credit Shopi
     await settled();
   }
   lair.sql.exec('UPDATE gm_credit_seats SET quiet = 0 WHERE game_id = ?', before);
-  assert.deepEqual(credited, [[RANGI, 500], [WIREMU, 500], ['5003', 500]], 'Ana is on the team: no credit, so no email');
+  // (Kai pays for Rangi's after this went live: his lands quietly, but Rangi heard about Mia's from Shopify, so an email
+  // about Kai's alone would tell half the story)
+  await pay(after);
+  await settled();
+  assert.deepEqual(credited, [[RANGI, 500], [WIREMU, 500], ['5003', 500], [RANGI, 500]], 'Ana is on the team: no credit, so no email');
   const wiremuMails = () => sent.filter((m) => m.to === 'wiremu@example.com');
   nowIs(at('2026-10-27', 23, 5));
   assert.deepEqual(await lair.gmCreditMails(Date.now()), { retry: 1, failed: 1 }, "Resend busy: Wiremu's is tried again next run; Hemi's address refused");
@@ -447,13 +452,45 @@ test('GM credit (round 30): the one email: none for a session whose credit Shopi
   assert.equal(new Set(wiremuMails().map((m) => m.idempotencyKey)).size, 1, 'the same key each time, so a send Resend did take is never sent twice');
   assert.equal(await lair.gmCreditMails(Date.now()), null);
   assert.equal(sent.filter((m) => m.to === 'hemi@example.com').length, 1, "Hemi's isn't tried again");
-  // a session that ended two days and more ago never gets one (a Lair that was down for days doesn't email about old ones)
+  // a session none of whose credit landed in the last two days never gets one (email that was off for days doesn't send
+  // about old sessions)
   nowIs(at('2026-10-29', 19));
   await pay(lateSeat);
   await settled();
   nowIs(at('2026-11-01', 9));
   assert.equal(await lair.gmCreditMails(Date.now()), null);
   assert.equal(sent.length, 4);
+});
+
+test('GM credit (round 30): the one email: nobody paid on the day (a monthly account\'s bill comes later), so it goes once some credit lands; a claim left with no answer (the Lair restarted mid-send) is tried again after 30 minutes, with the same key', async () => {
+  const sent = mailbox();
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia');
+  const kais = await seat(id, KAI, 'Kai');
+  nowIs(at('2026-10-27', 23));
+  await lair.autoGmCredit(Date.now());
+  assert.equal(await lair.gmCreditMails(Date.now()), null, 'nothing paid, nothing landed');
+  // Sunday: Mia's monthly bill is paid, so her seat is
+  nowIs(at('2026-11-01', 10));
+  await pay(mias);
+  await settled();
+  assert.deepEqual(credited, [[RANGI, 500]]);
+  // a run that was cut off part-way left its claim with no answer: one 5 minutes old may still be going, so it's left
+  lair.sql.exec("INSERT INTO gm_credit_mails (game_id, customer_id, players, amount, status, created_at) VALUES (?, ?, 1, 500, 'sending', ?)", id, RANGI, Date.now() - 5 * 60_000);
+  assert.equal(await lair.gmCreditMails(Date.now()), null);
+  nowIs(at('2026-11-01', 10, 26));
+  assert.deepEqual(await lair.gmCreditMails(Date.now()), { sent: 1 });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].idempotencyKey, `gm-credit-mail-${id}-${RANGI}`, 'its same key, so Resend never sends it twice');
+  assert.match(sent[0].text, /\$5\.00 for the 1 player who paid\./);
+  assert.match(sent[0].text, /Players who paid: Mia\n/);
+  // Kai's bill a week on: quietly, as the email said
+  nowIs(at('2026-11-08', 10));
+  await pay(kais);
+  await settled();
+  assert.deepEqual(credited, [[RANGI, 500], [RANGI, 500]]);
+  assert.equal(await lair.gmCreditMails(Date.now()), null);
+  assert.equal(sent.length, 1);
 });
 
 /* ---------------- the plain RPG Session pays the player's seat ---------------- */

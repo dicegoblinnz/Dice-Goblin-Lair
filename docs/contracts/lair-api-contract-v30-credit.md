@@ -139,13 +139,16 @@ the GM pays for give nothing). `src/gm-credit.js`, `src/counter.js`; tests `test
 - **One email a session** (Mo, 6 Nov 2026: "One email for all the players per session"): the credit that adds itself
   goes on with `notify: false` (`creditCustomer`'s option), so Shopify sends the GM nothing for each player, and the
   seat is marked `quiet`. An hour after the session ends (`GM_CREDIT.mailAfter`), the 10-minute run
-  (`gmCreditMails`) emails each GM once for it: who paid and the total on their store credit (below). Seats that land
-  after that email do so quietly (it says so), and show in My Lair's Games I run. Only seats credited quietly count, so
-  a session credited before this went live (Shopify emailed then) gets none; nor does one with no credit, a staff GM's
-  the setting kept, or a session that ended more than 48 hours before the run gets to it (`GM_CREDIT.mailWithin`).
-  Each email is claimed in `gm_credit_mails` before it goes, with the idempotency key `gm-credit-mail-<game>-<GM>`:
-  Resend down, busy or not answering in time (5xx, 429, a timeout): unclaimed, and the next run tries again; anything
-  else Resend refuses, or no address for the GM: not tried again. Up to 20 a run. The maintenance answer adds
+  (`gmCreditMails`) emails each GM once for it: who paid and the total on their store credit (below). Nobody paid by
+  then (players on a monthly account pay with their bill): it goes once some credit lands. Seats that land after the
+  email do so quietly (it says so), and show in My Lair's Games I run. Only seats credited quietly count. None for a
+  session with no credit, a staff GM's the setting kept, one where none of the credit landed in the last 48 hours
+  (`GM_CREDIT.mailWithin`: email that was off for days doesn't send about old sessions), or one whose GM had credit
+  for it with Shopify's email (before this went live), so an email never tells half the story. Each email is claimed
+  in `gm_credit_mails` before it goes, with the idempotency key `gm-credit-mail-<game>-<GM>`: Resend down, busy or not
+  answering in time (5xx, 429, a timeout): unclaimed, and the next run tries again; a claim left with no answer for 30
+  minutes (`GM_CREDIT.mailStale`: the Lair restarted mid-send) is tried again with its same key; anything else Resend
+  refuses, or no address for the GM: not tried again (logged). Up to 20 a run. The maintenance answer adds
   `gmCreditMails: { sent, retry, failed }` when it looked at any. Session done on a session from before 26 October
   (staff add that GM credit themselves) still goes with Shopify's email.
 

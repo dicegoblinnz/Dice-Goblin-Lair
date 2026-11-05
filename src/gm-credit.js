@@ -21,7 +21,8 @@
  * nothing (nor do cancelled seats and no-shows). Each run gives one store credit for each GM; the 10-minute run catches
  * anything a payment didn't. Round 30, from Mo: "One email for all the players per session." So Shopify doesn't email
  * the GM about each one (notify false, the seat marked quiet), and an hour after the session ends Gobgob emails them
- * once (gmCreditMails, gm_credit_mails): who paid and what's landed. Anything that lands after that email does so quietly. The team's "GM credit for staff" setting still decides
+ * once (gmCreditMails, gm_credit_mails): who paid and what's landed. Anything that lands after that email does so
+ * quietly. The team's "GM credit for staff" setting still decides
  * for staff GMs, by their hours for 'shifts'. Sessions from before 26 October keep the staff page's "Session done"
  * button (POST /games/:id/credit), and a session someone already credited that way is left alone. Nothing is taken
  * back by itself: a credited seat cancelled, marked a no-show or unpaid, or its session cancelled, tells staff.
@@ -60,12 +61,14 @@ export const GM_CREDIT = Object.freeze({
   // starts a run of its own, so without the wait a busy Shopify could use every try up in a couple of minutes)
   maxTries: 5,
   retryAfter: 10 * 60_000,
-  // round 30, one email a session: sent this long after the session ends (late payers at the counter still count), never
-  // for one that ended more than mailWithin ago (a Lair that was down for days doesn't email about old sessions), and at
-  // most this many a run
+  // round 30, one email a session: sent this long after the session ends (late payers at the counter still count), or
+  // once some of its credit lands, when that's later (a monthly account's bill); never when none of it landed in the
+  // last mailWithin (email that was off for days doesn't send about old sessions); at most this many a run; and a claim
+  // with no answer after mailStale (the Lair restarted mid-send) is tried again, with the same key
   mailAfter: HOUR,
   mailWithin: 48 * HOUR,
   mailsPerRun: 20,
+  mailStale: 30 * 60_000,
 });
 
 /** Whether a session's GM credit adds itself (round 21), rather than waiting for "Session done" */
@@ -663,11 +666,13 @@ export const gmCreditMethods = {
   /**
    * Round 30, the 10-minute run (Mo, 6 Nov 2026: "One email for all the players per session"): an hour after a session
    * ends (GM_CREDIT.mailAfter), Gobgob emails each GM who had credit for it once: who paid and what's on their store
-   * credit, counting the seats credited quietly (Shopify didn't email them). A session that ended more than
-   * GM_CREDIT.mailWithin ago never gets one. Each is claimed in gm_credit_mails before it's sent, with an idempotency
-   * key of its own; Resend down, busy or not answering (5xx, 429, a timeout): unclaimed, so the next run tries again
-   * (never sent twice); anything else Resend refused, or no address: not tried again. Returns { sent, retry, failed }
-   * when it looked at any, else null.
+   * credit, counting the seats credited quietly (Shopify didn't email them). Nobody paid by then (a monthly account's
+   * bill): it goes once some does. None when none of its credit landed in the last GM_CREDIT.mailWithin, nor for a
+   * session whose GM had credit with Shopify's email (before this went live), so it's never part of the story. Each is
+   * claimed in gm_credit_mails before it's sent, with an idempotency key of its own; Resend down, busy or not answering
+   * (5xx, 429, a timeout): unclaimed, so the next run tries again (never sent twice), as is a claim left with no answer
+   * (GM_CREDIT.mailStale: the Lair restarted mid-send); anything else Resend refused, or no address: not tried again.
+   * Returns { sent, retry, failed } when it looked at any, else null.
    */
   async gmCreditMails(now = Date.now()) {
     if (!emailReady(this.env)) return null;
@@ -677,11 +682,14 @@ export const gmCreditMethods = {
       .exec(
         `SELECT s.game_id AS game_id, s.customer_id AS gm, SUM(s.people) AS players, SUM(s.amount) AS amount
            FROM gm_credit_seats s JOIN games g ON g.id = s.game_id
-          WHERE s.status = 'credited' AND s.quiet = 1 AND s.amount > 0 AND s.customer_id IS NOT NULL
-            AND g.ends_at <= ? AND g.ends_at > ?
-            AND NOT EXISTS (SELECT 1 FROM gm_credit_mails m WHERE m.game_id = s.game_id AND m.customer_id = s.customer_id)
-          GROUP BY s.game_id, s.customer_id ORDER BY MIN(g.ends_at), s.game_id LIMIT ?`,
-        now - GM_CREDIT.mailAfter, now - GM_CREDIT.mailWithin, GM_CREDIT.mailsPerRun,
+          WHERE s.status = 'credited' AND s.quiet = 1 AND s.amount > 0 AND s.customer_id IS NOT NULL AND g.ends_at <= ?
+            AND NOT EXISTS (SELECT 1 FROM gm_credit_mails m WHERE m.game_id = s.game_id AND m.customer_id = s.customer_id
+                             AND NOT (m.status = 'sending' AND m.created_at <= ?))
+            AND NOT EXISTS (SELECT 1 FROM gm_credit_seats o WHERE o.game_id = s.game_id AND o.customer_id = s.customer_id
+                             AND o.status = 'credited' AND o.quiet = 0)
+          GROUP BY s.game_id, s.customer_id HAVING MAX(s.updated_at) > ?
+          ORDER BY MIN(g.ends_at), s.game_id LIMIT ?`,
+        now - GM_CREDIT.mailAfter, now - GM_CREDIT.mailStale, now - GM_CREDIT.mailWithin, GM_CREDIT.mailsPerRun,
       )
       .toArray();
     if (!due.length) return null;
@@ -692,10 +700,18 @@ export const gmCreditMethods = {
     const mark = (d, status) => this.write('UPDATE gm_credit_mails SET status = ?, sent_at = ? WHERE game_id = ? AND customer_id = ?', status, status === 'sent' ? Date.now() : null, d.game_id, d.gm);
     const letters = [];
     for (const d of due) {
+      // (a claim still here is one left with no answer: the same email, its same key)
+      this.write("DELETE FROM gm_credit_mails WHERE game_id = ? AND customer_id = ? AND status = 'sending'", d.game_id, d.gm);
       this.write("INSERT INTO gm_credit_mails (game_id, customer_id, players, amount, status, created_at) VALUES (?, ?, ?, ?, 'sending', ?)", d.game_id, d.gm, d.players, d.amount, Date.now());
-      const letter = this.gmCreditLetter(d, rules);
+      let letter = null;
+      try {
+        letter = this.gmCreditLetter(d, rules);
+      } catch (error) {
+        console.error('Lair: could not write a GM credit email', d.game_id, error);
+      }
       if (letter) letters.push({ d, letter });
       else {
+        console.error('Lair: no GM credit email for this session: no email address for its GM', d.game_id);
         mark(d, 'failed');
         add('failed');
       }
@@ -711,6 +727,7 @@ export const gmCreditMethods = {
         this.write("DELETE FROM gm_credit_mails WHERE game_id = ? AND customer_id = ? AND status = 'sending'", d.game_id, d.gm);
         add('retry');
       } else {
+        console.error('Lair: Resend refused a GM credit email', d.game_id, result.status, result.message);
         mark(d, 'failed');
         add('failed');
       }
