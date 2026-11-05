@@ -91,7 +91,8 @@ const lair = new Lair({ storage: { sql, get: async () => null, put: async () => 
 const drain = async () => {
   while (pending.length) await Promise.all(pending.splice(0));
 };
-lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', store_phone: '021 159 6894' }, [{ id: 'common-room', name: 'Common room', code: 'T', tables: 20, seats: 4, order: 1 }], [], { address: ADDRESS });
+// reminders on, as the lab's settings say (absent, the Lair sends none and the confirmation promises none)
+lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', store_phone: '021 159 6894', lair_booking_reminders: true }, [{ id: 'common-room', name: 'Common room', code: 'T', tables: 20, seats: 4, order: 1 }], [], { address: ADDRESS });
 lair.rulesLoadedAt = Date.now() + 365 * 24 * 3600_000;
 Object.defineProperty(lair.shopify, 'configured', { get: () => true, configurable: true });
 lair.shopify.graphql = async () => {
@@ -176,10 +177,19 @@ async function open(size, who, where, { block = null, live = true } = {}) {
     return route.abort();
   });
   if (block) await ctx.route(block, (route) => route.abort());
-  // what the page's own scripts see of the address, once the document is parsed (the head snippets have run by then)
+  // what the page's own scripts see of the address, once the document is parsed (the head snippets have run by then);
+  // hash changes and history steps as a listener added before any page script gets them (as a browser extension could),
+  // which shows a same-tab link really fired them; and as a listener as late as the page's own (My Lair's router listens
+  // for hash changes), which must never get an unsubscribe link
   await ctx.addInitScript(() => {
+    window.__early = [];
+    window.addEventListener('hashchange', (event) => window.__early.push(event.newURL));
+    window.addEventListener('popstate', () => window.__early.push(`popstate ${window.location.href}`));
     document.addEventListener('DOMContentLoaded', () => {
       window.__seenAddress = window.location.href;
+      window.__late = [];
+      window.addEventListener('hashchange', (event) => window.__late.push(event.newURL));
+      window.addEventListener('popstate', () => window.__late.push(`popstate ${window.location.href}`));
     });
   });
   const page = watch(await ctx.newPage());
@@ -556,6 +566,17 @@ for (const size of sizes) {
     await page.waitForFunction(() => /already/.test(document.querySelector('.stop-link__said')?.textContent || ''), null, { timeout: 15000 });
     c = await cardOf(page);
     check(`${tag} the link again: "You've already stopped these. No more emails like that one."`, c.said === "You've already stopped these. No more emails like that one." && !c.actions, c);
+    // the link again in the tab that's on My Lair already (only the #fragment changes: no new page), its stop taken off
+    // first: the head snippet takes the code and key before any of the page's own listeners (My Lair's router included)
+    // gets the change, and the card asks afresh
+    lair.sql.exec('DELETE FROM followup_stops');
+    await page.evaluate(() => { window.__early = []; window.__late = []; });
+    await page.goto(`${BASE}${local}`, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => /Stop emails/.test(document.querySelector('.stop-link__title')?.textContent || ''), null, { timeout: 15000 }).catch(() => {});
+    c = await cardOf(page);
+    const tab = await page.evaluate(() => ({ early: window.__early || [], late: window.__late || [], now: window.location.href }));
+    check(`${tag} the link in a tab that's on My Lair already (only the #fragment changes): taken before any of the page's own listeners gets it (My Lair's router included), and the card asks afresh`,
+      tab.early.some((a) => a.includes('#unsubscribe=')) && !tab.late.some((a) => a.includes('unsubscribe') || a.includes(key)) && !tab.now.includes('#unsubscribe') && c.title === 'Stop emails like this one?' && c.actions, { c, tab });
     // a wrong key, opened in the tab that's on My Lair already (only the #fragment changes: no new page)
     await page.evaluate((h) => { window.location.hash = h; }, `#unsubscribe=${encodeURIComponent(sam.ref)}.${'0'.repeat(32)}`);
     await page.waitForSelector('.stop-link__call:not([hidden])', { timeout: 15000 });
@@ -563,6 +584,19 @@ for (const size of sizes) {
     check(`${tag} a wrong key (opened in the same tab): the Lair's "${UNSUBSCRIBE_WORDS.wrong}", and how to reach us`, c.error === UNSUBSCRIBE_WORDS.wrong && c.call === 'Something not right? Call us on 021 159 6894.' && !c.actions, c);
     check(`${tag} … with the key taken out of the address there too`, !page.url().includes('#unsubscribe'), page.url());
     await shot(page, `8-${size}-unsubscribe-wrong`, 'lair-unsubscribe');
+    // two links one after the other, the first one's answer slow: the card is the second link's, whenever the first's
+    // answer comes (Sam's real link would ask; the wrong one can't)
+    let slow = 0;
+    await page.route('**/apps/liar/unsubscribe/view', async (route) => {
+      if (slow++ === 0) await new Promise((resolve) => setTimeout(resolve, 2000));
+      await route.continue();
+    });
+    await page.evaluate((h) => { window.location.hash = h; }, local.slice(local.indexOf('#')));
+    await page.evaluate((h) => { window.location.hash = h; }, `#unsubscribe=${encodeURIComponent(sam.ref)}.${'0'.repeat(32)}`);
+    await settle(page, 3000);
+    c = await cardOf(page);
+    check(`${tag} a link's slow answer never lands on the card of a link opened after it`, slow === 2 && c.error === UNSUBSCRIBE_WORDS.wrong && !c.actions && c.title !== 'Stop emails like this one?', { c, slow });
+    await page.unroute('**/apps/liar/unsubscribe/view');
     // a refresh: no link any more, so nothing shows
     await page.reload({ waitUntil: 'networkidle' });
     check(`${tag} a refresh shows nothing: the key's gone from the address`, await page.$eval('lair-unsubscribe', (e) => e.hidden));

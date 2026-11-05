@@ -498,7 +498,10 @@ to compare with.
   already stopped these. No more emails like that one." A wrong link: the Lair's words and "Something not right? Call
   us on 021 159 6894." (a tap to call). While it loads: "Gobgob is finding your email…"; no answer: "That didn't go
   through. Try again, or call us on 021 159 6894." A link opened in a tab already on My Lair (only the #fragment
-  changes) works the same. Demo: "Demo: nothing is changed."
+  changes) works the same: the snippet's `popstate` and `hashchange` listeners are the page's first (after the cancel
+  link's, which leave an unsubscribe link alone), so they take the link, stop the event before any other listener of the
+  page's (My Lair's router included) gets it, and tell the card (`dg:unsubscribe-link`). Each link is a new run of the
+  card: a slow answer for an earlier link never lands on a later one's card. Demo: "Demo: nothing is changed."
 
 ### 3.7 Monday's weekly numbers (`src/report.js`)
 
