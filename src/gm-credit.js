@@ -600,7 +600,8 @@ export const gmCreditMethods = {
    * Round 30: for a GM's players list (gamePlayers), where each seat's GM fee is up to: { of(seat) } giving 'credited'
    * (it's on the GM's store credit), 'coming' (paid, and the fee's on its way: the session hasn't started yet, a run has
    * it now, or Shopify's still to say or staff add it by hand) or null (not paid yet, or there's none for this seat: a
-   * free session, a $0 GM fee, a $0 seat, one the GM pays for, or a staff GM the team's setting keeps it from). No
+   * free session, a $0 GM fee, a $0 seat, one the GM pays for, or a staff GM the team's setting keeps it from); and
+   * each, what the GM gets for each person who pays (cents, 0 when there's none for them: GET /me's gmCreditEach). No
    * awaits.
    */
   gmSeatCredits(game) {
@@ -612,6 +613,8 @@ export const gmCreditMethods = {
     const rule = staff && this.rulesCache ? this.staffGmRule(game, { customerId: id, staff: true }, this.rulesCache, game.gmOnShift ?? null) : null;
     const kept = Boolean(rule && !rule.credit);
     return {
+      // what the GM gets for each person who pays (cents): the fee, or 0 when there's none for them to get
+      each: none || kept || !id ? 0 : game.gmFee ?? this.rulesCache?.prices.gmCredit ?? 500,
       of: (seat) => {
         const status = ledger.get(seat.id);
         if (status === 'credited') return 'credited';

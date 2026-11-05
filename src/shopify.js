@@ -1357,12 +1357,13 @@ export class ShopifyAdmin {
   /**
    * Store credit with Shopify's email to the customer. Throws with error.refused when Shopify answered and said no (or
    * turned the call away before it ran), so nothing moved; any other error may or may not have moved it. Round 21:
-   * timeout (ms) gives up after that long (the GM credit that adds itself).
+   * timeout (ms) gives up after that long (the GM credit that adds itself). Round 30: the transaction comes back with
+   * balanceAfter, the balance after it in cents (null when Shopify leaves it out), so My Lair can show it at once.
    */
   async creditCustomer(customerId, cents, currency, { timeout = null } = {}) {
     const data = await madeAnyway(this.graphql(
       `mutation Credit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
-        storeCreditAccountCredit(id: $id, creditInput: $creditInput) { storeCreditAccountTransaction { amount { amount } } userErrors { field message code } }
+        storeCreditAccountCredit(id: $id, creditInput: $creditInput) { storeCreditAccountTransaction { amount { amount } balanceAfterTransaction { amount } } userErrors { field message code } }
       }`,
       { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: { amount: (cents / 100).toFixed(2), currencyCode: currency }, notify: true } },
       timeout ? { timeout } : {},
@@ -1372,7 +1373,9 @@ export class ShopifyAdmin {
     if (result.userErrors?.length) {
       throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true, code: result.userErrors[0].code || null });
     }
-    return result.storeCreditAccountTransaction;
+    const tx = result.storeCreditAccountTransaction;
+    const after = tx?.balanceAfterTransaction?.amount;
+    return tx ? { ...tx, balanceAfter: after != null && Number.isFinite(Number(after)) ? Math.round(Number(after) * 100) : null } : tx;
   }
 
   /**

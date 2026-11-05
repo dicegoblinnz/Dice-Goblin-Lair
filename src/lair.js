@@ -7127,9 +7127,12 @@ export class Lair {
     this.touchMember(who.customerId, {}, now);
     // --- claimed ---
     let problem = null;
+    // Round 30: their store credit balance after it, when Shopify says (cents), for My Lair to show at once
+    let balance = null;
     try {
       if (!this.shopify.configured) throw new Error('Shopify is not connected.');
-      await this.shopify.creditCustomer(who.customerId, won.amount, this.env.CURRENCY || 'NZD');
+      const added = await this.shopify.creditCustomer(who.customerId, won.amount, this.env.CURRENCY || 'NZD');
+      balance = Number.isInteger(added?.balanceAfter) ? added.balanceAfter : null;
     } catch (error) {
       problem = String(error.message || error).slice(0, 300);
       console.error('Lair: dice prize failed', error);
@@ -7153,6 +7156,7 @@ export class Lair {
       roll, kind: 'loyalty', pick, prize: { id: prize.id, kind: 'credit', amount: prize.amount, status: prize.status },
       message: sure ? loyaltySureMessage(Boolean(problem)) : loyaltyMessage(roll, Boolean(problem)),
       loyalty: this.loyaltyOf(who.customerId, rules, { details: true }),
+      ...(!problem && balance != null ? { balance } : {}),
     };
   }
 
@@ -10520,8 +10524,12 @@ export class Lair {
           status: b.status, locked: on && Boolean(seat) && this.coverLocked(seat, rules, now), ...(b.refund === 'due' ? { refund: 'due', refundAmount: b.refundAmount || 0 } : {}),
         };
       }),
-      // 17 Oct 2026: a private game's invite link, for its GM to share (contract v18-private)
-      games: gameRows.map((g) => ({ ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}) })),
+      // 17 Oct 2026: a private game's invite link, for its GM to share (contract v18-private). Round 30: gmCreditEach, what
+      // they get for each player who pays (cents; 0 when there's none for them), as each one pays
+      games: gameRows.map((g) => ({
+        ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), gmCreditEach: autoCredit(g) ? this.gmSeatCredits(g).each : 0,
+        ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}),
+      })),
       joins: joinList.map((j) => gone(j)),
       credits,
       // Round 30: store credit they've sent to friends, and received ({ id, direction, name, amount, note, status, at }),

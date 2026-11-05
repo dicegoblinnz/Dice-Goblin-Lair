@@ -287,6 +287,18 @@ test('GM credit (round 30): a GM\'s players in My Lair say whose fee has gone to
   assert.equal(game.gmFee, 500);
 });
 
+test('GM credit (round 30): a GM\'s games in My Lair say what they get for each player who pays (gmCreditEach): the GM fee, or 0 when there\'s none to get', async () => {
+  const priced = await list();
+  const tenner = await list({ tables: ['B2'], gmFee: 1000, title: 'Ten a head' });
+  const noFee = await list({ tables: ['B3'], gmFee: 0, title: 'No fee' });
+  const free = await list({ start: at('2026-10-28', 18), end: at('2026-10-28', 22), title: 'Free night' });
+  ok(await call('POST', `games/${free}/free`, { free: true }, OWNER));
+  const anas = await list({ gm: ANA, tables: ['B4'] });
+  const each = async (who) => Object.fromEntries(ok(await call('GET', 'me', null, who)).games.map((g) => [g.id, g.gmCreditEach]));
+  assert.deepEqual(await each(RANGI), { [priced]: 500, [tenner]: 1000, [noFee]: 0, [free]: 0 });
+  assert.deepEqual(await each(ANA), { [anas]: 0 }, 'Ana is on the team, and its setting says staff GMs never get it');
+});
+
 /* ---------------- the plain RPG Session pays the player's seat ---------------- */
 
 test('the counter (round 30): a plain RPG Session rung up for a player with a seat that day pays it, and its GM gets their fee straight away', async () => {
