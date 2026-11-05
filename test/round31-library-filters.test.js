@@ -22,6 +22,7 @@ import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
 import { PICK_DATA } from '../src/pick.js';
+import { externalCalls } from '../src/shopify.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -77,13 +78,37 @@ const PERSON = {
 
 let lair;
 let ctx;
+/** Pending promises (an alarm being set) settle: what happens between one request and the next */
+const settle = () => new Promise((resolve) => {
+  setImmediate(resolve);
+});
+/**
+ * One invocation (a request to the Lair, or its alarm): Cloudflare's free plan lets it make at most 50 outside calls
+ * (Shopify's among them, src/shopify.js's externalCalls). Every invocation in these tests is held to that, and the calls
+ * each made are kept (invocations).
+ */
+const FREE_PLAN_CALLS = 50;
+let invocations = [];
+async function invoke(run) {
+  const start = externalCalls.count;
+  try {
+    return await run();
+  } finally {
+    await settle();
+    const used = externalCalls.count - start;
+    invocations.push(used);
+    assert.ok(used <= FREE_PLAN_CALLS, `one invocation made ${used} outside calls; Cloudflare's free plan allows ${FREE_PLAN_CALLS}`);
+  }
+}
 async function call(method, path, body, customer = '', extraHeaders = {}) {
-  const response = await lair.fetch(new Request(`https://lair.test/${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'X-Lair-Customer': customer, ...extraHeaders },
-    body: body ? JSON.stringify(body) : undefined,
-  }));
-  return { status: response.status, data: await response.json() };
+  return invoke(async () => {
+    const response = await lair.fetch(new Request(`https://lair.test/${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-Lair-Customer': customer, ...extraHeaders },
+      body: body ? JSON.stringify(body) : undefined,
+    }));
+    return { status: response.status, data: await response.json() };
+  });
 }
 const internal = (path, body = {}) => call('POST', `internal/${path}`, body, '', { 'X-Lair-Internal': '1' });
 const said = (res) => `${res.status} ${res.data.error || ''}`.trim();
@@ -114,14 +139,18 @@ const ageGroup = (label) => Object.keys(AGE_GROUPS).find((key) => AGE_GROUPS[key
  * what the Lair asks by the query's own aliases, so it never depends on how the Lair names them.
  */
 let shop;
-function useShopify() {
-  shop = { products: new Map(), calls: [], fail: () => false };
+function useShopify(store = null) {
+  // afterRead: something to happen in Shopify just after the Lair reads products (a librarian saving in Shopify admin)
+  shop = store || { products: new Map(), calls: [], fail: () => false, afterRead: null };
   Object.defineProperty(lair.shopify, 'configured', { value: true, configurable: true });
   lair.shopify.wait = async () => {};
   lair.shopify.graphql = async (query, variables = {}) => {
+    // each is one request outside Cloudflare, as the real one's fetch is
+    externalCalls.count += 1;
     const name = query.match(/^\s*(?:query|mutation)\s+(\w+)/)?.[1] || '';
     shop.calls.push({ name, variables: JSON.parse(JSON.stringify(variables)) });
     if (shop.fail(name)) throw new Error('Shopify API error 503');
+    if (name === 'LairFilterProducts' && shop.afterRead) queueMicrotask(() => shop.afterRead?.());
     if (name === 'VariantCopies') {
       return { nodes: variables.ids.map((id) => {
         const p = [...shop.products.values()].find((x) => x.variantId === digits(id));
@@ -211,16 +240,23 @@ const libraryGame = (g) => {
 /** A for-sale board game: { id, title, tags, players, playTime, ages, difficulty, libraryCopy, sellingPlan } */
 const shopGame = (g) => ({ tags: [], ...g, library: false });
 
+/** A copy of the Lair on ctx (a new one is what Cloudflare starts after an eviction), with Shopify's store kept */
+function lairOn(store = null) {
+  lair = new Lair(ctx, { CURRENCY: 'NZD', SHOP: 'ep0qiq-rp.myshopify.com', MEMBERSHIPS_SIMPLEE_TAGS: 'off' });
+  lair.person = async (id) => ({ customerId: id || null, staff: false, gm: false, tags: [], role: null, perms: [], ...(PERSON[id] || {}) });
+  lair.rulesCache = rulesFromSettings({}, [], []);
+  lair.rulesLoadedAt = NOW + 365 * DAY;
+  useShopify(store);
+}
+/** The Lair restarts (evicted, then woken again): its memory's gone, its storage and its alarm are as they were */
+const restart = () => lairOn(shop);
+
 /** Everything in place: the seed (facts) before the Lair starts, the catalogue as a full sync saves it, and the store */
 function start({ library = [], forSale = [] } = {}) {
   PICK_DATA.seed = Object.fromEntries(library.filter((g) => g.facts).map((g) => [g.id, g.facts]));
   PICK_DATA.seedVersion = `test-${Math.random()}`;
   ctx = fakeCtx();
-  lair = new Lair(ctx, { CURRENCY: 'NZD', SHOP: 'ep0qiq-rp.myshopify.com', MEMBERSHIPS_SIMPLEE_TAGS: 'off' });
-  lair.person = async (id) => ({ customerId: id || null, staff: false, gm: false, tags: [], role: null, perms: [], ...(PERSON[id] || {}) });
-  lair.rulesCache = rulesFromSettings({}, [], []);
-  lair.rulesLoadedAt = NOW + 365 * DAY;
-  useShopify();
+  lairOn();
   const handleOf = (title) => title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const catalogueNode = (g) => ({
     id: gid('Product', g.id), handle: `${handleOf(g.title)}-library`, title: `${g.title} (Library)`, status: 'ACTIVE', tags: ['Board Game Rental', ...g.tags],
@@ -252,12 +288,27 @@ function start({ library = [], forSale = [] } = {}) {
 }
 /** Staff press "Write the filters to Shopify now" */
 const runNow = (who = LIBRARIAN) => call('POST', 'pick/filters', {}, who);
-/** The alarm goes off (the clock moves to it first) */
+/** When the alarm is set to go off now (null: none), once what's under way has settled */
+const alarmTime = async () => {
+  await settle();
+  return ctx.alarm.at;
+};
+/** The alarm goes off (the clock moves to it first, and Cloudflare clears it as it goes off): one invocation */
 async function alarmGoesOff() {
-  assert.ok(ctx.alarm.at, 'an alarm is set');
+  assert.ok(await alarmTime(), 'an alarm is set');
   clock = Math.max(clock, ctx.alarm.at);
   ctx.alarm.at = null;
-  await lair.alarm();
+  await invoke(() => lair.alarm());
+}
+/** The alarm goes off, again and again, until nothing's left for it (at most `most` times). → how many times */
+async function alarmsUntilQuiet(most = 30) {
+  let times = 0;
+  while ((await alarmTime()) !== null && times < most) {
+    assert.ok(ctx.alarm.at - clock <= 2 * MIN, 'a minute or so apart');
+    await alarmGoesOff();
+    times += 1;
+  }
+  return times;
 }
 
 /** A Lair library membership (src/memberships.js): a member whose plan lets them borrow */
@@ -274,6 +325,7 @@ beforeEach(() => {
   clock = NOW;
   Date.now = () => clock;
   codes = 0;
+  invocations = [];
 });
 afterEach(() => {
   Date.now = realNow;
@@ -509,7 +561,7 @@ test('On the shelf now: true while a copy is free (copies less active holds less
   await member(SAM, 'Sam Jones');
   await member(KIRI, 'Kiri Smith');
   // the first check (nothing known yet): read first, so a game Shopify already has right isn't written again
-  await lair.alarm();
+  await invoke(() => lair.alarm());
   assert.deepEqual([mf(azul.id, 'on_shelf'), mf(duo.id, 'on_shelf'), mf(ready.id, 'on_shelf')], [true, true, true]);
   assert.deepEqual([written(azul.id), written(ready.id)], [['on_shelf'], []]);
   assert.equal((await runNow()).status, 200);
@@ -593,29 +645,167 @@ test("a Shopify failure never breaks a borrow, hold or return: they're saved, an
 
 /* ================ 4. When it runs ================ */
 
-test('the nightly job (the scheduled maintenance, from 3am) writes every game and puts right On the shelf now where Shopify drifted, once a night', async () => {
+/** Maintenance can run in these tests: Shopify's login and the payment webhook are as they should be */
+const maintenanceReady = () => {
+  lair.shopify.appInfo = async () => ({ app: { title: 'Dice Goblin Lair' }, shop: { name: 'Dice Goblin' }, scopes: ['write_products', 'read_customers'] });
+  lair.ensureWebhook = async () => ({ ok: true });
+};
+const lastRun = async () => (await call('GET', 'pick/filters', null, LIBRARIAN)).data;
+
+test('the first fill starts by itself at the first maintenance after the deploy (not waiting for 3am); then each night, at the first maintenance from 3am, every game is written again and On the shelf now put right where Shopify drifted, once a night', async () => {
   const azul = libraryGame({ id: '9910000000001', title: 'Azul', difficulty: 'Easy', facts: facts() });
   const catan = libraryGame({ id: '9910000000002', title: 'Catan', difficulty: 'Medium', facts: facts({ players: { min: 3, max: 4, best: [4] } }) });
   start({ library: [azul, catan] });
-  lair.shopify.appInfo = async () => ({ app: { title: 'Dice Goblin Lair' }, shop: { name: 'Dice Goblin' }, scopes: ['write_products', 'read_customers'] });
-  lair.ensureWebhook = async () => ({ ok: true });
-  // before 3am: not yet
-  clock = at('2026-11-10', 2, 50);
-  await internal('maintenance');
-  assert.equal(mf(azul.id, 'plays_with'), null);
-  clock = at('2026-11-10', 3, 5);
+  maintenanceReady();
+  // just deployed at 1am: the first maintenance fills every game, without waiting for 3am
+  clock = at('2026-11-10', 1, 0);
   await internal('maintenance');
   assert.deepEqual([mf(azul.id, 'plays_with'), mf(catan.id, 'on_shelf')], [['2 players', '3 players', '4 players'], true]);
-  // someone changes On the shelf now in Shopify by hand: not touched again that night
+  assert.equal((await lastRun()).last.reason, 'first');
+  // someone changes On the shelf now in Shopify by hand: before 3am nothing writes again
+  shop.products.get(catan.id).mf['custom.on_shelf'] = 'false';
+  shop.calls = [];
+  clock = at('2026-11-10', 2, 50);
+  await internal('maintenance');
+  assert.equal(writes().length, 0, 'not before 3am');
+  // from 3am, the night's run puts it right
+  clock = at('2026-11-10', 3, 5);
+  await internal('maintenance');
+  assert.equal(mf(catan.id, 'on_shelf'), true);
+  assert.equal((await lastRun()).last.reason, 'nightly');
+  // once a night
   shop.products.get(catan.id).mf['custom.on_shelf'] = 'false';
   shop.calls = [];
   clock = at('2026-11-10', 3, 15);
   await internal('maintenance');
   assert.equal(writes().length, 0, 'once a night');
-  // the next night puts it right
   clock = at('2026-11-11', 3, 5);
   await internal('maintenance');
   assert.equal(mf(catan.id, 'on_shelf'), true);
+});
+
+/* ================ 5. Cloudflare's free plan: 50 outside calls an invocation ================ */
+
+test("a fill too big for one invocation (Cloudflare's free plan allows 50 outside calls) does what fits in 35 Shopify calls: the button says how much is done and that the rest follows, and the alarm finishes it, a minute apart", async () => {
+  const many = Array.from({ length: 200 }, (_, i) => libraryGame({ id: String(9810000000001 + i), title: `Big ${i + 1}`, difficulty: 'Medium', facts: facts() }));
+  start({ library: many });
+  const done = () => many.filter((g) => mf(g.id, 'plays_with') && mf(g.id, 'on_shelf') !== null).length;
+  const res = await runNow();
+  assert.equal(res.status, 200, said(res));
+  assert.equal(res.data.done, false);
+  assert.ok(done() > 0 && done() < 200, `${done()} of 200 written`);
+  assert.equal(res.data.message, `${res.data.checked} of 200 games done so far, ${res.data.changed} changed in Shopify. The rest follow in the next few minutes.`);
+  assert.equal(res.data.checked, done());
+  // still under way: no last run yet, and the run in progress says how far it's got
+  const midway = await lastRun();
+  assert.deepEqual([midway.last, midway.running.total, midway.running.left], [null, 200, 200 - done()]);
+  // the alarm takes it from there, each time a fresh invocation, until every game is written; one of its writes Shopify
+  // doesn't answer on the way, and those games wait for the next go rather than being dropped
+  const next = await alarmTime();
+  assert.ok(next && next - clock <= 2 * MIN, 'the rest follows within a couple of minutes');
+  let sets = 0;
+  shop.fail = (name) => name === 'LairFilterSet' && (sets += 1) === 3;
+  await alarmsUntilQuiet();
+  assert.ok(sets > 3, 'the failed write was tried again');
+  assert.equal(done(), 200);
+  const after = await lastRun();
+  assert.deepEqual([after.last.games, after.last.changed, after.last.failed, after.running], [200, 200, 0, null]);
+  // no invocation used more than 35 of its 50 calls (the filters' share)
+  assert.ok(Math.max(...invocations) <= 35, `the most one invocation made: ${Math.max(...invocations)}`);
+});
+
+test("the night's run starts inside maintenance with only what that invocation has left of its 35 Shopify calls; the alarm carries the rest a minute apart, and the night counts as done only once every game is written", async () => {
+  const many = Array.from({ length: 120 }, (_, i) => libraryGame({ id: String(9830000000001 + i), title: `Night ${i + 1}`, difficulty: 'Medium', facts: facts() }));
+  start({ library: many });
+  maintenanceReady();
+  // the deploy's first maintenance: by the filters' turn its other steps have used all but a few of its 35 calls, so On
+  // the shelf now stops at the limit (100 games to check: 6 calls), and the alarm finishes it and the first fill
+  lair.ensureWebhook = async () => {
+    externalCalls.count += 30;
+    return { ok: true };
+  };
+  invocations = [];
+  await internal('maintenance');
+  assert.ok(invocations[0] <= 35, `the first maintenance made ${invocations[0]} outside calls in all`);
+  await alarmsUntilQuiet();
+  assert.equal((await lastRun()).last.reason, 'first');
+  // overnight, someone changes every game's players by hand
+  for (const g of many) shop.products.get(g.id).mf['custom.plays_with'] = JSON.stringify(['1 player']);
+  const right = () => many.filter((g) => JSON.stringify(mf(g.id, 'plays_with')) === JSON.stringify(['2 players', '3 players', '4 players'])).length;
+  // 3:05am: by the filters' turn, maintenance has already made 20 outside calls (its other steps)
+  lair.ensureWebhook = async () => {
+    externalCalls.count += 20;
+    return { ok: true };
+  };
+  clock = at('2026-11-10', 3, 5);
+  invocations = [];
+  await internal('maintenance');
+  assert.ok(right() > 0 && right() < 120, `${right()} put right in maintenance`);
+  assert.ok(invocations[0] <= 35, `maintenance made ${invocations[0]} outside calls in all`);
+  const midway = await lastRun();
+  assert.deepEqual([midway.last.reason, midway.running.reason], ['first', 'nightly'], 'not the night\'s yet');
+  // the alarm, a minute apart, until it's done; then (and only then) the night is done
+  await alarmsUntilQuiet();
+  assert.equal(right(), 120);
+  const night = (await lastRun()).last;
+  assert.equal(night.reason, 'nightly');
+  shop.calls = [];
+  clock = at('2026-11-10', 3, 25);
+  await internal('maintenance');
+  assert.equal(writes().length, 0, 'the night was done');
+  const later = await lastRun();
+  assert.deepEqual([later.last.at, later.running], [night.at, null], 'no second run that night');
+});
+
+test("Shopify's all-or-nothing write never fails a game's neighbours: a call it turns away is split (halves, then single games) until the one it refuses is alone, and only that game counts as failed", async () => {
+  // ten games, each with an empty difficulty to fill (six fields a game, so four to a call)
+  const ten = Array.from({ length: 10 }, (_, i) => libraryGame({ id: String(9840000000001 + i), title: `Fill ${i + 1}`, facts: facts({ weight: 1.5 }) }));
+  start({ library: ten });
+  // a librarian sets one game's difficulty in Shopify admin just after the Lair read it: that fill is refused
+  const late = ten[1];
+  shop.afterRead = () => {
+    shop.products.get(late.id).mf['custom.difficulty'] = 'Hard';
+    shop.afterRead = null;
+  };
+  const res = await runNow();
+  assert.equal(res.status, 200, said(res));
+  for (const g of ten.filter((x) => x !== late)) assert.equal(mf(g.id, 'difficulty'), 'Easy', `${g.title} is written`);
+  assert.equal(mf(late.id, 'difficulty'), 'Hard', 'never overwritten');
+  assert.deepEqual([res.data.changed, res.data.failed], [9, 1]);
+  assert.equal(res.data.message, "9 games changed in Shopify. 1 game couldn't be written just now: the Lair tries again tonight.");
+  // three calls of four, four and two games, then halves: the four (2 + 2), then the two (1 + 1)
+  assert.equal(writes().length, 7);
+});
+
+test("the alarm's retry always lands: if the Lair can't read its settings as the alarm goes off, it tries again 5 minutes later", async () => {
+  const azul = libraryGame({ id: '9850000000001', title: 'Azul', difficulty: 'Easy', facts: facts() });
+  start({ library: [azul] });
+  await member(SAM, 'Sam Jones');
+  assert.equal((await runNow()).status, 200);
+  assert.equal((await reserve(azul)).status, 200);
+  const set = await alarmTime();
+  assert.ok(set);
+  lair.useConfig = async () => {
+    throw new Error('The config database is down');
+  };
+  await alarmGoesOff();
+  assert.equal(await alarmTime(), set + 5 * MIN);
+});
+
+test("after the Lair restarts (an eviction), a later wake never moves a sooner alarm that's already set: it asks Cloudflare first and keeps the sooner one", async () => {
+  const azul = libraryGame({ id: '9860000000001', title: 'Azul', difficulty: 'Easy', facts: facts() });
+  start({ library: [azul] });
+  await member(SAM, 'Sam Jones');
+  assert.equal((await runNow()).status, 200);
+  // an alarm set before the restart, 10 seconds on (a hold ending, say)
+  ctx.alarm.at = clock + 10_000;
+  restart();
+  // a hold wants the alarm a minute on: the sooner one stays
+  assert.equal((await reserve(azul)).status, 200);
+  assert.equal(await alarmTime(), clock + 10_000);
+  // a sooner one still moves it (a game saved on Check games: 5 seconds)
+  assert.equal((await call('POST', `pick/games/${azul.id}`, { checked: true }, LIBRARIAN)).status, 200);
+  assert.equal(await alarmTime(), clock + 5_000);
 });
 
 test("staff save a game on Library discovery's Check games: its filters, and its shop twin's, go to Shopify straight after", async () => {

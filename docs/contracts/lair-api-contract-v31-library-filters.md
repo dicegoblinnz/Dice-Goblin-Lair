@@ -10,7 +10,7 @@ stay `{ error: "A plain sentence." }` with a 4xx or 5xx.
 
 The code: `src/shop-filters.js` (the rules and the runs), with changes in `src/shopify.js` (five calls), `src/lair.js`
 (the routes, the alarm, the write hook, maintenance, `heldFor`), `src/core.js` (`heldFor`) and `src/pick.js` (`heldFor`
-in the quiz's availability). Tests: `test/round31-library-filters.test.js` (15 checks).
+in the quiz's availability). Tests: `test/round31-library-filters.test.js` (20 checks).
 
 ## 1. The fields
 
@@ -148,50 +148,80 @@ fix its own Players, Play time, age group or tags in Shopify admin; the next run
   minute later, and changes in that minute share it. The alarm also wakes 5 seconds after the next active hold ends (a
   hold stops counting at its end, before maintenance marks it expired). Each run works out every game's value; where it
   differs from what the Lair last saw in Shopify (`shelf_state`), Shopify is read first and only what's different written,
-  100 games a run (more: the alarm again a minute later).
+  100 games a run and as far as the invocation's calls go (section 9; more: the alarm again a minute later). A game
+  Shopify doesn't have is set aside until the nightly run, so it's never asked about every minute.
 - **Never in the way**: a borrow, hold or return is saved and answers as before; Shopify is only asked afterwards, by the
   alarm. When Shopify fails it's tried again 1, 2, 5, 15 and 30 minutes later, then hourly, until it answers. Maintenance
   (every 10 minutes) does the same work as the alarm's safety net.
+- **The alarm itself** (from the review): a Durable Object has one. A wake never moves a sooner one that's already set;
+  after an eviction the Lair doesn't remember what's set, so its first wake asks Cloudflare (`getAlarm`) and keeps the
+  sooner. When the alarm goes off but fails before its work starts (the Lair's settings can't be read), it's set again 5
+  minutes on.
 - **Every night** each game's value is read from Shopify and put right where it drifted (someone changed it by hand).
 
 ## 4. When the filters are written
 
 | When | What |
 | --- | --- |
-| Every night, at the first maintenance from 3am Lair time, once a Lair day | every library game and shop board game: the four filters, Weight where it's empty, On the shelf now. A run that can't read Shopify tries again at the next maintenance (10 minutes on); one that ran is the night's, and anything Shopify turned away is tried again the next night (On the shelf now sooner, section 3). |
-| Staff press the button (5.1) | the same, now |
+| Soon after the deploy (the first fill): the first maintenance once the Lair has never finished a whole run, not waiting for 3am | a whole run: every library game and shop board game, the four filters, Weight where it's empty, On the shelf now |
+| Every night, at the first maintenance from 3am Lair time, once a Lair day | a whole run |
+| Staff press the button (5.1) | a whole run, or the one under way taken further |
 | Straight after staff save a game on Check games (`POST /pick/games/:productId`, its answer unchanged) | that game and its shop twins (its Shop copy, the shop games with its title, and those whose Library copy is it): the alarm 5 seconds later. One that fails is tried again 1, 2, 5, 15, 30 and 60 minutes later, then left to the nightly run after 10 tries. |
 | A hold or loan changes | On the shelf now (section 3) |
 
+**A whole run goes a slice at a time** (from the review): it starts with every product to do (meta `shop-filters-run`),
+and each invocation (maintenance, the alarm, the button) takes it as far as its calls go (section 9), a slice of up to 50
+products sized so its read and writes fit, saved after each. A game it settles leaves the run: written, already right, or
+refused by Shopify on its own (2 below). One it couldn't finish (the calls ran out, or Shopify didn't answer) stays first
+in line, read again next time. While any are left, the alarm takes it on a minute later in a fresh invocation (later
+after failures in a row: 1, 2, 5, 15, 30, then 60 minutes); maintenance starting a run uses only what its own invocation
+has left. A run is finished only when nothing's left: then its summary is kept for GET /pick/filters, and a night's run
+marks that Lair day done (so the night's run never counts as done with games still to write). One run at a time: while
+one's under way no other starts, and the alarm, maintenance and the button wait for each other.
+
 **Only what changed is written.** Shopify is read first (`LairFilterProducts`, 50 products a read), and a field is
 written only when Shopify doesn't already have that value (lists compared in Shopify's order). Writes are `metafieldsSet`,
-25 fields a call with a product's fields together (Shopify's limit; each call is all or nothing, so one that fails fails
-only its products), and `metafieldsDelete`, 25 a call, to take off a list that's now known to be empty. Every call is
-paced by Shopify's query bucket, and one that's throttled is asked again once there's room (5 tries). Only one run goes
-at a time: the alarm, maintenance and the button wait for each other.
+25 fields a call with a game's fields together (Shopify's limit), and `metafieldsDelete`, 25 a call, to take off a list
+that's now known to be empty. Every call is paced by Shopify's query bucket, and one that's throttled is asked again once
+there's room (5 tries, each a call).
+
+**A refusal fails only its own game** (from the review). `metafieldsSet` is all or nothing, so when Shopify turns away a
+call with more than one game in it (say a librarian set a game's difficulty just after the Lair read it, so that fill is
+refused), the call is split in halves, and halves again, down to single games, so the game Shopify refuses is on its own:
+only it counts as failed (tried again the next night), and every game beside it is written. Splitting spends calls from
+the same budget; what the budget doesn't reach waits for the next invocation.
 
 ## 5. Staff routes
 
 ### 5.1 `POST /pick/filters` (perm library, as Sync with Shopify now)
 
-Every game's filters and On the shelf now, written now (section 4). → 200, for example:
+A whole run (or the one under way) taken as far as this request's calls go (section 4). → 200. Finished, for example:
 
 ```json
-{ "games": 638, "changed": 12, "fields": 31, "failed": 0, "gaps": [], "cutoffs": { "easyBelow": 1.9, "hardFrom": 3, "agree": 431, "of": 450 },
-  "message": "12 games changed in Shopify." }
+{ "done": true, "at": 1794189000000, "finishedAt": 1794189004000, "reason": "staff", "games": 638, "changed": 12, "fields": 31, "failed": 0,
+  "gaps": [], "cutoffs": { "easyBelow": 1.9, "hardFrom": 3, "agree": 431, "of": 450 }, "message": "12 games changed in Shopify." }
+```
+
+Not finished yet (the first fill, say), with the alarm taking on the rest a minute later:
+
+```json
+{ "done": false, "total": 638, "checked": 149, "left": 489, "changed": 149,
+  "message": "149 of 638 games done so far, 149 changed in Shopify. The rest follow in the next few minutes." }
 ```
 
 - `games`: the products looked at (library games and shop board games); `changed`: the games with a field written or
-  taken off; `fields`: how many; `failed`: the games Shopify turned away (tried again tonight); `gaps` (2.4); `cutoffs`
-  (1.5).
-- `message`: what changed, then what failed and what's missing, when there's any (section 7).
+  taken off; `fields`: how many; `failed`: the games Shopify refused (tried again tonight); `gaps` (2.4); `cutoffs` (1.5);
+  `checked`: the games done so far, of `total`.
+- `message`: what changed, then what failed and what's missing, when there's any; or how much is done and that the rest
+  follows (section 7).
 - 403 without the library permission. 503 with the reason: Shopify not connected, the app without `write_products`, or
-  Shopify not answering (section 7).
+  Shopify not answering before anything was done (section 7); a run it started stays under way, for the alarm.
 
 ### 5.2 `GET /pick/filters` (perm library)
 
-The last whole run (nightly or the button): `{ last: { at, reason: 'nightly' | 'staff', games, changed, fields, failed }
-| null, gaps, cutoffs }`.
+`{ last: { at, finishedAt, reason: 'first' | 'nightly' | 'staff', games, changed, fields, failed } | null, gaps, cutoffs,
+running: { reason, startedAt, total, checked, left, changed } | null }`: the last whole run that finished, its gaps and
+cut-offs, and the run under way.
 
 ### 5.3 What the staff page needs (the theme, not this branch)
 
@@ -222,6 +252,7 @@ The quiz's cards (`availability`, contract v17) say the same.
 | The button, nothing to change | `Every game's filters were already up to date.` |
 | …and when Shopify turned some away | `<n> games couldn't be written just now: the Lair tries again tonight.` (`1 game couldn't …`) |
 | …and when some have gaps | `<n> games are missing something: they're listed below.` (`1 game is …`) |
+| The button, a run not finished yet | `<checked> of <total> games done so far, <changed> changed in Shopify. The rest follow in the next few minutes.` |
 | 503, Shopify not connected | `Shopify isn't connected yet, so there's nothing to write.` |
 | 503, no `write_products` | `Shopify hasn't let the Lair app change products yet (write_products), so the filters can't be written.` |
 | 503, Shopify not answering | `Shopify didn't answer just now. Try again in a minute.` |
@@ -236,7 +267,9 @@ Made when missing on every start, and written only when something changes:
   try again).
 - `shop_twins` (`shop_id`, `library_id`, `seen_at`): shop games linked by their own Library copy, as last read, so a save
   finds them.
-- `meta`: `shop-filters-day` (the Lair day the nightly run last ran) and `shop-filters-last` (the last whole run).
+- `meta`: `shop-filters-run` (the whole run under way: its products still to do, its counts and gaps so far, rewritten
+  after each slice), `shop-filters-last` (the last whole run that finished) and `shop-filters-day` (the Lair day the
+  last night's run finished for).
 - An index on `library_holds (status, until)`: the alarm and maintenance ask for the holds still on every few minutes,
   and the table keeps every hold ever made, so those reads only touch the active ones (the free plan counts rows read).
 
@@ -248,23 +281,33 @@ Made when missing on every start, and written only when something changes:
   too, and without it the runs don't start and the button says why.
 - The fields are in the store's own namespace (`custom`), so the app may write them with `write_products`.
 - Shopify: 50 products a read (checked against the live store on 6 November: well under the 1,000 a query), 25 fields a
-  write, every call paced by the query bucket. Cloudflare: no query binds more than a handful of values, and the
-  whole-table reads (holds, loans, `shelf_state`, the catalogue's difficulties) have no `IN` lists.
+  write, every call paced by the query bucket.
+- **Cloudflare's free plan: 50 outside calls an invocation** (from the review). Every request to Shopify (its API and its
+  login), an event picture's upload and Resend is counted as it's made (`externalCalls` in `src/shopify.js`). Each
+  invocation (a request to the Lair, maintenance's run, the alarm) notes the count when it begins, and the filters make
+  at most 35 calls less whatever the invocation made before theirs; past that they stop cleanly and the rest waits for
+  the alarm, a minute on, in a fresh invocation with its own 50 (section 4). The 15 left over cover a login, an email or
+  a retry. The count is shared by whatever runs at once, so it can only stop early, never late.
+- Cloudflare's SQLite: no query binds more than a handful of values, and the whole-table reads (holds, loans,
+  `shelf_state`, the catalogue's difficulties) have no `IN` lists.
 
 ## 10. Tests
 
-`test/round31-library-filters.test.js`, 15 checks named for the rules, against a pretend Shopify that refuses what the real
+`test/round31-library-filters.test.js`, 20 checks named for the rules, against a pretend Shopify that refuses what the real
 one does (values outside the choices, an empty list, the wrong type, more than 25 fields a call, a fill over a set
-difficulty), each seen failing for the right reason before the change, and each rule broken once afterwards to see its
-check fail. The older checks that pin GET /library/status's exact shape (`test/lair.test.js`, `test/round7-a.test.js`)
+difficulty) and counts every call as an outside one, with every invocation held to the free plan's 50; each seen
+failing for the right reason before the change, and each rule broken once afterwards to see its check fail. Five of
+them came from the review: a fill too big for one invocation, the night's run inside maintenance, a refusal isolated,
+the alarm's retry, and the alarm after an eviction. The older checks that pin GET /library/status's exact shape (`test/lair.test.js`, `test/round7-a.test.js`)
 and a quiz card's (`test/round17-pick.test.js`) now expect `heldFor` too: the new field, not a changed rule.
 
 ## 11. Going live
 
 1. The Lair, with Mo's yes (a push to `main` deploys it). Nothing to approve in Shopify.
-2. The first fill: the first nightly run from 3am writes every game's fields, about 550 library games and 88 board games,
-   roughly 3,000 fields in about 120 calls (a few minutes), or press the button. On the shelf now starts filling at the
-   first maintenance after the deploy, 100 games a run.
+2. The first fill starts by itself at the first maintenance after the deploy (within 10 minutes): about 550 library
+   games and 88 board games, roughly 3,000 fields in about 120 calls plus 13 reads, so about four or five invocations of
+   35 calls, the alarm taking it on a minute apart: done in five minutes or so. On the shelf now fills alongside, 100
+   games a go. The button shows how far it's got (or GET /pick/filters's `running`).
 3. Then check the gaps list: link shop games to their library copies and fix the listings it names.
 4. The website, not in this branch: in the Search & Discovery app add the six filters (Players (filter), Play time
    (filter), Youngest player, Difficulty, How you play, On the shelf now) to the library's collections and the board

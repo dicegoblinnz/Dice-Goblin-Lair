@@ -14,7 +14,7 @@ import {
 } from './core.js';
 // Round 29: the head-start card (12 slots, 2 of them Gobgob's), as every screen and email shows it
 import { CARD_ROW, cardSoFar, cardView } from './core.js';
-import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
+import { ShopifyAdmin, emailReady, externalCalls, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
 import { hoursSummary, renderEmail } from './email.js';
 // Round 7: mobile numbers on customer bookings and in the player profile
@@ -93,7 +93,7 @@ import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMetho
 import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './library-rules.js';
 // Round 31: the library shelves' and the shop's board games' filters in Shopify, and On the shelf now (src/shop-filters.js,
 // contract v31-library-filters)
-import { SHELF_WRITES, SHOP_FILTER_TABLES, shopFilterMethods } from './shop-filters.js';
+import { FILTER_LIMITS, SHELF_WRITES, SHOP_FILTER_TABLES, callBudget, shopFilterMethods } from './shop-filters.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1922,20 +1922,26 @@ export class Lair {
   /* ---------------- HTTP ---------------- */
   /**
    * Round 31: the Durable Object's alarm (its one alarm, src/shop-filters.js's wakeAt): On the shelf now where a hold or
-   * loan changed, games staff saved on Check games, and the next hold to end. Never throws, so Cloudflare doesn't run it
-   * again on its own; the work sets the next alarm itself.
+   * loan changed, games staff saved on Check games, a whole run under way, and the next hold to end, with this
+   * invocation's own outside calls. Never throws, so Cloudflare doesn't run it again on its own; the work sets the next
+   * alarm itself, and when the alarm itself fails it's set again 5 minutes on.
    */
   async alarm() {
+    const callsAtStart = externalCalls.count;
+    // the alarm that went off isn't set any more, so the retry below always lands (from the review, 6 Nov 2026)
+    this.alarmAt = null;
     try {
       await this.useConfig();
-      await this.filterAlarm(Date.now());
+      await this.filterAlarm(Date.now(), callsAtStart);
     } catch (error) {
       console.error('Lair: the alarm failed', error);
-      this.wakeAt(Date.now() + 5 * MIN);
+      this.wakeAt(Date.now() + FILTER_LIMITS.alarmRetry);
     }
   }
 
   async fetch(request) {
+    // Round 31: the outside calls made before this request (Cloudflare's free plan allows 50 an invocation)
+    const callsAtStart = externalCalls.count;
     const url = new URL(request.url);
     const parts = url.pathname.split('/').filter(Boolean);
     try {
@@ -2131,7 +2137,7 @@ export class Lair {
       if (a === 'pick' && b === 'swipes' && !c) return json(await this.pickSwipes(body, who, client));
       if (a === 'pick' && b === 'sync' && !c) return json(await this.staffPickSync(who));
       // Round 31: the shop's filters and On the shelf now, written to Shopify now (src/shop-filters.js)
-      if (a === 'pick' && b === 'filters' && !c) return json(await this.staffShopFilters(who));
+      if (a === 'pick' && b === 'filters' && !c) return json(await this.staffShopFilters(who, callsAtStart));
       if (a === 'pick' && b === 'games' && c && !d) {
         const saved = this.staffPickEdit(c, body, who);
         // Round 31: and its filters, and its shop twin's, go to Shopify straight after (the alarm, src/shop-filters.js)
@@ -10785,6 +10791,8 @@ export class Lair {
 
   /** Health check, run by /setup (forced) and every 10 minutes by the cron trigger. The result is saved in the status table. */
   async checkConnection(webhookUrl, { force = false, testEmail = false, membershipsUrl = null, membershipsSetup = false } = {}) {
+    // Round 31: the outside calls made before this run (Cloudflare's free plan allows 50 an invocation, src/shop-filters.js)
+    const callsAtStart = externalCalls.count;
     if (force) this.rulesCache = null;
     const rules = await this.rules();
     const result = {
@@ -11091,19 +11099,15 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not delete old quiz sessions', error);
     }
-    // Round 31 (src/shop-filters.js), after the catalogue sync above: On the shelf now wherever it changed (the alarm's
-    // safety net), then from 3am the night's filters for every library game and the shop's board games, once a night
+    // Round 31 (src/shop-filters.js), after the catalogue sync above: a whole run starts when one's due (the first fill
+    // after a deploy, then each night's from 3am), then On the shelf now where it changed (the alarm's safety net), games
+    // staff saved and the run under way, with what's left of this run's outside calls; the alarm carries the rest
     try {
-      const shelf = await this.filterWork(() => this.filterUpkeep(Date.now()));
-      if (shelf) result.shelf = shelf;
+      const started = this.startDueFilterRun(Date.now());
+      const upkeep = await this.filterWork(() => this.filterUpkeep(Date.now(), callBudget(callsAtStart)));
+      if (started || upkeep) result.shopFilters = { ...(started ? { started } : {}), ...(upkeep || {}) };
     } catch (error) {
-      console.error('Lair: could not keep On the shelf now in Shopify', error);
-    }
-    try {
-      const filters = await this.shopFiltersNightly(Date.now());
-      if (filters) result.shopFilters = filters;
-    } catch (error) {
-      console.error('Lair: the shop filters run failed', error);
+      console.error('Lair: could not keep the shop filters in Shopify', error);
     }
     this.note({ connection: result });
     return result;

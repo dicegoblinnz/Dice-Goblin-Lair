@@ -190,6 +190,7 @@ export class ShopifyAdmin {
       this.tokenExpires = saved.expires;
       return this.token;
     }
+    externalCalls.count += 1;
     const response = await fetch(`https://${this.shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -224,6 +225,7 @@ export class ShopifyAdmin {
       if (error && typeof error === 'object') error.nothingRan = true;
       throw error;
     }
+    externalCalls.count += 1;
     const response = await fetch(`https://${this.shop}/admin/api/${this.version}/graphql.json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
@@ -471,6 +473,7 @@ export class ShopifyAdmin {
     const form = new FormData();
     for (const p of target.parameters || []) form.append(p.name, p.value);
     form.append('file', new Blob([bytes], { type: mimeType }), filename);
+    externalCalls.count += 1;
     const sent = await fetch(target.url, { method: 'POST', body: form });
     await sent.arrayBuffer().catch(() => null);
     if (!sent.ok) return { problem: `the upload answered ${sent.status}` };
@@ -1623,6 +1626,14 @@ const resendEmail = (env, { to, subject, text, html = null, replyTo = null, from
 /** The from and reply-to an email would go with now, to keep with one that's pinned */
 export const emailSender = (env, replyTo = null) => ({ from: env.FROM_EMAIL || null, replyTo: replyTo || env.REPLY_TO || null });
 
+/**
+ * Round 31 (from the review): every request the Lair makes outside Cloudflare (Shopify's API and login, an event
+ * picture's upload, Resend), counted as it's made. Cloudflare's free plan lets one invocation make at most 50, so work
+ * that makes many (src/shop-filters.js) notes the count when its invocation starts and stops in time. Shared by whatever
+ * runs in this isolate at once, so it can only count too many, never too few.
+ */
+export const externalCalls = { count: 0 };
+
 /** How long to wait before sending once more when Resend says it's busy (too many requests a second) */
 const RESEND_AGAIN_AFTER = 1000;
 /**
@@ -1646,6 +1657,7 @@ async function postToResend(env, path, body, { key = null } = {}) {
     let response;
     try {
       const wait = key ? RESEND_TIMEOUT.key : Array.isArray(body) ? RESEND_TIMEOUT.batch : RESEND_TIMEOUT.single;
+      externalCalls.count += 1;
       response = await fetch(`https://api.resend.com/${path}`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(wait) });
     } catch (error) {
       if (key && attempt < 2) {
