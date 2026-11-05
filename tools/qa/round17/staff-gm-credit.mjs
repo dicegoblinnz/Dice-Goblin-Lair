@@ -279,8 +279,9 @@ for (const size of sizes) {
   check(`${tag} GM page: a staff GM's "You get" follows the setting (never, in their hours, outside them), and the GM page's account sends it`,
     words.never === 'No GM credit: you’re on the Dice Goblin team. Players still pay the GM fee.'
     && words.inHours === 'No GM credit for this session: it’s in your hours. Sessions outside them earn it.'
-    && words.outside === '$5 store credit per player, after each session outside your hours'
-    && words.notStaff === '$5 store credit per player, after each session'
+    // (round 30: the fee lands as each player pays; it was after each session)
+    && words.outside === '$5 store credit for each paying player, as they pay (outside your hours)'
+    && words.notStaff === '$5 store credit for each paying player, as they pay'
     && words.covering === 'No store credit. Thanks for covering your players!'
     && words.me && words.me.mode === 'never', words);
   check(`${tag} GM page: no script errors`, !page.errors.length, page.errors.slice(0, 5));
