@@ -57,6 +57,12 @@ Set `DG_THEME` to the branch checkout. The defaults point at the old worktrees.
 
 Late at night, bookings seeded "today" can land on tomorrow and trip date checks. The bk4 scripts take `LAIR_AT=…` to pin the page clock.
 
+## paints: the paint pages (Warhammer and hobby chat, 6 Nov 2026)
+
+`DG_THEME=/path/to/theme [AXE=/path/to/axe.min.js] node tools/qa/paints/paints.mjs`: the Colours dropdown's low stock, the
+match line under it (variant metafield `paint.match`) and Pick several, on the mock's Vallejo colours at 390 and 1280px
+(62 checks; axe when AXE is set). Exits 1 on a FAIL.
+
 ## theme-check
 
 `npm install`, then `node run.mjs /path/to/theme`. A clean theme prints `counts {}`.

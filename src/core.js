@@ -545,8 +545,11 @@ export function dateTables(o, rules) {
  * Round 22: a date with its own tables (dateTables) holds those, with changed: true, and none at all when it has [] (an
  * event with no Tables reserved can still hold a date's own). Game tables never repeat a table the date holds locked
  * (its usual tables or its own); a date that holds none still marks them all, since their spots are still sold.
+ * Round 31: once a date that locks its tables has started (now), its game tables leave the lock and are only marked
+ * (soft), so a pair nobody reserved can be booked by anyone; its other tables (Warhammer night's painting station) stay
+ * locked. Mo, 2 Nov 2026: "Warhammer Night's unbooked pairs open to anyone to book from 6pm on the night".
  */
-export function eventHolds(rules, from, to) {
+export function eventHolds(rules, from, to, now = Date.now()) {
   const out = [];
   const own = rules.holdDates instanceof Map ? rules.holdDates : null;
   const changedEvents = new Set(own ? [...own.values()].map((c) => c.eventId) : []);
@@ -554,10 +557,13 @@ export function eventHolds(rules, from, to) {
   for (const o of eventOccurrences({ ...rules, events }, from, to)) {
     const { tables, changed } = dateTables(o, rules);
     const base = { eventId: o.eventId, occurrenceId: o.id, start: o.start, end: o.end, label: o.title, title: o.title, type: 'event' };
-    if (tables.length) out.push({ ...base, id: `ev-${o.id}`, tables, soft: !o.lockTables, ...(changed ? { changed: true } : {}) });
+    const pairs = [...new Set(parseSpots(o.gameTables, rules.rooms).flat())];
+    const opened = Boolean(o.lockTables) && pairs.length > 0 && now >= o.start;
+    const held = opened ? tables.filter((t) => !pairs.includes(t)) : tables;
+    if (held.length) out.push({ ...base, id: `ev-${o.id}`, tables: held, soft: !o.lockTables, ...(changed ? { changed: true } : {}) });
     // game tables stay marked for the event (their spots are still sold), less any the date holds locked (round 22: the
-    // tables it holds that date, so a date that frees its tables still marks its game tables)
-    const spots = [...new Set(parseSpots(o.gameTables, rules.rooms).flat())].filter((t) => !(o.lockTables && tables.includes(t)));
+    // tables it holds that date, so a date that frees its tables still marks its game tables); all of them once it's on
+    const spots = pairs.filter((t) => opened || !(o.lockTables && tables.includes(t)));
     if (spots.length) out.push({ ...base, id: `ev-${o.id}-spots`, tables: spots, soft: true, spots: true });
   }
   return out;
@@ -1147,6 +1153,8 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     pages: {
       book: page(settings.page_book, 'book-a-table'), gm: page(settings.page_gm, 'gm-games'), events: page(settings.page_events, 'events-calendar'),
       staff: page(settings.page_staff, 'lair-staff'), myLair: '/pages/my-lair',
+      // Round 31: where open games are listed (Find a game), linked from Discord posts and emails
+      wargames: page(settings.page_wargames, 'warhammer'),
     },
     tz: settings.lair_timezone || 'Pacific/Auckland',
     hours: parseHours(settings.lair_hours || DEFAULT_HOURS),
