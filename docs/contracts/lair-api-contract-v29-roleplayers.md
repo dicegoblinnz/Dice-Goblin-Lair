@@ -496,21 +496,39 @@ to compare with.
 - `POST /unsubscribe/stop { ref, key }` (the tap) → `{ ok: true, already }`. The email (lower case) goes on the stop
   list straight away (`followup_stops`: `email`, `at`, `ref`, `via` 'link'), and no email the day after goes to it
   again, from any seat. Booking confirmations and reminders aren't marketing, and still go.
+- **It reaches Shopify.** Using an unsubscribe withdraws consent to all of Dice Goblin's marketing emails, not just
+  these (the Unsolicited Electronic Messages Act 2007, sections 9(2) and 11(1)(a), within 5 working days), and
+  Shopify's email marketing setting is the one list of who may get them. So straight after a stop, in the background,
+  `pushStopsToShopify` finds the customer with that email (`customerByIdentifier`, `read_customers`) and, when Shopify
+  has them subscribed or pending, sets them to unsubscribed as of the stop (`customerEmailMarketingConsentUpdate`,
+  `write_customers`, which Mo approves once in Shopify admin after the deploy that adds it). Nothing to change for
+  someone Shopify doesn't have, or who isn't subscribed there, or whose setting changed after the stop (they've signed
+  up again since: that later choice stands). Done: `shopify_at`. Not done (Shopify down, the permission not approved
+  yet): `shopify_tries` and `shopify_error`, and the 10-minute run tries again (`result.stopsToShopify: { done, failed
+  }`), at most 20 a run, the ones that have failed least first, one push after another so none is sent twice. A
+  permission Shopify hasn't given stops that run's push at the first refusal.
+- **And the other way.** Before the email the day after goes, the 10-minute run asks Shopify about each one due: an
+  email unsubscribed there since they ticked the box (or at a time Shopify doesn't give), or marked invalid or
+  redacted, gets none (`followup_at` set with `followup_skipped` 'shopify', and no key, so it isn't asked about again).
+  Unsubscribed before they ticked it: the box is fresh consent to this one email, so it goes. Only the ones Shopify
+  answered for are claimed: an address it can't answer for, or a seat that became due while it was being asked, waits
+  for the next run (nothing marked), and the others go.
 - **404** "That link doesn't work. Check you have the whole link from your email." for a wrong key, a code that isn't a
   first game's email, or either left out: one message, never saying which. **429** "Too many tries. Wait a few minutes
   and try again, or give us a call." after 10 wrong tries from one address in 10 minutes.
 - **The one-click route**, on the Lair app's own address (`src/index.js`): `POST /unsubscribe/<code>/<key>` (the mail
-  app) stops them the same way (`via` 'one-click') and answers 200 "Done. No more emails like that one." (plain text;
+  app) stops them the same way (`via` 'one-click') and answers 200 "Done. No more news emails from Dice Goblin." (plain text;
   the 404 and 429 above as plain text). `GET` or `HEAD` (someone opening it, or a scanner) stops nothing: a 303 to My
   Lair's page with the link in its #fragment.
 - The website (`<lair-unsubscribe>` on My Lair, outside the logged-in part, `assets/lair-unsubscribe.js`):
   `snippets/unsubscribe-early.liquid`, first in `layout/theme.liquid`'s head on My Lair, takes the link out of the
   address before any other script runs (`window.DGUnsubscribe`), so the key is never in a server's logs (it's a
-  #fragment), an analytics or ad script, or a later request's Referer. The card: "Emails from Gobgob", "Stop emails like
-  this one?", "It's the email Gobgob sends the day after a first game. Once you stop them, you won't get another." and
-  **"Yes, stop these emails"**. After the tap: "Emails after a first game", "Done. No more emails like that one." (the
-  status line) and "Booking confirmations and reminders still come, so you know what's booked." The link again: "You've
-  already stopped these. No more emails like that one." A wrong link: the Lair's words and "Something not right? Call
+  #fragment), an analytics or ad script, or a later request's Referer. The card says what the law makes it do:
+  "Emails from Gobgob", "Stop news emails from Dice Goblin?", "That's this email after a first game and any other news
+  from Dice Goblin. Booking confirmations and reminders still come." and **"Yes, stop these emails"**. After the tap:
+  "News emails from Dice Goblin", "Done. No more news emails from Dice Goblin." (the status line) and "Booking
+  confirmations and reminders still come, so you know what's booked." The link again: "You've already stopped these.
+  No more news emails from Dice Goblin." A wrong link: the Lair's words and "Something not right? Call
   us on 021 159 6894." (a tap to call). While it loads: "Gobgob is finding your email…"; no answer: "That didn't go
   through. Try again, or call us on 021 159 6894." A link opened in a tab already on My Lair (only the #fragment
   changes) works the same: the snippet's `popstate` and `hashchange` listeners are the page's first (after the cancel

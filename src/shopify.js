@@ -497,6 +497,41 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 29: the email marketing setting of the customer with exactly this email (Shopify's one list of who may get
+   * Dice Goblin's marketing emails): { customerId, state ('SUBSCRIBED', 'PENDING', 'UNSUBSCRIBED', 'NOT_SUBSCRIBED' or
+   * 'INVALID'), at: when it last changed (ms) or null }, or null when no customer has that email. read_customers, and
+   * protected customer data approval for the email field.
+   */
+  async marketingByEmail(email) {
+    const data = await this.graphql(
+      'query MarketingByEmail($email: String!) { customerByIdentifier(identifier: { emailAddress: $email }) { id defaultEmailAddress { marketingState marketingUpdatedAt } } }',
+      { email: String(email || '').trim() },
+      { timeout: 15_000 },
+    );
+    const c = data.customerByIdentifier;
+    if (!c?.id) return null;
+    const at = Date.parse(c.defaultEmailAddress?.marketingUpdatedAt || '');
+    return { customerId: String(c.id).split('/').pop(), state: c.defaultEmailAddress?.marketingState || null, at: Number.isFinite(at) ? at : null };
+  }
+
+  /**
+   * Round 29: sets a customer's email marketing to unsubscribed, as of `at` (ms): someone used the unsubscribe in one of
+   * the Lair's marketing emails, which withdraws consent to all of Dice Goblin's (the Unsolicited Electronic Messages
+   * Act 2007, sections 9(2) and 11(1)(a)). write_customers (Mo approves it once in Shopify admin). → true, or throws.
+   */
+  async unsubscribeMarketing(customerId, at) {
+    const data = await this.graphql(
+      'mutation UnsubscribeMarketing($input: CustomerEmailMarketingConsentUpdateInput!) { customerEmailMarketingConsentUpdate(input: $input) { customer { id } userErrors { field message code } } }',
+      { input: { customerId: `gid://shopify/Customer/${customerId}`, emailMarketingConsent: { marketingState: 'UNSUBSCRIBED', consentUpdatedAt: new Date(at).toISOString() } } },
+      // asked again after a lost answer is harmless: unsubscribed twice is unsubscribed
+      { timeout: 15_000 },
+    );
+    const errors = data.customerEmailMarketingConsentUpdate?.userErrors || [];
+    if (errors.length) throw new Error(`Shopify: ${errors.map((e) => e.message).join('; ')}`);
+    return true;
+  }
+
+  /**
    * When each customer's Shopify account was made (round 6: years with Dice Goblin), for up to 100 customer IDs in one
    * call. read_customers. Returns a Map of customer ID → ms, or null for a customer Shopify doesn't have.
    */

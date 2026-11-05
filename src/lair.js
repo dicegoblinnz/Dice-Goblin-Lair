@@ -105,6 +105,8 @@ FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in';
 FEATURE_SCOPES.write_products = "adding Games Workshop's order pad (the Warhammer tab)";
 FEATURE_SCOPES.write_inventory = 'new Games Workshop products stocked at 0, and their costs';
 FEATURE_SCOPES.write_publications = 'new Games Workshop products on the till';
+// Round 29: an unsubscribe from the email the day after a first game reaches Shopify's email marketing setting
+FEATURE_SCOPES.write_customers = "unsubscribes from the Lair's emails reaching Shopify's email marketing";
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -1129,6 +1131,8 @@ export class Lair {
     for (const statement of BOOKING_REMINDER_INDEXES) this.sql.exec(statement);
     // Round 29, item 3: a seat's answer to "Is this your first roleplaying game?", the consent to the email the day after
     // and when it went, and the emails people stopped (made when missing, src/first-game.js)
+    // (the stop list first, so its own columns have a table to go on)
+    this.sql.exec(FIRST_GAME_TABLES[0]);
     for (const [table, column, type] of FIRST_GAME_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -10882,10 +10886,17 @@ export class Lair {
     }
     // Round 29: the email the day after a first game, from 9am to 9pm at the Lair, each once (src/first-game.js)
     try {
-      const nextDay = this.sendNextDay(rules, Date.now());
+      const nextDay = await this.sendNextDay(rules, Date.now());
       if (nextDay?.sent) result.nextDay = nextDay;
     } catch (error) {
       console.error('Lair: could not send the next-day emails', error);
+    }
+    // Round 29: unsubscribes from it reach Shopify's email marketing setting, tried again until they do (src/first-game.js)
+    try {
+      const stops = await this.pushStopsToShopify(Date.now());
+      if (stops) result.stopsToShopify = stops;
+    } catch (error) {
+      console.error('Lair: could not send unsubscribes to Shopify', error);
     }
     // Round 10: library memberships: /setup?key=…&memberships=plans sets up the plans, then the upkeep bills what's due,
     // retries failed payments and ends what should end (it never throws)
