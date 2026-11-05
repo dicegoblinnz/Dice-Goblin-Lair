@@ -73,8 +73,9 @@ const waitList = async (route) => {
 const shown = await pageOrder();
 const bySpend = await apiOrder('sort=spend');
 check(`${L}: the Members tab lists everyone, by spend this year (the app's order)`, shown.length >= 6 && shown.join() === bySpend.join(), { shown, bySpend });
-// round 6: spend is this financial year's (1 April on), and a Card column shows the loyalty card
-check(`${L}: each row: name, code, this financial year, total, card, last visit, owed, open tab`, /This financial year/.test(await text(p, '[data-members-list]')) && /of 10 stamps/.test(await text(p, '[data-members-list]')) && (await text(p, `[data-members-list] [data-member-view="7101"]`)).includes(R.codes['7101']), (await text(p, '[data-members-list] .staff-mem-row')).slice(0, 200));
+// round 6: spend is this financial year's (1 April on), and a Card column shows the loyalty card (round 29: "9/12", read
+// out as "9 of 12 on their card")
+check(`${L}: each row: name, code, this financial year, total, card, last visit, owed, open tab`, /This financial year/.test(await text(p, '[data-members-list]')) && /of 12 on their card/.test(await text(p, '[data-members-list]')) && (await text(p, `[data-members-list] [data-member-view="7101"]`)).includes(R.codes['7101']), (await text(p, '[data-members-list] .staff-mem-row')).slice(0, 200));
 for (const sort of ['recent', 'owing']) {
   const wait = waitList(new RegExp(`sort=${sort}`));
   await p.check(`[data-members-sort="${sort}"]`, { force: true });

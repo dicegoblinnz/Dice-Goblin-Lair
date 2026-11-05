@@ -77,11 +77,12 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   let L = await me(page);
   let s = await ui(page);
   const left = L.cardSize - L.stamps;
-  check(size, 'the card shows the right stamps', s.stamped === L.stamps && s.count.includes(`${L.stamps} of ${L.cardSize} stamps`)
-    && s.count.includes(`${left} more ${left === 1 ? 'session' : 'sessions'} to your next roll`), `${s.stamped} stamped; "${s.count}"; app says ${L.stamps}`);
+  // round 29 (the head-start card): 12 slots, the first 2 Gobgob's, so 7 stamps say "9 of 12", and a roll is still 10 visits
+  check(size, 'the card shows the right stamps', s.stamped === L.stamps && s.count.includes(`${L.onCard} of ${L.slots}`)
+    && s.count.includes(`${left} more ${left === 1 ? 'visit' : 'visits'} to your next roll`), `${s.stamped} stamped; "${s.count}"; app says ${L.stamps}`);
   // round 7: the demo member starts on card 3 (two filled) with 1 roll ready, and no welcome roll (loot codes now)
-  check(size, 'the demo card starts at card 3 with 7 stamps, 2 cards filled, 1 roll ready', L.stamps === 7 && L.cards === 2 && L.card === 3 && L.rolls.available === 1
-    && s.tag === '2 cards filled' && s.count.startsWith('Card 3 · 7 of 10 stamps') && s.ready.startsWith('1 roll ready'), `${L.stamps}/${L.cards}/${L.rolls.available}; tag "${s.tag}"; "${s.ready}"`);
+  check(size, 'the demo card starts at card 3 with 7 stamps ("9 of 12" with Gobgob\'s 2), 2 cards filled, 1 roll ready', L.stamps === 7 && L.cards === 2 && L.card === 3 && L.rolls.available === 1
+    && s.tag === '2 cards filled' && s.count.startsWith('Card 3 · 9 of 12') && s.ready.startsWith('1 roll ready'), `${L.stamps}/${L.cards}/${L.rolls.available}; tag "${s.tag}"; "${s.ready}"`);
   check(size, 'no welcome roll: where the rolls came from', !/Welcome to the Lair/.test(s.ready) && L.rolls.earned.welcome === 0 && s.ready.includes('2 from full cards'), s.ready);
   check(size, 'one clear roll button', s.buttons === 1 && /^Roll your d20/.test(s.button), s.button);
 
@@ -180,7 +181,7 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
   const head = flat(await sp.locator('.staff-mem-head').textContent().catch(() => ''));
   const firstRow = flat(await sp.locator('.staff-mem-row').first().innerText());
   check(size, 'the members list shows spend this financial year and the card', head.includes('This financial year') && head.includes('Card')
-    && /This financial year/.test(firstRow) && /\d+\/10/.test(firstRow), firstRow.slice(0, 140));
+    && /This financial year/.test(firstRow) && /\d+\/12/.test(firstRow), firstRow.slice(0, 140)); // round 29: "8/12", Gobgob's 2 counted
   await sp.locator('.staff-mem-row', { hasText: 'Sam Tautahi' }).click();
   await sp.waitForSelector('[data-person-loyalty] .staff-person__facts', { timeout: 10000 });
   const facts = async () => sp.evaluate(() => Object.fromEntries([...document.querySelectorAll('[data-person-loyalty] .staff-person__facts > div')]
