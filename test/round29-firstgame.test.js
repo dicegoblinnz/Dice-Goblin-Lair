@@ -509,7 +509,7 @@ test('round 29, first game: a weekly game with seats next session (mockup D3): s
   assert.ok(m.html.includes(`#unsubscribe=${s.ref}.${key}`));
 });
 
-test('round 29, first game: a one-shot, a full next session, or none: the same thanks, then "Fancy another? N beginner games have seats this week." and Find your next game', async () => {
+test('round 29, first game: a one-shot, a full next session, or none, built like D3 (Mo, 6 Nov 2026: "This one is the best please use that"): the soonest beginner game with seats this week, Save me a seat and its link, its details, the card, and the others counted', async () => {
   // a one-shot on Sunday
   const { g: oneShot } = await riasFirstGame({ game: { title: 'Lost Mine of Phandelver', schedule: 'one-shot' } });
   // a weekly game whose next session is full (Kai's first game), and one whose sessions stop (Mia's)
@@ -524,22 +524,58 @@ test('round 29, first game: a one-shot, a full next session, or none: the same t
   lair.sql.exec("UPDATE games SET status = 'cancelled' WHERE series_id = ? AND starts_at > ?", ending.seriesId, ending.start);
   await checkIn(kais);
   await checkIn(mias);
-  // one beginner game with seats in the week ahead
+  // two beginner games with seats in the week ahead: Wednesday's is the soonest, so it's the one offered
   nowIs(NOW);
-  await game({ title: 'Daggerheart: first flight', schedule: 'one-shot', tables: ['T5'], start: at(WED2, 18), end: at(WED2, 21) });
+  const wed = await game({ title: 'Daggerheart: first flight', schedule: 'one-shot', tables: ['T5'], start: at(WED2, 18), end: at(WED2, 21) });
+  await game({ title: 'Goblin Kitchen Nightmares', schedule: 'one-shot', tables: ['T6'], start: at(FRI2, 19), end: at(FRI2, 22) });
   const run = await runAt(at(MON2, 11));
   assert.equal(run.sent, 3);
   for (const [to, title] of [['ria@example.com', 'Lost Mine of Phandelver'], ['kai@example.com', 'Curse of Strahd'], ['mia@example.com', 'Tomb of Annihilation']]) {
     const m = only(to);
     const name = to.split('@')[0].replace(/^./, (c) => c.toUpperCase());
     assert.equal(m.subject, `How was your first game, ${name}?`);
-    assert.ok(m.text.includes(`Thanks for coming to ${title} on Sunday, ${name}. Gobgob hopes the dice were kind.`), m.text);
-    assert.ok(m.text.includes('Fancy another? 1 beginner game has seats this week.'), m.text);
-    assert.equal(linkIn(m, 'Find your next game'), GM_PAGE);
-    assert.ok(!/Save my seat|Just next|Next session/.test(m.text), 'none of the weekly table\'s words');
-    assert.ok(linkIn(m, "Don't send me emails like this"));
+    assert.equal(preheader(m), 'Daggerheart: first flight has seats on Wednesday. Want one?');
+    assert.match(m.html, /<h1[^>]*>How was your first game\?<\/h1>/);
+    const text = m.text.replace(/ {2,}/g, ' ');
+    const order = [
+      'HOW WAS YOUR FIRST GAME?',
+      `Thanks for coming to ${title} on Sunday, ${name}. Gobgob hopes the dice were kind.`,
+      'Fancy another? Daggerheart: first flight is on Wednesday at 6pm, and new players are welcome. You pay at the counter on the day, $15.',
+      `Save me a seat: ${GM_PAGE}?join=${wed.id}`,
+      `Try a different game: ${GM_PAGE}`,
+      'When: Wednesday 11 November, 6pm to 9pm',
+      'Seats left: 4',
+      'Loyalty card: 3 of 12 so far. Stamps land when you check in.',
+      "Not quite your thing? That's fine. 1 other beginner game has seats this week.",
+      'See you at the Lair!\nGobgob, the Dice Goblin',
+      "Don't send me emails like this: ",
+    ];
+    let from = 0;
+    for (const part of order) {
+      const i = text.indexOf(part, from);
+      assert.ok(i >= 0, `${to}, in order: ${part}\n---\n${text}`);
+      from = i + part.length;
+    }
+    assert.ok(!/Save my seat every week|Just next|Next session|Find your next game/.test(m.text), 'none of the weekly table\'s words, and one button');
   }
   assert.ok(oneShot);
+});
+
+test('round 29, first game: the beginner game offered says today or tomorrow when it is, and a guest\'s email has no card row', async () => {
+  // a one-shot for Sam (a guest) on Sunday; the only beginner game with seats is on Tuesday, the day after the email
+  const g = await game({ title: 'Lost Mine of Phandelver', schedule: 'one-shot' });
+  nowIs(NOW);
+  await checkIn(await seat(g.id, '', 'Sam Jones', { firstGame: true, followUp: true }));
+  nowIs(NOW);
+  const tue = await game({ title: 'Daggerheart: first flight', schedule: 'one-shot', tables: ['T5'], start: at(TUE2, 18), end: at(TUE2, 21) });
+  await runAt(at(MON2, 9));
+  const m = only('sam@example.com');
+  assert.equal(preheader(m), 'Daggerheart: first flight has seats tomorrow. Want one?');
+  assert.ok(m.text.includes('Fancy another? Daggerheart: first flight is tomorrow at 6pm, and new players are welcome.'), m.text);
+  assert.equal(linkIn(m, 'Save me a seat'), `${GM_PAGE}?join=${tue.id}`);
+  assert.ok(!/Loyalty card/.test(m.text), 'a guest has no card, so no card row');
+  assert.ok(!/Not quite your thing/.test(m.text), 'no other beginner game to count');
+  assert.ok(g);
 });
 
 test('round 29, first game: with no other beginner game with seats this week, the count\'s sentence is left out', async () => {
@@ -547,17 +583,29 @@ test('round 29, first game: with no other beginner game with seats this week, th
   const { g } = await riasFirstGame();
   await runAt(at(MON2, 9));
   assert.ok(!/Not quite your thing/.test(only('ria@example.com').text), 'D3 without "Not quite your thing?"');
-  // the week after, a one-shot with no other beginner game (Candlekeep's sessions called off): "Fancy another?" alone
+  // the week after, a one-shot with no beginner game to offer (Candlekeep's sessions called off): built like D3 still,
+  // with the card, and Find your next game
   lair.sql.exec("UPDATE games SET status = 'cancelled' WHERE series_id = ?", g.seriesId);
   nowIs(at(MON2, 13));
   const oneShot = await game({ title: 'Lost Mine', schedule: 'one-shot', tables: ['T10'], start: at(SUN2, 18), end: at(SUN2, 21) });
   const kais = await seat(oneShot.id, KAI, 'Kai Tane', { firstGame: true, followUp: true });
   await checkIn(kais);
   await runAt(at('2026-11-16', 9));
-  const kai = only('kai@example.com').text;
-  assert.ok(kai.includes('Fancy another?'));
-  assert.ok(!/beginner game/.test(kai), kai);
-  assert.equal(linkIn(only('kai@example.com'), 'Find your next game'), GM_PAGE);
+  const kai = only('kai@example.com').text.replace(/ {2,}/g, ' ');
+  const order = [
+    'Thanks for coming to Lost Mine on Sunday, Kai. Gobgob hopes the dice were kind.',
+    'Fancy another? No beginner games have seats left this week, but GMs add new ones all the time.',
+    `Find your next game: ${GM_PAGE}`,
+    'Loyalty card: 3 of 12 so far. Stamps land when you check in.',
+    'See you at the Lair!',
+  ];
+  let from = 0;
+  for (const part of order) {
+    const i = kai.indexOf(part, from);
+    assert.ok(i >= 0, `in order: ${part}\n---\n${kai}`);
+    from = i + part.length;
+  }
+  assert.ok(!/Not quite your thing|Save me a seat/.test(kai), kai);
 });
 
 test('round 29, first game: Resend down or busy (5xx, 429): unmarked, so the next run sends it; anything else isn\'t tried again', async () => {

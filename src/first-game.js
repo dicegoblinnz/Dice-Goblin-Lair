@@ -80,8 +80,18 @@ export const FIRST_GAME_WORDS = {
   nextSession: 'Next session',
   seatsLeft: 'Seats left',
   others: (n) => `Not quite your thing? That's fine. ${n} other beginner ${n === 1 ? 'game has' : 'games have'} seats this week.`,
-  /** Anything else: a one-shot, a full next session, none, or a game that isn't weekly */
-  another: (n) => (n > 0 ? `Fancy another? ${n} beginner ${n === 1 ? 'game has' : 'games have'} seats this week.` : 'Fancy another?'),
+  /**
+   * Anything else (a one-shot, a full next session, none, or a game that isn't weekly), built like D3 (Mo, 6 Nov 2026:
+   * "This one is the best please use that"): the soonest beginner game with seats this week. on: "on Wednesday",
+   * "tomorrow" or "today"; clock: "6pm".
+   */
+  pickPreheader: (title, on) => `${title} has seats ${on}. Want one?`,
+  pick: (title, on, clock) => `Fancy another? ${title} is ${on} at ${clock}, and new players are welcome.`,
+  payOnDay: (amount) => `You pay at the counter on the day, ${amount}.`,
+  saveOne: 'Save me a seat',
+  when: 'When',
+  /** No beginner game with seats this week */
+  none: 'Fancy another? No beginner games have seats left this week, but GMs add new ones all the time.',
   find: 'Find your next game',
   unsubscribe: "Don't send me emails like this",
 };
@@ -246,8 +256,10 @@ export const firstGameMethods = {
    * seats (mockup D3): the thanks, the same table, "Save my seat every week" (the GM games page, opening that session's
    * join sheet with every week picked), "Just next Sunday" (the same, one-off) and "Try a different game", then the next
    * session, its seats left and their loyalty card, and the other beginner games with seats this week (left out when
-   * none). Anything else: the thanks, then "Fancy another?" and Find your next game. Both end with "Don't send me emails
-   * like this", and carry the one-click unsubscribe headers. d: a claimed email. No awaits.
+   * none). Anything else is built the same way (Mo, 6 Nov 2026: "This one is the best please use that"): the soonest
+   * beginner game with seats this week, "Save me a seat" (its join sheet) and "Try a different game", then when it is,
+   * its seats left, their card and the others; with none, "Fancy another?", Find your next game and their card. All end
+   * with "Don't send me emails like this", and carry the one-click unsubscribe headers. d: a claimed email. No awaits.
    */
   nextDayLetter(d, rules, now) {
     const W = FIRST_GAME_WORDS;
@@ -257,7 +269,9 @@ export const firstGameMethods = {
     const title = game?.title || 'your game';
     const thanks = W.thanks(title, weekdayOf(x.start, rules.tz), name);
     const gm = this.page('gm');
-    const others = this.beginnerGamesWithSeats(rules, now, { exceptSeries: game?.seriesId || null, exceptGame: game?.id || null });
+    const beginners = this.beginnerSessionsWithSeats(rules, now, { exceptSeries: game?.seriesId || null, exceptGame: game?.id || null });
+    const others = beginners.length;
+    const card = [CARD_ROW, this.cardLine(x.customerId, rules)];
     const lair = String(this.env.PUBLIC_URL || 'https://dice-goblin-lair.dicegoblinnz.workers.dev').replace(/\/$/, '');
     const unsubscribe = { label: W.unsubscribe, url: `${this.page('myLair')}#unsubscribe=${encodeURIComponent(x.ref)}.${d.key}` };
     const extra = { headers: { 'List-Unsubscribe': `<${lair}/unsubscribe/${encodeURIComponent(x.ref)}/${d.key}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } };
@@ -276,15 +290,39 @@ export const firstGameMethods = {
         details: [
           [W.nextSession, `${longDay(next.start, rules.tz)}, ${clockLabel(time.minutesOf(next.start))} to ${clockLabel(time.minutesOf(next.end))}`],
           [W.seatsLeft, String(left)],
-          [CARD_ROW, this.cardLine(x.customerId, rules)],
+          card,
         ],
         detailsAfter: true,
         outro: others > 0 ? W.others(others) : [],
         unsubscribe,
       }, extra);
     }
+    const pick = beginners[0];
+    if (pick) {
+      const p = pick.g;
+      const today = time.key(now);
+      const day = time.key(p.start);
+      const on = day === today ? 'today' : day === addDays(today, 1) ? 'tomorrow' : `on ${weekdayOf(p.start, rules.tz)}`;
+      const clock = clockLabel(time.minutesOf(p.start));
+      const price = seatPriceOf(p, rules);
+      return this.letter(x.email, W.subject(name), {
+        title: W.title,
+        preheader: W.pickPreheader(p.title, on),
+        intro: [thanks, [W.pick(p.title, on, clock), price ? W.payOnDay(money(price)) : ''].filter(Boolean).join(' ')],
+        button: { label: W.saveOne, url: `${gm}?join=${encodeURIComponent(p.id)}` },
+        links: [{ label: W.different, url: gm }],
+        details: [
+          [W.when, `${longDay(p.start, rules.tz)}, ${clock} to ${clockLabel(time.minutesOf(p.end))}`],
+          [W.seatsLeft, String(pick.left)],
+          card,
+        ],
+        detailsAfter: true,
+        outro: others > 1 ? W.others(others - 1) : [],
+        unsubscribe,
+      }, extra);
+    }
     return this.letter(x.email, W.subject(name), {
-      title: W.title, intro: [thanks, W.another(others)], button: { label: W.find, url: gm }, unsubscribe,
+      title: W.title, intro: [thanks, W.none], button: { label: W.find, url: gm }, details: [card], detailsAfter: true, unsubscribe,
     }, extra);
   },
 
@@ -295,22 +333,23 @@ export const firstGameMethods = {
   },
 
   /**
-   * Beginner games with seats this week, counted as the website's front door counts them: public sessions (not private,
-   * open, with a seat left) for new players (level 'new'), starting in the next BEGINNER_DAYS days, a series' next
-   * session only (the one the public board shows). exceptSeries, exceptGame: the game they played. No awaits.
+   * Beginner games with seats this week, soonest first, as the website's front door finds them: public sessions (not
+   * private, open, with a seat left) for new players (level 'new'), starting in the next BEGINNER_DAYS days, a series'
+   * next session only (the one the public board shows). exceptSeries, exceptGame: the game they played. No awaits.
+   * → [{ g, left }]
    */
-  beginnerGamesWithSeats(rules, now, { exceptSeries = null, exceptGame = null } = {}) {
+  beginnerSessionsWithSeats(rules, now, { exceptSeries = null, exceptGame = null } = {}) {
     const until = now + BEGINNER_DAYS * 24 * 3_600_000;
     const st = this.state(now, until + 1);
     const info = this.seriesInfo(now);
-    let n = 0;
+    const found = [];
     for (const g of st.games) {
       if (!(g.start > now && g.start <= until) || g.private || g.level !== 'new' || g.id === exceptGame) continue;
       if (g.seriesId && (g.seriesId === exceptSeries || info.next.get(g.seriesId) !== g.id)) continue;
       const view = this.gameView(g, st, rules, info);
-      if (view.status === 'open' && view.seats - view.taken > 0) n += 1;
+      if (view.status === 'open' && view.seats - view.taken > 0) found.push({ g, left: view.seats - view.taken });
     }
-    return n;
+    return found.sort((a, b) => a.g.start - b.g.start || String(a.g.id).localeCompare(String(b.g.id)));
   },
 
   /* ---------------- "Don't send me emails like this" ---------------- */

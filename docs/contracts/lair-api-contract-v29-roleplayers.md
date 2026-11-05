@@ -458,12 +458,27 @@ saving changes nothing: the day and the hours are Lair time.
   has…"), left out when there are none.
 
 **Anything else** (a one-shot, a fortnightly or flexible game, or a weekly one with its next session full or none
-listed): the same subject, title and thanks, then "Fancy another? 2 beginner games have seats this week." ("1
-beginner game has…", or just "Fancy another?"), and the button "Find your next game" (the GM games page).
+listed) is built the same way as D3 (Mo, 6 Nov 2026, of the D3 preview: "This one is the best please use that"),
+offering the soonest beginner game with seats this week:
 
-"Beginner games with seats this week" counts as the front door does (3.8): public sessions for new players (level
-`new`), open with a seat anyone can book, starting in the next 7 days, a weekly game's next session only, not the game
-they played.
+- **Subject, title and thanks:** as D3.
+- **Preheader:** "Daggerheart: first flight has seats on Wednesday. Want one?" ("… has seats tomorrow.", "… today.")
+- **Intro:** the thanks, then "Fancy another? Daggerheart: first flight is on Wednesday at 6pm, and new players are
+  welcome. You pay at the counter on the day, $15." ("is tomorrow at 6pm", "is today at 6pm"; the price left out for a
+  free one)
+- **Button:** "Save me a seat": the GM games page with that session's join sheet open (`/pages/gm-games?join=<id>`).
+- **Links:** "Try a different game" (the GM games page).
+- **Details, after them:** When "Wednesday 11 November, 6pm to 9pm"; Seats left "4"; Loyalty card (a member's only).
+- **Outro:** "Not quite your thing? That's fine. 1 other beginner game has seats this week." (the others, not counting
+  the one offered), left out when there are none.
+
+With **no beginner game with seats this week**: the thanks, then "Fancy another? No beginner games have seats left
+this week, but GMs add new ones all the time.", the button "Find your next game" (the GM games page), and the Loyalty
+card row (a member's only).
+
+"Beginner games with seats this week" are found as the front door finds them (3.8): public sessions for new players
+(level `new`), open with a seat anyone can book, starting in the next 7 days, a weekly game's next session only, not
+the game they played; soonest first.
 
 **Every one** ends with the shop's details (the layout's footer: Dice Goblin Lair, the address, phone and hours) and
 "Don't send me emails like this", a link to `/pages/my-lair#unsubscribe=<code>.<key>` (the seat's code and the email's
@@ -573,5 +588,5 @@ Three lines after "New players":
 - `reminderDay` uses section 2's switch the way the run does (`rules.bookingReminders` must be `true`, so it's null until
   the live theme's settings say true), so the confirmation never promises a reminder that won't go.
 - Mo's calls (the safest reading for now): the box at a game that isn't weekly says "about my next game"; only weekly
-  games get D3 (fortnightly and flexible ones get "Fancy another?"); See all counts every TTRPG session this week, not
-  only beginner ones.
+  games get "Save my seat every week" (fortnightly and flexible ones get the soonest beginner game, as a one-shot does);
+  See all counts every TTRPG session this week, not only beginner ones.
