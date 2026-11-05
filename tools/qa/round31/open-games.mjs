@@ -6,7 +6,9 @@
 //   3. logged out: "A player · Warhammer 40,000", and Log in to join
 //   4. Mia joins from the list: the join sheet (the game, when, the tables, $10), Join the game, then the sheet says
 //      she's in and her row says You're in; Ruby's says Game on with Mia
-//   5. axe (WCAG 2.2 A and AA) on Find me one and the join sheet; no sideways scroll; no console errors
+//   5. three days out: Mia joins Ruby's game; in My Lair each sees the other by first name only ("You against Mia",
+//      "Ruby against you": no last name or email, from the review of 6 Nov 2026); Mia drops out; it's listed again
+//   6. axe (WCAG 2.2 A and AA) on Find me one, the join sheet and the drop out dialog; no sideways scroll; no console errors
 // Usage: DG_THEME=/path/to/theme [PORT=4995] [AXE=/path/to/axe.min.js] [OUT=/dir] node tools/qa/round31/open-games.mjs [phone|desktop]
 // Exits 1 on a FAIL.
 import { createRequire } from 'node:module';
@@ -186,8 +188,16 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   check(`${size}: three days out, the join sheet says she can drop out in My Lair`, /Drop out in My Lair until 24 hours before/.test(flat(await page.innerText('.cal-open-join'))));
   await page.click('[data-open-go]');
   await page.waitForSelector('.cal-flash', { timeout: 10000 }).catch(() => {});
+  // the two of them see each other by first name only, never an email or a last name (from the review, 6 Nov 2026)
+  await open('/pages/my-lair#bookings', RUBY);
+  await page.waitForSelector('.ml-ticket', { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(500);
+  const rubyLair = flat(await page.innerText('body'));
+  check(`${size}: My Lair: Ruby sees "You against Mia", no last name or email`, /You against Mia\b/.test(rubyLair) && !/Chen/.test(rubyLair) && !(mia.email && rubyLair.includes(mia.email)), rubyLair.slice(0, 300));
   await open('/pages/my-lair#bookings', mia);
   await page.waitForSelector('[data-drop-out]', { timeout: 15000 }).catch(() => {});
+  const miaLair = flat(await page.innerText('body'));
+  check(`${size}: My Lair: Mia sees "Ruby against you", no last name or email`, /Ruby against you/.test(miaLair) && !/Tane|ruby@example\.com/.test(miaLair), miaLair.slice(0, 300));
   check(`${size}: My Lair: Mia's ticket has Drop out`, (await page.locator('[data-drop-out]').count()) === 1);
   if ((await page.locator('[data-drop-out]').count()) === 1) {
     // My Lair redraws as it loads, so Playwright's wait for a still button never settles: scroll and tap from the page

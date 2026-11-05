@@ -169,18 +169,21 @@ export const gamePlayerMethods = {
   /**
    * A game's players as someone sees them: { name, role, member, invited } each, plus you: true on the viewer's own
    * entry. staff: with email, code and customerId; booker: with email (they typed it). Nobody else gets an email or a
-   * code. withBooker: the booker first, as role 'booker' (for the other players' views). [] when it has none.
+   * code. withBooker: the booker first, as role 'booker' (for the other players' views). [] when it has none. Round 31:
+   * an open game's two players found each other on the list, not by typing each other's details, so (staff aside)
+   * they see first names only, and the booker no emails (src/open-games.js).
    */
   gamePlayersOf(b, { staff = false, booker = false, viewer = null, withBooker = false } = {}) {
     const rows = this.gamePlayerRows(b.id);
     if (!rows.length) return [];
+    const open = !staff && Boolean(b.occurrenceId) && Boolean(this.openGameOf(b.id));
     const list = rows.map((p) => ({
-      name: this.playerName(p), role: p.role, member: Boolean(p.customer_id), invited: !p.customer_id,
+      name: open ? this.openGamePlayerName(p) : this.playerName(p), role: p.role, member: Boolean(p.customer_id), invited: !p.customer_id,
       ...(viewer && String(p.customer_id || '') === String(viewer) ? { you: true } : {}),
-      ...(staff ? { email: p.email || '', code: p.member_code || p.code || null, customerId: p.customer_id || null } : booker ? { email: p.email || '' } : {}),
+      ...(staff ? { email: p.email || '', code: p.member_code || p.code || null, customerId: p.customer_id || null } : booker && !open ? { email: p.email || '' } : {}),
     }));
     if (!withBooker) return list;
-    return [{ name: trimmed(b.name, 80) || 'The booker', role: 'booker', member: Boolean(b.customerId), invited: false }, ...list];
+    return [{ name: (open ? this.openGameBookerFirst(b) : trimmed(b.name, 80)) || 'The booker', role: 'booker', member: Boolean(b.customerId), invited: false }, ...list];
   },
 
   /**
@@ -361,11 +364,13 @@ export const gamePlayerMethods = {
     return rows.map((r) => {
       const b = this.rowToBooking(r);
       const share = this.playerShare(b, customerId);
+      // Round 31: an open game they joined goes by the game's own id, not the booker's code (it has their initials)
+      const open = b.occurrenceId ? this.openGameOf(b.id) : null;
       return {
-        id: b.id, ref: b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
+        id: b.id, ref: open ? open.id : b.ref, kind: b.kind, tables: b.tables, room: b.room, start: b.start, end: b.end, people: b.people, status: b.status,
         paid: share.due === 0 && (share.paid > 0 || b.paid), amount: share.amount, pay: 'day', extras: b.extras, players: [], occurrenceId: b.occurrenceId || null,
         refund: null, payment: 'store', pass: null, covered: 0, due: share.due, paidAmount: share.paid, split: false, owed: false, waived: Boolean(b.waived),
-        title: findOccurrence(rules, b.occurrenceId)?.title || '', playerOf: { name: firstName(b.name) }, canCancel: false, role: r.player_role,
+        title: findOccurrence(rules, b.occurrenceId)?.title || '', playerOf: { name: open ? this.openGameBookerFirst(b) : firstName(b.name) }, canCancel: false, role: r.player_role,
         gameSize: GAME_SIZES[b.people] || null, gamePlayers: this.gamePlayersOf(b, { viewer: customerId, withBooker: true }),
         ...(member?.code ? { ticketCode: member.code } : {}),
         // Round 31: an open game they joined: until when they can drop out online (POST /open-games/:id/leave)

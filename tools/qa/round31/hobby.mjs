@@ -3,7 +3,8 @@
 // and Learn to paint on a later date:
 //   1. Every Thursday: the next night (its date, free pairs, one player looking, Book a game table to the calendar)
 //   2. Looking for a game: Ruby's game for a member (first name, the game, size, start, tables, Join to the calendar's
-//      join sheet); logged out "A player" and the note; the filter (Kill Team: nobody); Post a game for a night
+//      join sheet); logged out "A player" and the note, and Join's sheet and the event sheet say Log in to join, coming
+//      straight back to that game (the review, 6 Nov 2026); the filter (Kill Team: nobody); Post a game for a night
 //   3. Learn to paint: its next date, and Book a seat opening it on the calendar
 //   4. the links work: Join opens the calendar's join sheet for that game; Post a game opens Reserve with Find me one
 //   5. axe (WCAG 2.2 A and AA) on the section; no sideways scroll; no console errors
@@ -131,6 +132,25 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   const out = flat(await page.innerText('[data-wt-list]'));
   check(`${size}: logged out: "A player", never Ruby`, /A player · Warhammer 40,000/.test(out) && !/Ruby/.test(out), out.slice(0, 200));
   check(`${size}: logged out: the note says to log in`, await page.locator('[data-wt-note]').isVisible());
+  // and Join opens the join sheet with Log in to join, which comes straight back to it (from the review, 6 Nov 2026)
+  await open(`/pages/events-calendar?game=${encodeURIComponent(listed)}#event=${encodeURIComponent(id)}`, null);
+  await page.waitForSelector('.cal-open-join', { timeout: 15000 }).catch(() => {});
+  const back = await page.evaluate(() => {
+    const a = document.querySelector('[data-open-login]');
+    return a ? new URL(a.href, location.href).searchParams.get('return_to') : null;
+  });
+  check(`${size}: logged out, the join sheet has Log in to join (no Join the game), back to this game`,
+    (await page.locator('[data-open-go]').count()) === 0 && back === `/pages/events-calendar?game=${encodeURIComponent(listed)}#event=${encodeURIComponent(id)}`, back);
+  check(`${size}: logged out, the sheet says why`, /Log in to join a game, so it shows in My Lair/.test(flat(await page.innerText('.cal-open-join'))));
+  await open('/pages/events-calendar', null);
+  await page.waitForSelector('lair-calendar .cal-card', { state: 'attached', timeout: 20000 });
+  await page.evaluate((occ) => document.querySelector('lair-calendar').openItem(occ), id);
+  await page.waitForSelector('[data-open-games] .cal-open__game', { timeout: 15000 }).catch(() => {});
+  const listBack = await page.evaluate(() => {
+    const a = document.querySelector('[data-open-games] a[href*="customer_authentication"]');
+    return a ? new URL(a.href, location.href).searchParams.get('return_to') : null;
+  });
+  check(`${size}: logged out, the event sheet's Log in to join comes back to that game's join sheet`, listBack === `/pages/events-calendar?game=${encodeURIComponent(listed)}#event=${encodeURIComponent(id)}`, listBack);
 
   // 4. the links
   await open(`/pages/events-calendar?game=${encodeURIComponent(listed)}#event=${encodeURIComponent(id)}`, mia);

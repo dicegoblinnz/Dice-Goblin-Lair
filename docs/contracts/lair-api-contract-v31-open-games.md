@@ -30,6 +30,10 @@ Discord; "Warhammer Night's unbooked pairs open to anyone to book from 6pm on th
   code, an account, a phone, the booker's last name, or the booking's own id or code: a game's public id is its own
   (`og_…`).
 - A taken game leaves the list for everyone but its two players.
+- The two players found each other on the list, so they see each other the same way everywhere (My Lair, the join's
+  answer, emails): first names only (**"A player"** for a member with no name, never their member code), with no email,
+  phone or last name, and the player's ticket goes by the game's id, not the booker's booking code. Staff see everything,
+  as for any game. (From the review, 6 Nov 2026.)
 
 ### 1.3 Joining
 
@@ -45,7 +49,10 @@ Discord; "Warhammer Night's unbooked pairs open to anyone to book from 6pm on th
 
 - The player can drop out (`POST /open-games/:id/leave`) until `refundHours` (24) before it starts. The booking is the
   booker's alone again, the game is listed again (and its afternoon email can go again), and the booker hears. A share
-  they'd paid ahead at the counter is money due back: staff are emailed, as for any cancellation.
+  they'd paid ahead at the counter is money due back: staff are emailed, as for any cancellation, and it stops counting
+  toward the game (a payment of minus that much, `order_id` 'refund', as v21's), so the booker still pays their own.
+- Either way round, the booking's `paid` follows what's paid toward it: a booker who paid their own $10 ahead has half a
+  game paid once someone joins (the player still pays theirs), and a whole one again if they drop out.
 - The booker cancels as before (`POST /bookings/:id/update { status: 'cancelled' }`). While nobody's joined it's free
   **right up until it starts** (`cancelRule`: `cancelUntil` is the start, never locked). Once someone has, the usual rule:
   locked in 24 hours before. A player who'd joined hears it's off ("Called off: Sam's game").
@@ -54,7 +61,8 @@ Discord; "Warhammer Night's unbooked pairs open to anyone to book from 6pm on th
 
 From 2pm on the night (Lair time), before it starts, the booker of a game nobody has joined gets one email: nobody's
 joined yet; their tables are saved to play whoever walks in, or paint at the station (free with their own paints); not
-coming, cancel free in My Lair before it starts. Once a game; again only after a player drops out.
+coming, cancel free in My Lair before it starts. Once a game; again only after a player drops out. Not for a game listed
+from 2pm that day: they've only just said they're coming.
 
 ### 1.6 Discord
 
@@ -127,7 +135,9 @@ Errors, after v11's name, email, phone and rate checks, in this order: `401 logi
 - The booker's booking: `openGame: { id, game, gameLabel, size, sizeLabel, newPlayers, status ('looking' | 'on'),
   opponent (first name, or null) }`, `gameSize: '1 v 1'`; `cancelUntil` is the start and `locked` false while it's looking.
 - The player's entry (v11's `playerBookings`, `playerOf` the booker): `openGame: { id, game, gameLabel, size, sizeLabel,
-  newPlayers, status: 'on', canLeave, leaveUntil }`. `canCancel` stays false: the player drops out with 2.4.
+  newPlayers, status: 'on', canLeave, leaveUntil }`. `canCancel` stays false: the player drops out with 2.4. `ref` is the
+  game's id (`og_…`), `playerOf.name` and `gamePlayers` first names only (1.2).
+- The booker's `gamePlayers` for an open game: first names, no `email`.
 
 ### 2.6 `POST /internal/open-games { at? }`
 

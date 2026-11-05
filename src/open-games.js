@@ -13,7 +13,10 @@
  *   someone has, the usual rule (locked refundHours before). The player can drop out (POST /open-games/:id/leave) until
  *   then too, and the game is listed again. Each side hears about the other's change by email.
  * - The afternoon: from 2pm on the day, the booker of a game nobody has joined is asked once if they're still coming
- *   (to play whoever walks in, or paint), and can still cancel free before it starts.
+ *   (to play whoever walks in, or paint), and can still cancel free before it starts. Not for a game listed from 2pm
+ *   that day: they've only just said they're coming.
+ * - The two players found each other on the list, so each sees the other's first name only, everywhere (the list, My
+ *   Lair, the join's answer, emails): never an email, a phone, a last name, a member code or the booker's booking code.
  * - Discord: with DISCORD_WARHAMMER_WEBHOOK set (a secret, the channel's webhook address), each game is posted without
  *   anyone's name or tables, edited to "Game on!" once it's taken, and deleted when it's called off or the night's over.
  *   A post that fails is tried again by the 10-minute run (openGamesAt). Mentions are switched off, so a post never pings.
@@ -88,6 +91,8 @@ const firstName = (name) => String(name || '').trim().split(/\s+/)[0] || '';
 const gameOf = (key) => OPEN_GAME_LIST.find((g) => g.key === key) || null;
 /** "$10", "$12.50" */
 const money = (cents) => `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)}`;
+/** Paid in full, as lair.js's settled: what it costs (less a pass's cover) is paid; a booking that costs nothing keeps its flag */
+const settled = (x) => ((x.amount || 0) > 0 ? Math.max(0, (x.amount || 0) - (x.covered || 0) - (x.paidAmount || 0)) === 0 : Boolean(x.paid));
 const partsOf = (ms, tz, options) => Object.fromEntries(new Intl.DateTimeFormat('en-NZ', { timeZone: tz, ...options }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
 /** "Thursday 15 October" */
 const dayWords = (ms, tz) => {
@@ -184,6 +189,19 @@ export const openGameMethods = {
     return trimmed(member?.first_name || member?.name || b?.name, 80);
   },
 
+  /**
+   * How an open game's two players name each other (they found each other on the list, so first names only, as the
+   * list shows them): the booker's first name, and the player's (a booking_players row with its member's name). "A
+   * player" when there's none: never round 11's member-code stand-in (playerName), since a code checks someone in.
+   */
+  openGameBookerFirst(b) {
+    return firstName(this.openGameBookerName(b)) || OPEN_GAME_WORDS.player;
+  },
+
+  openGamePlayerName(p) {
+    return firstName(trimmed(p?.member_name || p?.member_first || p?.name, 80)) || OPEN_GAME_WORDS.player;
+  },
+
   /** { game, gameLabel, size, sizeLabel, newPlayers } */
   openGameWords(row) {
     return {
@@ -197,7 +215,7 @@ export const openGameMethods = {
     const row = b?.occurrenceId ? this.openGameOf(b.id) : null;
     if (!row) return null;
     const p = this.openGamePlayer(row);
-    return { id: row.id, ...this.openGameWords(row), status: p ? 'on' : 'looking', opponent: p ? firstName(this.playerName(p)) : null };
+    return { id: row.id, ...this.openGameWords(row), status: p ? 'on' : 'looking', opponent: p ? this.openGamePlayerName(p) : null };
   },
 
   /** On the player's entry in My Lair (round 11's playerBookings): the game, and until when they can drop out online */
@@ -214,10 +232,10 @@ export const openGameMethods = {
     const yours = viewer && String(b.customerId || '') === viewer ? 'booker' : viewer && p && String(p.customer_id || '') === viewer ? 'player' : null;
     return {
       id: row.id, ...this.openGameWords(row), tables: spotLabel(b.tables || []), start: b.start,
-      player: viewer ? firstName(this.openGameBookerName(b)) || OPEN_GAME_WORDS.player : OPEN_GAME_WORDS.player,
+      player: viewer ? this.openGameBookerFirst(b) : OPEN_GAME_WORDS.player,
       status: p ? 'on' : 'looking',
       ...(yours ? { yours } : {}),
-      ...(yours === 'booker' && p ? { opponent: firstName(this.playerName(p)) } : {}),
+      ...(yours === 'booker' && p ? { opponent: this.openGamePlayerName(p) } : {}),
     };
   },
 
@@ -295,6 +313,8 @@ export const openGameMethods = {
     b.people = 2;
     b.amount = unit * 2;
     b.split = true;
+    // the booker may have paid their own $10 ahead: that's half the game now, so the player still pays theirs
+    b.paid = settled(b);
     this.saveBooking(b, now);
     this.write('UPDATE open_games SET player_id = ?, joined_at = ?, updated_at = ? WHERE id = ? AND player_id IS NULL', playerId, now, now, row.id);
     // --- saved: the game is theirs ---
@@ -324,13 +344,23 @@ export const openGameMethods = {
     const p = row ? this.openGamePlayer(row) : null;
     if (!row || !b || !p || String(p.customer_id || '') !== me || b.status !== 'confirmed') throw new RuleError(OPEN_GAME_WORDS.notIn, 404);
     if (now >= cancelUntil(b, rules)) throw new RuleError(OPEN_GAME_WORDS.lockedLeave(rules.refundHours, firstName(this.openGameBookerName(b)) || 'the booker'), 409);
-    // paid their share at the counter ahead of time: it's money due back, for staff (as cancelOwnBooking)
+    // Paid their share at the counter ahead of time: it's money due back to them, for staff (as cancelOwnBooking), and
+    // it stops counting toward the game (a payment of minus that much, order_id 'refund', as round 21's), so the booker
+    // still pays their own and every later sum (paidSoFar) goes by what's paid toward it, net
     const paid = this.sql.exec('SELECT COALESCE(SUM(amount), 0) AS n FROM payments WHERE booking_id = ? AND customer_id = ?', b.id, me).one().n;
     const unit = Math.round((b.amount || 0) / Math.max(1, b.people || 1));
     this.write('DELETE FROM booking_players WHERE id = ?', p.id);
+    if (paid > 0) {
+      this.write(
+        "INSERT INTO payments (id, booking_id, kind, order_id, line_id, amount, customer_id, at) VALUES (?, ?, 'booking', 'refund', ?, ?, ?, ?)",
+        makeId('pm'), b.id, `left:${p.id}`, -paid, me, now,
+      );
+      b.paidAmount = Math.max(0, (b.paidAmount || 0) - paid);
+    }
     b.people = 1;
     b.amount = unit;
     b.split = false;
+    b.paid = settled(b);
     this.saveBooking(b, now);
     this.write('UPDATE open_games SET player_id = NULL, joined_at = NULL, nudged_at = NULL, updated_at = ? WHERE id = ?', now, row.id);
     // --- saved ---
@@ -382,7 +412,8 @@ export const openGameMethods = {
     const title = event?.title || 'the game night';
     const when = this.when(b, rules);
     const booker = firstName(this.openGameBookerName(b)) || 'there';
-    const player = firstName(this.playerName(p)) || 'Someone';
+    const player = this.openGamePlayerName(p);
+    const hello = player === OPEN_GAME_WORDS.player ? 'there' : player;
     const unit = Math.round((b.amount || 0) / Math.max(1, b.people || 1));
     const where = `Tables ${spotLabel(b.tables || [])}`;
     const game = this.openGameLine(row);
@@ -401,7 +432,7 @@ export const openGameMethods = {
       const label = new LairTime(rules.tz).label(until);
       this.later(this.mail(this.letter(p.email, `You're in: ${title} with ${booker}, ${when}`, {
         title: "You're in!",
-        intro: `Kia ora ${player}, you've joined ${booker}'s game at ${title}, at the Dice Goblin Lair. Gobgob's saved your tables.`,
+        intro: `Kia ora ${hello}, you've joined ${booker}'s game at ${title}, at the Dice Goblin Lair. Gobgob's saved your tables.`,
         details: [['Event', title], ['When', when], ['Where', where], ['Game', game], ['Playing', `You against ${booker}`], ['Fee', unit ? `${money(unit)}, your own share, paid at the counter on the night` : '']],
         outro: [
           `Show your Goblin card from My Lair at the counter when you arrive (or give ${booker}'s name): it finds the game.`,
@@ -421,7 +452,7 @@ export const openGameMethods = {
     const title = event?.title || 'the game night';
     const when = this.when(b, rules);
     const booker = firstName(this.openGameBookerName(b)) || 'there';
-    const player = firstName(this.playerName(p)) || 'Your opponent';
+    const player = this.openGamePlayerName(p);
     this.later(this.mail(this.letter(b.email, `${player} can't make it: your game's listed again`, {
       title: 'Your game is listed again',
       intro: `Kia ora ${booker}, ${player} has dropped out of your game at ${title}. Gobgob's listed it again, so someone else can join.`,
@@ -438,7 +469,8 @@ export const openGameMethods = {
     const title = event?.title || 'the game night';
     const when = this.when(b, rules);
     const booker = firstName(this.openGameBookerName(b)) || 'The booker';
-    const player = firstName(this.playerName(p)) || 'there';
+    const hello = this.openGamePlayerName(p);
+    const player = hello === OPEN_GAME_WORDS.player ? 'there' : hello;
     this.later(this.mail(this.letter(p.email, `Called off: ${booker}'s game, ${when}`, {
       title: 'That game is off',
       intro: `Kia ora ${player}, ${booker} has cancelled the game you'd joined at ${title}, so it's off. There's nothing to pay for it.`,
@@ -460,7 +492,10 @@ export const openGameMethods = {
     return { nudged, posted };
   },
 
-  /** From 2pm on the day, once: the booker of a game nobody has joined is asked if they're still coming. No awaits. */
+  /**
+   * From 2pm on the day, once: the booker of a game nobody has joined, listed before 2pm that day (or earlier), is asked
+   * if they're still coming. No awaits.
+   */
   nudgeOpenGames(rules, now) {
     if (!emailReady(this.env)) return 0;
     const time = new LairTime(rules.tz);
@@ -476,6 +511,8 @@ export const openGameMethods = {
     for (const row of rows) {
       const b = this.booking(row.booking_id);
       if (!b || !isEmail(b.email) || time.key(b.start) !== time.key(now)) continue;
+      // listed from 2pm on the day: they've only just said they're coming
+      if (time.key(row.created_at) === time.key(now) && time.minutesOf(row.created_at) >= NUDGE_FROM) continue;
       const event = findOccurrence(rules, b.occurrenceId);
       const title = event?.title || 'the game night';
       const booker = firstName(this.openGameBookerName(b)) || 'there';
