@@ -320,7 +320,9 @@ test('round 29, first game: "Save my seat every week" marks the first seat it bo
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM bookings WHERE customer_id = ? AND first_game IS NOT NULL", KAI).one().n, 0);
 });
 
-test('round 29, first game: a seat\'s answer says which weekday its two-day reminder goes (reminderDay), or nothing: booked on the reminder day or later, a weekly seat, reminders off, or no emails', async () => {
+test('round 29, first game: a seat\'s answer says which weekday its two-day reminder goes (reminderDay), or nothing: booked on the reminder day or later, a weekly seat, reminders not switched on (only the live theme\'s settings saying true turns them on, as section 2\'s run reads it), or no emails', async () => {
+  // section 2: reminders go only once the live theme's settings say lair_booking_reminders: true
+  lair.rulesCache = rulesWith({ lair_booking_reminders: true });
   const g = await game({ seats: 8, tables: ['T12', 'T13'] });
   // Monday for Sunday: Friday's reminder
   assert.equal((await join(g.id, RIA, 'Ria Moana', { firstGame: true })).reminderDay, 'Friday');
@@ -331,15 +333,22 @@ test('round 29, first game: a seat\'s answer says which weekday its two-day remi
   assert.equal((await join(g.id, MIA, 'Mia Chen')).reminderDay, null);
   // a Saturday game booked on Wednesday: Thursday's
   nowIs(NOW);
-  const sat = await game({ title: 'Lost Mine', schedule: 'one-shot', tables: ['T10'], start: at(SAT, 13), end: at(SAT, 16) });
+  const sat = await game({ title: 'Lost Mine', schedule: 'one-shot', seats: 8, tables: ['T10', 'T11'], start: at(SAT, 13), end: at(SAT, 16) });
   assert.equal((await join(sat.id, LEO, 'Leo Park')).reminderDay, 'Thursday');
   // a weekly saved seat gets no reminder, so "Save my seat every week" answers none
   const weekly = ok(await call('POST', `games/${g.id}/join-series`, { people: 1, name: 'Leo Park', email: 'leo@example.com', phone: MOBILE }, LEO));
   assert.equal(weekly.reminderDay ?? null, null);
-  // reminders switched off in Theme settings, and emails not set up
+  // reminders switched off in Theme settings: none goes, so none is promised
   lair.rulesCache = rulesWith({ lair_booking_reminders: false });
   assert.equal((await join(sat.id, '', 'Sam Jones')).reminderDay, null);
+  // no setting yet (a Lair app live before its theme): the run sends none, so the confirmation promises none
   lair.rulesCache = rulesWith();
+  assert.equal((await join(sat.id, '', 'Ana Lee')).reminderDay, null);
+  // rules that don't say at all fail safe too, as the run's claim does
+  lair.rulesCache = { ...rulesWith({ lair_booking_reminders: true }), bookingReminders: undefined };
+  assert.equal((await join(sat.id, '', 'Tom Ngata')).reminderDay, null);
+  // emails not set up
+  lair.rulesCache = rulesWith({ lair_booking_reminders: true });
   lair.baseEnv = { ...lair.baseEnv, RESEND_API_KEY: '' };
   assert.equal((await join(sat.id, '', 'Jo Bloggs')).reminderDay, null);
 });

@@ -1,13 +1,15 @@
 // Round 29, roleplayers phase 1, item 1 (contract v29-roleplayers section 2): a booking reminder's cancel link on the
 // theme mock, with the real Lair app in this process (node:sqlite), so every link here comes from a real reminder email
 // (POST /internal/reminders at a fixed time). Mo's plan (2 Nov 2026): "One tap cancels while it's still free."
-// Checked logged out and logged in, at 390 and 1280: the code and key are out of the address before the page's own
-// scripts run; the card asks once ("Give up your seat at …?", until when it's free); opening the link cancels nothing
+// Checked logged out and logged in, at 390 and 1280: the code and key ride in the fragment (#cancel=…&key=…), so no
+// request to a server carries them, and they're out of the address before the page's own scripts run (none of them, My
+// Lair's router included, ever sees them); the card asks once ("Give up your seat at …?", until when it's free); opening the link cancels nothing
 // (email scanners open links); "Yes" cancels by the Lair's own path (the GM hears); "Keep it" keeps it; a wrong key,
 // one that's locked in and one cancelled already say so in the Lair's words, with the phone number; logged in, My Lair
 // shows it cancelled straight after; logged out, Log in comes back with an email's ?view= and never the key. No
 // sideways scroll, no console errors, nothing outside localhost, axe on the card.
 // Usage (from the Lair repo): DG_THEME=/path/to/theme [AXE=/path/to/axe.min.js] [PORT=4994] [OUT=dir] node tools/qa/round29-roleplayers/reminder-cancel.mjs
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -56,7 +58,8 @@ const drain = async () => {
   while (pending.length) await Promise.all(pending.splice(0));
 };
 const EVENTS = [{ id: 'clocktower', title: 'Blood on the Clocktower', type: 'social', start: at(DAY, 18), end: at(DAY, 21), tables: '', capacity: 40, entryFee: 1000, payment: 'store' }];
-lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', store_phone: '021 159 6894' }, [{ id: 'common-room', name: 'Common room', code: 'T', tables: 20, seats: 4, order: 1 }], EVENTS, { address: ADDRESS });
+// reminders on, as the theme's settings say once it's live (absent, the Lair sends none)
+lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', store_phone: '021 159 6894', lair_booking_reminders: true }, [{ id: 'common-room', name: 'Common room', code: 'T', tables: 20, seats: 4, order: 1 }], EVENTS, { address: ADDRESS });
 lair.rulesLoadedAt = Date.now() + 365 * 24 * 3600_000;
 Object.defineProperty(lair.shopify, 'configured', { get: () => true, configurable: true });
 lair.shopify.graphql = async () => {
@@ -114,7 +117,16 @@ const linkOf = (email) => {
   const line = text.match(/^Cancel my (?:seat|seats|table|sign-up): (\S+)$/m);
   return line ? new URL(line[1]) : null;
 };
-const local = (url) => `/pages/my-lair${url.search}`;
+const local = (url) => `/pages/my-lair${url.search}${url.hash}`;
+/** A link with its fragment's key swapped */
+const withKey = (url, key) => {
+  const wrong = new URL(url);
+  const hash = new URLSearchParams(wrong.hash.slice(1));
+  hash.set('key', key);
+  wrong.hash = hash.toString();
+  return wrong;
+};
+const linkKeys = () => ['phone', 'desk'].flatMap((t) => [`sam.${t}`, `jo.${t}`, `ria.${t}`, `ria.seat.${t}`]).map((who) => new URLSearchParams(linkOf(`${who}@example.com`)?.hash.slice(1) || '').get('key')).filter(Boolean);
 const status = (id) => lair.sql.exec('SELECT status FROM bookings WHERE id = ? UNION ALL SELECT status FROM event_joins WHERE id = ?', id, id).one()?.status;
 // one that's locked in already (its session starts in 6 hours), with a key of its own (made now: one made before the
 // Lair's round 15 start keeps the old rules and never locks)
@@ -129,7 +141,21 @@ lair.sql.exec('UPDATE bookings SET cancel_key = ? WHERE id = ?', lockedKey, lock
 /* ---------------- the theme mock, live, with /apps/liar going to the Lair above ---------------- */
 m.globalSettings.lair_mode = 'live';
 const API = '/apps/liar';
+const THEME = process.env.DG_THEME || '/home/claude/dg-theme';
+// every address a request to the server carried (a key there would be in its logs)
+const serverSaw = [];
+// the page's own scripts, each noting the address it saw when it ran (My Lair's router is my-lair.js)
+const WATCHED = ['theme.js', 'tracking.js', 'lair-core.js', 'my-lair.js', 'lair-cancel-link.js'];
 m.mockState.before = async (req, res, url) => {
+  serverSaw.push(req.url);
+  const script = url.pathname.startsWith('/assets/') && WATCHED.find((name) => url.pathname === `/assets/${name}`);
+  if (script) {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    // and, from the first of them, listeners as late as the page's own (My Lair's router listens for hash changes)
+    const late = `if (!window.__late) { window.__late = []; window.addEventListener('hashchange', (e) => window.__late.push(e.newURL)); window.addEventListener('popstate', () => window.__late.push('popstate ' + window.location.href)); }`;
+    res.end(`(window.__saw = window.__saw || {})[${JSON.stringify(script)}] = window.location.href; ${late}\n${fs.readFileSync(path.join(THEME, 'assets', script), 'utf8')}`);
+    return true;
+  }
   if (!url.pathname.startsWith(`${API}/`)) return false;
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -156,8 +182,13 @@ async function open(size, who, where) {
     outside.push(route.request().url());
     return route.abort();
   });
-  // what the page's own scripts see of the address, once the document is parsed (the head snippet has run by then)
+  // what the page's own scripts see of the address, once the document is parsed (the head snippet has run by then);
+  // and hash changes and history steps as a listener added before any page script gets them (as a browser extension
+  // could: nothing on the page can come before it), which shows a same-tab link really fired them
   await ctx.addInitScript(() => {
+    window.__early = [];
+    window.addEventListener('hashchange', (event) => window.__early.push(event.newURL));
+    window.addEventListener('popstate', () => window.__early.push(`popstate ${window.location.href}`));
     document.addEventListener('DOMContentLoaded', () => {
       window.__seenAddress = window.location.href;
     });
@@ -174,6 +205,17 @@ const card = async (page) => ({
   keep: await text(page, '[data-cancel-link-keep]'), actions: await page.$eval('.cancel-link__actions', (e) => !e.hidden).catch(() => false),
 });
 const settle = (page, ms = 400) => page.waitForTimeout(ms);
+/**
+ * What the page's scripts saw of the address, as they started and in any hash change or history step a listener as late
+ * as theirs got: none may have the code or key (logged in, my-lair.js must be one of them). sameTab: a link opened in
+ * a tab on My Lair already, which must have fired those events (as the early listener shows)
+ */
+const sawNoKey = async (page, loggedIn, sameTab = false) => {
+  const seen = await page.evaluate(() => ({ saw: window.__saw || {}, dom: window.__seenAddress, now: window.location.href, late: window.__late || [], early: window.__early || [] }));
+  const all = [...Object.values(seen.saw), seen.dom, seen.now, ...seen.late];
+  const fired = seen.early.some((a) => /#cancel=/.test(a));
+  return { ok: all.every((a) => !/[?&#](cancel|key)=/.test(a || '')) && !seen.late.length && (!loggedIn || 'my-lair.js' in seen.saw) && !new URL(seen.now).hash && fired === sameTab, seen };
+};
 const when = `${longDay(DAY)}, 6pm`;
 const free = `It's free to cancel until 6pm ${weekday(addDays(DAY, -1))}.`;
 
@@ -186,7 +228,8 @@ for (const size of ['phone', 'desktop']) {
     const link = linkOf(`sam.${size === 'phone' ? 'phone' : 'desk'}@example.com`);
     const { ctx, page } = await open(size, null, local(link));
     await page.waitForSelector('.cancel-link__actions:not([hidden])', { timeout: 15000 });
-    check(`${tag} logged out: the code and key are out of the address before the page's own scripts run`, !/[?&](cancel|key)=/.test(await page.evaluate(() => window.__seenAddress)) && !/[?&](cancel|key)=/.test(page.url()), [await page.evaluate(() => window.__seenAddress), page.url()]);
+    const seenOut = await sawNoKey(page, false);
+    check(`${tag} logged out: the code and key ride in the fragment and are out of the address before the page's own scripts run (none of them sees them)`, linkOf(`sam.${size === 'phone' ? 'phone' : 'desk'}@example.com`).hash.startsWith('#cancel=') && seenOut.ok, seenOut.seen);
     const c = await card(page);
     check(`${tag} the card: "Give up your seat at Candlekeep Mysteries, ${when}?" and until when it's free`, c.title === `Give up your seat at Candlekeep Mysteries, ${when}?` && c.line === free && c.yes === 'Yes, give up my seat' && c.keep === 'Keep it', c);
     check(`${tag} opening the link cancels nothing (email scanners open links)`, status(set.seatGuest.id) === 'confirmed');
@@ -241,6 +284,8 @@ for (const size of ['phone', 'desktop']) {
   {
     const { ctx, page } = await open(size, RIA, local(linkOf(`ria.${size === 'phone' ? 'phone' : 'desk'}@example.com`)));
     await page.waitForSelector('.cancel-link__actions:not([hidden])', { timeout: 15000 });
+    const seenIn = await sawNoKey(page, true);
+    check(`${tag} logged in: no script saw the code or key, My Lair's router included, and My Lair opened on Home`, seenIn.ok && await page.$eval('my-lair [data-view="home"]', (e) => !e.hidden).catch(() => false), seenIn.seen);
     check(`${tag} logged in: the card above My Lair`, await page.evaluate(() => {
       const card = document.querySelector('lair-cancel-link');
       const mine = document.querySelector('my-lair');
@@ -254,8 +299,12 @@ for (const size of ['phone', 'desktop']) {
     await settle(page);
     const kept = await card(page);
     check(`${tag} Keep it: "Gobgob's guarding your table. See you there!", and it's still booked`, kept.said === "Gobgob's guarding your table. See you there!" && !kept.actions && status(set.tableMember.id) === 'confirmed', kept);
+    // her seat's link, in the same tab: only the fragment changes, so there's no new page
     await page.goto(`${BASE}${local(linkOf(`ria.seat.${size === 'phone' ? 'phone' : 'desk'}@example.com`))}`, { waitUntil: 'networkidle' });
     await page.waitForSelector('.cancel-link__actions:not([hidden])', { timeout: 15000 });
+    const next = await card(page);
+    const seenNext = await sawNoKey(page, true, true);
+    check(`${tag} the next link in the same tab (only the fragment changes): taken before the page's own listeners (My Lair's router included) see it, and the card asks afresh`, seenNext.ok && next.title === `Give up your seat at Candlekeep Mysteries, ${when}?` && next.yes === 'Yes, give up my seat', { next, seen: seenNext.seen });
     await page.click('[data-cancel-link-yes]');
     await page.waitForFunction(() => /Done\./.test(document.querySelector('.cancel-link__said')?.textContent || ''), null, { timeout: 15000 });
     check(`${tag} logged in, the seat's cancelled the same way`, status(set.seatMember.id) === 'cancelled');
@@ -270,16 +319,14 @@ for (const size of ['phone', 'desktop']) {
 
   /* a wrong key, and one that's locked in */
   {
-    const real = linkOf(`ria.${size === 'phone' ? 'phone' : 'desk'}@example.com`);
-    const wrong = new URL(real);
-    wrong.searchParams.set('key', 'f'.repeat(32));
+    const wrong = withKey(linkOf(`ria.${size === 'phone' ? 'phone' : 'desk'}@example.com`), 'f'.repeat(32));
     const { ctx, page } = await open(size, null, local(wrong));
     await page.waitForSelector('.cancel-link__call:not([hidden])', { timeout: 15000 });
     const c = await card(page);
     check(`${tag} a wrong key: one plain message, and the phone number`, c.title === 'Cancel a booking' && c.error === CANCEL_LINK_WORDS.wrong && c.call === 'Something come up? Call us on 021 159 6894.' && !c.actions, c);
     await axe(page, `${tag} the card, a wrong link`, 'lair-cancel-link');
     await shot(page, `${size}-5-wrong`, 'lair-cancel-link');
-    await page.goto(`${BASE}/pages/my-lair?cancel=LK-LOCKED-7&key=${lockedKey}`, { waitUntil: 'networkidle' });
+    await page.goto(`${BASE}/pages/my-lair#cancel=LK-LOCKED-7&key=${lockedKey}`, { waitUntil: 'networkidle' });
     await page.waitForSelector('.cancel-link__call:not([hidden])', { timeout: 15000 });
     const locked = await card(page);
     check(`${tag} locked in: what it is, and the tab's words`, /^Your seat at Candlekeep Mysteries, /.test(locked.title) && locked.error === TAB_WORDS.locked(24) && !locked.actions && status(lockedId) === 'confirmed', locked);
@@ -290,10 +337,10 @@ for (const size of ['phone', 'desktop']) {
 
 /* logged out with an email's ?view=: Log in comes back to it, never with the cancel link's code or key */
 {
-  const { ctx, page } = await open('phone', null, `/pages/my-lair?view=ml-st-RM-OWLBEAR-17&cancel=NO-SUCH-1&key=${'d'.repeat(32)}`);
+  const { ctx, page } = await open('phone', null, `/pages/my-lair?view=ml-st-RM-OWLBEAR-17#cancel=NO-SUCH-1&key=${'d'.repeat(32)}`);
   const href = await page.$eval('a[data-ml-login]', (a) => a.getAttribute('href'));
   const back = new URL(href, BASE).searchParams.get('return_to');
-  check('[phone] Log in comes back to the ticket the email linked to (?view=), and the address keeps it', back === '/pages/my-lair?view=ml-st-RM-OWLBEAR-17' && /view=ml-st-RM-OWLBEAR-17/.test(page.url()), { href, url: page.url() });
+  check('[phone] Log in comes back to the ticket the email linked to (?view=), and the address keeps it (and only it)', back === '/pages/my-lair?view=ml-st-RM-OWLBEAR-17' && /view=ml-st-RM-OWLBEAR-17/.test(page.url()) && !new URL(page.url()).hash, { href, url: page.url() });
   check('[phone] … and never carries the cancel link\'s code or key', !/cancel|key|dddd/.test(decodeURIComponent(href)), href);
   await ctx.close();
   const plain = await open('phone', null, '/pages/my-lair');
@@ -306,7 +353,7 @@ for (const size of ['phone', 'desktop']) {
 {
   m.globalSettings.lair_mode = 'demo';
   const before = lair.sql.exec("SELECT COUNT(*) AS n FROM bookings WHERE status = 'cancelled'").one().n;
-  const { ctx, page } = await open('phone', null, `/pages/my-lair?cancel=DEMO-1&key=${'e'.repeat(32)}`);
+  const { ctx, page } = await open('phone', null, `/pages/my-lair#cancel=DEMO-1&key=${'e'.repeat(32)}`);
   await page.waitForSelector('.cancel-link__actions:not([hidden])', { timeout: 15000 });
   check('[demo] a made-up seat, saying it\'s a demo', /^Give up your seat at Candlekeep Mysteries, /.test(await text(page, '.cancel-link__title')) && (await text(page, '.cancel-link__demo')) === 'Demo: nothing is cancelled.');
   await page.click('[data-cancel-link-yes]');
@@ -317,6 +364,9 @@ for (const size of ['phone', 'desktop']) {
 }
 
 check('nothing outside localhost was asked for', !outside.length, outside.slice(0, 5));
+// the code and key went to the Lair only in POST bodies: no address a server got (its logs) carried one
+const keys = [...linkKeys(), lockedKey, 'f'.repeat(32), 'd'.repeat(32), 'e'.repeat(32)];
+check(`no request to the server carried a cancel link's code or key in its address (${serverSaw.length} requests, ${keys.length} keys)`, serverSaw.length > 0 && keys.length === 12 && serverSaw.every((u) => !/[?&#](cancel|key)=/.test(u) && !keys.some((k) => u.includes(k))), serverSaw.filter((u) => /cancel=|key=/.test(u) || keys.some((k) => u.includes(k))).slice(0, 5));
 if (!AXE) console.log('(axe skipped: set AXE to a copy of axe.min.js)');
 console.log(JSON.stringify(totals()), `screenshots in ${process.env.OUT}`);
 await browser.close();

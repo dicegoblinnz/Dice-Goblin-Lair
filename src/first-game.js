@@ -123,11 +123,12 @@ export const firstGameMethods = {
 
   /**
    * The weekday a one-off TTRPG seat's two-day reminder goes ("Friday"), or null when none will: emails off, the reminders
-   * switched off in Theme settings, a weekly saved seat, or booked on the reminder day or later (as booking-reminders.js
-   * claims them). For the confirmation's "We'll email you on Friday as a reminder." No awaits.
+   * not switched on (only the live theme's settings saying true turns them on, the same check as booking-reminders.js's
+   * claim), a weekly saved seat, or booked on the reminder day or later (as booking-reminders.js claims them). For the
+   * confirmation's "We'll email you on Friday as a reminder." No awaits.
    */
   bookingReminderDay(x, rules, now) {
-    if (!emailReady(this.env) || rules?.bookingReminders === false) return null;
+    if (!emailReady(this.env) || rules?.bookingReminders !== true) return null;
     if (!x || x.kind !== 'gm-seat' || x.seriesId || x.status !== 'confirmed' || !isEmail(x.email)) return null;
     const time = new LairTime(rules.tz);
     const remindDay = addDays(time.key(x.start), -2);
