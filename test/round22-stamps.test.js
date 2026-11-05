@@ -244,7 +244,7 @@ test('paid sessions (round 22): an owed session paid at a later visit stamps it,
   ok(await internal('orders-paid', posOrder(7201, [bookingLine(72011, owed.line.properties._booking, Number(owed.line.price))])));
   assert.deepEqual([lair.booking(booking.id).status, lair.booking(booking.id).paid], ['confirmed', true]);
   assert.equal(stamps(RIA), 1, 'paid: stamped');
-  assert.deepEqual(ok(await pos('scan', { code: codeOf(RIA) })).loyalty, { stamps: 1, cardSize: 10, rollsAvailable: 0, card: 1 }, 'the counter sees it');
+  assert.deepEqual(ok(await pos('scan', { code: codeOf(RIA) })).loyalty, { stamps: 1, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 3 }, 'the counter sees it');
 });
 
 test('paid sessions (round 22): an event sign-up paid at the counter stamps everyone on it from its day; part paid, it waits', async () => {
@@ -428,7 +428,7 @@ test('paid sessions (round 22, after review): a GM who pays a guest\'s seat in t
 test('staff stamps (round 22): at the counter, one a tap; the same tap again adds nothing; Undo takes it back', async () => {
   const added = ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' }));
   assert.deepEqual([added.repeated, added.stamp.kind, added.stamp.count, added.stamp.title, added.stamp.addedBy, added.stamp.undoneAt], [false, 'staff', 1, W.staffTitle, 'the counter', null]);
-  assert.deepEqual(added.loyalty, { stamps: 1, cardSize: 10, rollsAvailable: 0, card: 1 });
+  assert.deepEqual(added.loyalty, { stamps: 1, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 3 });
   // the answer was lost and the counter asked again with the same key: nothing more
   const repeat = ok(await pos('stamp', { customerId: MIA, key: 'tap-aaaa-0001' }));
   assert.deepEqual([repeat.repeated, repeat.stamp.id, repeat.loyalty.stamps], [true, added.stamp.id, 1]);
@@ -505,7 +505,7 @@ test('staff stamps (round 22, after review): a helper never stamps their own car
 test('staff stamps (round 22): on a member\'s page, 1 to 10 with a note, for staff with Check-in or Members; Undo there; ten fill a card', async () => {
   const given = ok(await call('POST', `members/${MIA}/stamps`, { count: 3, note: 'Missed check-ins on Friday', key: 'page-aaaa-0001' }, OWNER));
   assert.equal(given.member.customerId, MIA);
-  assert.deepEqual(given.member.loyalty, { stamps: 3, cards: 0, rollsAvailable: 0, card: 1 });
+  assert.deepEqual(given.member.loyalty, { stamps: 3, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 5 });
   assert.deepEqual(given.member.stamps.map((s) => [s.kind, s.count, s.note, s.addedBy, s.undoneAt]), [['staff', 3, 'Missed check-ins on Friday', 'Mo', null]]);
   assert.equal(ok(await call('POST', `members/${MIA}/stamps`, { count: 3, key: 'page-aaaa-0001' }, OWNER)).repeated, true, 'a double tap');
   assert.equal(stamps(MIA), 3);
@@ -535,9 +535,9 @@ test('staff stamps (round 22): on a member\'s page, 1 to 10 with a note, for sta
 test('the counter (round 22): a ticket on an account shows its card, and the check-in answer brings its new stamps; a guest\'s has none', async () => {
   const booking = await table(MIA, 'Mia', { people: 2 });
   const scan = ok(await pos('scan', { code: booking.ref }));
-  assert.deepEqual(scan.loyalty, { stamps: 0, cardSize: 10, rollsAvailable: 0, card: 1 });
+  assert.deepEqual(scan.loyalty, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 2 });
   const checkin = ok(await pos('checkin', { id: booking.id, type: 'booking' }));
-  assert.deepEqual([checkin.checkedIn, checkin.loyalty], [true, { stamps: 2, cardSize: 10, rollsAvailable: 0, card: 1 }]);
+  assert.deepEqual([checkin.checkedIn, checkin.loyalty], [true, { stamps: 2, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 4 }]);
   // a guest's booking (no account) has no card to show
   const guest = ok(await call('POST', 'bookings', { kind: 'table', tables: ['T6'], start: at('2026-10-25', 14), end: at('2026-10-25', 16), people: 2, name: 'Pat', email: 'pat@example.com', phone: '021 555 0101', pay: 'day' }, '')).booking;
   const guestScan = ok(await pos('scan', { code: guest.ref }));
@@ -548,11 +548,11 @@ test('the counter (round 22): a ticket on an account shows its card, and the che
 test('the staff page (round 22): a member code at check-in brings their card, so a helper with Check-in can add a stamp there', async () => {
   const before = ok(await call('POST', 'checkin', { code: codeOf(MIA) }, HEMI));
   assert.equal(before.kind, 'member');
-  assert.deepEqual(before.loyalty, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1 });
+  assert.deepEqual(before.loyalty, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 2 });
   const added = ok(await call('POST', `members/${MIA}/stamps`, { count: 1, key: 'checkin-card-tap-1' }, HEMI));
   assert.deepEqual([added.member.loyalty.stamps, added.member.loyalty.card, added.stamp.addedBy], [1, 1, 'Hemi']);
-  assert.deepEqual(ok(await call('POST', 'checkin', { code: codeOf(MIA) }, HEMI)).loyalty, { stamps: 1, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1 });
+  assert.deepEqual(ok(await call('POST', 'checkin', { code: codeOf(MIA) }, HEMI)).loyalty, { stamps: 1, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 3 });
   // nine more fill the card: the next scan shows card 2, and a roll waiting
   ok(await call('POST', `members/${MIA}/stamps`, { count: 9 }, OWNER));
-  assert.deepEqual(ok(await call('POST', 'checkin', { code: codeOf(MIA) }, HEMI)).loyalty, { stamps: 0, cardSize: 10, cards: 1, rollsAvailable: 1, card: 2 });
+  assert.deepEqual(ok(await call('POST', 'checkin', { code: codeOf(MIA) }, HEMI)).loyalty, { stamps: 0, cardSize: 10, cards: 1, rollsAvailable: 1, card: 2, slots: 12, headStart: 2, onCard: 2 });
 });

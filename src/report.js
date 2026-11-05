@@ -27,7 +27,7 @@
 //   customer, browser or address is stored, and a browser sending too many in a short time is ignored.
 // - The report emails the team on Monday morning (after 8am at the Lair), once a week: last week next to the week before.
 //   REPORT_EMAIL (config) sends it somewhere else, or 'off' stops it; otherwise it goes to STAFF_EMAIL.
-import { HOUR, LairTime, MIN } from './core.js';
+import { CARD_SIZE, HOUR, LairTime, MIN } from './core.js';
 import { emailReady } from './shopify.js';
 import { COUNTER_SOURCES, FOUND_US_ANSWERS } from './newplayers.js';
 
@@ -76,8 +76,9 @@ export const REPORT_COLUMNS = [
 const BOOKING_KINDS = "('table', 'walkin', 'gm-seat')";
 /** Paid around the session (alias x): still paid, and first paid from PAID_BEFORE before it to PAID_AFTER after it */
 const paidOnTheDay = (x) => `((${x}.paid = 1 OR ${x}.paid_amount > 0) AND ${x}.paid_at IS NOT NULL AND ${x}.paid_at >= ${x}.starts_at - ${PAID_BEFORE} AND ${x}.paid_at <= ${x}.ends_at + ${PAID_AFTER})`;
-/** A booking that was a visit (alias b) */
-const BOOKING_VISIT = `(b.status IN ('seated', 'done') OR (${paidOnTheDay('b')} AND b.status NOT IN ('cancelled', 'noshow', 'held')))`;
+/** A booking that was a visit (alias x; round 29: any alias, for a first game and the seat someone came back to) */
+const visitOf = (x) => `(${x}.status IN ('seated', 'done') OR (${paidOnTheDay(x)} AND ${x}.status NOT IN ('cancelled', 'noshow', 'held')))`;
+const BOOKING_VISIT = visitOf('b');
 /** A sign-up that was a visit (alias j) */
 const JOIN_VISIT = `(j.status = 'attended' OR (${paidOnTheDay('j')} AND j.status NOT IN ('cancelled', 'held')))`;
 /** Made by staff for someone: a walk-in, a staff-page booking (added_by), or a seat staff added (round 7's note) */
@@ -91,7 +92,29 @@ export const REPORT_WORDS = {
   week: 'Weeks run Monday to Sunday at the Lair.',
   // Round 24 (contract v24-new-players)
   newPlayer: 'A new player has an account and made their first visit that week. Each is counted once: by the welcome code they used, else the ad link they first came by, else what they told us when asked how they found us.',
+  // Round 29 (contract v29-roleplayers section 2)
+  oneOff: "A one-off booking is a TTRPG seat (not a weekly saved one), a table or an event sign-up. A seat or table is a no-show when staff mark it one; a sign-up when it's over and wasn't checked in or paid.",
+  // Round 29 (contract v29-roleplayers section 3)
+  firstGames: 'A first game is a TTRPG seat booked as someone\'s first roleplaying game ("Yes, my first") that they came to (checked in, or paid on the day). Back within 4 weeks: they came to another TTRPG seat in the 4 weeks after it. Each week shows the first games from 4 weeks before it, whose 4 weeks are up.',
+  cardsFilled: 'A loyalty card fills with its 10th stamp. Cards filled: in the 4 weeks ending with that week.',
+  visitGap: 'Days between visits: for each person with an account who came on 2 or more days in the 8 weeks ending with that week, the average days between those days. The number is the median of those (half come back sooner, half later).',
 };
+/** Round 29: first games come back "within 4 weeks"; cards filled "in the last 4 weeks"; visits "in the last 8 weeks" */
+export const FIRST_GAME_BACK_DAYS = 28;
+export const CARDS_WINDOW_WEEKS = 4;
+export const VISIT_GAP_WEEKS = 8;
+/** Days from one day key to another ('YYYY-MM-DD'), whatever daylight saving does in between */
+const daysBetween = (a, b) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / (24 * HOUR));
+/** The middle of a list of numbers (the two middles' average for an even count), to one decimal place; null for none */
+const median = (list) => {
+  if (!list.length) return null;
+  const sorted = [...list].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const value = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return Math.round(value * 10) / 10;
+};
+/** 7 → "7", 13.5 → "13.5" */
+const oneDecimal = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 const ANSWER_WORDS = new Map(FOUND_US_ANSWERS);
 
 /** 'YYYY-MM-DD' plus n days */
@@ -166,6 +189,11 @@ export const reportMethods = {
         visits: 0, checkIns: { checkedIn: 0, paidOnly: 0, notRecorded: 0, rate: null }, noShows: 0,
         bookingsMade: { online: 0, staff: 0, saved: 0 }, newMembers: 0, ttrpg: { sessions: 0, seats: 0, taken: 0 },
         newPlayers: { total: 0, codes: {}, ads: {}, answers: {}, unknown: 0 },
+        // Round 29: booking reminders that went, and one-off bookings with their no-shows
+        bookingReminders: { sent: 0 }, oneOff: { bookings: 0, noShows: 0, seats: 0, tables: 0, signUps: 0 },
+        // Round 29 (section 3): the first games from 4 weeks before and how many came back, cards filled in the last 4
+        // weeks, and the median days between visits in the last 8
+        firstGames: { week: addDays(monday, -FIRST_GAME_BACK_DAYS), players: 0, back: 0 }, cardsFilled: 0, visitGap: { median: null, people: 0 },
         library: { loansOut: 0 },
         steps: Object.fromEntries(STEP_FLOWS.map((flow) => [flow, Object.fromEntries(STEP_NAMES.map((s) => [s, 0]))])),
       };
@@ -201,6 +229,38 @@ export const reportMethods = {
       const c = row.checkIns;
       c.rate = pct(c.checkedIn, c.checkedIn + c.paidOnly + c.notRecorded);
     }
+
+    // Round 29 (src/booking-reminders.js): whether the reminders two days before work. The reminders that went, by the
+    // week they went (one Resend didn't take was unmarked, so it isn't here); and one-off bookings by the session's week
+    // (TTRPG seats with no weekly seat behind them, tables, event sign-ups made ahead), with their no-shows: a seat or
+    // table staff marked one, or a sign-up that's over and wasn't checked in or paid (sign-ups have no no-show mark)
+    for (const r of this.sql.exec(
+      `SELECT reminded_at AS at FROM bookings WHERE reminded_at >= ? AND reminded_at < ?
+       UNION ALL
+       SELECT reminded_at FROM event_joins WHERE reminded_at >= ? AND reminded_at < ?`,
+      start, until, start, until,
+    ).toArray()) add(r.at, (row) => { row.bookingReminders.sent += 1; });
+    for (const r of this.sql.exec(
+      `SELECT b.starts_at AS at, CASE WHEN b.kind = 'table' THEN 'tables' ELSE 'seats' END AS kind, CASE WHEN b.status = 'noshow' THEN 1 ELSE 0 END AS missed
+         FROM bookings b WHERE (b.kind = 'table' OR (b.kind = 'gm-seat' AND b.series_id IS NULL)) AND b.status NOT IN ('cancelled', 'held')
+          AND b.starts_at >= ? AND b.starts_at < ?
+       UNION ALL
+       SELECT j.starts_at, 'signUps', CASE WHEN j.status != 'attended' AND j.ends_at <= ? AND NOT ${paidOnTheDay('j')} THEN 1 ELSE 0 END
+         FROM event_joins j WHERE j.status NOT IN ('cancelled', 'held') AND COALESCE(j.source, '') != 'walk-in' AND j.starts_at >= ? AND j.starts_at < ?`,
+      start, until, now, start, until,
+    ).toArray()) {
+      add(r.at, (row) => {
+        row.oneOff.bookings += 1;
+        if (!r.missed) return;
+        row.oneOff.noShows += 1;
+        row.oneOff[r.kind] += 1;
+      });
+    }
+
+    // Round 29 (src/first-game.js): whether first-timers come back, loyalty cards filled, and how often people come
+    this.firstGameNumbers(rows, time);
+    this.cardsFilledNumbers(rows, time, now, rules);
+    this.visitGapNumbers(rows, time, until);
 
     // bookings and sign-ups made, by the week they were made: online, by staff, or saved by Gobgob for a weekly regular
     for (const r of this.sql.exec(
@@ -275,7 +335,22 @@ export const reportMethods = {
    */
   visitorsByWeek(from, until, weekOf) {
     const out = new Map();
-    const rows = this.sql.exec(
+    for (const r of this.visitRows(from, until)) {
+      const week = weekOf(r.at);
+      if (!week) continue;
+      if (!out.has(week)) out.set(week, new Set());
+      out.get(week).add(String(r.id));
+    }
+    return out;
+  },
+
+  /**
+   * Every visit by someone with an account from `from` to `until`, as [{ id (customer), at (the session's start) }]:
+   * bookers, named players with an account on a table or a seat, and guests with an account on a sign-up, each for
+   * themselves (visitorsByWeek's, and round 29's days between visits). No awaits.
+   */
+  visitRows(from, until) {
+    return this.sql.exec(
       `SELECT b.customer_id AS id, b.starts_at AS at FROM bookings b
         WHERE b.customer_id IS NOT NULL AND b.customer_id != '' AND b.kind IN ${BOOKING_KINDS} AND b.starts_at >= ? AND b.starts_at < ? AND ${BOOKING_VISIT}
        UNION ALL
@@ -291,13 +366,114 @@ export const reportMethods = {
           AND j.starts_at >= ? AND j.starts_at < ? AND ${JOIN_VISIT}`,
       from, until, from, until, from, until, from, until,
     ).toArray();
-    for (const r of rows) {
-      const week = weekOf(r.at);
-      if (!week) continue;
-      if (!out.has(week)) out.set(week, new Set());
-      out.get(week).add(String(r.id));
+  },
+
+  /**
+   * Round 29 (contract v29-roleplayers section 3): each week's first games, from the week 4 weeks before it (whose 4 weeks
+   * are up by its end), and how many came back. A first game: a TTRPG seat with first_game 1 that was a visit (checked
+   * in, or paid on the day). Back: the same person (their account, or their email) came to another TTRPG seat in the 4
+   * weeks after it, counted in Lair days. rows: reportFor's, newest first. No awaits.
+   */
+  firstGameNumbers(rows, time) {
+    const cohorts = rows.map((r) => r.firstGames.week);
+    const from = time.at(cohorts[cohorts.length - 1], 0);
+    const to = time.at(addDays(cohorts[0], 7), 0);
+    const firsts = this.sql.exec(
+      `SELECT b.id AS id, b.customer_id AS customer, lower(b.email) AS email, b.starts_at AS at FROM bookings b
+        WHERE b.kind = 'gm-seat' AND b.first_game = 1 AND b.starts_at >= ? AND b.starts_at < ? AND ${visitOf('b')}`,
+      from, to,
+    ).toArray();
+    if (!firsts.length) return;
+    const seats = this.sql.exec(
+      `SELECT b.id AS id, b.customer_id AS customer, lower(b.email) AS email, b.starts_at AS at FROM bookings b
+        WHERE b.kind = 'gm-seat' AND b.starts_at > ? AND b.starts_at < ? AND ${visitOf('b')}`,
+      from, time.at(addDays(time.key(to), FIRST_GAME_BACK_DAYS + 1), 0),
+    ).toArray();
+    const same = (a, b) => (Boolean(a.customer) && a.customer === b.customer) || (Boolean(a.email) && a.email === b.email);
+    for (const row of rows) {
+      const start = time.at(row.firstGames.week, 0);
+      const end = time.at(addDays(row.firstGames.week, 7), 0);
+      const mine = firsts.filter((f) => f.at >= start && f.at < end);
+      const last = (f) => addDays(time.key(f.at), FIRST_GAME_BACK_DAYS);
+      const back = mine.filter((f) => seats.some((s) => s.id !== f.id && s.at > f.at && time.key(s.at) <= last(f) && same(f, s)));
+      row.firstGames.players = mine.length;
+      row.firstGames.back = back.length;
     }
-    return out;
+  },
+
+  /**
+   * Round 29: loyalty cards filled in the 4 weeks ending with each week. Stamps aren't stored (stampTally counts them), so
+   * a card fills when someone's stamps, counted in order, reach the next multiple of 10 (CARD_SIZE): at that session's
+   * start (or the stamp's time, for one from the ledger). Only people with a stamp's worth of activity in the weeks in
+   * play are counted (their own bookings and sign-ups, as a named player or a guest, ledger stamps, ones they paid for,
+   * sessions they ran). No awaits.
+   */
+  cardsFilledNumbers(rows, time, now, rules) {
+    const from = time.at(addDays(rows[rows.length - 1].week, -7 * (CARDS_WINDOW_WEEKS - 1)), 0);
+    const to = time.at(addDays(rows[0].week, 7), 0);
+    const ids = new Set();
+    // (two queries: Cloudflare's SQLite takes at most 5 terms in one compound SELECT)
+    for (const r of this.sql.exec(
+      `SELECT customer_id AS id FROM bookings WHERE customer_id IS NOT NULL AND customer_id != '' AND starts_at >= ? AND starts_at < ?
+       UNION SELECT p.customer_id FROM booking_players p JOIN bookings b ON b.id = p.booking_id
+        WHERE p.customer_id IS NOT NULL AND p.customer_id != '' AND b.starts_at >= ? AND b.starts_at < ?
+       UNION SELECT customer_id FROM event_joins WHERE customer_id IS NOT NULL AND customer_id != '' AND starts_at >= ? AND starts_at < ?
+       UNION SELECT x.customer_id FROM event_join_guests x JOIN event_joins j ON j.id = x.join_id
+        WHERE x.customer_id IS NOT NULL AND x.customer_id != '' AND j.starts_at >= ? AND j.starts_at < ?
+       UNION SELECT customer_id FROM loyalty_stamps WHERE undone_at IS NULL AND at >= ? AND at < ?`,
+      from, to, from, to, from, to, from, to, from, to,
+    ).toArray()) ids.add(String(r.id));
+    for (const r of this.sql.exec(
+      `SELECT m.customer_id AS id FROM payments m JOIN bookings b ON b.id = m.booking_id
+        WHERE m.kind = 'booking' AND m.customer_id IS NOT NULL AND m.customer_id != '' AND b.starts_at >= ? AND b.starts_at < ?
+       UNION SELECT m.customer_id FROM payments m JOIN event_joins j ON j.id = m.booking_id
+        WHERE m.kind = 'join' AND m.customer_id IS NOT NULL AND m.customer_id != '' AND j.starts_at >= ? AND j.starts_at < ?
+       UNION SELECT gm_customer_id FROM games WHERE gm_customer_id IS NOT NULL AND gm_customer_id != '' AND starts_at >= ? AND starts_at < ?`,
+      from, to, from, to, from, to,
+    ).toArray()) ids.add(String(r.id));
+    const filled = [];
+    for (const id of ids) {
+      let total = 0;
+      for (const stamp of [...this.stampTally(id, now, rules).rows].reverse()) {
+        const before = total;
+        total += Number(stamp.people) || 0;
+        for (let card = Math.floor(before / CARD_SIZE) + 1; card * CARD_SIZE <= total; card += 1) filled.push(stamp.at);
+      }
+    }
+    for (const row of rows) {
+      const start = time.at(addDays(row.week, -7 * (CARDS_WINDOW_WEEKS - 1)), 0);
+      const end = time.at(addDays(row.week, 7), 0);
+      row.cardsFilled = filled.filter((at) => at >= start && at < end).length;
+    }
+  },
+
+  /**
+   * Round 29: the median days between visits in the 8 weeks ending with each week: for each person with an account who
+   * came on 2 or more different Lair days in them (visitRows), the days from their first to their last over the days
+   * less one (their average gap), then the middle of those. { median (one decimal place, null for nobody), people }.
+   * No awaits.
+   */
+  visitGapNumbers(rows, time, until) {
+    const from = time.at(addDays(rows[rows.length - 1].week, -7 * (VISIT_GAP_WEEKS - 1)), 0);
+    const visits = this.visitRows(from, Math.min(until, time.at(addDays(rows[0].week, 7), 0)));
+    for (const row of rows) {
+      const start = time.at(addDays(row.week, -7 * (VISIT_GAP_WEEKS - 1)), 0);
+      const end = Math.min(until, time.at(addDays(row.week, 7), 0));
+      const days = new Map();
+      for (const v of visits) {
+        if (v.at < start || v.at >= end) continue;
+        const id = String(v.id);
+        if (!days.has(id)) days.set(id, new Set());
+        days.get(id).add(time.key(v.at));
+      }
+      const gaps = [];
+      for (const set of days.values()) {
+        if (set.size < 2) continue;
+        const keys = [...set].sort();
+        gaps.push(daysBetween(keys[0], keys[keys.length - 1]) / (keys.length - 1));
+      }
+      row.visitGap = { median: median(gaps), people: gaps.length };
+    }
   },
 
   /**
@@ -453,6 +629,35 @@ export const reportMethods = {
     return `${n.total}${then ? ` (${then.total} the week before)` : ''}${parts.length ? `: ${parts.join(', ')}` : ''}`;
   },
 
+  /**
+   * Round 29: a week's one-off bookings and their no-shows, beside the week before: "3 of 6, 50% (20% the week before): 1
+   * TTRPG seat, 1 table, 1 event sign-up not checked in or paid". No awaits.
+   */
+  oneOffWords(o, then) {
+    const share = (x) => `${pct(x.noShows, x.bookings)}%`;
+    const prev = !then ? '' : then.bookings ? ` (${share(then)} the week before)` : ' (no one-off bookings the week before)';
+    if (!o?.bookings) return `No one-off bookings${prev}`;
+    const parts = [plural(o.seats, 'TTRPG seat', 'TTRPG seats'), plural(o.tables, 'table', 'tables'), `${plural(o.signUps, 'event sign-up', 'event sign-ups')} not checked in or paid`];
+    return `${o.noShows} of ${o.bookings}, ${share(o)}${prev}: ${parts.join(', ')}`;
+  },
+
+  /**
+   * Round 29: a week's first games and how many came back, beside the week before: "2 of 4, 50% (first games 12–18 Oct;
+   * 1 of 1 the week before)", or "No first games 12–18 Oct (none the week before)". No awaits.
+   */
+  firstGameWords(f, then) {
+    const prev = !then ? '' : then.players ? `${then.back} of ${then.players} the week before` : 'none the week before';
+    if (!f?.players) return `No first games ${weekLabel(f?.week || '')}${prev ? ` (${prev})` : ''}`;
+    return `${f.back} of ${f.players}, ${pct(f.back, f.players)}% (first games ${weekLabel(f.week)}${prev ? `; ${prev}` : ''})`;
+  },
+
+  /** Round 29: "7 days, the median for 3 people who came on 2 or more days in the last 8 weeks (13.5 the week before)". No awaits. */
+  visitGapWords(g, then) {
+    if (!g?.people) return 'Nobody came on 2 or more days in the last 8 weeks';
+    const prev = !then ? '' : then.people ? ` (${oneDecimal(then.median)} the week before)` : ' (nobody the week before)';
+    return `${oneDecimal(g.median)} ${g.median === 1 ? 'day' : 'days'}, the median for ${plural(g.people, 'person', 'people')} who came on 2 or more days in the last 8 weeks${prev}`;
+  },
+
   /** The weekly email's words: { subject, body: { title, intro, details, outro } }. No awaits. */
   weeklyReportContent(last, before, report) {
     const was = (then) => (then == null ? '' : ` (${then} the week before)`);
@@ -463,10 +668,17 @@ export const reportMethods = {
       ['Visits, friends included', `${last.visits}${was(before?.visits)}`],
       ['Check-ins recorded', c.rate == null ? 'No sessions to check in' : `${c.rate}% (${plural(c.notRecorded, 'session', 'sessions')} with no check-in or payment, ${c.paidOnly} paid without a check-in)`],
       ['No-shows', String(last.noShows)],
+      // Round 29: whether the reminders two days before a booking work
+      ['Booking reminders sent', `${last.bookingReminders?.sent ?? 0}${was(before?.bookingReminders?.sent)}`],
+      ['No-shows on one-off bookings', this.oneOffWords(last.oneOff, before?.oneOff)],
       ['Bookings and sign-ups made', `${last.bookingsMade.online} online, ${last.bookingsMade.staff} by staff, ${last.bookingsMade.saved} saved for weekly regulars`],
       ['New to the Lair app', `${last.newMembers}${was(before?.newMembers)}`],
       // Round 24: "3 (1 the week before): 1 by welcome code (SCROLL-ROLL 1), 1 by ad link (google/paid 1), 1 told us (Walked past 1)"
       ['New players', this.newPlayerWords(last.newPlayers, before?.newPlayers)],
+      // Round 29 (section 3): do first-timers come back, how often do people come, and how many cards filled
+      ['First games, back within 4 weeks', this.firstGameWords(last.firstGames, before?.firstGames)],
+      ['Days between visits', this.visitGapWords(last.visitGap, before?.visitGap)],
+      ['Loyalty cards filled, last 4 weeks', `${last.cardsFilled ?? 0}${was(before?.cardsFilled)}`],
       ['TTRPG seats', last.ttrpg.sessions ? `${last.ttrpg.taken} of ${last.ttrpg.seats} taken, across ${plural(last.ttrpg.sessions, 'session', 'sessions')}` : 'No sessions'],
       ['Library games out', String(last.library.loansOut)],
       ['Library memberships now', String(report.library.memberships)],

@@ -89,11 +89,11 @@ const longDay = (ms, tz) => new Intl.DateTimeFormat('en-NZ', { timeZone: tz, wee
 const shortDay = (ms, tz) => new Intl.DateTimeFormat('en-NZ', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ms)).replace(/,/g, '');
 /** "10am to 4pm" */
 const span = (o, time) => `${clockLabel(time.minutesOf(o.start))} to ${clockLabel(time.minutesOf(o.end))}`;
-/** UTC for calendar files and links: 20261120T210000Z */
-const stamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-const icsText = (value) => String(value || '').replace(/\r\n?/g, '\n').replace(/[\\,;]/g, (c) => `\\${c}`).replace(/\n/g, '\\n');
+/** UTC for calendar files and links: 20261120T210000Z (round 29: the booking reminders' calendar files use these too) */
+export const stamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+export const icsText = (value) => String(value || '').replace(/\r\n?/g, '\n').replace(/[\\,;]/g, (c) => `\\${c}`).replace(/\n/g, '\\n');
 /** Calendar lines longer than 75 bytes are folded (RFC 5545), as the theme's Add to calendar does */
-function icsFold(line) {
+export function icsFold(line) {
   const parts = [];
   let part = '';
   let bytes = 0;
@@ -170,14 +170,20 @@ export const reminderMethods = {
     return claim.summary;
   },
 
-  /** POST /internal/reminders { at? }: the same run at a fixed time (the live checks' clock), waiting for the send */
+  /**
+   * POST /internal/reminders { at? }: the same run at a fixed time (the live checks' clock), waiting for the send. sent and
+   * dates are the event reminders' (as round 11 answered); round 29's reminders two days before a booking
+   * (src/booking-reminders.js) are claimed in the same step and answer under bookings, only when some were due.
+   */
   async remindersAt(at) {
     const rules = await this.rules();
     // --- no awaits until the reminders are claimed ---
     const claim = this.claimReminders(rules, at);
-    if (!claim) return { sent: 0, dates: [] };
-    const result = await this.deliverReminders(claim);
-    return { ...claim.summary, ok: Boolean(result.ok) };
+    const booked = this.claimBookingReminders(rules, at);
+    const events = claim ? { ...claim.summary, ok: Boolean((await this.deliverReminders(claim)).ok) } : { sent: 0, dates: [] };
+    if (!booked) return events;
+    const result = await this.deliverBookingReminders(booked);
+    return { ...events, bookings: { ...booked.summary, ok: Boolean(result.ok) } };
   },
 
   /**

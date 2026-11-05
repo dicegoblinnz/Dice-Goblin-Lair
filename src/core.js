@@ -864,11 +864,41 @@ export function rollPrize(roll) {
    whose face is the prize in store credit ($1 to $20). Round 23: or, the member's pick, a sure $10 instead. */
 export const CARD_SIZE = 10;
 
+/**
+ * Round 29, the head start (contract v29-roleplayers, section 1). Mo (2 Nov 2026), mockup A, "12 slots, 2 from Gobgob":
+ * "Every card shows 12 slots, the first 2 already filled as Gobgob's head start, so a d20 roll still takes 10 paid
+ * visits." It's how the card looks, not how it counts: CARD_SIZE stamps still fill a card, and its roll, the cards and
+ * store credit are as they were. Every card gets the 2, the one on the go included: 7 stamps show as 9 of 12.
+ */
+export const CARD_HEAD_START = 2;
+/** The slots a card shows: its stamps' and Gobgob's head start (12) */
+export const CARD_SLOTS = CARD_SIZE + CARD_HEAD_START;
+
 /** The card from all the stamps someone has: { stamps (0-9 on the current card), cards (full cards so far) } */
 export const loyaltyCard = (total) => {
   const n = Math.max(0, Math.floor(Number(total) || 0));
   return { stamps: n % CARD_SIZE, cards: Math.floor(n / CARD_SIZE) };
 };
+
+/**
+ * Round 29: a card as every screen shows it, from loyaltyCard's { stamps, cards }. stamps (0-9) and cardSize (10) mean
+ * what they always have, for pages and counters from before round 29; card is the one they're on (cards + 1); slots,
+ * headStart and onCard are the head start's: onCard is the stamps plus Gobgob's 2, so a card on the go is 2 to 11 of
+ * 12, and the 10th stamp starts the next card at 2 of 12. What's left to a roll is slots - onCard (= cardSize - stamps).
+ */
+export const cardView = ({ stamps, cards }) => ({
+  stamps, cardSize: CARD_SIZE, cards, card: cards + 1, slots: CARD_SLOTS, headStart: CARD_HEAD_START, onCard: stamps + CARD_HEAD_START,
+});
+
+/**
+ * Round 29: a card in one line, for the "Loyalty card" row of a member's booking emails: "9 of 12 so far. Stamps land
+ * when you check in." Stamps can come several to a booking (one for each person at a table), so it never promises that
+ * this one adds a stamp. card: cardView's (onCard and slots).
+ */
+export const cardSoFar = (card) => `${card.onCard} of ${card.slots} so far. Stamps land when you check in.`;
+
+/** Round 29: the label of that row in a booking email's details */
+export const CARD_ROW = 'Loyalty card';
 
 /** A loyalty roll's prize: whatever the d20 shows, in store credit */
 export const loyaltyPrize = (roll) => ({ kind: 'credit', amount: roll * 100 });
@@ -1075,6 +1105,15 @@ export const TAB_WORDS = {
   lockedNowGuest: (hours) => `It's less than ${hours} hours away, so it's locked in: it's yours to pay, even if you can't come. Let us know if something comes up.`,
 };
 
+/** Round 29: what cancelling means for something paid online before round 15, as its confirmation said (the reminder
+    two days before says the same) */
+export const ONLINE_WORDS = {
+  /** an event game spot or sign-up paid online: locked in, staff decide on a refund */
+  lockedIn: "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.",
+  /** a table the first release took payment for online: its old refund policy */
+  refund: (hours) => `Need to cancel? Do it in My Lair or call us at least ${hours} hours before, and you'll get your money back. After that the fee can't be refunded.`,
+};
+
 export function rulesFromSettings(settings = {}, rooms = [], events = [], shop = {}) {
   const prices = {
     table: Math.round(Number(settings.price_table ?? 10) * 100),
@@ -1102,6 +1141,9 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // counter; each event says how it's paid).
     payOnline: settings.lair_pay_online !== false,
     refundHours: Number(settings.lair_refund_hours ?? 24),
+    // Round 29: "Email a reminder two days before each booking" (src/booking-reminders.js): on only once the live
+    // theme's settings say true, so a Lair deployed before its theme (no key yet) sends none
+    bookingReminders: settings.lair_booking_reminders === true,
     prices,
     rooms: builtRooms,
     events,

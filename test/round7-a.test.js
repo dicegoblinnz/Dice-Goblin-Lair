@@ -461,9 +461,9 @@ test('loyalty card (4): card is the card they\'re on (cards + 1); a full card\'s
   await redeem('ROLL-FOR-LOOT');
   const after = (await me()).loyalty;
   assert.deepEqual([after.card, after.rolls.available, after.rolls.earned], [3, 4, { cards: 2, welcome: 0, birthday: 0, staff: 0, codes: 2 }]);
-  assert.deepEqual((await call('GET', 'members?q=1001', null, 'staff')).data[0].loyalty, { stamps: 3, cards: 2, rollsAvailable: 4, card: 3 });
+  assert.deepEqual((await call('GET', 'members?q=1001', null, 'staff')).data[0].loyalty, { stamps: 3, cardSize: 10, cards: 2, rollsAvailable: 4, card: 3, slots: 12, headStart: 2, onCard: 5 });
   const scan = await pos('scan', { code: lair.memberRow('1001').code });
-  assert.deepEqual(scan.data.loyalty, { stamps: 3, cardSize: 10, rollsAvailable: 4, card: 3 });
+  assert.deepEqual(scan.data.loyalty, { stamps: 3, cardSize: 10, cards: 2, rollsAvailable: 4, card: 3, slots: 12, headStart: 2, onCard: 5 });
   assert.deepEqual((await pos('member', { code: lair.memberRow('1001').code })).data.loyalty, scan.data.loyalty, '/pos/member too');
   // A round 6 welcome roll already given still counts
   lair.write("INSERT INTO loyalty_grants (id, customer_id, kind, count, note, created_by, created_at) VALUES ('lg_w', '1001', 'welcome', 1, NULL, 'lair', ?)", NOW - DAY);

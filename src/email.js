@@ -62,9 +62,12 @@ export function hoursSummary(hours) {
  *   brand      { logo, url }: the header's logo (EMAIL_LOGO when not given) and where it links (the shop's home page)
  *   cards      round 17: [{ title, image, url, lines }]: games, each with its picture (a Shopify CDN address), its title
  *              (linked to its page) and short lines under it (the "Your picks" email)
+ *   detailsAfter  round 29: the details table goes after the button and its links (the email the day after a first
+ *              game, mockup D3: "Save my seat every week" first, then the next session's details)
+ *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details
  * Returns { html, text }.
  */
-export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [] }) {
+export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [], detailsAfter = false, unsubscribe = null }) {
   // Round 11: small links under the button, http(s) only
   const extras = (Array.isArray(links) ? links : []).filter((l) => l && safeUrl(l.url) && String(l.label ?? '').trim()).map((l) => ({ label: String(l.label).trim(), url: safeUrl(l.url) }));
   const before = list(intro);
@@ -80,8 +83,12 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const said = String(quote ?? '').trim();
   const logo = safeUrl(brand.logo) || EMAIL_LOGO;
   const home = safeUrl(brand.url) || 'https://www.dicegoblin.nz/';
+  const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim() ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url) } : null;
 
   const p = (text, extra = '') => `<p style="margin:0 0 14px;font:16px/1.55 ${FONT};color:${C.ink};${extra}">${lines(text)}</p>`;
+  const table = rows.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 20px;border-collapse:collapse;">
+${rows.map(([label, value]) => `<tr><td style="padding:10px 12px 10px 0;border-top:1px solid ${C.line};font:700 15px/1.45 ${FONT};color:${C.ink};vertical-align:top;width:36%;">${escapeHtml(label)}</td><td style="padding:10px 0;border-top:1px solid ${C.line};font:15px/1.45 ${FONT};color:${C.ink};vertical-align:top;">${lines(value)}</td></tr>`).join('\n')}
+</table>` : '';
   const html = `<!doctype html>
 <html lang="en-NZ"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>${escapeHtml(title)}</title></head>
 <body style="margin:0;padding:0;background:${C.page};">
@@ -102,32 +109,34 @@ ${games.map((g) => `<table role="presentation" width="100%" cellpadding="0" cell
 ${g.image ? `<td style="width:96px;padding:0 14px 0 0;vertical-align:top;">${g.url ? `<a href="${escapeHtml(g.url)}">` : ''}<img src="${escapeHtml(g.image)}" width="96" alt="${escapeHtml(g.title)}" style="display:block;width:96px;max-width:96px;height:auto;border:0;border-radius:8px;">${g.url ? '</a>' : ''}</td>` : ''}
 <td style="vertical-align:top;font:16px/1.45 ${FONT};color:${C.ink};"><div style="font:700 17px/1.3 ${FONT};margin:0 0 4px;">${g.url ? `<a href="${escapeHtml(g.url)}" style="color:${C.ink};text-decoration:none;">${escapeHtml(g.title)}</a>` : escapeHtml(g.title)}</div>
 ${g.lines.map((t) => `<div style="font:15px/1.45 ${FONT};color:${C.muted};">${lines(t)}</div>`).join('\n')}</td></tr></table>`).join('\n')}
-${rows.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 20px;border-collapse:collapse;">
-${rows.map(([label, value]) => `<tr><td style="padding:10px 12px 10px 0;border-top:1px solid ${C.line};font:700 15px/1.45 ${FONT};color:${C.ink};vertical-align:top;width:36%;">${escapeHtml(label)}</td><td style="padding:10px 0;border-top:1px solid ${C.line};font:15px/1.45 ${FONT};color:${C.ink};vertical-align:top;">${lines(value)}</td></tr>`).join('\n')}
-</table>` : ''}
+${detailsAfter ? '' : table}
 ${link ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px;"><tr><td style="border-radius:999px;background:${C.button};"><a href="${escapeHtml(link.url)}" style="display:inline-block;padding:14px 26px;font:700 16px/1 ${FONT};color:#ffffff;text-decoration:none;border-radius:999px;">${escapeHtml(link.label)}</a></td></tr></table>` : ''}
 ${extras.length ? `<p style="margin:-8px 0 20px;font:15px/1.6 ${FONT};color:${C.ink};">${extras.map((l) => `<a href="${escapeHtml(l.url)}" style="color:${C.button};font-weight:700;">${escapeHtml(l.label)}</a>`).join(' &nbsp;·&nbsp; ')}</p>` : ''}
+${detailsAfter ? table : ''}
 ${after.map((t) => p(t)).join('\n')}
 ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
 </td></tr>
-<tr><td style="padding:18px 24px 24px;border-top:1px solid ${C.line};font:13px/1.55 ${FONT};color:${C.muted};">${foot.map(escapeHtml).join('<br>')}</td></tr>
+<tr><td style="padding:18px 24px 24px;border-top:1px solid ${C.line};font:13px/1.55 ${FONT};color:${C.muted};">${foot.map(escapeHtml).join('<br>')}${stop ? `<br><br><a href="${escapeHtml(stop.url)}" style="color:${C.muted};text-decoration:underline;">${escapeHtml(stop.label)}</a>` : ''}</td></tr>
 </table>
 </td></tr></table>
 </body></html>`;
 
   const width = Math.max(0, ...rows.map(([label]) => label.length));
+  const textRows = rows.length ? rows.map(([label, value]) => `${`${label}:`.padEnd(width + 2)}${value.replace(/\r?\n/g, `\n${' '.repeat(width + 2)}`)}`).join('\n') : null;
   const text = [
     String(title).toUpperCase(),
     ...before,
     said ? said.split(/\r?\n/).map((l) => `> ${l}`).join('\n') : null,
     ...boxes.map((b) => [`    ${b.code}`, ...b.lines.map((t) => `    ${t}`)].join('\n')),
     ...games.map((g) => [g.title, ...g.lines, g.url].filter(Boolean).join('\n')),
-    rows.length ? rows.map(([label, value]) => `${`${label}:`.padEnd(width + 2)}${value.replace(/\r?\n/g, `\n${' '.repeat(width + 2)}`)}`).join('\n') : null,
+    detailsAfter ? null : textRows,
     link ? `${link.label}: ${link.url}` : null,
     ...extras.map((l) => `${l.label}: ${l.url}`),
+    detailsAfter ? textRows : null,
     ...after,
     signed.join('\n'),
     `--\n${foot.join('\n')}`,
+    stop ? `${stop.label}: ${stop.url}` : null,
   ].filter(Boolean).join('\n\n');
   return { html, text: `${text}\n` };
 }

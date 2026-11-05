@@ -40,12 +40,13 @@ export const SESSIONS_FEED = Object.freeze({
 export const LOGGED_OUT = Object.freeze({ customerId: null, staff: false, gm: false });
 
 const SCHEDULES = ['one-shot', 'weekly', 'fortnightly', 'flexible'];
+const CHARACTERS = ['pregens', 'at-table', 'bring'];
 const clip = (value, length) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, length);
 const iso = (ms) => new Date(ms).toISOString();
 
 /**
  * The feed from the public board's games (GET /floor's games for someone logged out). now: ms. Returns
- * { v, updated, days, sessions: [{ id, title, system, start, end, schedule, newPlayers, price, seatsLeft, full }] },
+ * { v, updated, days, sessions: [{ id, title, system, start, end, schedule, newPlayers, price, seatsLeft, full, characters }] },
  * soonest first. start and end are UTC ISO times; price is the usual seat price in cents.
  */
 export function sessionsFeed(games, { now, days = SESSIONS_FEED.days, max = SESSIONS_FEED.max } = {}) {
@@ -72,6 +73,9 @@ export function sessionsFeed(games, { now, days = SESSIONS_FEED.days, max = SESS
         price: Math.max(0, Math.round(Number(g.seatPrice) || 0)),
         seatsLeft,
         full: g.status === 'full' || seatsLeft === 0,
+        // round 29 (contract v29-roleplayers section 3): how a beginner gets a character, for the TTRPG page's "Your first
+        // game" cards: 'pregens', 'at-table' or 'bring' as its GM picked, '' when they didn't say
+        characters: CHARACTERS.includes(g.characters) ? g.characters : '',
       };
     });
   return { v: SESSIONS_FEED.version, updated: iso(now), days, sessions };

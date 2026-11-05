@@ -8,6 +8,8 @@ import {
   dayBuckets,
   findRow,
   finishedLine,
+  firstGameHint,
+  FIRST_GAME,
   gameTitle,
   gmPaysChoice,
   gmPaysFor,
@@ -459,4 +461,24 @@ test('an owed no-show still counts as money due; owed seats are never offered a 
     passCandidates(today, pass).map((x) => x.row.id),
     ['bk_one'],
   );
+});
+
+// Round 29 (Lair contract v29-roleplayers section 3): a seat booked as someone's first roleplaying game ("Yes, my first")
+// carries firstGame: true from the Lair app; the counter says "First game" on it, with what to do. Mo's plan: staff walk
+// first-timers to their GM.
+test('round 29: a first game\'s seat says "First game" on the Today list and the check-in, with the hint; older answers without it show nothing', () => {
+  const ria = { id: 'bk_ria', type: 'booking', kind: 'gm-seat', ref: 'RM-OWLBEAR-17', name: 'Ria Moana', people: 1, amount: 1500, due: 1500, status: 'confirmed', firstGame: true };
+  assert.deepEqual(rowBadges(ria), [{ tone: 'warning', text: 'Due $15' }, { tone: 'info', text: 'First game' }]);
+  assert.equal(firstGameHint(ria), 'Walk them to their GM, and point out drinks, the bathroom and the lift.');
+  assert.deepEqual(FIRST_GAME, { badge: 'First game', hint: 'Walk them to their GM, and point out drinks, the bathroom and the lift.' });
+  // checked in and paid: still a first game (that's when they're walked over)
+  assert.deepEqual(rowBadges({ ...ria, status: 'seated', arrivedAt: 1, due: 0, paid: true }), [{ tone: 'success', text: 'Here' }, { tone: 'info', text: 'First game' }]);
+  // an older Lair app's row (no field), anyone else's, and never on a table
+  const { firstGame, ...older } = ria;
+  assert.equal(firstGame, true);
+  assert.deepEqual(rowBadges(older), [{ tone: 'warning', text: 'Due $15' }]);
+  assert.equal(firstGameHint(older), '');
+  assert.equal(firstGameHint({ ...ria, firstGame: false }), '');
+  assert.equal(firstGameHint({ ...ria, kind: 'table' }), '');
+  assert.deepEqual(rowBadges({ ...ria, kind: 'table' }), [{ tone: 'warning', text: 'Due $15' }]);
 });

@@ -9,9 +9,11 @@ import {
   checkGameSession, checkSeatBooking, checkTableBooking, codeKey, codeKeys, eventHolds, eventOccurrences, findOccurrence, isFree, legacyRefs, makeId,
   nextBirthday, oneRoom, parseBirthday, parseSpots, parseTableList, publicBooking, publicGame, readSettingsData, refundFor, rulesFromSettings,
   SERIES_SCHEDULES, seatPlayers, seatsTaken, tableIndex, uniqueCode,
-  CARD_SIZE, financialYear, financialYearFrom, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
+  financialYear, financialYearFrom, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
   eventDays, LOYALTY_PICKS, LOYALTY_SURE, PICK_WORDS, loyaltySureMessage,
 } from './core.js';
+// Round 29: the head-start card (12 slots, 2 of them Gobgob's), as every screen and email shows it
+import { CARD_ROW, cardSoFar, cardView } from './core.js';
 import { ShopifyAdmin, emailReady, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';
 import { hoursSummary, renderEmail } from './email.js';
@@ -78,6 +80,12 @@ import { GW_PAD_TABLES, gwPadMethods } from './gw-pad.js';
 // Round 27: the rest of the Warhammer tab: this week's order, the box coming in, order dates (src/gw-week.js)
 import { GW_WEEK_TABLES, gwWeekMethods } from './gw-week.js';
 import { dateTables } from './core.js';
+// Round 29: a reminder two days before each one-off booking, its cancel link and calendar file (src/booking-reminders.js),
+// and paying online's words, which the reminder repeats
+import { BOOKING_REMINDER_COLUMNS, BOOKING_REMINDER_INDEXES, bookingReminderMethods } from './booking-reminders.js';
+import { ONLINE_WORDS } from './core.js';
+// Round 29, item 3: a first game for beginners (contract v29-roleplayers section 3)
+import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMethods } from './first-game.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -118,7 +126,7 @@ const LOCKED_IN = 'Your spot is cancelled. You paid online, so have a chat with 
 // Round 15: no code of its own to show: it's on their tab, paid at the counter on the day (TAB_WORDS)
 const COUNTER = TAB_WORDS.onTab;
 const SHOW_CODE = TAB_WORDS.nothingToPay;
-const LOCKED_IN_EMAIL = "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.";
+const LOCKED_IN_EMAIL = ONLINE_WORDS.lockedIn;
 const SPLIT = 'Splitting the bill? Each friend can pay their share at the counter.';
 /** A session pass sold as a product: an order line with this SKU makes `quantity` passes of N sessions each. */
 const PASS_SKU = /^LAIR-PASS-(\d{1,3})$/i;
@@ -1109,6 +1117,29 @@ export class Lair {
         this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
     }
+    // Round 29: when each booking's and sign-up's reminder went, for which start, and its cancel link's key (made when
+    // missing, src/booking-reminders.js)
+    for (const [table, column, type] of BOOKING_REMINDER_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of BOOKING_REMINDER_INDEXES) this.sql.exec(statement);
+    // Round 29, item 3: a seat's answer to "Is this your first roleplaying game?", the consent to the email the day after
+    // and when it went, and the emails people stopped (made when missing, src/first-game.js)
+    for (const [table, column, type] of FIRST_GAME_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of FIRST_GAME_TABLES) this.sql.exec(statement);
+    // and when they first started: a catch-up the next day is only for a reminder day they were running on
+    this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('booking-reminders-from', ?)", String(Date.now()));
+    this.bookingRemindersFrom = Number(this.sql.exec("SELECT value FROM meta WHERE key = 'booking-reminders-from'").toArray()[0]?.value) || 0;
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1205,6 +1236,9 @@ export class Lair {
       } : {}),
       // round 18: a seat booked by someone new to the Lair's TTRPG sessions
       newPlayer: Boolean(r.new_player),
+      // round 29: a seat booked as someone's first roleplaying game ("Yes, my first"); staff views only (staffBooking,
+      // bookingRow), never a customer's
+      ...(r.first_game === 1 ? { firstGame: true } : {}),
       // Round 21: a seat its GM pays for (coveredBy: the GM; coverWas: what it cost before), and a GM's charge for one
       // (kind 'gm-cover'; coverOf: the seat)
       ...(r.covered_by ? { coveredBy: String(r.covered_by), coverWas: r.cover_was ?? null } : {}),
@@ -1851,6 +1885,8 @@ export class Lair {
         if (request.method === 'GET' && b === 'img') return this.image(c);
         // Round 11: an event date as a calendar file, for the reminder email's Add to calendar (public: GET /ics/<id>.ics)
         if (request.method === 'GET' && b === 'eventics') return this.eventIcs(decodeURIComponent(c || ''));
+        // Round 29: a seat or table as a calendar file, for its reminder's Add to my calendar (public: GET /ics/b/<id>.ics)
+        if (request.method === 'GET' && b === 'bookingics') return this.bookingIcs(decodeURIComponent(c || ''));
         // Round 13: a followed game's calendar on the Lair app's own address (public: GET /feeds/<key>.ics)
         if (request.method === 'GET' && b === 'feed') return this.eventFeed(c || '');
         if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
@@ -1872,6 +1908,10 @@ export class Lair {
         if (b === 'admin-job') return json(await this.adminJob(body));
         // Round 11: the day-before reminders on their own, at a fixed time when `at` is given (the live checks' clock)
         if (b === 'reminders') return json(await this.remindersAt(Number(body.at) || Date.now()));
+        // Round 29: the email the day after a first game, at a fixed time (src/first-game.js), and its one-click
+        // unsubscribe from the Lair's own address (index.js: /unsubscribe/<code>/<key>)
+        if (b === 'next-day') return json(await this.nextDayAt(Number(body.at) || Date.now()));
+        if (b === 'unsubscribe') return this.oneClickUnsubscribe(body);
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
         if (b === 'pos' && c === 'today') return json(await this.posToday());
@@ -1900,7 +1940,7 @@ export class Lair {
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
           || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw'].includes(a));
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -1911,6 +1951,20 @@ export class Lair {
       if (request.method === 'POST' && a === 'steps' && !b && !c) {
         const input = await request.json().catch(() => ({}));
         return json(this.countStep(input, request.headers.get('X-Lair-Client') || ''));
+      }
+      // Round 29: a reminder's cancel link (src/booking-reminders.js), for whoever has its key, logged in or not. Before
+      // anyone is looked up: who's logged in changes nothing, and the key (in the body, never the address) only cancels.
+      if (request.method === 'POST' && a === 'cancel-links' && ['view', 'cancel'].includes(b) && !c) {
+        const input = await request.json().catch(() => ({}));
+        const from = request.headers.get('X-Lair-Client') || '';
+        return json(b === 'view' ? await this.cancelLinkView(input, from) : await this.cancelByLink(input, from));
+      }
+      // Round 29: the next-day email's "Don't send me emails like this" (src/first-game.js), for whoever has its key, logged
+      // in or not, before anyone is looked up. Seeing what it is never stops anything: only the tap (stop) does.
+      if (request.method === 'POST' && a === 'unsubscribe' && ['view', 'stop'].includes(b) && !c) {
+        const input = await request.json().catch(() => ({}));
+        const from = request.headers.get('X-Lair-Client') || '';
+        return json(b === 'view' ? this.unsubscribeView(input, from) : this.unsubscribeStop(input, from));
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
@@ -2520,13 +2574,22 @@ export class Lair {
     if (!override) this.tagAd('bookings', id, who.customerId || null, cleanAd(input.ad), now);
     if (tableGame) booking.game = this.setBookingGame(booking.id, tableGame, now).game;
     // --- saved: the table is ours ---
+    // Round 29 (src/first-game.js): a TTRPG seat keeps the answer to "Is this your first roleplaying game?" and, after
+    // "Yes, my first", the box for the email the day after, before its GM hears
+    if (kind === 'gm-seat') {
+      const answer = this.firstGameAnswer(input);
+      this.markFirstGame(id, answer, now);
+      booking.firstGame = answer.first === 1;
+    }
     // Every new player at a game emails its GM (a guest, a member or anyone else), with their details.
     if (game) this.tellGmNewPlayer(booking, game, rules);
+    // Round 29: the weekday its two-day reminder goes, for the confirmation's "What happens next" (null: none will)
+    const reminderDay = kind === 'gm-seat' ? this.bookingReminderDay(this.booking(id), rules, now) : undefined;
 
     const result = await this.payOrConfirm(booking, rules, { game });
     // Round 28: "Booked a session" for the ad platforms (src/newplayers.js bookedTrack), never for what staff make
     const track = override || kind === 'walkin' ? null : this.bookedTrack(result.booking, kind === 'gm-seat' ? 'ttrpg' : 'table', who.customerId || null, { now });
-    return track ? { ...result, track } : result;
+    return { ...result, ...(track ? { track } : {}), ...(reminderDay !== undefined ? { reminderDay } : {}) };
   }
 
   /** At most 6 upcoming bookings per email for anyone but staff (seats from "join every session" don't count). */
@@ -2639,13 +2702,13 @@ export class Lair {
       : `${dollars(booking.amount)}, ${booking.customerId ? 'on your tab' : 'pay at the counter on the day'}`;
     // A game spot paid online is locked in. A table the first release took payment for online keeps its old policy.
     const lockedIn = online && Boolean(booking.occurrenceId);
-    const changes = lockedIn ? LOCKED_IN_EMAIL : online
-      ? `Need to cancel? Do it in My Lair or call us at least ${rules.refundHours} hours before, and you'll get your money back. After that the fee can't be refunded.`
-      : null;
+    const changes = lockedIn ? LOCKED_IN_EMAIL : online ? ONLINE_WORDS.refund(rules.refundHours) : null;
     // what's to pay and how, and until when they can cancel (round 15), or a paid online booking's old words
     const [pay, cancel] = changes ? [dueOf(booking) > 0 ? COUNTER : SHOW_CODE, changes] : this.tabLines(booking, rules, { spot: game ? 'seat' : booking.occurrenceId ? 'game table' : 'table' });
     const tables = `${booking.tables.length > 1 ? 'Tables' : 'Table'} ${booking.tables.join(', ')}`;
     const event = booking.occurrenceId ? findOccurrence(rules, booking.occurrenceId) : null;
+    // Round 29: a member's card, "9 of 12 so far" (a guest's booking has no row: cardLine is null)
+    const cardRow = [CARD_ROW, this.cardLine(booking.customerId, rules)];
     let subject;
     let content;
     if (game) {
@@ -2655,7 +2718,7 @@ export class Lair {
         intro: `Kia ora ${booking.name}, you're in for ${game.title}${game.gm ? ` with GM ${game.gm}` : ''}. Gobgob has pulled up a chair for you.`,
         details: [
           ['Game', `${game.title}${game.system ? ` (${game.system})` : ''}`], ['When', when], ['Players', this.partyLine(booking.party)], ['Where', tables],
-          ['Fee', fee],
+          ['Fee', fee], cardRow,
         ],
         outro: [
           pay, cancel,
@@ -2676,7 +2739,7 @@ export class Lair {
           : `Kia ora ${booking.name}, your table at the Dice Goblin Lair is booked. Gobgob's already guarding it.`,
         details: [
           ['When', when], ['Where', tables], ['People', String(booking.people)], ...(played ? played.details : []),
-          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee],
+          ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played && !booking.paid ? played.fee : fee], cardRow,
         ],
         outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), cancel],
       };
@@ -2869,6 +2932,51 @@ export class Lair {
     return [...bookings, ...joins].sort((x, y) => x.start - y.start || String(x.id).localeCompare(String(y.id)));
   }
 
+  /**
+   * Someone cancelling their own table or seat: from My Lair (updateBooking, once it's checked they're its owner and it
+   * hasn't started) and, round 29, from their reminder's cancel link (src/booking-reminders.js cancelByLink, once it's
+   * checked the key). One path, so both keep the same rules and side effects: locked in refundHours before it starts
+   * (it stays on their tab), the refund rules, staff told about money due back, the library game let go, the GM told
+   * and the GM's charge for the seat stopped. Cancelled already: as it is. No awaits.
+   */
+  cancelOwnBooking(booking, rules, now) {
+    if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
+    // Round 15: locked in 24 hours before it starts: it stays on their tab, and only staff take it off
+    if (this.cancelRule(booking, rules, now).locked) {
+      throw new RuleError(booking.coveredBy ? GM_COVER_WORDS.seatLocked(rules.refundHours) : TAB_WORDS.locked(rules.refundHours), 409);
+    }
+    // An event game spot paid online is locked in: cancelling frees the spot and staff decide on a refund. Anything
+    // else paid online (from before everything moved to the counter) keeps the cancellation policy it was sold with.
+    const lockedIn = Boolean(booking.occurrenceId && booking.paidAmount > 0 && booking.pay === 'now');
+    // Round 15: paid at the counter ahead of time (paying for a few at once) and cancelled in time: it comes back
+    const ahead = !lockedIn && booking.pay !== 'now' && booking.paidAmount > 0
+      ? { due: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid at the counter ahead of time, cancelled in time' }
+      : null;
+    const refund = lockedIn
+      ? { due: false, ask: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
+      : ahead || refundFor(booking, rules, now);
+    booking.status = 'cancelled';
+    booking.holdUntil = null;
+    if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
+    this.saveBooking(booking, now);
+    this.dropDraft(booking);
+    // Round 17: its library game is let go
+    if (booking.game) this.bookingGameSync(booking.id, now);
+    if (refund.due) {
+      this.notifyStaff(`Refund due: ${booking.ref}`, {
+        title: 'Refund due',
+        intro: ahead
+          ? `${booking.name} cancelled ${booking.ref} in time, and they'd paid ${dollars(refund.amount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`
+          : `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
+        details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
+      });
+    } else if (lockedIn) this.askAboutRefund(booking, rules, 'game spot');
+    if (booking.kind === 'gm-seat') this.tellGmSeatDropped(booking, rules);
+    // Round 21: a seat its GM was paying for: the GM's charge goes with it
+    if (booking.coveredBy) this.syncCover(booking.id, now);
+    return { booking: this.ownView(this.booking(booking.id)), refund, ...(lockedIn ? { notice: LOCKED_IN } : {}) };
+  }
+
   async updateBooking(id, patch, who) {
     const rules = await this.rules();
     // --- no awaits from here on ---
@@ -2892,41 +3000,8 @@ export class Lair {
       // Round 21: a GM's charge for a player's seat goes from the session ("Stop paying"), not as a booking
       if (own && booking.kind === 'gm-cover') throw new RuleError(GM_COVER_WORDS.stopFirst, 409);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
-      if (booking.status === 'cancelled') return { booking: this.ownView(booking), refund: { due: false, amount: 0, reason: 'already cancelled' } };
-      // Round 15: locked in 24 hours before it starts: it stays on their tab, and only staff take it off
-      if (this.cancelRule(booking, rules, now).locked) {
-        throw new RuleError(booking.coveredBy ? GM_COVER_WORDS.seatLocked(rules.refundHours) : TAB_WORDS.locked(rules.refundHours), 409);
-      }
-      // An event game spot paid online is locked in: cancelling frees the spot and staff decide on a refund. Anything
-      // else paid online (from before everything moved to the counter) keeps the cancellation policy it was sold with.
-      const lockedIn = Boolean(booking.occurrenceId && booking.paidAmount > 0 && booking.pay === 'now');
-      // Round 15: paid at the counter ahead of time (paying for a few at once) and cancelled in time: it comes back
-      const ahead = !lockedIn && booking.pay !== 'now' && booking.paidAmount > 0
-        ? { due: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid at the counter ahead of time, cancelled in time' }
-        : null;
-      const refund = lockedIn
-        ? { due: false, ask: true, amount: booking.paidAmount, orderId: booking.orderId || null, reason: 'paid online, so staff decide' }
-        : ahead || refundFor(booking, rules, now);
-      booking.status = 'cancelled';
-      booking.holdUntil = null;
-      if (booking.refund !== 'done') booking.refund = refund.due ? 'due' : lockedIn ? 'ask' : booking.refund;
-      this.saveBooking(booking, now);
-      this.dropDraft(booking);
-      // Round 17: its library game is let go
-      if (booking.game) this.bookingGameSync(booking.id, now);
-      if (refund.due) {
-        this.notifyStaff(`Refund due: ${booking.ref}`, {
-          title: 'Refund due',
-          intro: ahead
-            ? `${booking.name} cancelled ${booking.ref} in time, and they'd paid ${dollars(refund.amount)} for it at the counter already. Refund it (or put it on their store credit), then mark it refunded.`
-            : `${booking.name} cancelled ${booking.ref} more than ${rules.refundHours} hours ahead, so they get their money back. Refund it in Shopify.`,
-          details: [['Booking', booking.ref], ['Was for', this.when(booking, rules)], ['Refund', dollars(refund.amount)], ['Order', refund.orderId || 'See Orders in Shopify']],
-        });
-      } else if (lockedIn) this.askAboutRefund(booking, rules, 'game spot');
-      if (booking.kind === 'gm-seat') this.tellGmSeatDropped(booking, rules);
-      // Round 21: a seat its GM was paying for: the GM's charge goes with it
-      if (booking.coveredBy) this.syncCover(booking.id, now);
-      return { booking: this.ownView(this.booking(booking.id)), refund, ...(lockedIn ? { notice: LOCKED_IN } : {}) };
+      // Round 29: the person's own cancel, the same from My Lair and from their reminder's cancel link
+      return this.cancelOwnBooking(booking, rules, now);
     }
     // Round 21: a GM's charge for a player's seat follows the seat (src/gm-cover.js): staff take it off with "Stop paying"
     // on the session, but can mark it paid, waive it or mark it refunded here (money back: chargeRefunded)
@@ -3167,9 +3242,13 @@ export class Lair {
     const when = this.when(game, rules);
     const content = {
       title: toGm ? 'A new player for your game!' : 'A new player for a game',
-      intro: toGm
-        ? `Kia ora ${game.gm}, ${seat.name} just joined ${game.title}. Gobgob's pulled up ${seat.people === 1 ? 'a chair' : `${seat.people} chairs`}.`
-        : `${seat.name} just joined ${game.gm ? `${game.gm}'s game ` : ''}${game.title}. There's no email on file for the GM, so please pass this on.`,
+      intro: [
+        toGm
+          ? `Kia ora ${game.gm}, ${seat.name} just joined ${game.title}. Gobgob's pulled up ${seat.people === 1 ? 'a chair' : `${seat.people} chairs`}.`
+          : `${seat.name} just joined ${game.gm ? `${game.gm}'s game ` : ''}${game.title}. There's no email on file for the GM, so please pass this on.`,
+        // Round 29: they said it's their first roleplaying game ("Yes, my first")
+        ...(seat.firstGame ? [FIRST_GAME_WORDS.gmLine(this.firstNameOf(seat.name))] : []),
+      ],
       details: [
         ['Name', seat.name], ['Email', seat.email], ['Phone', seat.phone], ['Seats', String(seat.people)], ['Players', this.partyLine(seat.party)],
         ['Notes', seat.notes], ['When', when], ['Seats left', `${left} of ${game.seats}`],
@@ -4092,7 +4171,13 @@ export class Lair {
       // Round 28: a seat this made is "Booked a session" for the ad platforms (one they had already isn't)
       if (got?.created) newSeat = got.seat;
       // A weekly regular's first seat is a new player: the GM hears (round 6). Seats maintenance rolls forward don't.
-      if (got?.created) this.tellGmNewPlayer(got.seat, next, rules);
+      // Round 29: that seat keeps the answer to "Is this your first roleplaying game?" (and the box), first
+      if (got?.created) {
+        const answer = this.firstGameAnswer(input);
+        this.markFirstGame(got.seat.id, answer, now);
+        got.seat.firstGame = answer.first === 1;
+        this.tellGmNewPlayer(got.seat, next, rules);
+      }
       if (!got) {
         full.push({ gameId: next.id, start: next.start });
         this.write('INSERT OR IGNORE INTO series_alerts (game_id, customer_id, at) VALUES (?, ?, NULL)', next.id, who.customerId);
@@ -4112,6 +4197,8 @@ export class Lair {
           ['Game', game.title], ['Players', this.partyLine(players)], ['Next session', booked.length ? this.when(next, rules) : ''],
           ['Already full', full.length ? this.when(next, rules) : ''],
           ['Fee', seatPriceOf(game, rules) ? `${dollars(seatPriceOf(game, rules) * people)} a session, on your tab` : 'Free'],
+          // Round 29: their card, "9 of 12 so far"
+          [CARD_ROW, this.cardLine(who.customerId, rules)],
         ],
         // Round 15: each session on their tab, no code to show; cancelled up to 24 hours before
         outro: [
@@ -5497,6 +5584,8 @@ export class Lair {
       seriesId: b.seriesId || null, owed: this.isOwed(b, now), waived: Boolean(b.waived),
       // Round 11: a game's players, for staff and the POS
       ...this.staffGamePlayers(b),
+      // Round 29: their first roleplaying game, so the counter walks them to their GM ("First game")
+      ...(b.kind === 'gm-seat' && b.firstGame ? { firstGame: true } : {}),
     };
   }
 
@@ -5602,12 +5691,12 @@ export class Lair {
         ? `${x.playerOf.name} booked them into a game at ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''}${x.due ? `, their share ${dollars(x.due)}` : ''})`
         : `${x.guestOf.name} signed them up for ${x.title} at ${this.clock(x.start, rules)} (${x.ref}${here(x) ? ', checked in' : ''})`)).join('; ')}.`;
     }
-    // Round 22: their loyalty card, so staff can add a stamp from the check-in card (contract v22-stamps)
-    const card = member ? this.loyaltyOf(customerId, rules) : null;
+    // Round 22: their loyalty card, so staff can add a stamp from the check-in card (contract v22-stamps); round 29: with
+    // the head start's slots, headStart and onCard, as every card has them (staffCard)
     return {
       found: true, kind: 'member', type: 'member', checkedIn: false, customer: { id: String(customerId) },
       member: { customerId: String(customerId), name, firstName: member?.first_name || '', email: member?.email || '', code: member?.code || null },
-      ...(card ? { loyalty: { stamps: card.stamps, cardSize: card.cardSize, cards: card.cards, rollsAvailable: card.rolls.available, card: card.card } } : {}),
+      ...(member ? { loyalty: this.staffCard(customerId, rules) } : {}),
       rows: [...[...rows, ...along].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name)), ...owed], passes: this.activePasses(customerId, now), due,
       bookings: rows.map((x) => ({
         kind: x.type, id: x.id, ref: x.ref, title: x.title, start: x.start, end: x.end, people: x.people, tables: x.tables, status: x.status,
@@ -5737,8 +5826,6 @@ export class Lair {
     if (found.type === 'member') {
       const customerId = found.item.customer_id;
       const { member, today, owed } = this.memberDay(customerId, rules, now);
-      // loyalty (round 6): their card, for the counter to show (display only)
-      const card = this.loyaltyOf(customerId, rules);
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
         // round 24: "How did you find us?": their answer (or null), and newHere, true on a new player's first day at the
@@ -5747,9 +5834,10 @@ export class Lair {
         // round 9: after their owed rows, what a monthly account owes from earlier days (none for pay-each-visit members);
         // round 15: a monthly account's owed rows are on it (onAccount)
         rows: [...today, ...this.onAccountRows(customerId, owed), ...this.accountOwedRows(customerId, rules, now)], tab: this.tabView(this.todayTabRow(customerId, rules, now)), passes: this.activePasses(customerId, now),
-        // round 7: card is the number of the card they're on
-        // round 24: rollsWaiting, a welcome code's rolls waiting for their first paid session (only there while some do)
-        loyalty: { stamps: card.stamps, cardSize: card.cardSize, rollsAvailable: card.rolls.available, card: card.card, ...(card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}) },
+        // loyalty (round 6): their card, for the counter to show (display only). Round 7: card is the number of the card
+        // they're on; round 24: rollsWaiting, a welcome code's rolls waiting for their first paid session (only there
+        // while some do); round 29: cards, and the head start's slots, headStart and onCard (staffCard)
+        loyalty: this.staffCard(customerId, rules, { waiting: true }),
         // round 9: their billing ({ billing: 'visit' }, or a monthly account's limit and what's owed)
         account: this.accountSummary(customerId, rules, now),
       };
@@ -6242,7 +6330,8 @@ export class Lair {
       intro: `Kia ora ${join.name}, you're signed up for ${join.title} at the Dice Goblin Lair. Gobgob's saving your spot.`,
       details: [
         ['Event', join.title], ['When', this.when(join, rules)], ['People', String(join.people)], ['Coming', join.people > 1 ? this.comingLine(join) : ''],
-        ['Entry', fee],
+        // Round 29: a member's card, "9 of 12 so far" (none on a guest's sign-up)
+        ['Entry', fee], [CARD_ROW, this.cardLine(join.customerId, rules)],
       ],
       outro: [pay, cancel],
       button: { label: 'See it in My Lair', url: this.page('myLair') },
@@ -6275,11 +6364,28 @@ export class Lair {
     if (guest) throw new RuleError(GUEST_MESSAGES.guestOnly, 403);
     if (who.staff && !staffJoin && !own) throw new RuleError(TEAM_WORDS.notYours, 403);
     if (!staffJoin && !own) throw new RuleError('Only staff can change that sign-up.', 403);
+    // Round 29: the person's own cancel, the same from My Lair and from their reminder's cancel link
+    return staffJoin ? this.joinCancelled(join, rules, now, { staffJoin: true }) : this.cancelOwnJoin(join, rules, now);
+  }
+
+  /**
+   * Someone cancelling their own sign-up: from My Lair (cancelJoin, once it's checked it's theirs) and, round 29, from
+   * their reminder's cancel link (src/booking-reminders.js cancelByLink, once it's checked the key). Locked in
+   * refundHours before it starts (a free one, or one from before round 15, once it's started): staff take it off.
+   * Cancelled already: as it is. No awaits.
+   */
+  cancelOwnJoin(join, rules, now) {
     if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
     // Round 15: locked in 24 hours before it starts (a free one, or one from before round 15, once it's started):
     // staff take it off
-    if (!staffJoin && this.cancelRule(join, rules, now).locked) throw new RuleError(TAB_WORDS.locked(rules.refundHours), 409);
-    if (!staffJoin && join.start <= now) throw new RuleError(TAB_WORDS.started, 409);
+    if (this.cancelRule(join, rules, now).locked) throw new RuleError(TAB_WORDS.locked(rules.refundHours), 409);
+    if (join.start <= now) throw new RuleError(TAB_WORDS.started, 409);
+    return this.joinCancelled(join, rules, now, { staffJoin: false });
+  }
+
+  /** A sign-up cancelled, by staff (staffJoin) or its person: what's owed back, the row, and staff told. No awaits. */
+  joinCancelled(join, rules, now, { staffJoin }) {
+    if (join.status === 'cancelled') return { ok: true, join: this.joinView(join) };
     const paid = join.paidAmount > 0;
     let refund;
     let flag = join.refund;
@@ -7105,7 +7211,8 @@ export class Lair {
 
   /**
    * A member's loyalty card (GET /me, the roll, staff views): { stamps (0-9 on this card), cardSize, cards (full cards),
-   * card (round 7: the number of the card they're on, cards + 1), rolls: { available, earned: { cards, welcome,
+   * card (round 7: the number of the card they're on, cards + 1), slots, headStart, onCard (round 29, the head start:
+   * 12 slots, Gobgob's 2 and the stamps on this card, cardView), rolls: { available, earned: { cards, welcome,
    * birthday, staff, codes }, used }, sure }. A full card earns a roll and the next card starts at once; so do the welcome
    * rolls given in round 6, birthday gifts' rolls, rolls staff give and (round 7) loot codes' rolls. used: loyalty rolls
    * spent, rolled or taken as the sure $10 (the old spend dice's rolls never count). sure (round 23): the store credit,
@@ -7126,7 +7233,8 @@ export class Lair {
     const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty'", id).one().n;
     const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes - used);
     const rolls = { available, earned, used, ...(welcome.waiting ? { waiting: welcome.waiting } : {}) };
-    const card = { stamps, cardSize: CARD_SIZE, cards, card: cards + 1, rolls, sure: LOYALTY_SURE };
+    // round 29: how the card looks (12 slots, Gobgob's 2 on every card) comes with it; how it counts doesn't change
+    const card = { ...cardView({ stamps, cards }), rolls, sure: LOYALTY_SURE };
     if (!details) return card;
     const recent = this.stampedSessions(id, 10).map((s) => ({ at: s.at, title: this.stampTitle(s, rules), people: s.people }));
     const history = this.sql
@@ -7155,6 +7263,29 @@ export class Lair {
     if (s.kind === 'stamp-staff') return STAMP_WORDS.staffTitle;
     if (s.occurrence_id) return (rules && findOccurrence(rules, s.occurrence_id)?.title) || 'Event game spot';
     return this.tablesTitle(parse(s.tables, []));
+  }
+
+  /**
+   * Round 29 (contract v29-roleplayers, section 1): a member's card as the staff page and the counter show it (the
+   * check-in card, GET /members and a member's page, the stamp routes, and every POS answer with a card): the card's
+   * fields as GET /me has them (cardView: stamps, cardSize, cards, card, slots, headStart, onCard) and rollsAvailable.
+   * waiting (the counter): round 24's rollsWaiting, only while a welcome code's rolls wait. No awaits.
+   */
+  staffCard(customerId, rules = this.rulesCache, { waiting = false } = {}) {
+    const card = this.loyaltyOf(customerId, rules);
+    return { ...cardView(card), rollsAvailable: card.rolls.available, ...(waiting && card.rolls.waiting ? { rollsWaiting: card.rolls.waiting } : {}) };
+  }
+
+  /**
+   * Round 29: a member's card in one line, for the "Loyalty card" row (CARD_ROW) of their booking emails: "9 of 12 so
+   * far. Stamps land when you check in." null when the booking isn't a member's (a guest's, or no Lair member with that
+   * customer ID), and renderEmail leaves a row with nothing in it out. The booking reminders and the day-after email
+   * (the roleplayers plan's Phase 1) use it too. No awaits.
+   */
+  cardLine(customerId, rules = this.rulesCache) {
+    const id = customerId == null ? '' : String(customerId);
+    if (!/^\d{1,20}$/.test(id) || !this.memberRow(id)) return null;
+    return cardSoFar(this.loyaltyOf(id, rules));
   }
 
   /** The old dice's `rolls` (GET /me, the POS member lookup), for clients from before round 6: it mirrors the loyalty rolls. */
@@ -9224,11 +9355,11 @@ export class Lair {
    * A member as staff see them. rollsFromSpend, rollsGifted and rollsUsed are the old spend dice's (staff history only).
    * Round 6 adds loyalty ({ stamps, cards, rollsAvailable }), customerSince ('YYYY-MM-DD' staff set, or null),
    * yearsWithUs and spendFy (the financial year so far). Round 7 adds the player profile (mobile, pronouns,
-   * favouriteGames, about) and loyalty.card (the card they're on).
+   * favouriteGames, about) and loyalty.card (the card they're on). Round 29: loyalty is staffCard's, with cardSize and
+   * the head start's slots, headStart and onCard.
    */
   memberView(row, now = Date.now()) {
     const spend = this.spendOf(row.customer_id, now);
-    const card = this.loyaltyOf(row.customer_id);
     return {
       customerId: row.customer_id, name: row.name || '', firstName: row.first_name || '', email: row.email || '', birthday: row.birthday || '',
       spendYear: spend.year, spendTotal: spend.total, rollsFromSpend: Math.floor(spend.total / ROLL_EVERY), rollsGifted: this.giftedRolls(row.customer_id),
@@ -9236,7 +9367,7 @@ export class Lair {
       lastSeen: row.last_seen || null, code: row.code || null,
       // Dice prizes Shopify couldn't add: staff give them at the counter (POST /prizes/:id/done)
       pendingPrizes: this.memberPrizes(row.customer_id, { pending: true }),
-      loyalty: { stamps: card.stamps, cards: card.cards, rollsAvailable: card.rolls.available, card: card.card },
+      loyalty: this.staffCard(row.customer_id),
       customerSince: row.customer_since || null, yearsWithUs: this.yearsWithUs(row, now), spendFy: this.spendFy(row.customer_id, now),
       mobile: row.mobile || '', pronouns: row.pronouns || '', favouriteGames: parse(row.favourite_games, []), about: row.about || '',
     };
@@ -10259,6 +10390,9 @@ export class Lair {
     return {
       // Round 17: for someone on the team, GM credit for staff as it touches them (staffGmFor: the setting and their hours)
       customer: { id: who.customerId, staff: who.staff, gm: who.gm, staffGmCredit: this.staffGmFor(who) },
+      // Round 29 (src/first-game.js): they've had a TTRPG seat at the Lair, checked in or paid once its day came, so the
+      // TTRPG page's "Your first game" isn't for them and the join sheet doesn't ask
+      ttrpgPlayed: this.ttrpgPlayed(who.customerId, account.email || memberRow?.account_email || '', now),
       gmProfile: profile ? { name: profile.name, bio: profile.bio } : null,
       // Round 11: their own game tables list their players (gamePlayers, gameSize)
       bookings: [...own.filter((b) => b.kind === 'table' || b.kind === 'walkin').map((b) => this.withGamePlayers(view(b), b)), ...playing].sort((a, b) => a.start - b.start).map((b) => gone(b)),
@@ -10739,6 +10873,20 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not send event reminders', error);
     }
+    // Round 29: a reminder two days before each one-off booking, from 9am to 9pm at the Lair, each once (src/booking-reminders.js)
+    try {
+      const booked = this.sendBookingReminders(rules, Date.now());
+      if (booked?.sent) result.bookingReminders = booked;
+    } catch (error) {
+      console.error('Lair: could not send booking reminders', error);
+    }
+    // Round 29: the email the day after a first game, from 9am to 9pm at the Lair, each once (src/first-game.js)
+    try {
+      const nextDay = this.sendNextDay(rules, Date.now());
+      if (nextDay?.sent) result.nextDay = nextDay;
+    } catch (error) {
+      console.error('Lair: could not send the next-day emails', error);
+    }
     // Round 10: library memberships: /setup?key=…&memberships=plans sets up the plans, then the upkeep bills what's due,
     // retries failed payments and ends what should end (it never throws)
     if (membershipsSetup) {
@@ -10817,3 +10965,7 @@ Object.assign(Lair.prototype, gwOrderMethods);
 Object.assign(Lair.prototype, gwPadMethods);
 // Round 27: the rest of the Warhammer tab (src/gw-week.js)
 Object.assign(Lair.prototype, gwWeekMethods);
+// Round 29: a reminder two days before each one-off booking, its cancel link and calendar file (src/booking-reminders.js)
+Object.assign(Lair.prototype, bookingReminderMethods);
+// Round 29, item 3: a first game for beginners: the answer, the GM's line, the counter, the email the day after
+Object.assign(Lair.prototype, firstGameMethods);

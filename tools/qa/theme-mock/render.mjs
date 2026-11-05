@@ -285,7 +285,9 @@ export { collections, allProducts };
 /** Test hooks: a logged-in customer and a request interceptor (used by live.mjs). */
 // sessionsFeed (round 20): the shop metafield lair.sessions the Lair app keeps, as its value; none unless a check sets it
 // templateGaps (26 Oct 2026): a section setting a template doesn't list stays blank, as Shopify renders it
-export const mockState = { customer: null, before: null, sessionsFeed: null, templateGaps: false };
+// sectionSettings (round 29): settings to change on a section type for a check, as if set in the theme editor,
+// like { 'lair-play': { first_place: 'below' } }
+export const mockState = { customer: null, before: null, sessionsFeed: null, templateGaps: false, sectionSettings: null };
 
 /* ---------------- engine ---------------- */
 const compiledCss = [];
@@ -389,7 +391,8 @@ const sectionWrapper = (id, schema, html, group) => {
 async function renderSection(type, id, data = {}, group = '') {
   const file = `sections/${type}.liquid`;
   const schema = schemaOf(file);
-  const settings = resolveSettings(schema.settings, data.settings || {}, { asShopify: Boolean(mockState.templateGaps) });
+  const changed = (mockState.sectionSettings && mockState.sectionSettings[type]) || {};
+  const settings = resolveSettings(schema.settings, { ...(data.settings || {}), ...changed }, { asShopify: Boolean(mockState.templateGaps) });
   const blockDefs = Object.fromEntries((schema.blocks || []).map((b) => [b.type, b]));
   const order = data.block_order || Object.keys(data.blocks || {});
   const blocks = order.map((bid) => {

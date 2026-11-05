@@ -1,6 +1,6 @@
 // Round 7 (mylair): My Lair after Mo's 6 Oct phone test. In demo mode through theme-mock, at 390px then 1280px:
 // the six sections in a row that stays in sight (every one reachable from the row and by its address, the older ones
-// included), Home's summary cards and their numbers, the loyalty card (the stacked logo, "Card N · X of 10 stamps", a
+// included), Home's summary cards and their numbers, the loyalty card (the stacked logo, "Card N · X of 12" since round 29's head-start card, a
 // full card's roll waiting and a fresh card at once, rolling), the Wallet (credit, a group's pass, Got a code? with
 // ROLL-FOR-LOOT once and then refused, an unknown code, an HBD- code, a pass code, gifts by state and the rolls line,
 // orders), the player profile (each field, the mobile messages, the 9th game, only what changed is sent), the GM box,
@@ -264,7 +264,8 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
       panel: getComputedStyle(el.querySelector('[data-stamps]')).backgroundColor, tagBg: getComputedStyle(el.querySelector('.ml-stampcard__tag')).backgroundColor,
     };
   });
-  check(tag, `the card says "Card ${L.card} · ${L.stamps} of 10 stamps", its stamps in the slots`, card.count === `Card ${L.card} · ${L.stamps} of ${L.cardSize} stamps` && card.stamped === L.stamps && L.card === L.cards + 1, card);
+  // round 29 (the head-start card): 12 slots, the first 2 Gobgob's, so it says "Card N · 9 of 12" for 7 stamps
+  check(tag, `the card says "Card ${L.card} · ${L.onCard} of ${L.slots}", its stamps in the slots`, card.count === `Card ${L.card} · ${L.onCard} of ${L.slots}` && card.stamped === L.stamps && L.card === L.cards + 1, card);
   // Round 9 (Mo: the card's green against the logo's green "is not working"): a deep forest green card, so the logo's
   // bright green stands out; a bright goblin-green rim; cream slots; a gold tag; cream text at 4.5:1 or better.
   const [fr, fg, fb] = (card.green.match(/\d+/g) || []).map(Number);
@@ -296,7 +297,7 @@ for (const size of ['phone', 'desktop'].filter((s) => !only || s === only)) {
     ready: document.querySelector('[data-rolls-ready]')?.innerText.replace(/\s+/g, ' ').trim(),
   }));
   check(tag, 'a full card: its roll joins rolls ready and a fresh card shows at once', L.card === before.card + 1 && L.stamps === 0 && L.rolls.available === before.rolls.available + 1
-    && fresh.count === `Card ${before.card + 1} · 0 of 10 stamps` && fresh.stamped === 0 && fresh.ready.startsWith(`${L.rolls.available} roll`)
+    && fresh.count === `Card ${before.card + 1} · 2 of 12` && fresh.stamped === 0 && fresh.ready.startsWith(`${L.rolls.available} roll`)
     && fresh.note === `Card ${before.card} is full! Its roll is ready below, and card ${before.card + 1} starts now.`, fresh);
   // rolling still works (?roll=14 forces the face)
   await go(page, '/pages/my-lair?roll=14');

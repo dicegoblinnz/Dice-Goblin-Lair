@@ -4,6 +4,8 @@
 // more, ten stamps fill a card (a roll in My Lair), and a Lair app from before round 22 (no `stamps` on the member)
 // shows no Add stamps. The member card at check-in has their card too, with Add a stamp and Undo that stamp. No sideways
 // scroll, no console errors, axe. Phone and desktop. The page's clock is today at 1pm.
+// Round 29 (Mo, 2 Nov 2026, the head start): a card says "9 of 12" with "7 stamps and Gobgob’s 2" under it, so the
+// stamps are read from that line (or an older Lair app's "7 of 10"), and the toasts and the members list say "of 12".
 // Usage: DG_THEME=/path/to/theme [PORT=4987] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round22/staff-stamps.mjs [phone|desktop]
 import os from 'node:os';
 import path from 'node:path';
@@ -31,7 +33,8 @@ const card = (page) => page.evaluate(() => {
   const count = f(root.querySelector('.staff-loyalty__count')?.textContent);
   return {
     count,
-    stamps: Number((count.match(/^(\d+) of 10/) || [])[1]),
+    // round 29: "9 of 12, 7 stamps and Gobgob’s 2", or an older Lair app's "7 of 10"
+    stamps: Number((count.match(/(\d+) stamps? and Gobgob/) || count.match(/^(\d+) of 10/) || [])[1]),
     dots: root.querySelectorAll('.staff-loyalty__dot.is-on').length,
     cards: Number(facts['Cards filled']),
     rolls: Number(facts['Rolls ready']),
@@ -65,6 +68,8 @@ const form = (page) => page.evaluate(() => {
     key: el.dataset.key || '',
   };
 });
+/** Round 29: the card as it's said, "9 of 12" with Gobgob's 2 */
+const said = (stamps) => `${stamps + 2} of 12`;
 const toast = async (page) => flat(await page.locator('.toast').last().innerText().catch(() => ''));
 const submit = async (page) => {
   await page.click('[data-stamps-form] button[type="submit"]');
@@ -92,7 +97,7 @@ for (const size of sizes) {
     return {
       label: el?.getAttribute('aria-label') || '',
       title: f(el?.querySelector('.checkin-pass__title')?.textContent),
-      count, stamps: Number((count.match(/^(\d+) of 10/) || [])[1]),
+      count, stamps: Number((count.match(/(\d+) stamps? and Gobgob/) || count.match(/^(\d+) of 10/) || [])[1]),
       dots: el ? el.querySelectorAll('.staff-loyalty__dot.is-on').length : -1,
       note: f(el?.querySelector('.small.muted')?.textContent),
       add: f(el?.querySelector('[data-checkin-stamp]')?.textContent),
@@ -109,8 +114,8 @@ for (const size of sizes) {
   const k1 = await ci();
   const t1k = await toast(page);
   const wantK = (k0.stamps + 1) % 10;
-  check(`${tag} check-in: Add a stamp puts one on (${k0.stamps} to ${wantK} of 10), says so, and offers Undo that stamp`,
-    k1.stamps === wantK && k1.dots === wantK && (wantK ? t1k === `Stamp added: Aroha is on ${wantK} of 10.` : /card is full/.test(t1k)) && k1.undo === 'Undo that stamp', { k1, t1k });
+  check(`${tag} check-in: Add a stamp puts one on (${said(k0.stamps)} to ${said(wantK)}), says so, and offers Undo that stamp`,
+    k1.stamps === wantK && k1.dots === wantK && (wantK ? t1k === `Stamp added: Aroha is on ${said(wantK)}.` : /card is full/.test(t1k)) && k1.undo === 'Undo that stamp', { k1, t1k });
   check(`${tag} check-in: focus stays on Add a stamp`, await page.evaluate(() => document.activeElement?.matches('[data-checkin-stamp]')), await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 80)));
   await shot(page, `${size}-checkin-card`, '.checkin-card--member');
   await page.evaluate(() => document.querySelector('.checkin-card__loyalty')?.scrollIntoView({ block: 'center' }));
@@ -120,7 +125,7 @@ for (const size of sizes) {
   await settle(page, 700);
   const k2 = await ci();
   const t2k = await toast(page);
-  check(`${tag} check-in: Undo that stamp takes it back (${k0.stamps} of 10) and goes`, k2.stamps === k0.stamps && !k2.undo && t2k === 'Took that stamp back off Aroha’s card.', { k2, t2k });
+  check(`${tag} check-in: Undo that stamp takes it back (${said(k0.stamps)}) and goes`, k2.stamps === k0.stamps && !k2.undo && t2k === 'Took that stamp back off Aroha’s card.', { k2, t2k });
   // a lost answer (the stamp went on, the answer didn't come back): the button comes back, and the second tap is the
   // same stamp, with its Undo
   await page.evaluate(() => {
@@ -146,7 +151,7 @@ for (const size of sizes) {
   await page.click('[data-checkin-stamp]');
   await settle(page, 700);
   const k3 = await ci();
-  check(`${tag} check-in: trying again adds nothing more (${(k0.stamps + 1) % 10} of 10) and offers its Undo`, k3.stamps === (k0.stamps + 1) % 10 && k3.undo === 'Undo that stamp', k3);
+  check(`${tag} check-in: trying again adds nothing more (${said((k0.stamps + 1) % 10)}) and offers its Undo`, k3.stamps === (k0.stamps + 1) % 10 && k3.undo === 'Undo that stamp', k3);
   await page.click('[data-checkin-stamp-undo]');
   await settle(page, 700);
   check(`${tag} check-in: and Undo takes it back`, (await ci()).stamps === k0.stamps, await ci());
@@ -180,8 +185,8 @@ for (const size of sizes) {
   const want1 = (c0.stamps + 2) % 10;
   const filled1 = c0.stamps + 2 >= 10 ? 1 : 0;
   const t1 = await toast(page);
-  check(`${tag} 2 stamps: the card goes from ${c0.stamps} to ${want1} of 10`, c1.stamps === want1 && c1.dots === want1 && c1.cards === c0.cards + filled1, { c0: c0.count, c1: c1.count });
-  check(`${tag} 2 stamps: the toast says so`, t1 === `Added 2 stamps to Sam’s card. Sam is on ${want1} of 10.`, t1);
+  check(`${tag} 2 stamps: the card goes from ${said(c0.stamps)} to ${said(want1)}`, c1.stamps === want1 && c1.dots === want1 && c1.cards === c0.cards + filled1, { c0: c0.count, c1: c1.count });
+  check(`${tag} 2 stamps: the toast says so`, t1 === `Added 2 stamps to Sam’s card. Sam is on ${said(want1)}.`, t1);
   const row1 = c1.items[0];
   check(`${tag} 2 stamps: the list under the card says what, who, when and the note, with Undo (outside the live region)`,
     c1.heading === 'Added by hand or rung up at the counter' && !c1.listInLive && c1.items.length === 1 && row1.what === '+2 A stamp from Gobgob, 2 stamps'
@@ -222,8 +227,8 @@ for (const size of sizes) {
   const c3 = await card(page);
   const want3 = (c1.stamps + 1) % 10;
   check(`${tag} a lost answer: the toast says so and the form keeps its key`, /didn’t answer/.test(t3a) && Boolean(f3.key), { t3a, key: f3.key });
-  check(`${tag} the second tap adds nothing more: ${want3} of 10, and it says they were on already`,
-    c3.stamps === want3 && c3.items.length === 2 && t3b === `Those stamps were on Sam’s card already. Sam is on ${want3} of 10.`, { stamps: c3.stamps, items: c3.items.length, t3b });
+  check(`${tag} the second tap adds nothing more: ${said(want3)}, and it says they were on already`,
+    c3.stamps === want3 && c3.items.length === 2 && t3b === `Those stamps were on Sam’s card already. Sam is on ${said(want3)}.`, { stamps: c3.stamps, items: c3.items.length, t3b });
 
   // ---------- Undo ----------
   const twoRow = c3.items.findIndex((x) => x.what.startsWith('+2'));
@@ -233,7 +238,7 @@ for (const size of sizes) {
   const t4 = await toast(page);
   const undone = c4.items.find((x) => x.what.startsWith('+2'));
   const want4 = (want3 - 2 + 10) % 10;
-  check(`${tag} Undo takes the 2 back: ${want4} of 10, and says so`, c4.stamps === want4 && t4 === 'Took 2 stamps back off Sam’s card.', { stamps: c4.stamps, t4 });
+  check(`${tag} Undo takes the 2 back: ${said(want4)}, and says so`, c4.stamps === want4 && t4 === 'Took 2 stamps back off Sam’s card.', { stamps: c4.stamps, t4 });
   check(`${tag} the taken back row stays, struck through, with who and when, and no Undo`,
     undone && undone.undone && undone.back === 'Taken back by Mo, Today, 1pm' && !undone.undo, undone);
   const focusedRow = await page.evaluate(() => document.activeElement?.closest?.('[data-stamp-row]')?.textContent.replace(/\s+/g, ' ').trim() || document.activeElement?.tagName);
@@ -256,7 +261,7 @@ for (const size of sizes) {
   await page.fill('[data-stamps-form] [name="count"]', '10');
   await submit(page);
   const c5 = await card(page);
-  check(`${tag} 10 stamps fill a card: a card filled, a roll ready, the same ${before10.stamps} of 10 on the next`,
+  check(`${tag} 10 stamps fill a card: a card filled, a roll ready, the same ${said(before10.stamps)} on the next`,
     c5.stamps === before10.stamps && c5.cards === before10.cards + 1 && c5.rolls === before10.rolls + 1, { before: before10, after: { stamps: c5.stamps, cards: c5.cards, rolls: c5.rolls } });
   check(`${tag} the member page: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
   await shot(page, `${size}-member`, null, true);
@@ -266,7 +271,7 @@ for (const size of sizes) {
   await page.waitForSelector('.staff-mem-row', { timeout: 15000 });
   await settle(page, 800);
   const cell = flat(await page.locator('.staff-mem-row', { hasText: 'Sam Tautahi' }).locator('.staff-mem-row__cell--card .staff-mem-row__v').innerText().catch(() => ''));
-  check(`${tag} the members list shows Sam's card: ${c5.stamps}/10`, cell.startsWith(`${c5.stamps}/10`), cell);
+  check(`${tag} the members list shows Sam's card: ${c5.stamps + 2}/12`, cell.startsWith(`${c5.stamps + 2}/12`), cell);
 
   // ---------- a Lair app from before round 22: no stamps on the member, so no Add stamps ----------
   await page.evaluate(() => {

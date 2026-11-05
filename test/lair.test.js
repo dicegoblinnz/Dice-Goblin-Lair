@@ -1819,8 +1819,8 @@ test('dice (round 6): the spend dice and the daily roll have retired (410); a lo
     lair.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', 'gid://shopify/Order/1', '1001', 20000, 'pos', NOW);
     const me = (await call('GET', 'me', null, '1001')).data;
     assert.deepEqual([me.rolls, me.prizes], [{ available: 0, toNext: null, per: null, bonus: 0 }, []], 'the old rolls field mirrors the loyalty rolls');
-    // round 23: the card says a roll can be taken as a sure $10 instead
-    assert.deepEqual(me.loyalty, { stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 0, earned: { cards: 0, welcome: 0, birthday: 0, staff: 0, codes: 0 }, used: 0 }, sure: 1000, recent: [], history: [] });
+    // round 23: the card says a roll can be taken as a sure $10 instead; round 29: Gobgob's head start, 2 of 12
+    assert.deepEqual(me.loyalty, { stamps: 0, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 2, rolls: { available: 0, earned: { cards: 0, welcome: 0, birthday: 0, staff: 0, codes: 0 }, used: 0 }, sure: 1000, recent: [], history: [] });
   } finally {
     unload();
   }
@@ -4805,10 +4805,11 @@ test('loyalty card (round 6): a stamp for each person at each checked-in session
   assert.deepEqual([(await card('1002')).stamps, (await card('1002')).cards], [4, 0]);
   // The counter sees the card when it scans a member code (display only)
   const scan = await pos('scan', { code: lair.memberRow('1001').code });
-  assert.deepEqual(scan.data.loyalty, { stamps: 0, cardSize: 10, rollsAvailable: 1, card: 2 });
+  // (round 29: every card has the same fields, the head start's too)
+  assert.deepEqual(scan.data.loyalty, { stamps: 0, cardSize: 10, cards: 1, rollsAvailable: 1, card: 2, slots: 12, headStart: 2, onCard: 2 });
   assert.deepEqual((await pos('member', { code: lair.memberRow('1001').code })).data.rolls, { available: 1, toNext: null, per: null, bonus: 1 }, 'round 3\'s rolls mirror the loyalty rolls');
   // Staff see it on the member: GET /members loyalty
-  assert.deepEqual((await call('GET', 'members?q=1001', null, 'staff')).data[0].loyalty, { stamps: 0, cards: 1, rollsAvailable: 1, card: 2 });
+  assert.deepEqual((await call('GET', 'members?q=1001', null, 'staff')).data[0].loyalty, { stamps: 0, cardSize: 10, cards: 1, rollsAvailable: 1, card: 2, slots: 12, headStart: 2, onCard: 2 });
 });
 
 test('loyalty rolls (round 6): birthday gifts\' rolls and staff rolls add up; staff give 1 to 20 at a time to a member; round 7: nothing gives a welcome roll any more', async () => {
@@ -4830,7 +4831,7 @@ test('loyalty rolls (round 6): birthday gifts\' rolls and staff rolls add up; st
   const given = await call('POST', 'members/1001/rolls', { count: 3, note: 'Helped set up the market' }, 'staff');
   assert.equal(given.status, 200, given.data.error);
   const { member } = given.data;
-  assert.deepEqual([member.customerId, member.loyalty, member.owed, member.openTab, member.giftedThisYear], ['1001', { stamps: 0, cards: 0, rollsAvailable: 3, card: 1 }, 0, 0, false], 'the GET /members view');
+  assert.deepEqual([member.customerId, member.loyalty, member.owed, member.openTab, member.giftedThisYear], ['1001', { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 3, card: 1, slots: 12, headStart: 2, onCard: 2 }, 0, 0, false], 'the GET /members view (round 29: with the head start)');
   assert.deepEqual(lair.sql.exec("SELECT count, note, created_by FROM loyalty_grants WHERE kind = 'staff'").toArray().map((r) => ({ ...r })), [{ count: 3, note: 'Helped set up the market', created_by: 'staff:staff' }]);
   // Birthday gifts' rolls are loyalty rolls
   giftShopify();
@@ -5509,11 +5510,11 @@ test('live data: round 5\'s database (main, db8702b) moves to round 6 with every
   // rolls do (round 7: and there's no welcome roll on this visit)
   const me = (await call('GET', 'me', null, '1001')).data;
   assert.deepEqual(me.loyalty, {
-    stamps: 0, cardSize: 10, cards: 0, card: 1, rolls: { available: 2, earned: { cards: 0, welcome: 0, birthday: 2, staff: 0, codes: 0 }, used: 0 }, sure: 1000, recent: [], history: [],
+    stamps: 0, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 2, rolls: { available: 2, earned: { cards: 0, welcome: 0, birthday: 2, staff: 0, codes: 0 }, used: 0 }, sure: 1000, recent: [], history: [],
   });
   assert.deepEqual(me.rolls, { available: 2, toNext: null, per: null, bonus: 2 });
   // Kai's seated session last week (round 4) earns nothing either; Mia hasn't visited (and no welcome roll waits for her)
-  assert.deepEqual((await call('GET', 'members?q=kai', null, 'staff')).data[0].loyalty, { stamps: 0, cards: 0, rollsAvailable: 0, card: 1 });
+  assert.deepEqual((await call('GET', 'members?q=kai', null, 'staff')).data[0].loyalty, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 2 });
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM loyalty_grants WHERE customer_id = 'mia'").one().n, 0);
   // The old pending prize stays on the staff page until it's done, and old members read the new fields sensibly
   const sam = (await call('GET', 'members?q=1001', null, 'staff')).data[0];
