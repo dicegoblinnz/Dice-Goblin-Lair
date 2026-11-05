@@ -177,10 +177,9 @@ export const firstGameMethods = {
    * in the background. Shopify not answering: none go this run, and the next run asks again. → { sent } or null.
    */
   async sendNextDay(rules, now) {
-    const skips = await this.nextDaySkips(rules, now);
-    if (!skips) return null;
+    const asked = await this.nextDaySkips(rules, now);
     // --- no awaits from here ---
-    const claim = this.claimNextDay(rules, now, skips);
+    const claim = this.claimNextDay(rules, now, asked);
     if (!claim) return null;
     this.later(this.deliverNextDay(claim));
     return claim.summary;
@@ -189,55 +188,57 @@ export const firstGameMethods = {
   /** POST /internal/next-day { at }: the same run at a fixed time (the checks' clock), waiting for the send. → { sent, ok } or { sent: 0 } */
   async nextDayAt(at) {
     const rules = await this.rules();
-    const skips = await this.nextDaySkips(rules, at);
-    if (!skips) return { sent: 0 };
+    const asked = await this.nextDaySkips(rules, at);
     // --- no awaits until they're claimed ---
-    const claim = this.claimNextDay(rules, at, skips);
+    const claim = this.claimNextDay(rules, at, asked);
     if (!claim) return { sent: 0 };
     const result = await this.deliverNextDay(claim);
     return { ...claim.summary, ok: Boolean(result.ok) };
   },
 
   /**
-   * Which of the ones due Shopify rules out. Using an unsubscribe withdraws consent to all of Dice Goblin's marketing
-   * emails (the Unsolicited Electronic Messages Act 2007, sections 9(2) and 11(1)(a)), so the box counts only until they
-   * unsubscribe: no email when Shopify has their email unsubscribed since they ticked it (or at a time it doesn't
-   * know), or marked invalid or redacted. Unsubscribed before they ticked it: the box is fresh consent to this one email.
-   * Asked before the claim (every await first). → a Map of booking id → 'shopify' (settled without an email); empty
-   * without Shopify set up; null when Shopify doesn't answer.
+   * Which of the ones due Shopify has been asked about, and which of those it rules out. Using an unsubscribe withdraws
+   * consent to all of Dice Goblin's marketing emails (the Unsolicited Electronic Messages Act 2007, sections 9(2) and
+   * 11(1)(a)), so the box counts only until they unsubscribe: no email when Shopify has their email unsubscribed since
+   * they ticked it (or at a time it doesn't give), or marked invalid or redacted. Unsubscribed before they ticked it: the
+   * box is fresh consent to this one email. An address Shopify can't answer for this time isn't asked about, so it waits
+   * for the next run; the others don't wait for it. Asked before the claim (every await first).
+   * → { checked: the booking ids Shopify answered for (null without Shopify set up: nothing to ask), skips: a Map of
+   * booking id → 'shopify' (settled without an email) }
    */
   async nextDaySkips(rules, now) {
     const skips = new Map();
-    const due = this.nextDayDue(rules, now);
-    if (!due.length || !this.shopify.configured) return skips;
+    if (!this.shopify.configured) return { checked: null, skips };
+    const checked = new Set();
     const known = new Map();
-    for (const d of due) {
+    for (const d of this.nextDayDue(rules, now)) {
       const mail = lowerEmail(d.x.email);
-      if (known.has(mail)) continue;
-      try {
-        known.set(mail, await this.shopify.marketingByEmail(mail));
-      } catch (error) {
-        console.error('Lair: could not read email marketing settings from Shopify', error);
-        return null;
+      if (!known.has(mail)) {
+        try {
+          known.set(mail, await this.shopify.marketingByEmail(mail));
+        } catch (error) {
+          console.error('Lair: could not read email marketing settings from Shopify', error);
+          known.set(mail, undefined);
+        }
       }
-    }
-    for (const d of due) {
-      const m = known.get(lowerEmail(d.x.email));
-      if (!m) continue;
+      const m = known.get(mail);
+      if (m === undefined) continue;
+      checked.add(d.x.id);
       const ticked = Number(d.row.followup_ok_at) || 0;
-      if (m.state === 'INVALID' || m.state === 'REDACTED' || (m.state === 'UNSUBSCRIBED' && (m.at ?? Infinity) >= ticked)) skips.set(d.x.id, 'shopify');
+      if (m && (m.state === 'INVALID' || m.state === 'REDACTED' || (m.state === 'UNSUBSCRIBED' && (m.at ?? Infinity) >= ticked))) skips.set(d.x.id, 'shopify');
     }
-    return skips;
+    return { checked, skips };
   },
 
   /**
    * Which next-day emails are due at `now`, Lair time, marked as sent (with their unsubscribe key) before anything goes:
-   * nextDayDue's, less the ones Shopify ruled out (skips: settled here, with no email and no key, so they're never asked
-   * about again). Once each, at most REMINDERS_A_RUN a run. No awaits.
+   * nextDayDue's that Shopify was asked about (nextDaySkips: any that became due while it was being asked wait for the
+   * next run, which asks about them first), less the ones it ruled out (settled here, with no email and no key, so
+   * they're never asked about again). Once each, at most REMINDERS_A_RUN a run. No awaits.
    * → { at, ids, letters, summary: { sent } } or null.
    */
-  claimNextDay(rules, now, skips = new Map()) {
-    const found = this.nextDayDue(rules, now);
+  claimNextDay(rules, now, { checked = null, skips = new Map() } = {}) {
+    const found = this.nextDayDue(rules, now).filter((d) => !checked || checked.has(d.x.id));
     if (!found.length) return null;
     // --- the ones Shopify ruled out are settled first: they never go ---
     for (const d of found) {
@@ -487,17 +488,22 @@ export const firstGameMethods = {
   /** One push of the stops not in Shopify yet, at most STOPS_A_RUN: every await first, then the marks. → as pushStopsToShopify */
   async pushStopsOnce(now) {
     if (!this.shopify.configured) return null;
-    const rows = this.sql.exec('SELECT email, at FROM followup_stops WHERE shopify_at IS NULL ORDER BY at LIMIT ?', STOPS_A_RUN).toArray();
+    // the ones that have failed least first, so stops that keep failing for their own reasons don't hold up newer ones
+    const rows = this.sql.exec('SELECT email, at FROM followup_stops WHERE shopify_at IS NULL ORDER BY COALESCE(shopify_tries, 0), at LIMIT ?', STOPS_A_RUN).toArray();
     if (!rows.length) return null;
     const done = [];
     const failed = [];
     for (const r of rows) {
       try {
         const m = await this.shopify.marketingByEmail(r.email);
-        if (m && (m.state === 'SUBSCRIBED' || m.state === 'PENDING')) await this.shopify.unsubscribeMarketing(m.customerId, r.at);
+        // their setting changed after the stop (they've signed up again since): that later choice stands
+        const since = m?.at != null && m.at > r.at;
+        if (m && !since && (m.state === 'SUBSCRIBED' || m.state === 'PENDING')) await this.shopify.unsubscribeMarketing(m.customerId, r.at);
         done.push(r.email);
       } catch (error) {
         failed.push({ email: r.email, error: String(error?.message || error).slice(0, 300) });
+        // a permission Shopify hasn't been given turns every one away alike: the rest wait for the next run
+        if (/access denied|access_denied|required access|not approved/i.test(String(error?.message || error))) break;
       }
     }
     // --- no awaits from here ---

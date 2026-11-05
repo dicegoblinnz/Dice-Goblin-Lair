@@ -506,6 +506,7 @@ export class ShopifyAdmin {
     const data = await this.graphql(
       'query MarketingByEmail($email: String!) { customerByIdentifier(identifier: { emailAddress: $email }) { id defaultEmailAddress { marketingState marketingUpdatedAt } } }',
       { email: String(email || '').trim() },
+      { timeout: 15_000 },
     );
     const c = data.customerByIdentifier;
     if (!c?.id) return null;
@@ -522,6 +523,8 @@ export class ShopifyAdmin {
     const data = await this.graphql(
       'mutation UnsubscribeMarketing($input: CustomerEmailMarketingConsentUpdateInput!) { customerEmailMarketingConsentUpdate(input: $input) { customer { id } userErrors { field message code } } }',
       { input: { customerId: `gid://shopify/Customer/${customerId}`, emailMarketingConsent: { marketingState: 'UNSUBSCRIBED', consentUpdatedAt: new Date(at).toISOString() } } },
+      // asked again after a lost answer is harmless: unsubscribed twice is unsubscribed
+      { timeout: 15_000 },
     );
     const errors = data.customerEmailMarketingConsentUpdate?.userErrors || [];
     if (errors.length) throw new Error(`Shopify: ${errors.map((e) => e.message).join('; ')}`);

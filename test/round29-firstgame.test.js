@@ -843,6 +843,87 @@ test('round 29, first game: the email the day after skips someone who unsubscrib
   assert.equal(row(s.id).followup_key, null, 'no email went, so no unsubscribe key');
 });
 
+test('round 29, first game, from review: a seat that becomes due while Shopify is being asked waits for the next run, which asks about it first; an address Shopify can\'t answer for waits too, and the others go', async () => {
+  const { s } = await riasFirstGame();
+  nowIs(NOW);
+  const g2 = await game({ title: 'Lost Mine', schedule: 'one-shot', tables: ['T10'] });
+  const kais = await seat(g2.id, KAI, 'Kai Tane', { firstGame: true, followUp: true });
+  nowIs(NOW);
+  const g3 = await game({ title: 'Tomb of Annihilation', schedule: 'one-shot', tables: ['T11'] });
+  const mias = await seat(g3.id, MIA, 'Mia Chen', { firstGame: true, followUp: true });
+  await checkIn(mias);
+  // Kai unsubscribed in Shopify after ticking the box; staff check him in (late) while Shopify is being asked about Ria
+  const shop = shopifyMarketing({ 'kai@example.com': { customerId: KAI, state: 'UNSUBSCRIBED', at: row(kais.id).followup_ok_at + HOUR } });
+  shop.failFor = 'mia@example.com';
+  const read = lair.shopify.marketingByEmail;
+  lair.shopify.marketingByEmail = async (email) => {
+    if (email === 'ria@example.com') lair.sql.exec("UPDATE bookings SET status = 'seated' WHERE id = ?", kais.id);
+    if (email === shop.failFor) throw new Error('Shopify API error 502');
+    return read(email);
+  };
+  const first = await runAt(at(MON2, 9));
+  assert.equal(first.sent, 1);
+  assert.deepEqual(nextDays().map((m) => m.to), ['ria@example.com'], 'Kai never asked about, so not sent; Mia unreadable, so not sent');
+  assert.equal(row(kais.id).followup_at, null);
+  assert.equal(row(mias.id).followup_at, null);
+  // the next run asks about both: Kai's settled without an email, and Mia's goes once Shopify answers
+  shop.failFor = null;
+  const second = await runAt(at(MON2, 9, 10));
+  assert.equal(second.sent, 1);
+  assert.deepEqual(nextDays().map((m) => m.to), ['ria@example.com', 'mia@example.com']);
+  assert.equal(row(kais.id).followup_skipped, 'shopify');
+  assert.ok(s);
+});
+
+test('round 29, first game, from review: a stop never undoes a later sign-up (Shopify\'s setting changed after the stop: that choice stands); a permission Shopify hasn\'t given stops the push for that run; stops that keep failing don\'t hold up newer ones', async () => {
+  await riasFirstGame();
+  await runAt(at(MON2, 9));
+  const link = stopOf(only('ria@example.com'));
+  // subscribed in Shopify a month ago; the permission isn't approved yet, so the push straight after the tap fails
+  const shop = shopifyMarketing({ 'ria@example.com': { customerId: RIA, state: 'SUBSCRIBED', at: NOW - 30 * DAY } });
+  const waits = [];
+  lair.ctx.waitUntil = (promise) => waits.push(promise);
+  shop.fail = 'Shopify API: Access denied for customerEmailMarketingConsentUpdate field';
+  ok(await stopNow({ ref: link.ref, key: link.key }));
+  const stoppedAt = Date.now();
+  await Promise.all(waits);
+  assert.equal(lair.sql.exec('SELECT shopify_tries FROM followup_stops').one().shopify_tries, 1);
+  // she signs up again (the footer, say) an hour later, before the permission is approved
+  shop.fail = null;
+  lair.shopify.marketingByEmail = async (email) => {
+    shop.asked.push(email);
+    return email === 'ria@example.com' ? { customerId: RIA, state: 'SUBSCRIBED', at: stoppedAt + HOUR } : null;
+  };
+  nowIs(stoppedAt + 2 * HOUR);
+  assert.deepEqual(await lair.pushStopsToShopify(Date.now()), { done: 1, failed: 0 });
+  assert.deepEqual(shop.changed, [], 'her later sign-up stands');
+  // a missing permission: the first denial stops that run's push (each would be refused alike)
+  for (const [i, email] of ['a@example.com', 'b@example.com', 'c@example.com'].entries()) {
+    lair.sql.exec("INSERT INTO followup_stops (email, at, ref, via) VALUES (?, ?, 'XX-STOP-1', 'link')", email, stoppedAt + i);
+  }
+  lair.shopify.marketingByEmail = async (email) => {
+    shop.asked.push(email);
+    return { customerId: '1', state: 'SUBSCRIBED', at: NOW - 30 * DAY };
+  };
+  shop.fail = 'Shopify API: Access denied for customerEmailMarketingConsentUpdate field';
+  shop.asked.length = 0;
+  assert.deepEqual(await lair.pushStopsToShopify(Date.now()), { done: 0, failed: 1 });
+  assert.deepEqual(shop.asked, ['a@example.com']);
+  // 20 that keep failing for their own reasons don't hold up a newer one
+  shop.fail = null;
+  lair.sql.exec('DELETE FROM followup_stops');
+  for (let i = 0; i < 20; i += 1) {
+    lair.sql.exec("INSERT INTO followup_stops (email, at, ref, via, shopify_tries) VALUES (?, ?, 'XX-STOP-1', 'link', 3)", `old${i}@example.com`, stoppedAt + i);
+  }
+  lair.sql.exec("INSERT INTO followup_stops (email, at, ref, via) VALUES ('new@example.com', ?, 'XX-STOP-2', 'link')", stoppedAt + HOUR);
+  lair.shopify.marketingByEmail = async (email) => {
+    if (email.startsWith('old')) throw new Error('Shopify: Customer email is invalid');
+    return null;
+  };
+  await lair.pushStopsToShopify(Date.now());
+  assert.ok(lair.sql.exec("SELECT shopify_at FROM followup_stops WHERE email = 'new@example.com'").one().shopify_at, 'the newer one went through');
+});
+
 /* ---------------- Monday's numbers ---------------- */
 
 /** A past booking, saved as it would be by then (status, paid), for the weekly numbers */

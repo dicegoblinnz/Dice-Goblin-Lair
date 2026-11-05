@@ -502,14 +502,17 @@ to compare with.
   `pushStopsToShopify` finds the customer with that email (`customerByIdentifier`, `read_customers`) and, when Shopify
   has them subscribed or pending, sets them to unsubscribed as of the stop (`customerEmailMarketingConsentUpdate`,
   `write_customers`, which Mo approves once in Shopify admin after the deploy that adds it). Nothing to change for
-  someone Shopify doesn't have, or who isn't subscribed there. Done: `shopify_at`. Not done (Shopify down, the
-  permission not approved yet): `shopify_tries` and `shopify_error`, and the 10-minute run tries again
-  (`result.stopsToShopify: { done, failed }`), at most 20 a run, one push after another so none is sent twice.
+  someone Shopify doesn't have, or who isn't subscribed there, or whose setting changed after the stop (they've signed
+  up again since: that later choice stands). Done: `shopify_at`. Not done (Shopify down, the permission not approved
+  yet): `shopify_tries` and `shopify_error`, and the 10-minute run tries again (`result.stopsToShopify: { done, failed
+  }`), at most 20 a run, the ones that have failed least first, one push after another so none is sent twice. A
+  permission Shopify hasn't given stops that run's push at the first refusal.
 - **And the other way.** Before the email the day after goes, the 10-minute run asks Shopify about each one due: an
   email unsubscribed there since they ticked the box (or at a time Shopify doesn't give), or marked invalid or
   redacted, gets none (`followup_at` set with `followup_skipped` 'shopify', and no key, so it isn't asked about again).
-  Unsubscribed before they ticked it: the box is fresh consent to this one email, so it goes. Shopify not answering:
-  none go that run, and nothing is marked.
+  Unsubscribed before they ticked it: the box is fresh consent to this one email, so it goes. Only the ones Shopify
+  answered for are claimed: an address it can't answer for, or a seat that became due while it was being asked, waits
+  for the next run (nothing marked), and the others go.
 - **404** "That link doesn't work. Check you have the whole link from your email." for a wrong key, a code that isn't a
   first game's email, or either left out: one message, never saying which. **429** "Too many tries. Wait a few minutes
   and try again, or give us a call." after 10 wrong tries from one address in 10 minutes.
