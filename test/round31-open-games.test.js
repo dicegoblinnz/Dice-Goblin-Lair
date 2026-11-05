@@ -522,3 +522,27 @@ test('open games (round 31, review): the booker paid their own $10 ahead; whoeve
   assert.equal((await leave(b.openGame.id, KIRI)).status, 200);
   assert.deepEqual([lair.booking(b.id).paid, (await me(SAM)).bookings.find((x) => x.id === b.id).due], [true, 0], "Sam's alone again, and paid");
 });
+
+test('open games (round 31, second review): the booker paid for both ahead and the player drops out: staff are told the extra $10 is the booker\'s to have back', async () => {
+  await members();
+  const mail = capture({ discord: false });
+  const b = (await list({}, SAM, NEXT_WEEK)).data.booking;
+  assert.equal((await join(b.openGame.id, KIRI)).status, 200);
+  Object.defineProperty(lair.shopify, 'configured', { value: true, configurable: true });
+  lair.shopify.orderSpend = async () => ({ customerId: SAM, amount: 2000, source: 'pos' });
+  const ref = lair.booking(b.id).ref;
+  const paid = await internal('orders-paid', { id: 9303, admin_graphql_api_id: 'gid://shopify/Order/9303', source_name: 'pos', line_items: [{ id: 93031, quantity: 1, price: '20.00', properties: [{ name: '_booking', value: ref }] }] });
+  assert.equal(paid.status, 200, said(paid));
+  assert.deepEqual([lair.booking(b.id).paidAmount, lair.booking(b.id).paid], [2000, true], 'Sam paid for both of them');
+  await settle();
+  mail.sent.length = 0;
+  assert.equal((await leave(b.openGame.id, KIRI)).status, 200);
+  const after = lair.booking(b.id);
+  assert.deepEqual([after.amount, after.paidAmount, after.paid], [1000, 2000, true], "Sam's game is paid, $10 over");
+  await settle();
+  const staff = mail.sent.filter((m) => m.to === 'staff@dicegoblin.test' && /^Refund due/.test(m.subject));
+  assert.equal(staff.length, 1, 'staff are told');
+  assert.match(words(staff[0]), /Sam Jones/);
+  assert.match(words(staff[0]), /\$10\b/);
+  assert.doesNotMatch(words(staff[0]), /Kiri Smith had paid/, "it's Sam's money, not Kiri's");
+});

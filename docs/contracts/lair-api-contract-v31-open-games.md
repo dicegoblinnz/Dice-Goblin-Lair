@@ -51,6 +51,8 @@ Discord; "Warhammer Night's unbooked pairs open to anyone to book from 6pm on th
   booker's alone again, the game is listed again (and its afternoon email can go again), and the booker hears. A share
   they'd paid ahead at the counter is money due back: staff are emailed, as for any cancellation, and it stops counting
   toward the game (a payment of minus that much, `order_id` 'refund', as v21's), so the booker still pays their own.
+  A booker who'd paid for both of them has paid more than their game costs now: staff are emailed to refund them the
+  difference.
 - Either way round, the booking's `paid` follows what's paid toward it: a booker who paid their own $10 ahead has half a
   game paid once someone joins (the player still pays theirs), and a whole one again if they drop out.
 - The booker cancels as before (`POST /bookings/:id/update { status: 'cancelled' }`). While nobody's joined it's free

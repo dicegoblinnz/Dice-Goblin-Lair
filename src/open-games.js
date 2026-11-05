@@ -371,6 +371,15 @@ export const openGameMethods = {
         details: [['Booking', b.ref], ['Was for', this.when(b, rules)], ['Refund', money(paid)]],
       });
     }
+    // The booker had paid more than their game costs now (paid for both of them, say): the rest is theirs to have back
+    const over = Math.max(0, (b.paidAmount || 0) - Math.max(0, (b.amount || 0) - (b.covered || 0)));
+    if (over > 0) {
+      this.notifyStaff(`Refund due: ${b.ref}`, {
+        title: 'Refund due',
+        intro: `${this.playerName(p)} dropped out of ${b.name}'s open game in time, and ${b.name} had paid ${money(b.paidAmount)} toward it, ${money(over)} more than their own game costs now. Refund ${b.name} the ${money(over)} (or put it on their store credit).`,
+        details: [['Booking', b.ref], ['Was for', this.when(b, rules)], ['Refund', money(over)]],
+      });
+    }
     const fresh = this.booking(b.id);
     this.tellOpenGameLeft(fresh, row, p, rules);
     this.later(this.syncOpenGamePost(row.id));
