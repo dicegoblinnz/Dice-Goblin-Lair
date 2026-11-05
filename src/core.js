@@ -489,6 +489,8 @@ export function eventOccurrences(rules, from, to) {
           capacity: Number(e.capacity) > 0 ? Math.floor(Number(e.capacity)) : null,
           entryFee: Number(e.entryFee) > 0 ? Math.round(Number(e.entryFee)) : 0, gameTables: e.gameTables || '',
           payment: eventPayment(e.payment), lockTables: e.lockTables === true,
+          // Round 30: "Free for library members" (lair_event member_free): library members get in free
+          memberFree: e.memberFree === true,
         });
       }
     }
@@ -985,6 +987,17 @@ export function libraryPlan(tags) {
   if (list.includes('library-member')) return { name: 'Library', games: 1 };
   return null;
 }
+
+/** Shopify's handle for a tag, as the theme's `handle` filter makes it: "In Store Only" → "in-store-only" */
+export const tagHandle = (tag) => String(tag ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+/**
+ * Round 30 (contract v30-library): a library game that stays in the Lair is tagged In Store Only in Shopify. Like the
+ * theme's product page and the catalogue (src/pick.js), it's the tag's handle that counts: in-store-only, whatever the
+ * case or spacing.
+ */
+export const IN_STORE_TAG = 'in-store-only';
+export const inStoreTagged = (tags) => (Array.isArray(tags) ? tags : []).some((t) => tagHandle(t) === IN_STORE_TAG);
 
 /* ---------- mobile numbers (round 7): required on every customer booking ---------- */
 export const MOBILE_MISSING = 'Add a mobile number so we can reach you on the day.';

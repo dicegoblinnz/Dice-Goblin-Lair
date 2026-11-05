@@ -1,6 +1,8 @@
 // Dice Goblin Lair — talking to Shopify: request signatures, Admin API token and GraphQL calls.
 import { eventDays, eventPayment } from './core.js';
 import { barcodeForms } from './core.js';
+// Round 30: a library game that stays in the Lair (its In Store Only tag)
+import { inStoreTagged } from './core.js';
 
 const enc = new TextEncoder();
 
@@ -331,6 +333,8 @@ export class ShopifyAdmin {
           game: String(f.game || '').trim() || null, type: String(f.event_type || '').trim() || null,
           // Round 11: how many days in a row each date runs (Oddity Alley: Saturday and Sunday), same hours each day
           days: eventDays(f.days),
+          // Round 30: member_free ("Free for library members"): library members get in free (contract v30-library)
+          memberFree: String(f.member_free || '').trim().toLowerCase() === 'true',
         };
       })
       .filter((e) => Number.isFinite(e.start));
@@ -546,20 +550,25 @@ export class ShopifyAdmin {
   /**
    * How many copies of each library game there are (round 6: library holds): each product variant's inventory quantity,
    * for up to 60 variant IDs in one call. Needs read_products and read_inventory (Mo approves them once in Shopify admin);
-   * until then Shopify refuses and this throws. Returns a Map of variant ID → { quantity, tracked }, or null for a
-   * variant Shopify doesn't have.
+   * until then Shopify refuses and this throws. Returns a Map of variant ID → { quantity, tracked, inStoreOnly }, or
+   * null for a variant Shopify doesn't have. Round 30: inStoreOnly, whether its product is tagged In Store Only (a game
+   * that stays in the Lair), read on the scan's own lookup so the catalogue never lags behind it; null when Shopify said
+   * nothing about the product.
    */
   async variantCopies(variantIds) {
     const ids = [...new Set(variantIds.map(String))].slice(0, 60);
     if (!ids.length) return new Map();
     const data = await this.graphql(
-      'query VariantCopies($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id inventoryQuantity inventoryItem { tracked } } } }',
+      'query VariantCopies($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id inventoryQuantity inventoryItem { tracked } product { tags } } } }',
       { ids: ids.map((id) => `gid://shopify/ProductVariant/${id}`) },
     );
     const found = new Map((data.nodes || []).filter((n) => n?.id).map((n) => [String(n.id).split('/').pop(), n]));
     return new Map(ids.map((id) => {
       const n = found.get(id);
-      return [id, n ? { quantity: Number.isFinite(Number(n.inventoryQuantity)) ? Number(n.inventoryQuantity) : null, tracked: n.inventoryItem?.tracked !== false } : null];
+      return [id, n ? {
+        quantity: Number.isFinite(Number(n.inventoryQuantity)) ? Number(n.inventoryQuantity) : null, tracked: n.inventoryItem?.tracked !== false,
+        inStoreOnly: Array.isArray(n.product?.tags) ? inStoreTagged(n.product.tags) : null,
+      } : null];
     }));
   }
 
@@ -633,7 +642,8 @@ export class ShopifyAdmin {
    * and tab items. Library copies' barcodes and SKUs are their shelf codes, and a library copy's product has its shelf
    * code in custom.library_code. Needs read_products (waiting for Mo); until then Shopify refuses and this throws. Each:
    * { variantId, productId, handle, title (the variant's), productTitle, sku, barcode, price (cents), available, image
-   * (the variant's), productImage, status, giftCard, sellingPlan, libraryCode }.
+   * (the variant's), productImage, status, giftCard, sellingPlan, libraryCode, inStoreOnly }. Round 30: inStoreOnly,
+   * whether the product is tagged In Store Only (a library game that stays in the Lair), or null when Shopify gave no tags.
    */
   async variantByCode(code) {
     const text = String(code ?? '').replace(/["\\]/g, '');
@@ -642,7 +652,7 @@ export class ShopifyAdmin {
     const data = await this.graphql(
       `query LairVariantByCode($query: String!) { productVariants(first: 5, query: $query) { nodes { id title sku barcode price availableForSale
         media(first: 1) { nodes { preview { image { url } } } }
-        product { id handle title status isGiftCard requiresSellingPlan featuredMedia { preview { image { url } } } libraryCode: metafield(namespace: "custom", key: "library_code") { value } } } } }`,
+        product { id handle title status tags isGiftCard requiresSellingPlan featuredMedia { preview { image { url } } } libraryCode: metafield(namespace: "custom", key: "library_code") { value } } } } }`,
       { query },
     );
     return (data.productVariants?.nodes || []).filter((n) => n?.id && n.product).map((n) => {
@@ -653,6 +663,7 @@ export class ShopifyAdmin {
         image: n.media?.nodes?.[0]?.preview?.image?.url || null, productImage: n.product.featuredMedia?.preview?.image?.url || null,
         status: n.product.status || null, giftCard: n.product.isGiftCard === true, sellingPlan: n.product.requiresSellingPlan === true,
         libraryCode: String(n.product.libraryCode?.value || '').trim() || null,
+        inStoreOnly: Array.isArray(n.product.tags) ? inStoreTagged(n.product.tags) : null,
       };
     });
   }

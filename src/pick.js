@@ -16,6 +16,8 @@
  * cache): a busy night of quizzes never slows the staff floor.
  */
 import { HOUR, MIN, RuleError, addDays, lairTime } from './core.js';
+// Round 30: Shopify's handle for a tag ("In Store Only" → "in-store-only"), the one rule core.js keeps for every reader
+import { tagHandle } from './core.js';
 import { emailReady, safeEqual } from './shopify.js';
 import { wishlistProductId } from './wishlist.js';
 import { PICK_VOCAB } from './pick-vocab.js';
@@ -105,8 +107,6 @@ const wholeIn = (value, lo, hi) => {
 };
 /** A Shopify product's number from its digits, a number or its gid (as the wishlist reads them), else null */
 export const pickProductId = (value) => wishlistProductId(value);
-/** Shopify's handle for a tag: "In Store Only" → "in-store-only" */
-const tagHandle = (tag) => String(tag ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 /** Text cut to max characters at a word, with "…" when it was cut */
 const cutText = (text, max) => {
   if (text.length <= max) return text;

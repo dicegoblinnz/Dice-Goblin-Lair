@@ -315,7 +315,8 @@ export const bookingReminderMethods = {
     if (amount > 0 && !x.waived && due === 0) return [label, W.paid(money(paidSoFar || amount))];
     if (due > 0 && paidSoFar > 0) return [label, W.part(money(due), money(paidSoFar), money(amount))];
     if (due > 0) return [label, W.due(money(due))];
-    if (type === 'signup' && !amount && !x.waived) {
+    // (round 30: a library member's own place at an event free for them is nothing to pay, not the event's price)
+    if (type === 'signup' && !amount && !x.waived && !x.memberFree) {
       const said = this.eventPriceLine(o, (rules.events || []).find((e) => e.id === o.eventId) || {});
       if (said) return ['Entry', said];
     }
