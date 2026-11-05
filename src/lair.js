@@ -88,6 +88,11 @@ import { BOOKING_REMINDER_COLUMNS, BOOKING_REMINDER_INDEXES, bookingReminderMeth
 import { ONLINE_WORDS } from './core.js';
 // Round 29, item 3: a first game for beginners (contract v29-roleplayers section 3)
 import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMethods } from './first-game.js';
+// Round 31, retail: the wishlist's back-on-the-shelf emails, pickups to pull and Open a display (contract v31-retail)
+import { retailMethods } from './retail.js';
+import { wishAlertMethods } from './wish-alerts.js';
+import { pickupMethods } from './pickups.js';
+import { displayMethods } from './displays.js';
 // Round 30: library members get in free at events marked so, and games that stay in the Lair never go home
 // (src/library-rules.js, contract v30-library)
 import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './library-rules.js';
@@ -112,6 +117,9 @@ FEATURE_SCOPES.write_inventory = 'new Games Workshop products stocked at 0, and 
 FEATURE_SCOPES.write_publications = 'new Games Workshop products on the till';
 // Round 29: an unsubscribe from the email the day after a first game reaches Shopify's email marketing setting
 FEATURE_SCOPES.write_customers = "unsubscribes from the Lair's emails reaching Shopify's email marketing";
+// Round 31, retail: staff's Ready to collect for online pickups (Shopify's ready-for-pickup email)
+FEATURE_SCOPES.read_merchant_managed_fulfillment_orders = 'reading online pickups for Ready to collect';
+FEATURE_SCOPES.write_merchant_managed_fulfillment_orders = 'Ready to collect for online pickups';
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -1168,6 +1176,8 @@ export class Lair {
         this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
     }
+    // Round 31, retail: the wishlist keyed by option (rebuilt once), its stock and emails, pickups and displays (src/retail.js)
+    this.retailMigrate();
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1949,6 +1959,8 @@ export class Lair {
         // Round 29: the email the day after a first game, at a fixed time (src/first-game.js), and its one-click
         // unsubscribe from the Lair's own address (index.js: /unsubscribe/<code>/<key>)
         if (b === 'next-day') return json(await this.nextDayAt(Number(body.at) || Date.now()));
+        // Round 31: a back-on-the-shelf email's one-click unsubscribe (WISH-<id>: src/wish-alerts.js)
+        if (b === 'unsubscribe' && this.isWishRef(body.ref)) return this.wishOneClick(body);
         if (b === 'unsubscribe') return this.oneClickUnsubscribe(body);
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
@@ -1978,7 +1990,7 @@ export class Lair {
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
           || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts'].includes(a));
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'staff'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2002,6 +2014,8 @@ export class Lair {
       if (request.method === 'POST' && a === 'unsubscribe' && ['view', 'stop'].includes(b) && !c) {
         const input = await request.json().catch(() => ({}));
         const from = request.headers.get('X-Lair-Client') || '';
+        // Round 31: a back-on-the-shelf email's link (WISH-<id>: src/wish-alerts.js), the same page and the same stop list
+        if (this.isWishRef(input?.ref)) return json(b === 'view' ? this.wishUnsubscribeView(input, from) : this.wishUnsubscribeStop(input, from));
         return json(b === 'view' ? this.unsubscribeView(input, from) : this.unsubscribeStop(input, from));
       }
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
@@ -2022,6 +2036,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'members' && b && !c) return json(await this.memberDetail(decodeURIComponent(b), who));
       // Round 9, team: who's using the staff page, the team, and a member's store credit and emails
       if (request.method === 'GET' && a === 'staff' && b === 'me' && !c) return json(this.staffMe(who));
+      // Round 31, retail: pickups to pull, and Open a display's product search (src/pickups.js, src/displays.js)
+      if (request.method === 'GET' && a === 'staff' && b === 'pull' && !c) return json(this.staffPull(who));
+      if (request.method === 'GET' && a === 'staff' && b === 'displays' && !c) return json(await this.displaySearch(url, who));
       if (request.method === 'GET' && a === 'team' && !b) return json(await this.listTeam(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'credit') return json(await this.memberCredit(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'members' && b && c === 'emails') return json(this.memberEmails(decodeURIComponent(b), who));
@@ -2087,6 +2104,14 @@ export class Lair {
       // Round 16: add a product to the wishlist, and take one off
       if (a === 'me' && b === 'wishlist' && !c) return json(this.addToWishlist(body, who));
       if (a === 'me' && b === 'wishlist' && c === 'remove' && !d) return json(this.removeFromWishlist(body, who));
+      // Round 31: My Lair's "Email me when these come back" (src/wishlist.js)
+      if (a === 'me' && b === 'wishlist' && c === 'alerts' && !d) return json(this.setWishlistAlerts(body, who));
+      // Round 31, retail: a pickup ready, not on the shelf, or done; and Open a display and its undo
+      if (a === 'staff' && b === 'pull' && c === 'ready' && !d) return json(await this.pickupReady(body, who));
+      if (a === 'staff' && b === 'pull' && c === 'missing' && !d) return json(await this.pickupMissing(body, who));
+      if (a === 'staff' && b === 'pull' && c === 'done' && !d) return json(this.pickupDone(body, who));
+      if (a === 'staff' && b === 'displays' && c === 'open' && !d) return json(await this.displayOpen(body, who));
+      if (a === 'staff' && b === 'displays' && c === 'undo' && !d) return json(await this.displayUndo(body, who));
       // Round 17: Help me pick (src/pick.js): the quiz, its swipe round, a session's events, save and email, ratings, and
       // the staff check list and sync
       // Round 26: the Warhammer tab: the pad a part at a time, reading the shop, the plan, applying it, and a release's
@@ -4931,6 +4956,9 @@ export class Lair {
     const orderId = order.admin_graphql_api_id || (order.id ? `gid://shopify/Order/${order.id}` : '');
     if (!orderId || !this.shopify.configured) return { updated: [] };
     const source = order.source_name || '';
+    // Round 31, retail: an online order collected at the Lair goes on staff's To pull list (src/pickups.js), on its own.
+    // Only one with a shipping line (a pickup has one, named for the location) is asked about.
+    if (source === 'web' && (order.shipping_lines || []).length) this.later(this.pickupFromPaid(orderId));
     // Rung up at the counter: Shopify POS's own orders, and since round 22 Pay on Verifone's (src/counter.js)
     const pos = counterSale(order);
     const fromDraft = !source || source === 'shopify_draft_order';
@@ -10896,6 +10924,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: GM credit that adds itself failed', error);
     }
+    // Round 31, retail (src/retail.js): the wishlist's stock and its back-on-the-shelf emails, pickups the webhook missed
+    // or that were collected, and pickups' reminders and refunds due
+    try {
+      const retail = await this.retailUpkeep(rules, Date.now());
+      if (retail) result.retail = retail;
+    } catch (error) {
+      console.error('Lair: retail upkeep failed', error);
+    }
     // Round 30: an hour after a session ends, its GM's one email: who paid and what's on their store credit
     try {
       const mails = await this.gmCreditMails(Date.now());
@@ -11117,3 +11153,9 @@ Object.assign(Lair.prototype, firstGameMethods);
 Object.assign(Lair.prototype, libraryRuleMethods);
 // Round 30: store credit gifts (src/credit-gifts.js)
 Object.assign(Lair.prototype, creditGiftMethods);
+// Round 31, retail (contract v31-retail): what the selling side shares, back-on-the-shelf emails, pickups to pull and
+// Open a display (src/retail.js, src/wish-alerts.js, src/pickups.js, src/displays.js)
+Object.assign(Lair.prototype, retailMethods);
+Object.assign(Lair.prototype, wishAlertMethods);
+Object.assign(Lair.prototype, pickupMethods);
+Object.assign(Lair.prototype, displayMethods);

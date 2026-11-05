@@ -53,7 +53,18 @@ async function call(method, path, body, customer = '', extraHeaders = {}) {
       body: body === undefined || body === null ? undefined : JSON.stringify(body),
     }),
   );
-  return { status: response.status, data: await response.json() };
+  return { status: response.status, data: v16(await response.json()) };
+}
+/**
+ * Round 31 (contract v31-retail) adds the option, what the last stock check found and the member's email switch to every
+ * answer. These checks are round 16's, so they look at round 16's part: each item's productId, handle, title and
+ * addedAt, with no alerts. test/round31-retail.test.js checks the rest.
+ */
+function v16(data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.items)) return data;
+  const { alerts, ...rest } = data;
+  assert.deepEqual(alerts, { on: true }, 'the email switch is on until a member says');
+  return { ...rest, items: data.items.map(({ productId, handle, title, addedAt }) => ({ productId, handle, title, addedAt })) };
 }
 const said = (res) => `${res.status} ${res.data.error || ''}`.trim();
 const list = (who = SAM) => call('GET', 'me/wishlist', null, who);
@@ -92,6 +103,9 @@ test('wishlist (round 16): the words, word for word, and 100 at most', () => {
     handle: "That product's link doesn't look right. Refresh the page and try again.",
     title: "That product's title doesn't look right. Keep it to 255 characters.",
     full: 'Your wishlist is full (100 games). Take one off to add another.',
+    // round 31 (contract v31-retail)
+    variant: "That option doesn't look right. Refresh the page and try again.",
+    alerts: 'Say whether to email you: on or off.',
   });
 });
 
@@ -99,9 +113,11 @@ test('wishlist: its table and index are made on every start when missing (a new 
   const ctx = fakeCtx();
   const first = new Lair(ctx, { CURRENCY: 'NZD' });
   const columns = ctx.db.prepare("SELECT name, type, \"notnull\", pk FROM pragma_table_info('wishlist') ORDER BY cid").all().map((c) => [c.name, c.type, c.notnull, c.pk]);
+  // round 31 (contract v31-retail): the option is in the key, and when they were last told it's back
   assert.deepEqual(columns, [
-    ['customer_id', 'TEXT', 1, 1], ['product_id', 'TEXT', 1, 2], ['handle', 'TEXT', 0, 0], ['title', 'TEXT', 0, 0], ['created_at', 'INTEGER', 1, 0],
-  ], 'one row per member per product: the primary key is (customer_id, product_id)');
+    ['customer_id', 'TEXT', 1, 1], ['product_id', 'TEXT', 1, 2], ['variant_id', 'TEXT', 1, 3], ['handle', 'TEXT', 0, 0], ['title', 'TEXT', 0, 0],
+    ['variant_title', 'TEXT', 0, 0], ['created_at', 'INTEGER', 1, 0], ['told_at', 'INTEGER', 0, 0],
+  ], 'one row per member per product per option: the primary key is (customer_id, product_id, variant_id)');
   const index = ctx.db.prepare("SELECT name FROM pragma_index_info('wishlist_customer') ORDER BY seqno").all().map((c) => c.name);
   assert.deepEqual(index, ['customer_id', 'created_at']);
   // made on every start (as round 15's columns), not by a step in MIGRATIONS, so it never waits on one
@@ -351,7 +367,7 @@ test("wishlist: through the store's app proxy (www.dicegoblin.nz/apps/liar/me/wi
     const res = await worker.fetch(new Request(await signedUrl(`/proxy/${path}`, { ...base, logged_in_customer_id: customer }), {
       method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
     }), env);
-    return { status: res.status, data: await res.json() };
+    return { status: res.status, data: v16(await res.json()) };
   };
   const added = await proxy('POST', 'me/wishlist', SAM, { productId: `gid://shopify/Product/${CATAN}`, handle: 'catan', title: 'Catan' });
   assert.deepEqual([added.status, added.data], [200, { ok: true, added: true, items: [item(CATAN, 'catan', 'Catan', NOW)] }]);

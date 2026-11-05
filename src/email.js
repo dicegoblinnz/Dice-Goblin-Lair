@@ -64,7 +64,9 @@ export function hoursSummary(hours) {
  *              (linked to its page) and short lines under it (the "Your picks" email)
  *   detailsAfter  round 29: the details table goes after the button and its links (the email the day after a first
  *              game, mockup D3: "Save my seat every week" first, then the next session's details)
- *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details
+ *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details.
+ *              Round 31: { why } too, the line before the link that says why they're getting it ("You're getting
+ *              this because The Heist is on your wishlist.")
  * Returns { html, text }.
  */
 export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [], detailsAfter = false, unsubscribe = null }) {
@@ -83,7 +85,8 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const said = String(quote ?? '').trim();
   const logo = safeUrl(brand.logo) || EMAIL_LOGO;
   const home = safeUrl(brand.url) || 'https://www.dicegoblin.nz/';
-  const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim() ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url) } : null;
+  const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim()
+    ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url), why: String(unsubscribe.why ?? '').trim() } : null;
 
   const p = (text, extra = '') => `<p style="margin:0 0 14px;font:16px/1.55 ${FONT};color:${C.ink};${extra}">${lines(text)}</p>`;
   const table = rows.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 20px;border-collapse:collapse;">
@@ -116,7 +119,7 @@ ${detailsAfter ? table : ''}
 ${after.map((t) => p(t)).join('\n')}
 ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
 </td></tr>
-<tr><td style="padding:18px 24px 24px;border-top:1px solid ${C.line};font:13px/1.55 ${FONT};color:${C.muted};">${foot.map(escapeHtml).join('<br>')}${stop ? `<br><br><a href="${escapeHtml(stop.url)}" style="color:${C.muted};text-decoration:underline;">${escapeHtml(stop.label)}</a>` : ''}</td></tr>
+<tr><td style="padding:18px 24px 24px;border-top:1px solid ${C.line};font:13px/1.55 ${FONT};color:${C.muted};">${foot.map(escapeHtml).join('<br>')}${stop ? `<br><br>${stop.why ? `${escapeHtml(stop.why)} ` : ''}<a href="${escapeHtml(stop.url)}" style="color:${C.muted};text-decoration:underline;">${escapeHtml(stop.label)}</a>` : ''}</td></tr>
 </table>
 </td></tr></table>
 </body></html>`;
@@ -136,7 +139,7 @@ ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
     ...after,
     signed.join('\n'),
     `--\n${foot.join('\n')}`,
-    stop ? `${stop.label}: ${stop.url}` : null,
+    stop ? `${stop.why ? `${stop.why}\n` : ''}${stop.label}: ${stop.url}` : null,
   ].filter(Boolean).join('\n\n');
   return { html, text: `${text}\n` };
 }
