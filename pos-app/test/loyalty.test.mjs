@@ -161,8 +161,7 @@ test('round 29: the count says "X of 12" and what’s left is still the stamps t
   if (!older) return;
   assert.equal(headStartWords(older), '', 'an older Lair app: no head start to explain');
   assert.deepEqual([stampCount(older), stampsLeft(older)], ['7 of 10 stamps', '3 more fill the card: a d20 roll for store credit.'], 'and its words as before');
-  assert.equal(stampAddedWords(r29(8), 'Sam'), 'Stamp added: 10 of 12.');
-  assert.equal(stampAddedWords(r29(0, 2, 1), 'Sam'), "Stamp added: Sam's loyalty card is full!", 'the 10th stamp fills it; the next card is 2 of 12');
+  // (round 30: there's no "Stamp added" toast any more: the counter never adds a stamp)
 });
 
 test('round 29: the card drawn in three rows of four: Gobgob’s 2 first, then the stamps (the ones that just landed marked new), then the spaces left', () => {

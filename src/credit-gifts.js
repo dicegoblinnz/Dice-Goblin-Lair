@@ -123,7 +123,7 @@ export const creditGiftMethods = {
   /* ---------------- names and views ---------------- */
 
   /** A member as the other side of a gift sees them: "Kai T." (first name and initial), or "A member". No awaits. */
-  giftName(customerId) {
+  creditGiftName(customerId) {
     const m = this.memberRow(customerId);
     const words = String(m?.name || '').trim().split(/\s+/).filter(Boolean);
     const first = String(m?.first_name || words[0] || '').trim();
@@ -133,7 +133,7 @@ export const creditGiftMethods = {
   },
 
   /** A member's first name for the emails and messages. No awaits. */
-  giftFirst(customerId) {
+  creditGiftFirst(customerId) {
     const m = this.memberRow(customerId);
     return String(m?.first_name || String(m?.name || '').split(/\s+/)[0] || 'your friend').trim();
   },
@@ -142,7 +142,7 @@ export const creditGiftMethods = {
   creditGiftView(row, viewer) {
     const sent = String(row.from_id) === String(viewer);
     const status = ['sent', 'failed', 'returned'].includes(row.status) ? row.status : 'checking';
-    return { id: row.id, direction: sent ? 'sent' : 'received', name: this.giftName(sent ? row.to_id : row.from_id), amount: row.amount, note: row.note || '', status, at: row.created_at };
+    return { id: row.id, direction: sent ? 'sent' : 'received', name: this.creditGiftName(sent ? row.to_id : row.from_id), amount: row.amount, note: row.note || '', status, at: row.created_at };
   },
 
   /**
@@ -151,7 +151,7 @@ export const creditGiftMethods = {
    */
   creditGiftStaffView(row) {
     return {
-      id: row.id, from: { customerId: row.from_id, name: this.giftName(row.from_id) }, to: { customerId: row.to_id, name: this.giftName(row.to_id) },
+      id: row.id, from: { customerId: row.from_id, name: this.creditGiftName(row.from_id) }, to: { customerId: row.to_id, name: this.creditGiftName(row.to_id) },
       amount: row.amount, note: row.note || '', status: row.status, stage: row.status === 'check' ? row.stage || null : null, message: row.message || null,
       at: row.created_at, sentAt: row.sent_at || null, settledAt: row.settled_at || null,
     };
@@ -172,7 +172,7 @@ export const creditGiftMethods = {
 
   /** GET /me's giftCredit: { min, max, left } (left: cents they can still send today). No awaits. */
   giftCreditLimits(customerId, now = Date.now()) {
-    const today = this.giftsToday(String(customerId), now);
+    const today = this.creditGiftsToday(String(customerId), now);
     return { min: CREDIT_GIFT.min, max: CREDIT_GIFT.max, left: today.count >= CREDIT_GIFT.dayCount ? 0 : Math.max(0, CREDIT_GIFT.dayMax - today.sum) };
   },
 
@@ -193,11 +193,11 @@ export const creditGiftMethods = {
       .map((row) => {
         const sent = String(row.from_id) === id;
         const status = row.status === 'sent' ? 'done' : ['failed', 'returned'].includes(row.status) ? 'failed' : 'pending';
-        const other = this.giftName(sent ? row.to_id : row.from_id);
+        const other = this.creditGiftName(sent ? row.to_id : row.from_id);
         return {
           id: `gift:${row.id}`, giftId: row.id, kind: 'gift', amount: sent ? -row.amount : row.amount, note: `${sent ? 'Gift to' : 'Gift from'} ${other}${row.note ? `: ${row.note}` : ''}`,
           status, check: row.status === 'check', stage: row.status === 'check' ? row.stage || null : null, balanceAfter: null, message: row.message || null,
-          at: row.created_at, by: null, from: this.giftName(row.from_id), to: this.giftName(row.to_id),
+          at: row.created_at, by: null, from: this.creditGiftName(row.from_id), to: this.creditGiftName(row.to_id),
         };
       });
   },
@@ -205,7 +205,7 @@ export const creditGiftMethods = {
   /* ---------------- checks ---------------- */
 
   /** What a sender has sent today (Lair time), gifts that didn't go left out: { sum, count }. No awaits. */
-  giftsToday(fromId, now) {
+  creditGiftsToday(fromId, now) {
     const time = new LairTime(this.rulesCache?.tz || 'Pacific/Auckland');
     const from = time.at(time.key(now), 0);
     const to = time.at(addDays(time.key(now), 1), 0);
@@ -215,23 +215,23 @@ export const creditGiftMethods = {
   },
 
   /** One member code looked up by a member (to check or to send): 429 past CREDIT_GIFT.lookups an hour. No awaits. */
-  giftLookup(customerId, now) {
-    if (!this.giftLookups) this.giftLookups = new Map();
-    const hits = (this.giftLookups.get(customerId) || []).filter((t) => now - t < CREDIT_GIFT.lookupWindow);
+  creditGiftLookup(customerId, now) {
+    if (!this.creditGiftLookups) this.creditGiftLookups = new Map();
+    const hits = (this.creditGiftLookups.get(customerId) || []).filter((t) => now - t < CREDIT_GIFT.lookupWindow);
     if (hits.length >= CREDIT_GIFT.lookups) {
-      this.giftLookups.set(customerId, hits);
+      this.creditGiftLookups.set(customerId, hits);
       throw new RuleError(CREDIT_GIFT_WORDS.lookups, 429);
     }
     hits.push(now);
-    if (this.giftLookups.size > 2000) this.giftLookups.clear();
-    this.giftLookups.set(customerId, hits);
+    if (this.creditGiftLookups.size > 2000) this.creditGiftLookups.clear();
+    this.creditGiftLookups.set(customerId, hits);
   },
 
   /** The member a code is (a member's own current code), for a gift from `fromId`: their row, or 422, 404 or 409. No awaits. */
-  giftRecipient(code, fromId, now) {
+  creditGiftRecipient(code, fromId, now) {
     const text = String(code ?? '').trim();
     if (!text || text.length > 40) throw new RuleError(CREDIT_GIFT_WORDS.code);
-    this.giftLookup(fromId, now);
+    this.creditGiftLookup(fromId, now);
     const found = this.findCode(text);
     if (!found || found.type !== 'member' || !found.item?.customer_id) throw new RuleError(CREDIT_GIFT_WORDS.noMember, 404);
     if (String(found.item.customer_id) === fromId) throw new RuleError(CREDIT_GIFT_WORDS.own, 409);
@@ -241,8 +241,8 @@ export const creditGiftMethods = {
   /** POST /me/credit/gift/check { code } (logged in): who a member code is, before sending: { to: { name } }. No awaits. */
   checkCreditGift(input, who) {
     if (!who?.customerId) throw new RuleError(CREDIT_GIFT_WORDS.login, 401);
-    const to = this.giftRecipient(input?.code, String(who.customerId), Date.now());
-    return { to: { name: this.giftName(to.customer_id) } };
+    const to = this.creditGiftRecipient(input?.code, String(who.customerId), Date.now());
+    return { to: { name: this.creditGiftName(to.customer_id) } };
   },
 
   /* ---------------- sending ---------------- */
@@ -262,13 +262,13 @@ export const creditGiftMethods = {
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) throw new RuleError(CREDIT_GIFT_WORDS.key);
     const repeat = () => this.sql.exec('SELECT * FROM credit_gifts WHERE from_id = ? AND key = ?', from, key).toArray()[0] || null;
     const again = repeat();
-    if (again) return this.giftRepeat(again, from);
+    if (again) return this.creditGiftRepeat(again, from);
     const amount = input?.amount;
     if (typeof amount !== 'number' || !Number.isInteger(amount) || amount < CREDIT_GIFT.min || amount > CREDIT_GIFT.max) throw new RuleError(CREDIT_GIFT_WORDS.amount);
     const note = cleanNote(input?.note);
     if (note.length > CREDIT_GIFT.noteMax) throw new RuleError(CREDIT_GIFT_WORDS.note);
-    const to = this.giftRecipient(input?.code, from, Date.now());
-    this.checkGiftLimits(from, amount, Date.now());
+    const to = this.creditGiftRecipient(input?.code, from, Date.now());
+    this.creditGiftLimitCheck(from, amount, Date.now());
     if (!this.shopify?.configured) throw new RuleError(CREDIT_GIFT_WORDS.off, 503);
     const currency = this.env?.CURRENCY || 'NZD';
     // their balance first, when Shopify will say, for a clear "you have $4" (Shopify refuses to take more anyway)
@@ -280,8 +280,8 @@ export const creditGiftMethods = {
     }
     // --- no awaits until the gift is claimed (a second tap, or another gift, may have come in meanwhile) ---
     const raced = repeat();
-    if (raced) return this.giftRepeat(raced, from);
-    this.checkGiftLimits(from, amount, Date.now());
+    if (raced) return this.creditGiftRepeat(raced, from);
+    this.creditGiftLimitCheck(from, amount, Date.now());
     if (balance != null && balance < amount) throw new RuleError(CREDIT_GIFT_WORDS.short(balance), 409);
     const id = makeId('cg');
     const now = Date.now();
@@ -299,23 +299,23 @@ export const creditGiftMethods = {
       if (!error?.refused) {
         // it may or may not have come off: the 10-minute run looks in their store credit, so it never goes twice
         console.error('Lair: a store credit gift had no answer taking it off', error);
-        this.giftUpdate(id, { status: 'checking', stage: 'take', message: said(error) });
-        return { gift: this.creditGiftView(this.giftRow(id), from), balance: null, message: CREDIT_GIFT_WORDS.checking };
+        this.creditGiftUpdate(id, { status: 'checking', stage: 'take', message: said(error) });
+        return { gift: this.creditGiftView(this.creditGiftRow(id), from), balance: null, message: CREDIT_GIFT_WORDS.checking };
       }
       const short = error.code === 'INSUFFICIENT_FUNDS';
       const message = short ? CREDIT_GIFT_WORDS.shortNow : CREDIT_GIFT_WORDS.notTaken(said(error));
-      this.giftUpdate(id, { status: 'failed', message });
+      this.creditGiftUpdate(id, { status: 'failed', message });
       throw new RuleError(message, 409);
     }
     const done = await this.giveCreditGift(id, { tx: took?.id || null, balanceAfter: took?.balanceAfter ?? null });
     if (done.refuse) throw new RuleError(done.message, 409);
-    return { gift: this.creditGiftView(this.giftRow(id), from), balance: done.balance, message: done.message };
+    return { gift: this.creditGiftView(this.creditGiftRow(id), from), balance: done.balance, message: done.message };
   },
 
   /** The same tap again: the first gift as it stands (still going: checking). No awaits. */
-  giftRepeat(row, from) {
+  creditGiftRepeat(row, from) {
     const view = this.creditGiftView(row, from);
-    const first = this.giftFirst(row.to_id);
+    const first = this.creditGiftFirst(row.to_id);
     const message = view.status === 'sent' ? CREDIT_GIFT_WORDS.sent(money(row.amount), first)
       : view.status === 'returned' ? CREDIT_GIFT_WORDS.returned(first)
         : view.status === 'failed' ? row.message || CREDIT_GIFT_WORDS.shortNow
@@ -324,20 +324,20 @@ export const creditGiftMethods = {
   },
 
   /** The sender's limits for a new gift: one at a time, and the day's sum and count. Throws 409. No awaits. */
-  checkGiftLimits(from, amount, now) {
+  creditGiftLimitCheck(from, amount, now) {
     const moving = this.sql.exec(`SELECT 1 AS n FROM credit_gifts WHERE from_id = ? AND status IN (${MOVING.map(() => '?').join(', ')}) LIMIT 1`, from, ...MOVING).toArray().length;
     if (moving) throw new RuleError(CREDIT_GIFT_WORDS.busy, 409);
-    const today = this.giftsToday(from, now);
+    const today = this.creditGiftsToday(from, now);
     if (today.count >= CREDIT_GIFT.dayCount) throw new RuleError(CREDIT_GIFT_WORDS.count, 409);
     if (today.sum + amount > CREDIT_GIFT.dayMax) throw new RuleError(CREDIT_GIFT_WORDS.daily(CREDIT_GIFT.dayMax - today.sum), 409);
   },
 
-  giftRow(id) {
+  creditGiftRow(id) {
     return this.sql.exec('SELECT * FROM credit_gifts WHERE id = ?', id).toArray()[0] || null;
   },
 
   /** Change a gift's own row (status and what came back). No awaits. */
-  giftUpdate(id, fields) {
+  creditGiftUpdate(id, fields) {
     const sets = Object.keys(fields).map((k) => `${k} = ?`);
     this.write(`UPDATE credit_gifts SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`, ...Object.values(fields), Date.now(), id);
   },
@@ -348,9 +348,9 @@ export const creditGiftMethods = {
    * refuse } (refuse: a 409 for the sender, nothing moved in the end).
    */
   async giveCreditGift(id, { tx, balanceAfter }) {
-    const row = this.giftRow(id);
-    this.giftUpdate(id, { status: 'giving', stage: null, take_tx: tx, balance_after: balanceAfter });
-    const first = this.giftFirst(row.to_id);
+    const row = this.creditGiftRow(id);
+    this.creditGiftUpdate(id, { status: 'giving', stage: null, take_tx: tx, balance_after: balanceAfter });
+    const first = this.creditGiftFirst(row.to_id);
     let gave;
     try {
       gave = await this.shopify.changeStoreCredit(row.to_id, row.amount, row.currency, { timeout: CREDIT_GIFT.timeoutMs });
@@ -358,33 +358,33 @@ export const creditGiftMethods = {
       if (error?.refused) return this.returnCreditGift(id, error);
       // --- no awaits from here on ---
       console.error('Lair: a store credit gift had no answer going on the friend\'s account', error);
-      this.giftUpdate(id, { status: 'check', stage: 'give', message: said(error) });
-      this.giftCheckAlert(this.giftRow(id));
+      this.creditGiftUpdate(id, { status: 'check', stage: 'give', message: said(error) });
+      this.creditGiftCheckAlert(this.creditGiftRow(id));
       return { status: 'check', message: CREDIT_GIFT_WORDS.onItsWay(first), balance: balanceAfter };
     }
     // --- no awaits from here on ---
-    this.giftUpdate(id, { status: 'sent', stage: null, give_tx: gave?.id || null, sent_at: Date.now(), message: null });
-    this.creditGiftEmails(this.giftRow(id));
+    this.creditGiftUpdate(id, { status: 'sent', stage: null, give_tx: gave?.id || null, sent_at: Date.now(), message: null });
+    this.creditGiftEmails(this.creditGiftRow(id));
     return { status: 'sent', message: CREDIT_GIFT_WORDS.sent(money(row.amount), first), balance: balanceAfter };
   },
 
   /** Shopify wouldn't add a gift to the friend's account: it goes back on the sender's. Returns giveCreditGift's shape. */
   async returnCreditGift(id, giveError) {
-    const row = this.giftRow(id);
-    const first = this.giftFirst(row.to_id);
-    this.giftUpdate(id, { status: 'returning', message: said(giveError) });
+    const row = this.creditGiftRow(id);
+    const first = this.creditGiftFirst(row.to_id);
+    this.creditGiftUpdate(id, { status: 'returning', message: said(giveError) });
     let back;
     try {
       back = await this.shopify.changeStoreCredit(row.from_id, row.amount, row.currency, { timeout: CREDIT_GIFT.timeoutMs });
     } catch (error) {
       // --- no awaits from here on ---
       console.error('Lair: a store credit gift could not go back on the sender\'s account', error);
-      this.giftUpdate(id, { status: 'check', stage: 'back', message: `${said(giveError)}; back: ${said(error)}` });
-      this.giftCheckAlert(this.giftRow(id));
+      this.creditGiftUpdate(id, { status: 'check', stage: 'back', message: `${said(giveError)}; back: ${said(error)}` });
+      this.creditGiftCheckAlert(this.creditGiftRow(id));
       return { status: 'check', message: CREDIT_GIFT_WORDS.backCheck(first), balance: null };
     }
     // --- no awaits from here on ---
-    this.giftUpdate(id, { status: 'returned', stage: null, back_tx: back?.id || null, balance_after: back?.balanceAfter ?? null });
+    this.creditGiftUpdate(id, { status: 'returned', stage: null, back_tx: back?.id || null, balance_after: back?.balanceAfter ?? null });
     return { status: 'returned', message: CREDIT_GIFT_WORDS.returned(first), balance: back?.balanceAfter ?? null, refuse: true };
   },
 
@@ -396,8 +396,8 @@ export const creditGiftMethods = {
     this.write('UPDATE credit_gifts SET emailed = 1 WHERE id = ?', row.id);
     const sender = this.memberRow(row.from_id);
     const friend = this.memberRow(row.to_id);
-    const fromFirst = this.giftFirst(row.from_id);
-    const toFirst = this.giftFirst(row.to_id);
+    const fromFirst = this.creditGiftFirst(row.from_id);
+    const toFirst = this.creditGiftFirst(row.to_id);
     const amount = money(row.amount);
     const wallet = `${this.page('myLair')}?view=wallet`;
     const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
@@ -414,7 +414,7 @@ export const creditGiftMethods = {
       this.later(this.mail(this.letter(to(sender), `You sent ${toFirst} ${amount} of store credit`, {
         title: 'Gift sent!',
         intro: `Kia ora ${fromFirst}, you sent ${toFirst} ${amount} of your store credit. It's on their account now.`,
-        details: [['To', this.giftName(row.to_id)], ['Amount', amount], ['Your store credit now', row.balance_after != null ? money(row.balance_after) : '']],
+        details: [['To', this.creditGiftName(row.to_id)], ['Amount', amount], ['Your store credit now', row.balance_after != null ? money(row.balance_after) : '']],
         outro: "Didn't send this? Reply to this email straight away and the team will look into it.",
         button: { label: 'See it in My Lair', url: wallet },
       })));
@@ -422,9 +422,9 @@ export const creditGiftMethods = {
   },
 
   /** Staff hear about a gift Shopify didn't confirm, with what to look for and what to tap. Once a day each. No awaits. */
-  giftCheckAlert(row) {
-    const fromFirst = this.giftFirst(row.from_id);
-    const toFirst = this.giftFirst(row.to_id);
+  creditGiftCheckAlert(row) {
+    const fromFirst = this.creditGiftFirst(row.from_id);
+    const toFirst = this.creditGiftFirst(row.to_id);
     const amount = money(row.amount);
     const time = new Intl.DateTimeFormat('en-NZ', { timeZone: this.rulesCache?.tz || 'Pacific/Auckland', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(row.created_at)).replace(/\s/g, '').toLowerCase();
     const intro = row.stage === 'back'
@@ -435,7 +435,7 @@ export const creditGiftMethods = {
     this.staffAlert(`credit-gift-check:${row.id}`, `Check a store credit gift: ${fromFirst} to ${toFirst}`, {
       title: 'Did the store credit gift go through?',
       intro,
-      details: [['From', this.giftName(row.from_id)], ['To', this.giftName(row.to_id)], ['Amount', amount], ['Shopify said', row.message || 'no answer']],
+      details: [['From', this.creditGiftName(row.from_id)], ['To', this.creditGiftName(row.to_id)], ['Amount', amount], ['Shopify said', row.message || 'no answer']],
     });
   },
 
@@ -449,15 +449,15 @@ export const creditGiftMethods = {
     this.requireStaff(who, 'money');
     const outcome = String(input?.outcome ?? '');
     if (!['sent', 'returned', 'failed'].includes(outcome)) throw new RuleError(CREDIT_GIFT_WORDS.outcome);
-    const row = this.giftRow(String(id || '').slice(0, 40));
+    const row = this.creditGiftRow(String(id || '').slice(0, 40));
     if (!row) throw new RuleError('No gift with that ID.', 404);
     if (row.status !== 'check') throw new RuleError(CREDIT_GIFT_WORDS.notCheck, 409);
     const now = Date.now();
-    this.giftUpdate(row.id, {
+    this.creditGiftUpdate(row.id, {
       status: outcome, stage: null, settled_by: who.customerId ? `staff:${who.customerId}` : 'staff', settled_at: now, ...(outcome === 'sent' ? { sent_at: now } : {}),
     });
-    if (outcome === 'sent') this.creditGiftEmails(this.giftRow(row.id));
-    return { gift: this.creditGiftStaffView(this.giftRow(row.id)) };
+    if (outcome === 'sent') this.creditGiftEmails(this.creditGiftRow(row.id));
+    return { gift: this.creditGiftStaffView(this.creditGiftRow(row.id)) };
   },
 
   /* ---------------- the 10-minute run ---------------- */
@@ -476,10 +476,10 @@ export const creditGiftMethods = {
     };
     // left mid-way by a restart: taking is looked for like a lost answer; giving or returning goes to staff
     for (const row of this.sql.exec("SELECT * FROM credit_gifts WHERE status IN ('taking', 'giving', 'returning') AND updated_at < ? LIMIT ?", now - CREDIT_GIFT.stale, CREDIT_GIFT.perRun).toArray()) {
-      if (row.status === 'taking') this.giftUpdate(row.id, { status: 'checking', stage: 'take', message: 'no answer (the Lair restarted)' });
+      if (row.status === 'taking') this.creditGiftUpdate(row.id, { status: 'checking', stage: 'take', message: 'no answer (the Lair restarted)' });
       else {
-        this.giftUpdate(row.id, { status: 'check', stage: row.status === 'giving' ? 'give' : 'back', message: 'no answer (the Lair restarted)' });
-        this.giftCheckAlert(this.giftRow(row.id));
+        this.creditGiftUpdate(row.id, { status: 'check', stage: row.status === 'giving' ? 'give' : 'back', message: 'no answer (the Lair restarted)' });
+        this.creditGiftCheckAlert(this.creditGiftRow(row.id));
         add('check');
       }
     }
@@ -493,13 +493,13 @@ export const creditGiftMethods = {
         console.error('Lair: could not read store credit for a gift', error);
       }
       // --- no awaits from here on (for this one, until it goes on to the friend's) ---
-      const fresh = this.giftRow(row.id);
+      const fresh = this.creditGiftRow(row.id);
       if (!fresh || fresh.status !== 'checking') continue;
       const at = Date.now();
       if (!debits) {
         if (at - fresh.created_at >= CREDIT_GIFT.askAfter) {
-          this.giftUpdate(fresh.id, { status: 'check', stage: 'take' });
-          this.giftCheckAlert(this.giftRow(fresh.id));
+          this.creditGiftUpdate(fresh.id, { status: 'check', stage: 'take' });
+          this.creditGiftCheckAlert(this.creditGiftRow(fresh.id));
           add('check');
         }
         continue;
@@ -521,7 +521,7 @@ export const creditGiftMethods = {
         continue;
       }
       if (at - fresh.created_at >= CREDIT_GIFT.goneAfter) {
-        this.giftUpdate(fresh.id, { status: 'failed', stage: null, message: CREDIT_GIFT_WORDS.gone });
+        this.creditGiftUpdate(fresh.id, { status: 'failed', stage: null, message: CREDIT_GIFT_WORDS.gone });
         add('failed');
       }
     }

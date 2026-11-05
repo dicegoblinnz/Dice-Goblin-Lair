@@ -8960,15 +8960,8 @@ export class Lair {
     return this.loansOut(customerId).filter((l) => !l.lent);
   }
 
-  /**
-   * The member an email belongs to (16 Oct 2026, lending): their email on the Lair, or their Shopify account's (ignoring
-   * case), the most recently seen first; null when nobody has it. No awaits.
-   */
-  memberForEmail(email) {
-    if (!isEmail(email)) return null;
-    const value = String(email).trim();
-    return this.sql.exec('SELECT * FROM members WHERE lower(email) = lower(?) OR lower(account_email) = lower(?) ORDER BY last_seen DESC LIMIT 1', value, value).toArray()[0] || null;
-  }
+  // (The member an email belongs to, memberForEmail, is src/warhammer.js's since round 11: it always replaced the one
+  // lending had here, which round 30 took out so no mixed-in method replaces one of the Lair's: test/round30-mixins.)
 
   /** A library game the Lair knows (library_games), or null */
   libraryGame(variantId) {
