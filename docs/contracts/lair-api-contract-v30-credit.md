@@ -136,6 +136,30 @@ the GM pays for give nothing). `src/gm-credit.js`, `src/counter.js`; tests `test
   staff add it by hand) or null (not paid, or none for that seat).
 - The GM's emails' "Your credit" line (`gmCreditLine`): "$5.00 store credit for each paying player, as they pay". The
   invite email: "Your store credit goes onto your account as each player pays through the Lair."
+- **One email a session** (Mo, 6 Nov 2026: "One email for all the players per session"): the credit that adds itself
+  goes on with `notify: false` (`creditCustomer`'s option), so Shopify sends the GM nothing for each player, and the
+  seat is marked `quiet`. An hour after the session ends (`GM_CREDIT.mailAfter`), the 10-minute run
+  (`gmCreditMails`) emails each GM once for it: who paid and the total on their store credit (below). Seats that land
+  after that email do so quietly (it says so), and show in My Lair's Games I run. Only seats credited quietly count, so
+  a session credited before this went live (Shopify emailed then) gets none; nor does one with no credit, a staff GM's
+  the setting kept, or a session that ended more than 48 hours before the run gets to it (`GM_CREDIT.mailWithin`).
+  Each email is claimed in `gm_credit_mails` before it goes, with the idempotency key `gm-credit-mail-<game>-<GM>`:
+  Resend down, busy or not answering in time (5xx, 429, a timeout): unclaimed, and the next run tries again; anything
+  else Resend refuses, or no address for the GM: not tried again. Up to 20 a run. The maintenance answer adds
+  `gmCreditMails: { sent, retry, failed }` when it looked at any. Session done on a session from before 26 October
+  (staff add that GM credit themselves) still goes with Shopify's email.
+
+The email (Gobgob signs it; the button opens My Lair at Games I run, `?view=ml-games`):
+
+| Part | Words |
+|---|---|
+| Subject (`mailSubject`) | Your GM credit for Rangi's one-shot: $15.00 |
+| Title (`mailTitle`) | Thanks for running Rangi's one-shot! |
+| Intro (`mailIntro`) | Kia ora Rangi, $15.00 of store credit is on your account for Rangi's one-shot: $5.00 for each of the 3 players who paid. (one: "$5.00 for the 1 player who paid"; fees that differed: "for the 3 players who paid") |
+| Details | Session (when), Players who paid ("Mia (2), Kai": first names, people on the seat in brackets; past 8, "and 3 more"), Store credit |
+| After (`mailLater`) | Anyone who pays later still sends you their $5.00. It lands on your store credit without an email, and My Lair shows it under Games I run. |
+| Button | See it in My Lair |
+| Sign-off | Happy GMing! Gobgob |
 
 `GM_CREDIT_WORDS` changes, word for word:
 

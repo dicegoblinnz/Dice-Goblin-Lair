@@ -188,7 +188,7 @@ test('GM credit (round 30): once the session has started, each seat gives its GM
   nowIs(at('2026-10-27', 18, 20));
   await pay(mias);
   await settled();
-  assert.deepEqual(creditCalls, [[RANGI, 1000, 'NZD', { timeout: GM_CREDIT.timeoutMs }]]);
+  assert.deepEqual(creditCalls, [[RANGI, 1000, 'NZD', { timeout: GM_CREDIT.timeoutMs, notify: false }]], 'no email from Shopify each time (Mo: one email a session)');
   assert.deepEqual(ledger(id).map((r) => [r.booking_id, r.customer_id, r.people, r.amount, r.status]), [[mias.id, RANGI, 2, 1000, 'credited']]);
   // 9:55pm: Kai pays by card at the counter (the tile's line, through Pay on Verifone): his $5 goes straight away too
   nowIs(at('2026-10-27', 21, 55));
@@ -344,6 +344,116 @@ test('GM credit (round 30): a GM\'s games in My Lair say what they get for each 
   lair.rulesCache.prices.gmCredit = 0;
   const game = ok(await call('GET', 'me', null, RANGI)).games.find((g) => g.id === priced);
   assert.deepEqual([game.gmCreditEach, game.players.map((p) => [p.name, p.paid, p.gmCredit])], [0, [['Mia', true, null]]]);
+});
+
+/* ---------------- one email a session (Mo, 6 Nov 2026: "One email for all the players per session") ---------------- */
+
+/**
+ * The GM credit emails the Lair sends, as Resend would take them, with the email set up (listing a game and booking a
+ * seat send emails of their own, which Resend takes and aren't kept here)
+ */
+function mailbox({ answer = () => ({ attempted: true, ok: true, status: 200 }) } = {}) {
+  const keys = { RESEND_API_KEY: 're_test', FROM_EMAIL: 'Dice Goblin <lair@dicegoblin.test>' };
+  lair.baseEnv = { ...lair.baseEnv, ...keys };
+  lair.env = { ...lair.env, ...keys };
+  const sent = [];
+  lair.mail = async (message) => {
+    if (!String(message.subject || '').startsWith('Your GM credit')) return { attempted: true, ok: true, status: 200 };
+    sent.push(message);
+    return answer(message, sent.length);
+  };
+  return sent;
+}
+
+test('GM credit (round 30): one email a session: the fees land quietly as each player pays, and an hour after it ends Gobgob emails the GM once with who paid and the total', async () => {
+  const sent = mailbox();
+  const id = await list();
+  const mias = await seat(id, MIA, 'Mia', { people: 2 });
+  const kais = await seat(id, KAI, 'Kai');
+  const rias = await seat(id, RIA, 'Ria');
+  nowIs(at('2026-10-27', 18, 20));
+  await pay(mias);
+  await settled();
+  nowIs(at('2026-10-27', 21, 55));
+  await pay(kais);
+  await settled();
+  assert.deepEqual(credited, [[RANGI, 1000], [RANGI, 500]]);
+  assert.ok(creditCalls.every((c) => c[3]?.notify === false), 'Shopify sends no email for any of them');
+  assert.deepEqual(sent, [], 'nothing yet: the session is on');
+  // 10:30pm, half an hour after it ended: not yet (late payers at the counter still count)
+  nowIs(at('2026-10-27', 22, 30));
+  assert.equal(await lair.gmCreditMails(Date.now()), null);
+  // 11pm, an hour after: one email to Rangi, for the three players who paid
+  nowIs(at('2026-10-27', 23, 0));
+  assert.deepEqual(await lair.gmCreditMails(Date.now()), { sent: 1 });
+  assert.equal(sent.length, 1);
+  const [mail] = sent;
+  assert.equal(mail.to, 'rangi@example.com');
+  assert.equal(mail.subject, "Your GM credit for Rangi's one-shot: $15.00");
+  assert.match(mail.text, /Kia ora Rangi, \$15\.00 of store credit is on your account for Rangi's one-shot: \$5\.00 for each of the 3 players who paid\./);
+  assert.match(mail.text, /Players who paid: Mia \(2\), Kai/);
+  assert.match(mail.text, /See it in My Lair: https:\/\/www\.dicegoblin\.nz\/pages\/my-lair\?view=ml-games\n/, 'Games I run, in My Lair');
+  assert.equal(mail.idempotencyKey, `gm-credit-mail-${id}-${RANGI}`);
+  assert.match(mail.text, /Anyone who pays later still sends you their \$5\.00\. It lands on your store credit without an email, and My Lair shows it under Games I run\./);
+  assert.ok(!/Ria/.test(mail.text), "Ria hasn't paid");
+  // never twice: a run again, and Ria paying the next day, land quietly
+  assert.equal(await lair.gmCreditMails(Date.now()), null);
+  nowIs(at('2026-10-28', 12));
+  await pay(rias);
+  await settled();
+  await lair.autoGmCredit(Date.now());
+  assert.deepEqual(credited, [[RANGI, 1000], [RANGI, 500], [RANGI, 500]]);
+  assert.equal(await lair.gmCreditMails(Date.now()), null);
+  assert.equal(sent.length, 1);
+});
+
+test('GM credit (round 30): the one email: none for a session whose credit Shopify emailed about before, nothing paid, staff GMs, or sessions long gone; Resend down or not answering: tried again next run, never twice; an address Resend refuses: not again', async () => {
+  // Resend busy, then not answering in time, then fine; and it refuses Hemi's address
+  const answers = [{ attempted: true, ok: false, status: 503, message: 'busy' }, { attempted: true, ok: false, status: 0, message: 'The operation timed out.' }];
+  const sent = mailbox({
+    answer: (m) => (m.to === 'hemi@example.com' ? { attempted: true, ok: false, status: 422, message: 'Invalid `to` field.' } : answers.shift() || { attempted: true, ok: true, status: 200 }),
+  });
+  // Tuesday's sessions: one credited before this round (Shopify emailed the GM then), one nobody paid for, a staff GM's
+  // (kept by the team's setting), and Wiremu's, paid
+  const before = await list();
+  const old = await seat(before, MIA, 'Mia');
+  const empty = await list({ tables: ['B2'], title: 'Empty night' });
+  await seat(empty, KAI, 'Kai');
+  const anas = await list({ gm: ANA, tables: ['B3'] });
+  const anaSeat = await seat(anas, RIA, 'Ria');
+  const wiremus = await list({ gm: WIREMU, tables: ['B4'], title: "Wiremu's game" });
+  const kais = await seat(wiremus, KAI, 'Kai');
+  const hemis = await list({ gm: '5003', tables: ['T1'], title: "Hemi's game" });
+  const hemiSeat = await seat(hemis, RIA, 'Ria');
+  // and Thursday's, which the Lair only gets to two days and more after it ends
+  const lateGame = await list({ start: at('2026-10-29', 18), end: at('2026-10-29', 22), tables: ['B1'], title: 'Late one' });
+  const lateSeat = await seat(lateGame, MIA, 'Mia');
+  nowIs(at('2026-10-27', 19));
+  for (const booking of [old, anaSeat, kais, hemiSeat]) {
+    await pay(booking);
+    await settled();
+  }
+  lair.sql.exec('UPDATE gm_credit_seats SET quiet = 0 WHERE game_id = ?', before);
+  assert.deepEqual(credited, [[RANGI, 500], [WIREMU, 500], ['5003', 500]], 'Ana is on the team: no credit, so no email');
+  const wiremuMails = () => sent.filter((m) => m.to === 'wiremu@example.com');
+  nowIs(at('2026-10-27', 23, 5));
+  assert.deepEqual(await lair.gmCreditMails(Date.now()), { retry: 1, failed: 1 }, "Resend busy: Wiremu's is tried again next run; Hemi's address refused");
+  assert.deepEqual(sent.map((m) => m.to).sort(), ['hemi@example.com', 'wiremu@example.com']);
+  nowIs(at('2026-10-27', 23, 15));
+  assert.deepEqual(await lair.gmCreditMails(Date.now()), { retry: 1 }, 'Resend not answering in time: tried again too');
+  nowIs(at('2026-10-27', 23, 25));
+  assert.deepEqual(await lair.gmCreditMails(Date.now()), { sent: 1 });
+  assert.equal(wiremuMails().length, 3);
+  assert.equal(new Set(wiremuMails().map((m) => m.idempotencyKey)).size, 1, 'the same key each time, so a send Resend did take is never sent twice');
+  assert.equal(await lair.gmCreditMails(Date.now()), null);
+  assert.equal(sent.filter((m) => m.to === 'hemi@example.com').length, 1, "Hemi's isn't tried again");
+  // a session that ended two days and more ago never gets one (a Lair that was down for days doesn't email about old ones)
+  nowIs(at('2026-10-29', 19));
+  await pay(lateSeat);
+  await settled();
+  nowIs(at('2026-11-01', 9));
+  assert.equal(await lair.gmCreditMails(Date.now()), null);
+  assert.equal(sent.length, 4);
 });
 
 /* ---------------- the plain RPG Session pays the player's seat ---------------- */

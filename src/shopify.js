@@ -1359,13 +1359,14 @@ export class ShopifyAdmin {
    * turned the call away before it ran), so nothing moved; any other error may or may not have moved it. Round 21:
    * timeout (ms) gives up after that long (the GM credit that adds itself). Round 30: the transaction comes back with
    * balanceAfter, the balance after it in cents (null when Shopify leaves it out), so My Lair can show it at once.
+   * notify: false skips Shopify's email (round 30: the GM credit that adds itself, which Gobgob emails once a session).
    */
-  async creditCustomer(customerId, cents, currency, { timeout = null } = {}) {
+  async creditCustomer(customerId, cents, currency, { timeout = null, notify = true } = {}) {
     const data = await madeAnyway(this.graphql(
       `mutation Credit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
         storeCreditAccountCredit(id: $id, creditInput: $creditInput) { storeCreditAccountTransaction { amount { amount } balanceAfterTransaction { amount } } userErrors { field message code } }
       }`,
-      { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: { amount: (cents / 100).toFixed(2), currencyCode: currency }, notify: true } },
+      { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: { amount: (cents / 100).toFixed(2), currencyCode: currency }, notify: notify !== false } },
       timeout ? { timeout } : {},
     ));
     const result = data?.storeCreditAccountCredit;

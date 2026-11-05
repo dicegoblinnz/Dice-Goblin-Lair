@@ -288,7 +288,7 @@ test('GM credit (round 21, round 30): once the session has started, each paid se
   // round 30: under way (it was once it was over): Mia's two seats, $5 each, in one store credit
   nowIs(at('2026-10-27', 18, 10));
   assert.deepEqual(await lair.autoGmCredit(Date.now()), { credited: 2, amount: 1000, staff: 0, manual: 0, retry: 0, failed: 0, check: 0 });
-  assert.deepEqual(creditCalls, [[RANGI, 1000, 'NZD', { timeout: GM_CREDIT.timeoutMs }]]);
+  assert.deepEqual(creditCalls, [[RANGI, 1000, 'NZD', { timeout: GM_CREDIT.timeoutMs, notify: false }]]);
   assert.deepEqual(ledger(id).map((r) => [r.customer_id, r.people, r.amount, r.status]), [[RANGI, 2, 1000, 'credited']]);
   assert.deepEqual(creditRows(id), [{ customer_id: RANGI, players: 2, amount: 1000, status: 'credited', by: 'auto' }]);
   assert.equal(creditedOf(id), 2);

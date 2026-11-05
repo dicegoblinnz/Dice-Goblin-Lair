@@ -18,8 +18,10 @@
  * game. So gms are incentivized to keep the players inside the system and using Thier app to pay for things". So a
  * seat's fee goes as soon as it's paid (a payment sets the run going at once: gmCreditSoon), not once the session's
  * over; one paid before the session goes when it starts. A seat paid later gives it later, and one never paid gives
- * nothing (nor do cancelled seats and no-shows). Each run gives one store credit for each GM (Shopify emails the GM each
- * time); the 10-minute run catches anything a payment didn't. The team's "GM credit for staff" setting still decides
+ * nothing (nor do cancelled seats and no-shows). Each run gives one store credit for each GM; the 10-minute run catches
+ * anything a payment didn't. Round 30, from Mo: "One email for all the players per session." So Shopify doesn't email
+ * the GM about each one (notify false, the seat marked quiet), and an hour after the session ends Gobgob emails them
+ * once (gmCreditMails, gm_credit_mails): who paid and what's landed. Anything that lands after that email does so quietly. The team's "GM credit for staff" setting still decides
  * for staff GMs, by their hours for 'shifts'. Sessions from before 26 October keep the staff page's "Session done"
  * button (POST /games/:id/credit), and a session someone already credited that way is left alone. Nothing is taken
  * back by itself: a credited seat cancelled, marked a no-show or unpaid, or its session cancelled, tells staff.
@@ -36,8 +38,9 @@
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair.
  */
-import { RuleError, makeId } from './core.js';
+import { HOUR, RuleError, makeId } from './core.js';
 import { bookingStamps } from './stamps.js';
+import { emailReady } from './shopify.js';
 
 export const GM_CREDIT = Object.freeze({
   // Mo, 26 Oct 2026: "Automatic from today": sessions starting from midnight that day, Lair time (NZDT, UTC+13)
@@ -57,6 +60,12 @@ export const GM_CREDIT = Object.freeze({
   // starts a run of its own, so without the wait a busy Shopify could use every try up in a couple of minutes)
   maxTries: 5,
   retryAfter: 10 * 60_000,
+  // round 30, one email a session: sent this long after the session ends (late payers at the counter still count), never
+  // for one that ended more than mailWithin ago (a Lair that was down for days doesn't email about old sessions), and at
+  // most this many a run
+  mailAfter: HOUR,
+  mailWithin: 48 * HOUR,
+  mailsPerRun: 20,
 });
 
 /** Whether a session's GM credit adds itself (round 21), rather than waiting for "Session done" */
@@ -83,7 +92,17 @@ export const GM_CREDIT_TABLES = [
      status TEXT NOT NULL, batch TEXT, note TEXT, tries INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   'CREATE INDEX IF NOT EXISTS gm_credit_seats_game ON gm_credit_seats (game_id)',
   'CREATE INDEX IF NOT EXISTS gm_credit_seats_status ON gm_credit_seats (status, updated_at)',
+  // round 30: one email a session, to each GM who had credit for it (status 'sending' while it goes, 'sent', 'failed')
+  `CREATE TABLE IF NOT EXISTS gm_credit_mails (
+     game_id TEXT NOT NULL, customer_id TEXT NOT NULL, players INTEGER NOT NULL, amount INTEGER NOT NULL, status TEXT NOT NULL,
+     created_at INTEGER NOT NULL, sent_at INTEGER, PRIMARY KEY (game_id, customer_id))`,
 ];
+
+/**
+ * Round 30: quiet, on a seat whose credit Shopify didn't email the GM about (1): the session's one email covers it.
+ * Made sure of once gm_credit_seats is there; 0 for every seat credited before.
+ */
+export const GM_CREDIT_SEAT_COLUMNS = [['gm_credit_seats', 'quiet', 'INTEGER NOT NULL DEFAULT 0']];
 
 /**
  * The sessions that earn their GM a stamp, as stampedSessions' columns (id, kind 'gm-run', at, people 1, tables,
@@ -124,6 +143,12 @@ export const GM_CREDIT_WORDS = {
   noShow: 'was marked a no-show',
   cancelled: 'was cancelled',
   noAccount: "The GM isn't linked to a customer account, so add the store credit in Shopify admin.",
+  // round 30: the one email a session
+  mailSubject: (title, amount) => `Your GM credit for ${title}: ${amount}`,
+  mailTitle: (title) => `Thanks for running ${title}!`,
+  mailIntro: (first, amount, title, each, players) => `Kia ora ${first}, ${amount} of store credit is on your account for ${title}: ${
+    each ? (players === 1 ? `${each} for the 1 player who paid` : `${each} for each of the ${players} players who paid`) : `for the ${players} players who paid`}.`,
+  mailLater: (each) => `Anyone who pays later still sends you their ${each || 'GM fee'}. It lands on your store credit without an email, and My Lair shows it under Games I run.`,
   refused: (said) => `Shopify didn't add the store credit (${said}). Nothing moved. Gobgob tries again in 10 minutes.`,
   failed: (said) => `Shopify didn't add the store credit after ${GM_CREDIT.maxTries} tries (${said}). Nothing moved. Add it in Shopify admin.`,
   check: (said) => `Shopify didn't confirm the store credit (${said}), so it may have gone through. Check the GM's store credit in Shopify admin before adding any.`,
@@ -131,6 +156,7 @@ export const GM_CREDIT_WORDS = {
 };
 
 const money = (cents) => `$${(cents / 100).toFixed(2)}`;
+const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 const players = (n) => `${n} ${n === 1 ? 'player' : 'players'}`;
 const said = (error) => String(error?.message || error || 'no answer').replace(/^Shopify API:\s*/, '').slice(0, 160);
 // the ledger's statuses that count as done for the session (its "credited" count)
@@ -274,7 +300,8 @@ export const gmCreditMethods = {
       // --- claimed: now Shopify. Afterwards only this batch's seats are touched ---
       let error = null;
       try {
-        await this.shopify.creditCustomer(gm, total, this.env.CURRENCY || 'NZD', { timeout: GM_CREDIT.timeoutMs });
+        // (round 30: no email from Shopify each time; the session's one email from Gobgob covers it)
+        await this.shopify.creditCustomer(gm, total, this.env.CURRENCY || 'NZD', { timeout: GM_CREDIT.timeoutMs, notify: false });
       } catch (e) {
         error = e;
         console.error('Lair: GM store credit failed', e);
@@ -367,7 +394,7 @@ export const gmCreditMethods = {
     const at = Date.now();
     const seats = this.sql.exec("SELECT * FROM gm_credit_seats WHERE batch = ? AND status = 'sending'", batch).toArray();
     if (!error) {
-      this.write("UPDATE gm_credit_seats SET status = 'credited', updated_at = ? WHERE batch = ? AND status = 'sending'", at, batch);
+      this.write("UPDATE gm_credit_seats SET status = 'credited', quiet = 1, updated_at = ? WHERE batch = ? AND status = 'sending'", at, batch);
       for (const s of sending) this.recordGmCredit(s.id, gm, { players: s.count, amount: s.due, status: 'credited', note: s.note, at });
       out.credited += seats.reduce((n, r) => n + r.people, 0);
       out.amount += seats.reduce((n, r) => n + r.amount, 0);
@@ -631,6 +658,98 @@ export const gmCreditMethods = {
         return 'coming';
       },
     };
+  },
+
+  /**
+   * Round 30, the 10-minute run (Mo, 6 Nov 2026: "One email for all the players per session"): an hour after a session
+   * ends (GM_CREDIT.mailAfter), Gobgob emails each GM who had credit for it once: who paid and what's on their store
+   * credit, counting the seats credited quietly (Shopify didn't email them). A session that ended more than
+   * GM_CREDIT.mailWithin ago never gets one. Each is claimed in gm_credit_mails before it's sent, with an idempotency
+   * key of its own; Resend down, busy or not answering (5xx, 429, a timeout): unclaimed, so the next run tries again
+   * (never sent twice); anything else Resend refused, or no address: not tried again. Returns { sent, retry, failed }
+   * when it looked at any, else null.
+   */
+  async gmCreditMails(now = Date.now()) {
+    if (!emailReady(this.env)) return null;
+    const rules = await this.rules();
+    // --- no awaits until this run's emails are claimed ---
+    const due = this.sql
+      .exec(
+        `SELECT s.game_id AS game_id, s.customer_id AS gm, SUM(s.people) AS players, SUM(s.amount) AS amount
+           FROM gm_credit_seats s JOIN games g ON g.id = s.game_id
+          WHERE s.status = 'credited' AND s.quiet = 1 AND s.amount > 0 AND s.customer_id IS NOT NULL
+            AND g.ends_at <= ? AND g.ends_at > ?
+            AND NOT EXISTS (SELECT 1 FROM gm_credit_mails m WHERE m.game_id = s.game_id AND m.customer_id = s.customer_id)
+          GROUP BY s.game_id, s.customer_id ORDER BY MIN(g.ends_at), s.game_id LIMIT ?`,
+        now - GM_CREDIT.mailAfter, now - GM_CREDIT.mailWithin, GM_CREDIT.mailsPerRun,
+      )
+      .toArray();
+    if (!due.length) return null;
+    const out = {};
+    const add = (key) => {
+      out[key] = (out[key] || 0) + 1;
+    };
+    const mark = (d, status) => this.write('UPDATE gm_credit_mails SET status = ?, sent_at = ? WHERE game_id = ? AND customer_id = ?', status, status === 'sent' ? Date.now() : null, d.game_id, d.gm);
+    const letters = [];
+    for (const d of due) {
+      this.write("INSERT INTO gm_credit_mails (game_id, customer_id, players, amount, status, created_at) VALUES (?, ?, ?, ?, 'sending', ?)", d.game_id, d.gm, d.players, d.amount, Date.now());
+      const letter = this.gmCreditLetter(d, rules);
+      if (letter) letters.push({ d, letter });
+      else {
+        mark(d, 'failed');
+        add('failed');
+      }
+    }
+    // --- claimed: now Resend. Afterwards only each email's own row changes ---
+    for (const { d, letter } of letters) {
+      const result = await this.mail(letter);
+      if (result.ok) {
+        mark(d, 'sent');
+        add('sent');
+      } else if (!result.attempted || !result.status || result.status >= 500 || result.status === 429) {
+        // (no status: Resend didn't answer in time, and may have taken it; its key means a second try never sends twice)
+        this.write("DELETE FROM gm_credit_mails WHERE game_id = ? AND customer_id = ? AND status = 'sending'", d.game_id, d.gm);
+        add('retry');
+      } else {
+        mark(d, 'failed');
+        add('failed');
+      }
+    }
+    return out;
+  },
+
+  /** The one email for a session (gmCreditMails' row d: game_id, gm, players, amount), or null with no address. No awaits. */
+  gmCreditLetter(d, rules) {
+    const game = this.game(d.game_id);
+    if (!game) return null;
+    const member = this.memberRow(d.gm);
+    const to = [member?.email, member?.account_email, String(game.gmCustomerId || '') === String(d.gm) ? game.gmEmail : null].find(isEmail);
+    if (!to) return null;
+    const first = String(member?.first_name || String(member?.name || '').split(/\s+/)[0] || game.gm || 'there').trim();
+    const seats = this.sql
+      .exec(
+        `SELECT s.people AS people, s.amount AS amount, b.name AS name FROM gm_credit_seats s LEFT JOIN bookings b ON b.id = s.booking_id
+          WHERE s.game_id = ? AND s.customer_id = ? AND s.status = 'credited' AND s.quiet = 1 AND s.amount > 0 ORDER BY s.updated_at, s.booking_id`,
+        d.game_id, d.gm,
+      )
+      .toArray();
+    // each player's fee, when they're all the same (they are, unless the fee changed part-way)
+    const per = d.players ? d.amount / d.players : 0;
+    const each = Number.isInteger(per) && seats.every((x) => x.amount === x.people * per) ? money(per) : '';
+    const names = seats.map((x) => {
+      const name = String(x.name || 'A player').trim().split(/\s+/)[0];
+      return x.people > 1 ? `${name} (${x.people})` : name;
+    });
+    const shown = names.length > 8 ? `${names.slice(0, 8).join(', ')} and ${names.length - 8} more` : names.join(', ');
+    const amount = money(d.amount);
+    return this.letter(to.trim(), GM_CREDIT_WORDS.mailSubject(game.title, amount), {
+      title: GM_CREDIT_WORDS.mailTitle(game.title),
+      intro: GM_CREDIT_WORDS.mailIntro(first, amount, game.title, each, d.players),
+      details: [['Session', this.when(game, rules)], ['Players who paid', shown], ['Store credit', amount]],
+      outro: GM_CREDIT_WORDS.mailLater(each),
+      button: { label: 'See it in My Lair', url: `${this.page('myLair')}?view=ml-games` },
+      signoff: 'Happy GMing!\nGobgob',
+    }, { idempotencyKey: `gm-credit-mail-${d.game_id}-${d.gm}` });
   },
 
   /** A round 21 session's GM credit with nothing on it yet (gmCreditsIn's shape). No awaits. */

@@ -63,7 +63,7 @@ import { REPORT_COLUMNS, REPORT_TABLES, STAMP_WRITES, reportMethods } from './re
 // Round 20 (26 Oct 2026): the TTRPG page's sessions, in the page itself
 import { sessionsFeedMethods } from './sessions-feed.js';
 // Round 21 (26 Oct 2026): GMs' stamps, and GM credit that adds itself
-import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
+import { GM_CREDIT_COLUMNS, GM_CREDIT_SEAT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
 // Round 21, part 2: a GM pays for one of their players
 import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 // Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add
@@ -1093,6 +1093,15 @@ export class Lair {
     for (const statement of REPORT_TABLES) this.sql.exec(statement);
     // Round 21: whether each session's GM was on the team (GM stamps), and each seat's GM credit (made when missing)
     for (const statement of GM_CREDIT_TABLES) this.sql.exec(statement);
+    // Round 30: whether Shopify was asked not to email the GM about a seat's credit (Gobgob's one email a session says it
+    // instead), made sure of once the table is there
+    for (const [table, column, type] of GM_CREDIT_SEAT_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     // and (part 2) a seat's GM charge is found by its seat
     this.sql.exec("CREATE INDEX IF NOT EXISTS bookings_cover_of ON bookings (cover_of) WHERE cover_of IS NOT NULL");
     // Round 22: the stamp ledger: sessions rung up at the counter and stamps staff add (made when missing)
@@ -10886,6 +10895,13 @@ export class Lair {
       if (gmCredit) result.gmCredit = gmCredit;
     } catch (error) {
       console.error('Lair: GM credit that adds itself failed', error);
+    }
+    // Round 30: an hour after a session ends, its GM's one email: who paid and what's on their store credit
+    try {
+      const mails = await this.gmCreditMails(Date.now());
+      if (mails) result.gmCreditMails = mails;
+    } catch (error) {
+      console.error('Lair: could not email GMs their GM credit', error);
     }
     // Round 30 (src/credit-gifts.js): store credit gifts whose answer Shopify lost are looked for, and finished
     try {
