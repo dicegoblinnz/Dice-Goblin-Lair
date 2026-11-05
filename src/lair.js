@@ -94,6 +94,8 @@ import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './libra
 // Round 31: the library shelves' and the shop's board games' filters in Shopify, and On the shelf now (src/shop-filters.js,
 // contract v31-library-filters)
 import { FILTER_LIMITS, SHELF_WRITES, SHOP_FILTER_TABLES, callBudget, shopFilterMethods } from './shop-filters.js';
+// Round 32, the till, part 1: who's on the till, their PINs and the owner's Team screen (src/till.js, contract v32-till)
+import { TILL_TABLES, tillMethods } from './till.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1174,6 +1176,9 @@ export class Lair {
     // Round 31: what Shopify's On the shelf now says, games waiting for their filters, and shop games' library twins (made
     // when missing, src/shop-filters.js)
     for (const statement of SHOP_FILTER_TABLES) this.sql.exec(statement);
+    // Round 32, the till: its people, PINs and who's on it (made when missing), and Caleb and Felix on it once (src/till.js)
+    for (const statement of TILL_TABLES) this.sql.exec(statement);
+    this.tillSeed(Date.now());
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -2007,8 +2012,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2053,6 +2058,8 @@ export class Lair {
       // Round 9, team: who's using the staff page, the team, and a member's store credit and emails
       if (request.method === 'GET' && a === 'staff' && b === 'me' && !c) return json(this.staffMe(who));
       if (request.method === 'GET' && a === 'team' && !b) return json(await this.listTeam(who));
+      // Round 32, the till: the lock screen's people (src/till.js)
+      if (request.method === 'GET' && a === 'till' && b === 'team' && !c) return json(await this.tillTeam(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'credit') return json(await this.memberCredit(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'members' && b && c === 'emails') return json(this.memberEmails(decodeURIComponent(b), who));
       // Round 9: monthly accounts for staff (the Accounts tab)
@@ -2187,6 +2194,14 @@ export class Lair {
       if (a === 'members' && b && c === 'since') return json(await this.setCustomerSince(decodeURIComponent(b), body, who));
       // Round 24: a member's answer to "How did you find us?", from their page (src/newplayers.js)
       if (a === 'members' && b && c === 'found-us' && !d) return json(this.staffFoundUs(decodeURIComponent(b), body, who));
+      // Round 32, the till: someone unlocks it and chooses their own PIN; the owner resets PINs, switches till access, and
+      // adds, changes and removes the till's own people (src/till.js)
+      if (a === 'till' && b === 'unlock' && !c) return json(await this.tillUnlock(body, who));
+      if (a === 'till' && b === 'pin' && !c) return json(await this.tillChoosePin(body, who));
+      if (a === 'till' && b === 'reset' && !c) return json(await this.tillReset(body, who));
+      if (a === 'till' && b === 'access' && !c) return json(await this.tillAccess(body, who));
+      if (a === 'till' && b === 'people' && !c) return json(await this.tillSavePerson(body, who));
+      if (a === 'till' && b === 'people' && c === 'remove' && !d) return json(await this.tillRemovePerson(body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
       // Round 17: GM credit for staff (the team's setting), and each person's hours
@@ -11173,3 +11188,5 @@ Object.assign(Lair.prototype, libraryRuleMethods);
 Object.assign(Lair.prototype, creditGiftMethods);
 // Round 31: the shop's filters in Shopify, and On the shelf now (src/shop-filters.js)
 Object.assign(Lair.prototype, shopFilterMethods);
+// Round 32, the till, part 1: who's on the till (src/till.js)
+Object.assign(Lair.prototype, tillMethods);
