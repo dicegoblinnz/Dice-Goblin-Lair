@@ -1,12 +1,13 @@
 // The loyalty card at the counter (API contract v6 section 1, v7 section 4, v22-stamps): the stamps on a member's card,
 // their rolls waiting in My Lair, the stamps a check-in or a payment just added, and the moment a check-in fills a card
 // (Mo, 27 Oct 2026: "show the member's loyalty card progress, a friendly line when someone's card fills"). Round 22
-// (Mo, 28 Oct 2026: "the stamp is not clear" and "give the staff [a way] to add a stamp on the area for the stamps"):
-// the card is drawn like a punch card, two rows of five, with what's left in words, and staff can add a stamp on it.
-// Round 29 (Lair contract v29-roleplayers, Mo, 2 Nov 2026: "12 slots, 2 from Gobgob"): from a Lair app that sends the
+// (Mo, 28 Oct 2026: "the stamp is not clear"): the card is drawn like a punch card, two rows of five, with what's left in
+// words. Round 29 (Lair contract v29-roleplayers, Mo, 2 Nov 2026: "12 slots, 2 from Gobgob"): from a Lair app that sends the
 // head start, the card has 12 slots, the first 2 Gobgob's, so it's drawn in three rows of four and says "9 of 12"; a
 // roll still takes 10 stamps, so what's left and when a card fills are counted as before. An older Lair app's card is
-// drawn as it was.
+// drawn as it was. Round 30 (Mo, 6 Nov 2026): the tablet faces customers, so there's no Add a stamp at the counter any
+// more: every session adds its own stamp once it's checked in or paid, and staff add one by hand on the staff page,
+// under Members.
 // No `shopify` global here, so `npm test` can check it without a POS.
 import { plural } from './format.js';
 
@@ -114,13 +115,12 @@ export function headStartWords(card) {
 }
 
 /**
- * When stamps land, under the card (round 22: they come by themselves once a session is checked in or paid, so staff
- * know not to add one too). On a ticket: whether this session's stamps are on yet. On a member's card (no row): that
- * check-ins and payments stamp by themselves, and Add a stamp is for a session the Lair app doesn't know about.
+ * When stamps land, under the card (round 22: they come by themselves once a session is checked in or paid). On a
+ * ticket: whether this session's stamps are on yet. On a member's card (no row): that sessions stamp by themselves.
  * @param {{ people?: unknown, status?: unknown, arrivedAt?: unknown, paid?: unknown } | null} [row]
  */
 export function stampNote(row = null) {
-  if (!row) return 'Check-ins and payments add stamps by themselves. Add one here for a session the Lair app doesn’t know about.';
+  if (!row) return 'Sessions add their stamps by themselves once they’re checked in or paid.';
   // (a no-show or a cancelled one stamps nobody, and its screen says what happened to it)
   if (['noshow', 'cancelled'].includes(String(row.status || ''))) return '';
   const many = Math.round(Number(row.people) || 1) > 1;
@@ -229,31 +229,4 @@ export function cardFullWords(name) {
 /** The same, short, for a toast. @param {string} name their first name */
 export function cardFullShort(name) {
   return `${name ? `${name}'s` : 'Their'} loyalty card is full!`;
-}
-
-/**
- * The toast once staff add a stamp: "Stamp added: 8 of 10." or "Stamp added: Sam's card is full!". Round 29, with the
- * head start: "Stamp added: 10 of 12."
- * @param {unknown} loyalty
- * @param {string} name
- */
-export function stampAddedWords(loyalty, name) {
-  const card = loyaltyCard(loyalty);
-  if (!card) return 'Stamp added.';
-  if (!card.stamps && card.card > 1) return `Stamp added: ${cardFullShort(name)}`;
-  return `Stamp added: ${filledOf(card)} of ${slotsOf(card)}.`;
-}
-
-/**
- * A key for one tap of "Add a stamp", so the Lair app adds it once however often the counter asks (a retry after a lost
- * answer sends the same key). 8 to 64 letters, numbers and dashes.
- */
-export function stampKey() {
-  const random = typeof crypto === 'object' && crypto ? crypto : null;
-  if (random && typeof random.randomUUID === 'function') return `pos-${random.randomUUID()}`;
-  if (random && typeof random.getRandomValues === 'function') {
-    return `pos-${Array.from(random.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
-  }
-  // (no crypto on this device: the key only has to be different for each tap, not secret)
-  return `pos-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }

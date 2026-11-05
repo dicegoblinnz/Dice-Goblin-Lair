@@ -141,9 +141,10 @@ Stamps come by themselves (round 22):
 - **A Session rung up by hand** (Day Pass, TCG League, RPG Session, RPG Kids Session, Curse of Strahd) stamps the
   customer on the sale, one a unit. Scan their member code first: that's what puts them on the sale. A Session rung up
   for a session they booked is the same session, so it's still one stamp that day.
-- **Add a stamp** on a member's screen, for a session the Lair app doesn't know about: one a tap, two a member a day
-  (more go on the staff page, under Members). **Undo that stamp** takes it back. (Stamps added on the staff page are
-  taken back there.)
+- **No Add a stamp at the counter** (round 30, Mo, 6 Nov 2026: the tablet faces customers, and some were adding their
+  own). Every session adds its own stamp once it's checked in or paid. For a session the Lair app doesn't know about,
+  staff add a stamp on the staff page: the check-in card, or the member's page under Members, where stamps the counter
+  added before round 30 are listed as the counter's and can be taken back.
 
 They roll in My Lair. When a check-in or a stamp fills their card, the message at the bottom of POS says **"Sam's
 loyalty card is full!"**. Let them know: a roll for store credit is waiting in My Lair. (If the screen stays open, it
@@ -369,8 +370,7 @@ The check-in screen talks to the Worker directly, at `https://dice-goblin-lair.d
 | `POST /pos/tab/:id/added` | A member's tab is in the cart |
 | `POST /pos/cover { gameId, ref }` | The GM pays for a player's seat (contract v21-gm-cover); answers `{ seat, cover, game }` |
 | `POST /pos/uncover { gameId, ref }` | The GM stops paying for it; answers `{ seat, cover: null, game }` |
-| `POST /pos/stamp { customerId, key }` | Round 22, Add a stamp: one stamp on their card; the same `key` again adds nothing. Answers `{ stamp, repeated, loyalty }` |
-| `POST /pos/stamp-undo { customerId, id }` | Undo that stamp (only stamps added by hand at the counter). Answers `{ stamp, already, loyalty }` |
+| `POST /pos/stamp`, `/pos/stamp-undo` | Round 22's Add a stamp and Undo that stamp. Since round 30 the tile never calls them, and they answer 410 with what to do instead: the counter never adds or takes back a stamp |
 | `POST /pos/found-us { customerId, answer }` | Round 24: a new player's answer to "How did you find us?" (contract v24-new-players). Answers `{ foundUs }`. A member code's `/pos/scan` says `foundUs` and `newHere`, and its card `rollsWaiting` while a welcome code's roll waits |
 
 - The session token is a JWT signed HS256 with the app's client secret, `aud` = the client ID, `dest` =

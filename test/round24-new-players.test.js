@@ -308,9 +308,10 @@ test('welcome codes: a session pass used at check-in, a Session product rung up 
   ok(await redeem(KAI, 'SCROLL-ROLL'));
   ok(await internal('orders-paid', posOrder(8201, [sessionLine(82011, 'RPG Session', 'LAIR-SESSION-RPG')], { customer: { id: Number(KAI) } })));
   assert.equal((await card(KAI)).rolls.available, 1);
-  // Ria: a stamp staff added at the counter for a session the Lair app doesn't know about
+  // Ria: a stamp staff added for a session the Lair app doesn't know about (round 30: on the staff page; the counter
+  // doesn't add stamps any more)
   ok(await redeem(RIA, 'TOK-ROLL'));
-  ok(await pos('stamp', { customerId: RIA, key: 'ria-stamp-0001' }));
+  ok(await call('POST', `members/${RIA}/stamps`, { count: 1, key: 'ria-stamp-0001' }, OWNER));
   assert.equal((await card(RIA)).rolls.available, 1);
 });
 
@@ -468,7 +469,7 @@ test('welcome codes are for players new to the Lair: someone who played before t
   // staff added for a session the Lair app didn't know about
   nowIs(at(YESTERDAY, 15));
   ok(await internal('orders-paid', posOrder(7101, [sessionLine(71011, 'RPG Session', 'LAIR-SESSION-RPG')], { customer: { id: Number(RIA) } })));
-  ok(await pos('stamp', { customerId: LEO, key: 'leo-stamp-0001' }));
+  ok(await call('POST', `members/${LEO}/stamps`, { count: 1, key: 'leo-stamp-0001' }, OWNER));
   nowIs(NOW);
   assert.equal(said(await redeem(RIA, 'SEARCH-ROLL')), `409 ${W.notNew}`);
   assert.equal(said(await redeem(LEO, 'SEARCH-ROLL')), `409 ${W.notNew}`);

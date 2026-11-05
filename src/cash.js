@@ -253,6 +253,8 @@ export const cashMethods = {
     if (fresh.customer_id) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', String(fresh.customer_id), orderKey);
     if (tab) this.markTabsPaid([tab.id], orderKey, now);
     if (paidRefs.length || tab) this.reconcileBills(rules, now, { orderId: orderKey, pos: true });
+    // Round 30: a TTRPG seat paid with cash gives its GM their fee now, once its session has started (src/gm-credit.js)
+    if (paidRefs.length) this.gmCreditSoon();
     // what its Shopify order is made of, fixed now: custom lines at what each paid, and the tab's things as products at
     // the tab's price (so stock comes off)
     const orderLines = [

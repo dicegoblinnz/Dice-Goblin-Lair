@@ -17,6 +17,13 @@
 //     items (cartTabsPaidBy). Shopify POS's own sales keep _tab, so they never go by items.
 // Only counter sales are read this way: customers can't make one (the online store's orders are 'web', our checkouts
 // 'shopify_draft_order'), so a code typed into an online cart pays nothing.
+//
+// Round 30 (6 Nov 2026): the plain Session product's RPG Session (and RPG Kids Session), rung up from the POS grid
+// instead of the tile, pays the TTRPG seat of the player on the sale (rpgSessionSeats). Seen on the live store from 26
+// October to 5 November 2026: about 49 TTRPG seats were rung up that way and about 29 through the tile, and a seat paid
+// with a plain RPG Session stayed unpaid, so its GM never got their fee (Mo: "the store credit are not updating
+// properly"). It can only find the seat when the player is on the sale (scanning their code in the tile puts them on
+// it); a sale with nobody on it still pays nothing.
 
 /** The Verifone terminal's app: its orders' source_name, and their tag (lower case) */
 export const ORDERMATE = Object.freeze({ app: '36219584513', tag: 'ordermate' });
@@ -26,6 +33,12 @@ export const ORDERMATE = Object.freeze({ app: '36219584513', tag: 'ordermate' })
  * items: a tab left at the counter from a sale that was cleared isn't paid by a purchase days later.
  */
 export const TAB_CART_WINDOW = 3 * 60 * 60 * 1000;
+
+/** Round 30: the Session product's TTRPG seats (RPG Session, RPG Kids Session, and any RPG variant added later) */
+export const RPG_SESSION_SKU = /^LAIR-SESSION-RPG(?:-[A-Z0-9]+)*$/i;
+
+/** The most units of one line that pay seats (as a Session line's stamps: a mistyped quantity pays no more) */
+const RPG_UNITS_A_LINE = 10;
 
 /** A booking or sign-up code in a line's title (SJ-OWLBEAR-17, or the first release's GOB-7K2QXM), and a tab's ref */
 const CODE_IN_TITLE = /\b(?:[A-Z]{2}-[A-Z]{3,9}-\d{1,2}|GOB-[A-Z0-9]{6})\b/g;
@@ -87,6 +100,67 @@ export function titleTabRefs(title) {
 }
 
 export const counterMethods = {
+  /**
+   * Round 30: the TTRPG seats a counter sale's plain RPG Sessions pay, as recordPayments' lines ([{ type: 'booking', id,
+   * lineId, amount }]). Each unit of an RPG Session line pays one person on the unpaid TTRPG seats of the customer on the
+   * sale (customerId) that start on the sale's Lair day (saleAt), soonest first: what the unit paid after its discounts
+   * (unitPaid: sessionUnitPaid), up to what the seat has left to pay (anything over it isn't the seat's). Not a seat
+   * that's paid, waived, cancelled, a no-show, on a free session, one its GM pays for, nor one in a session the customer
+   * runs. A line that paid seats before (Shopify sending the order again) pays nothing more, whatever's happened since.
+   * Only counter sales, and only with someone on the sale. No awaits.
+   * @param {any} order the orders/paid webhook's order
+   * @param {string} orderId its gid
+   * @param {unknown} customerId who's on the sale (an id or a gid)
+   * @param {number} saleAt when it was paid (ms)
+   * @param {any} rules
+   * @param {Map<string, number>} unitPaid each RPG line's paid a unit, in cents
+   */
+  rpgSessionSeats(order, orderId, customerId, saleAt, rules, unitPaid) {
+    const customer = String(customerId ?? '').match(/(\d{1,20})$/)?.[1] || null;
+    if (!customer || !counterSale(order)) return [];
+    const used = new Set(this.sql.exec('SELECT line_id FROM payments WHERE order_id = ?', orderId).toArray().map((r) => String(r.line_id)));
+    const units = [];
+    (order?.line_items || []).forEach((item, index) => {
+      if (!RPG_SESSION_SKU.test(String(item?.sku ?? '').trim())) return;
+      const lineId = String(item.id ?? item.admin_graphql_api_id ?? `line-${index}`);
+      if ([...used].some((id) => id.startsWith(`${lineId}:seat-`))) return;
+      const each = unitPaid.get(lineId) || 0;
+      const quantity = Math.min(RPG_UNITS_A_LINE, Math.max(0, Math.floor(Number(item.quantity ?? 1)) || 0));
+      for (let unit = 0; unit < quantity && each > 0; unit += 1) units.push({ lineId, each });
+    });
+    if (!units.length) return [];
+    const { from, to } = this.dayWindow(rules, saleAt);
+    const seats = this.sql
+      .exec(
+        `SELECT b.id AS id, b.people AS people, b.amount AS amount, COALESCE(b.paid_amount, 0) AS paid_amount, COALESCE(b.covered, 0) AS covered
+           FROM bookings b JOIN games g ON g.id = b.game_id
+          WHERE b.customer_id = ? AND b.kind = 'gm-seat' AND b.status IN ('confirmed', 'seated', 'done') AND b.paid = 0
+            AND COALESCE(b.waived, 0) = 0 AND b.covered_by IS NULL AND b.amount > 0
+            AND b.starts_at >= ? AND b.starts_at < ?
+            AND g.status != 'cancelled' AND COALESCE(g.free, 0) = 0 AND COALESCE(g.gm_customer_id, '') != ?
+          ORDER BY b.starts_at, b.created_at, b.id LIMIT 10`,
+        customer, from, to, customer,
+      )
+      .toArray();
+    const lines = [];
+    const count = new Map();
+    let next = 0;
+    for (const s of seats) {
+      let left = Math.max(0, (s.amount || 0) - (s.covered || 0) - (s.paid_amount || 0));
+      for (let person = 0; person < Math.max(1, s.people || 1) && left > 0 && next < units.length; person += 1) {
+        const { lineId, each } = units[next];
+        next += 1;
+        const n = count.get(lineId) || 0;
+        count.set(lineId, n + 1);
+        const amount = Math.min(each, left);
+        left -= amount;
+        lines.push({ type: 'booking', id: s.id, lineId: `${lineId}:seat-${n}`, amount });
+      }
+      if (next >= units.length) break;
+    }
+    return lines;
+  },
+
   /**
    * The booking or sign-up a counter line's title names: { type, item } when exactly one of its codes is one, else null
    * (no code, or two different ones). No awaits.

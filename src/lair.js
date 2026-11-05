@@ -63,7 +63,7 @@ import { REPORT_COLUMNS, REPORT_TABLES, STAMP_WRITES, reportMethods } from './re
 // Round 20 (26 Oct 2026): the TTRPG page's sessions, in the page itself
 import { sessionsFeedMethods } from './sessions-feed.js';
 // Round 21 (26 Oct 2026): GMs' stamps, and GM credit that adds itself
-import { GM_CREDIT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
+import { GM_CREDIT_COLUMNS, GM_CREDIT_SEAT_COLUMNS, GM_CREDIT_TABLES, GM_CREDIT_WORDS, GM_STAMP_ROWS, autoCredit, gmCreditMethods } from './gm-credit.js';
 // Round 21, part 2: a GM pays for one of their players
 import { GM_COVER_WORDS, gmCoverMethods } from './gm-cover.js';
 // Round 22 (28 Oct 2026): stamps that follow payment, sessions rung up at the counter, and stamps staff add
@@ -79,6 +79,8 @@ import { GW_COLUMNS, GW_TABLES, gwOrderMethods } from './gw-orders.js';
 import { GW_PAD_TABLES, gwPadMethods } from './gw-pad.js';
 // Round 27: the rest of the Warhammer tab: this week's order, the box coming in, order dates (src/gw-week.js)
 import { GW_WEEK_TABLES, gwWeekMethods } from './gw-week.js';
+// Round 30 (6 Nov 2026): members send some of their store credit to another member
+import { CREDIT_GIFT_TABLES, creditGiftMethods } from './credit-gifts.js';
 import { dateTables } from './core.js';
 // Round 29: a reminder two days before each one-off booking, its cancel link and calendar file (src/booking-reminders.js),
 // and paying online's words, which the reminder repeats
@@ -1091,6 +1093,15 @@ export class Lair {
     for (const statement of REPORT_TABLES) this.sql.exec(statement);
     // Round 21: whether each session's GM was on the team (GM stamps), and each seat's GM credit (made when missing)
     for (const statement of GM_CREDIT_TABLES) this.sql.exec(statement);
+    // Round 30: whether Shopify was asked not to email the GM about a seat's credit (Gobgob's one email a session says it
+    // instead), made sure of once the table is there
+    for (const [table, column, type] of GM_CREDIT_SEAT_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     // and (part 2) a seat's GM charge is found by its seat
     this.sql.exec("CREATE INDEX IF NOT EXISTS bookings_cover_of ON bookings (cover_of) WHERE cover_of IS NOT NULL");
     // Round 22: the stamp ledger: sessions rung up at the counter and stamps staff add (made when missing)
@@ -1115,6 +1126,8 @@ export class Lair {
     for (const statement of GW_PAD_TABLES) this.sql.exec(statement);
     // Round 27: shelf top-ups, codes GW couldn't supply, and deliveries added to stock (src/gw-week.js)
     for (const statement of GW_WEEK_TABLES) this.sql.exec(statement);
+    // Round 30: store credit gifts from one member to another (src/credit-gifts.js), made when missing
+    for (const statement of CREDIT_GIFT_TABLES) this.sql.exec(statement);
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -1594,16 +1607,21 @@ export class Lair {
       }
       return profiles.get(customerId);
     };
+    // Round 30: where each seat's GM fee is up to, for its GM ('credited', 'coming' or null: gmSeatCredit)
+    const credits = theGame && autoCredit(theGame) ? this.gmSeatCredits(theGame) : null;
     const booked = st.bookings
       .filter((b) => b.gameId === gameId && b.kind === 'gm-seat' && ACTIVE.has(b.status))
       .flatMap((b) => {
         const party = b.party?.length ? b.party : [{ name: b.name, character: '' }];
         // Round 21: whether the GM pays for this seat (covered), and whether they could (coverable: nothing paid on it yet)
         const cover = this.coverState(b, theGame);
+        // (only on a session whose GM credit adds itself: one from before 26 Oct 2026 has Session done instead)
+        const gmCredit = credits ? { gmCredit: credits.of(b) } : {};
         return party.map((p, i) => ({
           name: p.name, character: p.character || '', ref: b.ref, paid: b.paid, arrived: Boolean(b.arrivedAt) || b.status === 'seated',
           member: Boolean(b.customerId), regular: Boolean(b.seriesId), ...(i === 0 && b.customerId ? profileOf(b.customerId) : {}),
           covered: cover.covered, coverable: cover.coverable, ...(cover.covered ? { coverLocked: cover.coverLocked, ...(cover.coverBy ? { coverBy: cover.coverBy } : {}) } : {}),
+          ...gmCredit,
         }));
       });
     const saved = this.savedRegulars(st, st.games.find((g) => g.id === gameId)).flatMap((m) => {
@@ -1945,9 +1963,9 @@ export class Lair {
         // Round 21, part 2: the GM pays for a player's seat, at the counter ({ gameId, ref }: src/gm-cover.js)
         if (b === 'pos' && c === 'cover') return json(await this.coverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
         if (b === 'pos' && c === 'uncover') return json(await this.uncoverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
-        // Round 22: a stamp on someone's card from the counter, and taking it back ({ customerId, key } / { customerId, id }: src/stamps.js)
-        if (b === 'pos' && c === 'stamp') return json(await this.posStamp(body, by));
-        if (b === 'pos' && c === 'stamp-undo') return json(await this.posStampUndo(body, by));
+        // Round 22's stamps from the counter: since round 30 (Mo, 6 Nov 2026) the counter faces customers, so it never adds
+        // or takes back a stamp; an older screen asking hears why (410, src/stamps.js)
+        if (b === 'pos' && (c === 'stamp' || c === 'stamp-undo')) return json(this.posStampGone());
         // Round 24: a new player's answer to "How did you find us?" ({ customerId, answer }: src/newplayers.js)
         if (b === 'pos' && c === 'found-us') return json(this.posFoundUs(body, by));
         return json({ error: 'Not found' }, 404);
@@ -1960,7 +1978,7 @@ export class Lair {
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
           || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe'].includes(a));
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2054,6 +2072,9 @@ export class Lair {
       if (a === 'me' && b === 'ad' && !c) return json(this.meAd(body, who));
       // Round 9: "Pay online now" for everything on a monthly account
       if (a === 'me' && b === 'account' && c === 'pay') return json(await this.payAccountNow(who));
+      // Round 30: store credit to a friend, by their member code: who it is, then send it (src/credit-gifts.js)
+      if (a === 'me' && b === 'credit' && c === 'gift' && d === 'check' && !parts[4]) return json(this.checkCreditGift(body, who));
+      if (a === 'me' && b === 'credit' && c === 'gift' && !d) return json(await this.sendCreditGift(body, who));
       // 17 Oct 2026: pay with cash at the counter, or not after all
       if (a === 'me' && b === 'cash' && !c) return json(await this.payCash(who));
       if (a === 'me' && b === 'cash' && c === 'cancel' && !d) return json(await this.cancelCash(who));
@@ -2119,6 +2140,8 @@ export class Lair {
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
+      // Round 30: staff with Money say what happened to a store credit gift Shopify didn't confirm (src/credit-gifts.js)
+      if (a === 'credit-gifts' && b && c === 'settle' && !d) return json(this.settleCreditGift(decodeURIComponent(b), body, who));
       // Round 22: stamps staff add on a member's page, and taking one back (src/stamps.js)
       if (a === 'members' && b && c === 'stamps' && !d) return json(await this.giveStamps(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'stamps' && d && parts[4] === 'undo' && !parts[5]) return json(await this.takeBackStamp(decodeURIComponent(b), decodeURIComponent(d), who));
@@ -3158,6 +3181,8 @@ export class Lair {
     if (['cancelled', 'noshow'].includes(next.status)) this.dropDraft(next);
     // Round 21: a seat whose GM credit has gone, now not paid or taken off: staff hear, to decide whether the GM keeps it
     if (next.kind === 'gm-seat') this.gmCreditUndone(booking, next);
+    // Round 30: a seat marked paid gives its GM their fee now, once its session has started (src/gm-credit.js)
+    if (next.kind === 'gm-seat' && next.paid && !booking.paid) this.gmCreditSoon();
     // Round 21: a seat its GM pays for: the GM's charge follows it (gone with it, back with it, its people); a charge
     // marked paid or not: what's due back to the GM follows what they've paid
     if (next.coveredBy) this.syncCover(next.id, now);
@@ -3603,7 +3628,7 @@ export class Lair {
         ['Your credit', this.gmCreditLine(game, rules)],
       ],
       outro: [
-        `Make your Dice Goblin account with this email (${game.gmEmail}), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account after each session.`,
+        `Make your Dice Goblin account with this email (${game.gmEmail}), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account as each player pays through the Lair.`,
         'Players can book already. Gobgob will email you each time someone joins.',
       ],
       button: { label: 'Open My Lair', url: this.page('myLair') },
@@ -4456,6 +4481,9 @@ export class Lair {
       this.write("UPDATE games SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.id);
       this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND status IN ('held', 'confirmed', 'seated')", now, game.id);
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
+        // Round 30: GM credit goes once a session starts, and a GM can cancel until an hour in: a seat whose fee has gone
+        // to its GM tells staff, who decide (src/gm-credit.js; nothing is taken back by itself)
+        this.gmCreditUndone(seat, { ...seat, status: 'cancelled' });
         affected += 1;
         this.dropDraft(seat);
         // Whatever was paid for the seat comes back (a split bill may be part paid).
@@ -4566,7 +4594,7 @@ export class Lair {
     // Round 17: whether the GM is on the team (the main account or a helper), asked before the part with no awaits
     const before = this.game(id);
     // Round 21: a session from 26 Oct 2026 on has GM credit that adds itself (src/gm-credit.js): this tap just does it
-    // now, once the session's over
+    // now, once the session's started (round 30: it was once it was over)
     if (before && autoCredit(before) && before.status !== 'cancelled') return this.creditGmNow(before, Date.now(), { onShift, who });
     const gm = before?.gmCustomerId ? await this.person(before.gmCustomerId) : null;
     // --- no awaits until the game is claimed, so two staff tapping "credit" at once can't pay twice ---
@@ -4990,6 +5018,13 @@ export class Lair {
     // Round 17: a paid postal library swap (_libsend), checked against the send's own draft order (src/queue.js)
     const librarySends = await this.librarySendsPaid(order, orderId);
     // --- no awaits from here on ---
+    // Round 30: a plain RPG Session rung up at the counter pays the TTRPG seat of the player on the sale that day, so its
+    // GM gets their fee (src/counter.js: before, the seat stayed unpaid and the GM got nothing)
+    const seatLines = pos ? this.rpgSessionSeats(order, orderId, spend?.customerId || order.customer?.id, spend?.processedAt || Date.parse(order.processed_at || order.created_at || '') || Date.now(), rules, sessionUnitPaid(order)) : [];
+    const sessionsPaid = seatLines.length ? this.recordPayments(seatLines, orderId, rules, { pos: true, now: Date.now() }) : [];
+    if (sessionsPaid.length) this.reconcileBills(rules, Date.now(), { orderId, pos });
+    // Round 30: a TTRPG seat paid by this order gives its GM their fee now, once its session has started (src/gm-credit.js)
+    if (updated.length || billsPaid.length || sessionsPaid.length) this.gmCreditSoon();
     // The order's customer paid: a friend paying their share with their own member code attached is the payer.
     if (spend?.customerId) this.write('UPDATE payments SET customer_id = ? WHERE order_id = ? AND customer_id IS NULL', spend.customerId, orderId);
     let counted = 0;
@@ -5017,6 +5052,7 @@ export class Lair {
     return {
       updated, tabs: [...tabsPaid, ...cartTabs], spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}),
       ...(stamps ? { stamps } : {}),
+      ...(sessionsPaid.length ? { sessionsPaid } : {}),
       ...(gw ? { gw } : {}),
     };
   }
@@ -7100,9 +7136,12 @@ export class Lair {
     this.touchMember(who.customerId, {}, now);
     // --- claimed ---
     let problem = null;
+    // Round 30: their store credit balance after it, when Shopify says (cents), for My Lair to show at once
+    let balance = null;
     try {
       if (!this.shopify.configured) throw new Error('Shopify is not connected.');
-      await this.shopify.creditCustomer(who.customerId, won.amount, this.env.CURRENCY || 'NZD');
+      const added = await this.shopify.creditCustomer(who.customerId, won.amount, this.env.CURRENCY || 'NZD');
+      balance = Number.isInteger(added?.balanceAfter) ? added.balanceAfter : null;
     } catch (error) {
       problem = String(error.message || error).slice(0, 300);
       console.error('Lair: dice prize failed', error);
@@ -7126,6 +7165,7 @@ export class Lair {
       roll, kind: 'loyalty', pick, prize: { id: prize.id, kind: 'credit', amount: prize.amount, status: prize.status },
       message: sure ? loyaltySureMessage(Boolean(problem)) : loyaltyMessage(roll, Boolean(problem)),
       loyalty: this.loyaltyOf(who.customerId, rules, { details: true }),
+      ...(!problem && balance != null ? { balance } : {}),
     };
   }
 
@@ -8933,15 +8973,8 @@ export class Lair {
     return this.loansOut(customerId).filter((l) => !l.lent);
   }
 
-  /**
-   * The member an email belongs to (16 Oct 2026, lending): their email on the Lair, or their Shopify account's (ignoring
-   * case), the most recently seen first; null when nobody has it. No awaits.
-   */
-  memberForEmail(email) {
-    if (!isEmail(email)) return null;
-    const value = String(email).trim();
-    return this.sql.exec('SELECT * FROM members WHERE lower(email) = lower(?) OR lower(account_email) = lower(?) ORDER BY last_seen DESC LIMIT 1', value, value).toArray()[0] || null;
-  }
+  // (The member an email belongs to, memberForEmail, is src/warhammer.js's since round 11: it always replaced the one
+  // lending had here, which round 30 took out so no mixed-in method replaces one of the Lair's: test/round30-mixins.)
 
   /** A library game the Lair knows (library_games), or null */
   libraryGame(variantId) {
@@ -9779,7 +9812,9 @@ export class Lair {
     ).toArray().map(({ order_name: order, ...p }) => ({
       ...this.creditView({ ...p, amount: -p.amount, note: `Damage charge: ${p.title}${order ? ` (order ${order})` : ''}`, status: 'done' }), kind: 'damage',
     }));
-    const history = [...changes, ...damage].sort((a, b) => b.at - a.at).slice(0, 20);
+    // Round 30: and store credit gifts sent and received (src/credit-gifts.js), with any waiting to be checked
+    const gifts = this.creditGiftHistory(id);
+    const history = [...changes, ...damage, ...gifts].sort((a, b) => b.at - a.at).slice(0, 20);
     return { balance, currency, problem, history };
   }
 
@@ -10498,10 +10533,18 @@ export class Lair {
           status: b.status, locked: on && Boolean(seat) && this.coverLocked(seat, rules, now), ...(b.refund === 'due' ? { refund: 'due', refundAmount: b.refundAmount || 0 } : {}),
         };
       }),
-      // 17 Oct 2026: a private game's invite link, for its GM to share (contract v18-private)
-      games: gameRows.map((g) => ({ ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}) })),
+      // 17 Oct 2026: a private game's invite link, for its GM to share (contract v18-private). Round 30: gmCreditEach, what
+      // they get for each player who pays (cents; 0 when there's none for them), as each one pays
+      games: gameRows.map((g) => ({
+        ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), gmCreditEach: autoCredit(g) ? this.gmSeatCredits(g).each : 0,
+        ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}),
+      })),
       joins: joinList.map((j) => gone(j)),
       credits,
+      // Round 30: store credit they've sent to friends, and received ({ id, direction, name, amount, note, status, at }),
+      // and how much more they can send today (src/credit-gifts.js)
+      creditGifts: this.memberCreditGifts(who.customerId),
+      giftCredit: this.giftCreditLimits(who.customerId, now),
       member: {
         firstName: member.firstName, name: member.name, email: member.email, birthday: member.birthday, spendYear: member.spendYear,
         spendTotal: member.spendTotal, code: member.code,
@@ -10853,6 +10896,20 @@ export class Lair {
     } catch (error) {
       console.error('Lair: GM credit that adds itself failed', error);
     }
+    // Round 30: an hour after a session ends, its GM's one email: who paid and what's on their store credit
+    try {
+      const mails = await this.gmCreditMails(Date.now());
+      if (mails) result.gmCreditMails = mails;
+    } catch (error) {
+      console.error('Lair: could not email GMs their GM credit', error);
+    }
+    // Round 30 (src/credit-gifts.js): store credit gifts whose answer Shopify lost are looked for, and finished
+    try {
+      const gifts = await this.creditGiftUpkeep(Date.now());
+      if (gifts) result.creditGifts = gifts;
+    } catch (error) {
+      console.error('Lair: could not check store credit gifts', error);
+    }
     // Round 21, part 2 (src/gm-cover.js): every GM's charge for a player's seat in step with the seat, in case anything
     // changed a seat without saying so
     try {
@@ -11058,3 +11115,5 @@ Object.assign(Lair.prototype, bookingReminderMethods);
 Object.assign(Lair.prototype, firstGameMethods);
 // Round 30: library members free at events marked so; games that stay in the Lair never go home (src/library-rules.js)
 Object.assign(Lair.prototype, libraryRuleMethods);
+// Round 30: store credit gifts (src/credit-gifts.js)
+Object.assign(Lair.prototype, creditGiftMethods);

@@ -1357,14 +1357,16 @@ export class ShopifyAdmin {
   /**
    * Store credit with Shopify's email to the customer. Throws with error.refused when Shopify answered and said no (or
    * turned the call away before it ran), so nothing moved; any other error may or may not have moved it. Round 21:
-   * timeout (ms) gives up after that long (the GM credit that adds itself).
+   * timeout (ms) gives up after that long (the GM credit that adds itself). Round 30: the transaction comes back with
+   * balanceAfter, the balance after it in cents (null when Shopify leaves it out), so My Lair can show it at once.
+   * notify: false skips Shopify's email (round 30: the GM credit that adds itself, which Gobgob emails once a session).
    */
-  async creditCustomer(customerId, cents, currency, { timeout = null } = {}) {
+  async creditCustomer(customerId, cents, currency, { timeout = null, notify = true } = {}) {
     const data = await madeAnyway(this.graphql(
       `mutation Credit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
-        storeCreditAccountCredit(id: $id, creditInput: $creditInput) { storeCreditAccountTransaction { amount { amount } } userErrors { field message code } }
+        storeCreditAccountCredit(id: $id, creditInput: $creditInput) { storeCreditAccountTransaction { amount { amount } balanceAfterTransaction { amount } } userErrors { field message code } }
       }`,
-      { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: { amount: (cents / 100).toFixed(2), currencyCode: currency }, notify: true } },
+      { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: { amount: (cents / 100).toFixed(2), currencyCode: currency }, notify: notify !== false } },
       timeout ? { timeout } : {},
     ));
     const result = data?.storeCreditAccountCredit;
@@ -1372,7 +1374,9 @@ export class ShopifyAdmin {
     if (result.userErrors?.length) {
       throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true, code: result.userErrors[0].code || null });
     }
-    return result.storeCreditAccountTransaction;
+    const tx = result.storeCreditAccountTransaction;
+    const after = tx?.balanceAfterTransaction?.amount;
+    return tx ? { ...tx, balanceAfter: after != null && Number.isFinite(Number(after)) ? Math.round(Number(after) * 100) : null } : tx;
   }
 
   /**
@@ -1394,8 +1398,10 @@ export class ShopifyAdmin {
    * Returns { id, balanceAfter (cents, or null) }. A take-off bigger than the balance fails with Shopify's
    * INSUFFICIENT_FUNDS (error.code).
    */
-  async changeStoreCredit(customerId, cents, currency) {
+  async changeStoreCredit(customerId, cents, currency, { timeout = null } = {}) {
     const take = cents < 0;
+    // Round 30: timeout (ms) gives up after that long, as a lost answer (store credit gifts)
+    const options = timeout ? { timeout } : {};
     const money = { amount: (Math.abs(cents) / 100).toFixed(2), currencyCode: currency };
     const fields = 'storeCreditAccountTransaction { id amount { amount currencyCode } balanceAfterTransaction { amount currencyCode } } userErrors { field message code }';
     // (a change Shopify made but answered with a denied field still counts as made: madeAnyway)
@@ -1403,10 +1409,12 @@ export class ShopifyAdmin {
       ? this.graphql(
         `mutation LairCreditTake($id: ID!, $debitInput: StoreCreditAccountDebitInput!) { storeCreditAccountDebit(id: $id, debitInput: $debitInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, debitInput: { debitAmount: money } },
+        options,
       )
       : this.graphql(
         `mutation LairCreditAdd($id: ID!, $creditInput: StoreCreditAccountCreditInput!) { storeCreditAccountCredit(id: $id, creditInput: $creditInput) { ${fields} } }`,
         { id: `gid://shopify/Customer/${customerId}`, creditInput: { creditAmount: money, notify: false } },
+        options,
       ));
     const result = take ? data?.storeCreditAccountDebit : data?.storeCreditAccountCredit;
     // no answer for it at all: it may or may not have moved (the caller looks before doing anything again)

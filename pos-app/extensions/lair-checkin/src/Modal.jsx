@@ -55,10 +55,10 @@ import {
   wrongScan,
 } from './flow.js';
 import { dayKey, firstName, money, plural } from './format.js';
-import { addStamp, checkIn, coverSeat, getToday, LairError, problemFor, saveFoundUs, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse, undoStamp } from './lair.js';
+import { checkIn, coverSeat, getToday, LairError, problemFor, saveFoundUs, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse } from './lair.js';
 import { foundUsSaved } from './foundus.js';
 import { feeLines, itemCount, linesTotal, owedLines, shareLines, tabToast } from './lines.js';
-import { cardFilled, cardFullShort, cardFullWords, freshStamps, stampAddedWords, stampKey } from './loyalty.js';
+import { cardFilled, cardFullShort, cardFullWords, freshStamps } from './loyalty.js';
 import { customerNames } from './sale.js';
 import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState, WAITING, waitingRefs } from './split.js';
 import { loadPending, savePending, saveTileEntry } from './store.js';
@@ -1262,62 +1262,6 @@ function CheckIn() {
     );
   }
 
-  /* ---------------- the loyalty card: Add a stamp (round 22, contract v22-stamps) ---------------- */
-
-  /**
-   * "Add a stamp" on a member's card (Mo, 28 Oct 2026: "give the staff [a way] to add a stamp on the area for the
-   * stamps"), for a session the Lair app doesn't know about: one stamp a tap (POST /pos/stamp). The tap's key goes with
-   * Try again too, so a lost answer never adds two. The card shows it as new, and Undo takes it back.
-   */
-  function addStampHere() {
-    const screen = topMember();
-    if (!screen?.member.customerId) return;
-    const customerId = screen.member.customerId;
-    const name = firstName(String(screen.member.name || ''));
-    const key = stampKey();
-    const go = () =>
-      run(
-        'Adding a stamp…',
-        async () => {
-          const before = topMember()?.loyalty || screen.loyalty || null;
-          const answer = await addStamp({ customerId, key });
-          const id = answer?.stamp?.id ? String(answer.stamp.id) : '';
-          updateMember((shown) =>
-            String(shown.member.customerId) !== String(customerId)
-              ? shown
-              : { ...withCard(shown, answer?.loyalty), added: id && !(shown.added || []).includes(id) ? [...(shown.added || []), id] : shown.added || [] },
-          );
-          toast(stampAddedWords(answer?.loyalty, name));
-          if (cardFilled(before, answer?.loyalty)) say('Card full!', `${cardFullWords(name)} Let them know.`, 'success');
-        },
-        go,
-        'stamp',
-      );
-    go();
-  }
-
-  /** "Undo that stamp": takes back the last stamp added on this screen (POST /pos/stamp-undo). */
-  function undoStampHere() {
-    const screen = topMember();
-    const id = screen?.added?.[screen.added.length - 1];
-    if (!screen || !id) return;
-    const customerId = screen.member.customerId;
-    run(
-      'Taking the stamp back…',
-      async () => {
-        const answer = await undoStamp({ customerId, id });
-        updateMember((shown) => {
-          if (String(shown.member.customerId) !== String(customerId)) return shown;
-          const loyalty = answer?.loyalty && typeof answer.loyalty === 'object' ? answer.loyalty : shown.loyalty;
-          return { ...shown, loyalty, fresh: Math.max(0, (shown.fresh || 0) - freshStamps(loyalty, shown.loyalty)), added: (shown.added || []).filter((x) => x !== id) };
-        });
-        toast(answer?.already ? 'That stamp was taken back already.' : 'Stamp taken back.');
-      },
-      undoStampHere,
-      'stamp-undo',
-    );
-  }
-
   /* ---------------- "How did they find us?" (round 24, contract v24-new-players) ---------------- */
 
   /**
@@ -1457,8 +1401,6 @@ function CheckIn() {
       checkInMemberOnly,
       addTab,
       putMemberOnSale,
-      addStamp: addStampHere,
-      undoStamp: undoStampHere,
       foundUs: foundUsHere,
       openPass: (pass) => push({ name: 'pass', pass, picking: false }),
       togglePicking: () => updatePass((screen) => ({ ...screen, picking: !screen.picking })),

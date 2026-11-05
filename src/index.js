@@ -38,8 +38,8 @@ const POS_CORS = {
 };
 /** The POS routes: GET /pos/today, and POST for the rest. /pos/member is round 3's name for scanning a member code.
     /pos/pass-undo { useId } gives a pass's sessions back, the same as the staff page's undo. Round 21: /pos/cover and
-    /pos/uncover { gameId, ref }: the GM pays for a player's seat, or stops. Round 22: /pos/stamp { customerId, key } adds
-    a stamp to someone's loyalty card, and /pos/stamp-undo { customerId, id } takes it back. Round 24: /pos/found-us
+    /pos/uncover { gameId, ref }: the GM pays for a player's seat, or stops. Round 22's /pos/stamp and /pos/stamp-undo
+    answer 410 since round 30 (the counter faces customers, so it never changes stamps). Round 24: /pos/found-us
     { customerId, answer } saves a new player's answer to "How did you find us?". */
 const POS_ROUTES = /^(?:today|scan|checkin|checkin-member|share|member|pass-undo|cover|uncover|stamp|stamp-undo|found-us|tab\/[A-Za-z0-9_-]{1,64}\/added)$/;
 const withCors = (response) => {

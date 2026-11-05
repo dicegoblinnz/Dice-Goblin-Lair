@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair } from '../src/lair.js';
+import { STAMP_WORDS } from '../src/stamps.js';
 import { LairTime, rulesFromSettings, DEFAULT_HOURS, CARD_SIZE, CARD_HEAD_START, CARD_SLOTS, LOYALTY_SURE, loyaltyCard, cardView, cardSoFar } from '../src/core.js';
 
 const TZ = 'Pacific/Auckland';
@@ -286,13 +287,14 @@ test('round 29 (Mo, 2 Nov 2026): every card the Lair sends carries the same fiel
     assert.deepEqual(fieldsOf(loyalty), want, where);
     if (where !== 'GET /me') assert.equal(loyalty.rollsAvailable, 1, `${where}: rollsAvailable as before`);
   }
-  // the stamp routes' answers too, one stamp on: 10 of 12
+  // the stamp routes' answers too, one stamp on: 10 of 12. Round 30: the counter adds no stamps (its screen faces
+  // customers), so the one stamp on is the check-in card's, and Undo on a member page takes it back
   const next = { ...want, stamps: 8, onCard: 10 };
-  assert.deepEqual(fieldsOf(ok(await pos('stamp', { customerId: MIA, key: 'pos-headstart-1' })).loyalty), next, 'the counter\'s Add a stamp');
-  const page = ok(await call('POST', `members/${MIA}/stamps/${ok(await call('GET', `members/${MIA}`, null, OWNER)).member.stamps[0].id}/undo`, {}, OWNER));
-  assert.deepEqual(fieldsOf(page.member.loyalty), want, 'Undo on a member page');
+  assert.equal(said(await pos('stamp', { customerId: MIA, key: 'pos-headstart-1' })), `410 ${STAMP_WORDS.counter}`, 'round 30: no Add a stamp at the counter');
   const given = ok(await call('POST', `members/${MIA}/stamps`, { count: 1 }, HEMI));
   assert.deepEqual(fieldsOf(given.member.loyalty), next, 'Add a stamp on the check-in card');
+  const page = ok(await call('POST', `members/${MIA}/stamps/${ok(await call('GET', `members/${MIA}`, null, OWNER)).member.stamps[0].id}/undo`, {}, OWNER));
+  assert.deepEqual(fieldsOf(page.member.loyalty), want, 'Undo on a member page');
 });
 
 test('round 29 (Mo, 2 Nov 2026): booking emails say how a member\'s card is going, "X of 12 so far", and a guest\'s say nothing about a card', async () => {

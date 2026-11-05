@@ -146,6 +146,9 @@ beforeEach(async () => {
     return { amount: { amount: (cents / 100).toFixed(2) } };
   };
   lair.notifyStaff = (subject, content) => alerts.push({ subject, intro: content.intro });
+  // (round 30: a payment also sets the GM credit going at once; this file checks the runs and the tap, and
+  // test/round30-gm-credit.test.js checks that)
+  lair.gmCreditSoon = () => null;
   lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '' }, ROOMS, []);
   lair.rulesLoadedAt = NOW + 10 * 365 * 24 * HOUR;
   lair.makeMember({ customerId: OWNER, name: 'Mo Ashgrove', email: 'owner@example.com' }, NOW);
@@ -167,7 +170,8 @@ test('round 21: the words, word for word, and the start: sessions from midnight 
   assert.equal(GM_CREDIT.maxTries, 5);
   assert.equal(W.stampTitle('Curse of Strahd'), 'Curse of Strahd (you ran it)');
   assert.equal(W.stampTitle(''), 'TTRPG session (you ran it)');
-  assert.equal(W.notOver, "GM credit adds itself for this session: once it's over, the GM gets their fee for each player who's paid. There's nothing to tap.");
+  // round 30 (Mo, 6 Nov 2026: "add the gm store credit after every client is paid inside a game"): once it's started
+  assert.equal(W.notStarted, "GM credit adds itself for this session: once it's started, the GM gets their fee as each player pays. There's nothing to tap.");
   assert.equal(W.nothingYet, "Nothing to add yet: the GM gets their fee for each player once they've paid.");
   assert.equal(W.allDone, "Done: the GM has had their fee for every player who's paid.");
   assert.equal(W.sending, "Gobgob is adding the GM's credit right now. Check again in a minute.");
@@ -175,7 +179,7 @@ test('round 21: the words, word for word, and the start: sessions from midnight 
   assert.equal(W.noFee, "This GM covers their players' fee, so there's no store credit to add.");
   assert.equal(W.marked, "The GM's credit has gone to them already, so it can't be kept now. Take it off their store credit on their member page if it shouldn't have gone.");
   assert.equal(W.markedOn, "Marked: they were working, so there's no GM credit for this session.");
-  assert.equal(W.markedOff, "Marked: they weren't working, so they get their GM credit once it's over.");
+  assert.equal(W.markedOff, "Marked: they weren't working, so they get their GM credit as their players pay.");
   assert.equal(W.undone('Rangi', '$5.00', "Mia's seat at Curse of Strahd", 'was cancelled'), "Rangi got $5.00 GM credit for Mia's seat at Curse of Strahd, but that seat was cancelled. If Rangi shouldn't keep it, take it off their store credit on their member page.");
   assert.equal(W.noAccount, "The GM isn't linked to a customer account, so add the store credit in Shopify admin.");
   assert.equal(W.refused('Customer is not eligible'), "Shopify didn't add the store credit (Customer is not eligible). Nothing moved. Gobgob tries again in 10 minutes.");
@@ -273,18 +277,18 @@ test('GM stamps (round 21): a GM checked in on a seat of their own session gets 
 
 /* ---------------- GM credit that adds itself ---------------- */
 
-test('GM credit (round 21): once the session is over, each paid seat gives its GM their fee, one store credit a run; paid later, later; never twice', async () => {
+test('GM credit (round 21, round 30): once the session has started, each paid seat gives its GM their fee, one store credit a run; paid later, later; never twice', async () => {
   const id = await list();
   await seat(id, MIA, 'Mia', { people: 2, paid: true });
   const kais = await seat(id, KAI, 'Kai');
-  // during the session: nothing yet
-  nowIs(at('2026-10-27', 21));
+  // before the session: nothing yet
+  nowIs(at('2026-10-27', 17, 50));
   assert.equal(await lair.autoGmCredit(Date.now()), null);
   assert.deepEqual(creditCalls, []);
-  // over: Mia's two seats, $5 each, in one store credit
-  nowIs(at('2026-10-27', 22, 10));
+  // round 30: under way (it was once it was over): Mia's two seats, $5 each, in one store credit
+  nowIs(at('2026-10-27', 18, 10));
   assert.deepEqual(await lair.autoGmCredit(Date.now()), { credited: 2, amount: 1000, staff: 0, manual: 0, retry: 0, failed: 0, check: 0 });
-  assert.deepEqual(creditCalls, [[RANGI, 1000, 'NZD', { timeout: GM_CREDIT.timeoutMs }]]);
+  assert.deepEqual(creditCalls, [[RANGI, 1000, 'NZD', { timeout: GM_CREDIT.timeoutMs, notify: false }]]);
   assert.deepEqual(ledger(id).map((r) => [r.customer_id, r.people, r.amount, r.status]), [[RANGI, 2, 1000, 'credited']]);
   assert.deepEqual(creditRows(id), [{ customer_id: RANGI, players: 2, amount: 1000, status: 'credited', by: 'auto' }]);
   assert.equal(creditedOf(id), 2);
@@ -368,12 +372,12 @@ test('GM credit (round 21): a session from before 26 October keeps Session done;
   assert.equal(readyForCredit(lair.game(tuesday), Date.now()), false);
 });
 
-test('GM credit (round 21): Session done on a round 21 session does now what the next run would; before it\'s over it says why not', async () => {
+test('GM credit (round 21, round 30): Session done on a round 21 session does now what the next run would; before it\'s started it says why not', async () => {
   const id = await list();
   await seat(id, MIA, 'Mia', { paid: true });
   const kais = await seat(id, KAI, 'Kai');
-  nowIs(at('2026-10-27', 20));
-  assert.equal(said(await credit(id)), `409 ${W.notOver}`);
+  nowIs(at('2026-10-27', 17));
+  assert.equal(said(await credit(id)), `409 ${W.notStarted}`);
   assert.equal(said(await credit(id, {}, ANA)), "403 That's not one of your staff permissions. Ask the main account to tick it on the Team tab.");
   // the floor offers no Session done for it (no staffGm), and says where it's up to
   assert.equal(readyForCredit(lair.game(id), Date.now()), false);
@@ -475,6 +479,9 @@ test('GM credit (round 21): Shopify said no: tried again each run, and after 5 t
   assert.deepEqual(creditRows(id), []);
   assert.equal(creditedOf(id), null);
   shopifySays = null;
+  // (round 30, from its review: tried again in the next 10-minute run, never sooner)
+  assert.equal(await lair.autoGmCredit(Date.now() + GM_CREDIT.retryAfter - 1), null, 'not yet');
+  nowIs(at('2026-10-27', 22, 20));
   assert.equal((await lair.autoGmCredit(Date.now())).credited, 1);
   assert.deepEqual(ledger(id).map((r) => [r.status, r.tries]), [['credited', 1]]);
   // another session refused every time: 5 tries, then staff hear, and it's never tried again
@@ -482,7 +489,10 @@ test('GM credit (round 21): Shopify said no: tried again each run, and after 5 t
   await seat(other, KAI, 'Kai', { paid: true });
   nowIs(at('2026-10-28', 22, 10));
   shopifySays = 'refuse';
-  for (let i = 1; i <= 4; i += 1) assert.equal((await lair.autoGmCredit(Date.now())).retry, 1, `try ${i}`);
+  for (let i = 1; i <= 4; i += 1) {
+    assert.equal((await lair.autoGmCredit(Date.now())).retry, 1, `try ${i}`);
+    nowIs(Date.now() + GM_CREDIT.retryAfter);
+  }
   assert.equal((await lair.autoGmCredit(Date.now())).failed, 1);
   assert.deepEqual(ledger(other).map((r) => [r.status, r.tries]), [['failed', 5]]);
   assert.deepEqual(alerts.map((a) => a.subject), ['GM credit to add by hand: Rangi Hohaia']);
@@ -561,10 +571,10 @@ test('GM credit (round 21, review): round 17\'s mark still works: "they weren\'t
   assert.deepEqual((await gameOn(id)).gmCredit.staffGm.marked, true);
   // marked "was working" now: it's gone already
   assert.equal(said(await credit(id, { onShift: true })), `409 ${W.marked}`);
-  // marked ahead of time: kept for the run
+  // marked ahead of time: kept for the run (round 30: before it starts)
   const next = await list({ gm: ANA, start: at('2026-10-28', 18), end: at('2026-10-28', 22) });
   await seat(next, KAI, 'Kai', { paid: true });
-  nowIs(at('2026-10-28', 19));
+  nowIs(at('2026-10-28', 17));
   assert.deepEqual(ok(await credit(next, { onShift: false })), { players: 0, amount: 0, status: 'marked', note: W.markedOff, auto: true });
   assert.equal(lair.game(next).gmOnShift, false);
   nowIs(at('2026-10-28', 22, 10));

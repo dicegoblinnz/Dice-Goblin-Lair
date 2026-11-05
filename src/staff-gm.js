@@ -276,7 +276,8 @@ export const staffGmMethods = {
     if (game.free) return 'None: this session is free for the players, so there are no GM fees';
     const credit = game.gmFee ?? rules.prices.gmCredit;
     if (!credit) return "None: you're covering your players' GM fee, so they pay just the table fee";
-    const usual = `${dollars(credit)} store credit for each paying player, after the session`;
+    // (round 30: as each player pays, once the session's started; it was after the session)
+    const usual = `${dollars(credit)} store credit for each paying player, as they pay`;
     const id = game.gmCustomerId;
     const staff = Boolean(id) && (Boolean(this.helperRow(id)) || Boolean(this.people?.get(id)?.person?.staff));
     if (!staff) return usual;

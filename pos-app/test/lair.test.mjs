@@ -16,9 +16,8 @@ import {
   tabAdded,
   uncoverSeat,
   undoPassUse,
-  addStamp,
-  undoStamp,
 } from '../extensions/lair-checkin/src/lair.js';
+import * as lairApp from '../extensions/lair-checkin/src/lair.js';
 
 /** @type {{ url: string, init: RequestInit }[]} */
 let requests = [];
@@ -111,22 +110,11 @@ test('GM pays for a player: POST /pos/cover and /pos/uncover, and the GM’s cha
   await assert.rejects(coverSeat({ gameId: 'gm_1', ref: 'MB-OTTER-9' }), { kind: 'refused', message: "Mia has paid for their seat already, so there's nothing to pay for." });
 });
 
-test('round 22: a stamp from the counter, and taking it back: POST /pos/stamp and /pos/stamp-undo (contract v22-stamps)', async () => {
-  pretend({ body: { ok: true } });
-  await addStamp({ customerId: 777, key: 'pos-abc12345' });
-  await undoStamp({ customerId: '777', id: 'st_1' });
-  assert.deepEqual(
-    requests.map((r) => [r.init.method, r.url.slice(LAIR_URL.length), JSON.parse(String(r.init.body))]),
-    [
-      ['POST', '/pos/stamp', { customerId: '777', key: 'pos-abc12345' }],
-      ['POST', '/pos/stamp-undo', { customerId: '777', id: 'st_1' }],
-    ],
-  );
-  pretend({ status: 404, body: { error: 'Not found' } });
-  await assert.rejects(addStamp({ customerId: 777, key: 'pos-abc12345' }), { kind: 'not-found', message: 'Adding a stamp needs the Lair app’s latest update. Try again in a few minutes.' });
-  pretend({ status: 404, body: { error: "There's no loyalty card for them yet: they need a Dice Goblin account. Scan the member code in their My Lair." } });
-  await assert.rejects(addStamp({ customerId: 777, key: 'pos-abc12345' }), { kind: 'not-found', message: "There's no loyalty card for them yet: they need a Dice Goblin account. Scan the member code in their My Lair." });
+test('round 30: the counter never adds or takes back a stamp: no calls for it (round 22\'s POST /pos/stamp and /pos/stamp-undo)', () => {
+  assert.equal(typeof lairApp.addStamp, 'undefined');
+  assert.equal(typeof lairApp.undoStamp, 'undefined');
 });
+
 
 test('banners say what went wrong in plain words, with Try again only where it can help', () => {
   assert.deepEqual(problemFor(new LairError('offline', OFFLINE)), {
