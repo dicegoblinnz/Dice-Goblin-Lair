@@ -46,6 +46,14 @@ ev.extraEvents.push({
   handle: HANDLE, title: 'Warhammer night (round 31)', event_type: 'wargame', starts_at: iso(today, '18:00'), ends_at: iso(tomorrow, '00:00'), image_slug: 'warhammer', game: 'Warhammer',
   description: 'Bring your army.', tables: 'T8-T21', lock_tables: true, game_tables: 'T8+T9, T10+T11, T12+T13, T14+T15, T18+T19, T20+T21', entry_fee: 10, payment: null,
 });
+// and one in three days, to drop out of from My Lair (more than 24 hours away)
+const LATER = lairKey(Date.parse(iso(today, '12:00')) + 3 * 24 * 3600 * 1000);
+const LATER_END = lairKey(Date.parse(iso(LATER, '12:00')) + 24 * 3600 * 1000);
+const LATER_HANDLE = 'r31-warhammer-later';
+ev.extraEvents.push({
+  handle: LATER_HANDLE, title: 'Warhammer night (round 31, later)', event_type: 'wargame', starts_at: iso(LATER, '18:00'), ends_at: iso(LATER_END, '00:00'), image_slug: 'warhammer', game: 'Warhammer',
+  description: 'Bring your army.', tables: 'T8-T21', lock_tables: true, game_tables: 'T8+T9, T10+T11, T12+T13, T14+T15, T18+T19, T20+T21', entry_fee: 10, payment: null,
+});
 const RUBY = { id: 7700112233, first_name: 'Ruby', last_name: 'Tane', name: 'Ruby Tane', email: 'ruby@example.com', phone: null, tags: [] };
 const MOBILE = '021 555 0123';
 
@@ -161,6 +169,42 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   check(`${size}: her row says You're in`, flat(await page.innerText('[data-open-games]')).includes('You’re in'));
   await sheet(RUBY);
   check(`${size}: Ruby's row says Game on with Mia`, flat(await page.innerText('[data-open-games]')).includes('Game on with Mia'));
+  // 5. three days out: Ruby lists, Mia joins, then drops out from My Lair; it's listed again
+  const later = await page.evaluate((h) => (document.querySelector('lair-calendar').all().find((i) => i.handle === h) || {}).id, LATER_HANDLE);
+  await open(`/pages/events-calendar#event=${encodeURIComponent(later)}`, RUBY);
+  await page.waitForTimeout(700);
+  await page.click(`[data-reserve="${later}"]`);
+  await page.waitForSelector('[data-reserve-form]');
+  await page.check('[data-reserve-form] [name="opponent"][value="find"]');
+  await page.fill('[data-reserve-form] [name="phone"]', MOBILE);
+  await page.click('[data-reserve-submit]');
+  await page.waitForTimeout(800);
+  await open(`/pages/events-calendar#event=${encodeURIComponent(later)}`, mia);
+  await page.waitForSelector('[data-open-join]', { timeout: 10000 });
+  await page.click('[data-open-join]');
+  await page.waitForSelector('[data-open-go]');
+  check(`${size}: three days out, the join sheet says she can drop out in My Lair`, /Drop out in My Lair until 24 hours before/.test(flat(await page.innerText('.cal-open-join'))));
+  await page.click('[data-open-go]');
+  await page.waitForSelector('.cal-flash', { timeout: 10000 }).catch(() => {});
+  await open('/pages/my-lair#bookings', mia);
+  await page.waitForSelector('[data-drop-out]', { timeout: 15000 }).catch(() => {});
+  check(`${size}: My Lair: Mia's ticket has Drop out`, (await page.locator('[data-drop-out]').count()) === 1);
+  if ((await page.locator('[data-drop-out]').count()) === 1) {
+    // My Lair redraws as it loads, so Playwright's wait for a still button never settles: scroll and tap from the page
+    await page.evaluate(() => (document.querySelector('[data-drop-out]').closest('.ml-ticket') || document.querySelector('[data-drop-out]')).scrollIntoView({ block: 'center' }));
+    await page.waitForTimeout(400);
+    if (phone) await page.screenshot({ path: `${OUT}/${size}-my-lair-drop-out.png` });
+    await page.evaluate(() => document.querySelector('[data-drop-out]').click());
+    await page.waitForSelector('[data-confirm-drop-out]');
+    check(`${size}: the dialog asks first`, /Drop out of Ruby’s game\?/.test(flat(await page.innerText('[data-cancel-title]'))));
+    await scan(page, `${size} the drop out dialog`, '[data-cancel-dialog]');
+    await page.evaluate(() => document.querySelector('[data-confirm-drop-out]').click());
+    await page.waitForTimeout(800);
+    check(`${size}: done, and it says so`, /You’ve dropped out of Ruby’s game, and Gobgob has listed it again/.test(flat(await page.innerText('body'))));
+    await open(`/pages/events-calendar#event=${encodeURIComponent(later)}`, mia);
+    await page.waitForSelector('[data-open-games] .cal-open__title', { timeout: 10000 }).catch(() => {});
+    check(`${size}: the game is listed again, with Join`, (await page.locator('[data-open-join]').count()) === 1);
+  }
   check(`${size}: no sideways scroll`, (await overflowX(page)) <= 0);
   check(`${size}: no console errors`, !errors.length, errors);
   await ctx.close();
