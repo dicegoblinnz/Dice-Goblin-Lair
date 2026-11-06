@@ -32,7 +32,7 @@
  * awaits anywhere in here.
  */
 import { LairTime, RuleError, codeKey, makeId } from './core.js';
-import { ORDERMATE } from './counter.js';
+import { ORDERMATE, TILL_SOURCE } from './counter.js';
 
 /** roll_codes.pays_on and roll_code_uses.pays_on for a welcome code: its rolls wait for the first paid session */
 export const WELCOME = 'first-session';
@@ -60,10 +60,11 @@ export const NEW_PLAYER_COLUMNS = [
 export const NEW_PLAYER_STAMP_COLUMNS = [['loyalty_stamps', 'amount', 'INTEGER']];
 
 /**
- * The counter's orders, by the source the Lair keeps for them (spend.source): Shopify POS's own and Pay on Verifone's
- * (OrderMate). counterSource (src/counter.js) keeps every counter sale as one of these, even if OrderMate's app ID changes.
+ * The counter's orders, by the source the Lair keeps for them (spend.source): Shopify POS's own, Pay on Verifone's
+ * (OrderMate) and, round 32, the Lair's own till's. counterSource (src/counter.js) keeps every counter sale as one of
+ * these, even if OrderMate's app ID changes.
  */
-export const COUNTER_SOURCES = ['pos', ORDERMATE.app];
+export const COUNTER_SOURCES = ['pos', ORDERMATE.app, TILL_SOURCE];
 
 /** Round 24's index, made when missing: one welcome code a member, kept in the data itself */
 export const NEW_PLAYER_TABLES = [

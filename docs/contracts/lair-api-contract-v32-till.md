@@ -1,4 +1,4 @@
-# Lair API contract v32: the till, part 1 (who's on the till)
+# Lair API contract v32: the till (who's on it, people on it, and its sales)
 
 Round 32, 6 November 2026 (the library filters and open games are round 31s of their own). Mo is replacing Shopify POS with the shop's own till (the website's staff page with
 `?view=till` on the end, on the counter tablet; plan: the doc "Dice Goblin till: plan"). He asked for his own passcode,
@@ -132,8 +132,78 @@ A person (`person`):
   null when Shopify can't say. `tab`: today's self-serve tab while it isn't paid, else null. `account`: pay each visit,
   or a monthly account's limit and what's owed (accountSummary).
 
-## 6. Next (not in this round)
+## 6. Part 3: products, prices and sales
 
-Part 3: real products, prices (the dice deal) and stock, and each sale saved to Shopify as a paid order with the
-member and the basket's lines (paying a booking's line marks it paid, as at the counter), stamps and credit. Part 4: cash approvals (a PIN on
-the till, or the staff page) and store credit at the till. Every sale will carry who was on the till.
+Mo (6 Nov 2026): "Part 3 please": the shop's real products and prices (the dice deal) and stock, and each sale saved to
+Shopify as a paid order with the member and the basket's lines (paying a booking's line marks it paid, as at the
+counter), and stamps. `src/till-sales.js`; tests `test/round32-till-sales.test.js`.
+
+The price is fixed before anyone pays: tapping Pay makes the sale's draft order, and that draft's total is what's keyed
+into the EFTPOS or taken in cash. Staff then say they have the money with their own PIN, and from that moment the sale is
+paid, whatever Shopify does next.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /proxy/till/product` | staff account (the counter tablet's) | `{ code }`: a barcode (in any of its forms: a UPC read with a leading 0 is the same) or SKU → `{ product, variant }`: the variant whose barcode, then SKU, it is (one for sale first), with its product (only that variant). From Shopify admin, so products sold only at the counter and unlisted ones (the Session product) are found too. Kept 5 minutes. Unknown: 404 `Gobgob can't find that in the shop. Search for it by name instead.`; a library copy (its code, or "(Library)" in the title): 422 `That's one of our library games, so it isn't for sale.`; archived, a draft or a gift card: 422 `That one isn't for sale at the till.`; not a code (1 to 40 letters, numbers and `. _ + -`): 400 `Scan the barcode, or type the code under it.`; Shopify down: 503 `Shopify didn't answer. Try again in a moment.` |
+| `POST /proxy/till/search` | staff account | `{ q }` → `{ products }`: up to 12 of the shop's products, by title, whose title has every word (up to 5), active or unlisted, never a library copy or gift card. Fewer than 2 letters: 400 `Type at least 2 letters to search.` |
+| `POST /proxy/till/price` | staff account | `{ lines, person? }` → `{ price: { lines, subtotal, discounts, total, gst, taxIncluded }, dropped }`: what the basket comes to, worked out by Shopify as at checkout (the shop's prices, its automatic discounts like the dice deal, GST), its bookings at what's left to pay and its tab at the tab's prices. Nothing is made or checked in. `dropped`: booking codes with nothing to pay now (left out) |
+| `POST /proxy/till/pay` | staff account; staff on the till (`token`) or a customer at the counter | `{ lines, person?, method: 'card' \| 'cash', token?, till? }`: start paying. Today's bookings in the basket are checked in, as the counter tile does when it scans them (saved passes apply), then the sale's draft order is made → `{ sale, covered, notices }`. `covered`: bookings a pass paid at check-in (they're not in the sale); `{ sale: null }` when passes covered everything. The till's sale still waiting for its money is let go first (`till`: the tablet's own id, 6 to 40 letters, numbers and dashes; else where it came from). A booking with nothing left to pay (or one a paid till sale is paying): 409 `MT-OWLBEAR-17 has nothing left to pay. Scan their code again.`; unknown: 404; their tab changed: 409 `Their tab has changed. Scan their code again.`; `method` missing: 400 `Pay by card or with cash.`; Shopify refused the sale: 422 `Shopify wouldn't take this sale: …`; Shopify down or too slow: 503 (nothing was taken) |
+| `POST /proxy/till/paid` | staff on the till with their own PIN; cash: the owner, Check-in or Money | `{ sale, token, expect, handed? }`: they have the money. `expect` is the total they were shown, in cents (409 `This sale is $26.00. Check that's what was paid, then confirm again.` when it isn't the sale's). Cash: `handed` in cents, at least the total and at most $1,000 over (400 `Type how much cash they handed over: $22.00 or more.`); the change is worked out. Sales only on the till can't take cash: 403 `Approving cash is for staff with Check-in or Money, or the owner.` → `{ sale }`, paid. Asking again for a paid sale gives it as it is. A sale that was let go: 409 `That sale was let go. Tap Pay again.`; still being set up: 409; none: 404 |
+| `POST /proxy/till/pay/cancel` | staff account | `{ sale }`: back from paying: it's let go (its draft deleted, its tab back to open) → `{ sale: null }`. A paid one: 409 `That sale's paid already.` |
+
+`lines` (the basket): `[{ key, variantId, qty }]` products (1 to 99 of each; the same variant twice is one line),
+`[{ key, booking: '<code>' }]` bookings, sign-ups, owed rows and a monthly account's owed tab (from the person's
+`bookings`, part 2), `[{ key, tab: '<tab id>' }]` their self-serve tab from My Lair. Up to 60 lines; anything else is 400
+`Something in the basket didn't look right. Take it out and add it again.` (none: `There's nothing in the basket yet.`).
+`person`: the member on the sale (their customer ID), or none for a guest or a ticket's code alone.
+
+A product (`product`): `{ id, title, type, vendor, dice, variants: [{ id, title, price, sku, available, stock }] }`.
+`dice`: it's in the dice deal's collection ("All dice (buy 2, get the 3rd free)", `TILL_DICE_COLLECTION` to change it).
+`stock`: Shopify's count when it tracks one, else null; `available`: Shopify would sell one now. The till sells it either
+way (it's in their hand), and says when Shopify shows none.
+
+A sale (`sale`): `{ id, status: 'open' | 'paid' | 'gone', method, total, subtotal, gst, discounts: [{ title, amount }],
+lines: [{ key, title, qty, unit, total, booking?, tab? }], person: { id, first } | null, paidAt, by, handed, change,
+order: { id, name } | null, saving, receipt }`. Amounts in cents; `subtotal` and the lines are before discounts.
+`saving`: paid, and its Shopify order still being made. `receipt`: the member's email, masked, where Shopify sends their
+receipt (its order confirmation).
+
+**The sale's order.** The draft is the member's (none for a quick sale), with the products by variant at the shop's
+prices, its tab's things at the tab's prices (`_tab`), each booking as the counter tile's own custom line ("Table fee:
+MT-OWLBEAR-17 (T1, 2 people)", `_booking`), the shop's automatic discounts, and a $0 "Collected at the Lair" shipping line
+when there are products. It's tagged `lair-till`, `till` and `card` or `cash`, noted "Sold on the Lair till, by card on
+the EFTPOS, rung up by Hemi (ts_…)" (no booking codes), with the sale's id in its `_lair_till` attribute. Once paid,
+it's made a paid order (marked as paid), and then fulfilled at the shop (`TILL_LOCATION_ID`, "Dice Goblin" by default:
+anything assigned elsewhere is moved there first when the shop stocks it), so stock comes off there and it never waits in
+Unfulfilled. Fulfilling needs `read_merchant_managed_fulfillment_orders` and `write_merchant_managed_fulfillment_orders`
+(new in `pos-app/shopify.app.toml`): until Mo approves them it's tried every 6 hours, and staff mark sales fulfilled by
+hand as they do now.
+
+Shopify gives the order the Lair app's ID as its `source_name`, so its orders/paid webhook knows it as **a counter sale**
+(`src/counter.js tillSale`: a number for the source and the `lair-till` tag; a web order, a draft's checkout or a POS
+sale tagged by hand isn't one) that keeps its lines' properties: its `_booking` lines pay their bookings, `_tab` its tab,
+Session lines stamp the member, RPG Sessions pay their TTRPG seat, passes and gifts are made, and the spend counts with
+the source `lair-till` (one of `COUNTER_SOURCES`, so a till sale counts as being in the shop for new players).
+
+**When Shopify is slow.** Pay waits up to 9 seconds for the draft (the shop's app proxy gives up on slower answers);
+nothing is taken when it fails. Paid waits up to 9 seconds for the order; past that the sale is paid and `saving`, and
+the 10-minute run tries again after 10 minutes, 30, 1 hour, 3, 6, 12 and 24 (each try first looks at whether the draft
+became an order already, so an answer that was lost never makes two). Meanwhile its bookings show as paid at the till
+(`paying: true`, no line), so nobody pays twice, until its order's payments are in (or two days). When it never can, or
+its draft was deleted in Shopify, staff get "A till sale with no Shopify order: Mia Tamaki" with what to do. An order that
+comes to a different total than was taken: "A till sale that doesn't match".
+
+**Letting go.** A sale waits for its money 30 minutes, then the 10-minute run lets it go. Back from paying, a new sale on
+the same till, and Shopify failing while the draft's made let it go at once.
+
+Data: `till_sales (id, till, customer_id, method, status, lines, refs, tabs, subtotal, total, gst, discounts, shown,
+draft_id, started_by, created_at, updated_at, paid_at, by, by_name, handed, change_given, ended_at, ended_why,
+order_status, order_tries, order_next_at, order_id, order_name, order_total, order_error, fulfil_status, fulfil_tries,
+fulfil_next_at, fulfil_error)`: `status` `making` (its draft on the way), `open`, `paid` or `gone`; `lines` what the draft
+was made from; `refs` the booking codes it pays; `shown` the lines as Shopify priced them; `order_status` `making`,
+`made`, `failed` or `stopped`; `fulfil_status` `due`, `making`, `done`, `failed` or `stopped`.
+
+## 7. Next (not in this round)
+
+Part 4: store credit and tabs as ways to pay at the till, staff phones' Counter tab (hearing Get staff, approving cash
+there), and Eftpos NZ's link sending the amount to the EFTPOS itself.

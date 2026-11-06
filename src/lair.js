@@ -100,6 +100,8 @@ import { OPEN_GAME_TABLES, OPEN_GAME_WORDS, openGameMethods } from './open-games
 import { TILL_TABLES, tillMethods } from './till.js';
 // Round 32, the till, part 2: real people on the till (src/till-people.js, contract v32-till section 5)
 import { tillPeopleMethods } from './till-people.js';
+// Round 32, the till, part 3: real products, prices and sales saved to Shopify (src/till-sales.js, contract v32-till section 6)
+import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -121,6 +123,8 @@ FEATURE_SCOPES.write_inventory = 'new Games Workshop products stocked at 0, and 
 FEATURE_SCOPES.write_publications = 'new Games Workshop products on the till';
 // Round 29: an unsubscribe from the email the day after a first game reaches Shopify's email marketing setting
 FEATURE_SCOPES.write_customers = "unsubscribes from the Lair's emails reaching Shopify's email marketing";
+// Round 32, the till, part 3: its sales marked fulfilled at the shop as soon as they're paid (src/till-sales.js)
+FEATURE_SCOPES.write_merchant_managed_fulfillment_orders = 'the till marking its sales fulfilled at the shop';
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -1185,6 +1189,8 @@ export class Lair {
     // Round 32, the till: its people, PINs and who's on it (made when missing), and Caleb and Felix on it once (src/till.js)
     for (const statement of TILL_TABLES) this.sql.exec(statement);
     this.tillSeed(Date.now());
+    // Round 32, part 3: the till's sales (src/till-sales.js)
+    for (const statement of TILL_SALE_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -2219,6 +2225,13 @@ export class Lair {
       if (a === 'till' && b === 'find' && !c) return json(await this.tillFind(body, who));
       if (a === 'till' && b === 'person' && !c) return json(await this.tillPerson(body, who));
       if (a === 'till' && b === 'tonight' && !c) return json(await this.tillTonight(body, who));
+      // Round 32, part 3: the shop's products and prices, and paying (src/till-sales.js)
+      if (a === 'till' && b === 'product' && !c) return json(await this.tillProductFind(body, who));
+      if (a === 'till' && b === 'search' && !c) return json(await this.tillProductSearch(body, who));
+      if (a === 'till' && b === 'price' && !c) return json(await this.tillPriceOf(body, who));
+      if (a === 'till' && b === 'pay' && !c) return json(await this.tillPay(body, who, client));
+      if (a === 'till' && b === 'pay' && c === 'cancel' && !d) return json(this.tillPayCancel(body, who));
+      if (a === 'till' && b === 'paid' && !c) return json(await this.tillPaid(body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
       // Round 17: GM credit for staff (the team's setting), and each person's hours
@@ -11096,6 +11109,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not make the Shopify orders for cash', error);
     }
+    // Round 32, part 3: till sales: unpaid ones let go after 30 minutes, paid ones' orders and fulfilments tried again
+    // until they're made (src/till-sales.js)
+    try {
+      const till = await this.tillSalesUpkeep(Date.now());
+      if (till.letGo || till.orders || till.fulfilled) result.tillSales = till;
+    } catch (error) {
+      console.error('Lair: could not look after till sales', error);
+    }
     // Round 11: "Remind me the day before": from 9am to 9pm at the Lair, each one once (src/reminders.js)
     try {
       const reminders = this.sendReminders(rules, Date.now());
@@ -11235,3 +11256,5 @@ Object.assign(Lair.prototype, openGameMethods);
 Object.assign(Lair.prototype, tillMethods);
 // Round 32, the till, part 2: real people on the till (src/till-people.js)
 Object.assign(Lair.prototype, tillPeopleMethods);
+// Round 32, the till, part 3: products, prices and sales (src/till-sales.js)
+Object.assign(Lair.prototype, tillSalesMethods);

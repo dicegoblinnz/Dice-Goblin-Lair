@@ -29,6 +29,14 @@
 export const ORDERMATE = Object.freeze({ app: '36219584513', tag: 'ordermate' });
 
 /**
+ * Round 32, the till, part 3 (src/till-sales.js): the tag on every sale the Lair's own till saves, and the source the Lair
+ * keeps for it (spend.source). The Lair makes these orders itself (a draft order made paid), so Shopify gives them the
+ * Lair app's ID as their source_name, a number, as it does OrderMate's.
+ */
+export const TILL_ORDER_TAG = 'lair-till';
+export const TILL_SOURCE = 'lair-till';
+
+/**
  * How long before a Pay on Verifone sale its tab can have gone in the cart (POST /pos/tab/:id/added) to be paid by its
  * items: a tab left at the counter from a sale that was cleared isn't paid by a purchase days later.
  */
@@ -60,28 +68,43 @@ export function orderTags(order) {
 }
 
 /**
- * Was this order rung up at the counter? Shopify POS's own orders (source_name 'pos'), and Pay on Verifone's (source_name
- * OrderMate's app ID; one from an app tagged OrderMate counts too, in case OrderMate's app ID ever changes).
+ * Round 32, part 3: a sale saved by the Lair's own till: tagged lair-till and made by an app (its source_name a number:
+ * the Lair's ID). Customers can't make one (their orders are 'web', a draft's checkout 'shopify_draft_order'), and a tag
+ * staff add in Shopify admin to an order made there doesn't make it one either. Its lines keep their properties.
+ */
+export function tillSale(order) {
+  return /^\d+$/.test(String(order?.source_name ?? '')) && orderTags(order).includes(TILL_ORDER_TAG);
+}
+
+/**
+ * Was this order rung up at the counter? Shopify POS's own orders (source_name 'pos'), Pay on Verifone's (source_name
+ * OrderMate's app ID; one from an app tagged OrderMate counts too, in case OrderMate's app ID ever changes), and round
+ * 32's, the Lair's own till's (tillSale).
  */
 export function counterSale(order) {
   const source = String(order?.source_name ?? '');
   if (source === 'pos' || source === ORDERMATE.app) return true;
-  return /^\d+$/.test(source) && orderTags(order).includes(ORDERMATE.tag);
+  return /^\d+$/.test(source) && (orderTags(order).includes(ORDERMATE.tag) || tillSale(order));
 }
 
 /**
  * What the Lair keeps as a sale's source when it was rung up at the counter (spend.source, round 24): 'pos' for Shopify
- * POS's own, and OrderMate's app ID for Pay on Verifone's, even one counterSale knows by its tag, so a counter purchase is
- * always one of the two (newplayers.js COUNTER_SOURCES). null for any other sale.
+ * POS's own, 'lair-till' for the Lair's till's (round 32), and OrderMate's app ID for Pay on Verifone's, even one
+ * counterSale knows by its tag, so a counter purchase is always one of the three (newplayers.js COUNTER_SOURCES). null for
+ * any other sale.
  */
 export function counterSource(order) {
   if (!counterSale(order)) return null;
-  return String(order?.source_name ?? '') === 'pos' ? 'pos' : ORDERMATE.app;
+  if (String(order?.source_name ?? '') === 'pos') return 'pos';
+  return tillSale(order) ? TILL_SOURCE : ORDERMATE.app;
 }
 
-/** A Pay on Verifone sale (a counter sale that isn't Shopify POS's own): its lines have lost their properties */
+/**
+ * A Pay on Verifone sale (a counter sale that isn't Shopify POS's own): its lines have lost their properties. The Lair's
+ * own till's sales keep theirs, so they're never one.
+ */
 export function verifoneSale(order) {
-  return counterSale(order) && String(order?.source_name ?? '') !== 'pos';
+  return counterSale(order) && String(order?.source_name ?? '') !== 'pos' && !tillSale(order);
 }
 
 /** A custom sale: no product behind it. The Lair tile's lines are custom sales; a product's title never names a booking. */
