@@ -2202,6 +2202,8 @@ export class Lair {
       if (a === 'till' && b === 'access' && !c) return json(await this.tillAccess(body, who));
       if (a === 'till' && b === 'people' && !c) return json(await this.tillSavePerson(body, who));
       if (a === 'till' && b === 'people' && c === 'remove' && !d) return json(await this.tillRemovePerson(body, who));
+      if (a === 'till' && b === 'forgot' && !c) return json(await this.tillForgot(body, who));
+      if (a === 'till' && b === 'forgot' && c === 'check' && !d) return json(await this.tillForgotCheck(body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
       // Round 17: GM credit for staff (the team's setting), and each person's hours

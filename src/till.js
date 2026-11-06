@@ -16,10 +16,14 @@
 //  - Unlocking gives the till a token for TILL_SESSION_MS (a long shift), which says who's on the till for everything
 //    after it: the till only asks again on Switch person. Tokens are kept as their SHA-256, so the table alone can't be
 //    used to get on the till.
+//  - Until someone has chosen their own PIN, their token does nothing but choose one: the Lair says so, not just the till.
 //  - The owner, on the till, resets anyone's PIN (back to the starting one, to choose again), switches someone's till
-//    access off and on, and adds, changes and removes the till's own people. An owner who forgot their own PIN resets it
-//    from the till while their own account is the one logged in.
+//    access off and on, and adds, changes and removes the till's own people.
+//  - An owner who forgot their PIN gets a 6-digit code by email (Forgot your PIN?, from any staff account), which puts
+//    them on the till to choose a new one. Never a reset on the logged-in account alone: the counter tablet's account is
+//    open to anyone at the counter (the review, 6 Nov 2026).
 import { RuleError, STAFF_PERMS, cleanPerms, makeId } from './core.js';
+import { emailReady } from './shopify.js';
 
 /** Everyone's PIN until they choose their own (Mo, 6 Nov 2026) */
 export const TILL_START_PIN = '1234';
@@ -35,6 +39,10 @@ export const TILL_PERMS = ['checkin', 'money'];
 export const TILL_DEFAULT_PERMS = ['checkin'];
 /** Mo (6 Nov 2026): Caleb and Felix are on the till too. Added once, on the first start, unless they're helpers already. */
 export const TILL_FIRST_PEOPLE = ['Caleb', 'Felix'];
+/** An owner's code by email: 6 numbers, good for 15 minutes and 5 tries, one a minute */
+export const TILL_CODE_MS = 15 * 60 * 1000;
+export const TILL_CODE_GAP_MS = 60 * 1000;
+export const TILL_CODE_TRIES = 5;
 /** How long the list of staff tagged in Shopify is kept before it's asked for again */
 const TILL_OWNERS_MS = 10 * 60 * 1000;
 /** The HMAC key's name in the Durable Object's key-value storage */
@@ -49,6 +57,7 @@ const TILL_KEY = 'till-pin-key';
  *    locked out since their last right PIN), locked_until (ms), off (1 = their till access is switched off), updated_at.
  *    person_id is a Shopify customer ID for the team, or a till_people id.
  *  - till_sessions: the SHA-256 of each unlock's token, whose it is, and when it stops working.
+ *  - till_resets: an owner's emailed code (HMAC and salt, as PINs), when it runs out, wrong tries, and when it was sent.
  */
 export const TILL_TABLES = [
   `CREATE TABLE IF NOT EXISTS till_people (
@@ -60,6 +69,9 @@ export const TILL_TABLES = [
   `CREATE TABLE IF NOT EXISTS till_sessions (
     token_hash TEXT PRIMARY KEY, person_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)`,
   'CREATE INDEX IF NOT EXISTS till_sessions_person ON till_sessions (person_id)',
+  `CREATE TABLE IF NOT EXISTS till_resets (
+    person_id TEXT PRIMARY KEY, hash TEXT NOT NULL, salt TEXT NOT NULL, expires_at INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0,
+    sent_at INTEGER NOT NULL)`,
 ];
 
 /** The till's words, for staff: plain NZ English */
@@ -78,6 +90,15 @@ export const TILL_WORDS = {
   nameTaken: (name) => `There's already a ${name} on the till.`,
   permsList: 'Send what they can do as a list.',
   notTillPerson: 'Only people added on the till can be changed or removed here. Helpers are on the Team tab.',
+  chooseFirst: 'Choose your own PIN first.',
+  codeOwners: "Only an owner's PIN is reset by email. Ask Mo to reset yours on the till.",
+  codeNoEmail: "The Lair can't email a code right now, so this PIN can't be reset here.",
+  codeWait: 'A code was just sent. Check your email, or ask again in a minute.',
+  codeFailed: "The email didn't send. Try again in a minute.",
+  codeNone: 'There is no code waiting. Tap Forgot your PIN? to get one.',
+  codeOld: 'That code ran out. Ask for a new one.',
+  codeWrong: "That code isn't right. Check the email and try again.",
+  codeTries: 'Too many wrong codes. Ask for a new one.',
 };
 
 const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -97,6 +118,20 @@ const sameText = (a, b) => {
   for (let i = 0; i < Math.max(x.length, y.length); i += 1) diff |= (x.charCodeAt(i) || 0) ^ (y.charCodeAt(i) || 0);
   return diff === 0;
 };
+const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
+/** owner@example.com as o•••@example.com, so the till says where the code went without showing the address */
+export const maskEmail = (email) => {
+  const [name, domain] = String(email || '').trim().split('@');
+  return name && domain ? `${name[0]}•••@${domain}` : '';
+};
+/** 6 numbers, every one as likely (no modulo bias) */
+export function tillCode() {
+  const box = new Uint32Array(1);
+  for (;;) {
+    crypto.getRandomValues(box);
+    if (box[0] < 4294000000) return String(box[0] % 1000000).padStart(6, '0');
+  }
+}
 /** A till person's permissions as sent: Check-in and Money only, in that order (null when it isn't a list) */
 export function tillPerms(list) {
   const clean = cleanPerms(list);
@@ -217,6 +252,9 @@ export const tillMethods = {
     for (const [id, c] of named) if (!this.helperRow(id)) fromTeam(id, 'owner', ownerPerms, c.name);
     for (const h of this.sql.exec("SELECT * FROM staff_helpers WHERE status = 'active' ORDER BY created_at, rowid").toArray()) {
       fromTeam(h.customer_id, 'helper', cleanPerms(parse(h.perms, [])) || []);
+      // a helper added back after being taken off: tills from before don't come back with them
+      const row = rows.get(String(h.customer_id));
+      if (row) row.since = Number(h.created_at) || 0;
     }
     for (const p of this.sql.exec("SELECT * FROM till_people WHERE status = 'active' ORDER BY created_at, rowid").toArray()) {
       if (!rows.has(p.id)) rows.set(p.id, { id: p.id, name: p.name, fullName: p.name, role: 'helper', kind: 'till', perms: tillPerms(parse(p.perms, [])) || [] });
@@ -240,29 +278,31 @@ export const tillMethods = {
     return team.map((row) => this.tillPersonView(row, now));
   },
 
-  /** Whoever a till token is for, from the till's people (or a 401: the till asks for the PIN again). No awaits. */
-  tillOn(tokenHash, team, now = Date.now()) {
+  /**
+   * Whoever a till token is for, from the till's people (or a 401: the till asks for the PIN again). Until they've chosen
+   * their own PIN, a 403 for anything but choosing one (start: true). No awaits.
+   */
+  tillOn(tokenHash, team, { start = false, now = Date.now() } = {}) {
     const session = tokenHash ? this.sql.exec('SELECT * FROM till_sessions WHERE token_hash = ?', tokenHash).toArray()[0] : null;
     const row = session && session.expires_at > now ? team.find((x) => x.id === session.person_id) : null;
-    if (!row || this.tillPinRow(row.id)?.off) throw new RuleError(TILL_WORDS.expired, 401);
+    const pin = row ? this.tillPinRow(row.id) : null;
+    if (!row || pin?.off || (row.since && session.created_at < row.since)) throw new RuleError(TILL_WORDS.expired, 401);
+    if (!start && (!pin?.hash || pin.must_change)) throw new RuleError(TILL_WORDS.chooseFirst, 403);
     return row;
   },
 
-  /** The owner on the till, or a 403. No awaits. */
+  /** The owner on the till with their own PIN, or a 403. No awaits. */
   tillOwnerOn(tokenHash, team) {
-    const me = this.tillOn(tokenHash, team);
+    const me = this.tillOn(tokenHash, team, { start: true });
     if (me.role !== 'owner') throw new RuleError(TILL_WORDS.ownerOnly, 403);
-    return me;
+    return this.tillOn(tokenHash, team);
   },
 
-  /**
-   * GET /till/team: the lock screen's people. { team: [tillPersonView], startPin, account: the logged-in account's ID (an
-   * owner whose own account is logged in can reset their own forgotten PIN from the lock screen) }
-   */
+  /** GET /till/team: the lock screen's people. { team: [tillPersonView], startPin } */
   async tillTeam(who) {
     this.tillGate(who);
     const team = this.tillTeamFrom(who, await this.tillTagged());
-    return { team: this.tillTeamView(team), startPin: TILL_START_PIN, account: String(who.customerId) };
+    return { team: this.tillTeamView(team), startPin: TILL_START_PIN };
   },
 
   /**
@@ -325,7 +365,7 @@ export const tillMethods = {
     const salt = randomHex(16);
     const hash = await this.tillHash(pin, salt);
     // --- no awaits from here on ---
-    const me = this.tillOn(tokenHash, this.tillTeamFrom(who, tagged));
+    const me = this.tillOn(tokenHash, this.tillTeamFrom(who, tagged), { start: true });
     const now = Date.now();
     this.write(
       `INSERT INTO till_pins (person_id, hash, salt, must_change, failed, lockouts, locked_until, off, updated_at) VALUES (?, ?, ?, 0, 0, 0, NULL, 0, ?)
@@ -336,10 +376,19 @@ export const tillMethods = {
     return { ok: true, staff: this.tillPersonView(me, now) };
   },
 
+  /** Someone back on the starting PIN, to choose their own, with any lock-out cleared. No awaits. */
+  tillClearPin(id, now) {
+    this.write(
+      `INSERT INTO till_pins (person_id, hash, salt, must_change, failed, lockouts, locked_until, off, updated_at) VALUES (?, NULL, NULL, 1, 0, 0, NULL, 0, ?)
+       ON CONFLICT (person_id) DO UPDATE SET hash = NULL, salt = NULL, must_change = 1, failed = 0, lockouts = 0, locked_until = NULL,
+         updated_at = excluded.updated_at`,
+      id, now,
+    );
+  },
+
   /**
    * POST /till/reset { token, id }: the owner on the till puts someone back on the starting PIN (they choose their own
-   * the next time they unlock), and clears any lock-out; that person's other tills lock. An owner who forgot their own
-   * PIN sends { id } with no token, while their own account is the one logged in. → { team }
+   * the next time they unlock), and clears any lock-out; that person's other tills lock. → { team }
    */
   async tillReset(body, who) {
     this.tillGate(who);
@@ -347,19 +396,104 @@ export const tillMethods = {
     const tokenHash = await this.tillTokenHash(body?.token);
     const team = this.tillTeamFrom(who, await this.tillTagged());
     // --- no awaits from here on ---
-    const own = !tokenHash && who.role === 'owner' && id === String(who.customerId);
-    if (!own) this.tillOwnerOn(tokenHash, team);
+    this.tillOwnerOn(tokenHash, team);
     if (!team.some((x) => x.id === id)) throw new RuleError(TILL_WORDS.notOnTill, 404);
     const now = Date.now();
-    this.write(
-      `INSERT INTO till_pins (person_id, hash, salt, must_change, failed, lockouts, locked_until, off, updated_at) VALUES (?, NULL, NULL, 1, 0, 0, NULL, 0, ?)
-       ON CONFLICT (person_id) DO UPDATE SET hash = NULL, salt = NULL, must_change = 1, failed = 0, lockouts = 0, locked_until = NULL,
-         updated_at = excluded.updated_at`,
-      id, now,
-    );
-    if (tokenHash) this.write('DELETE FROM till_sessions WHERE person_id = ? AND token_hash != ?', id, tokenHash);
-    else this.write('DELETE FROM till_sessions WHERE person_id = ?', id);
+    this.tillClearPin(id, now);
+    this.write('DELETE FROM till_sessions WHERE person_id = ? AND token_hash != ?', id, tokenHash);
     return { team: this.tillTeamView(team, now) };
+  },
+
+  /** An owner's emailed code, or null. No awaits. */
+  tillResetRow(id) {
+    return this.sql.exec('SELECT * FROM till_resets WHERE person_id = ?', String(id)).toArray()[0] || null;
+  },
+
+  /**
+   * POST /till/forgot { id } (any staff account): an owner who forgot their PIN gets a 6-digit code at their own email,
+   * good for 15 minutes; a new one replaces the last, one a minute. → { sent: true, to: 'o•••@example.com' }
+   */
+  async tillForgot(body, who) {
+    this.tillGate(who);
+    const id = String(body?.id ?? '');
+    const tagged = await this.tillTagged();
+    const row = this.tillTeamFrom(who, tagged).find((x) => x.id === id);
+    if (!row) throw new RuleError(TILL_WORDS.notOnTill, 404);
+    if (row.role !== 'owner') throw new RuleError(TILL_WORDS.codeOwners, 403);
+    if (this.tillPinRow(id)?.off) throw new RuleError(TILL_WORDS.off, 403);
+    const member = this.memberRow(id);
+    const shop = tagged.find((c) => String(c?.customerId) === id);
+    const email = [member?.email, shop?.email].find((e) => isEmail(e)) || '';
+    if (!emailReady(this.env) || !email) throw new RuleError(TILL_WORDS.codeNoEmail, 503);
+    const was = this.tillResetRow(id);
+    if (was && Date.now() - was.sent_at < TILL_CODE_GAP_MS) throw new RuleError(TILL_WORDS.codeWait, 429);
+    const code = tillCode();
+    const salt = randomHex(16);
+    const hash = await this.tillHash(`reset:${code}`, salt);
+    // --- no awaits from here on, until the email (another ask may have come in meanwhile) ---
+    const now = Date.now();
+    const again = this.tillResetRow(id);
+    if (again && now - again.sent_at < TILL_CODE_GAP_MS) throw new RuleError(TILL_WORDS.codeWait, 429);
+    this.write(
+      'INSERT OR REPLACE INTO till_resets (person_id, hash, salt, expires_at, tries, sent_at) VALUES (?, ?, ?, ?, 0, ?)',
+      id, hash, salt, now + TILL_CODE_MS, now,
+    );
+    const sent = await this.mail(this.letter(email, 'Your code for the till', {
+      title: 'Your code for the till',
+      preheader: 'Type it on the till to choose a new PIN. It works once, for 15 minutes.',
+      intro: `Someone tapped Forgot your PIN? on the till for ${row.name}. Type this code on the till, then choose a new PIN.`,
+      codes: [{ code, lines: ['Works once, for 15 minutes'] }],
+      outro: "If that wasn't you, ignore this email. Your PIN stays as it is.",
+      signoff: 'Gobgob',
+    }));
+    if (!sent?.ok) {
+      // nothing went: the next ask isn't made to wait
+      this.write('DELETE FROM till_resets WHERE person_id = ? AND sent_at = ?', id, now);
+      throw new RuleError(TILL_WORDS.codeFailed, 502);
+    }
+    return { sent: true, to: maskEmail(email) };
+  },
+
+  /**
+   * POST /till/forgot/check { id, code }: the emailed code, typed on the till. Right: that owner is on the till with the
+   * starting PIN cleared away, choosing a new one → { token, staff, mustChange: true } (their other tills lock). Wrong: a
+   * 401, the fifth a 429 and the code is gone; one that ran out a 410; none waiting a 400.
+   */
+  async tillForgotCheck(body, who) {
+    this.tillGate(who);
+    const id = String(body?.id ?? '');
+    const code = String(body?.code ?? '').replace(/\s+/g, '');
+    const row = this.tillTeamFrom(who, await this.tillTagged()).find((x) => x.id === id);
+    if (!row) throw new RuleError(TILL_WORDS.notOnTill, 404);
+    if (row.role !== 'owner') throw new RuleError(TILL_WORDS.codeOwners, 403);
+    const before = this.tillResetRow(id);
+    if (!before) throw new RuleError(TILL_WORDS.codeNone, 400);
+    const right = /^\d{6}$/.test(code) && sameText(await this.tillHash(`reset:${code}`, before.salt), before.hash);
+    const token = randomHex(24);
+    const tokenHash = await this.tillTokenHash(token);
+    // --- no awaits from here on (the code is read again: it may have been used or replaced meanwhile) ---
+    const now = Date.now();
+    const r = this.tillResetRow(id);
+    if (!r || r.hash !== before.hash) throw new RuleError(TILL_WORDS.codeNone, 400);
+    if (r.expires_at <= now) {
+      this.write('DELETE FROM till_resets WHERE person_id = ?', id);
+      throw new RuleError(TILL_WORDS.codeOld, 410);
+    }
+    if (this.tillPinRow(id)?.off) throw new RuleError(TILL_WORDS.off, 403);
+    if (!right) {
+      const tries = (r.tries || 0) + 1;
+      if (tries >= TILL_CODE_TRIES) {
+        this.write('DELETE FROM till_resets WHERE person_id = ?', id);
+        throw new RuleError(TILL_WORDS.codeTries, 429);
+      }
+      this.write('UPDATE till_resets SET tries = ? WHERE person_id = ?', tries, id);
+      throw new RuleError(TILL_WORDS.codeWrong, 401);
+    }
+    this.write('DELETE FROM till_resets WHERE person_id = ?', id);
+    this.tillClearPin(id, now);
+    this.write('DELETE FROM till_sessions WHERE person_id = ?', id);
+    this.write('INSERT INTO till_sessions (token_hash, person_id, created_at, expires_at) VALUES (?, ?, ?, ?)', tokenHash, id, now, now + TILL_SESSION_MS);
+    return { token, staff: this.tillPersonView(row, now), mustChange: true };
   },
 
   /** POST /till/access { token, id, off } (the owner on the till): someone's till access off, or back on. → { team } */

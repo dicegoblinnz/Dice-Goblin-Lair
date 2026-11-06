@@ -48,8 +48,14 @@ let lair;
 let shopifyOn;
 let searches;
 let searchFails;
-function boot(context) {
-  lair = new Lair(context, { CURRENCY: 'NZD' });
+let letters;
+let mailWorks;
+function boot(context, env = { CURRENCY: 'NZD', RESEND_API_KEY: 'test-key', FROM_EMAIL: 'lair@example.com' }) {
+  lair = new Lair(context, env);
+  lair.mail = async (message) => {
+    letters.push(message);
+    return { ok: mailWorks };
+  };
   lair.taggedPerson = async (id) => {
     const person = { customerId: id || null, staff: id === OWNER, gm: false, tags: [] };
     if (id) lair.people.set(id, { at: Date.now(), person });
@@ -88,12 +94,22 @@ const idOf = async (name) => (await team()).find((p) => p.name === name)?.id;
 const unlock = (id, pin, as = OWNER) => call('POST', 'till/unlock', { id, pin }, as);
 const choose = (token, pin, as = OWNER) => call('POST', 'till/pin', { token, pin }, as);
 const tillPost = (path, body, as = OWNER) => call('POST', `till/${path}`, body, as);
-const allTillText = () => ['till_people', 'till_pins', 'till_sessions'].flatMap((t) => lair.sql.exec(`SELECT * FROM ${t}`).toArray()).map((r) => JSON.stringify(r)).join('\n');
+// the owner on the till with their own PIN (the Lair refuses till actions on 1234)
+const ownerOn = async (pin = '2046') => {
+  const mo = ok(await unlock(OWNER, '1234'));
+  ok(await choose(mo.token, pin));
+  return mo.token;
+};
+const codeIn = (letter) => (String(letter?.text || '').match(/\b(\d{6})\b/) || [])[1];
+const wrongOf = (code) => String((Number(code) + 1) % 1000000).padStart(6, '0');
+const allTillText = () => ['till_people', 'till_pins', 'till_sessions', 'till_resets'].flatMap((t) => lair.sql.exec(`SELECT * FROM ${t}`).toArray()).map((r) => JSON.stringify(r)).join('\n');
 
 beforeEach(async () => {
   shopifyOn = true;
   searches = [];
   searchFails = false;
+  letters = [];
+  mailWorks = true;
   globalThis.fetch = async (url) => {
     throw new Error(`No network in tests: ${url}`);
   };
@@ -114,14 +130,13 @@ afterEach(() => {
 test('round 32: the till is for staff: nobody logged in and players get a 403, for every till route', async () => {
   for (const as of ['', MIA]) {
     said(await call('GET', 'till/team', undefined, as), 403, W.staffOnly);
-    for (const path of ['unlock', 'pin', 'reset', 'access', 'people', 'people/remove']) said(await tillPost(path, {}, as), 403, W.staffOnly);
+    for (const path of ['unlock', 'pin', 'reset', 'access', 'people', 'people/remove', 'forgot', 'forgot/check']) said(await tillPost(path, {}, as), 403, W.staffOnly);
   }
 });
 
 test('round 32: the lock screen has the owner, the helpers, then Caleb and Felix, everyone on the starting PIN', async () => {
   const res = ok(await call('GET', 'till/team', undefined, OWNER));
   assert.equal(res.startPin, '1234');
-  assert.equal(res.account, OWNER);
   assert.deepEqual(
     res.team.map((p) => [p.name, p.role, p.kind, p.roleWords, p.pin, p.off, p.locked]),
     [
@@ -253,7 +268,7 @@ test("round 32: the owner resets someone's PIN: back to 1234 to choose again, lo
   const felix = await idOf('Felix');
   const f = ok(await unlock(felix, '1234'));
   ok(await choose(f.token, '5555'));
-  const mo = ok(await unlock(OWNER, '1234'));
+  const mo = { token: await ownerOn() };
   const res = ok(await tillPost('reset', { token: mo.token, id: felix }));
   assert.equal(res.team.find((p) => p.id === felix).pin, 'start');
   said(await choose(f.token, '6666'), 401, W.expired);
@@ -275,23 +290,94 @@ test("round 32: the owner resets someone's PIN: back to 1234 to choose again, lo
   said(await tillPost('reset', { token: mo.token, id: MIA }), 404, W.notOnTill);
 });
 
-test('round 32: an owner who forgot their PIN resets it while their own account is logged in, and only theirs', async () => {
-  const mo = ok(await unlock(OWNER, '1234'));
-  ok(await choose(mo.token, '2046'));
+test('round 32: an owner who forgot their PIN gets a code by email, asked for from any staff account', async () => {
+  await ownerOn('2046');
   for (let i = 0; i < 5; i += 1) await unlock(OWNER, '0000');
   said(await unlock(OWNER, '2046'), 429, W.locked(5));
-  ok(await tillPost('reset', { id: OWNER }, OWNER));
-  assert.equal(ok(await unlock(OWNER, '1234')).mustChange, true);
-  // not someone else's without the owner on the till, and not from a helper's account
-  said(await tillPost('reset', { id: await idOf('Caleb') }, OWNER), 401, W.expired);
-  said(await tillPost('reset', { id: OWNER }, HEMI), 401, W.expired);
+  // nothing resets it without the owner on the till, not even their own logged-in account (anyone at the counter has that)
+  said(await tillPost('reset', { id: OWNER }, OWNER), 401, W.expired);
+  // the code goes to the owner's own email, wherever it was asked for
+  const asked = ok(await tillPost('forgot', { id: OWNER }, HEMI));
+  assert.equal(asked.to, 'o•••@example.com');
+  assert.equal(letters.length, 1);
+  assert.equal(letters[0].to, 'owner@example.com');
+  const code = codeIn(letters[0]);
+  assert.match(code, /^\d{6}$/);
+  // one a minute
+  said(await tillPost('forgot', { id: OWNER }, HEMI), 429, W.codeWait);
+  // a wrong code, then the right one: on the till as Mo, choosing a new PIN
+  said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(code) }, HEMI), 401, W.codeWrong);
+  const back = ok(await tillPost('forgot/check', { id: OWNER, code: ` ${code.slice(0, 3)} ${code.slice(3)} ` }, HEMI));
+  assert.equal(back.mustChange, true);
+  assert.equal(back.staff.id, OWNER);
+  assert.match(back.token, /^[0-9a-f]{48}$/);
+  // a code works once, and is never kept as sent
+  said(await tillPost('forgot/check', { id: OWNER, code }, HEMI), 400, W.codeNone);
+  assert.ok(!allTillText().includes(code), 'a code as sent is in a till table');
+  // the old PIN and lock-out are gone; the new PIN is his own
+  ok(await choose(back.token, '3579'));
+  said(await unlock(OWNER, '2046'), 401, W.wrong);
+  assert.equal(ok(await unlock(OWNER, '3579')).mustChange, false);
+});
+
+test('round 32: a PIN code runs out after 15 minutes or 5 wrong tries, a new one replaces it, and only owners get one', async () => {
+  ok(await tillPost('forgot', { id: OWNER }));
+  const first = codeIn(letters[0]);
+  nowIs(NOW + 15 * MIN + 1000);
+  said(await tillPost('forgot/check', { id: OWNER, code: first }), 410, W.codeOld);
+  said(await tillPost('forgot/check', { id: OWNER, code: first }), 400, W.codeNone);
+  // a new code replaces the last
+  ok(await tillPost('forgot', { id: OWNER }));
+  const second = codeIn(letters[1]);
+  nowIs(NOW + 17 * MIN);
+  ok(await tillPost('forgot', { id: OWNER }));
+  const third = codeIn(letters[2]);
+  // the last code is the one that works (the one before counts as a wrong try, unless they happen to match)
+  const tried = second !== third ? 1 : 0;
+  if (tried) said(await tillPost('forgot/check', { id: OWNER, code: second }), 401, W.codeWrong);
+  for (let i = tried; i < 4; i += 1) said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(third) }), 401, W.codeWrong);
+  said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(third) }), 429, W.codeTries);
+  said(await tillPost('forgot/check', { id: OWNER, code: third }), 400, W.codeNone);
+  // helpers and the till's own people ask Mo instead
+  said(await tillPost('forgot', { id: HEMI }, HEMI), 403, W.codeOwners);
+  said(await tillPost('forgot', { id: await idOf('Caleb') }), 403, W.codeOwners);
+  said(await tillPost('forgot', { id: MIA }), 404, W.notOnTill);
+  // an email that didn't go can be asked for again straight away
+  nowIs(NOW + 30 * MIN);
+  mailWorks = false;
+  said(await tillPost('forgot', { id: OWNER }), 502, W.codeFailed);
+  mailWorks = true;
+  ok(await tillPost('forgot', { id: OWNER }));
+  // with email not set up, it says so, and nothing is sent
+  boot(ctx, { CURRENCY: 'NZD' });
+  const sent = letters.length;
+  nowIs(NOW + 40 * MIN);
+  said(await tillPost('forgot', { id: OWNER }), 503, W.codeNoEmail);
+  assert.equal(letters.length, sent);
+});
+
+test('round 32: the Lair, not just the till, makes people choose their own PIN before anything else', async () => {
+  const caleb = await idOf('Caleb');
+  const mo = ok(await unlock(OWNER, '1234'));
+  // on 1234, the owner's token does nothing but choose a PIN
+  said(await tillPost('reset', { token: mo.token, id: caleb }), 403, W.chooseFirst);
+  said(await tillPost('access', { token: mo.token, id: caleb, off: true }), 403, W.chooseFirst);
+  said(await tillPost('people', { token: mo.token, name: 'Tia' }), 403, W.chooseFirst);
+  said(await tillPost('people/remove', { token: mo.token, id: caleb }), 403, W.chooseFirst);
+  ok(await choose(mo.token, '2046'));
+  ok(await tillPost('reset', { token: mo.token, id: caleb }));
+  // after a reset, the same again
+  ok(await tillPost('reset', { token: mo.token, id: OWNER }));
+  said(await tillPost('access', { token: mo.token, id: caleb, off: true }), 403, W.chooseFirst);
+  ok(await choose(mo.token, '1357'));
+  ok(await tillPost('access', { token: mo.token, id: caleb, off: true }));
 });
 
 test("round 32: the owner switches someone's till access off and back on", async () => {
   const felix = await idOf('Felix');
   const f = ok(await unlock(felix, '1234'));
   ok(await choose(f.token, '4321'));
-  const mo = ok(await unlock(OWNER, '1234'));
+  const mo = { token: await ownerOn() };
   const res = ok(await tillPost('access', { token: mo.token, id: felix, off: true }));
   assert.equal(res.team.find((p) => p.id === felix).off, true);
   said(await choose(f.token, '1357'), 401, W.expired);
@@ -310,7 +396,7 @@ test("round 32: the owner switches someone's till access off and back on", async
 });
 
 test("round 32: the owner adds, changes and removes the till's own people", async () => {
-  const mo = ok(await unlock(OWNER, '1234'));
+  const mo = { token: await ownerOn() };
   const added = ok(await tillPost('people', { token: mo.token, name: '  Aroha   Ngata ' }));
   assert.deepEqual([added.person.name, added.person.kind, added.person.roleWords, added.person.pin], ['Aroha Ngata', 'till', 'Check-in', 'start']);
   assert.equal(added.team.at(-1).id, added.person.id);
@@ -359,6 +445,11 @@ test("round 32: a helper taken off the Team tab is off the till, and their till 
   assert.ok(!(await team()).some((p) => p.id === HEMI));
   said(await choose(hemi.token, '7778'), 401, W.expired);
   said(await unlock(HEMI, '7777'), 404, W.notOnTill);
+  // added back within the 14 hours: the old till stays locked; their own PIN unlocks a new one
+  nowIs(NOW + HOUR);
+  ok(await call('POST', 'team', { customerId: HEMI, perms: ['checkin'] }, OWNER));
+  said(await choose(hemi.token, '7778'), 401, W.expired);
+  assert.equal(ok(await unlock(HEMI, '7777')).mustChange, false);
 });
 
 test("round 32: when Shopify can't be asked, the till still has who's logged in, the helpers and its own people", async () => {
