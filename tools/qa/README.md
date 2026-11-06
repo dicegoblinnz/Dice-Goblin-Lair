@@ -57,6 +57,12 @@ Set `DG_THEME` to the branch checkout. The defaults point at the old worktrees.
 
 Late at night, bookings seeded "today" can land on tomorrow and trip date checks. The bk4 scripts take `LAIR_AT=…` to pin the page clock.
 
+## paints: the paint pages (Warhammer and hobby chat, 6 Nov 2026)
+
+`DG_THEME=/path/to/theme [AXE=/path/to/axe.min.js] node tools/qa/paints/paints.mjs`: the Colours dropdown's low stock, the
+match line under it (variant metafield `paint.match`) and Pick several, on the mock's Vallejo colours at 390 and 1280px
+(62 checks; axe when AXE is set). Exits 1 on a FAIL.
+
 ## theme-check
 
 `npm install`, then `node run.mjs /path/to/theme`. A clean theme prints `counts {}`.
@@ -251,3 +257,15 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   offers no $10; a login that lapsed in an open tab (the logged-out answer, `{ roll }` alone) prints no coupon on either
   button and says to log in again; and the staff page's prize to sort says "took it instead of rolling". Axe, no sideways scroll, no
   console errors. `DG_THEME=… [PORT=4988] [AXE=…/axe.min.js] [OUT=…] node tools/qa/round23/sure-ten.mjs [small|phone|desktop]`.
+
+## round31: open games and the hobby page (Warhammer and hobby chat, 6 Nov 2026)
+
+- `round31/open-games.mjs`: the theme mock in demo mode at 390 and 1280px (contract v31-open-games). The calendar's
+  "Looking for a game"; Reserve with Find me one (game, size, new players; List my game; Game listed, 1 v 1); logged
+  out "A player" and Log in to join; Mia joins Ruby's game from the list; in My Lair each sees the other by first name
+  only (no last name or email); Mia drops out (it asks first) and the game is listed again. Axe, no sideways scroll, no
+  console errors (52 checks). `DG_THEME=… [PORT=4995] [AXE=…] [OUT=…] node tools/qa/round31/open-games.mjs [phone|desktop]`.
+- `round31/hobby.mjs`: the hobby page (`/pages/warhammer`): Every Thursday's next night (free pairs, who's looking, Book
+  a game table), Looking for a game (first names to members, "A player" logged out, the filter, Join and Post a game
+  opening the calendar's sheets; logged out, Log in to join comes straight back to that game's join sheet), and Learn
+  to paint's next date (40 checks). `DG_THEME=… [PORT=4996] [AXE=…] [OUT=…] node tools/qa/round31/hobby.mjs [phone|desktop]`.
