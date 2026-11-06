@@ -98,6 +98,8 @@ import { FILTER_LIMITS, SHELF_WRITES, SHOP_FILTER_TABLES, callBudget, shopFilter
 import { OPEN_GAME_TABLES, OPEN_GAME_WORDS, openGameMethods } from './open-games.js';
 // Round 32, the till, part 1: who's on the till, their PINs and the owner's Team screen (src/till.js, contract v32-till)
 import { TILL_TABLES, tillMethods } from './till.js';
+// Round 32, the till, part 2: real people on the till (src/till-people.js, contract v32-till section 5)
+import { tillPeopleMethods } from './till-people.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -2212,6 +2214,11 @@ export class Lair {
       if (a === 'till' && b === 'people' && c === 'remove' && !d) return json(await this.tillRemovePerson(body, who));
       if (a === 'till' && b === 'forgot' && !c) return json(await this.tillForgot(body, who));
       if (a === 'till' && b === 'forgot' && c === 'check' && !d) return json(await this.tillForgotCheck(body, who));
+      // Round 32, part 2: a code at the counter, and for staff on the till, finding people and tonight's list
+      if (a === 'till' && b === 'scan' && !c) return json(await this.tillScan(body, who, client));
+      if (a === 'till' && b === 'find' && !c) return json(await this.tillFind(body, who));
+      if (a === 'till' && b === 'person' && !c) return json(await this.tillPerson(body, who));
+      if (a === 'till' && b === 'tonight' && !c) return json(await this.tillTonight(body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
       // Round 17: GM credit for staff (the team's setting), and each person's hours
@@ -11226,3 +11233,5 @@ Object.assign(Lair.prototype, shopFilterMethods);
 Object.assign(Lair.prototype, openGameMethods);
 // Round 32, the till, part 1: who's on the till (src/till.js)
 Object.assign(Lair.prototype, tillMethods);
+// Round 32, the till, part 2: real people on the till (src/till-people.js)
+Object.assign(Lair.prototype, tillPeopleMethods);

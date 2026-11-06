@@ -97,8 +97,41 @@ Three tables, made on start when they're missing:
 
 The meta row `till-seeded` says Caleb and Felix were added (once).
 
-## 5. Next (not in this round)
+## 5. Part 2: people on the till
 
-Part 2: the till's real members, bookings and tabs. Part 3: real products, prices (the dice deal) and stock, and each
-sale saved to Shopify as a paid order with the member, stamps, check-ins and credit. Part 4: cash approvals (a PIN on
+Mo (6 Nov 2026): the counter faces customers, "people just scan their code and immediately start using it", and staff
+sign in to sort things out. `src/till-people.js`; tests `test/round32-till-people.test.js`. Nothing here changes a
+booking: paying is part 3.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /proxy/till/scan` | staff account (the counter tablet's), nobody on the till needed | `{ code, token? }`: a code at the counter. A member's code → `{ type: 'person', person }`. A booking's or sign-up's code → `{ type: 'booking', booking, name }`: just that booking and a first name (whoever holds a ticket isn't always its booker). With staff on the till (`token`, own PIN, Check-in or the owner) and an account on it → `{ type: 'person', person, focus: '<its code>' }`. A pass → `{ type: 'pass', pass: { label, left } }`. Unknown: 404 `Gobgob doesn't know that code. Try your member code from My Lair.`; the 20th unknown code from one tablet in 10 minutes, and anything after it from that tablet, 429 `Too many codes Gobgob didn't know. Ask staff for a hand.` (staff on the till are never held up) |
+| `POST /proxy/till/find` | staff on the till with Check-in, or the owner | `{ token, q }` (2 letters at least) → `{ people: [{ id, name, code }] }`: members by name, email or code, up to 12 |
+| `POST /proxy/till/person` | staff on the till with Check-in, or the owner | `{ token, id }` → `{ type: 'person', person }` (404 for no such member) |
+| `POST /proxy/till/tonight` | staff on the till with Check-in, or the owner | `{ token }` → `{ rows: [{ ref, personId, name, what, kind, at, due, paid, status }], night }`: today's rows as the counter tile's Today list has them, in time order; `night` is the event on now or starting within 90 minutes (the soonest) as `{ title, at, rows }`, or null |
+
+Someone on the till without Check-in (and not the owner) gets 403 `Finding people is for staff with Check-in.`; on 1234
+still, 403 `Choose your own PIN first.`
+
+A person (`person`):
+
+```
+{ id, first, name, code, since, email?, loyalty, credit, passes: [{ label, left }], library: [{ name }],
+  bookings: [{ code, title, at, kind, paid, owed, onAccount, status, lines: [{ title, sub, price, session, line }] }],
+  tab, account }
+```
+
+- `name`: "Mia T." on the customer screen; the full name, and a masked `email` ("m•••@example.com"), for staff on the till.
+- `bookings`: today's rows and what they owe from before, as `/pos/scan` lists them. Each row still to pay (not a
+  no-show) has one basket line: `price` (cents) is what's due, `sub` says what it is ("Event entry · MT-OWLBEAR-17",
+  "Table fee · T1, 2 people · …", "Owed from Thu 1 Oct · …"), `session` whether paying it stamps the card, and `line`
+  is the very cart line the counter tile uses (`_booking`), for part 3 to pay.
+- `loyalty`: their card as the counter shows it (staffCard). `credit`: store credit in cents from Shopify, kept a minute;
+  null when Shopify can't say. `tab`: today's self-serve tab while it isn't paid, else null. `account`: pay each visit,
+  or a monthly account's limit and what's owed (accountSummary).
+
+## 6. Next (not in this round)
+
+Part 3: real products, prices (the dice deal) and stock, and each sale saved to Shopify as a paid order with the
+member and the basket's lines (paying a booking's line marks it paid, as at the counter), stamps and credit. Part 4: cash approvals (a PIN on
 the till, or the staff page) and store credit at the till. Every sale will carry who was on the till.
