@@ -12,7 +12,7 @@ import {
   financialYear, financialYearFrom, heldFor, holdUntil, lairTime, loyaltyCard, loyaltyMessage, loyaltyPrize, parseSince, wholeYears,
   eventDays, LOYALTY_PICKS, LOYALTY_SURE, PICK_WORDS, loyaltySureMessage,
 } from './core.js';
-// Round 29: the head-start card (12 slots, 2 of them Gobgob's), as every screen and email shows it
+// Round 29: the card as every screen and email shows it (slots, headStart, onCard; no head start since 6 Nov 2026: 10 slots)
 import { CARD_ROW, cardSoFar, cardView } from './core.js';
 import { ShopifyAdmin, emailReady, externalCalls, sendEmail, sendEmails } from './shopify.js';
 import { recordStatus, withConfig } from './config.js';

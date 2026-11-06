@@ -1,13 +1,12 @@
-// Round 29: the head-start loyalty card (contract v29-roleplayers, section 1). Mo (2 Nov 2026) picked mockup A, "12
-// slots, 2 from Gobgob", in the roleplayers, loyalty and community plan:
-//  - "Every card shows 12 slots, the first 2 already filled as Gobgob's head start, so a d20 roll still takes 10 paid
-//    visits. Cards in progress get the 2 as well: 7 of 10 shows as 9 of 12; 0 shows 2 of 12; 9 shows 11 of 12; the 10th
-//    stamp completes the card, a roll becomes available exactly as today, and the next card shows 2 of 12."
-//  - "This is presentation only. How stamps are earned, CARD_SIZE = 10 as the counting rule, cards, rolls, credit and
-//    the sure $10 stay exactly as they are. No new credit or roll for anyone."
-//  - Progress shows wherever people book (My Lair, the website's confirmations, booking emails, the staff page and the
-//    counter), each saying "X of 12".
-// Written from those words, not from the code. Run with: npm test
+// Round 29's head-start loyalty card, taken back (contract v29-roleplayers, section 1, amended 6 Nov 2026). Mo picked
+// mockup A on 2 Nov 2026 ("12 slots, 2 from Gobgob": every card showed 12 slots, the first 2 filled as Gobgob's head
+// start), and on 6 Nov 2026 took it back: "Remove the loyalty card being 12. Make it 10 again I don't like it and the
+// free extra 2 ones". So every card shows its 10 slots again, with no head start: 7 stamps are 7 of 10, a new card is
+// 0 of 10, and the 10th stamp fills the card and starts the next at 0 of 10. It was only ever how the card looked: how
+// stamps are earned, CARD_SIZE = 10, cards, rolls, credit and the sure $10 are as they were, and nobody gains or loses a
+// stamp, a roll or credit. The fields every card carries (slots, headStart, onCard) stay, so pages, emails and the counter
+// from before work as they are: slots 10, headStart 0, onCard the stamps. Each screen says "X of 10".
+// Run with: npm test
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -19,7 +18,7 @@ import { LairTime, rulesFromSettings, DEFAULT_HOURS, CARD_SIZE, CARD_HEAD_START,
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
 const HOUR = 3_600_000;
-// Monday 2 November 2026, the day Mo picked the head start; 5:00pm in Auckland (NZDT, UTC+13). Open 4pm to midnight.
+// Monday 2 November 2026, 5:00pm in Auckland (NZDT, UTC+13). Open 4pm to midnight.
 const TODAY = '2026-11-02';
 const at = (day, hh, mm = 0) => time.at(day, hh * 60 + mm);
 const NOW = at(TODAY, 17);
@@ -147,7 +146,7 @@ const cardRow = (mail) => {
 };
 
 // What every card shape has in common, whichever screen it's for: stamps and cardSize as before (for older pages and
-// counters), cards and card, and the head start's slots, headStart and onCard
+// counters), cards and card, and round 29's slots, headStart (0 since 6 Nov 2026) and onCard
 const CARD_FIELDS = ['stamps', 'cardSize', 'cards', 'card', 'slots', 'headStart', 'onCard'];
 const fieldsOf = (loyalty) => Object.fromEntries(CARD_FIELDS.map((k) => [k, loyalty?.[k]]));
 
@@ -198,82 +197,82 @@ afterEach(() => {
 
 /* ---------------- the rule ---------------- */
 
-test('round 29 (Mo, 2 Nov 2026): every card shows 12 slots, the first 2 already filled as Gobgob\'s head start, so a d20 roll still takes 10 paid visits', () => {
+test('the head start taken back (Mo, 6 Nov 2026): every card shows its 10 slots again, none filled by Gobgob, and a d20 roll still takes 10 paid visits', () => {
   assert.equal(CARD_SIZE, 10, 'the counting rule: 10 stamps fill a card');
-  assert.equal(CARD_HEAD_START, 2);
-  assert.equal(CARD_SLOTS, 12);
-  // the card a total of stamps makes, as every screen shows it: onCard is the stamps plus the head start
+  assert.equal(CARD_HEAD_START, 0, 'no free 2');
+  assert.equal(CARD_SLOTS, 10, 'not 12');
+  // the card a total of stamps makes, as every screen shows it: onCard is the stamps
   const view = (total) => cardView(loyaltyCard(total));
-  assert.deepEqual(view(0), { stamps: 0, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 2 }, '0 shows 2 of 12');
-  assert.deepEqual(view(7), { stamps: 7, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 9 }, '7 of 10 shows as 9 of 12');
-  assert.deepEqual(view(9), { stamps: 9, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 11 }, '9 shows 11 of 12');
-  assert.deepEqual(view(10), { stamps: 0, cardSize: 10, cards: 1, card: 2, slots: 12, headStart: 2, onCard: 2 }, 'the 10th stamp completes the card, and the next shows 2 of 12');
-  assert.deepEqual(view(27), { stamps: 7, cardSize: 10, cards: 2, card: 3, slots: 12, headStart: 2, onCard: 9 });
-  // never a full 12 of 12 to wait on: a card is 2 to 11 of 12 while it's on the go
+  assert.deepEqual(view(0), { stamps: 0, cardSize: 10, cards: 0, card: 1, slots: 10, headStart: 0, onCard: 0 }, '0 is 0 of 10');
+  assert.deepEqual(view(7), { stamps: 7, cardSize: 10, cards: 0, card: 1, slots: 10, headStart: 0, onCard: 7 }, '7 stamps are 7 of 10');
+  assert.deepEqual(view(9), { stamps: 9, cardSize: 10, cards: 0, card: 1, slots: 10, headStart: 0, onCard: 9 }, '9 is 9 of 10');
+  assert.deepEqual(view(10), { stamps: 0, cardSize: 10, cards: 1, card: 2, slots: 10, headStart: 0, onCard: 0 }, 'the 10th stamp completes the card, and the next is 0 of 10');
+  assert.deepEqual(view(27), { stamps: 7, cardSize: 10, cards: 2, card: 3, slots: 10, headStart: 0, onCard: 7 });
+  // a card on the go is 0 to 9 of 10: the 10th fills it
   for (let total = 0; total <= 40; total += 1) {
     const { onCard, slots, stamps } = view(total);
-    assert.ok(onCard >= 2 && onCard <= 11, `${total} stamps: ${onCard} of ${slots}`);
+    assert.ok(onCard >= 0 && onCard <= 9 && onCard === stamps, `${total} stamps: ${onCard} of ${slots}`);
     assert.equal(slots - onCard, CARD_SIZE - stamps, 'what\'s left on the card is the visits still to go');
   }
 });
 
-test('round 29 (Mo, 2 Nov 2026): cards in progress get the 2 as well: 0 shows 2 of 12, 7 of 10 shows as 9 of 12, 9 shows 11 of 12', async () => {
+test('the head start taken back (Mo, 6 Nov 2026): cards in progress lose the free 2, and keep every stamp: 0 is 0 of 10, 7 is 7 of 10, 9 is 9 of 10', async () => {
   const first = await card(MIA);
-  assert.deepEqual(fieldsOf(first), { stamps: 0, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 2 }, '0 shows 2 of 12');
+  assert.deepEqual(fieldsOf(first), { stamps: 0, cardSize: 10, cards: 0, card: 1, slots: 10, headStart: 0, onCard: 0 }, '0 is 0 of 10');
   await stamp(MIA, 7);
   const seven = await card(MIA);
-  assert.deepEqual(fieldsOf(seven), { stamps: 7, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 9 }, '7 of 10 shows as 9 of 12');
+  assert.deepEqual(fieldsOf(seven), { stamps: 7, cardSize: 10, cards: 0, card: 1, slots: 10, headStart: 0, onCard: 7 }, '7 stamps are 7 of 10');
   await stamp(MIA, 2);
   const nine = await card(MIA);
-  assert.deepEqual(fieldsOf(nine), { stamps: 9, cardSize: 10, cards: 0, card: 1, slots: 12, headStart: 2, onCard: 11 }, '9 shows 11 of 12');
-  // no roll for being nearly there: the head start fills slots, not the card
+  assert.deepEqual(fieldsOf(nine), { stamps: 9, cardSize: 10, cards: 0, card: 1, slots: 10, headStart: 0, onCard: 9 }, '9 is 9 of 10');
+  // no roll for being nearly there
   assert.deepEqual([first.rolls.available, seven.rolls.available, nine.rolls.available], [0, 0, 0]);
-  // (10 of 12 is 8 stamps: two to go, and still no roll)
+  // (8 stamps: two to go, and still no roll)
   await stamp(KAI, 8);
   const kai = await card(KAI);
-  assert.deepEqual([kai.onCard, kai.slots, kai.stamps, kai.cards, kai.rolls.available], [10, 12, 8, 0, 0], '10 of 12 is not a full card');
+  assert.deepEqual([kai.onCard, kai.slots, kai.stamps, kai.cards, kai.rolls.available], [8, 10, 8, 0, 0], '8 of 10 is not a full card');
 });
 
-test('round 29 (Mo, 2 Nov 2026): the 10th stamp completes the card, a roll becomes available exactly as today, and the next card shows 2 of 12', async () => {
+test('the head start taken back (Mo, 6 Nov 2026): the 10th stamp completes the card, a roll becomes available as ever, and the next card is 0 of 10', async () => {
   await stamp(MIA, 9);
   const tonight = await table(MIA, 'Mia');
   // her 10th: checked in at the counter
   const checkin = ok(await pos('checkin', { id: tonight.id, type: 'booking' }));
-  assert.deepEqual(fieldsOf(checkin.loyalty), { stamps: 0, cardSize: 10, cards: 1, card: 2, slots: 12, headStart: 2, onCard: 2 }, 'the counter sees card 2 at 2 of 12');
+  assert.deepEqual(fieldsOf(checkin.loyalty), { stamps: 0, cardSize: 10, cards: 1, card: 2, slots: 10, headStart: 0, onCard: 0 }, 'the counter sees card 2 at 0 of 10');
   assert.equal(checkin.loyalty.rollsAvailable, 1);
   const me = await card(MIA);
-  assert.deepEqual(fieldsOf(me), { stamps: 0, cardSize: 10, cards: 1, card: 2, slots: 12, headStart: 2, onCard: 2 });
+  assert.deepEqual(fieldsOf(me), { stamps: 0, cardSize: 10, cards: 1, card: 2, slots: 10, headStart: 0, onCard: 0 });
   assert.deepEqual(me.rolls, { available: 1, earned: { cards: 1, welcome: 0, birthday: 0, staff: 0, codes: 0 }, used: 0 }, 'one roll, from the full card, as today');
   assert.deepEqual(me.recent.map((s) => [s.title, s.people]), [['Table T3', 1], ['A stamp from Gobgob', 9]], 'how the stamps came: as before');
 });
 
-test('round 29 (Mo, 2 Nov 2026): presentation only: a roll is still the d20\'s face in store credit, the sure $10 is still $10, and no new credit or roll for anyone', async () => {
+test('the head start taken back (Mo, 6 Nov 2026): it was only how the card looked: a roll is still the d20\'s face in store credit, the sure $10 is still $10, and nobody gains or loses credit or a roll', async () => {
   await stamp(MIA, 20);
   await stamp(KAI, 9);
   const before = await card(MIA);
-  assert.deepEqual([before.cards, before.card, before.onCard, before.rolls.available], [2, 3, 2, 2], 'two full cards: two rolls, card 3 at 2 of 12');
+  assert.deepEqual([before.cards, before.card, before.onCard, before.rolls.available], [2, 3, 0, 2], 'two full cards: two rolls, card 3 at 0 of 10');
   assert.equal(before.sure, LOYALTY_SURE, 'the sure $10, as round 23 has it');
   const dice = loadDice([14]);
   try {
     const rolled = ok(await roll(MIA));
     assert.deepEqual([rolled.roll, rolled.prize.amount, rolled.loyalty.rolls.available], [14, 1400, 1], 'a 14 is $14');
-    assert.deepEqual(fieldsOf(rolled.loyalty), { stamps: 0, cardSize: 10, cards: 2, card: 3, slots: 12, headStart: 2, onCard: 2 }, 'the roll\'s card says it too');
+    assert.deepEqual(fieldsOf(rolled.loyalty), { stamps: 0, cardSize: 10, cards: 2, card: 3, slots: 10, headStart: 0, onCard: 0 }, 'the roll\'s card says it too');
     const sure = ok(await roll(MIA, 'sure'));
     assert.deepEqual([sure.roll, sure.prize.amount, sure.loyalty.rolls.available], [null, 1000, 0]);
     assert.equal(said(await roll(MIA)), NO_ROLLS, 'two full cards, two rolls: no more');
   } finally {
     dice.unload();
   }
-  // Kai is on 11 of 12: nothing to roll, and nothing for him from the head start
+  // Kai is on 9 of 10: nothing to roll yet
   assert.equal((await card(KAI)).rolls.available, 0);
   assert.equal(said(await roll(KAI)), NO_ROLLS);
-  assert.deepEqual(credited, [[MIA, 1400, 'NZD'], [MIA, 1000, 'NZD']], 'only what Mia rolled and took: no credit from the head start');
+  assert.deepEqual(credited, [[MIA, 1400, 'NZD'], [MIA, 1000, 'NZD']], 'only what Mia rolled and took');
 });
 
-test('round 29 (Mo, 2 Nov 2026): every card the Lair sends carries the same fields: My Lair, the staff page\'s check-in card and member pages, and the counter, each "X of 12"', async () => {
+test('round 29\'s fields stay on every card the Lair sends (My Lair, the staff page\'s check-in card and member pages, and the counter), each "X of 10" since 6 Nov 2026', async () => {
   await stamp(MIA, 17);
   const tonight = await table(MIA, 'Mia');
-  const want = { stamps: 7, cardSize: 10, cards: 1, card: 2, slots: 12, headStart: 2, onCard: 9 };
+  const want = { stamps: 7, cardSize: 10, cards: 1, card: 2, slots: 10, headStart: 0, onCard: 7 };
   const shapes = {
     'GET /me': await card(MIA),
     'the check-in card (a member code)': ok(await call('POST', 'checkin', { code: codeOf(MIA) }, HEMI)).loyalty,
@@ -287,9 +286,9 @@ test('round 29 (Mo, 2 Nov 2026): every card the Lair sends carries the same fiel
     assert.deepEqual(fieldsOf(loyalty), want, where);
     if (where !== 'GET /me') assert.equal(loyalty.rollsAvailable, 1, `${where}: rollsAvailable as before`);
   }
-  // the stamp routes' answers too, one stamp on: 10 of 12. Round 30: the counter adds no stamps (its screen faces
+  // the stamp routes' answers too, one stamp on: 8 of 10. Round 30: the counter adds no stamps (its screen faces
   // customers), so the one stamp on is the check-in card's, and Undo on a member page takes it back
-  const next = { ...want, stamps: 8, onCard: 10 };
+  const next = { ...want, stamps: 8, onCard: 8 };
   assert.equal(said(await pos('stamp', { customerId: MIA, key: 'pos-headstart-1' })), `410 ${STAMP_WORDS.counter}`, 'round 30: no Add a stamp at the counter');
   const given = ok(await call('POST', `members/${MIA}/stamps`, { count: 1 }, HEMI));
   assert.deepEqual(fieldsOf(given.member.loyalty), next, 'Add a stamp on the check-in card');
@@ -297,15 +296,15 @@ test('round 29 (Mo, 2 Nov 2026): every card the Lair sends carries the same fiel
   assert.deepEqual(fieldsOf(page.member.loyalty), want, 'Undo on a member page');
 });
 
-test('round 29 (Mo, 2 Nov 2026): booking emails say how a member\'s card is going, "X of 12 so far", and a guest\'s say nothing about a card', async () => {
+test('round 29: booking emails say how a member\'s card is going, "X of 10 so far" since 6 Nov 2026, and a guest\'s say nothing about a card', async () => {
   const sent = captureEmails();
   await stamp(MIA, 7);
   // a table, a member's TTRPG seat, an event sign-up and a weekly seat, each from a member with an account
   await table(MIA, 'Mia');
   await settle();
   const booked = sent.find((m) => m.to === 'mia@example.com' && /^You're booked/.test(m.subject));
-  assert.equal(cardRow(booked), '9 of 12 so far. Stamps land when you check in.', 'Mia\'s table: 7 stamps');
-  assert.match(booked.html, />Loyalty card<\/td><td[^>]*>9 of 12 so far\. Stamps land when you check in\.<\/td>/);
+  assert.equal(cardRow(booked), '7 of 10 so far. Stamps land when you check in.', 'Mia\'s table: 7 stamps');
+  assert.match(booked.html, />Loyalty card<\/td><td[^>]*>7 of 10 so far\. Stamps land when you check in\.<\/td>/);
   const game = await session();
   ok(await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people: 1, name: 'Kai', email: 'kai@example.com', phone: '021 555 0100' }, KAI));
   ok(await signUp(LEO, 'Leo'));
@@ -313,11 +312,11 @@ test('round 29 (Mo, 2 Nov 2026): booking emails say how a member\'s card is goin
   ok(await call('POST', `games/${weekly.id}/join-series`, { people: 1, name: 'Mia', email: 'mia@example.com', phone: '021 555 0100' }, MIA));
   await settle();
   const seat = sent.find((m) => m.to === 'kai@example.com' && /^Seat saved/.test(m.subject));
-  assert.equal(cardRow(seat), '2 of 12 so far. Stamps land when you check in.', 'Kai\'s TTRPG seat: a new card shows Gobgob\'s 2');
+  assert.equal(cardRow(seat), '0 of 10 so far. Stamps land when you check in.', 'Kai\'s TTRPG seat: a new card, no free 2');
   const join = sent.find((m) => m.to === 'leo@example.com' && /^You're in/.test(m.subject));
-  assert.equal(cardRow(join), '2 of 12 so far. Stamps land when you check in.', 'Leo\'s sign-up');
+  assert.equal(cardRow(join), '0 of 10 so far. Stamps land when you check in.', 'Leo\'s sign-up');
   const regular = sent.find((m) => m.to === 'mia@example.com' && /^You're a regular/.test(m.subject));
-  assert.equal(cardRow(regular), '9 of 12 so far. Stamps land when you check in.', 'Mia\'s weekly seat');
+  assert.equal(cardRow(regular), '7 of 10 so far. Stamps land when you check in.', 'Mia\'s weekly seat');
   // guests: a TTRPG seat and a sign-up without an account, and a table booked logged out
   const before = sent.length;
   ok(await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people: 1, name: 'Ash', email: 'ash@example.com', phone: '021 555 0100' }, ''));
@@ -334,12 +333,12 @@ test('round 29 (Mo, 2 Nov 2026): booking emails say how a member\'s card is goin
   assert.ok(sent.filter((m) => /Loyalty card/.test(m.html)).every((m) => ['mia@example.com', 'kai@example.com', 'leo@example.com'].includes(m.to)));
 });
 
-test('round 29: cardLine, the card in one line for emails (booking reminders and the day-after email use it too): a member\'s "X of 12 so far", or null', async () => {
-  assert.equal(cardSoFar({ onCard: 9, slots: 12 }), '9 of 12 so far. Stamps land when you check in.');
-  assert.equal(lair.cardLine(MIA), '2 of 12 so far. Stamps land when you check in.', 'a new card');
+test('round 29: cardLine, the card in one line for emails (booking reminders and the day-after email use it too): a member\'s "X of 10 so far", or null', async () => {
+  assert.equal(cardSoFar({ onCard: 7, slots: 10 }), '7 of 10 so far. Stamps land when you check in.');
+  assert.equal(lair.cardLine(MIA), '0 of 10 so far. Stamps land when you check in.', 'a new card');
   await stamp(MIA, 9);
-  assert.equal(lair.cardLine(MIA, lair.rulesCache), '11 of 12 so far. Stamps land when you check in.');
+  assert.equal(lair.cardLine(MIA, lair.rulesCache), '9 of 10 so far. Stamps land when you check in.');
   await stamp(MIA, 1);
-  assert.equal(lair.cardLine(MIA), '2 of 12 so far. Stamps land when you check in.', 'card 2, straight after the 10th');
+  assert.equal(lair.cardLine(MIA), '0 of 10 so far. Stamps land when you check in.', 'card 2, straight after the 10th');
   for (const nobody of [null, undefined, '', 'not-a-customer', '424242']) assert.equal(lair.cardLine(nobody), null, `${nobody}: no member, no card`);
 });

@@ -873,13 +873,15 @@ export function rollPrize(roll) {
 export const CARD_SIZE = 10;
 
 /**
- * Round 29, the head start (contract v29-roleplayers, section 1). Mo (2 Nov 2026), mockup A, "12 slots, 2 from Gobgob":
- * "Every card shows 12 slots, the first 2 already filled as Gobgob's head start, so a d20 roll still takes 10 paid
- * visits." It's how the card looks, not how it counts: CARD_SIZE stamps still fill a card, and its roll, the cards and
- * store credit are as they were. Every card gets the 2, the one on the go included: 7 stamps show as 9 of 12.
+ * Round 29, the head start (contract v29-roleplayers, section 1), taken back. Mo picked it on 2 Nov 2026 (mockup A,
+ * "12 slots, 2 from Gobgob": every card showed 12 slots, the first 2 filled as Gobgob's head start) and took it back on
+ * 6 Nov 2026: "Remove the loyalty card being 12. Make it 10 again I don't like it and the free extra 2 ones". So no head
+ * start: a card shows its 10 slots, and 7 stamps are 7 of 10. It was only ever how the card looked: CARD_SIZE stamps
+ * fill a card, and its roll, the cards and store credit are as they were. The fields stay on every card (slots,
+ * headStart 0, onCard the stamps), so every page, email and counter from before reads them as it always did.
  */
-export const CARD_HEAD_START = 2;
-/** The slots a card shows: its stamps' and Gobgob's head start (12) */
+export const CARD_HEAD_START = 0;
+/** The slots a card shows: its stamps' (10) */
 export const CARD_SLOTS = CARD_SIZE + CARD_HEAD_START;
 
 /** The card from all the stamps someone has: { stamps (0-9 on the current card), cards (full cards so far) } */
@@ -891,15 +893,16 @@ export const loyaltyCard = (total) => {
 /**
  * Round 29: a card as every screen shows it, from loyaltyCard's { stamps, cards }. stamps (0-9) and cardSize (10) mean
  * what they always have, for pages and counters from before round 29; card is the one they're on (cards + 1); slots,
- * headStart and onCard are the head start's: onCard is the stamps plus Gobgob's 2, so a card on the go is 2 to 11 of
- * 12, and the 10th stamp starts the next card at 2 of 12. What's left to a roll is slots - onCard (= cardSize - stamps).
+ * headStart and onCard are round 29's: with no head start since 6 Nov 2026, slots is 10, headStart 0 and onCard the
+ * stamps, so a card on the go is 0 to 9 of 10, and the 10th stamp starts the next card at 0 of 10. What's left to a
+ * roll is slots - onCard (= cardSize - stamps).
  */
 export const cardView = ({ stamps, cards }) => ({
   stamps, cardSize: CARD_SIZE, cards, card: cards + 1, slots: CARD_SLOTS, headStart: CARD_HEAD_START, onCard: stamps + CARD_HEAD_START,
 });
 
 /**
- * Round 29: a card in one line, for the "Loyalty card" row of a member's booking emails: "9 of 12 so far. Stamps land
+ * Round 29: a card in one line, for the "Loyalty card" row of a member's booking emails: "7 of 10 so far. Stamps land
  * when you check in." Stamps can come several to a booking (one for each person at a table), so it never promises that
  * this one adds a stamp. card: cardView's (onCard and slots).
  */

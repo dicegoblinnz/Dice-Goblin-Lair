@@ -495,7 +495,7 @@ test('round 29, first game: a weekly game with seats next session (mockup D3): s
     `Try a different game: ${GM_PAGE}`,
     'Next session: Sunday 15 November, 6pm to 10pm',
     'Seats left: 4',
-    'Loyalty card: 3 of 12 so far. Stamps land when you check in.',
+    'Loyalty card: 1 of 10 so far. Stamps land when you check in.',
     "Not quite your thing? That's fine. 2 other beginner games have seats this week.",
     'See you at the Lair!\nGobgob, the Dice Goblin',
     `Dice Goblin Lair\n${ADDRESS}`,
@@ -552,7 +552,7 @@ test('round 29, first game: a one-shot, a full next session, or none, built like
       `Try a different game: ${GM_PAGE}`,
       'When: Wednesday 11 November, 6pm to 9pm',
       'Seats left: 4',
-      'Loyalty card: 3 of 12 so far. Stamps land when you check in.',
+      'Loyalty card: 1 of 10 so far. Stamps land when you check in.',
       "Not quite your thing? That's fine. 1 other beginner game has seats this week.",
       'See you at the Lair!\nGobgob, the Dice Goblin',
       "Don't send me emails like this: ",
@@ -603,7 +603,7 @@ test('round 29, first game: with no other beginner game with seats this week, th
     'Thanks for coming to Lost Mine on Sunday, Kai. Gobgob hopes the dice were kind.',
     'Fancy another? No beginner games have seats left this week, but GMs add new ones all the time.',
     `Find your next game: ${GM_PAGE}`,
-    'Loyalty card: 3 of 12 so far. Stamps land when you check in.',
+    'Loyalty card: 1 of 10 so far. Stamps land when you check in.',
     'See you at the Lair!',
   ];
   let from = 0;

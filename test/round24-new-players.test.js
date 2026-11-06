@@ -555,15 +555,15 @@ test('staff see a member\'s welcome code on their page: which code, when, and wh
 
 test('the counter shows a welcome roll that waits (rollsWaiting), and a card with nothing waiting is as it was', async () => {
   const before = ok(await pos('scan', { code: codeOf(MIA) })).loyalty;
-  assert.deepEqual(before, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 2 });
+  assert.deepEqual(before, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 10, headStart: 0, onCard: 0 });
   ok(await redeem(MIA, 'SCROLL-ROLL'));
-  assert.deepEqual(ok(await pos('scan', { code: codeOf(MIA) })).loyalty, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 12, headStart: 2, onCard: 2, rollsWaiting: 1 });
+  assert.deepEqual(ok(await pos('scan', { code: codeOf(MIA) })).loyalty, { stamps: 0, cardSize: 10, cards: 0, rollsAvailable: 0, card: 1, slots: 10, headStart: 0, onCard: 0, rollsWaiting: 1 });
   const booking = await table(MIA, 'Mia');
   const ticket = ok(await pos('scan', { code: booking.ref }));
   assert.equal(ticket.loyalty.rollsWaiting, 1, 'a ticket on her account shows it too');
   ok(await pos('checkin', { id: booking.id, type: 'booking' }));
   ok(await internal('orders-paid', posOrder(8401, [bookingLine(84011, booking.ref, 10)])));
-  assert.deepEqual(ok(await pos('scan', { code: codeOf(MIA) })).loyalty, { stamps: 1, cardSize: 10, cards: 0, rollsAvailable: 1, card: 1, slots: 12, headStart: 2, onCard: 3 });
+  assert.deepEqual(ok(await pos('scan', { code: codeOf(MIA) })).loyalty, { stamps: 1, cardSize: 10, cards: 0, rollsAvailable: 1, card: 1, slots: 10, headStart: 0, onCard: 1 });
 });
 
 /* ---------------- "How did you find us?" ---------------- */

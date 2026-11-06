@@ -9,6 +9,13 @@ reminders (section 2) and a first game for beginners (section 3).
 
 ## 1. The head-start card
 
+> **Taken back, 6 Nov 2026.** Mo: "Remove the loyalty card being 12. Make it 10 again I don't like it and the free
+> extra 2 ones". `CARD_HEAD_START` is 0: every card shows its 10 slots, `slots` is 10, `headStart` 0 and `onCard` the
+> stamps (7 stamps are "7 of 10"; a new card is "0 of 10"), and the booking emails' row says "7 of 10 so far. Stamps
+> land when you check in." The fields stay, so the pages, emails and counters below read them as they always did:
+> each already shows a card with no head start as its 10 slots (section 1.5). Stamps, cards, rolls and credit never
+> changed. What follows is the head start as it was built.
+
 Mo (2 Nov 2026) picked mockup A, "12 slots, 2 from Gobgob":
 
 - "Every card shows 12 slots, the first 2 already filled as Gobgob's head start, so a d20 roll still takes 10 paid

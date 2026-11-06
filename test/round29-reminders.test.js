@@ -435,8 +435,8 @@ test('round 29: a member\'s seat: "See you Sunday, Ria?", her GM and 3 players c
   assert.match(m.text, /Game: +Candlekeep Mysteries, D&D 5e\n/);
   assert.match(m.text, new RegExp(`Where: +${WHERE.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}\\n +Upstairs in Royal Oak Mall, above Whitcoulls\\. The lift is next to Whitcoulls\\. On weekends the lift runs during mall hours, 10am to 5pm\\.\\n`));
   assert.match(m.text, /On your tab: +\$15, paid at the counter on the day\n/);
-  // round 29's head-start card: a member's reminder carries their card, Gobgob's 2 included
-  assert.match(m.text, /Loyalty card: +2 of 12 so far\. Stamps land when you check in\.\n/);
+  // round 29: a member's reminder carries their card (no head start since 6 Nov 2026)
+  assert.match(m.text, /Loyalty card: +0 of 10 so far\. Stamps land when you check in\.\n/);
   assert.equal(linkIn(m, 'Add to my calendar'), `https://lair.example.com/ics/b/${ria.id}.ics`);
   assert.ok(m.html.includes(`href="https://lair.example.com/ics/b/${ria.id}.ics"`), 'the button is the calendar file');
   assert.equal(linkIn(m, 'Google Calendar'), `https://calendar.google.com/calendar/render?${new URLSearchParams({
