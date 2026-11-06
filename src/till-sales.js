@@ -33,8 +33,12 @@ const DAY = 24 * HOUR;
 
 /** The marker on a till sale's draft (and so its order's attributes): the sale's id */
 export const TILL_MARKER = '_lair_till';
-/** A sale that's waited this long for its money is let go (its draft deleted) */
-export const TILL_SALE_OPEN_MS = 30 * MIN;
+/**
+ * A sale that's waited this long for its money is let go (its draft deleted). Long (the review): the EFTPOS may have taken
+ * the money for one still on the pay screen, so it can be confirmed until the till's day is done; the till itself lets a
+ * sale go only on Back, a new sale, or staff saying it wasn't paid.
+ */
+export const TILL_SALE_OPEN_MS = 12 * HOUR;
 /** The shop's own location, "Dice Goblin": a till sale is fulfilled there (env TILL_LOCATION_ID can name another) */
 export const TILL_SHOP_LOCATION = 'gid://shopify/Location/72250359911';
 /** The dice deal's collection, "All dice (buy 2, get the 3rd free)" (env TILL_DICE_COLLECTION can name another) */
@@ -56,9 +60,14 @@ const READY_WAIT = 600;
 const ORDER_RETRY = [10 * MIN, 30 * MIN, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY];
 /** A try that never finished (the Worker stopped) is taken over after this */
 const STUCK = 15 * MIN;
-/** Waits before each try again at fulfilling a sale's order (Shopify refusing: the scopes still to approve) */
+/** Waits before each try again at fulfilling a sale's order: then it stops, and staff hear */
 const FULFIL_RETRY = [10 * MIN, HOUR, 6 * HOUR, DAY, DAY];
+/**
+ * Shopify refusing for want of the fulfilment scopes (until Mo approves them): tried every 6 hours, never counted as a
+ * failure, for up to 14 days, so the sales from before he approves them are fulfilled once he does (the review)
+ */
 const FULFIL_DENIED = 6 * HOUR;
+const FULFIL_DENIED_FOR = 14 * DAY;
 /** Orders and fulfilments looked after a run, so a run stays short */
 const A_RUN = 10;
 /** A paid sale's bookings show as paid at the till until its order has paid them (or this long) */
@@ -84,6 +93,7 @@ export const TILL_SALE_WORDS = {
   code: 'Scan the barcode, or type the code under it.',
   noProduct: "Gobgob can't find that in the shop. Search for it by name instead.",
   notForSale: "That one isn't for sale at the till.",
+  giftCard: 'Gift cards are sold on Shopify POS for now: the till sells them once Shopify lets the Lair app issue them.',
   library: "That's one of our library games, so it isn't for sale.",
   search: 'Type at least 2 letters to search.',
   shopify: "Shopify didn't answer. Try again in a moment.",
@@ -92,11 +102,12 @@ export const TILL_SALE_WORDS = {
   tooMany: "That's a lot for one sale. Split it into two.",
   booking: (code) => `${code} isn't one Gobgob knows. Scan their code again.`,
   nothingDue: (code) => `${code} has nothing left to pay. Scan their code again.`,
+  paidElsewhere: (what) => `${what} was paid another way while this sale waited, so this sale wasn't saved. Tap Back to see what's left to pay; if the EFTPOS took this one already, refund the difference there.`,
   tab: 'Their tab has changed. Scan their code again.',
   method: 'Pay by card or with cash.',
   refused: (why) => `Shopify wouldn't take this sale: ${why}`,
   noSale: "That sale isn't here any more. Tap Pay again.",
-  gone: 'That sale was let go. Tap Pay again.',
+  gone: "That sale was let go before it was confirmed, so it wasn't saved. If the EFTPOS took the money, ring it up again and confirm it without charging again.",
   making: 'That sale is still being set up. Give it a moment, then try again.',
   paid: "That sale's paid already.",
   expect: (total) => `This sale is ${dollars(total)}. Check that's what was paid, then confirm again.`,
@@ -258,6 +269,44 @@ export const tillSalesMethods = {
     return out;
   },
 
+  /** The tabs a paid till sale is paying, until they're paid (its order's webhook) or two days have gone. No awaits. */
+  tillPendingTabs(now = Date.now(), except = null) {
+    const out = new Set();
+    const rows = this.sql.exec("SELECT id, tabs FROM till_sales WHERE status = 'paid' AND paid_at > ? AND tabs != '[]'", now - PENDING_MS).toArray();
+    for (const r of rows) {
+      if (r.id === except) continue;
+      for (const tab of parse(r.tabs, [])) {
+        const t = this.sql.exec('SELECT status FROM tabs WHERE id = ?', String(tab)).toArray()[0];
+        if (t && t.status !== 'paid') out.add(String(tab));
+      }
+    }
+    return out;
+  },
+
+  /**
+   * What a sale waiting for its money pays (its lines' _booking and _tab) that's been paid since Pay: a booking or sign-up
+   * with nothing left, cancelled or gone, or being paid by another till sale; a tab paid, gone, or another sale's. → its
+   * code ('Their tab' for a tab), or null when everything's still to pay. No awaits.
+   */
+  tillPaidElsewhere(r, now = Date.now()) {
+    const pending = this.tillPendingRefs(now);
+    const pendingTabs = this.tillPendingTabs(now, r.id);
+    for (const line of parse(r.lines, [])) {
+      const ref = line.attributes?._booking ? String(line.attributes._booking).toUpperCase() : null;
+      if (ref) {
+        const item = this.bookingOrJoin(ref)?.item;
+        const left = item && !item.paid && !item.waived ? Math.max(0, (item.amount || 0) - (item.covered || 0) - (item.paidAmount || 0)) : 0;
+        if (!item || item.status === 'cancelled' || left <= 0 || pending.has(ref)) return ref;
+      }
+      const tab = line.attributes?._tab ? String(line.attributes._tab) : null;
+      if (tab) {
+        const t = this.sql.exec('SELECT status FROM tabs WHERE id = ?', tab).toArray()[0];
+        if (!t || t.status === 'paid' || pendingTabs.has(tab)) return 'Their tab';
+      }
+    }
+    return null;
+  },
+
   /** A member's rows at the till: today's, then what they owe from before (as /pos/scan lists them). No awaits. */
   tillRowsOf(customerId, rules, now) {
     const id = String(customerId);
@@ -315,7 +364,7 @@ export const tillSalesMethods = {
     const tabIds = [];
     for (const id of tabs) {
       const tab = customerId ? this.cashTab(customerId, rules, now) : null;
-      if (!tab || tab.id !== id) throw new RuleError(TILL_SALE_WORDS.tab, 409);
+      if (!tab || tab.id !== id || this.tillPendingTabs(now).has(tab.id)) throw new RuleError(TILL_SALE_WORDS.tab, 409);
       parse(tab.items, []).forEach((t, i) => {
         lines.push({ key: `t:${tab.id}:${i}`, variantId: String(t.variantId), qty: Math.max(1, Number(t.qty) || 1), cents: Math.max(0, Number(t.price) || 0), title: t.title || '', attributes: { _tab: tab.id }, tab: tab.id });
       });
@@ -371,6 +420,8 @@ export const tillSalesMethods = {
     // --- no awaits from here on ---
     if (!found) throw new RuleError(TILL_SALE_WORDS.noProduct, 404);
     if (/\(library\)/i.test(found.product.title || '')) throw new RuleError(TILL_SALE_WORDS.library, 422);
+    // (the gift card waits for Shopify to grant gift card permissions, as the till's plan says)
+    if (found.product.giftCard) throw new RuleError(TILL_SALE_WORDS.giftCard, 422);
     if (!tillSellable(found.product)) throw new RuleError(TILL_SALE_WORDS.notForSale, 422);
     return { product: tillProductView(found.product, [found.variant]), variant: tillVariantView(found.variant) };
   },
@@ -437,8 +488,8 @@ export const tillSalesMethods = {
    * POST /till/pay { lines, person?, method, token?, till? } (the tablet's staff account; staff on the till or a customer
    * at the counter): start paying. Today's bookings in the basket are checked in (saved passes apply), then the sale's
    * draft order is made: its price, fixed now, is what's taken. The till's sale still waiting for its money is let go.
-   * → { sale, covered, notices } (covered: bookings a pass paid at check-in, so they're not in it); { sale: null } when
-   * passes covered everything.
+   * → { sale, dropped, notices } (dropped: booking codes with nothing to pay now, left out: paid another way, or a pass
+   * covered them at check-in); { sale: null } when nothing's left to pay.
    */
   async tillPay(body, who, client = '') {
     this.tillGate(who);
@@ -455,14 +506,17 @@ export const tillSalesMethods = {
     const customerId = this.tillCustomerIn(body?.person);
     const till = this.tillFrom(who, body, client);
     const pending = this.tillPendingRefs(now);
-    // the bookings as the till showed them (each must still have something to pay), checked in, then read again
-    const before = this.tillOwedLines(basket.codes, customerId, rules, now, pending);
+    // the bookings as the till showed them, checked in, then read again: one with nothing to pay now (paid another way,
+    // or a pass covered it at check-in, on this try or one Shopify didn't finish: the review) is left out and said so.
+    // Nothing's been taken yet, so the sale is simply what's left.
+    const before = this.tillOwedLines(basket.codes, customerId, rules, now, pending, { drop: true });
     const notices = before.lines.map((l) => this.tillCheckIn(l.row, rules, now, me ? `till:${me.id}` : 'till')).filter(Boolean);
     const owed = this.tillOwedLines(basket.codes, customerId, rules, now, pending, { drop: true });
+    const dropped = [...new Set([...before.dropped, ...owed.dropped])];
     const tab = this.tillTabLines(basket.tabs, customerId, rules, now);
     const lines = [...basket.items, ...owed.lines.map(({ row, ...l }) => l), ...tab.lines].map((l) => ({ ...l, uuid: crypto.randomUUID() }));
     for (const old of this.sql.exec("SELECT * FROM till_sales WHERE till = ? AND status IN ('making', 'open')", till).toArray()) this.tillLetGo(old, 'another sale', now);
-    if (!lines.length) return { sale: null, covered: owed.dropped, notices };
+    if (!lines.length) return { sale: null, dropped, notices };
     const id = makeId('ts');
     this.write(
       `INSERT INTO till_sales (id, till, customer_id, method, status, lines, refs, tabs, started_by, created_at, updated_at)
@@ -509,7 +563,7 @@ export const tillSalesMethods = {
          WHERE id = ? AND status = 'making'`,
       draft.id, draft.subtotal, draft.total, draft.gst, JSON.stringify(draft.discounts), JSON.stringify(shown), Date.now(), id,
     );
-    return { sale: this.tillSaleView(this.tillSaleRow(id)), covered: owed.dropped, notices };
+    return { sale: this.tillSaleView(this.tillSaleRow(id)), dropped, notices };
   },
 
   /**
@@ -559,6 +613,10 @@ export const tillSalesMethods = {
     if (r.method === 'cash' && !tillTakesCash(me)) throw new RuleError(TILL_SALE_WORDS.cash, 403);
     const expect = body?.expect == null || body.expect === '' ? NaN : Math.round(Number(body.expect));
     if (expect !== r.total) throw new RuleError(TILL_SALE_WORDS.expect(r.total), 409);
+    // (the review) a booking or tab it pays that's been paid another way since Pay (another till, online, the counter
+    // tile, cash in My Lair) would be paid twice: nothing's saved, and staff are told
+    const elsewhere = this.tillPaidElsewhere(r, now);
+    if (elsewhere) throw new RuleError(TILL_SALE_WORDS.paidElsewhere(elsewhere), 409);
     let handed = null;
     let change = null;
     if (r.method === 'cash') {
@@ -715,14 +773,31 @@ export const tillSalesMethods = {
       done = await this.shopify.fulfilTillOrder(r.order_id, this.tillShop());
     } catch (error) {
       // --- no awaits from here on ---
-      if (!mine()) return null;
+      const fresh = mine();
+      if (!fresh) return null;
       const message = errorText(error);
+      const at = Date.now();
       const denied = /access denied|ACCESS_DENIED|merchant_managed_fulfillment/i.test(message);
-      const wait = denied ? FULFIL_DENIED : FULFIL_RETRY[tries - 1];
-      if (!wait || tries > FULFIL_RETRY.length) {
+      if (denied) {
+        // (the scopes still to approve: not counted, and tried every 6 hours for 14 days, then left for staff quietly)
+        if (at - (fresh.paid_at || at) > FULFIL_DENIED_FOR) {
+          this.write("UPDATE till_sales SET fulfil_status = 'stopped', fulfil_error = ?, fulfil_next_at = NULL WHERE id = ?", message, id);
+        } else {
+          this.write("UPDATE till_sales SET fulfil_status = 'failed', fulfil_tries = ?, fulfil_error = ?, fulfil_next_at = ? WHERE id = ?", tries - 1, message, at + FULFIL_DENIED, id);
+        }
+        return null;
+      }
+      const wait = FULFIL_RETRY[tries - 1];
+      if (!wait) {
         this.write("UPDATE till_sales SET fulfil_status = 'stopped', fulfil_error = ?, fulfil_next_at = NULL WHERE id = ?", message, id);
+        const who = fresh.customer_id ? this.memberName(fresh.customer_id) : 'A quick sale';
+        this.staffAlert(`till-fulfil:${id}`, `A till sale to mark fulfilled by hand: ${who}`, {
+          title: 'A till sale to mark fulfilled by hand',
+          intro: `${who}'s till sale is paid and saved in Shopify, but the Lair couldn't mark it fulfilled at the shop, however many times it tried, so it's waiting in Orders › Unfulfilled. Open it and mark it fulfilled.`,
+          details: [['Order', fresh.order_name || fresh.order_id || ''], ['Why', message.slice(0, 200)]],
+        }, at);
       } else {
-        this.write("UPDATE till_sales SET fulfil_status = 'failed', fulfil_error = ?, fulfil_next_at = ? WHERE id = ?", message, Date.now() + wait, id);
+        this.write("UPDATE till_sales SET fulfil_status = 'failed', fulfil_error = ?, fulfil_next_at = ? WHERE id = ?", message, at + wait, id);
       }
       return null;
     }

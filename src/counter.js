@@ -68,12 +68,15 @@ export function orderTags(order) {
 }
 
 /**
- * Round 32, part 3: a sale saved by the Lair's own till: tagged lair-till and made by an app (its source_name a number:
- * the Lair's ID). Customers can't make one (their orders are 'web', a draft's checkout 'shopify_draft_order'), and a tag
- * staff add in Shopify admin to an order made there doesn't make it one either. Its lines keep their properties.
+ * Round 32, part 3: a sale saved by the Lair's own till: a draft order the Lair made, tagged lair-till and completed by
+ * the Lair app, so Shopify gives it the app's ID as its source_name, a number (as the Lair's cash orders have, 6 Nov
+ * 2026). Should Shopify ever give it the draft-order source instead, it's still one (the review): only the Lair and staff
+ * make draft orders, and only the till tags them lair-till. A customer's own order ('web') never is, nor Shopify POS's,
+ * whatever tags staff add in admin. Its lines keep their properties.
  */
 export function tillSale(order) {
-  return /^\d+$/.test(String(order?.source_name ?? '')) && orderTags(order).includes(TILL_ORDER_TAG);
+  const source = String(order?.source_name ?? '');
+  return (/^\d+$/.test(source) || source === 'shopify_draft_order') && orderTags(order).includes(TILL_ORDER_TAG);
 }
 
 /**
@@ -83,8 +86,8 @@ export function tillSale(order) {
  */
 export function counterSale(order) {
   const source = String(order?.source_name ?? '');
-  if (source === 'pos' || source === ORDERMATE.app) return true;
-  return /^\d+$/.test(source) && (orderTags(order).includes(ORDERMATE.tag) || tillSale(order));
+  if (source === 'pos' || source === ORDERMATE.app || tillSale(order)) return true;
+  return /^\d+$/.test(source) && orderTags(order).includes(ORDERMATE.tag);
 }
 
 /**

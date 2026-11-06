@@ -20,6 +20,7 @@ const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
 const MIN = 60_000;
 const HOUR = 60 * MIN;
+const DAY_MS = 24 * HOUR;
 // Sunday 25 October 2026, 10:00am in Auckland (NZDT, UTC+13)
 const NOW = Date.UTC(2026, 9, 24, 21, 0);
 const DAY = '2026-10-25';
@@ -282,7 +283,7 @@ test('round 32 part 3: a barcode is the shop\'s product, with the dice deal and 
 
 test('round 32 part 3: barcodes the till won\'t sell, ones the shop doesn\'t have, and Shopify down', async () => {
   said(await call('POST', 'till/product', { code: '9999000011' }, OWNER), 422, S.notForSale);
-  said(await call('POST', 'till/product', { code: '5555000011' }, OWNER), 422, S.notForSale);
+  said(await call('POST', 'till/product', { code: '5555000011' }, OWNER), 422, S.giftCard);
   said(await call('POST', 'till/product', { code: 'DGL34-M011' }, OWNER), 422, S.library);
   lair.sql.exec('INSERT INTO library_codes (key, variant_id) VALUES (?, ?)', 'DGL56L031', '777');
   said(await call('POST', 'till/product', { code: 'DGL56-L031' }, OWNER), 422, S.library);
@@ -394,7 +395,8 @@ test('round 32 part 3: until its order has paid them, a paid sale\'s bookings sh
   assert.equal(row.paid, true);
   assert.equal(row.paying, true);
   assert.deepEqual(row.lines, []);
-  said(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }] }), 409, S.nothingDue(table.ref));
+  // Pay leaves it out: nothing left to pay
+  assert.deepEqual(ok(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }] })), { sale: null, dropped: [table.ref], notices: [] });
   // Shopify's orders/paid webhook for it: a counter sale, so its _booking line pays the booking and the spend counts
   lair.shopify.orderSpend = async () => ({ customerId: MIA, amount: sale.total, name: '#3000', source: LAIR_APP, processedAt: NOW });
   const order = webhookOrder(8000, [customLine(80001, `Table fee: ${table.ref} (T1, 2 people)`, sale.total, { _booking: table.ref })], { customer: { id: Number(MIA) } });
@@ -417,8 +419,12 @@ test('round 32 part 3: a till order is a counter sale that keeps its lines\' pro
   assert.ok(COUNTER_SOURCES.includes('lair-till'));
   // the Admin API gives tags as a list
   assert.equal(tillSale({ source_name: LAIR_APP, tags: ['lair-till'] }), true);
-  // a web order, a draft's checkout and Shopify POS's own, even tagged lair-till by hand in admin, aren't the till's
-  for (const source of ['web', 'shopify_draft_order', '']) assert.equal(tillSale({ source_name: source, tags: 'lair-till' }), false);
+  // the review: should Shopify ever give the Lair's completed draft the draft-order source, it's still the till's (only
+  // the Lair and staff make drafts, and only the till tags them lair-till)
+  assert.equal(tillSale({ source_name: 'shopify_draft_order', tags: 'card, lair-till, till' }), true);
+  assert.equal(verifoneSale({ source_name: 'shopify_draft_order', tags: 'lair-till' }), false);
+  // a web order and Shopify POS's own, even tagged lair-till by hand in admin, aren't the till's
+  for (const source of ['web', '']) assert.equal(tillSale({ source_name: source, tags: 'lair-till' }), false);
   assert.equal(counterSale({ source_name: 'web', tags: 'lair-till' }), false);
   assert.equal(tillSale({ source_name: 'pos', tags: 'lair-till' }), false);
   assert.equal(counterSource({ source_name: 'pos', tags: 'lair-till' }), 'pos');
@@ -486,17 +492,67 @@ test('round 32 part 3: one sale waits for its money on each till: a new one lets
   said(await paid({ sale: 'ts_nothing', token: hemi, expect: 1 }), 404, S.noSale);
 });
 
-test('round 32 part 3: a sale left waiting for its money is let go after 30 minutes', async () => {
+test('round 32 part 3: a sale left waiting for its money is let go only after 12 hours (the EFTPOS may have taken it)', async () => {
   const { sale } = ok(await pay({ method: 'card', lines: [{ variantId: '5013', qty: 1 }] }));
-  nowIs(NOW + TILL_SALE_OPEN_MS - MIN);
+  assert.equal(TILL_SALE_OPEN_MS, 12 * HOUR);
+  // the review: an hour on the pay screen, and it can still be confirmed
+  nowIs(NOW + HOUR);
   await lair.tillSalesUpkeep(Date.now());
   assert.equal(saleRow(sale.id).status, 'open');
-  nowIs(NOW + TILL_SALE_OPEN_MS + MIN);
+  const hemi = await onTill(HEMI);
+  ok(await paid({ sale: sale.id, token: hemi, expect: 1100 }));
+  assert.equal(saleRow(sale.id).status, 'paid');
+  // one left overnight goes
+  const left = ok(await pay({ method: 'card', lines: [{ variantId: '5013', qty: 2 }] })).sale;
+  nowIs(NOW + HOUR + TILL_SALE_OPEN_MS - MIN);
+  await lair.tillSalesUpkeep(Date.now());
+  assert.equal(saleRow(left.id).status, 'open');
+  nowIs(NOW + HOUR + TILL_SALE_OPEN_MS + MIN);
   const run = await lair.tillSalesUpkeep(Date.now());
   assert.equal(run.letGo, 1);
   await settle();
-  assert.equal(saleRow(sale.id).status, 'gone');
-  assert.deepEqual(shop.deleted, [shop.drafts[0].id]);
+  assert.equal(saleRow(left.id).status, 'gone');
+  assert.deepEqual(shop.deleted, [shop.drafts[1].id]);
+});
+
+test('round 32 part 3: a booking paid another way while its sale waited: confirming it saves nothing and says so', async () => {
+  const table = await miasTable();
+  const { sale } = ok(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }, { variantId: '5013', qty: 1 }] }));
+  // meanwhile it's paid at the counter tile (a POS sale with its _booking line)
+  ok(await internal('orders-paid', { id: 7001, admin_graphql_api_id: 'gid://shopify/Order/7001', name: '#7001', source_name: 'pos', line_items: [customLine(70011, `Table fee: ${table.ref}`, table.amount, { _booking: table.ref })] }));
+  assert.equal(bookingRow(table.id).paid, 1);
+  const hemi = await onTill(HEMI);
+  said(await paid({ sale: sale.id, token: hemi, expect: sale.total }), 409, S.paidElsewhere(table.ref));
+  assert.equal(saleRow(sale.id).status, 'open');
+  assert.deepEqual(shop.completed, []);
+  // and on another till: one paid sale has it, so the other can't take it too
+  const second = ok(await call('POST', 'bookings', { kind: 'table', tables: ['T2'], start: at(DAY, 18), end: at(DAY, 20), people: 2, name: 'Mia', email: 'mia@example.com', phone: '021 555 0100', pay: 'day' }, MIA)).booking;
+  const a = ok(await call('POST', 'till/pay', { till: 'till-a-0001', method: 'card', person: MIA, lines: [{ booking: second.ref }] }, OWNER)).sale;
+  const b = ok(await call('POST', 'till/pay', { till: 'till-b-0002', method: 'card', person: MIA, lines: [{ booking: second.ref }] }, OWNER)).sale;
+  shop.completeFails = 1;
+  ok(await paid({ sale: a.id, token: hemi, expect: a.total }));
+  assert.equal(saleRow(a.id).order_status, 'failed');
+  said(await paid({ sale: b.id, token: hemi, expect: b.total }), 409, S.paidElsewhere(second.ref));
+});
+
+test('round 32 part 3: their tab paid another way while its sale waited: confirming it saves nothing', async () => {
+  const tab = ok(await call('POST', 'tab', { items: [{ variantId: '5015', title: 'Drinks', variantTitle: '$3 Drink', price: 300, qty: 1 }] }, MIA)).tab;
+  const { sale } = ok(await pay({ method: 'card', person: MIA, lines: [{ tab: tab.id }] }));
+  lair.sql.exec("UPDATE tabs SET status = 'paid' WHERE id = ?", tab.id);
+  const hemi = await onTill(HEMI);
+  said(await paid({ sale: sale.id, token: hemi, expect: sale.total }), 409, S.paidElsewhere('Their tab'));
+});
+
+test('round 32 part 3: Shopify down after a pass covered the booking at check-in: paying again leaves it out, not a 409', async () => {
+  const table = await miasTable();
+  const pass = ok(await call('POST', 'passes', { customerId: MIA, sessions: 5, label: '5 sessions' }, OWNER)).pass;
+  lair.sql.exec('UPDATE bookings SET pass_id = ? WHERE id = ?', pass.id, table.id);
+  shop.down = true;
+  said(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }, { variantId: '5013', qty: 1 }] }), 503, S.shopify);
+  shop.down = false;
+  const res = ok(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }, { variantId: '5013', qty: 1 }] }));
+  assert.deepEqual(res.dropped, [table.ref]);
+  assert.equal(res.sale.total, 1100);
 });
 
 /* ---------------- passes and tabs ---------------- */
@@ -508,7 +564,7 @@ test('round 32 part 3: a saved pass covers the table at check-in, so the sale is
   const res = ok(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }] }));
   // the pass paid it all: nothing to take, and no draft
   assert.equal(res.sale, null);
-  assert.deepEqual(res.covered, [table.ref]);
+  assert.deepEqual(res.dropped, [table.ref]);
   assert.equal(shop.drafts.length, 0);
   assert.equal(bookingRow(table.id).status, 'seated');
 });
@@ -551,7 +607,7 @@ test('round 32 part 3: Shopify slow once the money is taken: the sale is paid, a
   assert.equal(done.order, null);
   assert.equal(saleRow(sale.id).order_status, 'failed');
   // the till won't take it again meanwhile
-  said(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }] }), 409, S.nothingDue(table.ref));
+  assert.deepEqual(ok(await pay({ method: 'card', person: MIA, lines: [{ booking: table.ref }] })), { sale: null, dropped: [table.ref], notices: [] });
   // 10 minutes on, the run makes it
   nowIs(NOW + 11 * MIN);
   await lair.tillSalesUpkeep(Date.now());
@@ -590,6 +646,40 @@ test('round 32 part 3: an order that comes to a different total than was taken: 
   shop.orderTotal = 1000;
   ok(await paid({ sale: sale.id, token: hemi, expect: 1100 }));
   assert.deepEqual(lair.alerts, ["A till sale that doesn't match: A quick sale"]);
+});
+
+test('round 32 part 3: fulfilling keeps waiting for the new permissions (never giving up after a day); other failures stop and staff hear', async () => {
+  const { sale } = ok(await pay({ method: 'card', lines: [{ variantId: '5013', qty: 1 }] }));
+  const hemi = await onTill(HEMI);
+  shop.fulfilDenied = true;
+  ok(await paid({ sale: sale.id, token: hemi, expect: 1100 }));
+  await settle();
+  // ten tries over two and a half days, still waiting
+  for (let i = 1; i <= 10; i += 1) {
+    nowIs(NOW + i * 6 * HOUR + MIN);
+    await lair.tillSalesUpkeep(Date.now());
+  }
+  assert.equal(saleRow(sale.id).fulfil_status, 'failed');
+  assert.deepEqual(lair.alerts, []);
+  // something else goes wrong each time: after the waits, it stops, and staff hear once
+  const other = ok(await pay({ till: 'counter-tablet-9', method: 'card', lines: [{ variantId: '5013', qty: 2 }] })).sale;
+  const first = saleRow(sale.id).order_id;
+  lair.shopify.fulfilTillOrder = async (orderId) => {
+    if (orderId === first) throw new Error('Shopify API: Access denied for fulfillmentOrders field.');
+    throw new Error('Shopify API error 500');
+  };
+  // (Hemi's till ran out meanwhile: he unlocks again with his own PIN)
+  const again = ok(await call('POST', 'till/unlock', { id: HEMI, pin: '2580' }, OWNER)).token;
+  ok(await paid({ sale: other.id, token: again, expect: 2200 }));
+  await settle();
+  for (let i = 1; i <= 12; i += 1) {
+    nowIs(Date.now() + 2 * DAY_MS);
+    await lair.tillSalesUpkeep(Date.now());
+  }
+  assert.equal(saleRow(other.id).fulfil_status, 'stopped');
+  assert.deepEqual(lair.alerts, ['A till sale to mark fulfilled by hand: A quick sale']);
+  // still refused for want of the permissions after 14 days: left for staff, quietly (the scopes show on the status page)
+  assert.equal(saleRow(sale.id).fulfil_status, 'stopped');
 });
 
 test('round 32 part 3: fulfilling waits for the new Shopify permissions, then goes', async () => {
