@@ -239,6 +239,14 @@ async function giftCard(size) {
   await settle(page);
   await axe(page, `${size} gift card`, 'main');
   await shot(page, `${size}-gift-card`, null, true);
+  // (going live before the gifts page) with no gifts page in the shop, the crumb skips it rather than leading nowhere
+  const giftsPage = m.pages.gifts;
+  delete m.pages.gifts;
+  await go(page, BASE, '/products/dice-goblin-gift-card', null);
+  await settle(page);
+  const crumb = await page.$$eval('.breadcrumbs li', (els) => els.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
+  m.pages.gifts = giftsPage;
+  check(`${size} gift card: with no gifts page yet, the crumb is Home › Dice Goblin gift card`, crumb.join(' › ') === 'Home › Dice Goblin gift card', crumb);
   check(`${size} gift card: no errors`, !page.errors.length, page.errors);
   await ctx.close();
 }
