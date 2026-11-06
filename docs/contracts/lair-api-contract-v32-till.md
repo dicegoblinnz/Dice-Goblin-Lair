@@ -55,9 +55,11 @@ A person, as every till route gives them (`tillPersonView`):
   choose it. Anything else is a 403 `Choose your own PIN first.` The Lair checks this, not just the till's page.
 - **Forgot your PIN (owners):** never a reset on the logged-in account alone, because the counter tablet's account is
   open to anyone at the counter. Instead the owner gets a 6-digit code at their own email (their member record's, else
-  Shopify's). The code is kept as an HMAC like a PIN, works once, for 15 minutes and 5 wrong tries; a new one replaces
-  the last, at most one a minute. The right code puts them on the till to choose a new PIN, with any lock-out cleared.
-  Helpers and the till's own people ask the owner to reset theirs.
+  Shopify's). The code is kept as an HMAC like a PIN and works once, for 15 minutes; a new one replaces the last, at most
+  one a minute and 10 a day. Five wrong codes in a row, across new codes, lock that owner's codes like PINs (5 minutes,
+  doubling to an hour). The right code gives a till for 15 minutes that can only choose a new PIN: the old PIN stays until
+  the new one is saved, so walking away halfway never leaves them on 1234, and choosing turns it into an ordinary till
+  for a shift. Helpers and the till's own people ask the owner to reset theirs.
 
 ## 3. Routes
 
@@ -70,8 +72,8 @@ All need a logged-in staff account (the owner or a helper; the till tablet is lo
 | `POST /proxy/till/unlock` | staff | `{ id, pin }` → `{ token, staff: person, mustChange }`. `mustChange` is true while they're on 1234: the till asks them to choose their own before anything else. Wrong PIN: 401 `That PIN isn't right. Try again.` The fifth in a row, and any try while locked out: 429 `Too many wrong PINs. Try again in 5 minutes, or ask Mo to reset it.` Switched off: 403. Not on the till: 404 |
 | `POST /proxy/till/pin` | on the till | `{ token, pin }`: whoever the token is for chooses their own PIN → `{ ok: true, staff: person }`. 4 numbers (400 `A PIN is 4 numbers.`), not 1234 (400 `Choose a PIN that isn't 1234.`). A token that ran out or was stopped: 401 `The till locked itself. Tap your name and your PIN again.` |
 | `POST /proxy/till/reset` | the owner on the till | `{ token, id }`: that person goes back on 1234 (they choose their own the next time they unlock), any lock-out is cleared, and their other tills lock → `{ team }`. The owner's own till stays open when they reset their own PIN with it (then it can only choose a new one). No token: 401 |
-| `POST /proxy/till/forgot` | staff | `{ id }` of an owner: emails them a 6-digit code → `{ sent: true, to: 'o•••@example.com' }`. Not an owner: 403 `Only an owner's PIN is reset by email. Ask Mo to reset yours on the till.` Asked again within a minute: 429. No email set up or no address: 503. The email didn't go: 502 (ask again straight away) |
-| `POST /proxy/till/forgot/check` | staff | `{ id, code }` (spaces ignored) → `{ token, staff: person, mustChange: true }`: that owner is on the till, choosing a new PIN; their other tills lock. Wrong: 401 `That code isn't right. Check the email and try again.`; the fifth wrong: 429, and the code is gone; ran out: 410; none waiting (used, replaced, never asked): 400 |
+| `POST /proxy/till/forgot` | staff | `{ id }` of an owner: emails them a 6-digit code → `{ sent: true, to: 'o•••@example.com' }`; asked again within a minute of one going → `{ sent: false, to }` (type that one). Not an owner: 403 `Only an owner's PIN is reset by email. Ask Mo to reset yours on the till.` Locked by wrong codes: 429 `Too many wrong codes. Try again in 5 minutes.` The 11th in a day: 429 `That's 10 codes today. Try again tomorrow.` No email set up or no address: 503. The email didn't go: 502 (ask again straight away; it doesn't count) |
+| `POST /proxy/till/forgot/check` | staff | `{ id, code }` (spaces ignored) → `{ token, staff: person, mustChange: true }`: a till for that owner for 15 minutes that can only choose a new PIN (anything else 403 `Choose your own PIN first.`); their other tills lock. Wrong: 401 `That code isn't right. Check the email and try again.`; the fifth wrong in a row, across new codes: 429, the code is gone and codes are locked; ran out: 410; none waiting (used, replaced, never asked): 400 |
 | `POST /proxy/till/access` | the owner on the till | `{ token, id, off }`: till access off (their tills lock; unlocking gives 403 `Your till access is switched off. Ask Mo to turn it back on.`) or back on (their own PIN still works) → `{ team }`. Not your own (400) |
 | `POST /proxy/till/people` | the owner on the till | `{ token, name, perms? }` adds someone on the till, on 1234; `{ token, id, name?, perms? }` changes someone added on the till → `{ team, person }`. `name`: 1 to 30 characters, spaces tidied, no `<` or `>` (400), not the name or first name of anyone on the till already, any case (409 `There's already a Caleb on the till.`). `perms`: a list, `checkin` and `money` kept, anything else dropped. Helpers are changed on the Team tab (404 here) |
 | `POST /proxy/till/people/remove` | the owner on the till | `{ token, id }`: someone added on the till is taken off it; their PIN goes and their tills lock → `{ team }`. Only people added on the till (404 for the team) |
@@ -87,9 +89,11 @@ Three tables, made on start when they're missing:
   `active` or `removed`; `made_by` `start` (Caleb and Felix) or `till:<owner's ID>`.
 - `till_pins (person_id, hash, salt, must_change, failed, lockouts, locked_until, off, updated_at)`: one row a person,
   once anything about their PIN changed.
-- `till_sessions (token_hash, person_id, created_at, expires_at)`: the SHA-256 of each token. Ones that ran out are
-  cleared on the next unlock.
-- `till_resets (person_id, hash, salt, expires_at, tries, sent_at)`: an owner's emailed code, while one is waiting.
+- `till_sessions (token_hash, person_id, created_at, expires_at, pin_only)`: the SHA-256 of each token; `pin_only` 1 for a
+  till from an emailed code until its PIN is chosen. Ones that ran out are cleared on the next unlock.
+- `till_resets (person_id, hash, salt, expires_at, sent_at, failed, lockouts, locked_until, day_start, day_count)`: an
+  owner's emailed code (hash null when none is waiting), wrong codes in a row and the lock-outs they caused, and the
+  day's codes. Gone after a right code.
 
 The meta row `till-seeded` says Caleb and Felix were added (once).
 

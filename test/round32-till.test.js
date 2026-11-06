@@ -298,14 +298,15 @@ test('round 32: an owner who forgot their PIN gets a code by email, asked for fr
   said(await tillPost('reset', { id: OWNER }, OWNER), 401, W.expired);
   // the code goes to the owner's own email, wherever it was asked for
   const asked = ok(await tillPost('forgot', { id: OWNER }, HEMI));
-  assert.equal(asked.to, 'o•••@example.com');
+  assert.deepEqual(asked, { sent: true, to: 'o•••@example.com' });
   assert.equal(letters.length, 1);
   assert.equal(letters[0].to, 'owner@example.com');
   const code = codeIn(letters[0]);
   assert.match(code, /^\d{6}$/);
-  // one a minute
-  said(await tillPost('forgot', { id: OWNER }, HEMI), 429, W.codeWait);
-  // a wrong code, then the right one: on the till as Mo, choosing a new PIN
+  // asked again within the minute: type the one already sent
+  assert.deepEqual(ok(await tillPost('forgot', { id: OWNER }, HEMI)), { sent: false, to: 'o•••@example.com' });
+  assert.equal(letters.length, 1);
+  // a wrong code, then the right one (spaces are fine): on the till as Mo, to choose a new PIN
   said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(code) }, HEMI), 401, W.codeWrong);
   const back = ok(await tillPost('forgot/check', { id: OWNER, code: ` ${code.slice(0, 3)} ${code.slice(3)} ` }, HEMI));
   assert.equal(back.mustChange, true);
@@ -314,41 +315,86 @@ test('round 32: an owner who forgot their PIN gets a code by email, asked for fr
   // a code works once, and is never kept as sent
   said(await tillPost('forgot/check', { id: OWNER, code }, HEMI), 400, W.codeNone);
   assert.ok(!allTillText().includes(code), 'a code as sent is in a till table');
-  // the old PIN and lock-out are gone; the new PIN is his own
+  // that till can only choose a PIN
+  said(await tillPost('reset', { token: back.token, id: await idOf('Caleb') }), 403, W.chooseFirst);
   ok(await choose(back.token, '3579'));
+  // now it's an ordinary till: the Team screen works, the old PIN doesn't, the new one does, and the lock-out is gone
+  ok(await tillPost('reset', { token: back.token, id: await idOf('Caleb') }));
   said(await unlock(OWNER, '2046'), 401, W.wrong);
   assert.equal(ok(await unlock(OWNER, '3579')).mustChange, false);
 });
 
-test('round 32: a PIN code runs out after 15 minutes or 5 wrong tries, a new one replaces it, and only owners get one', async () => {
+test('round 32: a right code never leaves the owner on 1234: the old PIN stays until the new one is chosen, for 15 minutes', async () => {
+  await ownerOn('2046');
   ok(await tillPost('forgot', { id: OWNER }));
-  const first = codeIn(letters[0]);
-  nowIs(NOW + 15 * MIN + 1000);
-  said(await tillPost('forgot/check', { id: OWNER, code: first }), 410, W.codeOld);
-  said(await tillPost('forgot/check', { id: OWNER, code: first }), 400, W.codeNone);
-  // a new code replaces the last
+  const back = ok(await tillPost('forgot/check', { id: OWNER, code: codeIn(letters[0]) }));
+  // walked away before choosing: nobody gets on as Mo with 1234, and the PIN he had still works
+  said(await unlock(OWNER, '1234'), 401, W.wrong);
+  assert.equal(ok(await unlock(OWNER, '2046')).mustChange, false);
+  // the code's till is gone once Mo unlocked again (his other tills lock) or after 15 minutes
+  nowIs(NOW + 16 * MIN);
+  said(await choose(back.token, '3579'), 401, W.expired);
+  // a fresh code, then choosing within the 15 minutes
   ok(await tillPost('forgot', { id: OWNER }));
-  const second = codeIn(letters[1]);
-  nowIs(NOW + 17 * MIN);
+  const again = ok(await tillPost('forgot/check', { id: OWNER, code: codeIn(letters[1]) }));
+  nowIs(NOW + 30 * MIN);
+  ok(await choose(again.token, '3579'));
+  // and then it's a full shift's till
+  nowIs(NOW + 10 * HOUR);
+  ok(await tillPost('reset', { token: again.token, id: await idOf('Felix') }));
+  said(await unlock(OWNER, '2046'), 401, W.wrong);
+});
+
+test('round 32: wrong codes add up across new codes and lock like PINs; 10 codes a day; owners only', async () => {
   ok(await tillPost('forgot', { id: OWNER }));
-  const third = codeIn(letters[2]);
-  // the last code is the one that works (the one before counts as a wrong try, unless they happen to match)
-  const tried = second !== third ? 1 : 0;
-  if (tried) said(await tillPost('forgot/check', { id: OWNER, code: second }), 401, W.codeWrong);
-  for (let i = tried; i < 4; i += 1) said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(third) }), 401, W.codeWrong);
-  said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(third) }), 429, W.codeTries);
-  said(await tillPost('forgot/check', { id: OWNER, code: third }), 400, W.codeNone);
+  let code = codeIn(letters.at(-1));
+  for (let i = 0; i < 4; i += 1) said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(code) }), 401, W.codeWrong);
+  // a new code doesn't start the count again
+  nowIs(NOW + 2 * MIN);
+  ok(await tillPost('forgot', { id: OWNER }));
+  code = codeIn(letters.at(-1));
+  said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(code) }), 429, W.codeLocked(5));
+  // locked: the right code waits too, and so does a new one; the code is gone
+  said(await tillPost('forgot/check', { id: OWNER, code }), 429, W.codeLocked(5));
+  said(await tillPost('forgot', { id: OWNER }), 429, W.codeLocked(5));
+  nowIs(NOW + 8 * MIN);
+  said(await tillPost('forgot/check', { id: OWNER, code }), 400, W.codeNone);
+  // five more wrong: 10 minutes this time
+  ok(await tillPost('forgot', { id: OWNER }));
+  code = codeIn(letters.at(-1));
+  for (let i = 0; i < 4; i += 1) said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(code) }), 401, W.codeWrong);
+  said(await tillPost('forgot/check', { id: OWNER, code: wrongOf(code) }), 429, W.codeLocked(10));
+  // a code that ran out
+  nowIs(NOW + 20 * MIN);
+  ok(await tillPost('forgot', { id: OWNER }));
+  code = codeIn(letters.at(-1));
+  nowIs(NOW + 36 * MIN);
+  said(await tillPost('forgot/check', { id: OWNER, code }), 410, W.codeOld);
+  said(await tillPost('forgot/check', { id: OWNER, code }), 400, W.codeNone);
+  // 10 codes in a day, then none till the day's up (4 sent so far)
+  let at = NOW + 40 * MIN;
+  for (let i = 0; i < 6; i += 1) {
+    nowIs(at);
+    ok(await tillPost('forgot', { id: OWNER }));
+    at += 2 * MIN;
+  }
+  nowIs(at);
+  said(await tillPost('forgot', { id: OWNER }), 429, W.codeDay);
+  nowIs(NOW + 24 * HOUR + MIN);
+  ok(await tillPost('forgot', { id: OWNER }));
   // helpers and the till's own people ask Mo instead
   said(await tillPost('forgot', { id: HEMI }, HEMI), 403, W.codeOwners);
   said(await tillPost('forgot', { id: await idOf('Caleb') }), 403, W.codeOwners);
   said(await tillPost('forgot', { id: MIA }), 404, W.notOnTill);
-  // an email that didn't go can be asked for again straight away
-  nowIs(NOW + 30 * MIN);
+});
+
+test("round 32: an emailed code that didn't send can be asked for again at once; with no email set up, it says so", async () => {
   mailWorks = false;
   said(await tillPost('forgot', { id: OWNER }), 502, W.codeFailed);
   mailWorks = true;
-  ok(await tillPost('forgot', { id: OWNER }));
-  // with email not set up, it says so, and nothing is sent
+  const asked = ok(await tillPost('forgot', { id: OWNER }));
+  assert.equal(asked.sent, true);
+  ok(await tillPost('forgot/check', { id: OWNER, code: codeIn(letters.at(-1)) }));
   boot(ctx, { CURRENCY: 'NZD' });
   const sent = letters.length;
   nowIs(NOW + 40 * MIN);

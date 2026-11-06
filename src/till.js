@@ -20,8 +20,10 @@
 //  - The owner, on the till, resets anyone's PIN (back to the starting one, to choose again), switches someone's till
 //    access off and on, and adds, changes and removes the till's own people.
 //  - An owner who forgot their PIN gets a 6-digit code by email (Forgot your PIN?, from any staff account), which puts
-//    them on the till to choose a new one. Never a reset on the logged-in account alone: the counter tablet's account is
-//    open to anyone at the counter (the review, 6 Nov 2026).
+//    them on the till for 15 minutes to choose a new one; their old PIN stays until they do, so walking away halfway never
+//    leaves them on 1234. Never a reset on the logged-in account alone: the counter tablet's account is open to anyone at
+//    the counter. Wrong codes add up across new codes and lock like PINs, and 10 codes a day at most (the reviews, 6 Nov
+//    2026).
 import { RuleError, STAFF_PERMS, cleanPerms, makeId } from './core.js';
 import { emailReady } from './shopify.js';
 
@@ -39,10 +41,13 @@ export const TILL_PERMS = ['checkin', 'money'];
 export const TILL_DEFAULT_PERMS = ['checkin'];
 /** Mo (6 Nov 2026): Caleb and Felix are on the till too. Added once, on the first start, unless they're helpers already. */
 export const TILL_FIRST_PEOPLE = ['Caleb', 'Felix'];
-/** An owner's code by email: 6 numbers, good for 15 minutes and 5 tries, one a minute */
+/** An owner's code by email: 6 numbers, good for 15 minutes, a new one at most once a minute and 10 a day; 5 wrong codes
+ *  in a row (across new codes) lock that owner's codes like PINs: 5 minutes, doubling to an hour */
 export const TILL_CODE_MS = 15 * 60 * 1000;
 export const TILL_CODE_GAP_MS = 60 * 1000;
 export const TILL_CODE_TRIES = 5;
+export const TILL_CODE_DAY = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** How long the list of staff tagged in Shopify is kept before it's asked for again */
 const TILL_OWNERS_MS = 10 * 60 * 1000;
 /** The HMAC key's name in the Durable Object's key-value storage */
@@ -56,8 +61,10 @@ const TILL_KEY = 'till-pin-key';
  *    must_change (1 = they're asked to choose their own), failed (wrong PINs in a row), lockouts (how many times they were
  *    locked out since their last right PIN), locked_until (ms), off (1 = their till access is switched off), updated_at.
  *    person_id is a Shopify customer ID for the team, or a till_people id.
- *  - till_sessions: the SHA-256 of each unlock's token, whose it is, and when it stops working.
- *  - till_resets: an owner's emailed code (HMAC and salt, as PINs), when it runs out, wrong tries, and when it was sent.
+ *  - till_sessions: the SHA-256 of each unlock's token, whose it is, when it stops working, and pin_only (1 = from an
+ *    emailed code: it can only choose a PIN until it has).
+ *  - till_resets: an owner's emailed code (HMAC and salt, as PINs; null when none is waiting), when it runs out and was
+ *    sent, wrong codes in a row and the lock-outs they caused, and how many codes went in the current day.
  */
 export const TILL_TABLES = [
   `CREATE TABLE IF NOT EXISTS till_people (
@@ -67,11 +74,13 @@ export const TILL_TABLES = [
     person_id TEXT PRIMARY KEY, hash TEXT, salt TEXT, must_change INTEGER NOT NULL DEFAULT 1, failed INTEGER NOT NULL DEFAULT 0,
     lockouts INTEGER NOT NULL DEFAULT 0, locked_until INTEGER, off INTEGER NOT NULL DEFAULT 0, updated_at INTEGER)`,
   `CREATE TABLE IF NOT EXISTS till_sessions (
-    token_hash TEXT PRIMARY KEY, person_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)`,
+    token_hash TEXT PRIMARY KEY, person_id TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+    pin_only INTEGER NOT NULL DEFAULT 0)`,
   'CREATE INDEX IF NOT EXISTS till_sessions_person ON till_sessions (person_id)',
   `CREATE TABLE IF NOT EXISTS till_resets (
-    person_id TEXT PRIMARY KEY, hash TEXT NOT NULL, salt TEXT NOT NULL, expires_at INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0,
-    sent_at INTEGER NOT NULL)`,
+    person_id TEXT PRIMARY KEY, hash TEXT, salt TEXT, expires_at INTEGER, sent_at INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0, lockouts INTEGER NOT NULL DEFAULT 0, locked_until INTEGER,
+    day_start INTEGER NOT NULL DEFAULT 0, day_count INTEGER NOT NULL DEFAULT 0)`,
 ];
 
 /** The till's words, for staff: plain NZ English */
@@ -93,12 +102,12 @@ export const TILL_WORDS = {
   chooseFirst: 'Choose your own PIN first.',
   codeOwners: "Only an owner's PIN is reset by email. Ask Mo to reset yours on the till.",
   codeNoEmail: "The Lair can't email a code right now, so this PIN can't be reset here.",
-  codeWait: 'A code was just sent. Check your email, or ask again in a minute.',
   codeFailed: "The email didn't send. Try again in a minute.",
   codeNone: 'There is no code waiting. Tap Forgot your PIN? to get one.',
   codeOld: 'That code ran out. Ask for a new one.',
   codeWrong: "That code isn't right. Check the email and try again.",
-  codeTries: 'Too many wrong codes. Ask for a new one.',
+  codeLocked: (minutes) => `Too many wrong codes. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+  codeDay: "That's 10 codes today. Try again tomorrow.",
 };
 
 const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -287,7 +296,7 @@ export const tillMethods = {
     const row = session && session.expires_at > now ? team.find((x) => x.id === session.person_id) : null;
     const pin = row ? this.tillPinRow(row.id) : null;
     if (!row || pin?.off || (row.since && session.created_at < row.since)) throw new RuleError(TILL_WORDS.expired, 401);
-    if (!start && (!pin?.hash || pin.must_change)) throw new RuleError(TILL_WORDS.chooseFirst, 403);
+    if (!start && (session.pin_only || !pin?.hash || pin.must_change)) throw new RuleError(TILL_WORDS.chooseFirst, 403);
     return row;
   },
 
@@ -373,6 +382,8 @@ export const tillMethods = {
          updated_at = excluded.updated_at`,
       me.id, hash, salt, now,
     );
+    // a till from an emailed code is an ordinary one now, for a full shift
+    this.write('UPDATE till_sessions SET pin_only = 0, expires_at = ? WHERE token_hash = ? AND pin_only = 1', now + TILL_SESSION_MS, tokenHash);
     return { ok: true, staff: this.tillPersonView(me, now) };
   },
 
@@ -409,9 +420,15 @@ export const tillMethods = {
     return this.sql.exec('SELECT * FROM till_resets WHERE person_id = ?', String(id)).toArray()[0] || null;
   },
 
+  /** A lock-out's minutes left, at least 1. */
+  tillMinutes(until, now) {
+    return Math.max(1, Math.ceil((until - now) / 60000));
+  },
+
   /**
    * POST /till/forgot { id } (any staff account): an owner who forgot their PIN gets a 6-digit code at their own email,
-   * good for 15 minutes; a new one replaces the last, one a minute. → { sent: true, to: 'o•••@example.com' }
+   * good for 15 minutes; a new one replaces the last. → { sent: true, to: 'o•••@example.com' }, or { sent: false, to }
+   * when one went less than a minute ago (type that one). 10 a day; none while wrong codes have locked them.
    */
   async tillForgot(body, who) {
     this.tillGate(who);
@@ -425,18 +442,28 @@ export const tillMethods = {
     const shop = tagged.find((c) => String(c?.customerId) === id);
     const email = [member?.email, shop?.email].find((e) => isEmail(e)) || '';
     if (!emailReady(this.env) || !email) throw new RuleError(TILL_WORDS.codeNoEmail, 503);
-    const was = this.tillResetRow(id);
-    if (was && Date.now() - was.sent_at < TILL_CODE_GAP_MS) throw new RuleError(TILL_WORDS.codeWait, 429);
+    const to = maskEmail(email);
+    // whether this ask sends nothing: locked, one just went, or the day's codes are used up (no awaits)
+    const holdOff = (r, now) => {
+      if (r?.locked_until > now) throw new RuleError(TILL_WORDS.codeLocked(this.tillMinutes(r.locked_until, now)), 429);
+      if (r?.hash && r.expires_at > now && now - r.sent_at < TILL_CODE_GAP_MS) return true;
+      if (r && now - r.day_start < DAY_MS && r.day_count >= TILL_CODE_DAY) throw new RuleError(TILL_WORDS.codeDay, 429);
+      return false;
+    };
+    if (holdOff(this.tillResetRow(id), Date.now())) return { sent: false, to };
     const code = tillCode();
     const salt = randomHex(16);
     const hash = await this.tillHash(`reset:${code}`, salt);
     // --- no awaits from here on, until the email (another ask may have come in meanwhile) ---
     const now = Date.now();
-    const again = this.tillResetRow(id);
-    if (again && now - again.sent_at < TILL_CODE_GAP_MS) throw new RuleError(TILL_WORDS.codeWait, 429);
+    const r = this.tillResetRow(id);
+    if (holdOff(r, now)) return { sent: false, to };
+    const newDay = !r || now - r.day_start >= DAY_MS;
     this.write(
-      'INSERT OR REPLACE INTO till_resets (person_id, hash, salt, expires_at, tries, sent_at) VALUES (?, ?, ?, ?, 0, ?)',
-      id, hash, salt, now + TILL_CODE_MS, now,
+      `INSERT INTO till_resets (person_id, hash, salt, expires_at, sent_at, failed, lockouts, locked_until, day_start, day_count) VALUES (?, ?, ?, ?, ?, 0, 0, NULL, ?, ?)
+       ON CONFLICT (person_id) DO UPDATE SET hash = excluded.hash, salt = excluded.salt, expires_at = excluded.expires_at, sent_at = excluded.sent_at,
+         day_start = excluded.day_start, day_count = excluded.day_count`,
+      id, hash, salt, now + TILL_CODE_MS, now, newDay ? now : r.day_start, (newDay ? 0 : r.day_count) + 1,
     );
     const sent = await this.mail(this.letter(email, 'Your code for the till', {
       title: 'Your code for the till',
@@ -447,17 +474,21 @@ export const tillMethods = {
       signoff: 'Gobgob',
     }));
     if (!sent?.ok) {
-      // nothing went: the next ask isn't made to wait
-      this.write('DELETE FROM till_resets WHERE person_id = ? AND sent_at = ?', id, now);
+      // nothing went: no code waiting, and the next ask isn't made to wait or counted
+      this.write(
+        'UPDATE till_resets SET hash = NULL, salt = NULL, expires_at = NULL, sent_at = 0, day_count = MAX(day_count - 1, 0) WHERE person_id = ? AND sent_at = ?',
+        id, now,
+      );
       throw new RuleError(TILL_WORDS.codeFailed, 502);
     }
-    return { sent: true, to: maskEmail(email) };
+    return { sent: true, to };
   },
 
   /**
-   * POST /till/forgot/check { id, code }: the emailed code, typed on the till. Right: that owner is on the till with the
-   * starting PIN cleared away, choosing a new one → { token, staff, mustChange: true } (their other tills lock). Wrong: a
-   * 401, the fifth a 429 and the code is gone; one that ran out a 410; none waiting a 400.
+   * POST /till/forgot/check { id, code }: the emailed code, typed on the till. Right: a till for that owner, for 15 minutes,
+   * that can only choose a new PIN (their old PIN stays until they do; their other tills lock) → { token, staff,
+   * mustChange: true }. Wrong: a 401; the fifth wrong in a row, across new codes, a 429 with the code gone and codes locked
+   * for 5 minutes, doubling to an hour. Ran out: a 410. None waiting: a 400.
    */
   async tillForgotCheck(body, who) {
     this.tillGate(who);
@@ -467,32 +498,41 @@ export const tillMethods = {
     if (!row) throw new RuleError(TILL_WORDS.notOnTill, 404);
     if (row.role !== 'owner') throw new RuleError(TILL_WORDS.codeOwners, 403);
     const before = this.tillResetRow(id);
-    if (!before) throw new RuleError(TILL_WORDS.codeNone, 400);
+    const start = Date.now();
+    if (before?.locked_until > start) throw new RuleError(TILL_WORDS.codeLocked(this.tillMinutes(before.locked_until, start)), 429);
+    if (!before?.hash) throw new RuleError(TILL_WORDS.codeNone, 400);
     const right = /^\d{6}$/.test(code) && sameText(await this.tillHash(`reset:${code}`, before.salt), before.hash);
     const token = randomHex(24);
     const tokenHash = await this.tillTokenHash(token);
-    // --- no awaits from here on (the code is read again: it may have been used or replaced meanwhile) ---
+    // --- no awaits from here on (the code is read again: it may have been used, replaced or locked meanwhile) ---
     const now = Date.now();
     const r = this.tillResetRow(id);
-    if (!r || r.hash !== before.hash) throw new RuleError(TILL_WORDS.codeNone, 400);
+    if (r?.locked_until > now) throw new RuleError(TILL_WORDS.codeLocked(this.tillMinutes(r.locked_until, now)), 429);
+    if (!r?.hash || r.hash !== before.hash) throw new RuleError(TILL_WORDS.codeNone, 400);
     if (r.expires_at <= now) {
-      this.write('DELETE FROM till_resets WHERE person_id = ?', id);
+      this.write('UPDATE till_resets SET hash = NULL, salt = NULL, expires_at = NULL WHERE person_id = ?', id);
       throw new RuleError(TILL_WORDS.codeOld, 410);
     }
     if (this.tillPinRow(id)?.off) throw new RuleError(TILL_WORDS.off, 403);
     if (!right) {
-      const tries = (r.tries || 0) + 1;
-      if (tries >= TILL_CODE_TRIES) {
-        this.write('DELETE FROM till_resets WHERE person_id = ?', id);
-        throw new RuleError(TILL_WORDS.codeTries, 429);
+      const failed = (r.failed || 0) + 1;
+      if (failed >= TILL_CODE_TRIES) {
+        const lock = tillLockMs(r.lockouts || 0);
+        this.write(
+          'UPDATE till_resets SET hash = NULL, salt = NULL, expires_at = NULL, failed = 0, lockouts = lockouts + 1, locked_until = ? WHERE person_id = ?',
+          now + lock, id,
+        );
+        throw new RuleError(TILL_WORDS.codeLocked(Math.round(lock / 60000)), 429);
       }
-      this.write('UPDATE till_resets SET tries = ? WHERE person_id = ?', tries, id);
+      this.write('UPDATE till_resets SET failed = ? WHERE person_id = ?', failed, id);
       throw new RuleError(TILL_WORDS.codeWrong, 401);
     }
     this.write('DELETE FROM till_resets WHERE person_id = ?', id);
-    this.tillClearPin(id, now);
     this.write('DELETE FROM till_sessions WHERE person_id = ?', id);
-    this.write('INSERT INTO till_sessions (token_hash, person_id, created_at, expires_at) VALUES (?, ?, ?, ?)', tokenHash, id, now, now + TILL_SESSION_MS);
+    this.write(
+      'INSERT INTO till_sessions (token_hash, person_id, created_at, expires_at, pin_only) VALUES (?, ?, ?, ?, 1)',
+      tokenHash, id, now, now + TILL_CODE_MS,
+    );
     return { token, staff: this.tillPersonView(row, now), mustChange: true };
   },
 
