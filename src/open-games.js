@@ -240,7 +240,7 @@ export const openGameMethods = {
   },
 
   /**
-   * GET /open-games (?occurrence=<id> for one night): { choices, dates }. dates: the next four weeks' game nights (at most
+   * GET /open-games (?occurrence=<id> for one night): { choices, dates, discord }. dates: the next four weeks' game nights (at most
    * eight) with game tables, each { occurrenceId, title, start, end, spots: { total, free }, games }, games being its
    * listed games still looking (and, to its two players, one that's on). choices: the games and sizes a listing can be.
    */
@@ -276,6 +276,8 @@ export const openGameMethods = {
     return {
       choices: OPEN_GAME_LIST.map((g) => ({ key: g.key, name: g.name, sizes: g.sizes.map((s) => ({ key: s, name: OPEN_GAME_SIZES[s] })) })),
       dates,
+      // whether listed games go to Discord (its webhook is set), so the website only says so when they do
+      discord: Boolean(this.openGameHook()),
     };
   },
 
@@ -408,7 +410,10 @@ export const openGameMethods = {
       people: GAME_SIZES[2],
       details: [['Game', this.openGameLine(row)], ['Opponent', "Gobgob's finding you one"]],
       fee: null,
-      note: "Your game's on our website for members, and on our Discord without your name. When someone joins, you both get an email.",
+      // Discord only while its webhook is set (openGameHook), so the email never promises a post that can't happen
+      note: this.openGameHook()
+        ? "Your game's on our website for members, and on our Discord without your name. When someone joins, you both get an email."
+        : "Your game's on our website for members. When someone joins, you both get an email.",
     };
   },
 

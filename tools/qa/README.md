@@ -264,8 +264,8 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   "Looking for a game"; Reserve with Find me one (game, size, new players; List my game; Game listed, 1 v 1); logged
   out "A player" and Log in to join; Mia joins Ruby's game from the list; in My Lair each sees the other by first name
   only (no last name or email); Mia drops out (it asks first) and the game is listed again. Axe, no sideways scroll, no
-  console errors (52 checks). `DG_THEME=… [PORT=4995] [AXE=…] [OUT=…] node tools/qa/round31/open-games.mjs [phone|desktop]`.
+  console errors (54 checks). `DG_THEME=… [PORT=4995] [AXE=…] [OUT=…] node tools/qa/round31/open-games.mjs [phone|desktop]`.
 - `round31/hobby.mjs`: the hobby page (`/pages/warhammer`): Every Thursday's next night (free pairs, who's looking, Book
   a game table), Looking for a game (first names to members, "A player" logged out, the filter, Join and Post a game
   opening the calendar's sheets; logged out, Log in to join comes straight back to that game's join sheet), and Learn
-  to paint's next date (40 checks). `DG_THEME=… [PORT=4996] [AXE=…] [OUT=…] node tools/qa/round31/hobby.mjs [phone|desktop]`.
+  to paint's next date (42 checks). `DG_THEME=… [PORT=4996] [AXE=…] [OUT=…] node tools/qa/round31/hobby.mjs [phone|desktop]`.

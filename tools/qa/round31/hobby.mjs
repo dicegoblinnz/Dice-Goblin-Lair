@@ -114,6 +114,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   const join = await page.getAttribute('[data-wt-list] a.button--ruby', 'href');
   check(`${size}: Join goes to the calendar's join sheet for that game`, join === `/pages/events-calendar?game=${encodeURIComponent(listed)}#event=${encodeURIComponent(id)}`, join);
   check(`${size}: each night has Post a game`, (await page.locator('.wt__post').count()) >= 3);
+  check(`${size}: a night nobody's posted for says Post the first game for others to join (no Discord without its webhook)`, /Nobody’s looking yet\. Post the first game for others to join\./.test(list) && !/Discord/.test(list), list.slice(0, 400));
   check(`${size}: no note for a member`, await page.locator('[data-wt-note]').isHidden());
   await page.check('[data-wt-filters] input[value="kill-team"]');
   check(`${size}: the filter: nobody's looking for Kill Team`, /Nobody’s looking for that game yet/.test(flat(await page.innerText('[data-wt-list]'))) && !/Ruby/.test(flat(await page.innerText('[data-wt-list]'))));

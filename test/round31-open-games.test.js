@@ -546,3 +546,22 @@ test('open games (round 31, second review): the booker paid for both ahead and t
   assert.match(words(staff[0]), /\$10\b/);
   assert.doesNotMatch(words(staff[0]), /Kiri Smith had paid/, "it's Sam's money, not Kiri's");
 });
+
+test('open games (round 31, after going live): the list and the booker\'s confirmation mention Discord only while its webhook is set', async () => {
+  await members();
+  let mail = capture({ discord: false });
+  assert.equal((await openGames('')).data.discord, false, 'no webhook: no Discord');
+  await list();
+  await settle();
+  const without = mail.sent.find((m) => m.to === 'sam@example.com');
+  assert.ok(without, "Sam's confirmation");
+  assert.doesNotMatch(words(without), /Discord/);
+  assert.match(words(without), /on our website for members/);
+  // with the webhook set: the list says so, and so does the next confirmation
+  mail = capture({ discord: true });
+  assert.equal((await openGames('')).data.discord, true);
+  await list({ name: 'Tama Rewiti', email: 'tama@example.com', spot: 'T12+T13' }, TAMA);
+  await settle();
+  const withHook = mail.sent.find((m) => m.to === 'tama@example.com');
+  assert.match(words(withHook), /on our Discord without your name/);
+});

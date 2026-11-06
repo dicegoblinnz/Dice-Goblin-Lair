@@ -135,6 +135,9 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   check(`${size}: Find me one: no player box, the game and size instead, and List my game`, find.players && !find.looking && /^List my game · \$10 on your tab/.test(find.button), find);
   check(`${size}: six games to pick from`, JSON.stringify(find.games) === JSON.stringify(['Warhammer 40,000', 'Age of Sigmar', 'Kill Team', 'The Old World', 'Bolt Action', 'Something else']), find.games);
   check(`${size}: 40k's sizes, Not fussed picked`, JSON.stringify(find.sizes) === JSON.stringify([['Combat Patrol', false], ['1,000 points', false], ['2,000 points', false], ['Not fussed', true]]), find.sizes);
+  // the demo posts nowhere (as the Lair app without its Discord webhook), so nothing promises a Discord post
+  const lookingText = flat(await page.innerText('[data-looking]'));
+  check(`${size}: without Discord, Find me one doesn't promise a Discord post`, /lists your game on the website for members\. When someone joins/.test(lookingText) && !/Discord/.test(lookingText), lookingText);
   await page.check('[data-reserve-form] [name="game"][value="kill-team"]');
   check(`${size}: Kill Team has no size to pick`, await page.evaluate(() => document.querySelector('[data-looking-sizes]').hidden && !document.querySelector('[data-reserve-form] [name="size"]')));
   await page.check('[data-reserve-form] [name="game"][value="40k"]');
@@ -146,7 +149,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await page.click('[data-reserve-submit]');
   await page.waitForTimeout(800);
   const ticket = flat(await page.innerText('.cal-ticket').catch(() => ''));
-  check(`${size}: the ticket: Game listed, 1 v 1, the game, Gobgob's finding one`, /Game listed/.test(ticket) && /Players 1 v 1/.test(ticket) && /Game Warhammer 40,000, 1,000 points, new players welcome/.test(ticket) && /Gobgob’s finding you one/.test(ticket), ticket.slice(0, 600));
+  check(`${size}: the ticket: Game listed, 1 v 1, the game, Gobgob's finding one`, /Game listed/.test(ticket) && /Players 1 v 1/.test(ticket) && /Game Warhammer 40,000, 1,000 points, new players welcome/.test(ticket) && /Gobgob’s finding you one/.test(ticket) && !/Discord/.test(ticket), ticket.slice(0, 600));
 
   // 3. logged out
   await sheet(null);

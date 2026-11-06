@@ -95,7 +95,8 @@ from the start, `ev-<occurrence>` holds only the other tables (hard) and `ev-<oc
 
 ### 2.1 `GET /open-games` (`?occurrence=<id>` for one night)
 
-→ `{ choices, dates }`.
+→ `{ choices, dates, discord }`. `discord`: true while listed games go to Discord (the webhook is set), so the
+website mentions Discord only then; the booker's confirmation does the same.
 
 - `choices`: the games a listing can be, in order, each `{ key, name, sizes: [{ key, name }] }`:
 
