@@ -198,6 +198,21 @@ test('round 32 part 2: a booking code alone shows that booking and a first name;
   assert.deepEqual([g.type, g.name, g.booking.lines[0].price], ['booking', 'Sam', guest.amount]);
 });
 
+test("round 32 part 2: a cancelled booking's code, or one held for paying online, has nothing to pay at the till", async () => {
+  const { table, join } = await miasNight();
+  lair.sql.exec("UPDATE bookings SET status = 'cancelled' WHERE id = ?", table.id);
+  lair.sql.exec("UPDATE event_joins SET status = 'held' WHERE id = ?", join.id);
+  for (const ref of [table.ref, join.ref]) {
+    const res = ok(await scan(ref));
+    assert.equal(res.type, 'booking');
+    assert.deepEqual([res.booking.lines, res.booking.paid], [[], false], ref);
+  }
+  // staff on the till see the same booking with nothing to pay
+  const token = await onTill(HEMI);
+  const staff = ok(await scan(table.ref, token));
+  assert.deepEqual(staff.person.bookings.find((b) => b.code === table.ref)?.lines ?? [], []);
+});
+
 test('round 32 part 2: unknown codes are a 404, and 20 in 10 minutes make that tablet wait; staff on the till never wait', async () => {
   said(await scan('ZZ-NOTHING-99'), 404, P.unknown);
   for (let i = 0; i < 18; i += 1) said(await scan(`ZZ-NOPE-${i}`), 404, P.unknown);

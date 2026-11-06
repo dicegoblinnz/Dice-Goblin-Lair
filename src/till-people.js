@@ -21,6 +21,8 @@ export const TILL_SCAN_WINDOW_MS = 10 * 60 * 1000;
 const TILL_CREDIT_MS = 60 * 1000;
 /** How early an event becomes the till's night: 90 minutes before it starts */
 const TILL_NIGHT_AHEAD_MS = 90 * 60 * 1000;
+/** A row with one of these statuses has nothing to pay at the till */
+const TILL_UNPAYABLE = ['noshow', 'cancelled', 'held'];
 /** Rows that put a stamp on the account holder's card once paid (round 22) */
 const STAMP_KINDS = ['table', 'walkin', 'gm-seat', 'join'];
 
@@ -94,9 +96,13 @@ export const tillPeopleMethods = {
     return parts.filter(Boolean).join(' · ');
   },
 
-  /** A row as the till shows it: { code, title, at, kind, paid, owed, onAccount, status, lines: [{ title, sub, price, session, line }] } */
+  /**
+   * A row as the till shows it: { code, title, at, kind, paid, owed, onAccount, status, lines: [{ title, sub, price,
+   * session, line }] }. Nothing to pay for a no-show (staff settle those), a cancelled booking, or one held for paying
+   * online (its checkout is still open): a booking's code reaches here without memberToday's own filter (the review).
+   */
   tillRowView(r, rules) {
-    const payable = r.due > 0 && r.status !== 'noshow';
+    const payable = r.due > 0 && !TILL_UNPAYABLE.includes(r.status);
     return {
       code: r.ref || '', title: r.title || 'Booking', at: r.start ?? null, kind: r.kind || r.type, paid: !(r.due > 0), owed: Boolean(r.owed),
       onAccount: Boolean(r.onAccount), status: r.status || null,

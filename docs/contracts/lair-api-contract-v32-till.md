@@ -126,6 +126,8 @@ A person (`person`):
   no-show) has one basket line: `price` (cents) is what's due, `sub` says what it is ("Event entry · MT-OWLBEAR-17",
   "Table fee · T1, 2 people · …", "Owed from Thu 1 Oct · …"), `session` whether paying it stamps the card, and `line`
   is the very cart line the counter tile uses (`_booking`), for part 3 to pay.
+  A no-show (staff settle those), a cancelled booking and one held for paying online (its checkout still open)
+  have no line.
 - `loyalty`: their card as the counter shows it (staffCard). `credit`: store credit in cents from Shopify, kept a minute;
   null when Shopify can't say. `tab`: today's self-serve tab while it isn't paid, else null. `account`: pay each visit,
   or a monthly account's limit and what's owed (accountSummary).
