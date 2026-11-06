@@ -17,7 +17,7 @@
 //     app's words and Used; the gift's page (Used at the counter: the note) and Undo. Ruby's TTRPG seat with her first
 //     game gift: the whole seat covered and the dice reminder, Undo gift. Her Learn to paint sign-up with her paint gift.
 // No sideways scroll, no console errors and axe at each. 320, 390 and 1280 wide.
-// Usage: DG_THEME=/path/to/theme [PORT=4994] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round31-gifts/gifts.mjs [small|phone|desktop]
+// Usage: DG_THEME=/path/to/theme [PORT=4994] [AXE=/path/to/axe.min.js] [OUT=dir] [PARTS=page,experience,card,lair] node tools/qa/round31-gifts/gifts.mjs [small|phone|desktop]
 import os from 'node:os';
 import path from 'node:path';
 
@@ -245,7 +245,7 @@ async function giftCard(size) {
   await go(page, BASE, '/products/dice-goblin-gift-card', null);
   await settle(page);
   const crumb = await page.$$eval('.breadcrumbs li', (els) => els.map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
-  m.pages.gifts = giftsPage;
+  if (giftsPage) m.pages.gifts = giftsPage;
   check(`${size} gift card: with no gifts page yet, the crumb is Home › Dice Goblin gift card`, crumb.join(' › ') === 'Home › Dice Goblin gift card', crumb);
   check(`${size} gift card: no errors`, !page.errors.length, page.errors);
   await ctx.close();
@@ -490,11 +490,14 @@ async function staff(size, ctx) {
   await page.close();
 }
 
+// PARTS (a comma list of page, experience, card, lair) runs only those: the gift card going live on its own, say
+const parts = new Set((process.env.PARTS || 'page,experience,card,lair').split(','));
 try {
   for (const size of sizes) {
-    await giftsPage(size);
-    await experience(size);
-    await giftCard(size);
+    if (parts.has('page')) await giftsPage(size);
+    if (parts.has('experience')) await experience(size);
+    if (parts.has('card')) await giftCard(size);
+    if (!parts.has('lair')) continue;
     // My Lair first, so the demo's gifts are Ruby's; the staff page in the same browser sees them
     const ctx = await context(size);
     await wallet(size, ctx);

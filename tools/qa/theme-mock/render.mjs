@@ -779,7 +779,8 @@ if (hasTemplate('page.our-games')) {
 /* ---- round 31, Christmas gifts (6 Nov 2026, contract v31-gifts), on a theme that has them: the gifts page
    (page.gifts, "who it's for"), the two experience gifts and the gift card as they are in Shopify (titles, prices, SKUs,
    template suffixes; drafts there until they go live), and the store's All dice collection for the Not sure tile ---- */
-if (hasTemplate('page.gifts')) {
+// (a theme with only the gift card's page, the preview going live with the gift card first, gets the products too)
+if (hasTemplate('page.gifts') || hasTemplate('product.gift-card')) {
   const giftProduct = (id, handle, title, dollars, suffix, sku, description, extra = {}) => {
     const p = product(handle, title, 'Dice Goblin NZ', dollars, dollars, null, true, 1, 1200, 1200, { description, ...extra });
     p.id = id;
@@ -819,8 +820,10 @@ if (hasTemplate('page.gifts')) {
   ];
   for (const p of dice) allProducts[p.handle] = p;
   collections['all-dice'] = coll('all-dice', 'All dice (buy 2, get the 3rd free)', dice, 55);
-  pages.gifts = { handle: 'gifts', title: 'Gifts', url: '/pages/gifts', content: '' };
-  PAGES['/pages/gifts'] = () => renderPage('page.gifts', { page: pages.gifts, template: { name: 'page', suffix: 'gifts' }, request: { page_type: 'page', locale: { iso_code: 'en' }, origin: '' } });
+  if (hasTemplate('page.gifts')) {
+    pages.gifts = { handle: 'gifts', title: 'Gifts', url: '/pages/gifts', content: '' };
+    PAGES['/pages/gifts'] = () => renderPage('page.gifts', { page: pages.gifts, template: { name: 'page', suffix: 'gifts' }, request: { page_type: 'page', locale: { iso_code: 'en' }, origin: '' } });
+  }
 }
 export const PRIZE_VARIANT = 50363551023207;
 /* ---- my-lair round 4 (ml3 worktree): the self-serve tab. The "Tab menu" products are real store data (prices in NZD,
