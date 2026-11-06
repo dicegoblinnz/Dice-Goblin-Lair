@@ -23,7 +23,8 @@
  * day, since prices may go up in 3 years:
  *  - first-game: one person's whole seat at a TTRPG session (a gm-seat booking), GM's fee and all, so the seat is paid
  *    and its GM is credited as for any paid seat. Staff are reminded about the dice (GIFT_WORDS.dice). Nothing else.
- *  - paint: one person's entry on a sign-up at Learn to paint (an event whose id or title says painting). Nothing else.
+ *  - paint: one person's entry on a sign-up at Learn to paint (an event whose id or title says Learn to paint), nothing
+ *    else: not another painting night.
  *  - "Use it now" (POST /passes/:id/use, staff): a gift used for its experience with nothing booked: a kid at the kids'
  *    table rung up at the counter, a painter at the station. One go; undo puts it back.
  *
@@ -160,8 +161,13 @@ export function giftDay(ms, tz = 'Pacific/Auckland') {
   return new Intl.DateTimeFormat('en-NZ', { timeZone: tz, day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(ms));
 }
 
-/** An event Learn to paint covers: its id or title says painting (lair_event learn-to-paint, "Learn to paint") */
-const paintEvent = (eventId, title) => /paint/i.test(String(eventId || '')) || /paint/i.test(String(title || ''));
+/**
+ * An event a Learn to paint gift covers: Learn to paint itself, by its id or title (lair_event learn-to-paint, "Learn to
+ * paint", or a one-off like learn-to-paint-christmas). The gift is "a seat at Learn to paint" (its email, page and the
+ * contract), so another painting night, a masterclass say, isn't covered (review, 6 Nov 2026).
+ */
+const LEARN_TO_PAINT = /learn[\s_-]*to[\s_-]*paint/i;
+const paintEvent = (eventId, title) => LEARN_TO_PAINT.test(String(eventId || '')) || LEARN_TO_PAINT.test(String(title || ''));
 
 /** The letters and digits a gift code ends with: none that read as another (0 O, 1 I L) */
 const TAIL = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

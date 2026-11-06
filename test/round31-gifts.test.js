@@ -70,9 +70,11 @@ const PAINT = {
   entryFee: 1000, payment: 'store', type: 'learn',
 };
 const CLOCKTOWER = { id: 'blood-on-the-clocktower', title: 'Blood on the Clocktower', start: at('2026-11-29', 12), end: at('2026-11-29', 18), tables: '', capacity: 40, entryFee: 1000, payment: 'store', type: 'social' };
+// (review) a painting night that isn't Learn to paint: $40, sign-ups, "paint" in its name
+const MASTERCLASS = { id: 'painting-masterclass', title: 'Painting masterclass', start: at('2026-11-26', 18), end: at('2026-11-26', 21), tables: '', capacity: 10, entryFee: 4000, payment: 'store', type: 'learn' };
 const PAINT_DEC = 'learn-to-paint@2026-12-03';
 const SETTINGS = { lair_hours: DEFAULT_HOURS, lair_shop_tables: '', store_phone: '021 159 6894' };
-const rulesWith = (events = [PAINT, CLOCKTOWER]) => rulesFromSettings(SETTINGS, ROOMS, events, { address: ADDRESS });
+const rulesWith = (events = [PAINT, CLOCKTOWER, MASTERCLASS]) => rulesFromSettings(SETTINGS, ROOMS, events, { address: ADDRESS });
 // People by their Shopify customer IDs (made up): the main account, a trusted GM (Ellie) and four members
 const OWNER = '9001';
 const GM = '7001';
@@ -404,9 +406,19 @@ test('round 31, gifts: Your first roleplaying game covers one person\'s whole TT
   // undo: the seat owes its $15 again, and the gift is back
   const use = (await passNamed(code)).uses[0];
   assert.deepEqual([use.bookingId, use.joinId, use.people, use.covered], [s.id, null, 1, 1500]);
+  // (review) by then Ellie has her $5 for the seat: taking the gift off tells staff, as unmarking a paid seat does
+  // (src/gm-credit.js gmCreditUndone), since the player now owes for a seat its GM was paid for
+  lair.sql.exec(
+    "INSERT INTO gm_credit_seats (booking_id, game_id, customer_id, people, amount, status, batch, note, tries, created_at, updated_at) VALUES (?, ?, ?, 1, 500, 'credited', 'b1', NULL, 0, ?, ?)",
+    s.id, g.id, GM, Date.now(), Date.now(),
+  );
+  const alerts = [];
+  lair.notifyStaff = (subject) => alerts.push(subject);
   ok(await call('POST', `passes/uses/${use.id}/undo`, {}, OWNER));
   assert.deepEqual([bookingRow(s.id).covered, bookingRow(s.id).paid], [0, 0]);
   assert.equal((await passNamed(code)).status, 'active');
+  assert.equal(alerts.length, 1, 'staff hear the GM was credited for a seat that owes again');
+  assert.match(alerts[0], /^GM credit to check: /);
 });
 
 test('round 31, gifts: a session pass still covers only the table part of a seat (the GM\'s fee is paid), so the GM isn\'t credited until it is', async () => {
@@ -504,6 +516,14 @@ test('round 31, gifts: Learn to paint covers no other event, and Your first role
   nowIs(at('2026-12-03', 18, 5));
   const r2 = ok(await staffCheckIn(painting.id, 'join', fg));
   assert.deepEqual([r2.pass, r2.notice], [null, GIFT_WORDS.notFor('first-game')]);
+  assert.equal((await passNamed(paint)).status, 'active');
+  // (review) the gift is "a seat at Learn to paint" (its email, page and contract): another painting night, here a $40
+  // masterclass, is not Learn to paint, so it isn't covered
+  nowIs(NOW);
+  const master = await signUp('painting-masterclass@2026-11-26', KAI);
+  nowIs(at('2026-11-26', 18, 5));
+  const r3 = ok(await staffCheckIn(master.id, 'join', paint));
+  assert.deepEqual([r3.pass, r3.notice, joinRow(master.id).covered], [null, GIFT_WORDS.notFor('paint'), 0]);
   assert.equal((await passNamed(paint)).status, 'active');
 });
 

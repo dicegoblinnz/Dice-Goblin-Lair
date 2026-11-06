@@ -95,7 +95,7 @@ A gift covers its experience for **one person**, whatever it costs on the day. N
 | Gift | Covers | Never |
 | --- | --- | --- |
 | Your first roleplaying game | one person's whole TTRPG seat (`gm-seat`): its price, GM's fee and all | a table, a game table at an event, a sign-up |
-| Learn to paint | one person's entry on a sign-up at Learn to paint (an event whose id or title says painting: `learn-to-paint`) | a booking, any other event |
+| Learn to paint | one person's entry on a sign-up at Learn to paint (an event whose id or title says Learn to paint: `learn-to-paint`, or a one-off like `learn-to-paint-christmas`) | a booking, any other event, another painting night |
 
 ### 3.1 A seat: `POST /checkin`, `POST /pos/checkin` (unchanged routes)
 
@@ -158,7 +158,9 @@ The use keeps who did it and their note (up to 120 characters).
 ### 3.5 Undo: `POST /passes/uses/:useId/undo` (unchanged route)
 
 A gift's use on a sign-up gives the sign-up back what it covered (`covered`, `paid`); one with nothing booked just goes
-back on the gift. The answer's `row` is the sign-up's when it was one.
+back on the gift. The answer's `row` is the sign-up's when it was one. A TTRPG seat that owes again after an undo (a first
+game gift paid all of it) and whose GM was already credited for it tells staff "GM credit to check", as unmarking a paid
+seat does (round 21).
 
 ### 3.6 The staff view of a pass (`GET /passes`, the member card, check-in)
 

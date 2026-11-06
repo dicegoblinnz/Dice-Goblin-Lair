@@ -8217,6 +8217,9 @@ export class Lair {
       if (booking) {
         const next = { ...booking, covered: Math.max(0, booking.covered - use.covered) };
         this.write('UPDATE bookings SET covered = ?, paid = ?, updated_at = ? WHERE id = ?', next.covered, settled(next) ? 1 : 0, now, booking.id);
+        // (round 31, review: a first roleplaying game gift pays a whole seat, so its GM may have been credited for it
+        // already; staff hear about a seat that owes again, as when a paid seat is unmarked: src/gm-credit.js)
+        if (booking.kind === 'gm-seat') this.gmCreditUndone(booking, { ...next, paid: settled(next) });
       }
       const join = use.join_id ? this.joinById(use.join_id) : null;
       if (join) {

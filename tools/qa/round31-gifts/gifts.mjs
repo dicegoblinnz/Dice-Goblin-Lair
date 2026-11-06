@@ -359,6 +359,28 @@ async function staff(size, ctx) {
   c = await card(page);
   check(`${size} staff: Use it now says what to do, in the Lair app's words, and the gift is Used`,
     c && c.notices[0] === "Used: Your first roleplaying game. Don't charge for their seat today, and let them pick a set of dice up to $30." && c.pay === 'Used' && !c.buttons.includes('Use it now'), c);
+  // (review) Use it now still waiting when the next code is scanned: the new card stays, and the gift's words come as a
+  // note instead of covering it. Hana's Learn to paint gift (Ruby claimed it in the Wallet) is the one used here.
+  const hana = gifts.find((g) => g.kind === 'paint' && g.from === 'Hana');
+  await checkinCode(page, hana.code);
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    const real = be.useGift.bind(be);
+    be.useGift = async (...args) => { await new Promise((r) => setTimeout(r, 1500)); be.useGift = real; return real(...args); };
+  });
+  await page.click('.checkin-gift > summary');
+  await page.click('[data-gift-now] [type="submit"]');
+  await settle(page, 200);
+  await checkinCode(page, game.code);
+  await settle(page, 2000);
+  c = await card(page);
+  const toast = await page.evaluate(() => String(document.querySelector('.toast')?.textContent || '').trim());
+  check(`${size} staff: a code scanned while Use it now waits keeps its own card, and the gift's words come as a note`,
+    c && c.name === 'Your first roleplaying game' && !c.notices.some((n) => /^Used: Learn to paint/.test(n)) && toast.startsWith('Used: Learn to paint.'), { c, toast });
+  await checkinCode(page, hana.code);
+  c = await card(page);
+  check(`${size} staff: Hana's gift was used all the same`, c && c.name === 'Learn to paint' && c.pay === 'Used', c);
+  await checkinCode(page, game.code);
   // the gift's page: its use, with the note, and Undo
   await page.click('.checkin-card [data-pass-open]');
   await page.waitForSelector('.staff-pass__uses', { timeout: 10000 });
@@ -409,6 +431,15 @@ async function staff(size, ctx) {
     await settle(page, 500);
     c = await card(page);
     check(`${size} staff: Undo gift: taken off, and the code can be used again`, c && c.notices.some((n) => n === `Gift taken off. ${game.code} can be used again.`), c);
+    // (review) her member card lists the seat with the gift still saved on it: gift words, no sessions
+    const rubyCode = await page.evaluate(() => window.Lair.store.backend.staffMembers().find((x) => x.email === 'ruby@example.com')?.code || '');
+    await checkinCode(page, rubyCode);
+    const item = await page.evaluate(() => {
+      const f = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+      const li = [...document.querySelectorAll('.checkin-card--member .checkin-item')].find((x) => /RT-GRIFFIN-31/.test(x.textContent));
+      return li ? f([...li.querySelectorAll('p.small')].map((p) => p.textContent).join(' | ')) : '(no row)';
+    });
+    check(`${size} staff: a member's row with a gift saved on it says gift, not sessions`, item.includes('Gift: Your first roleplaying game') && !/session/.test(item) && !/Pass:/.test(item), item);
   }
   // her Learn to paint sign-up, checked in early, with her paint gift
   const join = await page.evaluate(async () => {
