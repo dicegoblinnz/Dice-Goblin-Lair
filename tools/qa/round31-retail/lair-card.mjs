@@ -13,6 +13,8 @@ try {
 }
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const mock = await import(path.join(HERE, '../theme-mock/render.mjs'));
+// step 1's card: free holds off (the lab has them on for step 2: tools/qa/round31-retail/holds.mjs checks those)
+mock.globalSettings.retail_holds = false;
 const PORT = Number(process.env.PORT || 4961);
 const OUT = process.env.OUT || null;
 mock.serve(PORT);

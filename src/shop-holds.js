@@ -240,7 +240,7 @@ export const shopHoldMethods = {
    * POST /me/holds { productId, variantId } (logged in): hold it free. Free holds on (the live theme's setting), not
    * paused, fewer than SHOP_HOLD_MAX open, not this option already, and (asked of Shopify) sold online, not a gift card, not
    * tagged no-holds, not the supplier's, not a card or GW release in its first week, and on the shelf at the Lair. Then
-   * the draft order that sets it aside, and the shop hears.
+   * the draft order that sets it aside, and the shop hears. (The supplier's dice only when the Lair has some on its shelf.)
    * → { ok: true, hold, holds, max, paused }, or { ok: false, cant, message, holds, max, paused, startsAt? } when it
    * can't be held (cant: off, full, paused, already, busy, product, noHolds, notShelf, release, gone). A placeholder row
    * (making) counts towards the limit while Shopify is asked; every await is between it and the final write.
@@ -295,7 +295,6 @@ export const shopHoldMethods = {
     };
     if (!v || v.productId !== productId || !v.sold || v.giftCard || !v.tracked) return refuse('product', SHOP_HOLD_WORDS.product);
     if (v.tags.some((t) => String(t).toLowerCase() === SHOP_HOLD_OFF_TAG)) return refuse('noHolds', SHOP_HOLD_WORDS.noHolds);
-    if (v.supplier) return refuse('notShelf', SHOP_HOLD_WORDS.notShelf);
     const release = v.productType === 'Trading Card Games' || v.vendor === 'Games Workshop';
     if (release && v.publishedAt && now < v.publishedAt + SHOP_HOLD_RELEASE_WAIT) {
       const starts = v.publishedAt + SHOP_HOLD_RELEASE_WAIT;
@@ -303,7 +302,8 @@ export const shopHoldMethods = {
         .formatToParts(new Date(starts)).map((p) => [p.type, p.value]));
       return refuse('release', SHOP_HOLD_WORDS.release(`${parts.weekday} ${parts.day} ${parts.month}`), { startsAt: starts });
     }
-    if (!(v.shelf >= 1)) return refuse('gone', SHOP_HOLD_WORDS.gone);
+    // the Lair's own count: the supplier's dice are held only when the Lair has some on its shelf
+    if (!(v.shelf >= 1)) return v.supplier ? refuse('notShelf', SHOP_HOLD_WORDS.notShelf) : refuse('gone', SHOP_HOLD_WORDS.gone);
     // the member's name and email: the Lair's, else Shopify's
     const member = this.memberRow(owner);
     let first = member?.first_name || nameParts(member?.name)[0];

@@ -166,8 +166,9 @@ holds are a different thing, at `/library/holds`).
 - **Until:** closing time of the first opening that starts after it's made (made Friday evening: midnight Saturday;
   made Saturday before 10am: midnight Saturday; made during Saturday: 10pm Sunday).
 - **Not on:** a trading card (product type Trading Card Games) or Games Workshop product in its first 7 days after it
-  went on the site; a product tagged `no-holds` (staff switch holds off with the tag); the supplier's dice; anything not
-  sold online, a gift card, or untracked stock; nothing on the shelf at the Lair.
+  went on the site; a product tagged `no-holds` (staff switch holds off with the tag); anything not sold online, a gift
+  card, or untracked stock; nothing on the shelf at the Lair (by the Lair's own count: the supplier's dice only when the
+  Lair has some).
 - **Only once the live theme says** (Theme settings › Free holds, `retail_holds`).
 - **Off sale while held:** a draft order for the member (tagged `lair-hold`) reserves the stock until the hold ends
   (`reserveInventoryUntil`), and is deleted when the hold ends, is cancelled or is collected; a deletion Shopify didn't

@@ -18,6 +18,7 @@ try {
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const m = await import(path.join(HERE, '../theme-mock/render.mjs'));
 m.globalSettings.lair_mode = 'demo';
+m.globalSettings.retail_holds = false; // step 1 as it goes live on its own (holds.mjs has step 2)
 m.globalSettings.lair_hours = 'Mon 16:00-24:00\nTue 16:00-24:00\nWed 16:00-24:00\nThu 16:00-24:00\nFri 16:00-24:00\nSat 10:00-24:00\nSun 10:00-22:00';
 const PORT = Number(process.env.PORT || 4964);
 const OUT = process.env.OUT || null;
@@ -69,7 +70,7 @@ for (const width of [320, 390, 1280]) {
   /* ---------- the tabs ---------- */
   const tabs = await page.locator('[role="tab"]').evaluateAll((els) => els.map((el) => el.dataset.tab));
   check(tabs[tabs.indexOf('today') + 1] === 'pull', `${width} To pull comes after Bookings: ${tabs.join(',')}`);
-  check(tabs.indexOf('displays') > -1 && tabs.indexOf('displays') === tabs.indexOf('warhammer') - 1, `${width} Open a display comes before Warhammer: ${tabs.join(',')}`);
+  check(tabs.indexOf('stock') > -1 && tabs.indexOf('stock') === tabs.indexOf('warhammer') - 1, `${width} Stock (Open a display) comes before Warhammer: ${tabs.join(',')}`);
   check(text(await page.locator('[data-tab="pull"]').innerText()) === 'To pull 1', `${width} the tab counts 1 to pull: ${await page.locator('[data-tab="pull"]').innerText()}`);
   check(/^\(1\) /.test(await page.title()), `${width} the title says (1): ${await page.title()}`);
 
@@ -149,7 +150,7 @@ for (const width of [320, 390, 1280]) {
   check(warned.includes("Shopify didn't take the new count. Set Dragon Shield Matte Sleeves: Jet to 0 in Shopify yourself"), `${width} the count warning on the card: ${warned}`);
 
   /* ---------- Open a display ---------- */
-  await page.locator('[data-tab="displays"]').click();
+  await page.locator('[data-tab="stock"]').click();
   await page.waitForTimeout(300);
   await page.locator('[data-disp-q]').fill('night city');
   await page.waitForSelector('[data-disp-pick]', { timeout: 4000 }).catch(() => null);

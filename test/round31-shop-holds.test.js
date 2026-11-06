@@ -240,7 +240,7 @@ test('free holds: the ones that can\'t be, each with its words, and nothing is h
     return [answer.cant, answer.message];
   };
   assert.deepEqual(await cant(MIA, NOPE), ['noHolds', SHOP_HOLD_WORDS.noHolds], 'tagged no-holds (any case)');
-  assert.deepEqual(await cant(MIA, DICE), ['notShelf', SHOP_HOLD_WORDS.notShelf], "the supplier's dice");
+  assert.deepEqual(await cant(MIA, DICE), ['notShelf', SHOP_HOLD_WORDS.notShelf], "the supplier's dice, none at the Lair");
   assert.deepEqual(await cant(MIA, HIDDEN), ['product', SHOP_HOLD_WORDS.product], 'not sold online');
   assert.deepEqual(await cant(MIA, FRESH), ['release', 'Free holds start Wednesday 11 November. New card releases skip holds in their first week, so everyone gets a fair go.']);
   assert.equal(ok(await hold(MIA, FRESH)).startsAt, NOW + 5 * DAY);
@@ -253,6 +253,11 @@ test('free holds: the ones that can\'t be, each with its words, and nothing is h
   options.get(BOX).shelf = 5;
   assert.deepEqual(await cant(MIA, BOX), ['off', SHOP_HOLD_WORDS.off]);
   assert.deepEqual(calls.filter((c) => c[0] === 'holdVariant').length, 6, 'off: Shopify not asked');
+});
+
+test('free holds: the supplier\'s dice the Lair has on its own shelf can be held', async () => {
+  options.get(DICE).shelf = 2;
+  assert.equal(ok(await hold(MIA, DICE)).ok, true);
 });
 
 test('free holds: up to 3 at a time, one of each, and two members at once for the last one', async () => {

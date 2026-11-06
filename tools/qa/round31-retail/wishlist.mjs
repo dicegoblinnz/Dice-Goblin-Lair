@@ -16,6 +16,7 @@ const HERE = path.dirname(new URL(import.meta.url).pathname);
 const m = await import(path.join(HERE, '../theme-mock/render.mjs'));
 m.globalSettings.lair_mode = 'demo';
 m.globalSettings.wishlist_enabled = true;
+m.globalSettings.retail_holds = false; // step 1 as it goes live on its own (holds.mjs has step 2)
 const PORT = Number(process.env.PORT || 4962);
 const OUT = process.env.OUT || null;
 m.serve(PORT);
