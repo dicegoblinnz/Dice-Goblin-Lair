@@ -517,6 +517,7 @@ test('pickups: reminders 3 and 10 days after Ready, Refund due at 14 days, and o
   assert.deepEqual(mails, [], 'day 3 at 9:30pm: the morning');
   await run(at('2026-11-10', 9, 5));
   assert.deepEqual(mails.map((m) => [m.to, m.subject]), [['sam@example.com', 'Your order #2031 is waiting at the Lair']]);
+  assert.deepEqual((({ waiting, reminded }) => ({ waiting, reminded }))(ok(await call('GET', 'staff/pull', null, OWNER)).pickups[0]), { waiting: 3, reminded: 1 });
   assert.ok(mails[0].text.includes("Gobgob is guarding your order behind the counter. Come and grab it whenever we're open."));
   assert.ok(mails[0].text.includes("Friday 20 November, then it's refunded to your card"));
   await run(at('2026-11-12', 10));

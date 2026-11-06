@@ -133,7 +133,7 @@ export const STAFF_PERMS = ['checkin', 'tables', 'sessions', 'events', 'members'
 export const HELPER_DEFAULT = ['checkin', 'tables'];
 /** Round 9: the staff page's words for what each permission lets a helper do (the Team tab shows them) */
 export const PERM_WORDS = {
-  checkin: 'Check people in, today’s bookings and taking payment at the desk',
+  checkin: 'Check people in, today’s bookings, taking payment at the desk, online pickups to pull and opening displays',
   tables: 'The floor, walk-ins, table bookings, holds and openings',
   sessions: 'Making and editing sessions, players, regulars and GM invites',
   events: 'The events editor and adding people to events',

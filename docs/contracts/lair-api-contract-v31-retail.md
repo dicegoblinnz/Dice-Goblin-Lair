@@ -111,7 +111,7 @@ order's paid webhook and from a 10-minute look at the last 3 days' pickup orders
 
 | Route | Who | What |
 |---|---|---|
-| `GET /proxy/staff/pull` | staff with Check-in | `{ pickups, newest }`: open pickups, newest first: `{ orderId, name, customer, items: [{ lineId, title, variantTitle, quantity }], paidAt, dueAt, status, readyAt, missing: [lineId], refundDue, waiting }`. `status`: `new`, `ready` or `missing`. `customer` is "Sam K.". `waiting`: whole days since Ready. `newest`: the newest paidAt (the page chimes when it grows) |
+| `GET /proxy/staff/pull` | staff with Check-in | `{ pickups, newest }`: open pickups, newest first: `{ orderId, name, customer, items: [{ lineId, title, variantTitle, quantity }], paidAt, dueAt, status, readyAt, missing: [lineId], refundDue, waiting, reminded }`. `status`: `new`, `ready` or `missing`. `customer` is "Sam K.". `waiting`: whole days since Ready. `reminded`: reminder emails sent (0 to 2). `newest`: the newest paidAt (the page chimes when it grows) |
 | `POST /proxy/staff/pull/ready` | Check-in | `{ orderId }` → `{ ok, pickup }` |
 | `POST /proxy/staff/pull/missing` | Check-in | `{ orderId, lineIds? }` (all lines when left out) → `{ ok, pickup }` |
 | `POST /proxy/staff/pull/done` | Check-in | `{ orderId }`: refunded or sorted → `{ ok }` |

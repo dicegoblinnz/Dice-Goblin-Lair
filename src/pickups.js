@@ -183,6 +183,7 @@ export const pickupMethods = {
       paidAt: row.paid_at, dueAt: row.due_at, status: row.status, readyAt: row.ready_at ?? null, missing,
       refundDue: row.status === 'missing' || Boolean(row.refund_due_at),
       waiting: row.ready_at ? Math.floor((now - row.ready_at) / DAY) : null,
+      reminded: Number(row.reminded) || 0,
     };
   },
 
