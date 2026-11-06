@@ -1157,6 +1157,8 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // Round 29: "Email a reminder two days before each booking" (src/booking-reminders.js): on only once the live
     // theme's settings say true, so a Lair deployed before its theme (no key yet) sends none
     bookingReminders: settings.lair_booking_reminders === true,
+    // Round 31, retail: Theme settings › Free holds (src/shop-holds.js): holds can be made only once the live theme says
+    retailHolds: settings.retail_holds === true,
     prices,
     rooms: builtRooms,
     events,

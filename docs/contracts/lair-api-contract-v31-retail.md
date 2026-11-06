@@ -155,3 +155,66 @@ Messages (word for word):
   other numbers; the same key with the same numbers answers with that opening, `repeated: true`)
 - `busy`: "Someone's opening or putting back that one right now. Try again in a moment." (one opening or undo of a
   product at a time)
+
+## 5. Free holds (step 2)
+
+Hold something on the shelf free and pay at the counter (Mo's picks of 6 Nov 2026: the hold sheet, My Lair's holds and
+the cases a hold can't happen, as drawn; the rules from the Decision log of 1 Nov 2026). `src/shop-holds.js` (library
+holds are a different thing, at `/library/holds`).
+
+- **Who and how many:** members (logged in), up to 3 open at a time, one of each option.
+- **Until:** closing time of the first opening that starts after it's made (made Friday evening: midnight Saturday;
+  made Saturday before 10am: midnight Saturday; made during Saturday: 10pm Sunday).
+- **Not on:** a trading card (product type Trading Card Games) or Games Workshop product in its first 7 days after it
+  went on the site; a product tagged `no-holds` (staff switch holds off with the tag); the supplier's dice; anything not
+  sold online, a gift card, or untracked stock; nothing on the shelf at the Lair.
+- **Only once the live theme says** (Theme settings › Free holds, `retail_holds`).
+- **Off sale while held:** a draft order for the member (tagged `lair-hold`) reserves the stock until the hold ends
+  (`reserveInventoryUntil`), and is deleted when the hold ends, is cancelled or is collected; a deletion Shopify didn't
+  take is tried again every 10 minutes.
+- **Collected** when staff say so, or when a paid order at the counter (not online) has the member on it and that option.
+- **Not collected in time:** it ends; one set aside shows on To pull for staff to put back. After 2 holds that weren't
+  collected (since staff last switched them back on), the member's holds pause until staff switch them back on.
+- **Staff hear** each new one on To pull (with the chime) and by email: "Hold to set aside: `what` (`Ana P.`)", "`Ana P.`
+  is holding it free until `midnight Saturday 7 November`, to pay at the counter. Set it aside behind the counter and tap
+  Set aside on the staff page." The counter tablet's `toPull` counts holds still to set aside too.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /proxy/me/shop-holds` | logged in | `{ holds, max, paused }`: open holds soonest first, `{ id, productId, variantId, title, variantTitle, handle, image, price, quantity, until, madeAt, set, url }` |
+| `POST /proxy/me/shop-holds` | logged in | `{ productId, variantId }` → `{ ok: true, hold, holds, max, paused }`, or `{ ok: false, cant, message, holds, max, paused, startsAt? }`. `cant`: `off`, `full`, `paused`, `already`, `busy`, `product`, `noHolds`, `notShelf`, `release` (with `startsAt`), `gone`. 401 logged out; 502 when Shopify didn't answer (nothing held) |
+| `POST /proxy/me/shop-holds/cancel` | logged in, their own | `{ id }` → `{ ok, holds, max, paused }` |
+| `GET /proxy/staff/pull` | Check-in | also `holds`: open ones and ones to put back, `{ id, customer, customerId, title, variantTitle, quantity, price, madeAt, until, status, putBack, closedHow }`; and `paused`: `[{ customerId, customer, misses }]` |
+| `POST /proxy/staff/shop-holds/set` | Check-in | `{ id }`: set aside behind the counter → `{ ok, hold }` (409 when it isn't new) |
+| `POST /proxy/staff/shop-holds/collected` | Check-in | `{ id }` → `{ ok }` |
+| `POST /proxy/staff/shop-holds/missing` | Check-in | `{ id }`: not on the shelf after all → `{ ok, warning? }`. Closed, the stock let go, the Lair's count set to 0, and the member emailed |
+| `POST /proxy/staff/shop-holds/done` | Check-in | `{ id }`: put back on the shelf → `{ ok }` |
+| `POST /proxy/staff/shop-holds/resume` | Check-in | `{ customerId }`: a paused member's holds back on → `{ ok }` |
+
+Words (word for word): `login` "Log in to hold it."; `off` "Free holds aren't on yet."; `full` "You're holding `n` things
+already. Collect one, or cancel one in My Lair, to hold this."; `paused` "Free holds are paused on your account, because 2
+holds weren't collected. Ask at the counter and staff can switch them back on."; `gone` "Someone grabbed the last one a
+moment ago. Gobgob can tell you when it's back."; `release` "Free holds start `Thursday 12 November`. New card releases
+skip holds in their first week, so everyone gets a fair go."; `noHolds` "This one can't be held. You can still buy it
+online and collect it free."; `notShelf` "It isn't on the shelf at the Lair, so it can't be held."; `already` "You're
+holding this one already. It's in My Lair."; `busy` "Someone else is holding that one right now. Try again in a moment."
+
+The member's email when it isn't on the shelf (transactional, about their own hold): subject "Sorry, your hold isn't on
+the shelf"; "We went to set aside `what` for you, and it wasn't on the shelf. Our count was wrong, and that's on us."
+"Your hold's cancelled, so there's nothing to pay." Signed "Sorry again, Gobgob, the Dice Goblin".
+
+## 6. Tell us what you're after (step 2)
+
+An empty search offers a short box (Mo's pick of 6 Nov 2026, the empty search, as drawn). `src/shop-requests.js`.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /proxy/requests` | anyone | `{ text, email?, query?, website? }` → `{ ok, message }`. `text` up to 200 characters; `email` optional, to hear back; `website` is the field people never see (a bot's is thanked and dropped). At most 5 an hour from one address, 200 a day in all (429) |
+| `GET /proxy/staff/requests` | Check-in | `{ requests: [{ id, text, query, email, member, madeAt, done }], waiting }`: the last 60 days', new first |
+| `POST /proxy/staff/requests/done` | Check-in | `{ id }` → `{ ok }` |
+
+Requests are deleted 180 days after they're made. Words: `text` "Say what you're after, in a few words."; `long` "Keep
+it to 200 characters or fewer."; `email` "That email doesn't look right. Leave it out if you'd rather not hear back.";
+`tooMany` "That's a lot of asks in a row. Try again in a little while, or tell us at the counter."; `thanks` "Thanks!
+Staff read every one at the counter."; `thanksEmail` "Thanks! Staff read every one at the counter, and we'll email you if
+we can get it in."

@@ -93,6 +93,8 @@ import { retailMethods } from './retail.js';
 import { wishAlertMethods } from './wish-alerts.js';
 import { pickupMethods } from './pickups.js';
 import { displayMethods } from './displays.js';
+import { shopHoldMethods } from './shop-holds.js';
+import { shopRequestMethods } from './shop-requests.js';
 // Round 30: library members get in free at events marked so, and games that stay in the Lair never go home
 // (src/library-rules.js, contract v30-library)
 import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './library-rules.js';
@@ -1990,7 +1992,7 @@ export class Lair {
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
           || (request.method === 'GET' && ['floor', 'games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'staff'].includes(a));
+          || (request.method === 'POST' && ['bookings', 'games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'staff', 'requests'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2027,6 +2029,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
       // Round 16: the wishlist, newest first (src/wishlist.js)
       if (request.method === 'GET' && a === 'me' && b === 'wishlist' && !c) return json(this.memberWishlist(who));
+      // Round 31, retail: a member's free holds of things on the shelf (src/shop-holds.js; library holds are /library/holds)
+      if (request.method === 'GET' && a === 'me' && b === 'shop-holds' && !c) return json(this.memberShopHolds(who));
       // Round 17: the borrow queue, and the staff's postal swaps (src/queue.js)
       if (request.method === 'GET' && a === 'me' && b === 'queue' && !c) return json(this.memberQueue(who));
       if (request.method === 'GET' && a === 'library' && b === 'sends' && !c) return json(this.listSends(url, who));
@@ -2039,6 +2043,8 @@ export class Lair {
       // Round 31, retail: pickups to pull, and Open a display's product search (src/pickups.js, src/displays.js)
       if (request.method === 'GET' && a === 'staff' && b === 'pull' && !c) return json(this.staffPull(who));
       if (request.method === 'GET' && a === 'staff' && b === 'displays' && !c) return json(await this.displaySearch(url, who));
+      // Round 31, retail: what people asked for from an empty search (src/shop-requests.js)
+      if (request.method === 'GET' && a === 'staff' && b === 'requests' && !c) return json(this.shopRequests(who));
       if (request.method === 'GET' && a === 'team' && !b) return json(await this.listTeam(who));
       if (request.method === 'GET' && a === 'members' && b && c === 'credit') return json(await this.memberCredit(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'members' && b && c === 'emails') return json(this.memberEmails(decodeURIComponent(b), who));
@@ -2106,12 +2112,24 @@ export class Lair {
       if (a === 'me' && b === 'wishlist' && c === 'remove' && !d) return json(this.removeFromWishlist(body, who));
       // Round 31: My Lair's "Email me when these come back" (src/wishlist.js)
       if (a === 'me' && b === 'wishlist' && c === 'alerts' && !d) return json(this.setWishlistAlerts(body, who));
+      // Round 31, retail: hold something on the shelf free, and cancel it (src/shop-holds.js)
+      if (a === 'me' && b === 'shop-holds' && !c) return json(await this.makeShopHold(body, who));
+      if (a === 'me' && b === 'shop-holds' && c === 'cancel' && !d) return json(await this.cancelShopHold(body, who));
       // Round 31, retail: a pickup ready, not on the shelf, or done; and Open a display and its undo
       if (a === 'staff' && b === 'pull' && c === 'ready' && !d) return json(await this.pickupReady(body, who));
       if (a === 'staff' && b === 'pull' && c === 'missing' && !d) return json(await this.pickupMissing(body, who));
       if (a === 'staff' && b === 'pull' && c === 'done' && !d) return json(this.pickupDone(body, who));
       if (a === 'staff' && b === 'displays' && c === 'open' && !d) return json(await this.displayOpen(body, who));
       if (a === 'staff' && b === 'displays' && c === 'undo' && !d) return json(await this.displayUndo(body, who));
+      // Round 31, retail: free holds on To pull: set aside, collected, not on the shelf, put back, and a member's back on
+      if (a === 'staff' && b === 'shop-holds' && c === 'set' && !d) return json(this.setShopHoldAside(body, who));
+      if (a === 'staff' && b === 'shop-holds' && c === 'collected' && !d) return json(await this.shopHoldCollected(body, who));
+      if (a === 'staff' && b === 'shop-holds' && c === 'missing' && !d) return json(await this.shopHoldMissing(body, who));
+      if (a === 'staff' && b === 'shop-holds' && c === 'done' && !d) return json(this.shopHoldPutBack(body, who));
+      if (a === 'staff' && b === 'shop-holds' && c === 'resume' && !d) return json(this.resumeShopHolds(body, who));
+      // Round 31, retail: an empty search's "Tell us what you're after" (anyone), and staff seeing to one
+      if (a === 'requests' && !b) return json(this.makeShopRequest(body, who, client));
+      if (a === 'staff' && b === 'requests' && c === 'done' && !d) return json(this.shopRequestDone(body, who));
       // Round 17: Help me pick (src/pick.js): the quiz, its swipe round, a session's events, save and email, ratings, and
       // the staff check list and sync
       // Round 26: the Warhammer tab: the pad a part at a time, reading the shop, the plan, applying it, and a release's
@@ -4959,6 +4977,8 @@ export class Lair {
     // Round 31, retail: an online order collected at the Lair goes on staff's To pull list (src/pickups.js), on its own.
     // Only one with a shipping line (a pickup has one, named for the location) is asked about.
     if (source === 'web' && (order.shipping_lines || []).length) this.later(this.pickupFromPaid(orderId));
+    // Round 31, retail: paid at the counter with the member on it, a free hold of an option on the order is collected
+    if (source && source !== 'web' && order.customer?.id) this.later(this.shopHoldsFromOrder(order));
     // Rung up at the counter: Shopify POS's own orders, and since round 22 Pay on Verifone's (src/counter.js)
     const pos = counterSale(order);
     const fromDraft = !source || source === 'shopify_draft_order';
@@ -11163,3 +11183,7 @@ Object.assign(Lair.prototype, retailMethods);
 Object.assign(Lair.prototype, wishAlertMethods);
 Object.assign(Lair.prototype, pickupMethods);
 Object.assign(Lair.prototype, displayMethods);
+// Round 31, retail: free holds of things on the shelf (src/shop-holds.js)
+Object.assign(Lair.prototype, shopHoldMethods);
+// Round 31, retail: an empty search's "Tell us what you're after" (src/shop-requests.js)
+Object.assign(Lair.prototype, shopRequestMethods);

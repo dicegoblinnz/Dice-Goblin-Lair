@@ -10,6 +10,8 @@
 import { LairTime, MIN, addDays, openWindow, windowAt } from './core.js';
 import { WISHLIST_V31, WISHLIST_V31_INDEXES } from './wishlist.js';
 import { REGULAR_MIN, REGULAR_WINDOW, mondayOf } from './report.js';
+import { SHOP_HOLD_TABLES } from './shop-holds.js';
+import { REQUEST_TABLES } from './shop-requests.js';
 
 /**
  * The tables (made when missing, from lair.js's migrate through retailMigrate):
@@ -275,7 +277,7 @@ export const retailMethods = {
     } catch {
       this.sql.exec('ALTER TABLE wishlist ADD COLUMN asked_at INTEGER');
     }
-    for (const statement of [...WISHLIST_V31_INDEXES, ...RETAIL_TABLES]) this.sql.exec(statement);
+    for (const statement of [...WISHLIST_V31_INDEXES, ...RETAIL_TABLES, ...SHOP_HOLD_TABLES, ...REQUEST_TABLES]) this.sql.exec(statement);
     // the second review: lines marked Not on the shelf and not yet told (missing_todo), on a table made before it
     try {
       this.sql.exec('SELECT missing_todo FROM pickups LIMIT 0');
@@ -316,6 +318,17 @@ export const retailMethods = {
       if (kept) out.pickupMail = kept;
     } catch (error) {
       console.error('Lair: could not remind pickups', error);
+    }
+    try {
+      const holds = await this.shopHoldUpkeep(now);
+      if (holds) out.holds = holds;
+    } catch (error) {
+      console.error('Lair: could not end free holds', error);
+    }
+    try {
+      this.shopRequestUpkeep(now);
+    } catch (error) {
+      console.error('Lair: could not tidy the shop requests', error);
     }
     return Object.keys(out).length ? out : null;
   },

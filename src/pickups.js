@@ -191,7 +191,8 @@ export const pickupMethods = {
 
   /** How many online pickups are still to pull (the counter tablet's tile shows the number, never names). No awaits. */
   retailToPull() {
-    return this.sql.exec("SELECT COUNT(*) AS n FROM pickups WHERE status = 'new'").one().n;
+    return this.sql.exec("SELECT COUNT(*) AS n FROM pickups WHERE status = 'new'").one().n
+      + this.sql.exec("SELECT COUNT(*) AS n FROM shop_holds WHERE status = 'new'").one().n;
   },
 
   /** GET /staff/pull (Check-in): { pickups, newest }, open ones newest first. No awaits. */
@@ -199,7 +200,8 @@ export const pickupMethods = {
     this.requireStaff(who, 'checkin');
     const now = Date.now();
     const rows = this.sql.exec("SELECT * FROM pickups WHERE status IN ('new', 'ready', 'missing') ORDER BY paid_at DESC LIMIT 200").toArray();
-    return { pickups: rows.map((r) => this.pickupView(r, now)), newest: rows.length ? Math.max(...rows.map((r) => r.paid_at)) : null };
+    // and free holds (src/shop-holds.js): to set aside, behind the counter, to put back; members whose holds are paused
+    return { pickups: rows.map((r) => this.pickupView(r, now)), newest: rows.length ? Math.max(...rows.map((r) => r.paid_at)) : null, ...this.shopHoldsForStaff() };
   },
 
   /** An open pickup by its order's number, or a 404 */
