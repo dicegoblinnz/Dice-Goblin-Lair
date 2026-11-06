@@ -675,12 +675,25 @@ const supplierDice = retailProduct('blossom-sky-dice-set', 'Blossom Sky Dice Set
   ['Default Title', 100, 90, { inventory_policy: 'continue', store_availabilities: [{ available: false, pick_up_enabled: true, pick_up_time: 'Usually ready in 2 hours', location: { name: 'Dice Goblin', id: 72250359911 } }] }],
 ]);
 supplierDice.metafields = { ...supplierDice.metafields, supplier: { code: { value: '#N42' } } };
+// the review (6 Nov 2026): the supplier's dice the Lair has on its own shelf (On the shelf at the Lair, before and after
+// the script), and one that can't be bought (Sold out, Tell me), never Delivered in about 10 days
+const LAIR_PICKUP = { name: 'Dice Goblin', id: 72250359911 };
+const dicePickup = (available) => [{ available, pick_up_enabled: true, pick_up_time: 'Usually ready in 2 hours', location: LAIR_PICKUP }];
+const shelfDice = retailProduct('porcelain-blossom-d20-33mm', 'Porcelain Blossom D20 (33 mm)', 'Dice Goblin NZ', 'Dice & Accessories', [
+  ['Default Title', 101, 25, { inventory_policy: 'continue', store_availabilities: dicePickup(true) }],
+]);
+const goneDice = retailProduct('sea-wave-blossom-d20-33mm', 'Sea Wave Blossom D20 (33 mm)', 'Dice Goblin NZ', 'Dice & Accessories', [
+  ['Default Title', 0, 25, { inventory_policy: 'deny', store_availabilities: dicePickup(false) }],
+]);
+for (const d of [shelfDice, goneDice]) d.metafields = { ...d.metafields, supplier: { code: { value: '#N43' } } };
 // the shelf these three are on, as product.collections gives it (the shared Trading Card Games mock stays as it is)
 const r31Cards = coll('trading-card-games', 'Trading Card Games', [nightCity, radiance, starterDeck,
   ...collections['trading-card-games'].products.filter((p) => ![nightCity, radiance, starterDeck].some((q) => q.handle === p.handle))], 142);
 for (const p of [radiance, nightCity, starterDeck]) p.collections = [r31Cards];
 supplierDice.collections = [];
-for (const p of [radiance, nightCity, starterDeck, supplierDice]) {
+shelfDice.collections = [];
+goneDice.collections = [];
+for (const p of [radiance, nightCity, starterDeck, supplierDice, shelfDice, goneDice]) {
   Object.assign(p, withVariant(p, null));
   allProducts[p.handle] = p;
 }

@@ -88,12 +88,13 @@ for (const width of [320, 390, 1280]) {
   check(await page.locator('#ml-wishlist').isVisible(), `${width} #ml-wishlist opens the Wallet at it`);
   check(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), `${width} no sideways scroll`);
   if (OUT) await page.locator('#ml-wishlist').screenshot({ path: `${OUT}/r31-${width}-mylair-wishlist.png` });
-  // the email switch off: Sold out says just that
+  // the email switch off: Showdown was asked for with Tell me when it's back, so it still says We'll email you (the
+  // review, 6 Nov 2026: that option's email goes whatever the switch says)
   await page.locator('[data-mlw-alerts]').uncheck();
   await page.waitForTimeout(250);
   check(text(await page.locator('.mlw-say').innerText()) === 'No more wishlist emails. Switch it back on any time.', `${width} switched off`);
   const showdown = await page.locator('.mlw-item', { hasText: 'Showdown' }).locator('.mlw-status').innerText();
-  check(text(showdown) === 'Sold out', `${width} sold out without the email: ${showdown}`);
+  check(text(showdown) === "Sold out. We'll email you.", `${width} asked with Tell me: still emailed: ${showdown}`);
   await page.locator('[data-mlw-alerts]').check();
   await page.waitForTimeout(250);
   // Remove one option

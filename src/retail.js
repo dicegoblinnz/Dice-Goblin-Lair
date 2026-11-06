@@ -121,7 +121,7 @@ export const retailApi = (shopify) => ({
         id name createdAt processedAt cancelledAt displayFinancialStatus displayFulfillmentStatus sourceName email
         customer { id firstName lastName defaultEmailAddress { emailAddress } }
         lineItems(first: 50) { nodes { id title variantTitle quantity currentQuantity variant { id } product { id }
-          originalUnitPriceSet { shopMoney { amount } } } } } } }`,
+          originalUnitPriceSet { shopMoney { amount } } discountedUnitPriceAfterAllDiscountsSet { shopMoney { amount } } } } } } }`,
       { query: terms.join(' ') },
       { timeout: 20_000 },
     );
@@ -134,7 +134,9 @@ export const retailApi = (shopify) => ({
       lines: (o.lineItems?.nodes || []).filter((l) => (l.currentQuantity ?? l.quantity) > 0).map((l) => ({
         lineId: digits(l.id), variantId: l.variant?.id ? digits(l.variant.id) : null, productId: l.product?.id ? digits(l.product.id) : null,
         title: l.title || '', variantTitle: l.variantTitle && l.variantTitle !== 'Default Title' ? l.variantTitle : '',
-        quantity: Number(l.currentQuantity ?? l.quantity) || 0, price: cents(l.originalUnitPriceSet?.shopMoney?.amount) || 0,
+        // what was paid for one, after every discount (the review: never the price before a discount code)
+        quantity: Number(l.currentQuantity ?? l.quantity) || 0,
+        price: cents(l.discountedUnitPriceAfterAllDiscountsSet?.shopMoney?.amount ?? l.originalUnitPriceSet?.shopMoney?.amount) || 0,
       })),
     }));
   },
@@ -266,6 +268,12 @@ export const retailMethods = {
       this.sql.exec('SELECT variant_id FROM wishlist LIMIT 0');
     } catch {
       for (const statement of WISHLIST_V31) this.sql.exec(statement);
+    }
+    // from the review: Tell me when it's back's request (asked_at), on a table made before it
+    try {
+      this.sql.exec('SELECT asked_at FROM wishlist LIMIT 0');
+    } catch {
+      this.sql.exec('ALTER TABLE wishlist ADD COLUMN asked_at INTEGER');
     }
     for (const statement of [...WISHLIST_V31_INDEXES, ...RETAIL_TABLES]) this.sql.exec(statement);
   },

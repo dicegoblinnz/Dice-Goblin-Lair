@@ -35,6 +35,8 @@ export const PICKUP_WORDS = {
   noPermission: "Shopify won't let the Lair mark pickups ready yet. Approve the Lair app's new permission in Shopify (Apps › Dice Goblin Lair), or mark it ready in Shopify for now.",
   refused: (why) => `Shopify said no: ${why}`,
   lines: 'Say which lines are missing, or leave them out for the whole order.',
+  // from the review: Shopify didn't take the count of 0, so staff set it (the customer has still been told)
+  countNotSet: (what) => `Shopify didn't take the new count. Set ${what} to 0 in Shopify yourself, so the website stops selling it.`,
   // staff's email for each new one
   staffSubject: (name, what) => `Pickup ${name} to pull: ${what}`,
   staffTitle: 'A pickup to pull',
@@ -66,11 +68,9 @@ const parse = (text, fallback) => {
 };
 const money = (c) => `$${(Math.max(0, c) / 100).toFixed(2)}`;
 const lineWords = (l) => `${l.title}${l.variantTitle ? `: ${l.variantTitle}` : ''}${l.quantity > 1 ? ` × ${l.quantity}` : ''}`;
-const whatOf = (lines) => {
-  const words = lines.map(lineWords);
-  if (words.length <= 1) return words[0] || 'your order';
-  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-};
+/** "A", "A and B", "A, B and C" */
+const listOf = (words) => (words.length <= 1 ? words[0] || '' : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
+const whatOf = (lines) => listOf(lines.map(lineWords)) || 'your order';
 /** "Sam K.": a first name and the last name's initial, or "A customer" */
 const shortName = (first, last) => {
   const f = String(first || '').trim();
@@ -205,12 +205,14 @@ export const pickupMethods = {
 
   /**
    * POST /staff/pull/ready { orderId } (Check-in): Shopify marks it prepared for pickup and emails the customer, then it's
-   * Ready here. → { ok, pickup }. Every await first (Shopify), then the write.
+   * Ready here. Only one still to pull (new): one that's Ready or Refund due is a 409. → { ok, pickup }. Every await
+   * first (Shopify), then the write, which changes only a pickup still to pull (the review: Not on the shelf landing
+   * while Shopify answered keeps its Refund due).
    */
   async pickupReady(input, who) {
     this.requireStaff(who, 'checkin');
     const row = this.pickupOpen(input?.orderId);
-    if (row.status === 'ready') throw new RuleError(PICKUP_WORDS.notNew, 409);
+    if (row.status !== 'new') throw new RuleError(PICKUP_WORDS.notNew, 409);
     let answer;
     try {
       answer = await this.retail().markReady(row.order_id);
@@ -222,14 +224,17 @@ export const pickupMethods = {
     if (answer.errors?.length) throw new RuleError(PICKUP_WORDS.refused(answer.errors.join('; ')), 409);
     // --- no awaits from here ---
     const now = Date.now();
-    this.write("UPDATE pickups SET status = 'ready', ready_at = COALESCE(ready_at, ?), ready_by = ? WHERE order_id = ?", now, String(who.customerId || ''), row.order_id);
+    this.write("UPDATE pickups SET status = 'ready', ready_at = COALESCE(ready_at, ?), ready_by = ? WHERE order_id = ? AND status = 'new'", now, String(who.customerId || ''), row.order_id);
     return { ok: true, pickup: this.pickupView(this.sql.exec('SELECT * FROM pickups WHERE order_id = ?', row.order_id).one(), now) };
   },
 
   /**
    * POST /staff/pull/missing { orderId, lineIds? } (Check-in): not on the shelf. The customer is emailed straight away
    * that it's being refunded, the Lair's count of what's missing goes to 0 in Shopify (once), and it shows Refund due
-   * until staff tap Done. → { ok, pickup }. Every await first (Shopify's count), then the writes and the email.
+   * until staff tap Done. → { ok, pickup, warning? }: warning when Shopify didn't take the count.
+   * From the review: only lines not already marked count, and they're marked before Shopify is asked, so a second tap
+   * (another device, or an answer lost on a phone) emails nobody twice and Ready can't undo it meanwhile. Then the await
+   * (Shopify's count), then the email, about those lines only.
    */
   async pickupMissing(input, who) {
     this.requireStaff(who, 'checkin');
@@ -242,20 +247,30 @@ export const pickupMethods = {
       if (asked.some((x) => !lineIds.includes(x))) throw new RuleError(PICKUP_WORDS.lines);
       lineIds = [...new Set(asked)];
     }
-    const gone = lines.filter((l) => lineIds.includes(String(l.lineId)));
+    const already = parse(row.missing, []).map(String);
+    const fresh = lineIds.filter((id) => !already.includes(id));
+    const now = Date.now();
+    if (!fresh.length) return { ok: true, pickup: this.pickupView(row, now) };
+    // marked now, before any await
+    const missing = [...already, ...fresh];
+    this.write(
+      "UPDATE pickups SET status = 'missing', missing = ?, missing_at = ?, missing_by = ? WHERE order_id = ?",
+      JSON.stringify(missing), now, String(who.customerId || ''), row.order_id,
+    );
+    const gone = lines.filter((l) => fresh.includes(String(l.lineId)));
     const locationId = this.retailLocationId();
     const changes = [...new Set(gone.map((l) => l.variantId).filter(Boolean))].map((variantId) => ({ variantId, quantity: 0 }));
+    let warning = null;
     if (locationId && changes.length && this.shopify.configured) {
       try {
-        await this.retail().setShelf(changes, locationId, `pickup-missing-${row.order_id}-${lineIds.join('-')}`.slice(0, 120), `logistics://dicegoblin.nz/pickup/${row.order_id}`);
+        const answer = await this.retail().setShelf(changes, locationId, `pickup-missing-${row.order_id}-${fresh.join('-')}`.slice(0, 120), `logistics://dicegoblin.nz/pickup/${row.order_id}`);
+        if (answer?.errors?.length) throw new Error(answer.errors.join('; '));
       } catch (error) {
         console.error('Lair: could not set the count of a missing pickup line', error);
+        warning = PICKUP_WORDS.countNotSet(listOf(gone.map((l) => `${l.title}${l.variantTitle ? `: ${l.variantTitle}` : ''}`)));
       }
     }
     // --- no awaits from here ---
-    const now = Date.now();
-    const missing = [...new Set([...parse(row.missing, []).map(String), ...lineIds])];
-    this.write("UPDATE pickups SET status = 'missing', missing = ?, missing_at = ?, missing_by = ? WHERE order_id = ?", JSON.stringify(missing), now, String(who.customerId || ''), row.order_id);
     const all = missing.length >= lines.length;
     if (emailReady(this.env) && row.email) {
       const amount = gone.reduce((sum, l) => sum + (Number(l.price) || 0) * (Number(l.quantity) || 1), 0);
@@ -267,7 +282,8 @@ export const pickupMethods = {
       })));
       this.write('UPDATE pickups SET missing_mailed = 1 WHERE order_id = ?', row.order_id);
     }
-    return { ok: true, pickup: this.pickupView(this.sql.exec('SELECT * FROM pickups WHERE order_id = ?', row.order_id).one(), now) };
+    const pickup = this.pickupView(this.sql.exec('SELECT * FROM pickups WHERE order_id = ?', row.order_id).one(), Date.now());
+    return warning ? { ok: true, pickup, warning } : { ok: true, pickup };
   },
 
   /**

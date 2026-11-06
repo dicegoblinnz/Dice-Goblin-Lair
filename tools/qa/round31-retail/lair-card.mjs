@@ -91,6 +91,14 @@ for (const width of [320, 390, 1280]) {
   check(v.state === 'supplier' && v.card.startsWith('Delivered in about 10 days'), `${width} dice: ${v.card}`);
   check(!/supplier|dice maker|sent from/i.test(v.card), `${width} the supplier is never named: ${v.card}`);
   check(!v.card.includes('collect free') && v.buy && !v.delivery, `${width} dice form ${JSON.stringify(v)}`);
+  // the review (6 Nov 2026): the supplier's dice on the Lair's own shelf say so, after the script too; and one that
+  // can't be bought is Sold out with Tell me, never a delivery promise
+  await page.goto(`${base}/products/porcelain-blossom-d20-33mm`, { waitUntil: 'networkidle' });
+  v = await look();
+  check(v.state === 'shelf' && v.card.includes('On the shelf at the Lair') && !v.card.includes('Delivered in about 10 days'), `${width} dice on the Lair's shelf: ${v.state} ${v.card}`);
+  await page.goto(`${base}/products/sea-wave-blossom-d20-33mm`, { waitUntil: 'networkidle' });
+  v = await look();
+  check(v.state === 'out' && v.card.includes('Sold out at the Lair') && !v.card.includes('Delivered in about 10 days') && v.wish === 'tell', `${width} dice that can't be bought: ${v.state} ${v.card} ${v.wish}`);
 
   // no card where it doesn't belong: Games Workshop (its own box), a library copy, the membership
   for (const p of ['/products/gw-in-store', '/products/library', '/products/board-game-rental-monthly']) {

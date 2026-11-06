@@ -31,6 +31,9 @@ export const DISPLAY_WORDS = {
   notFound: "That opening isn't one the Lair knows. Refresh the page.",
   noProduct: "Shopify doesn't have that product any more. Refresh the page.",
   key: "That didn't come through properly. Try again.",
+  // from the review: the same tap's key with other numbers, and two openings of one product at once
+  keyUsed: 'That tap was already used for a different opening. Refresh the page, then try again.',
+  busy: "Someone's opening or putting back that one right now. Try again in a moment.",
   shopify: "Shopify didn't take it. Nothing changed. Try again in a minute.",
   setup: "The Lair doesn't know which location is the shop's yet (LAIR_LOCATION_ID).",
   words: 'Type at least 2 letters of the product.',
@@ -108,8 +111,31 @@ export const displayMethods = {
     const key = typeof input?.key === 'string' ? input.key.trim() : '';
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) throw new RuleError(DISPLAY_WORDS.key);
     const done = this.sql.exec('SELECT * FROM display_opens WHERE key = ?', key).toArray()[0];
-    if (done) return { ok: true, open: this.displayView(done), repeated: true };
+    if (done) {
+      // the same tap again (an answer lost on the way) is the same opening; other numbers on that tap are refused
+      const same = done.product_id === productId && done.box_variant_id === boxId && done.pack_variant_id === packId && done.boxes === boxes && done.packs === packs;
+      if (!same) throw new RuleError(DISPLAY_WORDS.keyUsed, 409);
+      return { ok: true, open: this.displayView(done), repeated: true };
+    }
     const locationId = this.displayLocation();
+    // one opening (or undo) of a product at a time, so two can't both pass the box count (the review)
+    if (this.displayLocks().has(productId)) throw new RuleError(DISPLAY_WORDS.busy, 409);
+    this.displayLocks().add(productId);
+    try {
+      return await this.displayOpenNow({ productId, boxId, packId, boxes, packs, key, locationId }, who);
+    } finally {
+      this.displayLocks().delete(productId);
+    }
+  },
+
+  /** The products being opened or put back right now, one at a time each (this Lair's own, made the first time) */
+  displayLocks() {
+    if (!this.displayLockSet) this.displayLockSet = new Set();
+    return this.displayLockSet;
+  },
+
+  /** displayOpen's Shopify part and the record, once the checks are done (one product at a time: displayLocks) */
+  async displayOpenNow({ productId, boxId, packId, boxes, packs, key, locationId }, who) {
     const api = this.retail();
     let product;
     try {
@@ -164,6 +190,17 @@ export const displayMethods = {
     if (row.undone_at) throw new RuleError(DISPLAY_WORDS.undone, 409);
     if (Date.now() - row.at >= DISPLAY_UNDO_FOR) throw new RuleError(DISPLAY_WORDS.undoLate, 409);
     const locationId = this.displayLocation();
+    if (this.displayLocks().has(row.product_id)) throw new RuleError(DISPLAY_WORDS.busy, 409);
+    this.displayLocks().add(row.product_id);
+    try {
+      return await this.displayUndoNow(row, locationId, who);
+    } finally {
+      this.displayLocks().delete(row.product_id);
+    }
+  },
+
+  /** displayUndo's Shopify part and the record (one product at a time: displayLocks) */
+  async displayUndoNow(row, locationId, who) {
     const api = this.retail();
     let product;
     try {

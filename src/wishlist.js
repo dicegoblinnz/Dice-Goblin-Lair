@@ -62,7 +62,7 @@ export const wishlistVariantId = (value) => {
 export const WISHLIST_V31 = [
   `CREATE TABLE IF NOT EXISTS wishlist_v31 (
     customer_id TEXT NOT NULL, product_id TEXT NOT NULL, variant_id TEXT NOT NULL DEFAULT '', handle TEXT, title TEXT,
-    variant_title TEXT, created_at INTEGER NOT NULL, told_at INTEGER, PRIMARY KEY (customer_id, product_id, variant_id))`,
+    variant_title TEXT, created_at INTEGER NOT NULL, told_at INTEGER, asked_at INTEGER, PRIMARY KEY (customer_id, product_id, variant_id))`,
   `INSERT OR IGNORE INTO wishlist_v31 (customer_id, product_id, variant_id, handle, title, created_at)
     SELECT customer_id, product_id, '', handle, title, created_at FROM wishlist`,
   'DROP TABLE wishlist',
@@ -117,6 +117,8 @@ export const wishlistMethods = {
    * the handle and titles when they're sent (left out or empty, the kept ones stay); it's never refused for a full list.
    * A new one when there are WISHLIST_MAX already is a 409. → { ok, added, items, alerts }, added false when it was on
    * it already. No awaits: one read-check-write.
+   * Round 31, from the review: `tell: true` is Tell me when it's back, a request for that option's email (asked_at, now),
+   * which is sent even while "Email me when these come back" is off, and after an unsubscribe that came before it.
    */
   addToWishlist(input, who) {
     const owner = this.wishlistOwner(who);
@@ -125,11 +127,12 @@ export const wishlistMethods = {
     const handle = wishlistHandle(input?.handle);
     const title = wishlistTitle(input?.title);
     const variantTitle = variantId ? wishlistVariantTitle(input?.variantTitle) : null;
+    const asked = input?.tell === true ? Date.now() : null;
     if (this.onWishlist(owner, productId, variantId)) {
-      if (handle !== null || title !== null || variantTitle !== null) {
+      if (handle !== null || title !== null || variantTitle !== null || asked !== null) {
         this.write(
-          'UPDATE wishlist SET handle = COALESCE(?, handle), title = COALESCE(?, title), variant_title = COALESCE(?, variant_title) WHERE customer_id = ? AND product_id = ? AND variant_id = ?',
-          handle, title, variantTitle, owner, productId, variantId,
+          'UPDATE wishlist SET handle = COALESCE(?, handle), title = COALESCE(?, title), variant_title = COALESCE(?, variant_title), asked_at = COALESCE(?, asked_at) WHERE customer_id = ? AND product_id = ? AND variant_id = ?',
+          handle, title, variantTitle, asked, owner, productId, variantId,
         );
       }
       return { ok: true, added: false, items: this.wishlistItems(owner), alerts: this.wishlistAlerts(owner) };
@@ -137,8 +140,8 @@ export const wishlistMethods = {
     const count = this.sql.exec('SELECT COUNT(*) AS n FROM wishlist WHERE customer_id = ?', owner).one().n;
     if (count >= WISHLIST_MAX) throw new RuleError(WISHLIST_MESSAGES.full, 409);
     this.write(
-      'INSERT INTO wishlist (customer_id, product_id, variant_id, handle, title, variant_title, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      owner, productId, variantId, handle, title, variantTitle, Date.now(),
+      'INSERT INTO wishlist (customer_id, product_id, variant_id, handle, title, variant_title, created_at, asked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      owner, productId, variantId, handle, title, variantTitle, Date.now(), asked,
     );
     return { ok: true, added: true, items: this.wishlistItems(owner), alerts: this.wishlistAlerts(owner) };
   },
@@ -175,8 +178,13 @@ export const wishlistMethods = {
 
   /** Round 31: { on }, whether a member's wishlist emails are on (they are until they switch them off). No awaits. */
   wishlistAlerts(customerId) {
-    const row = this.sql.exec('SELECT alerts_off FROM wish_prefs WHERE customer_id = ?', String(customerId)).toArray()[0];
-    return { on: !row?.alerts_off };
+    return { on: this.wishPrefs(customerId).on };
+  },
+
+  /** Round 31: the switch and when it was last set ({ on, at }; at 0 when never). No awaits. */
+  wishPrefs(customerId) {
+    const row = this.sql.exec('SELECT alerts_off, updated_at FROM wish_prefs WHERE customer_id = ?', String(customerId)).toArray()[0];
+    return { on: !row?.alerts_off, at: Number(row?.updated_at) || 0 };
   },
 
   /**
@@ -225,11 +233,11 @@ export const wishlistMethods = {
    */
   wishlistItems(customerId) {
     return this.sql
-      .exec('SELECT product_id, variant_id, handle, title, variant_title, created_at, told_at FROM wishlist WHERE customer_id = ? ORDER BY created_at DESC, rowid DESC', customerId)
+      .exec('SELECT product_id, variant_id, handle, title, variant_title, created_at, told_at, asked_at FROM wishlist WHERE customer_id = ? ORDER BY created_at DESC, rowid DESC', customerId)
       .toArray()
       .map((r) => ({
         productId: r.product_id, variantId: r.variant_id || null, handle: r.handle || '', title: r.title || '', variantTitle: r.variant_title || '',
-        addedAt: r.created_at, ...this.wishItemStock(r), toldAt: r.told_at ?? null,
+        addedAt: r.created_at, ...this.wishItemStock(r), toldAt: r.told_at ?? null, asked: Boolean(r.asked_at),
       }));
   },
 };

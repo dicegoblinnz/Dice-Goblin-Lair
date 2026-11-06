@@ -32,17 +32,18 @@ becomes (customer_id, product_id, variant_id): rebuilt once on start when `varia
 | Route | Who | What |
 |---|---|---|
 | `GET /proxy/me/wishlist` | logged in | `{ items, alerts: { on } }`, items newest first (below) |
-| `POST /proxy/me/wishlist` | logged in | `{ productId, variantId?, handle?, title?, variantTitle? }` → `{ ok, added, items, alerts }`. `variantId` as a number, its digits or `gid://shopify/ProductVariant/…`; left out or null is any option. One already on it keeps its place |
+| `POST /proxy/me/wishlist` | logged in | `{ productId, variantId?, handle?, title?, variantTitle?, tell? }` → `{ ok, added, items, alerts }`. `variantId` as a number, its digits or `gid://shopify/ProductVariant/…`; left out or null is any option. One already on it keeps its place. `tell: true` is Tell me when it's back: a request for that option's email (`asked_at`, now), sent even while My Lair's switch is off, and after an unsubscribe that came before it |
 | `POST /proxy/me/wishlist/remove` | logged in | `{ productId, variantId? }` → `{ ok, removed, items, alerts }`. With `variantId`, that entry; without, every entry for the product |
 | `POST /proxy/me/wishlist/alerts` | logged in | `{ on }` (true or false): My Lair's "Email me when these come back" → `{ ok, alerts: { on } }`. On until they say |
 
-Each item: `{ productId, variantId, handle, title, variantTitle, addedAt, image, price, url, status, shelf, supplier, toldAt }`.
+Each item: `{ productId, variantId, handle, title, variantTitle, addedAt, image, price, url, status, shelf, supplier, toldAt, asked }`.
 `variantId` is null for any option. From the Lair's last stock check (section 2, at most 10 minutes old): `image` (a
 picture's address or null), `price` (cents, or null), `url` (the product's page, with `?variant=` for an option),
 `status` and `shelf` (the Lair's count, null when not known). `status` is `shelf` (on the shelf at the Lair: 1 or more),
 `out` (sold out), `away` (can be bought but isn't on the shelf: `supplier` true for the dice that are "Delivered in
 about 10 days", otherwise Games Workshop's Ordered in), `gone` (no longer sold online) or null (not checked yet).
-`toldAt`: when they were last emailed that it's back.
+`toldAt`: when they were last emailed that it's back. `asked`: Tell me when it's back asked for its email (My Lair says
+"We'll email you" for it whatever the switch says).
 
 New messages (word for word):
 - `variant`: "That option doesn't look right. Refresh the page and try again."
@@ -62,7 +63,8 @@ Each time something's back:
   waits.
 - One email per member per product each time, listing the options that are back. Never a "sold out again" email.
 - From 9am to 9pm at the Lair, like the Lair's other emails; anything due overnight goes at 9am. At most 100 a run.
-- Not sent to: a member who switched it off in My Lair; an email on the Lair's stop list ("Don't send me emails like
+- Not sent to: a member who switched it off in My Lair (except for options they asked about with Tell me when it's back
+  since, which go on their own); an email on the Lair's stop list ("Don't send me emails like
   this", round 29's `followup_stops`) at or after the entry was made; an email Shopify has as unsubscribed at or after
   the entry was made, or invalid or redacted; a product no longer sold online. An entry made after an unsubscribe is
   fresh consent to that alert (the emails skill: "nothing commercial goes after it, including … an alert given before
@@ -112,8 +114,8 @@ order's paid webhook and from a 10-minute look at the last 3 days' pickup orders
 | Route | Who | What |
 |---|---|---|
 | `GET /proxy/staff/pull` | staff with Check-in | `{ pickups, newest }`: open pickups, newest first: `{ orderId, name, customer, items: [{ lineId, title, variantTitle, quantity }], paidAt, dueAt, status, readyAt, missing: [lineId], refundDue, waiting, reminded }`. `status`: `new`, `ready` or `missing`. `customer` is "Sam K.". `waiting`: whole days since Ready. `reminded`: reminder emails sent (0 to 2). `newest`: the newest paidAt (the page chimes when it grows) |
-| `POST /proxy/staff/pull/ready` | Check-in | `{ orderId }` → `{ ok, pickup }` |
-| `POST /proxy/staff/pull/missing` | Check-in | `{ orderId, lineIds? }` (all lines when left out) → `{ ok, pickup }` |
+| `POST /proxy/staff/pull/ready` | Check-in | `{ orderId }` → `{ ok, pickup }`. Only one still to pull (`new`): Ready or Refund due is a 409 |
+| `POST /proxy/staff/pull/missing` | Check-in | `{ orderId, lineIds? }` (all lines when left out) → `{ ok, pickup, warning? }`. Lines already marked are left as they are (no second email); `warning` when Shopify didn't take the count of 0 |
 | `POST /proxy/staff/pull/done` | Check-in | `{ orderId }`: refunded or sorted → `{ ok }` |
 
 Customer emails (transactional: about their own order; no unsubscribe):
@@ -123,7 +125,10 @@ Customer emails (transactional: about their own order; no unsubscribe):
 - Not on the shelf: subject "Sorry, part of your order `#2031` isn't here" ("Sorry, your order `#2031` isn't here" for
   all of it). "We went to pull your order and `what` wasn't on the shelf. Our count was wrong, and that's on us." Then
   "We're refunding `$amount` to your card. Shopify emails you when it's done." (and "The rest of your order is still
-  ready to collect." when some is). Signed "Sorry again, Gobgob, the Dice Goblin".
+  ready to collect." when some is). Signed "Sorry again, Gobgob, the Dice Goblin". The amount is what was paid for those
+  lines after every discount (Shopify's discountedUnitPriceAfterAllDiscounts).
+- Staff, when Shopify didn't take the count of 0 (`warning`): "Shopify didn't take the new count. Set `what` to 0 in
+  Shopify yourself, so the website stops selling it." The customer has still been told.
 
 ## 4. Open a display
 
@@ -144,3 +149,7 @@ Messages (word for word):
 - `noBox`: (n) "Shopify has `n` of that box on the shelf. Count them, then fix the count in Shopify first."
 - `undoLate`: "That was more than a day ago. Change the counts in Shopify instead."
 - `shopify`: "Shopify didn't take it. Nothing changed. Try again in a minute."
+- `keyUsed`: "That tap was already used for a different opening. Refresh the page, then try again." (the same key with
+  other numbers; the same key with the same numbers answers with that opening, `repeated: true`)
+- `busy`: "Someone's opening or putting back that one right now. Try again in a moment." (one opening or undo of a
+  product at a time)

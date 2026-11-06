@@ -136,6 +136,17 @@ for (const width of [320, 390, 1280]) {
   check((await page.evaluate(() => window.__notes)) === quiet, `${width} no chime when it's off`);
   check(await page.evaluate(() => localStorage.getItem('dg-staff-chime')) === 'off', `${width} the chime's off is kept`);
   check(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0, `${width} To pull: no sideways scroll`);
+  // the review (6 Nov 2026): when Shopify didn't take the count of 0, the card says what to do, and so does the note
+  await page.evaluate(() => {
+    const api = window.Lair.store.backend;
+    const real = api.pullMissing.bind(api);
+    api.pullMissing = async (...a) => ({ ...(await real(...a)), warning: "Shopify didn't take the new count. Set Dragon Shield Matte Sleeves: Jet to 0 in Shopify yourself, so the website stops selling it." });
+  });
+  await page.locator('.spull-card:not(.spull-card--refund) [data-pull-missing]').first().click();
+  await page.locator('[data-pull-missing-yes]').click();
+  await page.waitForTimeout(400);
+  const warned = text(await page.locator('.spull-card--refund', { hasText: '#2036' }).innerText());
+  check(warned.includes("Shopify didn't take the new count. Set Dragon Shield Matte Sleeves: Jet to 0 in Shopify yourself"), `${width} the count warning on the card: ${warned}`);
 
   /* ---------- Open a display ---------- */
   await page.locator('[data-tab="displays"]').click();
@@ -183,6 +194,36 @@ for (const width of [320, 390, 1280]) {
   await page.waitForTimeout(600);
   check(text(await page.locator('.sdisp-open').first().innerText()).includes('Put back. The box is on again and its packs are off.'), `${width} put back`);
   check(await page.locator('[data-disp-box] option:checked').innerText() === 'Booster Box (45 on the shelf)', `${width} the form's counts are back: ${await page.locator('[data-disp-box] option:checked').innerText()}`);
+  // the review (6 Nov 2026): a lost answer tried again with the same numbers keeps its key; other numbers get a new one
+  await page.evaluate(() => {
+    const api = window.Lair.store.backend;
+    const real = api.displayOpen.bind(api);
+    window.__keys = [];
+    window.__fail = 1;
+    api.displayOpen = async (input) => {
+      window.__keys.push(input.key);
+      if (window.__fail > 0) {
+        window.__fail -= 1;
+        throw new TypeError('Failed to fetch');
+      }
+      return real(input);
+    };
+  });
+  await page.locator('[data-disp-go]').click();
+  await page.waitForTimeout(250);
+  await page.locator('[data-disp-go]').click();
+  await page.waitForTimeout(400);
+  let keys = await page.evaluate(() => window.__keys);
+  check(keys.length === 2 && keys[0] === keys[1], `${width} the same numbers again: the same key ${JSON.stringify(keys)}`);
+  await page.evaluate(() => { window.__keys = []; window.__fail = 1; });
+  await page.locator('[data-disp-go]').click();
+  await page.waitForTimeout(250);
+  await page.locator('[data-disp-step="1"]').click();
+  await page.locator('[data-disp-go]').click();
+  await page.waitForTimeout(400);
+  keys = await page.evaluate(() => window.__keys);
+  check(keys.length === 2 && keys[0] !== keys[1], `${width} other numbers: a new key ${JSON.stringify(keys)}`);
+  check(/Done: 2 Booster Boxes off, 72 Booster Packs on\./.test(text(await page.locator('lair-staff').innerText())), `${width} the note says what was opened`);
   check(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0, `${width} Open a display: no sideways scroll`);
 
   check(!errors.length, `${width} no script errors: ${errors.join(' | ')}`);

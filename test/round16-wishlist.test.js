@@ -113,10 +113,11 @@ test('wishlist: its table and index are made on every start when missing (a new 
   const ctx = fakeCtx();
   const first = new Lair(ctx, { CURRENCY: 'NZD' });
   const columns = ctx.db.prepare("SELECT name, type, \"notnull\", pk FROM pragma_table_info('wishlist') ORDER BY cid").all().map((c) => [c.name, c.type, c.notnull, c.pk]);
-  // round 31 (contract v31-retail): the option is in the key, and when they were last told it's back
+  // round 31 (contract v31-retail): the option is in the key, when they were last told it's back, and when Tell me when
+  // it's back asked for it
   assert.deepEqual(columns, [
     ['customer_id', 'TEXT', 1, 1], ['product_id', 'TEXT', 1, 2], ['variant_id', 'TEXT', 1, 3], ['handle', 'TEXT', 0, 0], ['title', 'TEXT', 0, 0],
-    ['variant_title', 'TEXT', 0, 0], ['created_at', 'INTEGER', 1, 0], ['told_at', 'INTEGER', 0, 0],
+    ['variant_title', 'TEXT', 0, 0], ['created_at', 'INTEGER', 1, 0], ['told_at', 'INTEGER', 0, 0], ['asked_at', 'INTEGER', 0, 0],
   ], 'one row per member per product per option: the primary key is (customer_id, product_id, variant_id)');
   const index = ctx.db.prepare("SELECT name FROM pragma_index_info('wishlist_customer') ORDER BY seqno").all().map((c) => c.name);
   assert.deepEqual(index, ['customer_id', 'created_at']);

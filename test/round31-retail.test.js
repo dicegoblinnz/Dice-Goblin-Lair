@@ -10,6 +10,7 @@ import { LairTime, rulesFromSettings, DEFAULT_HOURS } from '../src/core.js';
 import { WISH_WORDS, OTHERS_WAIT, wishLabel } from '../src/wish-alerts.js';
 import { PICKUP_WORDS } from '../src/pickups.js';
 import { DISPLAY_WORDS } from '../src/displays.js';
+import { retailApi } from '../src/retail.js';
 import { UNSUBSCRIBE_WORDS } from '../src/first-game.js';
 
 const TZ = 'Pacific/Auckland';
@@ -72,6 +73,10 @@ let pickupOrders;
 let orderStates;
 let readyAnswer;
 let displayProducts;
+// the review (6 Nov 2026): something that lands while the Lair waits on Shopify, and Shopify refusing a new count
+let beforeReady;
+let beforeAdjust;
+let shelfAnswer;
 const realFetch = globalThis.fetch;
 let reached = [];
 
@@ -122,12 +127,18 @@ const fakeRetail = () => ({
   },
   async markReady(orderId) {
     calls.push(['markReady', orderId]);
+    if (beforeReady) {
+      const first = beforeReady;
+      beforeReady = null;
+      await first();
+    }
     if (readyAnswer instanceof Error) throw readyAnswer;
     return readyAnswer;
   },
   async setShelf(changes, locationId, key, reference) {
     calls.push(['setShelf', changes, locationId, key, reference]);
-    return { ok: true };
+    if (shelfAnswer instanceof Error) throw shelfAnswer;
+    return shelfAnswer;
   },
   async displayProducts(words, locationId) {
     calls.push(['displayProducts', words, locationId]);
@@ -139,6 +150,11 @@ const fakeRetail = () => ({
   },
   async adjustShelf(changes, locationId, key, reference) {
     calls.push(['adjustShelf', changes, locationId, key, reference]);
+    if (beforeAdjust) {
+      const first = beforeAdjust;
+      beforeAdjust = null;
+      await first();
+    }
     for (const c of changes) {
       for (const p of displayProducts) for (const v of p.variants) if (v.inventoryItemId === c.inventoryItemId) v.shelf += c.delta;
     }
@@ -157,6 +173,9 @@ beforeEach(async () => {
   orderStates = new Map();
   readyAnswer = { ok: true };
   displayProducts = [];
+  beforeReady = null;
+  beforeAdjust = null;
+  shelfAnswer = { ok: true };
   globalThis.fetch = async (url) => {
     reached.push(String(url));
     throw new Error(`No network in tests: ${url}`);
@@ -377,6 +396,33 @@ test('back on the shelf: nobody who unsubscribed after wishing, switched it off,
   assert.equal(lair.sql.exec('SELECT skipped FROM wish_alerts WHERE customer_id = ? AND variants LIKE ?', RIA, `%${POWER}%`).one().skipped, 'off');
 });
 
+test('back on the shelf (the review): Tell me when it\'s back asks for that option\'s email even with the wishlist emails switched off; a heart alone stays quiet', async () => {
+  for (const [v, title] of [[HEIST, 'The Heist'], [POWER, 'Embracing Power']]) stock.set(v, variant(DECK, v, { shelf: 0, option: title }));
+  ok(await call('POST', 'me/wishlist/alerts', { on: false }, KAI));
+  ok(await wish(KAI, { productId: DECK, variantId: POWER }));
+  const told = ok(await wish(KAI, { productId: DECK, variantId: HEIST, tell: true }));
+  assert.deepEqual(told.items.find((i) => i.variantId === HEIST).asked, true);
+  assert.deepEqual(told.alerts, { on: false }, 'the switch for the rest stays as they left it');
+  await run(NOW + 10 * MIN);
+  stock.set(HEIST, variant(DECK, HEIST, { shelf: 3, option: 'The Heist' }));
+  stock.set(POWER, variant(DECK, POWER, { shelf: 3, option: 'Embracing Power' }));
+  await run(NOW + 20 * MIN);
+  await run(NOW + DAY + 30 * MIN);
+  assert.deepEqual(mails.map((m) => m.to), ['kai@example.com']);
+  assert.ok(mails[0].subject.includes('The Heist') && !mails[0].subject.includes('Embracing Power'), mails[0].subject);
+  // Tell me again on one already on the list asks afresh, after an unsubscribe from the emails too
+  lair.write('INSERT INTO followup_stops (email, at, ref, via) VALUES (?, ?, ?, ?)', 'kai@example.com', NOW + 2 * DAY, 'WISH-1', 'link');
+  nowIs(NOW + 2 * DAY + HOUR);
+  ok(await wish(KAI, { productId: DECK, variantId: HEIST, tell: true }));
+  stock.set(HEIST, variant(DECK, HEIST, { shelf: 0, option: 'The Heist' }));
+  await run(NOW + 2 * DAY + 2 * HOUR);
+  stock.set(HEIST, variant(DECK, HEIST, { shelf: 2, option: 'The Heist' }));
+  await run(NOW + 2 * DAY + 3 * HOUR);
+  // a day later, in the morning (9am to 9pm)
+  await run(NOW + 3 * DAY + 15 * HOUR);
+  assert.equal(mails.length, 2, 'asked again after the unsubscribe: told again');
+});
+
 test('back on the shelf: overnight it waits for 9am; a product no longer sold online is never emailed about', async () => {
   stock.set(HEIST, variant(DECK, HEIST, { shelf: 0, option: 'The Heist' }));
   ok(await wish(MIA, { productId: DECK, variantId: HEIST }));
@@ -558,6 +604,59 @@ test('pickups: Not on the shelf tells the customer it\'s being refunded, sets th
   assert.equal(said(await call('POST', 'staff/pull/missing', { orderId: '5002', lineIds: ['1'] }, OWNER)), `404 ${PICKUP_WORDS.notFound}`);
 });
 
+test('pickups (the review): Not on the shelf twice emails once; Ready is refused on Refund due, and loses nothing when Not on the shelf lands while it waits', async () => {
+  pickupOrders = [order('5010', '#2040', [boxLine, packLine]), order('5011', '#2041', [boxLine])];
+  await lair.pickupFromPaid('5010');
+  await lair.pickupFromPaid('5011');
+  // two taps (two devices, or an answer lost on a phone): one email, one change in Shopify
+  ok(await call('POST', 'staff/pull/missing', { orderId: '5010', lineIds: ['9001'] }, OWNER));
+  const twice = ok(await call('POST', 'staff/pull/missing', { orderId: '5010', lineIds: ['9001'] }, OWNER));
+  assert.deepEqual([twice.pickup.status, twice.pickup.missing], ['missing', ['9001']]);
+  assert.equal(mails.length, 1);
+  assert.equal(calls.filter((c) => c[0] === 'setShelf').length, 1);
+  // the rest, later: one more email, about the packs only
+  ok(await call('POST', 'staff/pull/missing', { orderId: '5010' }, OWNER));
+  assert.equal(mails.length, 2);
+  assert.ok(mails[1].text.includes('Riftbound Radiance: Booster Pack × 3') && !mails[1].text.includes('Booster Box'), mails[1].text);
+  assert.ok(mails[1].text.includes("We're refunding $33.00 to your card."));
+  // Ready on one that's Refund due: refused, and Shopify isn't asked
+  assert.equal(said(await call('POST', 'staff/pull/ready', { orderId: '5010' }, OWNER)), `409 ${PICKUP_WORDS.notNew}`);
+  assert.equal(calls.filter((c) => c[0] === 'markReady').length, 0);
+  // Not on the shelf landing while Ready waits on Shopify: it stays Refund due
+  beforeReady = () => call('POST', 'staff/pull/missing', { orderId: '5011' }, OWNER);
+  await call('POST', 'staff/pull/ready', { orderId: '5011' }, OWNER);
+  const p = ok(await call('GET', 'staff/pull', null, OWNER)).pickups.find((x) => x.orderId === '5011');
+  assert.deepEqual([p.status, p.refundDue], ['missing', true]);
+});
+
+test('pickups (the review): when Shopify doesn\'t take the count of 0, staff are told to set it themselves', async () => {
+  pickupOrders = [order('5012', '#2042', [boxLine]), order('5013', '#2043', [packLine])];
+  await lair.pickupFromPaid('5012');
+  await lair.pickupFromPaid('5013');
+  shelfAnswer = { errors: ['The quantity could not be set'] };
+  const refused = ok(await call('POST', 'staff/pull/missing', { orderId: '5012' }, OWNER));
+  assert.equal(refused.warning, PICKUP_WORDS.countNotSet('Riftbound Radiance: Booster Box'));
+  shelfAnswer = new Error('Shopify timed out');
+  const timedOut = ok(await call('POST', 'staff/pull/missing', { orderId: '5013' }, OWNER));
+  assert.equal(timedOut.warning, PICKUP_WORDS.countNotSet('Riftbound Radiance: Booster Pack'));
+  assert.equal(mails.length, 2, 'the customers still hear');
+});
+
+test('pickups (the review): the refund in the email is what was paid, after discounts', async () => {
+  const node = {
+    id: 'gid://shopify/Order/5014', name: '#2044', createdAt: '2026-11-06T06:00:00Z', processedAt: '2026-11-06T06:00:00Z', cancelledAt: null,
+    displayFinancialStatus: 'PAID', displayFulfillmentStatus: 'UNFULFILLED', sourceName: 'web', email: 'sam@example.com', customer: null,
+    lineItems: { nodes: [{
+      id: 'gid://shopify/LineItem/77', title: 'Riftbound Radiance', variantTitle: 'Booster Box', quantity: 1, currentQuantity: 1,
+      variant: { id: `gid://shopify/ProductVariant/${BOX}` }, product: { id: `gid://shopify/Product/${RADIANCE}` },
+      originalUnitPriceSet: { shopMoney: { amount: '240.0' } }, discountedUnitPriceAfterAllDiscountsSet: { shopMoney: { amount: '216.0' } },
+    }] },
+  };
+  const api = retailApi({ graphql: async () => ({ orders: { nodes: [node] } }) });
+  const [o] = await api.pickupOrders(NOW - DAY);
+  assert.equal(o.lines[0].price, 21600);
+});
+
 test('pickups: the 10-minute look adds any the webhook missed, and leaves orders that aren\'t paid, online or still to collect', async () => {
   pickupOrders = [
     order('5003', '#2033', [boxLine]),
@@ -614,6 +713,24 @@ test('Open a display: the box comes off and its packs go on in one change, once 
   assert.equal(undone.undone.undone, true);
   assert.deepEqual(calls.filter((c) => c[0] === 'adjustShelf')[1][1], [{ inventoryItemId: 'gid://shopify/InventoryItem/91', delta: 1 }, { inventoryItemId: 'gid://shopify/InventoryItem/92', delta: -36 }]);
   assert.equal(said(await call('POST', 'staff/displays/undo', { id: opened.open.id }, OWNER)), `409 ${DISPLAY_WORDS.undone}`);
+});
+
+test('Open a display (the review): a key already used for other numbers is refused, and one product isn\'t opened twice at once', async () => {
+  displayProducts = [nightCity()];
+  const body = { productId: NIGHT_CITY, boxVariantId: NC_BOX, packVariantId: NC_PACK, boxes: 1, packs: 36, key: 'open-tap-0003' };
+  ok(await call('POST', 'staff/displays/open', body, OWNER));
+  assert.equal(said(await call('POST', 'staff/displays/open', { ...body, boxes: 2 }, OWNER)), `409 ${DISPLAY_WORDS.keyUsed}`);
+  assert.equal(said(await call('POST', 'staff/displays/open', { ...body, packs: 24 }, OWNER)), `409 ${DISPLAY_WORDS.keyUsed}`);
+  // a second opening of the same product while the first waits on Shopify: told to wait, nothing more in Shopify
+  let second;
+  beforeAdjust = async () => {
+    second = await call('POST', 'staff/displays/open', { ...body, key: 'open-tap-0004' }, OWNER);
+  };
+  ok(await call('POST', 'staff/displays/open', { ...body, key: 'open-tap-0005' }, OWNER));
+  assert.equal(said(second), `409 ${DISPLAY_WORDS.busy}`);
+  assert.equal(calls.filter((c) => c[0] === 'adjustShelf').length, 2);
+  // and once it's done, the next one goes through
+  ok(await call('POST', 'staff/displays/open', { ...body, key: 'open-tap-0004' }, OWNER));
 });
 
 test('Open a display: the checks, each with its words, and nothing changes in Shopify', async () => {

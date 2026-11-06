@@ -178,16 +178,23 @@ export const wishAlertMethods = {
     let made = 0;
     for (const [productId, variants] of byProduct) {
       const wanted = new Map();
-      const rows = this.sql.exec("SELECT customer_id, variant_id FROM wishlist WHERE product_id = ? AND created_at < ?", productId, now).toArray();
+      const rows = this.sql.exec('SELECT customer_id, variant_id, asked_at FROM wishlist WHERE product_id = ? AND created_at < ?', productId, now).toArray();
       for (const r of rows) {
         const these = r.variant_id ? (variants.has(r.variant_id) ? [r.variant_id] : []) : [...variants];
         if (!these.length) continue;
+        // with the switch off, only what they asked for since (Tell me when it's back)
+        const prefs = this.wishPrefs(r.customer_id);
+        if (!prefs.on && !(r.asked_at != null && r.asked_at >= prefs.at)) {
+          if (!wanted.has(r.customer_id)) wanted.set(r.customer_id, new Set());
+          continue;
+        }
         if (!wanted.has(r.customer_id)) wanted.set(r.customer_id, new Set());
         for (const v of these) wanted.get(r.customer_id).add(v);
       }
-      for (const [customerId, these] of wanted) {
+      for (const [customerId, asked] of wanted) {
         const regular = regulars.has(String(customerId));
-        const off = !this.wishlistAlerts(customerId).on;
+        const off = !asked.size;
+        const these = off ? new Set(rows.filter((r) => r.customer_id === customerId).flatMap((r) => (r.variant_id ? [r.variant_id] : [...variants])).filter((v) => variants.has(v))) : asked;
         this.write(
           `INSERT OR IGNORE INTO wish_alerts (customer_id, product_id, back_at, variants, regular, due_at, created_at, skipped)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -242,19 +249,24 @@ export const wishAlertMethods = {
         continue;
       }
       if (this.shopify.configured && marketing.get(email) === undefined) continue;
-      const variants = parse(a.variants, []).map(String);
+      const all = parse(a.variants, []).map(String);
+      const entries = this.sql.exec('SELECT variant_id, created_at, asked_at FROM wishlist WHERE customer_id = ? AND product_id = ?', a.customer_id, a.product_id).toArray()
+        .filter((r) => !r.variant_id || all.includes(r.variant_id));
+      // with the switch off, only the options they asked for since (Tell me when it's back: the review)
+      const prefs = this.wishPrefs(a.customer_id);
+      const use = prefs.on ? entries : entries.filter((r) => r.asked_at != null && r.asked_at >= prefs.at);
+      const variants = prefs.on ? all : all.filter((v) => use.some((r) => !r.variant_id || r.variant_id === v));
       const stock = variants.map((v) => this.sql.exec('SELECT * FROM wish_stock WHERE variant_id = ?', v).toArray()[0]).filter(Boolean);
       const still = stock.filter((s) => s.sold && s.on_shelf);
-      const entries = this.sql.exec('SELECT variant_id, created_at FROM wishlist WHERE customer_id = ? AND product_id = ?', a.customer_id, a.product_id).toArray()
-        .filter((r) => !r.variant_id || variants.includes(r.variant_id));
-      const made = Math.max(0, ...entries.map((r) => r.created_at));
+      // a wish, or a Tell me, made after an unsubscribe is a fresh request for this email
+      const made = Math.max(0, ...use.map((r) => Math.max(r.created_at, Number(r.asked_at) || 0)));
       const stop = this.sql.exec('SELECT at FROM followup_stops WHERE email = ?', email).toArray()[0];
       const m = marketing.get(email);
       let why = null;
       if (!entries.length) why = 'removed';
+      else if (!use.length) why = 'off';
       else if (!stock.some((s) => s.sold)) why = 'gone';
       else if (!still.length) why = 'sold-out';
-      else if (!this.wishlistAlerts(a.customer_id).on) why = 'off';
       else if (stop && stop.at >= made) why = 'stopped';
       else if (m && (m.state === 'INVALID' || m.state === 'REDACTED' || (m.state === 'UNSUBSCRIBED' && (m.at ?? Infinity) >= made))) why = 'shopify';
       if (why) {
@@ -265,7 +277,7 @@ export const wishAlertMethods = {
       const key = newKey();
       this.write('UPDATE wish_alerts SET sent_at = ?, email = ?, key = ? WHERE id = ? AND sent_at IS NULL AND skipped IS NULL', now, email, key, a.id);
       if (!this.retailChanged()) continue;
-      for (const r of entries) this.write('UPDATE wishlist SET told_at = ? WHERE customer_id = ? AND product_id = ? AND variant_id = ?', now, a.customer_id, a.product_id, r.variant_id);
+      for (const r of use) this.write('UPDATE wishlist SET told_at = ? WHERE customer_id = ? AND product_id = ? AND variant_id = ?', now, a.customer_id, a.product_id, r.variant_id);
       claimed.push(a.id);
       messages.push(this.wishAlertMail({ ...a, key, email }, still, rules, now, member));
     }
