@@ -4979,10 +4979,11 @@ export class Lair {
     // Round 31, retail: an online order collected at the Lair goes on staff's To pull list (src/pickups.js), on its own.
     // Only one with a shipping line (a pickup has one, named for the location) is asked about.
     if (source === 'web' && (order.shipping_lines || []).length) this.later(this.pickupFromPaid(orderId));
-    // Round 31, retail: paid at the counter with the member on it, a free hold of an option on the order is collected
-    if (source && source !== 'web' && order.customer?.id) this.later(this.shopHoldsFromOrder(order));
     // Rung up at the counter: Shopify POS's own orders, and since round 22 Pay on Verifone's (src/counter.js)
     const pos = counterSale(order);
+    // Round 31, retail: paid at the counter with the member on it, a free hold of an option on the order is collected
+    // (only a counter sale: the Shop app, a sales channel or a draft order never collects one)
+    if (pos && order.customer?.id) this.later(this.shopHoldsFromOrder(order));
     const fromDraft = !source || source === 'shopify_draft_order';
     // The lines that pay for a booking or sign-up (its code in _booking), with what each paid; tabs paid; and session
     // passes bought (their SKU), with what each one cost after the line's discounts.

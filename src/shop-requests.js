@@ -38,7 +38,8 @@ export const REQUEST_WORDS = {
   notFound: "That request isn't one the Lair knows. Refresh the page.",
 };
 
-const isEmail = (v) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(v);
+// An address, and nothing a mail link could read as more (?, &, =, # and the like stay out: the staff page links it)
+const isEmail = (v) => /^[A-Za-z0-9._+'-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/.test(v);
 const tidy = (v) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
 
 export const shopRequestMethods = {

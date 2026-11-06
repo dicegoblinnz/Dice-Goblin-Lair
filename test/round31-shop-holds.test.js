@@ -400,6 +400,52 @@ test('free holds at the counter: scanning a member\'s code lists their holds; Ad
   assert.equal(rows().find((r) => r.id === deck.id).status, 'new');
 });
 
+test('free holds: only a counter sale collects one (Shopify POS or Pay on Verifone), not the Shop app, a channel or a draft order (review, 6 Nov)', async () => {
+  const internal = (path, body) => lair.fetch(new Request(`https://lair.test/internal/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1' }, body: JSON.stringify(body) })).then(async (r) => ({ status: r.status, data: await r.json() }));
+  lair.shopify.orderSpend = async () => null;
+  const box = ok(await hold(MIA, BOX)).hold;
+  ok(await call('POST', 'staff/shop-holds/set', { id: box.id }, OWNER));
+  const paid = async (n, source, tags = '') => {
+    ok(await internal('orders-paid', { id: n, admin_graphql_api_id: `gid://shopify/Order/${n}`, source_name: source, tags, customer: { id: Number(MIA) }, line_items: [{ id: n * 10, variant_id: Number(BOX), quantity: 1, price: '240.00', properties: [] }] }));
+    await new Promise((r) => setTimeout(r, 5));
+    return rows().find((r) => r.id === box.id).status;
+  };
+  for (const [n, source] of [[701, 'shopify_draft_order'], [702, '3890849'], [703, 'iphone'], [704, '']]) {
+    assert.equal(await paid(n, source), 'set', `not a counter sale: ${source || '(no source)'}`);
+  }
+  assert.equal(await paid(705, '36219584513'), 'collected', 'Pay on Verifone at the counter');
+});
+
+test('free holds: at most 10 made in a day by one member, cancelled ones too, so holding and cancelling can\'t run on (review, 6 Nov)', async () => {
+  for (let i = 0; i < 10; i += 1) {
+    const made = ok(await hold(MIA, BOX));
+    assert.equal(made.ok, true, `hold ${i + 1}`);
+    ok(await call('POST', 'me/shop-holds/cancel', { id: made.hold.id }, MIA));
+  }
+  const many = ok(await hold(MIA, BOX));
+  assert.deepEqual([many.ok, many.cant, many.message], [false, 'many', SHOP_HOLD_WORDS.many]);
+  assert.equal(SHOP_HOLD_WORDS.many, "That's 10 holds today, the most for one day. You can hold more tomorrow.");
+  assert.equal(ok(await hold(KAI, BOX)).ok, true, 'only theirs');
+  assert.equal(calls.filter((c) => c[0] === 'holdVariant').length, 11, 'Shopify not asked for the 11th');
+  nowIs(NOW + DAY + MIN);
+  assert.equal(ok(await hold(MIA, PACK)).ok, true, 'a day later');
+});
+
+test('free holds: one set aside while the 10-minute run closes it still goes on the put-back list (review, 6 Nov)', async () => {
+  const box = ok(await hold(MIA, BOX)).hold;
+  const stale = lair.sql.exec('SELECT * FROM shop_holds WHERE id = ?', box.id).one();
+  ok(await call('POST', 'staff/shop-holds/set', { id: box.id }, OWNER));
+  assert.equal(await lair.shopHoldClose(stale, 'ended', 'time', null), true);
+  const row = lair.sql.exec('SELECT status, put_back FROM shop_holds WHERE id = ?', box.id).one();
+  assert.deepEqual([row.status, row.put_back], ['ended', 1]);
+});
+
+test('free holds: an option id that isn\'t one comes back as data, like the other refusals (review, 6 Nov)', async () => {
+  const answer = ok(await hold(MIA, 'not-an-id', '8100000000002'));
+  assert.deepEqual([answer.ok, answer.cant, answer.message], [false, 'product', SHOP_HOLD_WORDS.product]);
+  assert.deepEqual(rows(), []);
+});
+
 test('free holds: Shopify\'s calls ask for what a hold needs', async () => {
   const asked = [];
   const api = shopHoldCalls({
@@ -436,6 +482,9 @@ test('requests: anyone tells the counter what they\'re after; staff see them, ne
   assert.equal(said(await ask({ text: '' })), `422 ${REQUEST_WORDS.text}`);
   assert.equal(said(await ask({ text: 'x'.repeat(201) })), `422 ${REQUEST_WORDS.long}`);
   assert.equal(said(await ask({ text: 'dice', email: 'not an email' })), `422 ${REQUEST_WORDS.email}`);
+  // nothing that would add to the staff page's email link (review, 6 Nov)
+  assert.equal(said(await ask({ text: 'dice', email: 'a@b.co?bcc=x@evil.example&body=hi' })), `422 ${REQUEST_WORDS.email}`);
+  assert.equal(said(await ask({ text: 'dice', email: 'a?cc=x@b.co' })), `422 ${REQUEST_WORDS.email}`);
   // a bot that fills in the hidden field: thanked, nothing kept
   assert.equal(ok(await ask({ text: 'cheap pills', website: 'https://spam.example' })).ok, true);
   const list = ok(await call('GET', 'staff/requests', null, OWNER));

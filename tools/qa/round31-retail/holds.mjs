@@ -208,8 +208,14 @@ const run = async (width) => {
   await page.waitForTimeout(400);
   check(!(await page.locator(`[data-free-hold="${newest}"]`).count()), `${width} not on the shelf: gone`);
   check((await sideways()) <= 0, `${width} staff To pull: no sideways scroll`);
-  // Stock: Asked for, with Ruby's from the search
+  // Stock: Asked for, with Ruby's from the search; an email can't add to the mail link (the review of 6 Nov)
+  await page.evaluate(() => window.Lair.store.backend.shopRequest({ text: 'mail trick', email: 'a@b.co?bcc=x@evil.example&body=hi' }));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-tab="stock"]', { timeout: 15000 }).catch(() => null);
   await page.locator('[data-tab="stock"]').click();
+  await page.waitForTimeout(300);
+  const trick = await page.locator('staff-requests a[href^="mailto:"]').first().getAttribute('href');
+  check(new URL(trick).search === `?subject=${encodeURIComponent('What you asked Dice Goblin for')}` && !trick.includes('?bcc'), `${width} the mail link has only its subject: ${trick}`);
   await page.waitForTimeout(400);
   const asked = text(await page.locator('staff-requests').innerText());
   check(asked.includes('Asked for') && asked.includes('pitch black') && asked.includes('Email ruby@example.com') && asked.includes('Ruby Tane'), `${width} Asked for: ${asked}`);

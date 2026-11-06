@@ -162,7 +162,8 @@ Hold something on the shelf free and pay at the counter (Mo's picks of 6 Nov 202
 the cases a hold can't happen, as drawn; the rules from the Decision log of 1 Nov 2026). `src/shop-holds.js` (library
 holds are a different thing, at `/library/holds`).
 
-- **Who and how many:** members (logged in), up to 3 open at a time, one of each option.
+- **Who and how many:** members (logged in), up to 3 open at a time, one of each option, and at most 10 made in 24 hours
+  (cancelled ones count too, so holding and cancelling can't run on).
 - **Until:** closing time of the first opening that starts after it's made (made Friday evening: midnight Saturday;
   made Saturday before 10am: midnight Saturday; made during Saturday: 10pm Sunday).
 - **Not on:** a trading card (product type Trading Card Games) or Games Workshop product in its first 7 days after it
@@ -175,7 +176,8 @@ holds are a different thing, at `/library/holds`).
   (`reserveInventoryUntil`), and is deleted when the hold ends, is cancelled or is collected; a deletion Shopify didn't
   take is tried again every 10 minutes.
 - **Collected** when staff say so (the staff page's Collected, or the counter tablet's Add to the sale after scanning
-  their code), or when a paid order at the counter (not online) has the member on it and that option.
+  their code), or when a paid order at the counter (Shopify POS or Pay on Verifone; never the online store, the Shop
+  app, another sales channel or a draft order) has the member on it and that option.
 - **Not collected in time:** it ends; one set aside shows on To pull for staff to put back. After 2 holds that weren't
   collected (since staff last switched them back on), the member's holds pause until staff switch them back on.
 - **Staff hear** each new one on To pull (with the chime) and by email: "Hold to set aside: `what` (`Ana P.`)", "`Ana P.`
@@ -185,7 +187,7 @@ holds are a different thing, at `/library/holds`).
 | Route | Who | What |
 |---|---|---|
 | `GET /proxy/me/shop-holds` | logged in | `{ holds, max, paused }`: open holds soonest first, `{ id, productId, variantId, title, variantTitle, handle, image, price, quantity, until, madeAt, set, url }` |
-| `POST /proxy/me/shop-holds` | logged in | `{ productId, variantId }` → `{ ok: true, hold, holds, max, paused }`, or `{ ok: false, cant, message, holds, max, paused, startsAt? }`. `cant`: `off`, `full`, `paused`, `already`, `busy`, `product`, `noHolds`, `notShelf`, `release` (with `startsAt`), `gone`. 401 logged out; 502 when Shopify didn't answer (nothing held) |
+| `POST /proxy/me/shop-holds` | logged in | `{ productId, variantId }` → `{ ok: true, hold, holds, max, paused }`, or `{ ok: false, cant, message, holds, max, paused, startsAt? }`. `cant`: `off`, `full`, `paused`, `many`, `already`, `busy`, `product`, `noHolds`, `notShelf`, `release` (with `startsAt`), `gone`. 401 logged out; 502 when Shopify didn't answer (nothing held) |
 | `POST /proxy/me/shop-holds/cancel` | logged in, their own | `{ id }` → `{ ok, holds, max, paused }` |
 | `GET /proxy/staff/pull` | Check-in | also `holds`: open ones and ones to put back, `{ id, customer, customerId, title, variantTitle, quantity, price, madeAt, until, status, putBack, closedHow }`; and `paused`: `[{ customerId, customer, misses }]` |
 | `POST /proxy/staff/shop-holds/set` | Check-in | `{ id }`: set aside behind the counter → `{ ok, hold }` (409 when it isn't new) |
@@ -202,7 +204,8 @@ holds weren't collected. Ask at the counter and staff can switch them back on.";
 moment ago. Gobgob can tell you when it's back."; `release` "Free holds start `Thursday 12 November`. New card releases
 skip holds in their first week, so everyone gets a fair go."; `noHolds` "This one can't be held. You can still buy it
 online and collect it free."; `notShelf` "It isn't on the shelf at the Lair, so it can't be held."; `already` "You're
-holding this one already. It's in My Lair."; `busy` "Someone else is holding that one right now. Try again in a moment."
+holding this one already. It's in My Lair."; `busy` "Someone else is holding that one right now. Try again in a moment.";
+`many` "That's 10 holds today, the most for one day. You can hold more tomorrow."
 
 The member's email when it isn't on the shelf (transactional, about their own hold): subject "Sorry, your hold isn't on
 the shelf"; "We went to set aside `what` for you, and it wasn't on the shelf. Our count was wrong, and that's on us."

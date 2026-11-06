@@ -22,6 +22,9 @@ import { emailReady } from './shopify.js';
 /** Holds a member can have at once, and the holds not collected that pause theirs */
 export const SHOP_HOLD_MAX = 3;
 export const SHOP_HOLD_MISSES = 2;
+/** Holds one member can make in 24 hours, cancelled ones too (the review of 6 Nov: so holding and cancelling can't run
+    on, each one a draft order and an email to the shop) */
+export const SHOP_HOLD_DAY_MAX = 10;
 /** A trading card or Games Workshop product skips holds this long after it goes on the site */
 export const SHOP_HOLD_RELEASE_WAIT = 7 * DAY;
 /** The tag that switches holds off for a product (staff add it in Shopify) */
@@ -55,6 +58,7 @@ export const SHOP_HOLD_WORDS = {
   notShelf: "It isn't on the shelf at the Lair, so it can't be held.",
   already: "You're holding this one already. It's in My Lair.",
   busy: 'Someone else is holding that one right now. Try again in a moment.',
+  many: "That's 10 holds today, the most for one day. You can hold more tomorrow.",
   product: "That product doesn't look right. Refresh the page and try again.",
   shopify: "Shopify didn't answer, so nothing's held. Try again in a minute.",
   notFound: "That hold isn't one the Lair knows. Refresh the page.",
@@ -251,13 +255,15 @@ export const shopHoldMethods = {
     // --- no awaits until the placeholder is written ---
     const productId = digitsOf(input?.productId);
     const variantId = digitsOf(input?.variantId);
-    if (!productId || !variantId) throw new RuleError(SHOP_HOLD_WORDS.product);
     const cant = (why, message, extra = {}) => ({ ok: false, cant: why, message, ...this.shopHoldsOf(owner), ...extra });
+    if (!productId || !variantId) return cant('product', SHOP_HOLD_WORDS.product);
     if (!rules.retailHolds) return cant('off', SHOP_HOLD_WORDS.off);
     if (this.shopHoldMisses(owner).paused) return cant('paused', SHOP_HOLD_WORDS.paused);
     const open = this.sql.exec(`SELECT variant_id FROM shop_holds WHERE customer_id = ? AND status IN ${OPEN}`, owner).toArray();
     if (open.some((h) => h.variant_id === variantId)) return cant('already', SHOP_HOLD_WORDS.already);
     if (open.length >= SHOP_HOLD_MAX) return cant('full', SHOP_HOLD_WORDS.full(open.length));
+    const today = this.sql.exec("SELECT COUNT(*) AS n FROM shop_holds WHERE customer_id = ? AND made_at > ? AND status != 'making'", owner, Date.now() - DAY).one().n;
+    if (today >= SHOP_HOLD_DAY_MAX) return cant('many', SHOP_HOLD_WORDS.many);
     if (this.shopHoldLocks().has(variantId)) return cant('busy', SHOP_HOLD_WORDS.busy);
     const locationId = this.retailLocationId();
     if (!locationId || !this.shopify.configured) throw new RuleError(SHOP_HOLD_WORDS.shopify, 503);
@@ -359,10 +365,12 @@ export const shopHoldMethods = {
    */
   async shopHoldClose(row, status, how, by) {
     const now = Date.now();
-    const putBack = row.status === 'set' && (status === 'cancelled' || status === 'ended') ? 1 : 0;
+    // put back when it's set aside as it stands now, not as `row` was read (staff may have set it aside since)
+    const back = status === 'cancelled' || status === 'ended' ? 1 : 0;
     this.write(
-      `UPDATE shop_holds SET status = ?, closed_at = ?, closed_how = ?, closed_by = ?, put_back = ?, release_due = 1 WHERE id = ? AND status IN ('new', 'set')`,
-      status, now, how, by || null, putBack, row.id,
+      `UPDATE shop_holds SET put_back = CASE WHEN status = 'set' THEN ? ELSE 0 END, status = ?, closed_at = ?, closed_how = ?, closed_by = ?,
+        release_due = 1 WHERE id = ? AND status IN ('new', 'set')`,
+      back, status, now, how, by || null, row.id,
     );
     if (!this.retailChanged()) return false;
     await this.shopHoldLetGo(row);

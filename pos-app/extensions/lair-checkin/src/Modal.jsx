@@ -1283,7 +1283,8 @@ function CheckIn() {
         } catch (error) {
           if (error instanceof LairError && error.kind === 'not-found') {
             updateMember((shown) => ({ ...shown, holds: (shown.holds || []).filter((h) => h.id !== hold.id) }));
-            say('That hold is gone', 'It was collected or it ended. Scan their code again to see what they hold now.', 'info');
+            // (a tap whose answer was lost on the way lands here too, with the hold collected but nothing in the cart)
+            say('That hold is gone', `It was collected or it ended. If ${hold.title} isn't in the cart and they're paying for it now, add it from the grid.`, 'warning');
             return;
           }
           throw error;
