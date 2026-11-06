@@ -132,6 +132,14 @@ const orderOf = (o) => {
 };
 
 /* ---------- round 32, the till, part 3: products, prices and its draft orders ---------- */
+/**
+ * The Admin API version the till's own operations ask (tillVariants, tillSearch, tillCalculate, createTillDraft,
+ * tillDraft, fulfilTillOrder), whatever API_VERSION the rest of the Lair is on. They were written against 2026-10:
+ * a variant's barcodes (ProductVariant.barcodes, all of them, not just the first) only came in 2026-10, so on the
+ * Lair's 2026-07 every scan of a product failed at the counter (Mo, 6 Nov 2026: "it keeps not working with the bar
+ * code of the items"). The rest of the Lair moves to a newer version on its own, after its own checks.
+ */
+export const TILL_API_VERSION = '2026-10';
 const TILL_VARIANT_FIELDS = 'id title sku price inventoryQuantity inventoryPolicy inventoryItem { tracked } barcodes(first: 5) { nodes { value } }';
 const TILL_PRODUCT_FIELDS = 'id title productType vendor status isGiftCard';
 const tillMoney = (field) => `${field} { shopMoney { amount currencyCode } }`;
@@ -249,6 +257,8 @@ export class ShopifyAdmin {
   constructor(env, storage, { clientId = env.SHOPIFY_CLIENT_ID, clientSecret = env.SHOPIFY_CLIENT_SECRET, tokenKey = 'admin-token' } = {}) {
     this.shop = env.SHOP;
     this.version = env.API_VERSION || '2026-07';
+    // the till's own operations ask TILL_API_VERSION, or the Lair's version once that's newer
+    this.tillVersion = String(this.version) > TILL_API_VERSION ? this.version : TILL_API_VERSION;
     this.clientId = clientId;
     this.clientSecret = clientSecret;
     this.tokenKey = tokenKey;
@@ -304,7 +314,8 @@ export class ShopifyAdmin {
    * then throws, as a lost answer does), or true for the one try again after a fresh token.
    */
   async graphql(query, variables = {}, options = {}) {
-    const { retried = false, timeout = null } = typeof options === 'boolean' ? { retried: options } : options || {};
+    // version: the Admin API version to ask (the till's own operations, TILL_API_VERSION); else the Lair's
+    const { retried = false, timeout = null, version = null } = typeof options === 'boolean' ? { retried: options } : options || {};
     // Round 21: no login, nothing sent, so nothing ran (a mutation's caller can safely try again: madeAnyway marks it refused)
     let token;
     try {
@@ -314,7 +325,7 @@ export class ShopifyAdmin {
       throw error;
     }
     externalCalls.count += 1;
-    const response = await fetch(`https://${this.shop}/admin/api/${this.version}/graphql.json`, {
+    const response = await fetch(`https://${this.shop}/admin/api/${version || this.version}/graphql.json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
       body: JSON.stringify({ query, variables }),
@@ -325,7 +336,7 @@ export class ShopifyAdmin {
       this.token = null;
       this.tokenExpires = 0;
       await this.storage?.delete?.(this.tokenKey);
-      return this.graphql(query, variables, { retried: true, timeout });
+      return this.graphql(query, variables, { retried: true, timeout, version });
     }
     if (!response.ok) throw new Error(`Shopify API error ${response.status}`);
     const { data, errors, extensions } = await response.json();
@@ -351,7 +362,7 @@ export class ShopifyAdmin {
         this.token = null;
         this.tokenExpires = 0;
         await this.storage?.delete?.(this.tokenKey);
-        if (!made) return this.graphql(query, variables, { retried: true, timeout });
+        if (!made) return this.graphql(query, variables, { retried: true, timeout, version });
       }
       const error = new Error(`Shopify API: ${errors.map((e) => e.message).join('; ')}`);
       if (made) error.partial = data;
@@ -1556,6 +1567,7 @@ export class ShopifyAdmin {
       `query LairTillVariants($query: String!${dice ? ', $dice: ID!' : ''}) { productVariants(first: 5, query: $query) { nodes {
         ${TILL_VARIANT_FIELDS} product { ${TILL_PRODUCT_FIELDS}${dice ? ' dice: inCollection(id: $dice)' : ''} } } } }`,
       { query, ...(dice ? { dice } : {}) },
+      { version: this.tillVersion },
     );
     return (data.productVariants?.nodes || []).filter((n) => n?.id && n.product).map((n) => ({ product: tillProductOf(n.product), variant: tillVariantOf(n) }));
   }
@@ -1570,6 +1582,7 @@ export class ShopifyAdmin {
       `query LairTillSearch($query: String!${dice ? ', $dice: ID!' : ''}) { products(first: 12, query: $query, sortKey: TITLE) { nodes {
         ${TILL_PRODUCT_FIELDS}${dice ? ' dice: inCollection(id: $dice)' : ''} variants(first: 20) { nodes { ${TILL_VARIANT_FIELDS} } } } } }`,
       { query, ...(dice ? { dice } : {}) },
+      { version: this.tillVersion },
     );
     return (data.products?.nodes || []).filter((p) => p?.id).map((p) => ({ ...tillProductOf(p), variants: (p.variants?.nodes || []).filter((v) => v?.id).map(tillVariantOf) }));
   }
@@ -1582,7 +1595,7 @@ export class ShopifyAdmin {
     const data = await this.graphql(
       `mutation LairTillCalculate($input: DraftOrderInput!) { draftOrderCalculate(input: $input) { calculatedDraftOrder { ${TILL_FIGURES} lineItems { ${TILL_LINE_FIELDS} } } userErrors { field message } } }`,
       { input: tillDraftInput({ lines, currency }) },
-      { timeout },
+      { timeout, version: this.tillVersion },
     );
     const result = data?.draftOrderCalculate;
     if (!result) throw new Error('Shopify gave no answer for the prices.');
@@ -1608,7 +1621,7 @@ export class ShopifyAdmin {
           tags, note, customAttributes: attrs(marker),
         },
       },
-      { timeout },
+      { timeout, version: this.tillVersion },
     ));
     const result = data?.draftOrderCreate;
     if (!result) throw new Error('Shopify gave no answer for the draft order.');
@@ -1623,7 +1636,7 @@ export class ShopifyAdmin {
     const data = await this.graphql(
       `query LairTillDraftNow($id: ID!) { draftOrder(id: $id) { id status ready order { ${ORDER_FIELDS} } ${TILL_FIGURES} lineItems(first: 100) { nodes { ${TILL_LINE_FIELDS} } } } }`,
       { id },
-      { timeout },
+      { timeout, version: this.tillVersion },
     );
     const d = data.draftOrder;
     return d ? { id: d.id, status: d.status || null, ready: d.ready !== false, order: orderOf(d.order), ...tillFiguresOf(d, d.lineItems?.nodes || []) } : null;
@@ -1639,7 +1652,7 @@ export class ShopifyAdmin {
     const data = await this.graphql(
       'query LairTillFulfilment($id: ID!) { order(id: $id) { id fulfillmentOrders(first: 10) { nodes { id status assignedLocation { location { id } } } } } }',
       { id: orderId },
-      { timeout },
+      { timeout, version: this.tillVersion },
     );
     if (!data.order) throw new Error('Shopify has no such order.');
     const open = (data.order.fulfillmentOrders?.nodes || []).filter((f) => ['OPEN', 'IN_PROGRESS'].includes(f.status));
@@ -1652,7 +1665,7 @@ export class ShopifyAdmin {
         const answer = await madeAnyway(this.graphql(
           'mutation LairTillMove($id: ID!, $to: ID!) { fulfillmentOrderMove(id: $id, newLocationId: $to) { movedFulfillmentOrder { id assignedLocation { location { id } } } userErrors { field message } } }',
           { id, to: locationId },
-          { timeout },
+          { timeout, version: this.tillVersion },
         ));
         const m = answer?.fulfillmentOrderMove;
         if (m?.movedFulfillmentOrder?.id && !m.userErrors?.length) {
@@ -1668,7 +1681,7 @@ export class ShopifyAdmin {
       const answer = await madeAnyway(this.graphql(
         'mutation LairTillFulfil($f: FulfillmentInput!) { fulfillmentCreate(fulfillment: $f) { fulfillment { id status } userErrors { field message } } }',
         { f: { lineItemsByFulfillmentOrder: ids.map((fulfillmentOrderId) => ({ fulfillmentOrderId })), notifyCustomer: false } },
-        { timeout },
+        { timeout, version: this.tillVersion },
       ));
       const result = answer?.fulfillmentCreate;
       if (!result) throw new Error('Shopify gave no answer for the fulfilment.');
