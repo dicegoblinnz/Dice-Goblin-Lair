@@ -793,11 +793,12 @@ if (hasTemplate('page.gifts')) {
     '<p><strong>Someone you know has said "I\'d love to try D&amp;D" at least three times. This is their seat.</strong></p><p><strong>Your first roleplaying game</strong> is one seat at any game at the Lair that takes beginners, plus a set of dice to keep. Most beginner games are Dungeons &amp; Dragons, and each one says how a beginner gets a character: ready to play, made together at the table, or brought along.</p>');
   const paintGift = giftProduct(10299259879527, 'learn-to-paint-gift', 'Learn to paint gift', 10, 'gift-paint', 'LAIR-XP-PAINT',
     '<p><strong>Grey plastic goes in. A tiny painted hero comes out.</strong></p><p><strong>Learn to paint</strong> is a seat at the Lair\'s painting class for beginners, the first Thursday of the month from 6 to 8pm. The Lair\'s paints and brushes and a miniature from the shelf are all included, and the crew on shift shows the basics, then helps when they\'re stuck.</p>');
-  const card = giftProduct(10299300000001, 'dice-goblin-gift-card', 'Dice Goblin gift card', 25, 'gift-card', 'GIFT-CARD-25',
+  const card = giftProduct(10299300000001, 'dice-goblin-gift-card', 'Dice Goblin gift card', 10, 'gift-card', 'GIFT-CARD-10',
     '<p><strong>For the person who already owns every game you can think of.</strong></p><p>A <strong>Dice Goblin gift card</strong> works on anything we sell, online or at the counter: board games, dice, trading cards, paint, a table at the Lair, even bubble tea. They don\'t need an account, just the code.</p>',
     { type: 'Gift card' });
   card['gift_card?'] = true;
-  const amounts = [25, 50, 100, 200];
+  // the shop's amounts (6 Nov 2026, Mo: "add the generic options of 10, 20 etc ... then have the other options also")
+  const amounts = [10, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 200];
   card.variants = amounts.map((d, i) => {
     const media = img(`gift-card-${d}__1200x1200`, 1200, 1200, `A $${d} Dice Goblin gift card`);
     media.preview_image = media;
@@ -805,10 +806,10 @@ if (hasTemplate('page.gifts')) {
   });
   card.media = [card.featured_media, ...card.variants.map((v) => v.featured_media)];
   card.has_only_default_variant = false;
-  card.price_min = 2500;
+  card.price_min = 1000;
   card.price_max = 20000;
   card.price_varies = true;
-  card.options_with_values = [{ name: 'Amount', position: 1, selected_value: '$25', values: amounts.map((d) => `$${d}`) }];
+  card.options_with_values = [{ name: 'Amount', position: 1, selected_value: '$10', values: amounts.map((d) => `$${d}`) }];
   card.selected_or_first_available_variant = card.variants[0];
   for (const p of [firstGame, paintGift, card]) allProducts[p.handle] = p;
   const dice = [

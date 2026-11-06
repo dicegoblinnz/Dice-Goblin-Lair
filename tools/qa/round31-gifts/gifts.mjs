@@ -187,14 +187,20 @@ async function giftCard(size) {
     };
   });
   let s = await state();
-  check(`${size} gift card: four amounts, $25 first`, s.amounts.join(' ') === '$25 $50 $100 $200' && s.price === '$25.00', s);
+  // (Mo, 6 Nov 2026: tens from $10 as well as $25, $50, $100 and $200; the page opens on $50, as drawn)
+  const checked = () => page.evaluate(() => document.querySelector('variant-picker .chip__input:checked')?.value || '');
+  check(`${size} gift card: twelve amounts in order, opening on $50 as drawn`, s.amounts.join(' ') === '$10 $20 $25 $30 $40 $50 $60 $70 $80 $90 $100 $200'
+    && s.price === '$50.00', s);
+  const opening = { chip: await checked(), id: await page.evaluate(() => document.querySelector('[data-variant-id]')?.value) };
+  check(`${size} gift card: the $50 chip is the one picked, and it's what goes in the cart`, opening.chip === '$50' && opening.id === String(51300000000006), opening);
   check(`${size} gift card: Them is picked, and their fields show`, s.to === 'them' && s.fields && !s.disabled, s);
   check(`${size} gift card: one at a time (no How many?), and the 3-years line`, !s.qty && /Lasts 3 years from the day you buy it/.test(s.after), s);
   check(`${size} gift card: Send it on starts today, and the time zone offset is filled in`, /^\d{4}-\d{2}-\d{2}$/.test(s.min || '') && s.offset !== '' && s.offset != null, s);
-  await page.click('variant-picker .chip:has(input[value="$50"])');
+  await page.click('variant-picker .chip:has(input[value="$30"])');
   await settle(page);
   s = await state();
-  check(`${size} gift card: $50 swaps the price`, s.price === '$50.00', s);
+  check(`${size} gift card: $30 swaps the price`, s.price === '$30.00', s);
+  check(`${size} gift card: the twelve amounts fit without sideways scroll`, (await overflowX(page)) <= 0);
   // Me
   await page.click('.chip:has([data-send-to][value="me"])');
   await settle(page);
