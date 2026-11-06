@@ -22,7 +22,7 @@ import {
   withGroups,
 } from './flow.js';
 import { customerIdNumber, dateLabel, firstName, longDay, money, peopleLabel, plural, tablesLabel, whenLabel } from './format.js';
-import { accountLine, tabItems } from './lines.js';
+import { accountLine, holdLine, tabItems } from './lines.js';
 import { FOUND_US, FOUND_US_WORDS, askFoundUs } from './foundus.js';
 import { cardFullWords, cardHeading, freshWords, headStartWords, loyaltyCard, rollWords, stampCount, stampNote, stampRows, stampsLeft, welcomeWords } from './loyalty.js';
 import { saleStrip } from './sale.js';
@@ -107,6 +107,7 @@ import {
  *   addEverything: () => void,
  *   checkInMemberOnly: () => void,
  *   addTab: () => void,
+ *   addHold: (hold: import('./lines.js').HoldItem) => void,
  *   putMemberOnSale: () => void,
  *   foundUs: (answer: string) => void,
  *   openPass: (pass: PassLike) => void,
@@ -864,6 +865,7 @@ function MemberView({ screen, ctx }) {
   const waiting = todayRows.filter(({ row }) => dueOf(row) > 0 && isHeld(row, cart.held) && !cart.bookings.includes(String(row.ref)));
   const tab = tabPlan(screen.tab, cart.tabs);
   const { items, bad } = tabItems(screen.tab);
+  const holds = screen.holds || [];
   const card = loyaltyCard(screen.loyalty);
   const monthly = screen.account?.billing === 'monthly';
   const account = accountLine(screen.account);
@@ -929,6 +931,24 @@ function MemberView({ screen, ctx }) {
 
       {/* Round 24: "How did they find us?" on a new player's first day, until someone answers */}
       {member.customerId && askFoundUs(screen) ? <FoundUsSection ctx={ctx} /> : null}
+
+      {/* Round 31 (Lair contract v31-retail section 5): their free holds; Add to the sale collects one */}
+      {holds.length ? (
+        <s-section heading={`Held for ${first || 'them'}`}>
+          <s-stack direction="block" gap="small">
+            {holds.map((hold, i) => (
+              <s-stack key={hold.id} direction="block" gap="small">
+                {i ? <s-divider /> : null}
+                <Item title={hold.title} lines={[holdLine(hold)]} badges={[]} />
+                <s-button variant="secondary" loading={ctx.busyKey === `hold-${hold.id}`} disabled={busyNow} onClick={() => act.addHold(hold)}>
+                  Add to the sale
+                </s-button>
+              </s-stack>
+            ))}
+            <s-text color="subdued">Held free, to pay here. Add to the sale marks it collected.</s-text>
+          </s-stack>
+        </s-section>
+      ) : null}
 
       {todayRows.length ? (
         <s-section heading="Today">

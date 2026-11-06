@@ -157,6 +157,64 @@ export function tabItems(tab) {
   return { items, bad };
 }
 
+/**
+ * @typedef {{ id: number, variantId: number, qty: number, title: string, price: number | null, set: boolean }} HoldItem
+ *   One of a member's free holds (round 31, Lair contract v31-retail section 5): set once staff have put it behind the
+ *   counter; price is the shop's at the time it was held, in cents (POS charges the shop's own).
+ */
+
+/**
+ * A member's free holds from their scan, ready for the cart: numeric ids and option ids, quantities 1–20. One without a
+ * usable option is left out (staff ring it up from the grid, and the paid sale with the member on it collects it).
+ * @param {unknown} holds
+ * @returns {HoldItem[]}
+ */
+export function holdItems(holds) {
+  /** @type {HoldItem[]} */
+  const out = [];
+  for (const raw of Array.isArray(holds) ? holds : []) {
+    const h = /** @type {{ id?: unknown, variantId?: unknown, quantity?: unknown, title?: unknown, variantTitle?: unknown, price?: unknown, set?: unknown }} */ (raw || {});
+    const id = Number(h.id);
+    const v = String(h.variantId ?? '').trim();
+    const variantId = /^\d{1,20}$/.test(v) ? Number(v) : NaN;
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(variantId) || variantId <= 0) continue;
+    const title = [h.title, h.variantTitle]
+      .map((t) => String(t ?? '').trim())
+      .filter((t) => t && t !== 'Default Title')
+      .join(' – ');
+    const price = h.price === null || h.price === undefined || h.price === '' ? NaN : Number(h.price);
+    out.push({
+      id, variantId, qty: Math.min(20, Math.max(1, Math.round(Number(h.quantity) || 1))), title: title || `Item ${v}`,
+      price: Number.isFinite(price) && price >= 0 ? Math.round(price) : null, set: h.set === true,
+    });
+  }
+  return out;
+}
+
+/** "Behind the counter · $30", or "On the shelf, not set aside yet · $30". @param {HoldItem} hold */
+export function holdLine(hold) {
+  return [hold.set ? 'Behind the counter' : 'On the shelf, not set aside yet', hold.price !== null ? money(hold.price) : ''].filter(Boolean).join(' · ');
+}
+
+/**
+ * What the counter says after Add to the sale on a free hold: a toast when it's in the cart (and a banner when someone
+ * else is on the sale), else a banner saying to add it from the grid (the Lair app has marked it collected already).
+ * @param {{ added: boolean, declined: boolean, message: string, customer: string }} result
+ * @param {string} title
+ * @param {string} [first] their first name
+ * @returns {{ toast?: string, title?: string, message?: string }}
+ */
+export function holdOutcome(result, title, first = '') {
+  if (!result.added) {
+    const why = result.declined ? 'POS asked about stock and it was left out.' : `POS said: ${String(result.message || 'no').trim().replace(/[.!]*$/, '.')}`;
+    return { title: `${title} isn't in the cart`, message: `${why} The hold's marked collected, so add ${title} from the grid.` };
+  }
+  const toast = `Added ${title}. Ready to pay.`;
+  if (result.customer !== 'other') return { toast };
+  const who = first || 'them';
+  return { toast, title: 'Someone else is on this sale', message: `${title} is in the cart. To count it for ${who}, tap Put ${who} on this sale.` };
+}
+
 /** What a tab comes to at its own prices, in cents (POS charges the shop's). @param {Tab | null | undefined} tab */
 export function tabCents(tab) {
   if (Number(tab?.total) > 0) return Math.round(Number(tab?.total));

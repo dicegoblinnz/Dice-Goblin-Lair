@@ -5,6 +5,9 @@ import {
   addedToast,
   everythingToast,
   feeLines,
+  holdItems,
+  holdLine,
+  holdOutcome,
   itemCount,
   linesTotal,
   NOTHING_TO_PAY,
@@ -166,4 +169,41 @@ test('a tab\'s total, and the toast after Add everything to cart', () => {
   assert.equal(everythingToast(3000, 3), 'Added $30 and 3 items from the tab. Ready to pay.');
   assert.equal(everythingToast(1500, 0), 'Added $15. Ready to pay.');
   assert.equal(everythingToast(0, 1), 'Added 1 item from the tab. Ready to pay.');
+});
+
+test('round 31: a member\'s free holds from their scan, ready for the cart; one without a usable option is left out', () => {
+  const holds = holdItems([
+    { id: 4, variantId: '4700000000021', productId: '81', title: 'Riftbound Radiance', variantTitle: 'Booster Box', price: 24000, quantity: 1, set: true, until: 1 },
+    { id: 5, variantId: '4700000000011', title: 'One Piece - Starter Deck: Captain Kidd', variantTitle: '', price: 3000, quantity: 1, set: false },
+    { id: 6, variantId: 'gid://shopify/ProductVariant/12', title: 'Broken', quantity: 1 },
+    { id: 'x', variantId: '13', title: 'No id' },
+    { id: 7, variantId: '4700000000099', title: 'Catan', variantTitle: 'Default Title', price: null, quantity: 40 },
+  ]);
+  assert.deepEqual(holds, [
+    { id: 4, variantId: 4700000000021, qty: 1, title: 'Riftbound Radiance – Booster Box', price: 24000, set: true },
+    { id: 5, variantId: 4700000000011, qty: 1, title: 'One Piece - Starter Deck: Captain Kidd', price: 3000, set: false },
+    { id: 7, variantId: 4700000000099, qty: 20, title: 'Catan', price: null, set: false },
+  ]);
+  assert.deepEqual(holdItems(undefined), []);
+  assert.deepEqual(holdItems([null]), []);
+  assert.equal(holdLine(holds[0]), 'Behind the counter · $240');
+  assert.equal(holdLine(holds[1]), 'On the shelf, not set aside yet · $30');
+  assert.equal(holdLine(holds[2]), 'On the shelf, not set aside yet');
+});
+
+test('round 31: what the counter says after Add to the sale on a free hold', () => {
+  assert.deepEqual(holdOutcome({ added: true, declined: false, message: '', customer: 'added' }, 'Catan'), { toast: 'Added Catan. Ready to pay.' });
+  assert.deepEqual(holdOutcome({ added: true, declined: false, message: '', customer: 'other' }, 'Catan', 'Ana'), {
+    toast: 'Added Catan. Ready to pay.',
+    title: 'Someone else is on this sale',
+    message: 'Catan is in the cart. To count it for Ana, tap Put Ana on this sale.',
+  });
+  assert.deepEqual(holdOutcome({ added: false, declined: true, message: '', customer: 'none' }, 'Catan'), {
+    title: "Catan isn't in the cart",
+    message: "POS asked about stock and it was left out. The hold's marked collected, so add Catan from the grid.",
+  });
+  assert.deepEqual(holdOutcome({ added: false, declined: false, message: 'POS refused addLineItem', customer: 'none' }, 'Catan'), {
+    title: "Catan isn't in the cart",
+    message: "POS said: POS refused addLineItem. The hold's marked collected, so add Catan from the grid.",
+  });
 });

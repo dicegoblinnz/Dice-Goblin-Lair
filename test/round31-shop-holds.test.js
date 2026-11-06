@@ -367,6 +367,39 @@ test('free holds: paid at the counter with the member on the sale, it\'s collect
   assert.equal(a.id, rows()[0].id);
 });
 
+test('free holds at the counter: scanning a member\'s code lists their holds; Add to the sale collects one, its stock let go first', async () => {
+  const internal = (path, body) => lair.fetch(new Request(`https://lair.test/internal/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Lair-Internal': '1', 'X-Lair-Pos-User': '77' }, body: JSON.stringify(body) })).then(async (r) => ({ status: r.status, data: await r.json() }));
+  const box = ok(await hold(MIA, BOX)).hold;
+  const deck = ok(await hold(MIA, DECK)).hold;
+  ok(await hold(KAI, PACK));
+  ok(await call('POST', 'staff/shop-holds/set', { id: box.id }, OWNER));
+  // the scan: Mia's open holds, soonest first (the box is set aside behind the counter), and only hers
+  const scan = ok(await internal('pos/scan', { code: lair.memberRow(MIA).code }));
+  assert.equal(scan.type, 'member');
+  assert.deepEqual(scan.holds.map((h) => [h.id, h.variantId, h.title, h.variantTitle, h.price, h.quantity, h.set]), [
+    [box.id, BOX, 'Riftbound Radiance', 'Booster Box', 24000, 1, true],
+    [deck.id, DECK, 'One Piece - Starter Deck: Captain Kidd', '', 3000, 1, false],
+  ]);
+  assert.deepEqual(ok(await internal('pos/scan', { code: lair.memberRow(OWNER).code })).holds, [], 'none for someone with none');
+  // Add to the sale: collected, its draft deleted before the answer (so the till doesn't ask about stock)
+  const before = released().length;
+  const added = ok(await internal('pos/shop-holds/collect', { id: box.id, customerId: MIA }));
+  assert.deepEqual([added.ok, added.hold.variantId, added.hold.quantity, added.hold.title], [true, BOX, 1, 'Riftbound Radiance']);
+  assert.deepEqual(added.holds.map((h) => h.id), [deck.id], 'what else they hold');
+  assert.equal(released().length, before + 1);
+  const row = lair.sql.exec('SELECT status, closed_how, closed_by, release_due FROM shop_holds WHERE id = ?', box.id).one();
+  assert.deepEqual([row.status, row.closed_how, row.closed_by, row.release_due], ['collected', 'counter', 'pos:77', 0]);
+  // a second tap, someone else's hold, or no member: nothing happens
+  assert.equal((await internal('pos/shop-holds/collect', { id: box.id, customerId: MIA })).status, 404);
+  const kais = rows().find((r) => r.customer_id === KAI);
+  assert.equal((await internal('pos/shop-holds/collect', { id: kais.id, customerId: MIA })).status, 404);
+  assert.equal((await internal('pos/shop-holds/collect', { id: kais.id })).status, 404);
+  assert.equal(rows().find((r) => r.customer_id === KAI).status, 'new');
+  // then the sale is paid with Mia on it: nothing more to collect, and the deck stays held
+  assert.equal(await lair.shopHoldsFromOrder({ source_name: 'pos', customer: { id: Number(MIA) }, line_items: [{ variant_id: Number(BOX) }] }), 0);
+  assert.equal(rows().find((r) => r.id === deck.id).status, 'new');
+});
+
 test('free holds: Shopify\'s calls ask for what a hold needs', async () => {
   const asked = [];
   const api = shopHoldCalls({

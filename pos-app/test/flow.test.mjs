@@ -90,7 +90,11 @@ test('a member opens the member view with their rows, tab and passes', () => {
   assert.equal(screen.tab?.id, 'tab_1');
   assert.equal(screen.passes.length, 1);
   assert.deepEqual(screen.loyalty, { stamps: 7, cardSize: 10, rollsAvailable: 1 }, 'the loyalty card, for show (round 6)');
+  // round 31: their free holds, ready for Add to the sale
+  const holding = nextScreen({ type: 'member', member: { customerId: '777' }, holds: [{ id: 3, variantId: '4700000000011', title: 'Mooki Island', variantTitle: '', price: 6500, quantity: 1, set: true }] });
+  assert.deepEqual(holding?.name === 'member' && holding.holds, [{ id: 3, variantId: 4700000000011, qty: 1, title: 'Mooki Island', price: 6500, set: true }]);
   const bare = nextScreen({ type: 'member', member: { customerId: '1' } });
+  assert.deepEqual(bare?.name === 'member' && bare.holds, []);
   assert.deepEqual(bare?.name === 'member' && [bare.rows, bare.tab, bare.passes, bare.loyalty, bare.fresh, bare.added], [[], null, [], null, 0, []]);
 });
 

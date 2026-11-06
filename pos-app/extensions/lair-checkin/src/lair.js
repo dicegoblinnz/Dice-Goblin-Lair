@@ -134,6 +134,17 @@ export function tabAdded(tabId) {
 }
 
 /**
+ * Round 31 (Lair contract v31-retail section 5): one of a member's free holds is going into the sale, so the Lair app
+ * marks it collected and lets its stock go. Answers `{ ok, hold, holds }` (holds: what else they hold). 404: it isn't
+ * theirs, or it's not open any more (collected or ended).
+ * @param {{ id: number, customerId: unknown }} input
+ * @returns {Promise<any>}
+ */
+export function collectHold({ id, customerId }) {
+  return call('POST', '/pos/shop-holds/collect', { id, customerId: String(customerId ?? '') }, "That hold is gone: it was collected or it ended.");
+}
+
+/**
  * @param {'GET' | 'POST'} method
  * @param {string} path
  * @param {object | null} body

@@ -1,7 +1,7 @@
 // Putting fees, shares, tabs and members in the POS cart, with a pretend POS cart: `npm test` in pos-app.
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, hasLairLines, putOnSale, scanCustomer, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
+import { addEverythingToCart, addFeesToCart, addHoldToCart, addTabToCart, bookingsInCart, hasLairLines, putOnSale, scanCustomer, sharesInCart, tabsInCart } from '../extensions/lair-checkin/src/cart.js';
 
 /**
  * A pretend POS cart that records every call.
@@ -251,4 +251,22 @@ test('round 22: scanning someone puts them on the sale when nobody is on it, or 
   assert.equal(scanCustomer({ lineItems: [] }, null), 'none', 'a guest: no account');
   assert.equal(scanCustomer(null, ''), 'none');
   assert.equal(scanCustomer(undefined, 777), 'set');
+});
+
+test('round 31: a free hold goes in as the product itself, then the member on the sale; declined or refused, nothing else happens', async () => {
+  const hold = { id: 4, variantId: 4700000000021, qty: 1, title: 'Riftbound Radiance – Booster Box', price: 24000, set: true };
+  const { calls, state } = pretendCart();
+  assert.deepEqual(await addHoldToCart(hold, '6001'), { added: true, declined: false, message: '', customer: 'added' });
+  assert.deepEqual(calls, [['addLineItem', 4700000000021, 1, undefined], ['setCustomer', { id: 6001 }]]);
+  assert.equal(state.lineItems.length, 1);
+  // someone else on the sale stays on it
+  pretendCart({ customer: { id: 7001 } });
+  assert.equal((await addHoldToCart(hold, '6001')).customer, 'other');
+  // POS asked about stock and staff said no
+  const declined = pretendCart({ declineVariant: 4700000000021 });
+  assert.deepEqual(await addHoldToCart(hold, '6001'), { added: false, declined: true, message: '', customer: 'none' });
+  assert.deepEqual(declined.calls.map((c) => c[0]), ['addLineItem']);
+  // POS refused
+  pretendCart({ refuse: ['addLineItem'] });
+  assert.deepEqual(await addHoldToCart(hold, '6001'), { added: false, declined: false, message: 'POS refused addLineItem', customer: 'none' });
 });

@@ -1974,6 +1974,8 @@ export class Lair {
         if (b === 'pos' && c === 'pass-undo') return json(await this.undoPassUse(String(body.useId || ''), { staff: true, customerId: null }));
         if (b === 'pos' && c === 'member') return json(await this.posMember(body));
         if (b === 'pos' && c === 'tab' && parts[3] && parts[4] === 'added') return json(this.posTabAdded(decodeURIComponent(parts[3])));
+        // Round 31, retail: a member's free hold into the sale ({ id, customerId }: src/shop-holds.js)
+        if (b === 'pos' && c === 'shop-holds' && parts[3] === 'collect') return json(await this.posCollectShopHold(body, by));
         // Round 21, part 2: the GM pays for a player's seat, at the counter ({ gameId, ref }: src/gm-cover.js)
         if (b === 'pos' && c === 'cover') return json(await this.coverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
         if (b === 'pos' && c === 'uncover') return json(await this.uncoverSeat(String(body.gameId || ''), String(body.ref || ''), { staff: true, customerId: null }));
@@ -5928,7 +5930,7 @@ export class Lair {
   /**
    * POST /pos/scan { code }: what a code is, without checking anyone in. A booking or sign-up: { type, row, group }. A
    * member: { type: 'member', member: { customerId, name, code }, rows (theirs today, then their owed seats: owed: true,
-   * each with its cart line), tab (today's), passes (active) }. A pass: { type: 'pass', pass }. The first release's
+   * each with its cart line), tab (today's), passes (active), holds (round 31: their free holds) }. A pass: { type: 'pass', pass }. The first release's
    * GOB- codes work too.
    */
   async posScan(input) {
@@ -5955,6 +5957,8 @@ export class Lair {
         loyalty: this.staffCard(customerId, rules, { waiting: true }),
         // round 9: their billing ({ billing: 'visit' }, or a monthly account's limit and what's owed)
         account: this.accountSummary(customerId, rules, now),
+        // round 31, retail: their free holds, for Add to the sale (src/shop-holds.js)
+        holds: this.posShopHolds(customerId),
       };
     }
     const row = found.type === 'join' ? this.joinRow(found.item) : this.bookingRow(found.item, rules);

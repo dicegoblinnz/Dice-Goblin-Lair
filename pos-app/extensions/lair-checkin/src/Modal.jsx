@@ -22,7 +22,7 @@
 import '@shopify/ui-extensions/preact';
 import { render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { addEverythingToCart, addFeesToCart, addTabToCart, bookingsInCart, cartCustomerId, putOnSale, scanCustomer, sharesInCart, tabsInCart } from './cart.js';
+import { addEverythingToCart, addFeesToCart, addHoldToCart, addTabToCart, bookingsInCart, cartCustomerId, putOnSale, scanCustomer, sharesInCart, tabsInCart } from './cart.js';
 import { readCode } from './codes.js';
 import {
   afterCart,
@@ -55,9 +55,9 @@ import {
   wrongScan,
 } from './flow.js';
 import { dayKey, firstName, money, plural } from './format.js';
-import { checkIn, coverSeat, getToday, LairError, problemFor, saveFoundUs, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse } from './lair.js';
+import { checkIn, collectHold, coverSeat, getToday, LairError, problemFor, saveFoundUs, scanCode, shareBill, tabAdded, uncoverSeat, undoPassUse } from './lair.js';
 import { foundUsSaved } from './foundus.js';
-import { feeLines, itemCount, linesTotal, owedLines, shareLines, tabToast } from './lines.js';
+import { feeLines, holdItems, holdOutcome, itemCount, linesTotal, owedLines, shareLines, tabToast } from './lines.js';
 import { cardFilled, cardFullShort, cardFullWords, freshStamps } from './loyalty.js';
 import { customerNames } from './sale.js';
 import { amountProblem, parseDollars, payerFromScan, pendingShare, pendingState, WAITING, waitingRefs } from './split.js';
@@ -1262,6 +1262,42 @@ function CheckIn() {
     );
   }
 
+  /**
+   * Round 31 (Lair contract v31-retail section 5): "Add to the sale" on one of their free holds. The Lair app marks it
+   * collected and lets its stock go first (POST /pos/shop-holds/collect), so POS shouldn't ask about stock; then the
+   * product goes in the cart at the shop's own price, and the member on the sale. Stays on their screen, with what else
+   * they hold. A hold that's gone (collected or ended) comes off the screen.
+   * @param {import('./lines.js').HoldItem} hold
+   */
+  function addHold(hold) {
+    const screen = topMember();
+    if (!screen) return;
+    const first = firstName(screen.member.name);
+    run(
+      'Adding the hold to the sale…',
+      async () => {
+        /** @type {any} */
+        let answer;
+        try {
+          answer = await collectHold({ id: hold.id, customerId: screen.member.customerId });
+        } catch (error) {
+          if (error instanceof LairError && error.kind === 'not-found') {
+            updateMember((shown) => ({ ...shown, holds: (shown.holds || []).filter((h) => h.id !== hold.id) }));
+            say('That hold is gone', 'It was collected or it ended. Scan their code again to see what they hold now.', 'info');
+            return;
+          }
+          throw error;
+        }
+        updateMember((shown) => ({ ...shown, holds: holdItems(answer?.holds) }));
+        const outcome = holdOutcome(await addHoldToCart(hold, screen.member.customerId), hold.title, first);
+        if (outcome.toast) toast(outcome.toast);
+        if (outcome.title) say(outcome.title, outcome.message || '', outcome.toast ? 'info' : 'warning');
+      },
+      () => addHold(hold),
+      `hold-${hold.id}`,
+    );
+  }
+
   /* ---------------- "How did they find us?" (round 24, contract v24-new-players) ---------------- */
 
   /**
@@ -1400,6 +1436,7 @@ function CheckIn() {
       addEverything,
       checkInMemberOnly,
       addTab,
+      addHold,
       putMemberOnSale,
       foundUs: foundUsHere,
       openPass: (pass) => push({ name: 'pass', pass, picking: false }),

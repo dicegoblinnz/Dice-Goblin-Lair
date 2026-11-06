@@ -2,7 +2,7 @@
 // cart. No `shopify` global here, so `npm test` can check it without a POS.
 import { readCode } from './codes.js';
 import { dateLabel, dayKey, firstName, money, plural, shortDay, timeRange } from './format.js';
-import { addedToast, everythingToast, feeLines, itemCount, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabCents, tabItems } from './lines.js';
+import { addedToast, everythingToast, feeLines, holdItems, itemCount, linesTotal, NOTHING_TO_PAY, passUsedLabel, tabCents, tabItems } from './lines.js';
 import { freshStamps } from './loyalty.js';
 import { canSplit, splitFirst } from './split.js';
 import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, passUsable, rowKey, rowState } from './today.js';
@@ -15,6 +15,7 @@ import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, pass
  * @typedef {import('./lines.js').UsedPass} UsedPass
  * @typedef {import('./lines.js').FeeLine} FeeLine
  * @typedef {import('./lines.js').TabItem} TabItem
+ * @typedef {import('./lines.js').HoldItem} HoldItem
  * @typedef {{ added: FeeLine[], skipped: FeeLine[], unlinked: FeeLine[], failed: { line: FeeLine, message: string }[] }} FeesResult
  *   what happened to some fee lines in the cart (cart.js)
  * @typedef {{ already: boolean, added: TabItem[], declined: TabItem[], untagged: TabItem[],
@@ -40,12 +41,14 @@ import { dueOf, findRow, isArrived, isHeld, isOwed, isPayOnly, passSummary, pass
  *   this screen just set up; confirm: "GM pays" (or stop) is waiting for a yes; fresh: stamps this screen saw land
  * @typedef {{ name: 'member', member: Member, rows: Row[], tab: Tab | null, passes: PassLike[], loyalty?: object | null,
  *   account?: { billing?: string, creditLimit?: number, owed?: number, available?: number | null, warning?: string | null } | null,
- *   fresh?: number, added?: string[], foundUs?: { answer?: string, label?: string } | null, newHere?: boolean }} MemberScreen
+ *   fresh?: number, added?: string[], foundUs?: { answer?: string, label?: string } | null, newHere?: boolean,
+ *   holds?: HoldItem[] }} MemberScreen
  *   loyalty: their loyalty card from the scan (`{ stamps, cardSize, rollsAvailable, card }`, rounds 6 and 7)
  *   account: their billing from the scan (round 9): `{ billing: 'visit' }`, or a monthly account's limit and what's owed
  *   fresh: stamps this screen saw land (check-ins, and stamps staff added); added (round 22): the stamps staff added on
  *   this screen, oldest first, so Undo can take the last one back; foundUs and newHere (round 24, contract
- *   v24-new-players): their answer to "How did you find us?" (null: none yet), and whether today is their first day
+ *   v24-new-players): their answer to "How did you find us?" (null: none yet), and whether today is their first day;
+ *   holds (round 31): their free holds, for Add to the sale
  * @typedef {{ name: 'pass', pass: PassLike & Record<string, any>, picking: boolean }} PassScreen
  * @typedef {{ name: 'group', key: string, ticked: string[], picking: boolean }} GroupScreen
  *   picking: "Check in several at once" is open; ticked: the rowKeys ticked to pay together
@@ -133,6 +136,8 @@ export function nextScreen(answer) {
       // round 24: "How did you find us?" (foundus.js asks while newHere and nobody has answered)
       foundUs: answer.foundUs && typeof answer.foundUs === 'object' ? answer.foundUs : null,
       newHere: answer.newHere === true,
+      // round 31: their free holds (Lair contract v31-retail section 5), for Add to the sale
+      holds: holdItems(answer.holds),
     };
   }
   if (type === 'pass' && answer.pass && typeof answer.pass === 'object') return { name: 'pass', pass: answer.pass, picking: false };

@@ -129,6 +129,11 @@ Scanning someone's member code (from My Lair) shows their loyalty card, **To pay
 - **A monthly account:** the button is **Check in**, and today's fees go on their account. **Pay now: …** is there
   if they'd rather pay now.
 - A weekly regular's ticket *is* their member code.
+- **Held for Ana** (round 31, free holds): what they're holding free, each "Behind the counter · $30" (or "On the
+  shelf, not set aside yet" when staff haven't set it aside) with **Add to the sale**. That marks it collected in the
+  Lair app and lets its stock go first, so the till doesn't ask about stock, then puts the product in the cart at the
+  shop's own price and them on the sale. Rung up from the grid instead, it's collected by itself when the sale is paid
+  with them on it (or tap Collected on the staff page).
 
 ### Their loyalty card
 

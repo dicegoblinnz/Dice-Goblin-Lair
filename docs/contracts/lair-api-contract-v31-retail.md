@@ -169,11 +169,13 @@ holds are a different thing, at `/library/holds`).
   went on the site; a product tagged `no-holds` (staff switch holds off with the tag); anything not sold online, a gift
   card, or untracked stock; nothing on the shelf at the Lair (by the Lair's own count: the supplier's dice only when the
   Lair has some).
-- **Only once the live theme says** (Theme settings › Free holds, `retail_holds`).
+- **Only once the live theme says** (Theme settings › Wishlist › Free holds and Tell us what you're after, `retail_holds`;
+  the same switch shows the empty search's box, section 6).
 - **Off sale while held:** a draft order for the member (tagged `lair-hold`) reserves the stock until the hold ends
   (`reserveInventoryUntil`), and is deleted when the hold ends, is cancelled or is collected; a deletion Shopify didn't
   take is tried again every 10 minutes.
-- **Collected** when staff say so, or when a paid order at the counter (not online) has the member on it and that option.
+- **Collected** when staff say so (the staff page's Collected, or the counter tablet's Add to the sale after scanning
+  their code), or when a paid order at the counter (not online) has the member on it and that option.
 - **Not collected in time:** it ends; one set aside shows on To pull for staff to put back. After 2 holds that weren't
   collected (since staff last switched them back on), the member's holds pause until staff switch them back on.
 - **Staff hear** each new one on To pull (with the chime) and by email: "Hold to set aside: `what` (`Ana P.`)", "`Ana P.`
@@ -191,6 +193,8 @@ holds are a different thing, at `/library/holds`).
 | `POST /proxy/staff/shop-holds/missing` | Check-in | `{ id }`: not on the shelf after all → `{ ok, warning? }`. Closed, the stock let go, the Lair's count set to 0, and the member emailed |
 | `POST /proxy/staff/shop-holds/done` | Check-in | `{ id }`: put back on the shelf → `{ ok }` |
 | `POST /proxy/staff/shop-holds/resume` | Check-in | `{ customerId }`: a paused member's holds back on → `{ ok }` |
+| `POST /pos/scan` (the counter tablet) | POS token | a member's code also gives `holds`: their open holds, soonest first, `{ id, productId, variantId, title, variantTitle, price, quantity, until, set }`. Only theirs: it's their own code |
+| `POST /pos/shop-holds/collect` | POS token | `{ id, customerId }`: Add to the sale. Collected, and its stock let go before the answer (so the till doesn't ask about stock) → `{ ok, hold: { id, variantId, productId, quantity, title, variantTitle, price }, holds }`. Not that member's, or not open (a second tap): 404 |
 
 Words (word for word): `login` "Log in to hold it."; `off` "Free holds aren't on yet."; `full` "You're holding `n` things
 already. Collect one, or cancel one in My Lair, to hold this."; `paused` "Free holds are paused on your account, because 2

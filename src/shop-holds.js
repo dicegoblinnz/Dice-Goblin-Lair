@@ -389,6 +389,37 @@ export const shopHoldMethods = {
     return { ok: true, ...this.shopHoldsOf(owner) };
   },
 
+  /**
+   * The counter tablet's scan of a member's code (POST /pos/scan): their open holds, soonest first, for Add to the sale.
+   * Only theirs: the counter faces customers, and it's their own code. No awaits.
+   */
+  posShopHolds(customerId) {
+    const owner = digitsOf(customerId);
+    if (!owner) return [];
+    return this.sql.exec(`SELECT * FROM shop_holds WHERE customer_id = ? AND status IN ('new', 'set') ORDER BY until, id`, owner).toArray().map((h) => ({
+      id: h.id, productId: h.product_id, variantId: h.variant_id, title: h.title || '', variantTitle: h.variant_title || '', price: h.price,
+      quantity: h.quantity, until: h.until, set: h.status === 'set',
+    }));
+  },
+
+  /**
+   * POST /pos/shop-holds/collect { id, customerId } (the counter tablet, on the member's screen after scanning their code):
+   * it's going into the sale, so it's collected now, and its stock is let go before the answer, so the till doesn't ask
+   * about stock when the tablet adds it. → { ok, hold: { id, variantId, productId, quantity, title, variantTitle, price },
+   * holds } (what else they hold). Not that member's, or not open (a second tap): 404.
+   */
+  async posCollectShopHold(input, by) {
+    const owner = digitsOf(input?.customerId);
+    if (!owner) throw new RuleError(SHOP_HOLD_WORDS.notFound, 404);
+    const row = this.shopHoldOpen(input?.id, owner);
+    if (!(await this.shopHoldClose(row, 'collected', 'counter', by))) throw new RuleError(SHOP_HOLD_WORDS.notFound, 404);
+    return {
+      ok: true,
+      hold: { id: row.id, variantId: row.variant_id, productId: row.product_id, quantity: row.quantity, title: row.title || '', variantTitle: row.variant_title || '', price: row.price },
+      holds: this.posShopHolds(owner),
+    };
+  },
+
   /** A hold as staff see it on To pull. No awaits. */
   shopHoldStaffView(h) {
     return {

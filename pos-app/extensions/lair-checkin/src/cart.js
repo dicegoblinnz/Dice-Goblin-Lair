@@ -195,6 +195,26 @@ export async function addEverythingToCart({ lines, tab, customerId, markAdded })
 }
 
 /**
+ * Round 31: one of a member's free holds into the cart, after the Lair app has marked it collected and let its stock go
+ * (so POS shouldn't ask about stock): the product itself (`cart.addLineItem`, so POS charges the shop's own price), then
+ * the member on the sale. declined: POS asked about stock and staff said no.
+ * @param {import('./lines.js').HoldItem} hold
+ * @param {unknown} customerId
+ * @returns {Promise<{ added: boolean, declined: boolean, message: string, customer: CustomerResult }>}
+ */
+export async function addHoldToCart(hold, customerId) {
+  /** @type {string} */
+  let uuid;
+  try {
+    uuid = await shopify.cart.addLineItem(hold.variantId, hold.qty);
+  } catch (error) {
+    return { added: false, declined: false, message: cartProblem(error), customer: 'none' };
+  }
+  if (!uuid) return { added: false, declined: true, message: '', customer: 'none' };
+  return { added: true, declined: false, message: '', customer: await putOnSale(customerId) };
+}
+
+/**
  * POST /pos/tab/:id/added through `markAdded`: '' when it went, else what to tell staff.
  * @param {string} tabId
  * @param {(tabId: string) => Promise<unknown>} markAdded
