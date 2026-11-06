@@ -282,6 +282,8 @@ const globalSettings = resolveSettings(globalSchema, readJson('config/settings_d
 export { globalSettings };
 /** r7 shell: the mock catalogue, so a check can mark a product sold out (or back in stock) while it runs */
 export { collections, allProducts };
+// the menus, so a check can try the header with the store's own menu (round 31: Warhammer in the menu)
+export { linklists };
 /** Test hooks: a logged-in customer and a request interceptor (used by live.mjs). */
 // sessionsFeed (round 20): the shop metafield lair.sessions the Lair app keeps, as its value; none unless a check sets it
 // templateGaps (26 Oct 2026): a section setting a template doesn't list stays blank, as Shopify renders it

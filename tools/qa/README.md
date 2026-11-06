@@ -269,3 +269,7 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   a game table), Looking for a game (first names to members, "A player" logged out, the filter, Join and Post a game
   opening the calendar's sheets; logged out, Log in to join comes straight back to that game's join sheet), and Learn
   to paint's next date (42 checks). `DG_THEME=… [PORT=4996] [AXE=…] [OUT=…] node tools/qa/round31/hobby.mjs [phone|desktop]`.
+- `round31/menu.mjs`: the header with the store's seven top links (Warhammer joined the menu, 6 Nov 2026): the drawer
+  below 1220px with Warhammer in it, every top link on one row from 1220px with at least 16px before the open pill or
+  the icons, and no sideways scroll, at 390 to 1920px on the theme mock with the theme's own fonts (33 checks).
+  `DG_THEME=… [PORT=4993] [OUT=…] node tools/qa/round31/menu.mjs`.
