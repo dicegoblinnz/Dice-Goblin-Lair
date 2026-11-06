@@ -3523,7 +3523,8 @@ test('POS today: games, events and table bookings for today, grouped and in orde
   assert.deepEqual([groups[3].rows[1].id, groups[3].rows[1].due, groups[3].rows[1].title, groups[3].rows[1].occurrenceId], [day.quizSam.id, 1000, 'Trivia night', 'quiz@2026-10-01']);
   // An empty day still answers.
   Date.now = () => at('2026-10-05', 13);
-  assert.deepEqual((await pos('today')).data, { day: '2026-10-05', now: at('2026-10-05', 13), groups: [] });
+  // round 31 (contract v31-retail): and how many online pickups are still to pull
+  assert.deepEqual((await pos('today')).data, { day: '2026-10-05', now: at('2026-10-05', 13), groups: [], toPull: 0 });
 });
 
 test('POS scan: a booking, seat, game spot or sign-up shows its row and group; a member their day, tab and passes; a pass itself; anything else is a 404', async () => {

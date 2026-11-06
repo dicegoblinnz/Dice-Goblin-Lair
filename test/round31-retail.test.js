@@ -76,6 +76,7 @@ let displayProducts;
 // the review (6 Nov 2026): something that lands while the Lair waits on Shopify, and Shopify refusing a new count
 let beforeReady;
 let beforeAdjust;
+let beforeShelf;
 let shelfAnswer;
 const realFetch = globalThis.fetch;
 let reached = [];
@@ -137,6 +138,11 @@ const fakeRetail = () => ({
   },
   async setShelf(changes, locationId, key, reference) {
     calls.push(['setShelf', changes, locationId, key, reference]);
+    if (beforeShelf) {
+      const first = beforeShelf;
+      beforeShelf = null;
+      await first();
+    }
     if (shelfAnswer instanceof Error) throw shelfAnswer;
     return shelfAnswer;
   },
@@ -175,6 +181,7 @@ beforeEach(async () => {
   displayProducts = [];
   beforeReady = null;
   beforeAdjust = null;
+  beforeShelf = null;
   shelfAnswer = { ok: true };
   globalThis.fetch = async (url) => {
     reached.push(String(url));
@@ -401,7 +408,7 @@ test('back on the shelf (the review): Tell me when it\'s back asks for that opti
   ok(await call('POST', 'me/wishlist/alerts', { on: false }, KAI));
   ok(await wish(KAI, { productId: DECK, variantId: POWER }));
   const told = ok(await wish(KAI, { productId: DECK, variantId: HEIST, tell: true }));
-  assert.deepEqual(told.items.find((i) => i.variantId === HEIST).asked, true);
+  assert.deepEqual(told.items.map((i) => [i.variantId, i.emails]), [[HEIST, true], [POWER, false]], 'each says whether it would email');
   assert.deepEqual(told.alerts, { on: false }, 'the switch for the rest stays as they left it');
   await run(NOW + 10 * MIN);
   stock.set(HEIST, variant(DECK, HEIST, { shelf: 3, option: 'The Heist' }));
@@ -421,6 +428,20 @@ test('back on the shelf (the review): Tell me when it\'s back asks for that opti
   // a day later, in the morning (9am to 9pm)
   await run(NOW + 3 * DAY + 15 * HOUR);
   assert.equal(mails.length, 2, 'asked again after the unsubscribe: told again');
+});
+
+test('wishlist (the second review): an option says it emails only when one would go: asked before the switch went off, or before an unsubscribe, it doesn\'t', async () => {
+  stock.set(HEIST, variant(DECK, HEIST, { shelf: 0, option: 'The Heist' }));
+  ok(await wish(KAI, { productId: DECK, variantId: HEIST, tell: true }));
+  assert.equal(ok(await call('GET', 'me/wishlist', null, KAI)).items[0].emails, true);
+  nowIs(NOW + MIN);
+  ok(await call('POST', 'me/wishlist/alerts', { on: false }, KAI));
+  assert.equal(ok(await call('GET', 'me/wishlist', null, KAI)).items[0].emails, false, 'switched off after asking');
+  nowIs(NOW + 2 * MIN);
+  ok(await wish(KAI, { productId: DECK, variantId: HEIST, tell: true }));
+  assert.equal(ok(await call('GET', 'me/wishlist', null, KAI)).items[0].emails, true, 'asked again');
+  lair.write('INSERT INTO followup_stops (email, at, ref, via) VALUES (?, ?, ?, ?)', 'kai@example.com', NOW + 3 * MIN, 'SJ-OWLBEAR-17', 'link');
+  assert.equal(ok(await call('GET', 'me/wishlist', null, KAI)).items[0].emails, false, 'unsubscribed after asking');
 });
 
 test('back on the shelf: overnight it waits for 9am; a product no longer sold online is never emailed about', async () => {
@@ -629,6 +650,41 @@ test('pickups (the review): Not on the shelf twice emails once; Ready is refused
   assert.deepEqual([p.status, p.refundDue], ['missing', true]);
 });
 
+test('pickups (the second review): a Not on the shelf cut short before its email is finished by the next tap; one on its way isn\'t done twice', async () => {
+  pickupOrders = [order('5017', '#2047', [boxLine, packLine])];
+  await lair.pickupFromPaid('5017');
+  // the first tap dies while Shopify is asked (a restart): the lines are marked, nobody's told
+  shelfAnswer = new Error('the Lair restarted');
+  const realLetter = lair.letter;
+  lair.letter = () => {
+    throw new Error('cut short');
+  };
+  await call('POST', 'staff/pull/missing', { orderId: '5017', lineIds: ['9001'] }, OWNER);
+  lair.letter = realLetter;
+  shelfAnswer = { ok: true };
+  assert.equal(mails.length, 0);
+  // the next tap finishes it: the email, and the count of 0 in Shopify
+  const again = ok(await call('POST', 'staff/pull/missing', { orderId: '5017', lineIds: ['9001'] }, OWNER));
+  assert.deepEqual([again.pickup.missing, mails.length], [['9001'], 1]);
+  assert.ok(mails[0].text.includes('Riftbound Radiance: Booster Box') && mails[0].text.includes('The rest of your order is still ready to collect.'));
+  assert.equal(calls.filter((c) => c[0] === 'setShelf').length, 2);
+  // and then it's done: a third tap does nothing more
+  ok(await call('POST', 'staff/pull/missing', { orderId: '5017', lineIds: ['9001'] }, OWNER));
+  assert.equal(mails.length, 1);
+  // a tap while another is waiting on Shopify answers without doing it again, and Done waits for it too
+  let during;
+  let doneDuring;
+  beforeShelf = async () => {
+    during = await call('POST', 'staff/pull/missing', { orderId: '5017' }, OWNER);
+    doneDuring = await call('POST', 'staff/pull/done', { orderId: '5017' }, OWNER);
+  };
+  ok(await call('POST', 'staff/pull/missing', { orderId: '5017' }, OWNER));
+  assert.equal(ok(during).pickup.status, 'missing');
+  assert.equal(said(doneDuring), `409 ${PICKUP_WORDS.busy}`);
+  assert.equal(mails.length, 2, 'the packs: one email');
+  assert.equal(mails[1].subject, "Sorry, your order #2047 isn't here");
+});
+
 test('pickups (the review): when Shopify doesn\'t take the count of 0, staff are told to set it themselves', async () => {
   pickupOrders = [order('5012', '#2042', [boxLine]), order('5013', '#2043', [packLine])];
   await lair.pickupFromPaid('5012');
@@ -655,6 +711,16 @@ test('pickups (the review): the refund in the email is what was paid, after disc
   const api = retailApi({ graphql: async () => ({ orders: { nodes: [node] } }) });
   const [o] = await api.pickupOrders(NOW - DAY);
   assert.equal(o.lines[0].price, 21600);
+});
+
+test('pickups: the counter tablet\'s today list counts those still to pull, and nothing more (it faces customers)', async () => {
+  pickupOrders = [order('5015', '#2045', [boxLine]), order('5016', '#2046', [packLine])];
+  await lair.pickupFromPaid('5015');
+  await lair.pickupFromPaid('5016');
+  ok(await call('POST', 'staff/pull/ready', { orderId: '5016' }, OWNER));
+  const today = await lair.posToday();
+  assert.equal(today.toPull, 1);
+  assert.ok(!JSON.stringify(today).includes('#2045') && !JSON.stringify(today).includes('Sam'), 'no order or name');
 });
 
 test('pickups: the 10-minute look adds any the webhook missed, and leaves orders that aren\'t paid, online or still to collect', async () => {

@@ -36,14 +36,15 @@ becomes (customer_id, product_id, variant_id): rebuilt once on start when `varia
 | `POST /proxy/me/wishlist/remove` | logged in | `{ productId, variantId? }` → `{ ok, removed, items, alerts }`. With `variantId`, that entry; without, every entry for the product |
 | `POST /proxy/me/wishlist/alerts` | logged in | `{ on }` (true or false): My Lair's "Email me when these come back" → `{ ok, alerts: { on } }`. On until they say |
 
-Each item: `{ productId, variantId, handle, title, variantTitle, addedAt, image, price, url, status, shelf, supplier, toldAt, asked }`.
+Each item: `{ productId, variantId, handle, title, variantTitle, addedAt, image, price, url, status, shelf, supplier, toldAt, emails }`.
 `variantId` is null for any option. From the Lair's last stock check (section 2, at most 10 minutes old): `image` (a
 picture's address or null), `price` (cents, or null), `url` (the product's page, with `?variant=` for an option),
 `status` and `shelf` (the Lair's count, null when not known). `status` is `shelf` (on the shelf at the Lair: 1 or more),
 `out` (sold out), `away` (can be bought but isn't on the shelf: `supplier` true for the dice that are "Delivered in
 about 10 days", otherwise Games Workshop's Ordered in), `gone` (no longer sold online) or null (not checked yet).
-`toldAt`: when they were last emailed that it's back. `asked`: Tell me when it's back asked for its email (My Lair says
-"We'll email you" for it whatever the switch says).
+`toldAt`: when they were last emailed that it's back. `emails`: whether an email goes when it's back, by the sender's
+own rules: the switch on, or Tell me when it's back since it went off, and no unsubscribe since the wish or the ask (My
+Lair says "We'll email you" only then, and a product page's Tell me shows "We'll email you when it's back" only then).
 
 New messages (word for word):
 - `variant`: "That option doesn't look right. Refresh the page and try again."
@@ -115,8 +116,9 @@ order's paid webhook and from a 10-minute look at the last 3 days' pickup orders
 |---|---|---|
 | `GET /proxy/staff/pull` | staff with Check-in | `{ pickups, newest }`: open pickups, newest first: `{ orderId, name, customer, items: [{ lineId, title, variantTitle, quantity }], paidAt, dueAt, status, readyAt, missing: [lineId], refundDue, waiting, reminded }`. `status`: `new`, `ready` or `missing`. `customer` is "Sam K.". `waiting`: whole days since Ready. `reminded`: reminder emails sent (0 to 2). `newest`: the newest paidAt (the page chimes when it grows) |
 | `POST /proxy/staff/pull/ready` | Check-in | `{ orderId }` → `{ ok, pickup }`. Only one still to pull (`new`): Ready or Refund due is a 409 |
-| `POST /proxy/staff/pull/missing` | Check-in | `{ orderId, lineIds? }` (all lines when left out) → `{ ok, pickup, warning? }`. Lines already marked are left as they are (no second email); `warning` when Shopify didn't take the count of 0 |
-| `POST /proxy/staff/pull/done` | Check-in | `{ orderId }`: refunded or sorted → `{ ok }` |
+| `POST /proxy/staff/pull/missing` | Check-in | `{ orderId, lineIds? }` (all lines when left out) → `{ ok, pickup, warning? }`. Lines already marked are left as they are (no second email); lines marked but not yet told (a tap cut short) are finished by the next tap; a tap while another is on its way answers as things stand. `warning` when Shopify didn't take the count of 0 |
+| `POST /proxy/staff/pull/done` | Check-in | `{ orderId }`: refunded or sorted → `{ ok }`. While Not on the shelf is still on its way: 409, "Someone's marking that pickup right now. Try again in a moment." |
+| `GET /pos/today` (the counter tablet) | POS token | also `toPull`: how many are still to pull. A number only: the tablet faces customers (round 30), so it never gets names or orders. The tile adds "· 1 to pull" ("1 online order to pull" with no bookings) |
 
 Customer emails (transactional: about their own order; no unsubscribe):
 - Reminder, day 3: subject "Your order `#2031` is waiting at the Lair"; day 10: "Last reminder: your order `#2031` is at

@@ -35,6 +35,8 @@ export const PICKUP_WORDS = {
   noPermission: "Shopify won't let the Lair mark pickups ready yet. Approve the Lair app's new permission in Shopify (Apps › Dice Goblin Lair), or mark it ready in Shopify for now.",
   refused: (why) => `Shopify said no: ${why}`,
   lines: 'Say which lines are missing, or leave them out for the whole order.',
+  // the second review: a tap on a pickup another tap is still marking (Done waits for it)
+  busy: "Someone's marking that pickup right now. Try again in a moment.",
   // from the review: Shopify didn't take the count of 0, so staff set it (the customer has still been told)
   countNotSet: (what) => `Shopify didn't take the new count. Set ${what} to 0 in Shopify yourself, so the website stops selling it.`,
   // staff's email for each new one
@@ -187,6 +189,11 @@ export const pickupMethods = {
     };
   },
 
+  /** How many online pickups are still to pull (the counter tablet's tile shows the number, never names). No awaits. */
+  retailToPull() {
+    return this.sql.exec("SELECT COUNT(*) AS n FROM pickups WHERE status = 'new'").one().n;
+  },
+
   /** GET /staff/pull (Check-in): { pickups, newest }, open ones newest first. No awaits. */
   staffPull(who) {
     this.requireStaff(who, 'checkin');
@@ -232,9 +239,10 @@ export const pickupMethods = {
    * POST /staff/pull/missing { orderId, lineIds? } (Check-in): not on the shelf. The customer is emailed straight away
    * that it's being refunded, the Lair's count of what's missing goes to 0 in Shopify (once), and it shows Refund due
    * until staff tap Done. → { ok, pickup, warning? }: warning when Shopify didn't take the count.
-   * From the review: only lines not already marked count, and they're marked before Shopify is asked, so a second tap
-   * (another device, or an answer lost on a phone) emails nobody twice and Ready can't undo it meanwhile. Then the await
-   * (Shopify's count), then the email, about those lines only.
+   * From the reviews: lines already marked aren't marked again, and new ones are marked before Shopify is asked (so a
+   * Ready waiting on Shopify can't undo them). What's marked and not yet told (missing_todo) is finished by the next tap
+   * when a tap was cut short (a restart), and a tap while another is on its way answers as things stand (pullLocks).
+   * Then the await (Shopify's count), then the email about those lines only, and missing_todo is cleared.
    */
   async pickupMissing(input, who) {
     this.requireStaff(who, 'checkin');
@@ -247,23 +255,40 @@ export const pickupMethods = {
       if (asked.some((x) => !lineIds.includes(x))) throw new RuleError(PICKUP_WORDS.lines);
       lineIds = [...new Set(asked)];
     }
+    const now = Date.now();
+    if (this.pullLocks().has(row.order_id)) return { ok: true, pickup: this.pickupView(row, now) };
     const already = parse(row.missing, []).map(String);
     const fresh = lineIds.filter((id) => !already.includes(id));
-    const now = Date.now();
-    if (!fresh.length) return { ok: true, pickup: this.pickupView(row, now) };
+    const todo = [...new Set([...parse(row.missing_todo, []).map(String), ...fresh])];
+    if (!todo.length) return { ok: true, pickup: this.pickupView(row, now) };
     // marked now, before any await
-    const missing = [...already, ...fresh];
     this.write(
-      "UPDATE pickups SET status = 'missing', missing = ?, missing_at = ?, missing_by = ? WHERE order_id = ?",
-      JSON.stringify(missing), now, String(who.customerId || ''), row.order_id,
+      "UPDATE pickups SET status = 'missing', missing = ?, missing_todo = ?, missing_mailed = 0, missing_at = ?, missing_by = ? WHERE order_id = ?",
+      JSON.stringify([...already, ...fresh]), JSON.stringify(todo), now, String(who.customerId || ''), row.order_id,
     );
-    const gone = lines.filter((l) => fresh.includes(String(l.lineId)));
+    this.pullLocks().add(row.order_id);
+    try {
+      return await this.pickupMissingNow(row, lines, todo);
+    } finally {
+      this.pullLocks().delete(row.order_id);
+    }
+  },
+
+  /** The pickups being marked Not on the shelf right now (this Lair's own, made the first time) */
+  pullLocks() {
+    if (!this.pullLockSet) this.pullLockSet = new Set();
+    return this.pullLockSet;
+  },
+
+  /** pickupMissing's Shopify count and the email, for the lines marked and not yet told (todo) */
+  async pickupMissingNow(row, lines, todo) {
+    const gone = lines.filter((l) => todo.includes(String(l.lineId)));
     const locationId = this.retailLocationId();
     const changes = [...new Set(gone.map((l) => l.variantId).filter(Boolean))].map((variantId) => ({ variantId, quantity: 0 }));
     let warning = null;
     if (locationId && changes.length && this.shopify.configured) {
       try {
-        const answer = await this.retail().setShelf(changes, locationId, `pickup-missing-${row.order_id}-${fresh.join('-')}`.slice(0, 120), `logistics://dicegoblin.nz/pickup/${row.order_id}`);
+        const answer = await this.retail().setShelf(changes, locationId, `pickup-missing-${row.order_id}-${todo.join('-')}`.slice(0, 120), `logistics://dicegoblin.nz/pickup/${row.order_id}`);
         if (answer?.errors?.length) throw new Error(answer.errors.join('; '));
       } catch (error) {
         console.error('Lair: could not set the count of a missing pickup line', error);
@@ -271,17 +296,19 @@ export const pickupMethods = {
       }
     }
     // --- no awaits from here ---
-    const all = missing.length >= lines.length;
-    if (emailReady(this.env) && row.email) {
+    const current = this.sql.exec('SELECT * FROM pickups WHERE order_id = ?', row.order_id).one();
+    const all = parse(current.missing, []).length >= lines.length;
+    if (emailReady(this.env) && current.email) {
       const amount = gone.reduce((sum, l) => sum + (Number(l.price) || 0) * (Number(l.quantity) || 1), 0);
-      this.later(this.mail(this.letter(row.email, PICKUP_WORDS.missingSubject(row.name, all), {
+      const message = this.letter(current.email, PICKUP_WORDS.missingSubject(current.name, all), {
         title: PICKUP_WORDS.missingTitle,
         intro: [PICKUP_WORDS.missingIntro(whatOf(gone)), PICKUP_WORDS.missingRefund(money(amount)), ...(all ? [] : [PICKUP_WORDS.missingRest])],
-        details: [['Order', row.name]],
+        details: [['Order', current.name]],
         signoff: PICKUP_WORDS.missingSignoff,
-      })));
-      this.write('UPDATE pickups SET missing_mailed = 1 WHERE order_id = ?', row.order_id);
+      });
+      this.later(this.mail(message));
     }
+    this.write('UPDATE pickups SET missing_todo = NULL, missing_mailed = 1 WHERE order_id = ?', row.order_id);
     const pickup = this.pickupView(this.sql.exec('SELECT * FROM pickups WHERE order_id = ?', row.order_id).one(), Date.now());
     return warning ? { ok: true, pickup, warning } : { ok: true, pickup };
   },
@@ -293,6 +320,8 @@ export const pickupMethods = {
   pickupDone(input, who) {
     this.requireStaff(who, 'checkin');
     const row = this.pickupOpen(input?.orderId);
+    // not while Not on the shelf is still telling the customer (the second review)
+    if (this.pullLocks().has(row.order_id)) throw new RuleError(PICKUP_WORDS.busy, 409);
     const now = Date.now();
     const lines = parse(row.lines, []);
     const missing = parse(row.missing, []).map(String);

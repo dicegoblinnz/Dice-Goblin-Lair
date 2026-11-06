@@ -15,6 +15,10 @@ the tile. It talks to the Lair app (the Cloudflare Worker at the root of this re
 The tile says **Lair check-in** and today's numbers, like "9 of 27 here · 2 to pay". The number on the tile counts
 the bookings here with something still to pay that isn't in the cart yet. Tap the tile.
 
+Round 31: when online orders are waiting to be pulled for collection, the tile adds how many ("· 1 to pull", or "1
+online order to pull" on a day with no bookings). Only the number: the tablet faces customers, so names and orders are
+on the staff page's To pull tab.
+
 A person's screen shows, from the top: who it is, **To pay** in big numbers, and a line saying what's in the cart
 ("In the cart: $15 · Sam Jones"). The big button is always the next step. If someone else's sale is in the cart, a
 yellow box says so: if they're paying apart, take that payment first.

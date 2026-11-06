@@ -36,7 +36,7 @@ export const RETAIL_TABLES = [
   `CREATE TABLE IF NOT EXISTS pickups (
     order_id TEXT PRIMARY KEY, name TEXT NOT NULL, customer_id TEXT, customer_name TEXT, email TEXT, lines TEXT NOT NULL,
     paid_at INTEGER NOT NULL, due_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'new', ready_at INTEGER, ready_by TEXT,
-    missing TEXT, missing_at INTEGER, missing_by TEXT, missing_mailed INTEGER NOT NULL DEFAULT 0, reminded INTEGER NOT NULL DEFAULT 0,
+    missing TEXT, missing_todo TEXT, missing_at INTEGER, missing_by TEXT, missing_mailed INTEGER NOT NULL DEFAULT 0, reminded INTEGER NOT NULL DEFAULT 0,
     refund_due_at INTEGER, refund_mailed INTEGER NOT NULL DEFAULT 0, staff_mailed INTEGER NOT NULL DEFAULT 0,
     closed_at INTEGER, closed_how TEXT, created_at INTEGER NOT NULL)`,
   "CREATE INDEX IF NOT EXISTS pickups_open ON pickups (paid_at) WHERE status IN ('new', 'ready', 'missing')",
@@ -276,6 +276,12 @@ export const retailMethods = {
       this.sql.exec('ALTER TABLE wishlist ADD COLUMN asked_at INTEGER');
     }
     for (const statement of [...WISHLIST_V31_INDEXES, ...RETAIL_TABLES]) this.sql.exec(statement);
+    // the second review: lines marked Not on the shelf and not yet told (missing_todo), on a table made before it
+    try {
+      this.sql.exec('SELECT missing_todo FROM pickups LIMIT 0');
+    } catch {
+      this.sql.exec('ALTER TABLE pickups ADD COLUMN missing_todo TEXT');
+    }
   },
 
   /**

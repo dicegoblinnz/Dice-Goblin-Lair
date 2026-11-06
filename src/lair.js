@@ -5881,7 +5881,11 @@ export class Lair {
     }
     const order = { game: 0, event: 1, tables: 2 };
     for (const g of groups.values()) g.rows.sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
-    return { day, now, groups: [...groups.values()].sort((a, b) => a.start - b.start || order[a.kind] - order[b.kind] || a.title.localeCompare(b.title)) };
+    return {
+      day, now, groups: [...groups.values()].sort((a, b) => a.start - b.start || order[a.kind] - order[b.kind] || a.title.localeCompare(b.title)),
+      // round 31 (contract v31-retail): online pickups still to pull, as a number only (the tablet faces customers)
+      toPull: this.retailToPull(),
+    };
   }
 
   /** The Today group a booking or sign-up belongs to: { key, kind, title, start } */

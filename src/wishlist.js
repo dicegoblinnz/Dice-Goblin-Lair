@@ -232,12 +232,22 @@ export const wishlistMethods = {
    * last stock check (wishItemStock, src/wish-alerts.js), and toldAt is when they were last emailed it's back. No awaits.
    */
   wishlistItems(customerId) {
+    // whether an email goes when it's back, by the sender's own rules (src/wish-alerts.js, the second review): the
+    // switch on, or Tell me when it's back since it went off; and no unsubscribe since the wish or the ask
+    const prefs = this.wishPrefs(customerId);
+    const email = String(this.memberRow(customerId)?.email || '').trim().toLowerCase();
+    const stop = email ? this.sql.exec('SELECT at FROM followup_stops WHERE email = ?', email).toArray()[0] : null;
+    const emails = (r) => {
+      const on = prefs.on || (r.asked_at != null && r.asked_at >= prefs.at);
+      const made = Math.max(r.created_at, Number(r.asked_at) || 0);
+      return on && !(stop && stop.at >= made);
+    };
     return this.sql
       .exec('SELECT product_id, variant_id, handle, title, variant_title, created_at, told_at, asked_at FROM wishlist WHERE customer_id = ? ORDER BY created_at DESC, rowid DESC', customerId)
       .toArray()
       .map((r) => ({
         productId: r.product_id, variantId: r.variant_id || null, handle: r.handle || '', title: r.title || '', variantTitle: r.variant_title || '',
-        addedAt: r.created_at, ...this.wishItemStock(r), toldAt: r.told_at ?? null, asked: Boolean(r.asked_at),
+        addedAt: r.created_at, ...this.wishItemStock(r), toldAt: r.told_at ?? null, emails: emails(r),
       }));
   },
 };

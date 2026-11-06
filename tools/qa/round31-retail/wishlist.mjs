@@ -88,13 +88,24 @@ for (const width of [320, 390, 1280]) {
   check(await page.locator('#ml-wishlist').isVisible(), `${width} #ml-wishlist opens the Wallet at it`);
   check(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)), `${width} no sideways scroll`);
   if (OUT) await page.locator('#ml-wishlist').screenshot({ path: `${OUT}/r31-${width}-mylair-wishlist.png` });
-  // the email switch off: Showdown was asked for with Tell me when it's back, so it still says We'll email you (the
-  // review, 6 Nov 2026: that option's email goes whatever the switch says)
+  // the email switch off after Tell me: no email goes, so it says just Sold out (the reviews, 6 Nov 2026)
   await page.locator('[data-mlw-alerts]').uncheck();
   await page.waitForTimeout(250);
   check(text(await page.locator('.mlw-say').innerText()) === 'No more wishlist emails. Switch it back on any time.', `${width} switched off`);
-  const showdown = await page.locator('.mlw-item', { hasText: 'Showdown' }).locator('.mlw-status').innerText();
-  check(text(showdown) === "Sold out. We'll email you.", `${width} asked with Tell me: still emailed: ${showdown}`);
+  let showdown = await page.locator('.mlw-item', { hasText: 'Showdown' }).locator('.mlw-status').innerText();
+  check(text(showdown) === 'Sold out', `${width} switched off after asking: no promise: ${showdown}`);
+  // the product page offers Tell me again, and asking then means that one's emailed, switch or not
+  await page.goto(`${base}/products/riftbound-radiance`, { waitUntil: 'networkidle' });
+  await page.locator('label.chip', { hasText: 'Showdown' }).click();
+  await page.waitForTimeout(250);
+  check(text(await heart.innerText()) === "Tell me when it's back", `${width} Tell me again while it wouldn't email: ${await heart.innerText()}`);
+  await heart.click();
+  await page.waitForTimeout(300);
+  check(text(await heart.innerText()) === "We'll email you when it's back", `${width} asked again: ${await heart.innerText()}`);
+  await page.goto(`${base}/pages/my-lair#ml-wishlist`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('.mlw-list', { timeout: 8000 }).catch(() => null);
+  showdown = await page.locator('.mlw-item', { hasText: 'Showdown' }).locator('.mlw-status').innerText();
+  check(text(showdown) === "Sold out. We'll email you." && !(await page.locator('[data-mlw-alerts]').isChecked()), `${width} asked since the switch went off: emailed: ${showdown}`);
   await page.locator('[data-mlw-alerts]').check();
   await page.waitForTimeout(250);
   // Remove one option

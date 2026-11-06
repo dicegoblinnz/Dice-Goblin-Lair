@@ -297,11 +297,22 @@ test('a booking whose last share is on its way says so, and a named player’s o
 test('the tile: people here of people booked, and a badge for those here with something to pay', () => {
   const entry = tileEntry(fixture(), 5000);
   // Zoë is the only one here who hasn't paid (Ben and the walk-in have).
-  assert.deepEqual(entry, { at: 5000, day: '2026-10-03', people: 13, arrived: 5, owing: ['ZB-KEA-20'] });
+  assert.deepEqual(entry, { at: 5000, day: '2026-10-03', people: 13, arrived: 5, owing: ['ZB-KEA-20'], pull: 0 });
   assert.deepEqual(tileWords(entry), { subheading: '5 of 13 here · 1 to pay', count: 1 });
   assert.deepEqual(tileWords(entry, ['ZB-KEA-20']), { subheading: '5 of 13 here', count: 0 }, 'her fee is in the cart');
   assert.deepEqual(tileWords(tileEntry({ groups: [] }, 1)), { subheading: 'Nothing booked today', count: 0 });
   assert.deepEqual(tileWords(null), { subheading: 'Nothing booked today', count: 0 });
+});
+
+test('the tile: online orders waiting to be pulled, as a count only (round 31: the tablet faces customers, so no names)', () => {
+  const entry = tileEntry({ ...fixture(), toPull: 2 }, 5000);
+  assert.equal(entry.pull, 2);
+  assert.deepEqual(tileWords(entry), { subheading: '5 of 13 here · 1 to pay · 2 to pull', count: 1 });
+  assert.deepEqual(tileWords(tileEntry({ groups: [], toPull: 1 }, 1)), { subheading: '1 online order to pull', count: 0 });
+  assert.deepEqual(tileWords(tileEntry({ groups: [], toPull: 3 }, 1)), { subheading: '3 online orders to pull', count: 0 });
+  assert.deepEqual(tileWords(tileEntry({ ...fixture(), toPull: 'lots' }, 5000)), { subheading: '5 of 13 here · 1 to pay', count: 1 }, 'an older Lair app: none');
+  assert.equal(newerTileEntry({ ...entry, at: 9000 }, 1000, '2026-10-03')?.pull, 2);
+  assert.equal(newerTileEntry({ at: 9000, day: '2026-10-03', people: 3, arrived: 1, owing: [] }, 0, '2026-10-03')?.pull, 0, 'saved before round 31');
 });
 
 test('the tile picks up newer numbers the check-in screen saved today', () => {

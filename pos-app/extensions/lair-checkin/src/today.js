@@ -534,10 +534,17 @@ export function areYou(row) {
 export const TILE_KEY = 'tile-numbers';
 
 /**
- * @typedef {{ at: number, day: string, people: number, arrived: number, owing: string[] }} TileEntry
- *   today's numbers for the tile: when they were made, which Lair day, people booked and here, and the codes of
- *   bookings that are here with something still to pay
+ * @typedef {{ at: number, day: string, people: number, arrived: number, owing: string[], pull: number }} TileEntry
+ *   today's numbers for the tile: when they were made, which Lair day, people booked and here, the codes of
+ *   bookings that are here with something still to pay, and (round 31) how many online orders are waiting to be pulled
  */
+
+/**
+ * Round 31 (contract v31-retail): how many online orders wait to be pulled, from the Lair's today list (0 from an older one)
+ * @param {unknown} value
+ * @returns {number}
+ */
+const pullOf = (value) => (typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0);
 
 /**
  * Today's numbers for the tile, from the Today list (the check-in screen saves them; the tile makes them too).
@@ -552,7 +559,7 @@ export function tileEntry(today, now) {
   for (const group of today?.groups || []) {
     for (const row of group.rows || []) if (row?.ref && rowState(row) === 'arrived' && dueOf(row) > 0) owing.push(String(row.ref));
   }
-  return { at: now, day: String(today?.day || ''), people, arrived, owing };
+  return { at: now, day: String(today?.day || ''), people, arrived, owing, pull: pullOf(/** @type {any} */ (today)?.toPull) };
 }
 
 /**
@@ -564,10 +571,12 @@ export function tileEntry(today, now) {
  */
 export function tileWords(entry, inCart = []) {
   const people = Math.max(0, Math.round(Number(entry?.people) || 0));
-  if (!people) return { subheading: 'Nothing booked today', count: 0 };
+  // round 31: online orders to pull, as a number only (the tablet faces customers: no names or orders on it)
+  const pull = pullOf(entry?.pull);
+  if (!people) return { subheading: pull ? `${pull} online ${pull === 1 ? 'order' : 'orders'} to pull` : 'Nothing booked today', count: 0 };
   const arrived = Math.max(0, Math.round(Number(entry?.arrived) || 0));
   const count = (entry?.owing || []).filter((ref) => !inCart.includes(ref)).length;
-  return { subheading: `${arrived} of ${people} here${count ? ` · ${count} to pay` : ''}`, count };
+  return { subheading: `${arrived} of ${people} here${count ? ` · ${count} to pay` : ''}${pull ? ` · ${pull} to pull` : ''}`, count };
 }
 
 /**
@@ -584,7 +593,7 @@ export function newerTileEntry(entry, shownAt, day) {
   const people = Number(saved.people);
   const arrived = Number(saved.arrived);
   if (!Number.isFinite(at) || at <= shownAt || !Number.isFinite(people) || !Number.isFinite(arrived)) return null;
-  return { at, day, people, arrived, owing: saved.owing.filter((ref) => typeof ref === 'string') };
+  return { at, day, people, arrived, owing: saved.owing.filter((ref) => typeof ref === 'string'), pull: pullOf(saved.pull) };
 }
 
 /** After a sale with Lair lines leaves the cart, the tile asks for fresh numbers this much later (the payment lands). */
