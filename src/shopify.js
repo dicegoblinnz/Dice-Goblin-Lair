@@ -131,6 +131,94 @@ const orderOf = (o) => {
   return { id: o.id, name: o.name || null, total: amount != null && Number.isFinite(Number(amount)) ? Math.round(Number(amount) * 100) : null };
 };
 
+/* ---------- round 32, the till, part 3: products, prices and its draft orders ---------- */
+const TILL_VARIANT_FIELDS = 'id title sku price inventoryQuantity inventoryPolicy inventoryItem { tracked } barcodes(first: 5) { nodes { value } }';
+const TILL_PRODUCT_FIELDS = 'id title productType vendor status isGiftCard';
+const tillMoney = (field) => `${field} { shopMoney { amount currencyCode } }`;
+const TILL_FIGURES = `taxesIncluded ${tillMoney('subtotalPriceSet')} ${tillMoney('totalPriceSet')} ${tillMoney('totalTaxSet')} platformDiscounts { title totalAmount { amount } }`;
+const TILL_LINE_FIELDS = `uuid custom quantity title variantTitle sku variant { id } ${tillMoney('originalUnitPriceSet')} ${tillMoney('originalTotalSet')} ${tillMoney('discountedTotalSet')} customAttributes { key value }`;
+/** An amount Shopify gives as text ("15.99") in cents, or null */
+const centsOf = (amount) => {
+  if (amount == null || amount === '') return null;
+  const n = Number(amount);
+  return Number.isFinite(n) ? Math.round(n * 100) : null;
+};
+const lastPart = (gid) => String(gid ?? '').split('/').pop();
+
+/** A product as the till sees it: { id (numeric), title, type, vendor, status, giftCard, dice (in the dice deal) } */
+export function tillProductOf(p) {
+  return { id: lastPart(p?.id), title: p?.title || '', type: p?.productType || '', vendor: p?.vendor || '', status: p?.status || null, giftCard: p?.isGiftCard === true, dice: p?.dice === true };
+}
+
+/**
+ * A variant as the till sees it: { id (numeric), title, sku, barcodes, price (cents), tracked, stock (Shopify's count
+ * when it's tracked, else null), oversell (it sells at 0: the "continue selling" policy) }
+ */
+export function tillVariantOf(v) {
+  const tracked = v?.inventoryItem?.tracked === true;
+  const stock = Number(v?.inventoryQuantity);
+  return {
+    id: lastPart(v?.id), title: v?.title || 'Default Title', sku: v?.sku || null,
+    barcodes: (v?.barcodes?.nodes || []).map((b) => String(b?.value || '').trim()).filter(Boolean),
+    price: centsOf(v?.price) ?? 0, tracked, stock: tracked && v?.inventoryQuantity != null && Number.isFinite(stock) ? stock : null, oversell: v?.inventoryPolicy === 'CONTINUE',
+  };
+}
+
+/**
+ * The DraftOrderInput for the till's lines (the same for working the price out and for the sale's draft): products by
+ * variant at the shop's price (`cents` overrides it: a tab's things, at the tab's price), custom lines for what the Lair
+ * charges (a booking's title and price, taxable), each with its uuid and properties; the shop's automatic discounts (the
+ * dice deal); a $0 "Collected at the Lair" shipping line when there are products, as the cash orders have.
+ * lines: [{ uuid, variantId, qty, cents?, attributes? } | { uuid, title, cents, attributes? }]
+ */
+export function tillDraftInput({ lines, currency }) {
+  const money = (cents) => ({ amount: (Math.max(0, Math.round(Number(cents) || 0)) / 100).toFixed(2), currencyCode: currency });
+  const attrs = (list) => Object.entries(list || {}).filter(([, v]) => v != null && v !== '').map(([key, value]) => ({ key, value: String(value).slice(0, 250) }));
+  const products = (lines || []).some((l) => l.variantId);
+  return {
+    acceptAutomaticDiscounts: true,
+    ...(products ? { shippingLine: { title: 'Collected at the Lair', priceWithCurrency: money(0) } } : {}),
+    lineItems: (lines || []).map((l) => {
+      const properties = attrs(l.attributes);
+      if (l.variantId) {
+        return {
+          ...(l.uuid ? { uuid: l.uuid } : {}),
+          variantId: String(l.variantId).startsWith('gid://') ? String(l.variantId) : `gid://shopify/ProductVariant/${l.variantId}`,
+          quantity: Math.max(1, Math.round(Number(l.qty) || 1)),
+          ...(l.cents != null ? { priceOverride: money(l.cents) } : {}),
+          ...(properties.length ? { customAttributes: properties } : {}),
+        };
+      }
+      return {
+        ...(l.uuid ? { uuid: l.uuid } : {}), title: String(l.title || 'Lair fee').slice(0, 255), quantity: 1, originalUnitPriceWithCurrency: money(l.cents),
+        requiresShipping: false, taxable: true, ...(properties.length ? { customAttributes: properties } : {}),
+      };
+    }),
+  };
+}
+
+/**
+ * A draft's figures (or a calculation's), in cents: { subtotal (the lines before discounts), discounts: [{ title, amount }]
+ * (the shop's automatic discounts that applied), total, gst, taxIncluded, lines: [{ uuid, title, variantTitle, variantId,
+ * qty, unit, total (before discounts), paid (after them), custom, attributes }] }
+ */
+export function tillFiguresOf(d, lineNodes) {
+  const lines = (lineNodes || []).map((l) => ({
+    uuid: l.uuid || null, title: l.title || '', variantTitle: l.variantTitle && !/^default title$/i.test(l.variantTitle) ? l.variantTitle : '',
+    variantId: l.variant?.id ? lastPart(l.variant.id) : null, qty: Number(l.quantity) || 1,
+    unit: centsOf(l.originalUnitPriceSet?.shopMoney?.amount) ?? 0, total: centsOf(l.originalTotalSet?.shopMoney?.amount) ?? 0,
+    paid: centsOf(l.discountedTotalSet?.shopMoney?.amount) ?? 0, custom: l.custom === true,
+    attributes: Object.fromEntries((l.customAttributes || []).map((a) => [a.key, a.value])),
+  }));
+  const discounts = (d?.platformDiscounts || [])
+    .map((x) => ({ title: String(x?.title || 'Discount').trim(), amount: centsOf(x?.totalAmount?.amount) ?? 0 }))
+    .filter((x) => x.amount > 0);
+  return {
+    subtotal: lines.reduce((sum, l) => sum + l.total, 0), discounts, total: centsOf(d?.totalPriceSet?.shopMoney?.amount) ?? 0,
+    gst: centsOf(d?.totalTaxSet?.shopMoney?.amount) ?? 0, taxIncluded: d?.taxesIncluded !== false, lines,
+  };
+}
+
 /** Round 25: a Games Workshop variant's fields (src/gw-orders.js) */
 const GW_VARIANT = 'id sku displayName inventoryQuantity inventoryPolicy inventoryItem { tracked } pack: metafield(namespace: "custom", key: "gw_pack_size") { value } product { release: metafield(namespace: "custom", key: "gw_release_date") { value } }';
 const gwVariant = (v) => ({
@@ -1454,6 +1542,140 @@ export class ShopifyAdmin {
       { timeout },
     );
     return orderOf((data.orders?.nodes || []).find((n) => (n.customAttributes || []).some((a) => a.key === key && a.value === value)));
+  }
+
+  /* ---------- round 32, the till, part 3 (src/till-sales.js) ---------- */
+  /**
+   * The variants whose barcode (in any of its forms) or SKU is `code`, up to 5, as the till needs them:
+   * [{ product: tillProductOf, variant: tillVariantOf }]. dice: the dice deal's collection (Product.inCollection), or null.
+   */
+  async tillVariants(code, dice) {
+    const text = String(code ?? '').replace(/["\\]/g, '');
+    const query = [...barcodeForms(text).map((form) => `barcode:"${form}"`), `sku:"${text}"`].join(' OR ');
+    const data = await this.graphql(
+      `query LairTillVariants($query: String!${dice ? ', $dice: ID!' : ''}) { productVariants(first: 5, query: $query) { nodes {
+        ${TILL_VARIANT_FIELDS} product { ${TILL_PRODUCT_FIELDS}${dice ? ' dice: inCollection(id: $dice)' : ''} } } } }`,
+      { query, ...(dice ? { dice } : {}) },
+    );
+    return (data.productVariants?.nodes || []).filter((n) => n?.id && n.product).map((n) => ({ product: tillProductOf(n.product), variant: tillVariantOf(n) }));
+  }
+
+  /**
+   * Products whose title has every one of `words` (a few letters and numbers each), not archived, drafts or gift cards,
+   * up to 12 by title, each with up to 20 variants: [{ ...tillProductOf, variants: [tillVariantOf] }]
+   */
+  async tillSearch(words, dice) {
+    const query = [...words.map((w) => `title:*${String(w).replace(/[^\p{L}\p{N}]/gu, '')}*`), '-status:archived', '-status:draft', '-gift_card:true'].join(' ');
+    const data = await this.graphql(
+      `query LairTillSearch($query: String!${dice ? ', $dice: ID!' : ''}) { products(first: 12, query: $query, sortKey: TITLE) { nodes {
+        ${TILL_PRODUCT_FIELDS}${dice ? ' dice: inCollection(id: $dice)' : ''} variants(first: 20) { nodes { ${TILL_VARIANT_FIELDS} } } } } }`,
+      { query, ...(dice ? { dice } : {}) },
+    );
+    return (data.products?.nodes || []).filter((p) => p?.id).map((p) => ({ ...tillProductOf(p), variants: (p.variants?.nodes || []).filter((v) => v?.id).map(tillVariantOf) }));
+  }
+
+  /**
+   * What the till's lines would come to, as Shopify works it out at checkout (draftOrderCalculate: the shop's prices, its
+   * automatic discounts like the dice deal, and GST). Nothing is made. lines: tillLineInput's. → tillFiguresOf
+   */
+  async tillCalculate({ lines, currency }, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const data = await this.graphql(
+      `mutation LairTillCalculate($input: DraftOrderInput!) { draftOrderCalculate(input: $input) { calculatedDraftOrder { ${TILL_FIGURES} lineItems { ${TILL_LINE_FIELDS} } } userErrors { field message } } }`,
+      { input: tillDraftInput({ lines, currency }) },
+      { timeout },
+    );
+    const result = data?.draftOrderCalculate;
+    if (!result) throw new Error('Shopify gave no answer for the prices.');
+    if (result.userErrors?.length) throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true });
+    if (!result.calculatedDraftOrder) throw new Error('Shopify gave no prices back.');
+    return tillFiguresOf(result.calculatedDraftOrder, result.calculatedDraftOrder.lineItems || []);
+  }
+
+  /**
+   * The till's sale as a draft order (its price fixed before anyone pays): the member as its customer, the lines
+   * (tillLineInput), the shop's automatic discounts, a $0 "Collected at the Lair" shipping line when there are products,
+   * tagged, with a note and the Lair's marker. → { id, ready, ...tillFiguresOf }, or throws (error.refused when Shopify said
+   * no, so nothing was made).
+   */
+  async createTillDraft({ customerId, lines, currency, tags, note, marker }, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const attrs = (list) => Object.entries(list || {}).filter(([, v]) => v != null && v !== '').map(([key, value]) => ({ key, value: String(value).slice(0, 250) }));
+    const data = await madeAnyway(this.graphql(
+      `mutation LairTillDraft($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id ready status ${TILL_FIGURES} lineItems(first: 100) { nodes { ${TILL_LINE_FIELDS} } } } userErrors { field message } } }`,
+      {
+        input: {
+          ...tillDraftInput({ lines, currency }),
+          ...(customerId ? { purchasingEntity: { customerId: `gid://shopify/Customer/${String(customerId).replace(/\D/g, '')}` } } : {}),
+          tags, note, customAttributes: attrs(marker),
+        },
+      },
+      { timeout },
+    ));
+    const result = data?.draftOrderCreate;
+    if (!result) throw new Error('Shopify gave no answer for the draft order.');
+    if (result.userErrors?.length) throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true });
+    const d = result.draftOrder;
+    if (!d?.id) throw new Error('Shopify gave no draft order back.');
+    return { id: d.id, ready: d.ready !== false, ...tillFiguresOf(d, d.lineItems?.nodes || []) };
+  }
+
+  /** A till draft as it is now: { id, status, ready, order (orderOf), ...tillFiguresOf }, or null when it's gone */
+  async tillDraft(id, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const data = await this.graphql(
+      `query LairTillDraftNow($id: ID!) { draftOrder(id: $id) { id status ready order { ${ORDER_FIELDS} } ${TILL_FIGURES} lineItems(first: 100) { nodes { ${TILL_LINE_FIELDS} } } } }`,
+      { id },
+      { timeout },
+    );
+    const d = data.draftOrder;
+    return d ? { id: d.id, status: d.status || null, ready: d.ready !== false, order: orderOf(d.order), ...tillFiguresOf(d, d.lineItems?.nodes || []) } : null;
+  }
+
+  /**
+   * A till order handed over at the counter: each of its open fulfillment orders moved to the shop (`locationId`) when
+   * it's somewhere else (when the shop doesn't stock it, it stays where it is), then marked fulfilled, so stock comes off
+   * and it never waits in Unfulfilled. The customer isn't emailed about it. Needs the merchant-managed fulfillment order
+   * scopes (until Mo approves them Shopify refuses, and this throws). → { fulfilled, moved } (fulfillment orders)
+   */
+  async fulfilTillOrder(orderId, locationId, { timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const data = await this.graphql(
+      'query LairTillFulfilment($id: ID!) { order(id: $id) { id fulfillmentOrders(first: 10) { nodes { id status assignedLocation { location { id } } } } } }',
+      { id: orderId },
+      { timeout },
+    );
+    if (!data.order) throw new Error('Shopify has no such order.');
+    const open = (data.order.fulfillmentOrders?.nodes || []).filter((f) => ['OPEN', 'IN_PROGRESS'].includes(f.status));
+    let moved = 0;
+    const byPlace = new Map();
+    for (const f of open) {
+      let id = f.id;
+      let place = f.assignedLocation?.location?.id || '';
+      if (locationId && place !== locationId) {
+        const answer = await madeAnyway(this.graphql(
+          'mutation LairTillMove($id: ID!, $to: ID!) { fulfillmentOrderMove(id: $id, newLocationId: $to) { movedFulfillmentOrder { id assignedLocation { location { id } } } userErrors { field message } } }',
+          { id, to: locationId },
+          { timeout },
+        ));
+        const m = answer?.fulfillmentOrderMove;
+        if (m?.movedFulfillmentOrder?.id && !m.userErrors?.length) {
+          id = m.movedFulfillmentOrder.id;
+          place = m.movedFulfillmentOrder.assignedLocation?.location?.id || locationId;
+          moved += 1;
+        }
+      }
+      byPlace.set(place, [...(byPlace.get(place) || []), id]);
+    }
+    let fulfilled = 0;
+    for (const ids of byPlace.values()) {
+      const answer = await madeAnyway(this.graphql(
+        'mutation LairTillFulfil($f: FulfillmentInput!) { fulfillmentCreate(fulfillment: $f) { fulfillment { id status } userErrors { field message } } }',
+        { f: { lineItemsByFulfillmentOrder: ids.map((fulfillmentOrderId) => ({ fulfillmentOrderId })), notifyCustomer: false } },
+        { timeout },
+      ));
+      const result = answer?.fulfillmentCreate;
+      if (!result) throw new Error('Shopify gave no answer for the fulfilment.');
+      if (result.userErrors?.length) throw Object.assign(new Error(result.userErrors.map((e) => e.message).join('; ')), { refused: true });
+      fulfilled += ids.length;
+    }
+    return { fulfilled, moved };
   }
 
   /**

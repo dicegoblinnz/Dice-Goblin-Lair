@@ -22,7 +22,7 @@ const TILL_CREDIT_MS = 60 * 1000;
 /** How early an event becomes the till's night: 90 minutes before it starts */
 const TILL_NIGHT_AHEAD_MS = 90 * 60 * 1000;
 /** A row with one of these statuses has nothing to pay at the till */
-const TILL_UNPAYABLE = ['noshow', 'cancelled', 'held'];
+export const TILL_UNPAYABLE = ['noshow', 'cancelled', 'held'];
 /** Rows that put a stamp on the account holder's card once paid (round 22) */
 const STAMP_KINDS = ['table', 'walkin', 'gm-seat', 'join'];
 
@@ -97,15 +97,18 @@ export const tillPeopleMethods = {
   },
 
   /**
-   * A row as the till shows it: { code, title, at, kind, paid, owed, onAccount, status, lines: [{ title, sub, price,
-   * session, line }] }. Nothing to pay for a no-show (staff settle those), a cancelled booking, or one held for paying
-   * online (its checkout is still open): a booking's code reaches here without memberToday's own filter (the review).
+   * A row as the till shows it: { code, title, at, kind, paid, owed, onAccount, status, paying?, lines: [{ title, sub,
+   * price, session, line }] }. Nothing to pay for a no-show (staff settle those), a cancelled booking, or one held for
+   * paying online (its checkout is still open): a booking's code reaches here without memberToday's own filter (the
+   * review). Part 3: nor for one a paid till sale is paying while its Shopify order is made (pending: tillPendingRefs),
+   * shown as paid with paying: true, so nobody pays it twice.
    */
-  tillRowView(r, rules) {
-    const payable = r.due > 0 && !TILL_UNPAYABLE.includes(r.status);
+  tillRowView(r, rules, pending = null) {
+    const paying = Boolean(r.ref && pending?.has(String(r.ref).toUpperCase()) && r.due > 0);
+    const payable = r.due > 0 && !TILL_UNPAYABLE.includes(r.status) && !paying;
     return {
-      code: r.ref || '', title: r.title || 'Booking', at: r.start ?? null, kind: r.kind || r.type, paid: !(r.due > 0), owed: Boolean(r.owed),
-      onAccount: Boolean(r.onAccount), status: r.status || null,
+      code: r.ref || '', title: r.title || 'Booking', at: r.start ?? null, kind: r.kind || r.type, paid: !(r.due > 0) || paying, owed: Boolean(r.owed),
+      onAccount: Boolean(r.onAccount), status: r.status || null, ...(paying ? { paying: true } : {}),
       lines: payable
         ? [{ title: r.title || 'Booking', sub: this.tillRowWords(r, rules), price: r.due, session: STAMP_KINDS.includes(r.kind), line: r.line || this.posLine(r, rules) }]
         : [],
@@ -119,12 +122,13 @@ export const tillPeopleMethods = {
    */
   tillMemberView(customerId, rules, now, { staff = false } = {}) {
     const id = String(customerId);
-    const { member, today, owed } = this.memberDay(id, rules, now);
+    // (part 3: the same rows a sale pays from, src/till-sales.js)
+    const { member, rows } = this.tillRowsOf(id, rules, now);
     if (!member) return null;
+    const pending = this.tillPendingRefs(now);
     const full = String(member.name || member.first_name || '').trim();
     const first = member.first_name || full.split(/\s+/)[0] || 'friend';
     const rest = full.split(/\s+/).slice(1);
-    const rows = [...today, ...this.onAccountRows(id, owed), ...this.accountOwedRows(id, rules, now)];
     const since = member.created_at
       ? new Intl.DateTimeFormat('en-NZ', { timeZone: rules?.tz || 'Pacific/Auckland', month: 'long', year: 'numeric' }).format(new Date(member.created_at))
       : '';
@@ -135,7 +139,7 @@ export const tillPeopleMethods = {
       loyalty: this.staffCard(id, rules),
       passes: this.activePasses(id, now).map((p) => ({ label: p.label, left: Math.max(0, (p.sessionsTotal || 0) - (p.sessionsUsed || 0)) })),
       library: this.loansOut(id).map((l) => ({ name: l.title || l.name || 'A library game' })),
-      bookings: rows.map((r) => this.tillRowView(r, rules)),
+      bookings: rows.map((r) => this.tillRowView(r, rules, pending)),
       tab: tab && tab.status !== 'paid' ? tab : null,
       account: this.accountSummary(id, rules, now),
     };
@@ -182,7 +186,7 @@ export const tillPeopleMethods = {
       const person = this.tillMemberView(row.customerId, rules, now, { staff: true });
       if (person) return { type: 'person', person: { ...person, credit }, focus: row.ref };
     }
-    return { type: 'booking', booking: this.tillRowView(row, rules), name: String(row.name || '').trim().split(/\s+/)[0] || 'friend' };
+    return { type: 'booking', booking: this.tillRowView(row, rules, this.tillPendingRefs(now)), name: String(row.name || '').trim().split(/\s+/)[0] || 'friend' };
   },
 
   /** POST /till/find { token, q } (staff on the till with Check-in): members by name, email or code → { people: [{ id, name, code }] } */
@@ -226,9 +230,11 @@ export const tillPeopleMethods = {
     const today = await this.posToday();
     // --- no awaits from here on ---
     const now = Date.now();
+    // (part 3: one a paid till sale is paying shows as paid)
+    const pending = this.tillPendingRefs(now);
     const rowOf = (g, r) => ({
       ref: r.ref, personId: r.customerId ? String(r.customerId) : null, name: r.name || '', what: g.kind === 'tables' ? 'Table booking' : g.title.replace(/ · GM .*$/, ''),
-      kind: r.kind || r.type, at: r.start, due: r.due, paid: !(r.due > 0), status: r.status,
+      kind: r.kind || r.type, at: r.start, due: r.due, paid: !(r.due > 0) || Boolean(r.ref && pending.has(String(r.ref).toUpperCase())), status: r.status,
     });
     const rows = today.groups.flatMap((g) => g.rows.map((r) => rowOf(g, r))).sort((a, b) => a.at - b.at || a.name.localeCompare(b.name));
     const events = today.groups.filter((g) => g.kind === 'event' && g.end > now && g.start - now <= TILL_NIGHT_AHEAD_MS).sort((a, b) => a.start - b.start);
