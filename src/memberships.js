@@ -3208,6 +3208,9 @@ export const membershipMethods = {
         const known = new Set([
           ...this.sql.exec('SELECT transaction_id AS id FROM damage_payments WHERE transaction_id IS NOT NULL').toArray(),
           ...this.sql.exec('SELECT transaction_id AS id FROM member_credit WHERE transaction_id IS NOT NULL').toArray(),
+          // round 33: gifts' and store credit payments' debits are never a damage charge's
+          ...this.sql.exec('SELECT take_tx AS id FROM credit_gifts WHERE take_tx IS NOT NULL').toArray(),
+          ...this.sql.exec('SELECT take_tx AS id FROM credit_payments WHERE take_tx IS NOT NULL').toArray(),
         ].map((r) => r.id));
         const match = debits.filter((d) => d.id && !d.fromOrder && d.amount === fresh.amount && !known.has(d.id)
           && d.createdAt >= fresh.created_at - CREDIT_SKEW && d.createdAt <= fresh.created_at + CLAIM_STALE)

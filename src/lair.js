@@ -102,6 +102,7 @@ import { TILL_TABLES, tillMethods } from './till.js';
 import { tillPeopleMethods } from './till-people.js';
 // Round 32, the till, part 3: real products, prices and sales saved to Shopify (src/till-sales.js, contract v32-till section 6)
 import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
+import { CREDIT_PAY_COLUMNS, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1191,6 +1192,15 @@ export class Lair {
     this.tillSeed(Date.now());
     // Round 32, part 3: the till's sales (src/till-sales.js)
     for (const statement of TILL_SALE_TABLES) this.sql.exec(statement);
+    // Round 33: paying with store credit, in My Lair and at the till (src/credit-pay.js), and a till sale's store credit
+    for (const statement of CREDIT_PAY_TABLES) this.sql.exec(statement);
+    for (const [table, column, type] of CREDIT_PAY_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -2130,6 +2140,8 @@ export class Lair {
       // Round 30: store credit to a friend, by their member code: who it is, then send it (src/credit-gifts.js)
       if (a === 'me' && b === 'credit' && c === 'gift' && d === 'check' && !parts[4]) return json(this.checkCreditGift(body, who));
       if (a === 'me' && b === 'credit' && c === 'gift' && !d) return json(await this.sendCreditGift(body, who));
+      // Round 33: My Lair's bill paid from store credit (src/credit-pay.js)
+      if (a === 'me' && b === 'credit' && !c) return json(await this.payBillWithCredit(body, who));
       // 17 Oct 2026: pay with cash at the counter, or not after all
       if (a === 'me' && b === 'cash' && !c) return json(await this.payCash(who));
       if (a === 'me' && b === 'cash' && c === 'cancel' && !d) return json(await this.cancelCash(who));
@@ -10691,6 +10703,8 @@ export class Lair {
       dueNow,
       // 17 Oct 2026: paying with cash at the counter today, waiting for staff ({ id, status, total, items, at }), or null
       cash: this.cashView(this.cashWaitingFor(who.customerId, rules, now)),
+      // Round 33: their bill paid from store credit, still being checked with Shopify, or null
+      creditPay: this.memberCreditPay(who.customerId),
       // Round 9: the running tab (owed now, coming up) and, on a monthly account, the limit and the open bill
       account: this.memberAccount(who.customerId, rules, now),
       // Round 9, play: the sessions they're interested in and the event dates they said maybe (or coming) to, still to come
@@ -11109,6 +11123,16 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not make the Shopify orders for cash', error);
     }
+    // Round 33: store credit payments: lost answers looked for (found: back on), and My Lair's bills' Shopify orders
+    // (src/credit-pay.js)
+    try {
+      const creditPay = await this.creditPayUpkeep(Date.now());
+      if (creditPay) result.creditPay = creditPay;
+      const creditOrders = await this.retryCreditOrders(Date.now());
+      if (creditOrders.length) result.creditOrders = { looked: creditOrders.length };
+    } catch (error) {
+      console.error('Lair: could not look after store credit payments', error);
+    }
     // Round 32, part 3: till sales: unpaid ones let go after 30 minutes, paid ones' orders and fulfilments tried again
     // until they're made (src/till-sales.js)
     try {
@@ -11258,3 +11282,4 @@ Object.assign(Lair.prototype, tillMethods);
 Object.assign(Lair.prototype, tillPeopleMethods);
 // Round 32, the till, part 3: products, prices and sales (src/till-sales.js)
 Object.assign(Lair.prototype, tillSalesMethods);
+Object.assign(Lair.prototype, creditPayMethods);

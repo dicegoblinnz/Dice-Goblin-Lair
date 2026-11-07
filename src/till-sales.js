@@ -19,14 +19,19 @@
 //    Session stamps, TTRPG seats, session passes and spend. When Shopify can't make the order there and then, the Lair
 //    keeps trying (as cash's orders do), the till shows those bookings as paid meanwhile, and staff hear if it never can.
 //  - POST /till/pay/cancel: back from paying: the sale and its draft go.
-// Store credit and tabs as ways to pay are part 4.
+// Store credit and tabs as ways to pay are part 4. Round 33 (contract v33-credit-pay): store credit is in. Paying with it
+// (method 'credit', or credit: true with card or cash) takes it off their Shopify store credit at Pay, once the draft has
+// fixed the price, with no PIN (Mo: no extra guard on store credit at the till): it covers the sale, and the sale's paid
+// there and then; or it covers part, and the rest is confirmed by card or cash as before (expect is what's left). A sale
+// let go puts its store credit back on (src/credit-pay.js).
 //
 // These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair:
 // every await first, then synchronous reads, checks and writes.
-import { HOUR, RuleError, codeKey, makeId, sameBarcode } from './core.js';
+import { HOUR, LairTime, RuleError, codeKey, makeId, sameBarcode } from './core.js';
 import { TILL_ORDER_TAG } from './counter.js';
 import { maskEmail } from './till.js';
 import { TILL_PEOPLE_WORDS, TILL_UNPAYABLE } from './till-people.js';
+import { CREDIT_PAY_WORDS } from './credit-pay.js';
 
 const MIN = 60_000;
 const DAY = 24 * HOUR;
@@ -104,7 +109,7 @@ export const TILL_SALE_WORDS = {
   nothingDue: (code) => `${code} has nothing left to pay. Scan their code again.`,
   paidElsewhere: (what) => `${what} was paid another way while this sale waited, so this sale wasn't saved. Tap Back to see what's left to pay; if the EFTPOS took this one already, refund the difference there.`,
   tab: 'Their tab has changed. Scan their code again.',
-  method: 'Pay by card or with cash.',
+  method: 'Pay by card, with cash or with store credit.',
   refused: (why) => `Shopify wouldn't take this sale: ${why}`,
   noSale: "That sale isn't here any more. Tap Pay again.",
   gone: "That sale was let go before it was confirmed, so it wasn't saved. If the EFTPOS took the money, ring it up again and confirm it without charging again.",
@@ -250,6 +255,8 @@ export const tillSalesMethods = {
       id: r.id, status: r.status, method: r.method, total: r.total ?? null, subtotal: r.subtotal ?? null, gst: r.gst ?? null,
       discounts: parse(r.discounts, []), lines: parse(r.shown, []), person: r.customer_id ? { id: String(r.customer_id), first } : null,
       paidAt: r.paid_at || null, by: r.by_name || null, handed: r.handed ?? null, change: r.change_given ?? null,
+      // round 33: store credit taken for it, and what's left to pay by card or cash
+      credit: r.credit || 0, due: r.total == null ? null : r.total - (r.credit || 0),
       order: r.order_id ? { id: r.order_id, name: r.order_name || null } : null, saving: r.status === 'paid' && r.order_status !== 'made',
       receipt: r.status === 'paid' && member?.email ? maskEmail(member.email) : null,
     };
@@ -494,16 +501,28 @@ export const tillSalesMethods = {
   async tillPay(body, who, client = '') {
     this.tillGate(who);
     const method = body?.method;
-    if (!['card', 'cash'].includes(method)) throw new RuleError(TILL_SALE_WORDS.method, 400);
+    if (!['card', 'cash', 'credit'].includes(method)) throw new RuleError(TILL_SALE_WORDS.method, 400);
+    // round 33: store credit pays all of it ('credit'), or first, with the rest by card or cash (credit: true)
+    const useCredit = method === 'credit' || body?.credit === true;
     const basket = tillBasketIn(body?.lines);
     const tokenHash = body?.token ? await this.tillTokenHash(body.token) : null;
     const tagged = tokenHash ? await this.tillTagged() : null;
     const rules = await this.rules();
     if (!this.shopify?.configured) throw new RuleError(TILL_SALE_WORDS.shopify, 503);
+    // round 33: store credit needs a member on the sale, and their balance, read first
+    let balance = null;
+    if (useCredit) {
+      const person = this.tillCustomerIn(body?.person);
+      if (!person) throw new RuleError(CREDIT_PAY_WORDS.tillPerson, 422);
+      balance = await this.creditBalanceOrNull(person);
+      if (balance == null) throw new RuleError(CREDIT_PAY_WORDS.tillOff, 503);
+      if (balance <= 0) throw new RuleError(CREDIT_PAY_WORDS.tillNone, 409);
+    }
     // --- no awaits from here on: who's paying, check-ins, the lines and the sale ---
     const now = Date.now();
     const me = tokenHash ? this.tillOn(tokenHash, this.tillTeamFrom(who, tagged)) : null;
     const customerId = this.tillCustomerIn(body?.person);
+    if (useCredit && this.creditPayBusy(customerId)) throw new RuleError(CREDIT_PAY_WORDS.tillBusy, 409);
     const till = this.tillFrom(who, body, client);
     const pending = this.tillPendingRefs(now);
     // the bookings as the till showed them, checked in, then read again: one with nothing to pay now (paid another way,
@@ -525,14 +544,17 @@ export const tillSalesMethods = {
     );
     // its tab can't change in My Lair while it's being paid
     for (const tabId of tab.tabIds) this.write("UPDATE tabs SET status = 'in-cart', updated_at = ? WHERE id = ? AND status IN ('open', 'in-cart')", now, tabId);
-    const note = `Sold on the Lair till, ${method === 'card' ? 'by card on the EFTPOS' : 'in cash'}${me ? `, rung up by ${me.name}` : ''} (${id}).`;
+    const rest = method === 'card' ? 'by card on the EFTPOS' : 'in cash';
+    const how = !useCredit ? rest : method === 'credit' ? 'with store credit' : `with store credit and ${rest}`;
+    const note = `Sold on the Lair till, ${how}${me ? `, rung up by ${me.name}` : ''} (${id}).`;
+    const tags = [TILL_ORDER_TAG, 'till', method, ...(useCredit && method !== 'credit' ? ['credit'] : []), ...(useCredit ? ['store-credit'] : [])];
     // --- Shopify: the draft, and its figures once it's worked them out ---
     const deadline = Date.now() + TILL_SHOPIFY_WAIT;
     const left = () => Math.max(1000, deadline - Date.now());
     let draft = null;
     try {
       draft = await this.shopify.createTillDraft(
-        { customerId, lines, currency: this.env?.CURRENCY || 'NZD', tags: [TILL_ORDER_TAG, 'till', method], note, marker: { [TILL_MARKER]: id } },
+        { customerId, lines, currency: this.env?.CURRENCY || 'NZD', tags, note, marker: { [TILL_MARKER]: id } },
         { timeout: left() },
       );
       while (!draft.ready && Date.now() + READY_WAIT < deadline) {
@@ -563,6 +585,78 @@ export const tillSalesMethods = {
          WHERE id = ? AND status = 'making'`,
       draft.id, draft.subtotal, draft.total, draft.gst, JSON.stringify(draft.discounts), JSON.stringify(shown), Date.now(), id,
     );
+    if (useCredit) return this.tillTakeCredit(id, { customerId, balance, method, deadline, me, dropped, notices });
+    return { sale: this.tillSaleView(this.tillSaleRow(id)), dropped, notices };
+  },
+
+  /**
+   * Round 33: a sale whose price is fixed (open) takes its store credit now: as much as it covers (all of it for
+   * 'credit'), with no PIN. Covered, it's paid there and then and its order made; part, it waits for the rest by card or
+   * cash (due). Shopify saying no, or not answering, lets the sale go (a lost answer's store credit goes back on once the
+   * 10-minute run finds it, src/credit-pay.js). → tillPay's { sale, dropped, notices }, or throws.
+   */
+  async tillTakeCredit(id, { customerId, balance, method, deadline, me, dropped, notices }) {
+    const r = this.tillSaleRow(id);
+    const total = r?.total || 0;
+    const now = Date.now();
+    if (method === 'credit' && balance < total) {
+      this.tillLetGo(r, 'store credit short', now);
+      throw new RuleError(CREDIT_PAY_WORDS.tillShort(balance, total), 409);
+    }
+    const amount = Math.min(balance, total);
+    if (amount <= 0) return { sale: this.tillSaleView(r), dropped, notices };
+    const cpId = makeId('cp');
+    const currency = this.env?.CURRENCY || 'NZD';
+    const day = new LairTime(this.rulesCache?.tz || 'Pacific/Auckland').key(now);
+    this.write(
+      `INSERT INTO credit_payments (id, customer_id, source, sale_id, day, amount, currency, status, created_at, updated_at)
+       VALUES (?, ?, 'till', ?, ?, ?, ?, 'taking', ?, ?)`,
+      cpId, String(customerId), id, day, amount, currency, now, now,
+    );
+    this.write('UPDATE till_sales SET credit = ?, credit_id = ?, updated_at = ? WHERE id = ?', amount, cpId, now, id);
+    let took;
+    try {
+      took = await this.shopify.changeStoreCredit(customerId, -amount, currency, { timeout: Math.max(1000, deadline - Date.now()) });
+    } catch (error) {
+      // --- no awaits from here on ---
+      const fresh = this.tillSaleRow(id);
+      if (!error?.refused) {
+        // it may or may not have come off: the run looks, and it goes back on if it did
+        console.error('Lair: store credit at the till had no answer', error);
+        this.creditPayUpdate(cpId, { status: 'checking', stage: 'take', message: errorText(error) });
+        if (fresh && ['making', 'open'].includes(fresh.status)) this.tillLetGo(fresh, 'store credit', Date.now());
+        throw new RuleError(CREDIT_PAY_WORDS.tillLost, 503);
+      }
+      this.creditPayUpdate(cpId, { status: 'failed', message: errorText(error) });
+      if (fresh && ['making', 'open'].includes(fresh.status)) this.tillLetGo(fresh, 'store credit', Date.now());
+      throw new RuleError(error.code === 'INSUFFICIENT_FUNDS' ? CREDIT_PAY_WORDS.tillChanged : CREDIT_PAY_WORDS.tillNotTaken(errorText(error).slice(0, 160)), 409);
+    }
+    // --- no awaits from here on (until its order, when store credit paid it all) ---
+    this.creditPayUpdate(cpId, { status: 'taken', take_tx: took?.id || null, balance_after: took?.balanceAfter ?? null });
+    const at = Date.now();
+    const fresh = this.tillSaleRow(id);
+    if (!fresh || fresh.status !== 'open') {
+      // let go while it came off (a new sale on this till): its store credit goes back on
+      this.creditPayReturnSoon(cpId, 'its till sale was let go');
+      throw new RuleError(TILL_SALE_WORDS.gone, 409);
+    }
+    // (as at Paid) a booking or tab it pays that was paid another way meanwhile: nothing's saved, and the credit goes back
+    const elsewhere = this.tillPaidElsewhere(fresh, at);
+    if (elsewhere) {
+      this.tillLetGo(fresh, 'paid elsewhere', at);
+      throw new RuleError(TILL_SALE_WORDS.paidElsewhere(elsewhere), 409);
+    }
+    if (amount < total) return { sale: this.tillSaleView(this.tillSaleRow(id)), dropped, notices };
+    // store credit paid all of it: paid now, by whoever's on the till (or the customer at the counter)
+    this.write(
+      `UPDATE till_sales SET status = 'paid', paid_at = ?, by = ?, by_name = ?, order_status = 'making', order_tries = 1, order_next_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'open'`,
+      at, me ? me.id : 'customer', me ? me.name : null, at + STUCK, at, id,
+    );
+    this.creditPayUpdate(cpId, { status: 'paid', paid_at: at });
+    const left = deadline - Date.now();
+    if (left > 1500) await this.tillOrder(id, 1, { timeout: left });
+    else this.later(this.tillOrder(id, 1));
     return { sale: this.tillSaleView(this.tillSaleRow(id)), dropped, notices };
   },
 
@@ -580,6 +674,8 @@ export const tillSalesMethods = {
         .some((x) => parse(x.tabs, []).includes(tabId));
       if (!others) this.write("UPDATE tabs SET status = 'open', updated_at = ? WHERE id = ? AND status = 'in-cart'", now, tabId);
     }
+    // round 33: store credit taken for it goes back on (one still coming off is looked after where it's taken)
+    if (r.credit_id) this.creditPayReturnSoon(r.credit_id, `its till sale was let go (${why})`);
   },
 
   /** POST /till/pay/cancel { sale } (the tablet's staff account): back from paying: the sale's let go. → { sale: null } */
@@ -611,8 +707,10 @@ export const tillSalesMethods = {
     if (r.status === 'gone') throw new RuleError(TILL_SALE_WORDS.gone, 409);
     if (r.status !== 'open') throw new RuleError(TILL_SALE_WORDS.making, 409);
     if (r.method === 'cash' && !tillTakesCash(me)) throw new RuleError(TILL_SALE_WORDS.cash, 403);
+    // round 33: what's left to pay once store credit took its part
+    const due = r.total - (r.credit || 0);
     const expect = body?.expect == null || body.expect === '' ? NaN : Math.round(Number(body.expect));
-    if (expect !== r.total) throw new RuleError(TILL_SALE_WORDS.expect(r.total), 409);
+    if (expect !== due) throw new RuleError(TILL_SALE_WORDS.expect(due), 409);
     // (the review) a booking or tab it pays that's been paid another way since Pay (another till, online, the counter
     // tile, cash in My Lair) would be paid twice: nothing's saved, and staff are told
     const elsewhere = this.tillPaidElsewhere(r, now);
@@ -621,14 +719,16 @@ export const tillSalesMethods = {
     let change = null;
     if (r.method === 'cash') {
       handed = body?.handed == null || body.handed === '' ? NaN : Math.round(Number(body.handed));
-      if (!Number.isFinite(handed) || handed < r.total || handed > r.total + TILL_CASH_OVER) throw new RuleError(TILL_SALE_WORDS.handed(r.total), 400);
-      change = handed - r.total;
+      if (!Number.isFinite(handed) || handed < due || handed > due + TILL_CASH_OVER) throw new RuleError(TILL_SALE_WORDS.handed(due), 400);
+      change = handed - due;
     }
     this.write(
       `UPDATE till_sales SET status = 'paid', paid_at = ?, by = ?, by_name = ?, handed = ?, change_given = ?, order_status = 'making', order_tries = 1,
          order_next_at = ?, updated_at = ? WHERE id = ? AND status = 'open'`,
       now, me.id, me.name, handed, change, now + STUCK, now, r.id,
     );
+    // round 33: its store credit, taken at Pay, paid for it
+    if (r.credit_id && this.creditPayRow(r.credit_id)?.status === 'taken') this.creditPayUpdate(r.credit_id, { status: 'paid', paid_at: now });
     await this.tillOrder(r.id, 1, { timeout: TILL_SHOPIFY_WAIT });
     return { sale: this.tillSaleView(this.tillSaleRow(r.id)) };
   },
@@ -716,7 +816,7 @@ export const tillSalesMethods = {
     const lines = parse(r.shown, []);
     this.staffAlert(`till-order:${r.id}`, `A till sale with no Shopify order: ${who}`, {
       title: 'A till sale that needs its order made by hand',
-      intro: `${who} paid ${dollars(r.total)} ${r.method === 'cash' ? 'in cash' : 'by card'} at the till${r.by_name ? ` (${r.by_name} took it)` : ''}, but the Lair couldn't make its Shopify order, however many times it tried. ${draft
+      intro: `${who} paid ${dollars(r.total)} ${r.method === 'credit' ? 'with store credit' : `${r.credit ? `(${dollars(r.credit)} of it from store credit) ` : ''}${r.method === 'cash' ? 'in cash' : 'by card'}`} at the till${r.by_name ? ` (${r.by_name} took it)` : ''}, but the Lair couldn't make its Shopify order, however many times it tried. ${draft
         ? 'Its draft order is in Shopify: open it (the link below) and mark it as paid. If it already shows as an order, there’s nothing to do.'
         : `Make it by hand in Shopify admin: Orders, Create order${r.customer_id ? ` for ${who}` : ''}, with what's below, then mark it as paid.`}`,
       details: [['Paid', dollars(r.total)], ['What it was for', lines.map((l) => (l.qty > 1 ? `${l.qty} × ${l.title}` : l.title)).join('\n')], ['Why', String(error).slice(0, 200)], ...(draft ? [['Draft order', draft]] : [])],
