@@ -478,6 +478,8 @@ const hex = (h, s, l) => {
 engine.registerFilter('color_lighten', (c, amt) => { const [h, s, l] = hsl(c); return hex(h, s, Math.min(100, l + amt)); });
 engine.registerFilter('color_darken', (c, amt) => { const [h, s, l] = hsl(c); return hex(h, s, Math.max(0, l - amt)); });
 engine.registerFilter('asset_url', (n) => `/assets/${n}`);
+// Shopify's json gives null for nothing (a product with no type, say); liquidjs's gives nothing at all, which isn't JSON
+engine.registerFilter('json', (value, space = 0) => JSON.stringify(value === undefined ? null : value, null, space));
 engine.registerFilter('shopify_asset_url', () => '#');
 /* Stylesheets a page asks to preload (stylesheet_tag: preload: true). Shopify sends them as a Link response header,
    rel=preload; as=style (the tag itself is unchanged); serve() does the same. Reset for each page render. */

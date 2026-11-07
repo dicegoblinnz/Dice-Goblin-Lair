@@ -38,7 +38,8 @@ look for and what to do by hand. A row left `taking` by a restart mid-call (30 m
 charges, staff changes and these), and the gifts' and damage charges' own looks skip these.
 
 One at a time: a member with a payment `taking`, `checking` or `returning` gets 409 `busy` (My Lair) or `tillBusy` (the
-till) until it's settled.
+till) until it's settled. Store credit that comes off or goes back on drops the minute-old balance the till keeps for
+that member (round 32), so the till reads it again for their next sale.
 
 Data: `credit_payments (id, customer_id, source, sale_id, key, day, amount, currency, status, stage, items, lines,
 take_tx, back_tx, balance_after, message, created_at, updated_at, paid_at, order_status, order_tries, order_next_at,

@@ -273,3 +273,20 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   below 1220px with Warhammer in it, every top link on one row from 1220px with at least 16px before the open pill or
   the icons, and no sideways scroll, at 390 to 1920px on the theme mock with the theme's own fonts (33 checks).
   `DG_THEME=… [PORT=4993] [OUT=…] node tools/qa/round31/menu.mjs`.
+
+## round33-credit-pay: paying with store credit (layout chat, 7 Nov 2026)
+
+- `round33-credit-pay/bill.mjs`: My Lair's bill on the theme mock in demo mode at 320, 390 and 1280px (contract
+  v33-credit-pay). Ruby's bill (a tab and what the demo has her owing): Pay with store credit between Show my Goblin
+  card and Pay with cash; it asks first (how much, what's left), Not now goes back; the bill changing while it asks
+  (the Lair app's words, nothing taken); paid (the tab and what was owed, the Wallet and Home's summary); a lost answer
+  tapped again sends the same key (paid once); not enough store credit (no button, a line instead). Axe, no sideways
+  scroll, no console errors (51 checks). `DG_THEME=… [PORT=4994] [AXE=…] [OUT=…] node tools/qa/round33-credit-pay/bill.mjs [small|phone|desktop]`.
+- `round33-credit-pay/till.mjs`: the till with Sales: Live, its Lair app routes answered by a stand-in in the check, at
+  1280×800 and 800×1280. Use their store credit (the totals, Card · what's left), Card sends `credit: true`, Back lets the
+  sale go, Confirm paid's `expect` is what's left, Pay with store credit (method `credit`, paid at once with no PIN), their
+  store credit changing meanwhile, the store credit tile, staff's last line not following the screen to customers, and
+  the customer screen's Pay with my store credit (no staff token). Axe, no sideways scroll, no console errors (44
+  checks). `DG_THEME=… [PORT=4996] [AXE=…] [OUT=…] node tools/qa/round33-credit-pay/till.mjs [wide|tall]`.
+- The theme mock's `json` filter gives `null` for nothing, as Shopify's does (a product with no type made the till's
+  settings unreadable, so it fell back to the demo).

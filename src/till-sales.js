@@ -619,6 +619,7 @@ export const tillSalesMethods = {
       took = await this.shopify.changeStoreCredit(customerId, -amount, currency, { timeout: Math.max(1000, deadline - Date.now()) });
     } catch (error) {
       // --- no awaits from here on ---
+      this.creditPayForget(customerId);
       const fresh = this.tillSaleRow(id);
       if (!error?.refused) {
         // it may or may not have come off: the run looks, and it goes back on if it did
@@ -632,6 +633,7 @@ export const tillSalesMethods = {
       throw new RuleError(error.code === 'INSUFFICIENT_FUNDS' ? CREDIT_PAY_WORDS.tillChanged : CREDIT_PAY_WORDS.tillNotTaken(errorText(error).slice(0, 160)), 409);
     }
     // --- no awaits from here on (until its order, when store credit paid it all) ---
+    this.creditPayForget(customerId);
     this.creditPayUpdate(cpId, { status: 'taken', take_tx: took?.id || null, balance_after: took?.balanceAfter ?? null });
     const at = Date.now();
     const fresh = this.tillSaleRow(id);

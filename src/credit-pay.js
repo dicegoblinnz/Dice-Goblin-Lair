@@ -266,6 +266,7 @@ export const creditPayMethods = {
       took = await this.shopify.changeStoreCredit(customerId, -bill.total, currency, { timeout: CREDIT_PAY.timeoutMs });
     } catch (error) {
       // --- no awaits from here on ---
+      this.creditPayForget(customerId);
       if (!error?.refused) {
         // it may or may not have come off: the 10-minute run looks in their store credit, and it pays nothing either way
         console.error('Lair: store credit for a bill had no answer taking it off', error);
@@ -277,6 +278,7 @@ export const creditPayMethods = {
       throw new RuleError(message, 409);
     }
     // --- no awaits from here on: the bill read again, as it is now ---
+    this.creditPayForget(customerId);
     this.creditPayUpdate(id, { status: 'taken', take_tx: took?.id || null, balance_after: took?.balanceAfter ?? null });
     const at = Date.now();
     const fresh = this.cashBill(customerId, rules, at);
@@ -331,6 +333,12 @@ export const creditPayMethods = {
     this.startCreditOrder(id);
   },
 
+  /** The till keeps a member's store credit for a minute (src/till-people.js): once some has moved, it's read again, so
+      their next sale doesn't show what they had before. No awaits. */
+  creditPayForget(customerId) {
+    if (this.tillCredits) this.tillCredits.delete(String(customerId));
+  },
+
   /* ---------------- going back on ---------------- */
 
   /**
@@ -355,6 +363,7 @@ export const creditPayMethods = {
       back = await this.shopify.changeStoreCredit(row.customer_id, row.amount, row.currency, { timeout: CREDIT_PAY.timeoutMs });
     } catch (error) {
       // --- no awaits from here on ---
+      this.creditPayForget(row.customer_id);
       console.error('Lair: store credit for a payment could not go back on', error);
       const fresh = this.creditPayRow(id);
       if (!fresh || fresh.status !== 'returning') return { id };
@@ -363,6 +372,7 @@ export const creditPayMethods = {
       return { id, status: 'check' };
     }
     // --- no awaits from here on ---
+    this.creditPayForget(row.customer_id);
     this.creditPayUpdate(id, { status: 'returned', stage: null, back_tx: back?.id || null, balance_after: back?.balanceAfter ?? null });
     return { id, status: 'returned' };
   },

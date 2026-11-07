@@ -293,8 +293,10 @@ test('round 33: My Lair\'s bill (tonight\'s table and the tab) is paid from stor
   // what they were shown has to be what it comes to
   said(await payCredit(MIA, 2000), 409, W.changed(2700));
   assert.deepEqual(changes, [], 'nothing taken until it matches');
+  lair.tillCredits = new Map([[MIA, { at: Date.now(), cents: 5000 }]]);
   const res = ok(await payCredit(MIA, 2700, 'pay-key-0100'));
   assert.equal(res.message, W.paid(2700, 2300));
+  assert.equal(await lair.tillCredit(MIA), 2300, 'the till reads it again');
   assert.equal(res.balance, 2300);
   assert.equal(res.credit.status, 'paid');
   assert.equal(res.credit.amount, 2700);
@@ -496,6 +498,25 @@ test('round 33: at the till, store credit pays all of it with no PIN, and the sa
   said(await pay({ lines: [{ key: 'a', variantId: '5013', qty: 1 }], person: MIA, method: 'credit' }), 409, W.tillShort(450, 1100));
   assert.deepEqual(changes, [[MIA, -1100]], 'never asked Shopify');
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM till_sales WHERE status IN ('open', 'making')").one().n, 0, 'the sale was let go');
+});
+
+test('round 33: once store credit moves, the till reads it again (not the balance it kept for a minute)', async () => {
+  balances.set(MIA, 5000);
+  assert.equal(await lair.tillCredit(MIA), 5000);
+  balances.set(MIA, 4000);
+  assert.equal(await lair.tillCredit(MIA), 5000, 'kept a minute (round 32)');
+  ok(await pay({ lines: [{ key: 'a', variantId: '5013', qty: 1 }], person: MIA, method: 'credit' }));
+  await settle();
+  assert.equal(await lair.tillCredit(MIA), 2900, 'paid at the till: read again');
+  // part of a sale, then Back: taken, then back on
+  balances.set(MIA, 500);
+  const token = await onTill(HEMI);
+  const part = ok(await pay({ lines: [{ key: 'a', variantId: '5013', qty: 1 }], person: MIA, method: 'cash', credit: true, token })).sale;
+  assert.deepEqual([part.credit, part.due], [500, 600]);
+  assert.equal(await lair.tillCredit(MIA), 0, 'part of a sale: read again');
+  ok(await call('POST', 'till/pay/cancel', { sale: part.id }, OWNER));
+  await settle();
+  assert.equal(await lair.tillCredit(MIA), 500, 'back on: read again');
 });
 
 test('round 33: at the till, store credit pays part and the rest goes on the card; expect is what\'s left; Back puts it back', async () => {
