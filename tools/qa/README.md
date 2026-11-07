@@ -289,7 +289,16 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   store credit changing meanwhile, the store credit tile, staff's last line not following the screen to customers, and
   the customer screen's Pay with my store credit (no staff token). From the reviews: a lost answer says it may have gone
   through and tapping again sends the same key (taken once, even after Not Ruby? and the same basket), a new key half
-  an hour on, a sale store credit paid while the screen changed hands still shows as paid, and Practice sales with real
-  people offer no store credit. Axe, no sideways scroll, no console errors (58 checks). `DG_THEME=… [PORT=4996] [AXE=…] [OUT=…] node tools/qa/round33-credit-pay/till.mjs [wide|tall]`.
+  an hour on, the shop's proxy giving up on a slow Pay (the same: a lost answer), a sale store credit paid while the
+  screen changed hands still shows as paid, and Practice sales with real people offer no store credit. Axe, no sideways
+  scroll, no console errors (60 checks). `DG_THEME=… [PORT=4996] [AXE=…] [OUT=…] node tools/qa/round33-credit-pay/till.mjs [wide|tall]`.
 - The theme mock's `json` filter gives `null` for nothing, as Shopify's does (a product with no type made the till's
   settings unreadable, so it fell back to the demo).
+
+## header-pill: the header's open pill (layout chat, 8 Nov 2026)
+
+- `header-pill/pill.mjs`: the header with the store's seven top links on the theme mock with the theme's own fonts, at
+  1280 to 1920px, with each thing the open pill says for the shop's hours ("Open until midnight", "Opens Monday 4pm"
+  and the rest): where it shows, it's on one line with at least 16px before it; it shows from 1420px; the top links stay
+  on one row; no sideways scroll (85 checks). Live r17-theme 3d11908 fails 8: from 1360px the pill wrapped onto two
+  lines and touched New here?. `DG_THEME=… [PORT=4999] node tools/qa/header-pill/pill.mjs`.

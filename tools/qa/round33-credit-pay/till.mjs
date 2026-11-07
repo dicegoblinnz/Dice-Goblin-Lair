@@ -40,7 +40,8 @@ const SHORT = (balance, total) => `Their store credit is ${money(balance)}, so i
 
 function lairApp() {
   // lose: the next till/pay is done, then its answer is lost; hold: till/pay waits for this promise before answering
-  const state = { balance: 500, sales: new Map(), keys: new Map(), next: 1, calls: [], lose: false, hold: null };
+  // gateway: the next till/pay is done, then Shopify's proxy gives up on it (a 504 page, not the Lair's words)
+  const state = { balance: 500, sales: new Map(), keys: new Map(), next: 1, calls: [], lose: false, hold: null, gateway: false };
   const person = (staff) => ({
     id: '7700112233', first: 'Ruby', name: staff ? 'Ruby Tane' : 'Ruby T.', code: RUBY_CODE, since: 'October 2026', ...(staff ? { email: 'r***@example.com' } : {}),
     loyalty: { onCard: 3, slots: 10, headStart: 0, stamps: 3 }, passes: [], library: [], bookings: [], tab: null, account: { billing: 'visit' }, credit: state.balance,
@@ -114,6 +115,11 @@ function lairApp() {
       if (name === 'till/pay' && state.lose) {
         state.lose = false;
         await route.abort('failed');
+        return;
+      }
+      if (name === 'till/pay' && state.gateway) {
+        state.gateway = false;
+        await route.fulfill({ status: 504, contentType: 'text/html', body: '<html><body>Gateway Timeout</body></html>' });
         return;
       }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(out) });
@@ -327,6 +333,25 @@ for (const size of sizes) {
   await tap('[data-act="pay-credit"]');
   const stale = calls('till/pay').slice(-2).map((c) => c.body.key);
   check(`${tag} half an hour after a lost answer, Pay starts a new key`, stale.length === 2 && stale[0] !== stale[1], stale);
+
+  // Shopify's proxy gives up on a slow Pay (the Lair app went on and took it): the same, not "try again"
+  lair.state.balance = 5000;
+  await tap('[data-act="next"]');
+  await scan(RUBY_CODE);
+  await scan('9300000000017');
+  await page.check('[data-in="credit"]');
+  await settle(page, 300);
+  lair.state.gateway = true;
+  const gw = calls('till/pay').length;
+  await tap('[data-act="pay-credit"]');
+  v = await look();
+  const gwToast = v.toast;
+  await tap('[data-act="pay-credit"]');
+  v = await look();
+  const gwKeys = calls('till/pay').slice(gw).map((c) => c.body.key);
+  check(`${tag} the shop's proxy giving up on a slow Pay: it may have gone through; tapping again sends the same key, taken once`,
+    gwToast === "The till didn't hear back from the Lair app, so it may have gone through. Tap it again to check: store credit is never taken twice."
+    && gwKeys.length === 2 && gwKeys[0] === gwKeys[1] && v.done === 'Paid $11.00 with store credit' && lair.state.balance === 3900, { gwToast, gwKeys, v, balance: lair.state.balance });
 
   // the screen changes hands while store credit pays all of it
   lair.state.balance = 5000;
