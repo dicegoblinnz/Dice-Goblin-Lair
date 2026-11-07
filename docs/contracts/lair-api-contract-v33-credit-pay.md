@@ -39,7 +39,8 @@ charges, staff changes and these), and the gifts' and damage charges' own looks 
 
 One at a time: a member with a payment `taking`, `checking` or `returning` gets 409 `busy` (My Lair) or `tillBusy` (the
 till) until it's settled. Store credit that comes off or goes back on drops the minute-old balance the till keeps for
-that member (round 32), so the till reads it again for their next sale.
+that member (round 32), so the till reads it again for their next sale. Data (the review): `till_sales` gains `pay_key`
+(the till's key for a Pay, section 3).
 
 Data: `credit_payments (id, customer_id, source, sale_id, key, day, amount, currency, status, stage, items, lines,
 take_tx, back_tx, balance_after, message, created_at, updated_at, paid_at, order_status, order_tries, order_next_at,
@@ -62,7 +63,8 @@ owed from before, and today's tab. First, any session pass saved on today's book
 - `key` (8 to 64 letters, numbers, dashes or underscores) is the page's own for this payment: the same key again gives
   back the first payment as it stands (`repeated: true`) and moves nothing. 400 `key` otherwise.
 - It needs all of it to be covered: their balance less than the bill is 409 `short`, and nothing's taken (the counter can
-  take part in store credit and the rest by card).
+  take part in store credit and the rest by card). Store credit of theirs on its way back on (a till sale let go just
+  now) lands before the balance is read, waiting up to 8 seconds.
 - Not on a monthly account (409 `monthly`: that's their monthly bill). Nothing to pay: 409 `nothing`. Today's tab, or a
   booking on the bill, being rung up at the till right now: 409 `atCounter`. Shopify not connected, or their balance
   unreadable: 503 `off`.
@@ -91,7 +93,7 @@ with no Shopify order: Mia T.") when it can't be. A total that doesn't match: "A
 
 `POST /proxy/till/pay` takes store credit (contract v32-till section 6, changed):
 
-`{ lines, person?, method: 'card' | 'cash' | 'credit', credit?: true, token?, till? }`
+`{ lines, person?, method: 'card' | 'cash' | 'credit', credit?: true, token?, till?, key? }`
 
 - `method: 'credit'`: store credit pays all of it. `credit: true` with `card` or `cash`: store credit pays first, as much
   as it covers, and the rest is paid by card or cash. Either needs a member on the sale (`person`): 422 `tillPerson`.
@@ -108,6 +110,15 @@ with no Shopify order: Mia T.") when it can't be. A total that doesn't match: "A
   - Something in it was paid another way while the credit came off: 409 `paidElsewhere` (as before), the credit goes back.
 - **Letting go** (Back, a new sale on the till, Shopify failing, the 12-hour run) puts any store credit taken for it back on
   their account (`returning`, then `returned`; no answer: staff check, section 1).
+- **The key** (the review, 8 Nov 2026): `key` (8 to 64 letters, numbers, dashes or underscores) is the till's own for
+  this Pay, kept until an answer comes. Asking again with it gives back that sale as it stands (`repeated: true`): paid,
+  or open with its store credit taken. So a lost answer never takes store credit twice. One still being made, or still
+  taking store credit: 409 `making`. One that was let go, for someone else or another way to pay, or from more than 30 minutes ago: a new sale.
+  Malformed: 400 `key` ("That didn't come through properly. Tap Pay again."). Without a key, as before.
+- **Paying again** (the review): with store credit, this till's last sale is let go first, and their store credit on its
+  way back on (Back, or that sale) lands before their balance is read, waiting up to 8 seconds. So paying again straight
+  after Back sees all of it. Taking it off gets at least 8 seconds with Shopify, whatever the draft took of the sale's 9.
+- `/till/paid` for a sale whose store credit is still coming off (Pay hasn't finished): 409 `making`.
 
 The sale (`sale`) gains `credit` (cents from store credit, 0 for none) and `due` (total less credit). The draft is tagged
 `lair-till`, `till`, the method, and `credit` and `store-credit` when store credit is in it; its note says how: "Sold on the

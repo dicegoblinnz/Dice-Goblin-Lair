@@ -31,7 +31,7 @@ import { HOUR, LairTime, RuleError, codeKey, makeId, sameBarcode } from './core.
 import { TILL_ORDER_TAG } from './counter.js';
 import { maskEmail } from './till.js';
 import { TILL_PEOPLE_WORDS, TILL_UNPAYABLE } from './till-people.js';
-import { CREDIT_PAY_WORDS } from './credit-pay.js';
+import { CREDIT_PAY, CREDIT_PAY_WORDS } from './credit-pay.js';
 
 const MIN = 60_000;
 const DAY = 24 * HOUR;
@@ -60,6 +60,8 @@ const PRODUCT_MS = 5 * MIN;
  * app proxy gives up on a slow answer, so the Lair answers first, and what's left happens in the background
  */
 export const TILL_SHOPIFY_WAIT = 9_000;
+// (the review, 8 Nov 2026) how long a Pay's key gives back its sale: a lost answer is asked again within moments
+const TILL_KEY_KEPT = 30 * 60_000;
 const READY_WAIT = 600;
 /** Waits before each try again at a paid sale's order, as cash's: then staff hear */
 const ORDER_RETRY = [10 * MIN, 30 * MIN, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY];
@@ -114,6 +116,8 @@ export const TILL_SALE_WORDS = {
   noSale: "That sale isn't here any more. Tap Pay again.",
   gone: "That sale was let go before it was confirmed, so it wasn't saved. If the EFTPOS took the money, ring it up again and confirm it without charging again.",
   making: 'That sale is still being set up. Give it a moment, then try again.',
+  // (the review, 8 Nov 2026) the till's key for a Pay
+  key: "That didn't come through properly. Tap Pay again.",
   paid: "That sale's paid already.",
   expect: (total) => `This sale is ${dollars(total)}. Check that's what was paid, then confirm again.`,
   cash: 'Approving cash is for staff with Check-in or Money, or the owner.',
@@ -492,19 +496,37 @@ export const tillSalesMethods = {
 
   /* ---------------- paying ---------------- */
   /**
-   * POST /till/pay { lines, person?, method, token?, till? } (the tablet's staff account; staff on the till or a customer
-   * at the counter): start paying. Today's bookings in the basket are checked in (saved passes apply), then the sale's
-   * draft order is made: its price, fixed now, is what's taken. The till's sale still waiting for its money is let go.
-   * → { sale, dropped, notices } (dropped: booking codes with nothing to pay now, left out: paid another way, or a pass
-   * covered them at check-in); { sale: null } when nothing's left to pay.
+   * POST /till/pay { lines, person?, method, credit?, token?, till?, key? } (the tablet's staff account; staff on the till
+   * or a customer at the counter): start paying. Today's bookings in the basket are checked in (saved passes apply), then
+   * the sale's draft order is made: its price, fixed now, is what's taken. The till's sale still waiting for its money is
+   * let go. → { sale, dropped, notices } (dropped: booking codes with nothing to pay now, left out: paid another way, or a
+   * pass covered them at check-in); { sale: null } when nothing's left to pay. (the review, 8 Nov 2026) key: the till's own
+   * for this Pay (8 to 64 letters, numbers, dashes or underscores): asking again with it gives back that sale as it stands
+   * (repeated: true), so a lost answer never takes store credit twice; one still being made is a 409 `making`, and one
+   * that was let go starts afresh.
    */
   async tillPay(body, who, client = '') {
     this.tillGate(who);
     const method = body?.method;
     if (!['card', 'cash', 'credit'].includes(method)) throw new RuleError(TILL_SALE_WORDS.method, 400);
+    const key = body?.key == null || body.key === '' ? null : String(body.key);
+    if (key !== null && !/^[A-Za-z0-9_-]{8,64}$/.test(key)) throw new RuleError(TILL_SALE_WORDS.key, 400);
     // round 33: store credit pays all of it ('credit'), or first, with the rest by card or cash (credit: true)
     const useCredit = method === 'credit' || body?.credit === true;
     const basket = tillBasketIn(body?.lines);
+    const till = this.tillFrom(who, body, client);
+    const customerId = this.tillCustomerIn(body?.person);
+    if (useCredit && !customerId) throw new RuleError(CREDIT_PAY_WORDS.tillPerson, 422);
+    // (the review) the same Pay asked again (its answer was lost): that sale as it stands
+    const repeated = this.tillPayRepeat(key, till, method, customerId);
+    if (repeated) return repeated;
+    if (useCredit) {
+      // (the review) this till's last sale goes now, and their store credit on its way back on (Back, or that sale) lands
+      // before their balance is read: paying again straight after Back sees all of it
+      const before = Date.now();
+      for (const old of this.sql.exec("SELECT * FROM till_sales WHERE till = ? AND status IN ('making', 'open')", till).toArray()) this.tillLetGo(old, 'another sale', before);
+      await this.creditPaySettled(customerId);
+    }
     const tokenHash = body?.token ? await this.tillTokenHash(body.token) : null;
     const tagged = tokenHash ? await this.tillTagged() : null;
     const rules = await this.rules();
@@ -512,18 +534,17 @@ export const tillSalesMethods = {
     // round 33: store credit needs a member on the sale, and their balance, read first
     let balance = null;
     if (useCredit) {
-      const person = this.tillCustomerIn(body?.person);
-      if (!person) throw new RuleError(CREDIT_PAY_WORDS.tillPerson, 422);
-      balance = await this.creditBalanceOrNull(person);
+      balance = await this.creditBalanceOrNull(customerId);
       if (balance == null) throw new RuleError(CREDIT_PAY_WORDS.tillOff, 503);
       if (balance <= 0) throw new RuleError(CREDIT_PAY_WORDS.tillNone, 409);
     }
     // --- no awaits from here on: who's paying, check-ins, the lines and the sale ---
     const now = Date.now();
+    // (the review) the same key asked again while this one was waiting on the above
+    const raced = this.tillPayRepeat(key, till, method, customerId);
+    if (raced) return raced;
     const me = tokenHash ? this.tillOn(tokenHash, this.tillTeamFrom(who, tagged)) : null;
-    const customerId = this.tillCustomerIn(body?.person);
     if (useCredit && this.creditPayBusy(customerId)) throw new RuleError(CREDIT_PAY_WORDS.tillBusy, 409);
-    const till = this.tillFrom(who, body, client);
     const pending = this.tillPendingRefs(now);
     // the bookings as the till showed them, checked in, then read again: one with nothing to pay now (paid another way,
     // or a pass covered it at check-in, on this try or one Shopify didn't finish: the review) is left out and said so.
@@ -538,9 +559,9 @@ export const tillSalesMethods = {
     if (!lines.length) return { sale: null, dropped, notices };
     const id = makeId('ts');
     this.write(
-      `INSERT INTO till_sales (id, till, customer_id, method, status, lines, refs, tabs, started_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'making', ?, ?, ?, ?, ?, ?)`,
-      id, till, customerId, method, JSON.stringify(lines), JSON.stringify(owed.refs), JSON.stringify(tab.tabIds), me ? me.id : null, now, now,
+      `INSERT INTO till_sales (id, till, customer_id, method, status, lines, refs, tabs, started_by, pay_key, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'making', ?, ?, ?, ?, ?, ?, ?)`,
+      id, till, customerId, method, JSON.stringify(lines), JSON.stringify(owed.refs), JSON.stringify(tab.tabIds), me ? me.id : null, key, now, now,
     );
     // its tab can't change in My Lair while it's being paid
     for (const tabId of tab.tabIds) this.write("UPDATE tabs SET status = 'in-cart', updated_at = ? WHERE id = ? AND status IN ('open', 'in-cart')", now, tabId);
@@ -590,6 +611,22 @@ export const tillSalesMethods = {
   },
 
   /**
+   * (the review, 8 Nov 2026) Pay asked again with the till's key for it (its answer was lost): the sale as it stands, so
+   * nothing is taken twice. A paid one, or an open one with its store credit taken, comes back as it is (repeated: true);
+   * one still being made, or still taking store credit, is a 409 (try again in a moment); one that was let go, for
+   * someone else or another way to pay, or from more than half an hour ago, starts afresh (null). No awaits.
+   */
+  tillPayRepeat(key, till, method, customerId) {
+    if (!key) return null;
+    const r = this.sql.exec('SELECT * FROM till_sales WHERE pay_key = ? AND till = ? AND created_at > ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+      key, till, Date.now() - TILL_KEY_KEPT).toArray()[0];
+    if (!r || r.status === 'gone' || r.method !== method || String(r.customer_id || '') !== String(customerId || '')) return null;
+    const taking = r.credit_id && this.creditPayRow(r.credit_id)?.status === 'taking';
+    if (r.status === 'making' || (r.status === 'open' && taking)) throw new RuleError(TILL_SALE_WORDS.making, 409);
+    return { sale: this.tillSaleView(r), dropped: [], notices: [], repeated: true };
+  },
+
+  /**
    * Round 33: a sale whose price is fixed (open) takes its store credit now: as much as it covers (all of it for
    * 'credit'), with no PIN. Covered, it's paid there and then and its order made; part, it waits for the rest by card or
    * cash (due). Shopify saying no, or not answering, lets the sale go (a lost answer's store credit goes back on once the
@@ -616,7 +653,8 @@ export const tillSalesMethods = {
     this.write('UPDATE till_sales SET credit = ?, credit_id = ?, updated_at = ? WHERE id = ?', amount, cpId, now, id);
     let took;
     try {
-      took = await this.shopify.changeStoreCredit(customerId, -amount, currency, { timeout: Math.max(1000, deadline - Date.now()) });
+      // (the review) its own time with Shopify, not just what the draft left of the sale's 9 seconds
+      took = await this.shopify.changeStoreCredit(customerId, -amount, currency, { timeout: Math.max(CREDIT_PAY.tillTimeoutMs, deadline - Date.now()) });
     } catch (error) {
       // --- no awaits from here on ---
       this.creditPayForget(customerId);
@@ -708,6 +746,8 @@ export const tillSalesMethods = {
     if (r.status === 'paid') return { sale: this.tillSaleView(r) };
     if (r.status === 'gone') throw new RuleError(TILL_SALE_WORDS.gone, 409);
     if (r.status !== 'open') throw new RuleError(TILL_SALE_WORDS.making, 409);
+    // (the review) its store credit still coming off (Pay hasn't finished): not yet
+    if (r.credit_id && this.creditPayRow(r.credit_id)?.status !== 'taken') throw new RuleError(TILL_SALE_WORDS.making, 409);
     if (r.method === 'cash' && !tillTakesCash(me)) throw new RuleError(TILL_SALE_WORDS.cash, 403);
     // round 33: what's left to pay once store credit took its part
     const due = r.total - (r.credit || 0);
@@ -818,7 +858,7 @@ export const tillSalesMethods = {
     const lines = parse(r.shown, []);
     this.staffAlert(`till-order:${r.id}`, `A till sale with no Shopify order: ${who}`, {
       title: 'A till sale that needs its order made by hand',
-      intro: `${who} paid ${dollars(r.total)} ${r.method === 'credit' ? 'with store credit' : `${r.credit ? `(${dollars(r.credit)} of it from store credit) ` : ''}${r.method === 'cash' ? 'in cash' : 'by card'}`} at the till${r.by_name ? ` (${r.by_name} took it)` : ''}, but the Lair couldn't make its Shopify order, however many times it tried. ${draft
+      intro: `${who} paid ${dollars(r.total)} ${r.method === 'credit' || (r.credit && r.credit >= r.total) ? 'with store credit' : `${r.credit ? `(${dollars(r.credit)} of it from store credit) ` : ''}${r.method === 'cash' ? 'in cash' : 'by card'}`} at the till${r.by_name ? ` (${r.by_name} took it)` : ''}, but the Lair couldn't make its Shopify order, however many times it tried. ${draft
         ? 'Its draft order is in Shopify: open it (the link below) and mark it as paid. If it already shows as an order, there’s nothing to do.'
         : `Make it by hand in Shopify admin: Orders, Create order${r.customer_id ? ` for ${who}` : ''}, with what's below, then mark it as paid.`}`,
       details: [['Paid', dollars(r.total)], ['What it was for', lines.map((l) => (l.qty > 1 ? `${l.qty} × ${l.title}` : l.title)).join('\n')], ['Why', String(error).slice(0, 200)], ...(draft ? [['Draft order', draft]] : [])],

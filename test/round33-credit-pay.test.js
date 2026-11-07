@@ -86,11 +86,14 @@ let changes;
 let says;
 let transactions;
 let during;
+// the time each store credit change was given with Shopify
+let timeouts;
 function fakeShopify() {
   shop = { drafts: [], deleted: [], completed: [], fulfilled: [], failCreate: 0 };
   Object.defineProperty(lair.shopify, 'configured', { get: () => true, configurable: true });
   lair.shopify.storeCreditBalance = async (id) => balances.get(String(id)) || 0;
-  lair.shopify.changeStoreCredit = async (id, cents) => {
+  lair.shopify.changeStoreCredit = async (id, cents, currency, opts = {}) => {
+    timeouts.push(opts.timeout ?? null);
     const how = says.shift() ?? null;
     changes.push([String(id), cents]);
     if (during) {
@@ -213,6 +216,7 @@ beforeEach(async () => {
   says = [];
   transactions = [];
   during = null;
+  timeouts = [];
   globalThis.fetch = async (url) => {
     throw new Error(`No network in tests: ${url}`);
   };
@@ -575,4 +579,108 @@ test('round 33: My Lair\'s bill being rung up at the till can\'t be paid from My
   ok(await pay({ lines: [{ key: 'b', booking: booking.ref }], person: MIA, method: 'card', token }));
   said(await payCredit(MIA, 2000), 409, W.atCounter);
   assert.deepEqual(changes, []);
+});
+
+/* ---------------- the reviews (8 Nov 2026) ---------------- */
+
+test('round 33 review: the till\'s key: Pay again after a lost answer gives back the same sale, so store credit is never taken twice', async () => {
+  const token = await onTill(HEMI);
+  const coke = [{ key: 'a', variantId: '5013', qty: 1 }];
+  // all of it from store credit: the till never heard the answer, so it asks again with the same key
+  const one = ok(await pay({ lines: coke, person: MIA, method: 'credit', key: 'till-key-0001' })).sale;
+  assert.equal(one.status, 'paid');
+  const again = ok(await pay({ lines: coke, person: MIA, method: 'credit', key: 'till-key-0001' }));
+  assert.equal(again.sale.id, one.id);
+  assert.equal(again.sale.status, 'paid');
+  assert.equal(again.repeated, true);
+  assert.deepEqual(changes, [[MIA, -1100]], 'taken once');
+  // part of it: the same open sale back, with what's left to pay, and no second draft
+  balances.set(MIA, 500);
+  const part = ok(await pay({ lines: coke, person: MIA, method: 'card', credit: true, token, key: 'till-key-0002' })).sale;
+  const part2 = ok(await pay({ lines: coke, person: MIA, method: 'card', credit: true, token, key: 'till-key-0002' })).sale;
+  assert.deepEqual([part2.id, part2.status, part2.credit, part2.due], [part.id, 'open', 500, 600]);
+  assert.equal(shop.drafts.length, 2);
+  assert.deepEqual(changes, [[MIA, -1100], [MIA, -500]]);
+  // a sale that was let go: the same key starts a new one
+  ok(await call('POST', 'till/pay/cancel', { sale: part.id }, OWNER));
+  await settle();
+  const fresh = ok(await pay({ lines: coke, person: MIA, method: 'card', credit: true, token, key: 'till-key-0002' })).sale;
+  assert.notEqual(fresh.id, part.id);
+  assert.deepEqual([fresh.status, fresh.credit], ['open', 500]);
+  // asked again while its store credit is still coming off: wait
+  ok(await call('POST', 'till/pay/cancel', { sale: fresh.id }, OWNER));
+  await settle();
+  let meanwhile;
+  during = async () => {
+    meanwhile = await pay({ lines: coke, person: MIA, method: 'card', credit: true, token, key: 'till-key-0003' });
+  };
+  ok(await pay({ lines: coke, person: MIA, method: 'card', credit: true, token, key: 'till-key-0003' }));
+  said(meanwhile, 409, S.making);
+  said(await pay({ lines: coke, method: 'card', key: 'no good!' }), 400, S.key);
+  // a key from long ago is never someone's sale now: a new one
+  await settle();
+  nowIs(Date.now() + 31 * MIN);
+  balances.set(MIA, 5000);
+  const later = ok(await pay({ lines: coke, person: MIA, method: 'credit', key: 'till-key-0001' })).sale;
+  assert.notEqual(later.id, one.id);
+  assert.equal(later.status, 'paid');
+});
+
+test('round 33 review: store credit at the till gets its own time with Shopify, not what the draft left over', async () => {
+  const token = await onTill(HEMI);
+  const make = lair.shopify.createTillDraft;
+  lair.shopify.createTillDraft = async (input) => {
+    // Shopify took 8.5 seconds over the draft
+    nowIs(Date.now() + 8_500);
+    return make(input);
+  };
+  ok(await pay({ lines: [{ key: 'a', variantId: '5013', qty: 1 }], person: MIA, method: 'card', credit: true, token }));
+  assert.ok(timeouts[0] >= 8_000, `the store credit step had ${timeouts[0]}ms`);
+});
+
+test('round 33 review: a till sale can\'t be confirmed while its store credit is still coming off', async () => {
+  balances.set(MIA, 500);
+  const token = await onTill(HEMI);
+  let early;
+  during = async () => {
+    const open = lair.sql.exec("SELECT id FROM till_sales WHERE status = 'open'").one();
+    early = await paid({ sale: open.id, token, expect: 600 });
+  };
+  const sale = ok(await pay({ lines: [{ key: 'a', variantId: '5013', qty: 1 }], person: MIA, method: 'card', credit: true, token })).sale;
+  said(early, 409, S.making);
+  assert.deepEqual([sale.status, sale.credit, sale.due], ['open', 500, 600]);
+  assert.equal(ok(await paid({ sale: sale.id, token, expect: 600 })).sale.status, 'paid');
+  assert.equal(creditRow(saleRow(sale.id).credit_id).status, 'paid');
+});
+
+test('round 33 review: paying again straight after Back waits for the last sale\'s store credit to go back on', async () => {
+  balances.set(MIA, 500);
+  const token = await onTill(HEMI);
+  const coke = [{ key: 'a', variantId: '5013', qty: 1 }];
+  const first = ok(await pay({ lines: coke, person: MIA, method: 'card', credit: true, token })).sale;
+  assert.equal(first.credit, 500);
+  // Back: its store credit goes back on, taking Shopify a moment
+  during = () => new Promise((resolve) => setTimeout(resolve, 30));
+  ok(await call('POST', 'till/pay/cancel', { sale: first.id }, OWNER));
+  // cash instead, straight away, with their store credit still ticked
+  const again = ok(await pay({ lines: coke, person: MIA, method: 'cash', credit: true, token })).sale;
+  assert.deepEqual([again.credit, again.due], [500, 600]);
+  // Pay again with no Back first lets that sale go, and waits the same way
+  during = () => new Promise((resolve) => setTimeout(resolve, 30));
+  const third = ok(await pay({ lines: coke, person: MIA, method: 'card', credit: true, token })).sale;
+  assert.deepEqual([third.credit, third.due], [500, 600]);
+  await settle();
+  assert.equal(creditRow(saleRow(first.id).credit_id).status, 'returned');
+  assert.equal(creditRow(saleRow(again.id).credit_id).status, 'returned');
+  assert.equal(balances.get(MIA), 0, 'the third sale holds it');
+});
+
+test('round 33 review: staff asked to make a till sale\'s order by hand hear it was paid with store credit', async () => {
+  const token = await onTill(HEMI);
+  const sale = ok(await pay({ lines: [{ key: 'a', variantId: '5013', qty: 1 }], person: MIA, method: 'card', credit: true, token })).sale;
+  assert.equal(sale.status, 'paid');
+  lair.tillOrderStopped(saleRow(sale.id), 'a test', Date.now());
+  const alert = lair.alerts.find((a) => /A till sale with no Shopify order/.test(a.subject));
+  assert.match(alert.intro, /paid \$11\.00 with store credit at the till/);
+  assert.doesNotMatch(alert.intro, /by card/);
 });

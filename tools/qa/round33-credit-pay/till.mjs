@@ -10,6 +10,9 @@
 //  6. Their store credit changed meanwhile: the Lair app's words, and Ruby's screen as she is now.
 //  7. The customer screen: staff's line goes with them; Ruby scans her own code, Use my store credit, Pay with my
 //     store credit (no staff token). The store credit tile says to use it in the sale (or on her basket), not on POS.
+//  8. (the reviews, 8 Nov) A lost answer: says it may have gone through; tapping again sends the same key, so it's
+//     taken once. The screen changing hands while store credit pays: the paid sale still shows as paid. Practice
+//     sales with real people: store credit isn't offered (it's on Shopify POS).
 // No sideways scroll, no console errors and axe at each. The counter's tablet: 1280×800 and 800×1280.
 // Usage: DG_THEME=/path/to/theme [PORT=4996] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round33-credit-pay/till.mjs [wide|tall]
 import os from 'node:os';
@@ -36,7 +39,8 @@ const PRICE = { 5013: 1100, 5011: 1599 };
 const SHORT = (balance, total) => `Their store credit is ${money(balance)}, so it doesn't cover ${money(total)}. Use it for part, and pay the rest by card or cash.`;
 
 function lairApp() {
-  const state = { balance: 500, sales: new Map(), next: 1, calls: [] };
+  // lose: the next till/pay is done, then its answer is lost; hold: till/pay waits for this promise before answering
+  const state = { balance: 500, sales: new Map(), keys: new Map(), next: 1, calls: [], lose: false, hold: null };
   const person = (staff) => ({
     id: '7700112233', first: 'Ruby', name: staff ? 'Ruby Tane' : 'Ruby T.', code: RUBY_CODE, since: 'October 2026', ...(staff ? { email: 'r***@example.com' } : {}),
     loyalty: { onCard: 3, slots: 10, headStart: 0, stamps: 3 }, passes: [], library: [], bookings: [], tab: null, account: { billing: 'visit' }, credit: state.balance,
@@ -58,6 +62,9 @@ function lairApp() {
       return answer(200, { price: { subtotal: total, discounts: [], total, gst: Math.round((total * 3) / 23), lines: b.lines.map((l) => ({ key: l.key, qty: l.qty, unit: PRICE[l.variantId] })) }, dropped: [] });
     },
     'till/pay': (b) => {
+      // (the review) the same key again: that sale as it stands
+      const known = b.key ? state.sales.get(state.keys.get(b.key)) : null;
+      if (known && known.status !== 'gone') return answer(200, { sale: view(known), dropped: [], notices: [], repeated: true });
       const total = totalOf(b.lines);
       const useCredit = b.method === 'credit' || b.credit === true;
       if (!['card', 'cash', 'credit'].includes(b.method)) return answer(400, { error: 'Pay by card, with cash or with store credit.' });
@@ -73,6 +80,7 @@ function lairApp() {
         credit, order: paid ? { id: 'gid://shopify/Order/1', name: '#3001' } : null, saving: false, receipt: paid && b.person ? 'r***@example.com' : null, change: null,
       };
       state.sales.set(id, sale);
+      if (b.key) state.keys.set(b.key, id);
       return answer(200, { sale: view(sale), dropped: [], notices: [] });
     },
     'till/paid': (b) => {
@@ -101,7 +109,13 @@ function lairApp() {
       const body = req.method() === 'POST' ? JSON.parse(req.postData() || '{}') : {};
       state.calls.push({ name, body });
       const fn = routes[name];
+      if (name === 'till/pay' && state.hold) await state.hold;
       const { status, body: out } = fn ? fn(body) : answer(404, { error: 'No such route.' });
+      if (name === 'till/pay' && state.lose) {
+        state.lose = false;
+        await route.abort('failed');
+        return;
+      }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(out) });
     },
   };
@@ -257,8 +271,118 @@ for (const size of sizes) {
   await shot(page, `till-${size}-6-customer-done`);
   await axe(page, `${tag} the customer's done screen`, '[data-r="over"]');
   check(`${tag} the customer screen: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
+
+  /* ---------- 8. the reviews: a lost answer, the screen changing hands, Practice ---------- */
+  await tap('[data-act="next"]');
+  await tap('[data-act="staff-door"]');
+  await tap('[data-act="pick"][data-id="hemi"]');
+  for (const d of '1234') await tap(`[data-act="digit"][data-d="${d}"]`);
+  await settle(page, 600);
+  lair.state.balance = 5000;
+  await scan(RUBY_CODE);
+  await scan('9300000000017');
+  await page.check('[data-in="credit"]');
+  await settle(page, 300);
+  lair.state.lose = true;
+  const before = calls('till/pay').length;
+  await tap('[data-act="pay-credit"]');
+  v = await look();
+  check(`${tag} a lost answer on Pay with store credit: it may have gone through, tap it again (never taken twice)`,
+    v.toast === "The till didn't hear back from the Lair app, so it may have gone through. Tap it again to check: store credit is never taken twice." && !v.done && lair.state.balance === 3900, { v, balance: lair.state.balance });
+  await tap('[data-act="pay-credit"]');
+  v = await look();
+  const tries = calls('till/pay').slice(before).map((c) => c.body.key);
+  check(`${tag} tapping again sends the same key: the same paid sale, taken once`,
+    tries.length === 2 && Boolean(tries[0]) && tries[0] === tries[1] && v.done === 'Paid $11.00 with store credit' && lair.state.balance === 3900, { tries, v, balance: lair.state.balance });
+  // a lost answer, then Start over and the same basket again: the same key, so it's still taken once; half an hour on,
+  // a new key
+  await tap('[data-act="next"]');
+  await scan(RUBY_CODE);
+  await scan('9300000000017');
+  await page.check('[data-in="credit"]');
+  await settle(page, 300);
+  lair.state.lose = true;
+  const from = calls('till/pay').length;
+  await tap('[data-act="pay-credit"]');
+  await tap('[data-act="clear-person"]');
+  await scan(RUBY_CODE);
+  await page.check('[data-in="credit"]');
+  await settle(page, 300);
+  await tap('[data-act="pay-credit"]');
+  const redo = calls('till/pay').slice(from).map((c) => c.body.key);
+  v = await look();
+  check(`${tag} a lost answer, then Not Ruby? and the same basket again: the same key, the same paid sale, taken once`,
+    redo.length === 2 && redo[0] === redo[1] && v.done === 'Paid $11.00 with store credit' && lair.state.balance === 2800, { redo, v, balance: lair.state.balance });
+  await tap('[data-act="next"]');
+  await scan(RUBY_CODE);
+  await scan('9300000000017');
+  await page.check('[data-in="credit"]');
+  await settle(page, 300);
+  lair.state.lose = true;
+  await tap('[data-act="pay-credit"]');
+  await page.evaluate(() => {
+    const real = Date.now;
+    Date.now = () => real() + 31 * 60_000;
+  });
+  await tap('[data-act="pay-credit"]');
+  const stale = calls('till/pay').slice(-2).map((c) => c.body.key);
+  check(`${tag} half an hour after a lost answer, Pay starts a new key`, stale.length === 2 && stale[0] !== stale[1], stale);
+
+  // the screen changes hands while store credit pays all of it
+  lair.state.balance = 5000;
+  await tap('[data-act="next"]');
+  await scan(RUBY_CODE);
+  await scan('9300000000017');
+  await page.check('[data-in="credit"]');
+  await settle(page, 300);
+  let release;
+  lair.state.hold = new Promise((resolve) => { release = resolve; });
+  await page.locator('[data-r="sale"] [data-act="pay-credit"]').click();
+  await settle(page, 200);
+  await tap('[data-act="to-customers"]');
+  lair.state.hold = null;
+  release();
+  await settle(page, 800);
+  v = await look();
+  const paidSale = [...lair.state.sales.values()].at(-1);
+  check(`${tag} the screen changed hands while store credit paid: the paid sale still shows as paid, and isn't let go`,
+    paidSale.status === 'paid' && /^Paid \$11\.00 with (your )?store credit$/.test(v.done) && !calls('till/pay/cancel').some((c) => c.body.sale === paidSale.id), { v, paidSale: paidSale.status });
   check(`${tag} the till: no console errors`, page.errors.length === 0, page.errors);
   await ctx.close();
+
+  // Practice sales with the Lair's real people: their store credit is real, so it isn't offered in a practice sale
+  m.mockState.sectionSettings = { 'lair-till': { sales: 'practice' } };
+  const ctx2 = await browser.newContext({ viewport: VIEWPORTS[size], deviceScaleFactor: 1, hasTouch: true });
+  await ctx2.addInitScript(clockAt('19:30'));
+  const lair2 = lairApp();
+  lair2.state.balance = 5000;
+  await ctx2.route(`${BASE}${API}/**`, (route) => lair2.handle(route));
+  const practice = watch(await ctx2.newPage());
+  await go(practice, BASE, '/pages/till', STAFF);
+  await practice.waitForSelector('[data-act="staff-door"]', { timeout: 20000 });
+  await settle(practice, 500);
+  const ptap = async (sel) => {
+    const over = practice.locator(`[data-r="over"] ${sel} >> visible=true`);
+    await ((await over.count()) ? over : practice.locator(`${sel} >> visible=true`)).first().click();
+    await settle(practice, 500);
+  };
+  await ptap('[data-act="staff-door"]');
+  await ptap('[data-act="pick"][data-id="hemi"]');
+  for (const d of '1234') await ptap(`[data-act="digit"][data-d="${d}"]`);
+  await settle(practice, 600);
+  await practice.evaluate((c) => document.querySelector('lair-till').onScan(c), RUBY_CODE);
+  await settle(practice, 700);
+  await practice.evaluate((c) => document.querySelector('lair-till').onScan(c), '9300000000017');
+  await settle(practice, 700);
+  const pv = await practice.evaluate(() => ({
+    pill: Boolean([...document.querySelectorAll('.t-pill')].find((x) => /Practice/.test(x.textContent))),
+    tick: Boolean(document.querySelector('[data-r="sale"] [data-in="credit"]')),
+    note: String([...document.querySelectorAll('.t-tile')].find((x) => /Store credit/.test(x.textContent))?.querySelector('.t-tile__note')?.textContent || '').trim(),
+  }));
+  check(`${tag} Practice with real people: no store credit in the sale, and the tile says Shopify POS`, pv.pill && !pv.tick && pv.note === 'Use it on Shopify POS for now', pv);
+  check(`${tag} Practice: no console errors`, practice.errors.length === 0, practice.errors);
+  m.mockState.sectionSettings = null;
+  await ctx2.close();
 }
 
 const { pass, fail } = totals();

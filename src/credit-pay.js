@@ -31,6 +31,10 @@ import { HOUR, LairTime, MIN, RuleError, makeId } from './core.js';
 export const CREDIT_PAY = Object.freeze({
   // how long My Lair's take-off may take before its answer counts as lost
   timeoutMs: 20_000,
+  // (the review, 8 Nov 2026) the till's take-off: at least this long, whatever the draft left of the sale's 9 seconds
+  tillTimeoutMs: 8_000,
+  // (the review) paying again: how long to wait for their store credit that's on its way back on
+  settleMs: 8_000,
   // a payment taking or returning this long had no answer (the Lair restarted mid-call)
   stale: 30 * MIN,
   // an answer lost while it came off: looked for in their store credit from lookAfter, until goneAfter (then it didn't
@@ -79,7 +83,10 @@ export const CREDIT_PAY_TABLES = [
   'CREATE INDEX IF NOT EXISTS credit_payments_sale ON credit_payments (sale_id)',
 ];
 /** A till sale's store credit: the cents taken for it, and its payment (made when missing) */
-export const CREDIT_PAY_COLUMNS = [['till_sales', 'credit', 'INTEGER'], ['till_sales', 'credit_id', 'TEXT']];
+// (the review, 8 Nov 2026) pay_key: the till's own key for a Pay, so asking again after a lost answer gives back that sale
+export const CREDIT_PAY_COLUMNS = [['till_sales', 'credit', 'INTEGER'], ['till_sales', 'credit_id', 'TEXT'], ['till_sales', 'pay_key', 'TEXT']];
+/** After CREDIT_PAY_COLUMNS: finding a till sale by its key */
+export const CREDIT_PAY_INDEXES = ['CREATE INDEX IF NOT EXISTS till_sales_pay_key ON till_sales (pay_key)'];
 
 const money = (cents) => `$${(Math.round(Number(cents) || 0) / 100).toFixed(2)}`;
 const said = (error) => String(error?.message || error || 'no answer').replace(/^Shopify API:\s*/, '').slice(0, 160);
@@ -236,6 +243,8 @@ export const creditPayMethods = {
     if (typeof expect !== 'number' || !Number.isInteger(expect) || expect < 0) throw new RuleError(W.expect, 400);
     const rules = await this.rules();
     // their balance first, when Shopify will say, for a clear "you have $8.50" (Shopify refuses to take more anyway)
+    // (the review) store credit of theirs on its way back on (a till sale let go just now) lands first
+    await this.creditPaySettled(customerId);
     const balance = this.shopify?.configured ? await this.creditBalanceOrNull(customerId) : null;
     // --- no awaits until it's claimed (a second tap may have come in meanwhile) ---
     const raced = repeat();
@@ -350,8 +359,25 @@ export const creditPayMethods = {
     const row = this.creditPayRow(id);
     if (!row || !from.includes(row.status)) return false;
     this.creditPayUpdate(id, { status: 'returning', stage: null, message: message || String(why).slice(0, 300) });
-    this.later(this.creditPayReturn(id));
+    // (the review) kept while it's with Shopify, so paying again straight away can wait for it (creditPaySettled)
+    if (!this.creditPayGoing) this.creditPayGoing = new Map();
+    const going = this.creditPayReturn(id);
+    this.creditPayGoing.set(id, { customerId: String(row.customer_id), going });
+    this.later(going.finally(() => this.creditPayGoing.delete(id)));
     return true;
+  },
+
+  /**
+   * (the review, 8 Nov 2026) Store credit of theirs on its way back on (Back at the till, a sale let go): waited for, up
+   * to `ms`, before their balance is read for paying again, so the till never says they have none when it's just coming
+   * back. Never throws.
+   */
+  async creditPaySettled(customerId, ms = CREDIT_PAY.settleMs) {
+    const going = [...(this.creditPayGoing?.values() || [])].filter((x) => x.customerId === String(customerId)).map((x) => x.going);
+    if (!going.length) return;
+    let timer;
+    await Promise.race([Promise.allSettled(going), new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
+    clearTimeout(timer);
   },
 
   /** Put a payment's store credit back on their account: 'returned', or 'check' (staff hear) when Shopify doesn't confirm it. */

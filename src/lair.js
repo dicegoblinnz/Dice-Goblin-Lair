@@ -102,7 +102,7 @@ import { TILL_TABLES, tillMethods } from './till.js';
 import { tillPeopleMethods } from './till-people.js';
 // Round 32, the till, part 3: real products, prices and sales saved to Shopify (src/till-sales.js, contract v32-till section 6)
 import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
-import { CREDIT_PAY_COLUMNS, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
+import { CREDIT_PAY_COLUMNS, CREDIT_PAY_INDEXES, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1201,6 +1201,7 @@ export class Lair {
         this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
     }
+    for (const statement of CREDIT_PAY_INDEXES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once

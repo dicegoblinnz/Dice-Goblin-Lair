@@ -7,6 +7,8 @@
 //  4. Pay: the Lair app's words, the tab and what was owed paid, the Wallet and Home's summary show what's left.
 //  5. A lost answer: says so, keeps the bill; tapping again sends the same key, so it's paid once.
 //  6. Not enough store credit: no button, a line saying it can go towards it at the counter.
+//  7. (the review, 8 Nov) A payment Shopify hasn't confirmed: the line says so, no button, and the page looks again
+//     once a minute; when it's settled, the line goes and the button's back (coming back to the page looks too).
 // No sideways scroll, no console errors and axe at each. 320, 390 and 1280 wide.
 // Usage: DG_THEME=/path/to/theme [PORT=4994] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round33-credit-pay/bill.mjs [small|phone|desktop]
 import os from 'node:os';
@@ -195,6 +197,38 @@ for (const size of sizes) {
   await shot(page, `${size}-4-short`, '[data-tab-status]');
   await axeFree(page, `${tag} the bill, not enough store credit`, '[data-tab-status]');
   check(`${tag} no sideways scroll (short)`, (await overflowX(page)) <= 0, await overflowX(page));
+
+  /* ---------- 7. a payment Shopify hasn't confirmed ---------- */
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    const c = window.Lair.store.cfg.customer;
+    be.creditState().balances[String(c.id)] = 5000;
+    be.commit();
+    const real = be.me.bind(be);
+    window.__checking = { id: 'cp-check-1', status: 'checking', amount: 1600, items: [], at: Date.now(), paidAt: null };
+    be.me = async () => ({ ...(await real()), creditPay: window.__checking });
+    window.__waits = [];
+    const timer = window.setTimeout.bind(window);
+    window.setTimeout = (fn, ms, ...rest) => {
+      if (ms >= 10000) window.__waits.push(ms);
+      return timer(fn, ms, ...rest);
+    };
+    document.querySelector('my-lair').dispatchEvent(new CustomEvent('lair:refresh'));
+  });
+  await settle(page, 1200);
+  b = await bill(page);
+  const waits = await page.evaluate(() => window.__waits);
+  check(`${tag} a payment Shopify hasn't confirmed: the line says so, no Pay with store credit, and it looks again in a minute`,
+    b.ledes.includes('Shopify hasn’t confirmed your store credit payment, so your bill isn’t paid yet. If any came off, it goes back on within 30 minutes.')
+    && !b.buttons.includes('Pay with store credit') && waits.includes(60000), { b, waits });
+  await page.evaluate(() => {
+    window.__checking = null;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await settle(page, 1000);
+  b = await bill(page);
+  check(`${tag} settled (coming back to the page looks): the line goes, and Pay with store credit is back`,
+    !b.ledes.some((l) => /hasn’t confirmed/.test(l)) && b.buttons.includes('Pay with store credit'), b);
   check(`${tag} My Lair: no console errors`, page.errors.length === 0, page.errors);
   await ctx.close();
 }
