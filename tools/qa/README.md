@@ -302,3 +302,11 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   and the rest): where it shows, it's on one line with at least 16px before it; it shows from 1420px; the top links stay
   on one row; no sideways scroll (85 checks). Live r17-theme 3d11908 fails 8: from 1360px the pill wrapped onto two
   lines and touched New here?. `DG_THEME=… [PORT=4999] node tools/qa/header-pill/pill.mjs`.
+
+## till-update: the till updates itself (layout chat, 9 Nov 2026)
+
+- `till-update/update.mjs`: the till in the demo with Sales on Practice, its own page served through the check so its
+  files can change. It reads its page when it starts; nothing changed, or a page that isn't the till's (logged out): no
+  update; the till's file changed: it knows, but doesn't reload with staff on it or the customer screen just touched; a
+  minute untouched on the customer screen: it reloads as the newer till; never twice in half an hour; no internet: it
+  waits, then goes (11 checks; live's till before the change fails). `DG_THEME=… [PORT=4992] node tools/qa/till-update/update.mjs`.
