@@ -4,6 +4,9 @@
 //   2. the till's file changed: it knows, but never reloads with staff on it, or with the customer screen just touched
 //   3. a minute untouched on the customer screen: it reloads itself, and comes back as the newer till
 //   4. never twice within half an hour; and never without the internet (it waits, then goes)
+//   5. (the review, 9 Nov) without the internet it tries again a minute later, not every second; the camera's code
+//      window open (outside the till) isn't a quiet moment; and a till that couldn't read its page at the start still
+//      sees settings that changed meanwhile
 // Usage: DG_THEME=/path/to/theme [PORT=4992] node tools/qa/till-update/update.mjs
 import os from 'node:os';
 import path from 'node:path';
@@ -21,7 +24,7 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
 
 // the shop's side: which version of the till's file the page names, whether the internet's up, and a logged-out page
-const shop = { version: 1, offline: false, loggedOut: false, reads: 0 };
+const shop = { version: 1, offline: false, loggedOut: false, reads: 0, logo: 1 };
 await ctx.route((url) => url.pathname === '/pages/till', async (route) => {
   const fetchByTill = route.request().resourceType() === 'fetch';
   if (fetchByTill) shop.reads += 1;
@@ -29,6 +32,8 @@ await ctx.route((url) => url.pathname === '/pages/till', async (route) => {
   const res = await route.fetch();
   let body = await res.text();
   if (shop.version > 1) body = body.replace('src="/assets/lair-till.js"', `src="/assets/lair-till.js?v=${shop.version}"`);
+  // a change to the till's settings (its logo's address, in the settings block)
+  if (shop.logo > 1) body = body.replace('dg-logo-stacked-320.png"', `dg-logo-stacked-320.png?v=${shop.logo}"`);
   if (fetchByTill && shop.loggedOut) body = body.replace(/<script type="application\/json" data-till-config>[\s\S]*?<\/script>/, '');
   return route.fulfill({ response: res, body });
 });
@@ -40,13 +45,18 @@ const till = (fn, arg) => page.evaluate(fn, arg);
 const state = () => till(() => {
   const t = document.querySelector('lair-till');
   const s = t.s;
-  return { ready: Boolean(t.updateReady), start: Boolean(t.startSig), mode: s.mode, view: s.view, version: (document.querySelector('script[src*="lair-till.js"]')?.getAttribute('src') || '').split('?v=')[1] || '1' };
+  return { ready: Boolean(t.updateReady), mode: s.mode, view: s.view, version: (document.querySelector('script[src*="lair-till.js"]')?.getAttribute('src') || '').split('?v=')[1] || '1' };
 });
 const checkNow = async () => {
   await till(() => document.querySelector('lair-till').checkUpdate());
   await wait(300);
 };
-const quiet = () => till(() => { document.querySelector('lair-till').s.idleAt = Date.now() - 61000; });
+// a minute with nobody touching the till or the page
+const quiet = () => till(() => {
+  const t = document.querySelector('lair-till');
+  t.s.idleAt = Date.now() - 61000;
+  t.touchedAt = Date.now() - 61000;
+});
 
 await page.goto(`${BASE}/pages/till`);
 await page.waitForSelector('[data-act="staff-door"]', { timeout: 20000 });
@@ -54,7 +64,7 @@ await wait(1200);
 
 /* ---------- 1. it reads its page when it starts ---------- */
 let st = await state();
-check('it reads its own page when it starts', shop.reads >= 1 && st.start && !st.ready, { reads: shop.reads, st });
+check('it reads its own page when it starts', shop.reads >= 1 && !st.ready, { reads: shop.reads, st });
 await checkNow();
 st = await state();
 check('nothing changed: no update', !st.ready, st);
@@ -109,12 +119,62 @@ await wait(2500);
 st = await state();
 check('half an hour on, but no internet: it waits (a reload would leave an error page)', loads === before + 1 && st.version === '2', { loads, st });
 shop.offline = false;
+// a minute on (it waits a minute after a try that couldn't read the page)
+await till(() => { document.querySelector('lair-till').nextUpdateTry = 0; });
 await quiet();
 await page.waitForEvent('load', { timeout: 10000 }).catch(() => null);
 await page.waitForSelector('[data-act="staff-door"]', { timeout: 20000 });
 await wait(1200);
 st = await state();
 check('the internet back: it reloads, as the newer till', loads === before + 2 && st.version === '3' && !st.ready, { loads, st });
+
+/* ---------- 5. the review ---------- */
+// without the internet: one try, then a minute's wait (not a fetch a second)
+shop.version = 4;
+await checkNow();
+await till(() => sessionStorage.setItem('dg-till-reloaded', String(Date.now() - 31 * 60000)));
+shop.offline = true;
+const readsBefore = shop.reads;
+await quiet();
+await wait(5000);
+const tries = shop.reads - readsBefore;
+check('no internet with a newer till waiting: it tries once, then waits a minute (not every second)', tries <= 1 && loads === before + 2, { tries, loads });
+shop.offline = false;
+await till(() => { document.querySelector('lair-till').nextUpdateTry = 0; });
+// the camera's code window open (outside the till): not a quiet moment
+await till(() => {
+  const d = document.createElement('dialog');
+  d.className = 'test-camera';
+  document.body.append(d);
+  d.show();
+});
+await quiet();
+await wait(2500);
+st = await state();
+check('the camera\'s code window open: it doesn\'t reload', loads === before + 2 && st.version === '3', { loads, st });
+// taps in that window count as someone at the till
+await till(() => document.querySelector('dialog.test-camera').close());
+await page.mouse.click(5, 5);
+await wait(2500);
+st = await state();
+check('a tap anywhere on the page counts: not quiet yet', loads === before + 2 && st.version === '3', { loads, st });
+await till(() => { document.querySelector('lair-till').touchedAt = Date.now() - 61000; });
+await quiet();
+await page.waitForEvent('load', { timeout: 10000 }).catch(() => null);
+await page.waitForSelector('[data-act="staff-door"]', { timeout: 20000 });
+await wait(1200);
+st = await state();
+check('the window closed and a minute quiet: it reloads, as the newer till', loads === before + 3 && st.version === '4', { loads, st });
+// a till that couldn't read its page when it started still sees settings changed since
+shop.offline = true;
+await page.reload();
+await page.waitForSelector('[data-act="staff-door"]', { timeout: 20000 });
+await wait(1200);
+shop.logo = 2;
+shop.offline = false;
+await checkNow();
+st = await state();
+check('it couldn\'t read its page at the start, and its settings changed since: it still knows', st.ready, st);
 check('no console errors', page.errors.length === 0, page.errors);
 
 const { pass, fail } = totals();

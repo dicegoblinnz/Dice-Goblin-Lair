@@ -309,4 +309,7 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   files can change. It reads its page when it starts; nothing changed, or a page that isn't the till's (logged out): no
   update; the till's file changed: it knows, but doesn't reload with staff on it or the customer screen just touched; a
   minute untouched on the customer screen: it reloads as the newer till; never twice in half an hour; no internet: it
-  waits, then goes (11 checks; live's till before the change fails). `DG_THEME=… [PORT=4992] node tools/qa/till-update/update.mjs`.
+  waits, then goes. From its review: without the internet it tries again a minute later, not every second; the camera's
+  code window open isn't a quiet moment, and a tap anywhere on the page counts; a till that couldn't read its page at the
+  start still sees settings changed since (16 checks; live's till before the change fails).
+  `DG_THEME=… [PORT=4992] node tools/qa/till-update/update.mjs`.
