@@ -77,6 +77,8 @@ import { NEW_PLAYER_COLUMNS, NEW_PLAYER_STAMP_COLUMNS, NEW_PLAYER_TABLES, WELCOM
 import { GW_COLUMNS, GW_TABLES, gwOrderMethods } from './gw-orders.js';
 // Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)
 import { GW_PAD_TABLES, gwPadMethods } from './gw-pad.js';
+// Round 34: GW's own pictures on the pad's products, and those products online (src/gw-pictures.js, contract v34-gw-pictures)
+import { GW_PICTURE_TABLES, gwPictureMethods } from './gw-pictures.js';
 // Round 27: the rest of the Warhammer tab: this week's order, the box coming in, order dates (src/gw-week.js)
 import { GW_WEEK_TABLES, gwWeekMethods } from './gw-week.js';
 // Round 30 (6 Nov 2026): members send some of their store credit to another member
@@ -1139,6 +1141,8 @@ export class Lair {
     // Round 26: the order pad, the shop's GW variants, the plan, the paint ranges' products and releases still hidden
     // (src/gw-pad.js); and each ordered-in line's release date, so a pre-order is never handed over early (made when missing)
     for (const statement of GW_PAD_TABLES) this.sql.exec(statement);
+    // Round 34: each pad code's pictures, sent, live or not shown (src/gw-pictures.js)
+    for (const statement of GW_PICTURE_TABLES) this.sql.exec(statement);
     // Round 27: shelf top-ups, codes GW couldn't supply, and deliveries added to stock (src/gw-week.js)
     for (const statement of GW_WEEK_TABLES) this.sql.exec(statement);
     // Round 30: store credit gifts from one member to another (src/credit-gifts.js), made when missing
@@ -2127,6 +2131,11 @@ export class Lair {
       if (request.method === 'GET' && a === 'gw' && (!b || b === 'plan') && !c) return json(this.gwPlanView(url, who));
       // Round 27: this week's order, a pad line by code or name, the delivery screen and order dates (src/gw-week.js)
       if (request.method === 'GET' && a === 'gw' && b === 'week' && !c) return json(await this.gwWeek(who));
+      // Round 34: where GW's pictures stand (src/gw-pictures.js)
+      if (request.method === 'GET' && a === 'gw' && b === 'pictures' && !c) {
+        this.requireStaff(who, 'warhammer');
+        return json(this.gwPicturesView());
+      }
       if (request.method === 'GET' && a === 'gw' && b === 'find' && !c) return json(this.gwFind(url, who));
       if (request.method === 'GET' && a === 'gw' && b === 'receiving' && !c) return json(this.gwReceiving(who));
       if (request.method === 'GET' && a === 'gw' && b === 'dates' && !c) return json(await this.gwDates(who));
@@ -11265,6 +11274,8 @@ Object.assign(Lair.prototype, newPlayerMethods);
 Object.assign(Lair.prototype, gwOrderMethods);
 // Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)
 Object.assign(Lair.prototype, gwPadMethods);
+// Round 34: GW's pictures and the pad's products online (src/gw-pictures.js)
+Object.assign(Lair.prototype, gwPictureMethods);
 // Round 27: the rest of the Warhammer tab (src/gw-week.js)
 Object.assign(Lair.prototype, gwWeekMethods);
 // Round 29: a reminder two days before each one-off booking, its cancel link and calendar file (src/booking-reminders.js)

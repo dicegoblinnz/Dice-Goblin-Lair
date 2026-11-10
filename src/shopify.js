@@ -1341,6 +1341,110 @@ export class ShopifyAdmin {
     return found;
   }
 
+  /**
+   * Round 34 (src/gw-pictures.js): GW variants with these SKUs (up to 50), and whether each already shows a picture: Map
+   * of sku → { variantId, productId, title, variants (how many the product has), productMedia, variantMedia }. Library
+   * copies (SKUs DGLRPG-…) never match: they aren't GW codes.
+   */
+  async gwPictureTargets(codes) {
+    const list = [...new Set(codes.map((c) => String(c).trim()).filter((c) => /^\d{8,13}$/.test(c)))].slice(0, 50);
+    if (!list.length) return new Map();
+    const data = await this.graphql(
+      `query GwPictureTargets($query: String!) { productVariants(first: 100, query: $query) { nodes {
+        id sku media(first: 1) { nodes { id } }
+        product { id title vendor mediaCount { count } variantsCount { count } } } } }`,
+      { query: list.map((c) => `sku:${c}`).join(' OR ') },
+    );
+    const found = new Map();
+    for (const v of data.productVariants?.nodes || []) {
+      const sku = String(v?.sku || '').trim();
+      if (v?.product?.vendor !== 'Games Workshop' || !list.includes(sku) || found.has(sku)) continue;
+      found.set(sku, {
+        variantId: v.id, productId: v.product.id, title: String(v.product.title || ''),
+        variants: Number(v.product.variantsCount?.count) || 1, productMedia: Number(v.product.mediaCount?.count) || 0,
+        variantMedia: (v.media?.nodes || []).length,
+      });
+    }
+    return found;
+  }
+
+  /**
+   * Round 34: GW's pictures added to products (productUpdate with media, up to 20 in one request). items: [{ productId,
+   * urls, alt }]. [{ productId }] or [{ productId, error }] in the same order. Shopify fetches each picture afterwards;
+   * gwPictureStatus says when it has.
+   */
+  async gwAddPictures(items) {
+    const list = items.slice(0, 20).filter((t) => t.urls?.length);
+    if (!list.length) return [];
+    const defs = list.map((_, i) => `$p${i}: ProductUpdateInput!, $m${i}: [CreateMediaInput!]`).join(', ');
+    const fields = list.map((_, i) => `a${i}: productUpdate(product: $p${i}, media: $m${i}) { product { id } userErrors { field message } }`).join(' ');
+    const vars = {};
+    list.forEach((t, i) => {
+      vars[`p${i}`] = { id: t.productId };
+      vars[`m${i}`] = t.urls.map((u) => ({ originalSource: u, mediaContentType: 'IMAGE', ...(t.alt ? { alt: String(t.alt).slice(0, 500) } : {}) }));
+    });
+    const data = await madeAnyway(this.graphql(`mutation GwAddPictures(${defs}) { ${fields} }`, vars));
+    return list.map((t, i) => {
+      const answer = data?.[`a${i}`];
+      if (answer?.userErrors?.length) return { productId: t.productId, error: new Error(answer.userErrors.map((e) => e.message).join('; ')) };
+      return answer?.product?.id ? { productId: t.productId } : { productId: t.productId, error: new Error('Shopify gave no answer for it.') };
+    });
+  }
+
+  /**
+   * Round 34: a paint range's colours each given their pot (productVariantsBulkUpdate: the pictures added to the product,
+   * each variant showing its own). colours: [{ variantId, url }]. { productId } or { productId, error }.
+   */
+  async gwAddVariantPictures(productId, colours) {
+    const list = colours.slice(0, 100).filter((c) => c.variantId && c.url);
+    if (!list.length) return { productId };
+    const media = [...new Set(list.map((c) => c.url))].map((u) => ({ originalSource: u, mediaContentType: 'IMAGE' }));
+    const data = await madeAnyway(this.graphql(
+      `mutation GwVariantPictures($id: ID!, $media: [CreateMediaInput!], $variants: [ProductVariantsBulkInput!]!) {
+        productVariantsBulkUpdate(productId: $id, media: $media, variants: $variants) { product { id } userErrors { field message } } }`,
+      { id: productId, media, variants: list.map((c) => ({ id: c.variantId, mediaSrc: [c.url] })) },
+    ));
+    const answer = data?.productVariantsBulkUpdate;
+    if (answer?.userErrors?.length) return { productId, error: new Error(answer.userErrors.map((e) => e.message).join('; ')) };
+    return answer?.product?.id ? { productId } : { productId, error: new Error('Shopify gave no answer for it.') };
+  }
+
+  /**
+   * Round 34: whether Shopify has fetched products' pictures (up to 25): Map of productId → { ready, waiting, failed:
+   * [media ids Shopify couldn't fetch] }.
+   */
+  async gwPictureStatus(productIds) {
+    const list = productIds.slice(0, 25);
+    if (!list.length) return new Map();
+    const data = await this.graphql(
+      'query GwPictureStatus($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id media(first: 100) { nodes { id status } } } } }',
+      { ids: list },
+    );
+    const out = new Map();
+    for (const p of data.nodes || []) {
+      if (!p?.id) continue;
+      const s = { ready: 0, waiting: 0, failed: [] };
+      for (const m of p.media?.nodes || []) {
+        if (m.status === 'READY') s.ready += 1;
+        else if (m.status === 'FAILED') s.failed.push(m.id);
+        else s.waiting += 1;
+      }
+      out.set(p.id, s);
+    }
+    return out;
+  }
+
+  /** Round 34: pictures Shopify couldn't fetch, deleted so they don't pile up in Files (up to 50). Never throws. */
+  async gwDeleteFiles(ids) {
+    const list = ids.slice(0, 50);
+    if (!list.length) return;
+    try {
+      await this.graphql('mutation GwDeleteFiles($ids: [ID!]!) { fileDelete(fileIds: $ids) { deletedFileIds userErrors { field message } } }', { ids: list });
+    } catch (error) {
+      console.error('Lair: could not delete GW pictures Shopify could not fetch', String(error?.message || error).slice(0, 200));
+    }
+  }
+
   /** Round 26: releases going on sale: their draft products made active (up to 10). [{ productId, error }] */
   async gwActivate(productIds) {
     const list = productIds.slice(0, 10);

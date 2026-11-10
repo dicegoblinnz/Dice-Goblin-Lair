@@ -426,6 +426,19 @@ export const shopFilterMethods = {
       out.runError = errorText(error);
       again = Math.min(again, Date.now() + retryWait(1));
     }
+    // Round 34 (src/gw-pictures.js): GW's pictures on the pad's products, and those products online, with the calls left
+    try {
+      const pictures = typeof this.gwPicturesUpkeep === 'function' ? await this.gwPicturesUpkeep(Date.now(), budget) : null;
+      if (pictures) {
+        out.gwPictures = pictures;
+        if (pictures.left) again = Math.min(again, soon());
+      }
+      this.pictureFailures = 0;
+    } catch (error) {
+      this.pictureFailures = (this.pictureFailures || 0) + 1;
+      out.gwPicturesError = errorText(error);
+      again = Math.min(again, Date.now() + retryWait(this.pictureFailures));
+    }
     const holdEnds = this.nextHoldEnd(Date.now());
     const wake = Math.min(again, holdEnds ? holdEnds + FILTER_LIMITS.holdEndWait : Infinity);
     if (Number.isFinite(wake)) this.wakeAt(wake);

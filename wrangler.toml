@@ -33,6 +33,9 @@ PUBLIC_URL = "https://dice-goblin-lair.dicegoblinnz.workers.dev"
 # of Sale) they're listed on, for the staff page's Warhammer tab
 GW_LOCATION_ID = "72250359911"
 GW_POS_PUBLICATION_ID = "129866989671"
+# Round 34: the Online Store and the Shop app, where a pad product goes once it shows GW's picture (src/gw-pictures.js)
+GW_ONLINE_PUBLICATION_ID = "129866924135"
+GW_SHOP_PUBLICATION_ID = "129866956903"
 
 # Round 17, Help me pick: Workers AI tags new library games (config PICK_AI = "off" stops it; PICK_AI_MODEL picks the model)
 [ai]
