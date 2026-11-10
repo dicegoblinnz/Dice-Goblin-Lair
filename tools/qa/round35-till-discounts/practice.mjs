@@ -104,6 +104,18 @@ const fresh = async () => {
   return { T, ctx };
 };
 
+// 0. the demo says it's the demo: Demo codes on its start screen, and "Practice till" as staff sign in
+{
+  const { T, ctx } = await fresh();
+  const texts = (sel) => T.page.evaluate((q) => [...document.querySelectorAll(q)].filter((b) => b.offsetParent).map((b) => b.textContent.replace(/\s+/g, ' ').trim()), sel);
+  const doors = await texts('[data-r="over"] button');
+  await T.click('[data-act="staff-door"]');
+  const notes = await texts('[data-r="over"] .t-note');
+  ok("the demo's start screen offers Demo codes beside Staff", doors.includes('Demo codes') && doors.includes('Staff'), JSON.stringify(doors));
+  ok('and its sign-in screen says it is a practice till', notes.some((t) => /Practice till: sales here aren’t charged or saved yet\./.test(t)), JSON.stringify(notes));
+  await ctx.close();
+}
+
 // 1. dollars off, the till's own limit, and the ordinary way through to cash
 {
   const { T, ctx } = await fresh();

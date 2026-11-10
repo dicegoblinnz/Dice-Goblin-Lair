@@ -315,8 +315,10 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   draft Shopify is asked for, Confirm paid and what the Lair keeps; something on sale already (none, or only so far); a
   discount on top of the dice deal; Pay tapped before the discount's priced (one tap is enough); Shopify's price
   dropping between the price and Pay (nothing sold, the refusal's figures on the Discount screen, and it doesn't stick);
-  a Lair app from before dollars (said so, nothing paid); odd things typed; the customer's screens. No sideways scroll,
-  no console errors (49 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4997] [OUT=…] node tools/qa/round35-till-discounts/till.mjs`.
+  a Lair app from before dollars (said so, nothing paid); the price never answering after Pay (the sale isn't left with
+  its buttons off: the separate review's note); odd things typed; the customer's screens; and what the real till says
+  about itself (no Demo codes on its start screen, no "Practice till" as staff sign in: both showed at the counter until
+  11 Nov 2026). No sideways scroll, no console errors (53 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4997] [OUT=…] node tools/qa/round35-till-discounts/till.mjs`.
 - `round35-till-discounts/practice.mjs`: the same on the demo (Practice sales, the till's own sums): dollars off, the
-  till's own limit, off each one, the Money PIN at Pay, and round 34's review finding still holding (Back while the PIN
-  is checked pays nothing) (10 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs`.
+  till's own limit, off each one, the Money PIN at Pay, round 34's review finding still holding (Back while the PIN
+  is checked pays nothing), and the demo still saying it's the demo (Demo codes, "Practice till") (12 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs`.

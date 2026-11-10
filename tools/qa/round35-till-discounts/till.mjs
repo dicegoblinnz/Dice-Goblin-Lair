@@ -15,8 +15,10 @@
 //  8. On top of the dice deal: the Lair app's words, and Pay says them again without sending anything.
 //  9. Pay tapped before the Lair app has priced the discount: one tap is enough.
 // 10. Shopify's price dropping between the price and Pay: the Lair app's words, and nothing's sold.
-// 11. A Lair app from before dollars: the till says so and Pay doesn't go ahead.
+// 11. A Lair app from before dollars: the till says so and Pay doesn't go ahead. The price never answering after Pay:
+//     the sale isn't left with its buttons off.
 // 12. No discount, typed oddities, and the customer screen.
+// And what the real till says about itself: no Demo codes on its start screen, no "Practice till" as staff sign in.
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4997] [OUT=dir] node tools/qa/round35-till-discounts/till.mjs
 import os from 'node:os';
 import path from 'node:path';
@@ -195,8 +197,9 @@ for (const [id, pin] of [[OWNER, '2580'], [HEMI, '1357'], [RUA, '4711']]) {
 }
 
 /* ---------- the till, in a browser ---------- */
-// slowPrice: ms each price takes; old: the Lair app is one from before round 35 (it never sees `off`)
-const state = { calls: [], slowPrice: 0, old: false };
+// slowPrice: ms each price takes; hangPrice: a price doesn't come back while it's on; old: the Lair app is one from
+// before round 35 (it never sees `off`)
+const state = { calls: [], slowPrice: 0, hangPrice: false, old: false };
 const server = await m.serve(PORT);
 const browser = await chromium.launch();
 m.globalSettings.lair_mode = 'demo';
@@ -210,6 +213,10 @@ await ctx.route(`${BASE}${API}/**`, async (route) => {
   let body = req.method() === 'POST' ? JSON.parse(req.postData() || '{}') : undefined;
   state.calls.push({ name, body });
   if (name === 'till/price' && state.slowPrice) await new Promise((r) => setTimeout(r, state.slowPrice));
+  if (name === 'till/price' && state.hangPrice) {
+    const until = Date.now() + 30000;
+    while (state.hangPrice && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+  }
   if (state.old && body?.lines) body = { ...body, lines: body.lines.map(({ off, ...l }) => l) };
   const res = await call(req.method(), name, body, url.search);
   drain();
@@ -279,10 +286,17 @@ await page.waitForSelector('[data-act="staff-door"]', { timeout: 20000 });
 await settle(500);
 check('Sales: Live with the Lair app answering: no Practice pill', (await page.locator('.t-pill', { hasText: 'Practice' }).count()) === 0, 'Practice shows');
 let v;
+const words = (sel) => page.evaluate((q) => [...document.querySelectorAll(q)].filter((b) => b.offsetParent).map((b) => b.textContent.replace(/\s+/g, ' ').trim()), sel);
 
 /* ---------- 1. Mo unlocks; a quick sale ---------- */
 await step('1', async () => {
+  // (11 Nov 2026) the real till isn't the demo: its start screen offers no Demo codes, and signing in doesn't call it a
+  // practice till (both showed on the counter's till, where every sale is a paid order)
+  const doors = await words('[data-r="over"] button');
+  check("the real till's start screen has its Staff door, and no Demo codes", doors.includes('Staff') && !doors.includes('Demo codes'), doors);
   await tap('[data-act="staff-door"]');
+  const notes = await words('[data-r="over"] .t-note');
+  check("signing in doesn't call the real till a practice till", !notes.some((t) => /Practice till/.test(t)), notes);
   await tap(`[data-act="pick"][data-id="${OWNER}"]`);
   await pin('2580');
   await tap('[data-act="quick"]');
@@ -514,6 +528,34 @@ await step('11', async () => {
   v = await look();
   check('and Card does not go ahead: no PIN asked, nothing sent to Pay', v.view === 'till' && v.toast === words && calls('till/pay').length === pays, { view: v.view, toast: v.toast });
   state.old = false;
+  await noToast();
+});
+
+/* ---------- 11b. The Lair app not answering the price once Pay is tapped ---------- */
+await step('11b', async () => {
+  // (the review) a price that never comes back mustn't leave the sale's buttons off: the till gives up after its wait
+  // (12 seconds at the counter; 1.2 here) and says so
+  await page.evaluate(() => {
+    document.querySelector('lair-till').priceWait = 1200;
+  });
+  state.hangPrice = true;
+  await tap('[data-act="discount"] >> nth=0');
+  await tap('[data-act="discount-set"][data-c="500"]', 60);
+  const pays = calls('till/pay').length;
+  await tap('[data-act="pay-card"]', 300);
+  const during = await look();
+  await settle(1700);
+  v = await look();
+  check('no answer for the price after Card: the sale waits, then gives up and says so, with its buttons back on and nothing sent to Pay',
+    during.busy && v.view === 'till' && !v.busy && !/\(off\)/.test(v.pay[0]) && v.toast === "Shopify didn't answer, so the discount isn't worked out yet. Try again in a moment." && calls('till/pay').length === pays, { during: during.busy, view: v.view, busy: v.busy, pay: v.pay, toast: v.toast });
+  state.hangPrice = false;
+  await settle(900);
+  await noToast();
+  // and once it answers again, Card goes on as usual
+  await tap('[data-act="pay-card"]', 1100);
+  v = await look();
+  check('once the Lair app answers again, Card goes on to Approve the discount', v.view === 'discountok' && /\$5\.00 off, so the sale is \$100\.00\./.test(v.lede), { view: v.view, lede: v.lede, toast: v.toast });
+  await tap('[data-act="back"]');
   await noToast();
 });
 
