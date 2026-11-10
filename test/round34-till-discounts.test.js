@@ -2,6 +2,10 @@
 // discounts but once applied the staff needs to 'log in' and that goes through make sure no item can go below 25%
 // discount". A discount is a percent off a shop product, up to 25%; Pay takes it only with a PIN just put in by the
 // owner or someone with Money; Shopify's own figures are checked again, and a line on a deal can't have one too.
+// Round 35 (Mo, 10 Nov 2026: "make it go off actual dollar value not % ... Actually make it 20%"): discounts are dollars
+// off each one now (test/round35-till-discounts.test.js). The percent here is still read, from a till that hasn't
+// reloaded: up to 20, held to round 35's 80% of the full price, so the three checks of the 25% say 20 now, and one over
+// gets round 35's words. Approving, the tag and the note are as they were.
 // Run with: npm test
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -286,12 +290,12 @@ const OAKIE = '5011'; // a dice set, $15.99, in the dice deal
 const approve = async (id = RUA, pin = '4711') => ok(await call('POST', 'till/unlock', { id, pin }, OWNER)).token;
 
 /* ---------------- the percent ---------------- */
-test('round 34: a discount is a percent off, more than 0 and up to 25, to 2 decimal places', () => {
-  assert.equal(tillDiscountIn(25), 25);
+test('round 34: a discount is a percent off, more than 0 and up to 20 (round 35: was 25), to 2 decimal places', () => {
+  assert.equal(tillDiscountIn(20), 20);
   assert.equal(tillDiscountIn('12.5'), 12.5);
   assert.equal(tillDiscountIn(10.05), 10.05);
   for (const none of [null, undefined, '', 0, '0']) assert.equal(tillDiscountIn(none), null);
-  for (const bad of [25.01, 26, 100, -5, 'ten', 10.123, Infinity]) assert.throws(() => tillDiscountIn(bad), (e) => e.status === 400 && e.message === D.over);
+  for (const bad of [20.01, 25, 26, 100, -5, 'ten', 10.123, Infinity]) assert.throws(() => tillDiscountIn(bad), (e) => e.status === 400 && e.message === D.over);
 });
 
 test('round 34: only the shop\'s products take a discount, one discount a product', () => {
@@ -305,18 +309,18 @@ test('round 34: only the shop\'s products take a discount, one discount a produc
 
 /* ---------------- what it comes to ---------------- */
 test('round 34: the price shows the discount straight away, and that it needs approving', async () => {
-  const { price } = ok(await call('POST', 'till/price', { lines: [{ key: 'b', variantId: BOOSTER, qty: 2, discount: 25 }, { key: 'd', variantId: '5015', qty: 1 }] }, OWNER));
+  const { price } = ok(await call('POST', 'till/price', { lines: [{ key: 'b', variantId: BOOSTER, qty: 2, discount: 20 }, { key: 'd', variantId: '5015', qty: 1 }] }, OWNER));
   assert.equal(price.subtotal, 2500);
-  assert.deepEqual(price.discounts, [{ title: 'Staff discount', amount: 550 }]);
-  assert.equal(price.total, 1950);
+  assert.deepEqual(price.discounts, [{ title: 'Staff discount', amount: 440 }]);
+  assert.equal(price.total, 2060);
   assert.equal(price.needsOk, true);
-  assert.equal(price.staffDiscount, 550);
-  assert.deepEqual(price.lines[0].discount, { percent: 25, amount: 550 });
+  assert.equal(price.staffDiscount, 440);
+  assert.deepEqual(price.lines[0].discount, { percent: 20, amount: 440 });
   assert.equal(price.lines[1].discount, undefined);
   // with no discount, nothing about approving
   const plain = ok(await call('POST', 'till/price', { lines: [{ key: 'b', variantId: BOOSTER, qty: 1 }] }, OWNER)).price;
   assert.equal(plain.needsOk, undefined);
-  // more than 25%: refused before Shopify is asked
+  // more than 20% (round 35: was 25): refused before Shopify is asked
   const asked = shop.calculated.length;
   said(await call('POST', 'till/price', { lines: [{ key: 'b', variantId: BOOSTER, qty: 1, discount: 30 }] }, OWNER), 400, D.over);
   assert.equal(shop.calculated.length, asked);
@@ -329,12 +333,12 @@ test('round 34: no discount on top of a deal: a die the dice deal takes off can\
   assert.equal(ok(await call('POST', 'till/price', { lines: [{ key: 'o', variantId: OAKIE, qty: 2, discount: 10 }] }, OWNER)).price.staffDiscount, 320);
 });
 
-test('round 34: what Shopify actually took off is checked: more than 25% of an item is refused, and nothing is sold', async () => {
+test('round 34: what Shopify actually took off is checked: more than 20% of an item (round 35: was 25) is refused, and nothing is sold', async () => {
   shop.staffExtra = 200;
-  said(await call('POST', 'till/price', { lines: [{ key: 'b', variantId: BOOSTER, qty: 1, discount: 25 }] }, OWNER), 422, D.capped('Riftbound Radiance · Booster Pack'));
+  said(await call('POST', 'till/price', { lines: [{ key: 'b', variantId: BOOSTER, qty: 1, discount: 20 }] }, OWNER), 422, D.most('Riftbound Radiance · Booster Pack', 220));
   await onTill(RUA, '4711');
   const token = await approve();
-  said(await pay({ lines: [{ key: 'b', variantId: BOOSTER, qty: 1, discount: 25 }], method: 'card', discountOk: token }), 422, D.capped('Riftbound Radiance · Booster Pack'));
+  said(await pay({ lines: [{ key: 'b', variantId: BOOSTER, qty: 1, discount: 20 }], method: 'card', discountOk: token }), 422, D.most('Riftbound Radiance · Booster Pack', 220));
   await settle();
   // its draft was deleted and the sale let go: nothing to confirm
   assert.equal(shop.deleted.length, 1);

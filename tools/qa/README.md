@@ -302,3 +302,21 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   and the rest): where it shows, it's on one line with at least 16px before it; it shows from 1420px; the top links stay
   on one row; no sideways scroll (85 checks). Live r17-theme 3d11908 fails 8: from 1360px the pill wrapped onto two
   lines and touched New here?. `DG_THEME=… [PORT=4999] node tools/qa/header-pill/pill.mjs`.
+
+## round35-till-discounts: the till's discounts in dollars (look and feel review chat, 11 Nov 2026)
+
+- `round35-till-discounts/till.mjs`: the till's own script in a browser (the theme mock, Sales: Live, 1280×800) against
+  **the Lair app itself**: the Durable Object class run in the check on node's SQLite, as the tests run it, with only
+  Shopify stood in for (its sums done the way the real one did them when asked on 11 Nov 2026: a fixed amount off each
+  one of a line and never more than its price, a percent rounded down, the dice deal on top, compare-at prices). So the
+  till and the Lair app are checked against each other, not against a stand-in's idea of the contract (v35). A Discount
+  on each line and none for everything; the Discount screen in dollars with no percent and no limit said; more than an
+  item can come down by (typed: the till's words, and it stays); off each one for 2 or more; Card approving first, the
+  draft Shopify is asked for, Confirm paid and what the Lair keeps; something on sale already (none, or only so far); a
+  discount on top of the dice deal; Pay tapped before the discount's priced (one tap is enough); Shopify's price
+  dropping between the price and Pay (nothing sold, the refusal's figures on the Discount screen, and it doesn't stick);
+  a Lair app from before dollars (said so, nothing paid); odd things typed; the customer's screens. No sideways scroll,
+  no console errors (49 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4997] [OUT=…] node tools/qa/round35-till-discounts/till.mjs`.
+- `round35-till-discounts/practice.mjs`: the same on the demo (Practice sales, the till's own sums): dollars off, the
+  till's own limit, off each one, the Money PIN at Pay, and round 34's review finding still holding (Back while the PIN
+  is checked pays nothing) (10 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs`.

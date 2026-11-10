@@ -144,7 +144,8 @@ const TILL_VARIANT_FIELDS = 'id title sku price inventoryQuantity inventoryPolic
 const TILL_PRODUCT_FIELDS = 'id title productType vendor status isGiftCard';
 const tillMoney = (field) => `${field} { shopMoney { amount currencyCode } }`;
 const TILL_FIGURES = `taxesIncluded ${tillMoney('subtotalPriceSet')} ${tillMoney('totalPriceSet')} ${tillMoney('totalTaxSet')} platformDiscounts { title totalAmount { amount } }`;
-const TILL_LINE_FIELDS = `uuid custom quantity title variantTitle sku variant { id } ${tillMoney('originalUnitPriceSet')} ${tillMoney('originalTotalSet')} ${tillMoney('discountedTotalSet')} customAttributes { key value } appliedDiscount { ${tillMoney('amountSet')} }`;
+// (round 35: the variant's compare-at price, its full price when it's on sale: a staff discount is held to 80% of it)
+const TILL_LINE_FIELDS = `uuid custom quantity title variantTitle sku variant { id compareAtPrice } ${tillMoney('originalUnitPriceSet')} ${tillMoney('originalTotalSet')} ${tillMoney('discountedTotalSet')} customAttributes { key value } appliedDiscount { ${tillMoney('amountSet')} }`;
 /** An amount Shopify gives as text ("15.99") in cents, or null */
 const centsOf = (amount) => {
   if (amount == null || amount === '') return null;
@@ -177,7 +178,9 @@ export function tillVariantOf(v) {
  * variant at the shop's price (`cents` overrides it: a tab's things, at the tab's price), custom lines for what the Lair
  * charges (a booking's title and price, taxable), each with its uuid and properties; the shop's automatic discounts (the
  * dice deal); a $0 "Collected at the Lair" shipping line when there are products, as the cash orders have.
- * lines: [{ uuid, variantId, qty, cents?, attributes?, discount?, discountNote? } | { uuid, title, cents, attributes? }]
+ * lines: [{ uuid, variantId, qty, cents?, attributes?, off?, discount?, discountNote? } | { uuid, title, cents, attributes? }]
+ * (round 35: off, the cents a staff discount takes off each one: Shopify's fixed amount on a line is for each one of it,
+ * so 2 at 500 is $10 off; discount, round 34's percent of the line, from a till that hasn't reloaded)
  */
 export function tillDraftInput({ lines, currency }) {
   const money = (cents) => ({ amount: (Math.max(0, Math.round(Number(cents) || 0)) / 100).toFixed(2), currencyCode: currency });
@@ -195,8 +198,16 @@ export function tillDraftInput({ lines, currency }) {
           quantity: Math.max(1, Math.round(Number(l.qty) || 1)),
           ...(l.cents != null ? { priceOverride: money(l.cents) } : {}),
           ...(properties.length ? { customAttributes: properties } : {}),
-          // round 34: a staff discount, a percent off this line (src/till-discounts.js checks it, and what Shopify took)
-          ...(l.discount ? { appliedDiscount: { valueType: 'PERCENTAGE', value: Number(l.discount), title: 'Staff discount', ...(l.discountNote ? { description: String(l.discountNote).slice(0, 255) } : {}) } } : {}),
+          // rounds 34 and 35: a staff discount, dollars off each one of this line or the older percent off it
+          // (src/till-discounts.js checks it, and what Shopify took)
+          ...(l.off || l.discount
+            ? {
+                appliedDiscount: {
+                  ...(l.off ? { valueType: 'FIXED_AMOUNT', value: Math.round(Number(l.off)) / 100 } : { valueType: 'PERCENTAGE', value: Number(l.discount) }),
+                  title: 'Staff discount', ...(l.discountNote ? { description: String(l.discountNote).slice(0, 255) } : {}),
+                },
+              }
+            : {}),
         };
       }
       return {
@@ -210,18 +221,25 @@ export function tillDraftInput({ lines, currency }) {
 /**
  * A draft's figures (or a calculation's), in cents: { subtotal (the lines before discounts), discounts: [{ title, amount }]
  * (the shop's automatic discounts that applied), total, gst, taxIncluded, lines: [{ uuid, title, variantTitle, variantId,
- * qty, unit, total (before discounts), paid (after them), custom, attributes, staff? (round 34: its staff discount) }] }
+ * qty, unit, total (before discounts), paid (after them), custom, attributes, staff? (round 34: its staff discount),
+ * was? (round 35: the variant's compare-at price, when it's above the unit price: it's on sale) }] }
  */
 export function tillFiguresOf(d, lineNodes) {
-  const lines = (lineNodes || []).map((l) => ({
-    uuid: l.uuid || null, title: l.title || '', variantTitle: l.variantTitle && !/^default title$/i.test(l.variantTitle) ? l.variantTitle : '',
-    variantId: l.variant?.id ? lastPart(l.variant.id) : null, qty: Number(l.quantity) || 1,
-    unit: centsOf(l.originalUnitPriceSet?.shopMoney?.amount) ?? 0, total: centsOf(l.originalTotalSet?.shopMoney?.amount) ?? 0,
-    paid: centsOf(l.discountedTotalSet?.shopMoney?.amount) ?? 0, custom: l.custom === true,
-    // round 34: what the line's own (staff) discount took off, when it has one
-    ...(l.appliedDiscount ? { staff: centsOf(l.appliedDiscount.amountSet?.shopMoney?.amount) ?? 0 } : {}),
-    attributes: Object.fromEntries((l.customAttributes || []).map((a) => [a.key, a.value])),
-  }));
+  const lines = (lineNodes || []).map((l) => {
+    const unit = centsOf(l.originalUnitPriceSet?.shopMoney?.amount) ?? 0;
+    const was = centsOf(l.variant?.compareAtPrice);
+    return {
+      uuid: l.uuid || null, title: l.title || '', variantTitle: l.variantTitle && !/^default title$/i.test(l.variantTitle) ? l.variantTitle : '',
+      variantId: l.variant?.id ? lastPart(l.variant.id) : null, qty: Number(l.quantity) || 1,
+      unit, total: centsOf(l.originalTotalSet?.shopMoney?.amount) ?? 0,
+      paid: centsOf(l.discountedTotalSet?.shopMoney?.amount) ?? 0, custom: l.custom === true,
+      // round 34: what the line's own (staff) discount took off, when it has one
+      ...(l.appliedDiscount ? { staff: centsOf(l.appliedDiscount.amountSet?.shopMoney?.amount) ?? 0 } : {}),
+      // round 35: what it was before it went on sale
+      ...(was != null && was > unit ? { was } : {}),
+      attributes: Object.fromEntries((l.customAttributes || []).map((a) => [a.key, a.value])),
+    };
+  });
   const discounts = (d?.platformDiscounts || [])
     .map((x) => ({ title: String(x?.title || 'Discount').trim(), amount: centsOf(x?.totalAmount?.amount) ?? 0 }))
     .filter((x) => x.amount > 0);

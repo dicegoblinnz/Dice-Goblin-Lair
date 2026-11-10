@@ -2355,7 +2355,8 @@ export class Lair {
       if (a === 'tab' && b === 'clear') return json(await this.clearTab(who));
       return json({ error: 'Not found' }, 404);
     } catch (error) {
-      if (error instanceof RuleError) return json({ error: error.message }, error.status);
+      // (round 35: a refusal can say more than its words: error.more, as the till's discounts do for the line they're about)
+      if (error instanceof RuleError) return json({ error: error.message, ...(error.more || {}) }, error.status);
       console.error('Lair error', error);
       this.note({ lastError: { message: String(error.message || error).slice(0, 300), path: url.pathname, at: new Date().toISOString() } });
       return json({ error: 'Something went wrong on our side. Please try again or call us.' }, 500);
