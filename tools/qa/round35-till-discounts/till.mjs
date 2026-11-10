@@ -12,12 +12,17 @@
 //  5. Card: approve first (people with Money), Rua's PIN, the EFTPOS amount, and the draft Shopify was asked for.
 //  6. Confirm paid: the sale's discount and who approved it are kept.
 //  7. Something on sale past 80% of what it was can't have a discount; one with a little off comes down only so far.
-//  8. On top of the dice deal: the Lair app's words, and Pay says them again without sending anything.
+//  8. On top of the dice deal (a third die added to a discounted line): the Lair app's words, Pay says them again
+//     without sending anything, and Discount on a line a deal has taken something off offers no amounts.
 //  9. Pay tapped before the Lair app has priced the discount: one tap is enough.
 // 10. Shopify's price dropping between the price and Pay: the Lair app's words, and nothing's sold.
 // 11. A Lair app from before dollars: the till says so and Pay doesn't go ahead. The price never answering after Pay:
 //     the sale isn't left with its buttons off.
 // 12. No discount, typed oddities, and the customer screen.
+// 6b, 6c. Discount on everything (Mo, 11 Nov 2026: "make $ off discount back"): dollars off the whole sale, shared
+//     across its things by price as whole cents off each one, exact where the quantities allow.
+// 6d. What stays out of it, and why: a deck's free sleeves (the shop's other deal), dice, things on sale already.
+// 6e. Tapped before Shopify's price is in: the Lair app's refusal names the line, and the next go leaves it out.
 // And what the real till says about itself: no Demo codes on its start screen, no "Practice till" as staff sign in.
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4997] [OUT=dir] node tools/qa/round35-till-discounts/till.mjs
 import os from 'node:os';
@@ -68,6 +73,10 @@ const PRODUCTS = {
   coke: { id: '113', title: 'Coca-Cola – Half Price (Flat)', type: 'Drinks', vendor: 'Dice Goblin NZ', status: 'ACTIVE', giftCard: false, dice: false },
   barrage: { id: '114', title: 'Barrage', type: 'Board Games', vendor: 'Cranio Creations', status: 'ACTIVE', giftCard: false, dice: false },
   wonders: { id: '115', title: '7 Wonders', type: 'Board Games', vendor: 'Repos Production', status: 'ACTIVE', giftCard: false, dice: false },
+  // (11 Nov 2026) a second set of dice, and the shop's other deal: a Commander deck comes with its sleeves free
+  glow: { id: '112', title: 'Glow Dice Set', type: 'Dice & Accessories', vendor: 'Dice Goblin NZ', status: 'ACTIVE', giftCard: false, dice: true },
+  deck: { id: '117', title: 'Final Fantasy Commander Deck', type: 'Trading Card Games', vendor: 'Wizards of the Coast', status: 'ACTIVE', giftCard: false, dice: false },
+  sleeves: { id: '118', title: 'Final Fantasy Commander Sleeves (100)', type: 'Trading Card Games', vendor: 'Ultra Pro', status: 'ACTIVE', giftCard: false, dice: false },
 };
 const VARIANTS = {
   5011: { product: 'oakie', id: '5011', title: 'Green', sku: null, barcodes: ['4056133701068'], price: 1599, tracked: true, stock: 35, oversell: false },
@@ -75,14 +84,18 @@ const VARIANTS = {
   5024: { product: 'coke', id: '5024', title: 'Classic', sku: null, barcodes: ['9400000000017'], price: 300, was: 600, tracked: false, stock: null, oversell: false },
   5025: { product: 'barrage', id: '5025', title: 'Default Title', sku: null, barcodes: ['9400000000024'], price: 9000, was: 10000, tracked: true, stock: 2, oversell: false },
   5026: { product: 'wonders', id: '5026', title: 'Default Title', sku: null, barcodes: ['9400000000031'], price: 10500, tracked: true, stock: 4, oversell: false },
+  5022: { product: 'glow', id: '5022', title: 'Green', sku: null, barcodes: ['9400000000048'], price: 2000, tracked: true, stock: 3, oversell: false },
+  5028: { product: 'deck', id: '5028', title: 'Default Title', sku: null, barcodes: ['9400000000055'], price: 8999, tracked: true, stock: 3, oversell: false },
+  5029: { product: 'sleeves', id: '5029', title: 'Default Title', sku: null, barcodes: ['9400000000062'], price: 1999, tracked: true, stock: 6, oversell: false },
 };
-const CODE = { oakie: '4056133701068', booster: '810155276195', coke: '9400000000017', barrage: '9400000000024', wonders: '9400000000031' };
+const CODE = { oakie: '4056133701068', booster: '810155276195', coke: '9400000000017', barrage: '9400000000024', wonders: '9400000000031', glow: '9400000000048', deck: '9400000000055', sleeves: '9400000000062' };
 const match = (id) => ({ product: { ...PRODUCTS[VARIANTS[id].product] }, variant: { ...VARIANTS[id] } });
 /**
  * Shopify's figures as the stand-in works them out, the way the real one did when asked (draftOrderCalculate, 11 Nov
  * 2026): a line's staff discount, dollars off each one of it (never more than the price) or a percent of the line
  * rounded down; then every third dice free, at what it costs after its line's discount, on the line it came from; a
- * variant's compare-at price (was); and GST.
+ * variant's compare-at price (was); and GST. And the shop's other deal (10 Nov 2026, "Final Fantasy Commander deck +
+ * free sleeves": buy a deck, get one of its sleeves free): the sleeves' price comes off the sleeves' own line.
  */
 function figuresFor(lines) {
   const out = lines.map((l) => {
@@ -109,11 +122,26 @@ function figuresFor(lines) {
     deal += units[i].unit;
     out[units[i].line].paid -= units[i].unit;
   }
+  // a deck's sleeves, free: one for each deck, the cheapest first, at what they cost after their own line's discount
+  // (the real store, asked on 11 Nov 2026 with a deck and two lines of sleeves, one with $1.35 off: the deal took
+  // $23.65 off that line and left the other alone)
+  const decks = out.reduce((n, l) => n + (l.variantId === '5028' ? l.qty : 0), 0);
+  const packs = [];
+  out.forEach((l, i) => {
+    if (l.variantId === '5029') for (let n = 0; n < l.qty; n += 1) packs.push({ unit: l.each, line: i });
+  });
+  packs.sort((x, y) => x.unit - y.unit);
+  let sleeves = 0;
+  packs.slice(0, decks).forEach((u) => {
+    sleeves += u.unit;
+    out[u.line].paid -= u.unit;
+  });
   const subtotal = out.reduce((sum, l) => sum + l.total, 0);
   const staffTotal = out.reduce((sum, l) => sum + (l.staff || 0), 0);
-  const total = subtotal - deal - staffTotal;
+  const total = subtotal - deal - sleeves - staffTotal;
   return {
-    subtotal, discounts: deal ? [{ title: 'Buy any 2 dice, get the 3rd free', amount: deal }] : [], total, gst: Math.round((total * 3) / 23), taxIncluded: true,
+    subtotal, total, gst: Math.round((total * 3) / 23), taxIncluded: true,
+    discounts: [...(deal ? [{ title: 'Buy any 2 dice, get the 3rd free', amount: deal }] : []), ...(sleeves ? [{ title: 'Final Fantasy Commander deck + free sleeves', amount: sleeves }] : [])],
     lines: out.map(({ dice, each, ...l }) => l),
   };
 }
@@ -264,6 +292,7 @@ const look = () => page.evaluate(() => {
     quick: [...(over?.querySelectorAll('[data-act="discount-set"]:not([data-c="0"])') || [])].map((b) => `${f(b.querySelector('span')?.textContent)} ${f(b.querySelector('small')?.textContent)}${b.getAttribute('aria-pressed') === 'true' ? ' (on)' : ''}`),
     field: over?.querySelector('#t-off') ? { label: f(over.querySelector('label[for="t-off"]')?.textContent), sign: f(over.querySelector('.t-discount__type span')?.textContent), value: over.querySelector('#t-off').value } : null,
     none: Boolean(over?.querySelector('[data-act="discount-set"][data-c="0"]')),
+    notes: [...(over?.querySelectorAll('.t-temp') || [])].map((p) => f(p.textContent)),
     overText: f(over?.textContent),
     approvers: [...(over?.querySelectorAll('.t-staff [data-act="pick"]') || [])].map((b) => f(b.textContent)),
     amount: f(over?.querySelector('.t-paying__amount')?.textContent), steps: [...(over?.querySelectorAll('.t-steps li') || [])].map((li) => f(li.textContent)),
@@ -305,8 +334,8 @@ await step('1', async () => {
   await scan(CODE.booster);
   await noToast();
   v = await look();
-  check('7 Wonders and two boosters: a Discount on each line, and none for everything; Card · $127.00',
-    v.offs.length === 2 && v.offs.every((t) => t === 'Discount') && v.pay[0] === 'Card · $127.00', v);
+  check('7 Wonders and two boosters: a Discount on each line, and one for everything; Card · $127.00',
+    JSON.stringify(v.offs) === JSON.stringify(['Discount', 'Discount', 'Discount on everything']) && v.pay[0] === 'Card · $127.00', v);
 });
 
 /* ---------- 2. The Discount screen is in dollars, and doesn't say the limit ---------- */
@@ -394,10 +423,164 @@ await step('6', async () => {
   check('the Lair app kept what came off and who approved it', row.status === 'paid' && row.total === 10200 && row.discount_total === 2500 && row.discount_by === RUA && row.discount_by_name === 'Rua', { status: row.status, total: row.total, off: row.discount_total, by: row.discount_by_name });
 });
 
-/* ---------- 7. Things on sale already ---------- */
-await step('7', async () => {
+/* ---------- 6b. Discount on everything: dollars off the whole sale ---------- */
+await step('6b', async () => {
+  // (Mo, 11 Nov 2026: "make $ off discount back") an amount off the sale, shared across its things as cents off each one
   await tap('[data-act="next"]');
   await tap('[data-act="quick"]');
+  await scan(CODE.wonders);
+  await scan(CODE.booster);
+  await scan(CODE.booster);
+  await scan(CODE.coke);
+  await noToast();
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('Discount on everything: what the sale\'s things cost before it, leaving out what is on sale already', v.view === 'discount' && v.title === 'Everything in the sale' && v.lede === '$127.00 before the discount.' && /Things on sale already stay as they are\./.test(v.overText), v);
+  check('no percent on it, and nothing saying how far it can come down', !/%|at most|up to/i.test(v.overText), v.overText);
+  check('amounts it can take, each with what those things would then cost, and a field for dollars off the sale',
+    JSON.stringify(v.quick) === JSON.stringify(['$1 off $126.00', '$2 off $125.00', '$5 off $122.00', '$10 off $117.00', '$20 off $107.00']) && v.field && v.field.label === 'Or type the dollars off the sale', { quick: v.quick, field: v.field });
+  await shot(page, 'till-8-everything');
+  const prices = calls('till/price').length;
+  await type('30');
+  v = await look();
+  check('$30 typed: the most the sale can come down by ($21.00 and 2 x $2.20), and it stays', v.view === 'discount' && v.toast === 'Everything in the sale can come down by $25.40 at most.' && calls('till/price').length === prices, v);
+  await noToast();
+  await type('10', 1300);
+  v = await look();
+  check('$10: shared by price as whole cents off each one, $8.28 off 7 Wonders and 86c off each booster, which is $10.00 exactly',
+    v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 828], ['5013', 86]]) && v.lines[0].sub === 'Staff discount: $8.28 off' && v.lines[1].sub === 'Booster Pack · Staff discount: $0.86 off each' && v.lines[2].sub === 'Classic', { v, sent: offsSent('till/price') });
+  check('the sale says Staff discount −$10.00 and Total $120.00, and the till says how it was shared', v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $120.00') && v.toast === '$10.00 off the sale, shared across 2 things. Someone with Money approves it at Pay.', v);
+  await noToast();
+  await shot(page, 'till-9-everything-on');
+  // Card asks for the PIN as for any discount
+  await tap('[data-act="pay-card"]', 700);
+  v = await look();
+  check('Card asks to approve it: $10.00 off, so the sale is $120.00', v.view === 'discountok' && /\$10\.00 off, so the sale is \$120\.00\./.test(v.lede), { view: v.view, lede: v.lede });
+  await tap('[data-act="back"]');
+  // and off again, all at once
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('Discount on everything again shows the $10 that is on, and offers No discount', v.none && v.quick.includes('$10 off $117.00 (on)') && v.quick.filter((t) => / \(on\)$/.test(t)).length === 1, { none: v.none, quick: v.quick });
+  await tap('[data-act="discount-set"][data-c="0"]', 1200);
+  v = await look();
+  check('No discount takes it off every line: Total $130.00 again', v.view === 'till' && v.toast === 'Discounts taken off.' && v.totals.includes('Total $130.00') && !v.totals.some((t) => /Staff discount/.test(t)) && v.offs.slice(0, 3).every((t) => t === 'Discount'), v);
+  await noToast();
+});
+
+/* ---------- 6c. An amount that can't be shared to the cent ---------- */
+await step('6c', async () => {
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.booster);
+  await scan(CODE.booster);
+  await scan(CODE.booster);
+  await scan(CODE.coke);
+  await noToast();
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('three of one thing (and a drink on sale): no ready amounts split to the cent, so dollars are typed', v.lede === '$33.00 before the discount.' && v.quick.length === 0 && v.field.label === 'Type the dollars off the sale', { lede: v.lede, quick: v.quick, field: v.field });
+  await type('1', 1300);
+  v = await look();
+  check("$1 across three boosters is 33c each: 99c comes off, never more than was asked, and the till says why", v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5013', 33]]) && v.totals.includes('Staff discount −$0.99')
+    && v.toast === "$0.99 off the sale: $1.00 didn't share out to the cent across these. Someone with Money approves it at Pay.", { v, sent: offsSent('till/price') });
+  await noToast();
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('opened again, the field has what is off the sale now: 0.99', v.field && v.field.value === '0.99', v.field);
+  const prices = calls('till/price').length;
+  await type('0.01');
+  v = await look();
+  check('a cent across three of something is too little to share, and nothing is asked', v.view === 'discount' && v.toast === '$0.01 is too little to share across these. Try a little more.' && calls('till/price').length === prices, v);
+  await noToast();
+  await tap('[data-act="back"]');
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+});
+
+/* ---------- 6d. What stays out of Discount on everything ---------- */
+await step('6d', async () => {
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.deck);
+  await scan(CODE.sleeves);
+  await scan(CODE.booster, 1300);
+  await noToast();
+  v = await look();
+  check("a Commander deck's sleeves are free with it: the shop's own deal, on Shopify's sums", v.totals.includes('Final Fantasy Commander deck + free sleeves −$19.99') && v.totals.includes('Total $100.99'), v.totals);
+  // the sleeves' own Discount: the Lair app's price said a deal has taken something off them
+  await tap('.t-line:nth-child(2) [data-act="discount"]');
+  v = await look();
+  check("Discount on the sleeves says they're on a deal already, and offers no amounts", v.view === 'discount' && v.lede === "$19.99. It's on a deal already, so it can't have a discount too." && v.quick.length === 0 && !v.field, v);
+  await tap('[data-act="back"]');
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('Discount on everything leaves the free sleeves out, and says why', v.lede === '$100.99 before the discount.' && v.notes.includes('Things on a deal already stay as they are.') && !v.notes.some((t) => /Dice|on sale|Bookings/.test(t)), { lede: v.lede, notes: v.notes });
+  await type('10', 1300);
+  v = await look();
+  check('$10 is shared across the deck and the booster only, and the Lair app takes it', v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5028', 892], ['5013', 108]]) && v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $90.99')
+    && v.toast === '$10.00 off the sale, shared across 2 things. Someone with Money approves it at Pay.', { v, sent: offsSent('till/price') });
+  await noToast();
+  // dice and a drink on sale join the sale: each stays out, for its own reason
+  await scan(CODE.oakie);
+  await scan(CODE.coke, 1300);
+  await noToast();
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('with dice and something on sale in it too: the same $100.99, and each reason said once',
+    v.lede === '$100.99 before the discount.' && v.notes[0] === 'Dice keep the dice deal instead, so they stay as they are. Things on sale or on a deal already stay as they are.' && v.notes.length === 2 && v.quick.includes('$10 off $90.99 (on)'), { lede: v.lede, notes: v.notes, quick: v.quick });
+  await shot(page, 'till-10-everything-stays');
+  check('nothing bigger is offered than the deck and the booster can take between them ($17.99 and $2.20)', !v.quick.some((t) => /^\$50 off/.test(t)) && v.quick.some((t) => /^\$20 off \$80\.99$/.test(t)), v.quick);
+  await tap('[data-act="discount-set"][data-c="2000"]', 1300);
+  v = await look();
+  check('$20 the same way: the dice and the drink keep their price', v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5028', 1783], ['5013', 217]]) && v.totals.includes('Staff discount −$20.00'), { v, sent: offsSent('till/price') });
+  await noToast();
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+  // only dice in the sale: nothing to share it across
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.oakie);
+  await scan(CODE.glow, 1300);
+  await noToast();
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('only dice in the sale: it says so, with no amounts and no field', v.lede === 'Only dice are in the sale, and they keep the dice deal.' && v.quick.length === 0 && !v.field && v.notes.length === 0, v);
+  await tap('[data-act="back"]');
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+});
+
+/* ---------- 6e. Tapped before Shopify's price is in ---------- */
+await step('6e', async () => {
+  // the till doesn't know yet that the sleeves are the deal's, so it shares across them too; the Lair app won't have it
+  state.slowPrice = 2500;
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.deck, 400);
+  await scan(CODE.sleeves, 400);
+  await tap('[data-act="discount"][data-key="*"]', 200);
+  v = await look();
+  check('before the price is in, the till shares across both', v.lede === '$109.98 before the discount.', v.lede);
+  await type('10', 300);
+  state.slowPrice = 0;
+  await page.waitForFunction(() => /on a deal already/.test(document.querySelector('[data-r="toast"]')?.textContent || ''), null, { timeout: 12000 }).catch(() => {});
+  v = await look();
+  check("the Lair app's own words for the sleeves, and the sale is still there",
+    v.view === 'till' && v.toast === "Final Fantasy Commander Sleeves (100) is on a deal already, so it can't have a discount too. Take the discount off it." && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5028', 819], ['5029', 181]]), { v, sent: offsSent('till/price') });
+  await noToast();
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('Discount on everything now leaves the sleeves out', v.lede === '$89.99 before the discount.' && v.notes.includes('Things on a deal already stay as they are.') && v.quick.includes('$10 off $79.99 (on)'), { lede: v.lede, notes: v.notes, quick: v.quick });
+  await tap('[data-act="discount-set"][data-c="1000"]', 1300);
+  v = await look();
+  check('$10 again: all of it off the deck, none on the sleeves, and the Lair app takes it', v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5028', 1000]]) && v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $79.99')
+    && v.toast === '$10.00 off the sale. Someone with Money approves it at Pay.', { v, sent: offsSent('till/price') });
+  await noToast();
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+});
+
+/* ---------- 7. Things on sale already ---------- */
+await step('7', async () => {
+  await tap('[data-act="quick"]').catch(() => {});
   await scan(CODE.coke);
   await scan(CODE.barrage);
   await noToast();
@@ -423,33 +606,42 @@ await step('7', async () => {
 /* ---------- 8. On top of the dice deal ---------- */
 await step('8', async () => {
   await tap('[data-act="remove"] >> nth=0').catch(() => {});
-  // a fresh quick sale: three of the same dice set (the third is free), with a discount on the line
+  // a fresh quick sale: two of the same dice set, with a discount on the line (two is no deal yet)
   await page.evaluate(() => document.querySelector('lair-till').nextSale());
   await settle(300);
   await tap('[data-act="quick"]').catch(() => {});
   await scan(CODE.oakie);
   await scan(CODE.oakie);
-  await scan(CODE.oakie);
   await noToast();
-  v = await look();
-  check('three dice sets: the deal takes the third, Total $31.98', v.totals.some((t) => /3rd free −\$15\.99/.test(t)) && v.totals.includes('Total $31.98'), v);
   await tap('[data-act="discount"] >> nth=0');
   await tap('[data-act="discount-set"][data-c="100"]', 1300);
   v = await look();
+  check('two dice sets with $1 off each: the Lair app takes it, Total $29.98', v.totals.includes('Staff discount −$2.00') && v.totals.includes('Total $29.98'), v);
+  await noToast();
+  // a third makes it the dice deal's: the free one comes off this line, which has a discount on it
+  await scan(CODE.oakie, 1300);
+  v = await look();
   const words = "Oakie Doakie Translucent RPG Dice Set · Green is on a deal already, so it can't have a discount too. Take the discount off it.";
-  check("$1 off each on top of the deal: the Lair app's words", v.toast === words, v.toast);
+  check("a third set, so the deal's free one lands on the discounted line: the Lair app's words", v.toast === words, v.toast);
   await noToast();
   const pays = calls('till/pay').length;
   await tap('[data-act="pay-card"]', 900);
   v = await look();
   check('Card asks the Lair app afresh and says them again: nobody is asked for a PIN, and nothing goes to Pay', v.view === 'till' && !v.busy && v.toast === words && calls('till/pay').length === pays, { view: v.view, toast: v.toast });
   await noToast();
-  // taking it off puts things right
+  // its Discount screen knows now (the refusal said the line is the deal's): no amounts, only the way out
   await tap('[data-act="discount"] >> nth=0');
+  v = await look();
+  check("Discount on it says it's on a deal already, with no amounts to tap or type, and No discount", v.lede === "$15.99 each. It's on a deal already, so it can't have a discount too." && v.quick.length === 0 && !v.field && v.none, v);
   await tap('[data-act="discount-set"][data-c="0"]', 1200);
   v = await look();
-  check('No discount: it says Discount taken off, and the sale is the deal alone again', /Discount taken off\./.test(v.toast) && v.offs[0] === 'Discount' && v.totals.includes('Total $31.98') && v.lines[0].sub === 'Green', v);
+  check('No discount: it says Discount taken off, and the sale is the deal alone', /Discount taken off\./.test(v.toast) && v.offs[0] === 'Discount' && v.totals.some((t) => /3rd free −\$15\.99/.test(t)) && v.totals.includes('Total $31.98') && v.lines[0].sub === 'Green', v);
   await noToast();
+  // and from the price alone (no refusal first): three dice on a line are the deal's
+  await tap('[data-act="discount"] >> nth=0');
+  v = await look();
+  check("three dice sets priced: Discount says they're on a deal already, and there's nothing to take off", v.lede === "$15.99 each. It's on a deal already, so it can't have a discount too." && v.quick.length === 0 && !v.field && !v.none, v);
+  await tap('[data-act="back"]');
 });
 
 /* ---------- 9. Pay tapped before the discount's priced ---------- */
@@ -459,6 +651,8 @@ await step('9', async () => {
   await tap('[data-act="quick"]').catch(() => {});
   await scan(CODE.wonders);
   await noToast();
+  v = await look();
+  check('one thing in the sale: its own Discount, and none for everything', JSON.stringify(v.offs) === JSON.stringify(['Discount']), v.offs);
   state.slowPrice = 1500;
   await tap('[data-act="discount"] >> nth=0');
   await tap('[data-act="discount-set"][data-c="500"]', 60);

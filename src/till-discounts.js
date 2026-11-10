@@ -110,7 +110,8 @@ export function tillDiscountMost(unit, was = null) {
  * Shopify took off for them is what was asked (a cent either way); a percent comes to no more than it can come down by
  * (Shopify rounds the line, so a cent each either way); and nothing else came off the line (a deal). A discounted line
  * the figures don't have is refused too. Throws a 422 naming the line otherwise, with more.line: its key and Shopify's
- * figures for it ({ key, unit, most, was? }), which the Lair's answer carries beside the words.
+ * figures for it ({ key, unit, most, was?, deal? }: most 0 and deal true when it's a deal that's in the way), which the
+ * Lair's answer carries beside the words.
  * → { total, byKey: Map(key → cents) }. lines: the sale's lines (with key, uuid, off or discount); figures: tillFiguresOf's.
  * No awaits.
  */
@@ -128,8 +129,9 @@ export function tillDiscountCheck(lines, figures) {
     const most = tillDiscountMost(f.unit, f.was);
     const off = Math.max(0, (f.total || 0) - (f.paid ?? f.total ?? 0));
     const staff = f.staff ?? off;
-    // a refusal says which line, with Shopify's figures for it now, so the till can offer what it can take
-    const no = (words) => Object.assign(new RuleError(words, 422), { more: { line: { key: l.key, unit: f.unit || 0, most, ...(f.was ? { was: f.was } : {}) } } });
+    // a refusal says which line, with Shopify's figures for it now, so the till can offer what it can take (nothing,
+    // on a line a deal took something off)
+    const no = (words, facts = {}) => Object.assign(new RuleError(words, 422), { more: { line: { key: l.key, unit: f.unit || 0, most, ...(f.was ? { was: f.was } : {}), ...facts } } });
     if (most <= 0) throw no((f.was || 0) > (f.unit || 0) ? TILL_DISCOUNT_WORDS.onSale(name) : TILL_DISCOUNT_WORDS.none(name));
     if (l.off) {
       if (l.off > most) throw no(TILL_DISCOUNT_WORDS.most(name, most, qty));
@@ -137,7 +139,7 @@ export function tillDiscountCheck(lines, figures) {
     } else if (staff > (most + 1) * qty) {
       throw no(TILL_DISCOUNT_WORDS.most(name, most, qty));
     }
-    if (off > staff + 1) throw no(TILL_DISCOUNT_WORDS.stacked(name));
+    if (off > staff + 1) throw no(TILL_DISCOUNT_WORDS.stacked(name), { most: 0, deal: true });
     byKey.set(l.key, staff);
     total += staff;
   });

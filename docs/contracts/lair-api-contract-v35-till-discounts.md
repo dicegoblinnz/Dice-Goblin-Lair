@@ -19,7 +19,12 @@ the item at a sale price or on a deal.
   - an item on sale comes down only as far as 80% of what it was ($100, now $90: $10);
   - an item already at or under 80% of what it was can't have a discount ($6, now $3). It sells for less than 80% only
     because Shopify already has it there.
-- A line the shop's own deal took something off (the dice deal's free die) can't have a discount too, as before.
+- A line the shop's own deal took something off (the dice deal's free die, a Commander deck's free sleeves) can't
+  have a discount too, as before.
+- (11 Nov 2026) The till also takes dollars off the whole sale ("Discount on everything", Mo: "make $ off discount
+  back"). That's the till's doing alone: it shares the amount across the sale's things as `off` on each line, by price
+  and within each thing's `most`, and sends lines as ever. Nothing here knows a shared discount from one put on by
+  hand, and every line is held to the same rule.
 - All of it is checked on Shopify's own figures (the price and compare-at price Shopify has for the item as it works
   the sale out, and what it took off the line): for the price, and again on the draft at Pay.
 - Approving is as v34: Pay takes a discounted basket only with `discountOk`.
@@ -34,7 +39,7 @@ v34's `discount` (a percent off the line) is still read, for a till that hasn't 
 
 | Route | Change |
 |---|---|
-| `POST /proxy/till/price` | Each product line (not a tab's) has `most`: the cents a discount could take off each one of it (0 when it can't have one), and `was`: its compare-at price in cents, when it's on sale. A line with dollars off has `discount: { each, amount }` (`each`: `off`; `amount`: what Shopify took off the line); a line with a percent has `{ percent, amount }` as v34. `discounts`, `needsOk` and `staffDiscount` as v34. |
+| `POST /proxy/till/price` | Each product line (not a tab's) has `most`: the cents a discount could take off each one of it (0 when it can't have one), and `was`: its compare-at price in cents, when it's on sale. A line one of the shop's deals took something off has `most: 0` and `deal: true` (11 Nov 2026: so the till leaves it out when it shares a discount across the sale, and its Discount screen offers nothing). A line with dollars off has `discount: { each, amount }` (`each`: `off`; `amount`: what Shopify took off the line); a line with a percent has `{ percent, amount }` as v34. `discounts`, `needsOk` and `staffDiscount` as v34. |
 | `POST /proxy/till/pay` | As v34. |
 
 Errors, word for word:
@@ -50,8 +55,9 @@ Errors, word for word:
 - Shopify took something other than what was asked off a line: 422 `Riftbound Radiance · Booster Pack's discount didn't come out as asked. Take it off and add it again.`
 
 Each of those 422s about a line's discount also says which line, with Shopify's figures for it now, so the till can
-offer what it can take: `{ error, line: { key, unit, most, was? } }` (`key` as the till sent it; `unit` its price,
-`most` and `was` as in the price, all in cents). Every other refusal is `{ error }` alone, as before.
+offer what it can take: `{ error, line: { key, unit, most, was?, deal? } }` (`key` as the till sent it; `unit` its
+price, `most`, `was` and `deal` as in the price, all in cents: the `… is on a deal already …` refusal's line has
+`most: 0` and `deal: true`). Every other refusal is `{ error }` alone, as before.
 
 At Pay, a refusal on the draft's figures lets the sale go and deletes its draft, as v34. v34's
 `… came to more than 25% off. …` is gone: a percent that comes to more than the item can come down by gets the

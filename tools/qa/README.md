@@ -318,7 +318,22 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   a Lair app from before dollars (said so, nothing paid); the price never answering after Pay (the sale isn't left with
   its buttons off: the separate review's note); odd things typed; the customer's screens; and what the real till says
   about itself (no Demo codes on its start screen, no "Practice till" as staff sign in: both showed at the counter until
-  11 Nov 2026). No sideways scroll, no console errors (53 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4997] [OUT=…] node tools/qa/round35-till-discounts/till.mjs`.
+  11 Nov 2026). And "Discount on everything" in dollars (Mo, 11 Nov 2026: "make $ off discount back"): an amount off
+  the sale shared across its things by price, to the cent ($10 across a $105 game and two $11 boosters); more than
+  they can come down by between them; the amount that's on shown when it's opened again; an amount three of one thing
+  can't share to the cent (a cent under, said so); what stays out and why (a deck's free sleeves on the shop's other
+  deal, dice, a drink on sale already); a sale of only dice; and tapped before Shopify's price is in (the Lair app's
+  refusal names the line, and the next go leaves it out). No sideways scroll, no console errors (81 checks).
+  `DG_THEME=… [LOOK=pieces|first] [PORT=4997] [OUT=…] node tools/qa/round35-till-discounts/till.mjs`.
 - `round35-till-discounts/practice.mjs`: the same on the demo (Practice sales, the till's own sums): dollars off, the
   till's own limit, off each one, the Money PIN at Pay, round 34's review finding still holding (Back while the PIN
-  is checked pays nothing), and the demo still saying it's the demo (Demo codes, "Practice till") (12 checks). `DG_THEME=… [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs`.
+  is checked pays nothing), the demo still saying it's the demo (Demo codes, "Practice till"), and Discount on
+  everything on the till's own sums, with a booking in the sale keeping its price (19 checks).
+  `DG_THEME=… [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs`.
+- `round35-till-discounts/split.mjs`: the sharing itself (`LairTill.splitOff`, in the till's own page) on 10,000
+  made-up baskets with up to 6, 12 and 99 of a thing: nothing gets more than it can come down by; never more comes off
+  than was asked; a share-out to the cent is found whenever one exists (checked against a slow, sure way; with up to
+  99 of each, in all but a few); when none exists it's short by less than the most there are of any one thing; the
+  shares follow the prices up to how far each thing can come down; and it's quick (16 checks). Breaking the sharing
+  four ways on purpose (shares that ignore the price, no last step, room ignored, a cent too many) fails it each time.
+  `DG_THEME=… [PORT=4989] [N=4000] node tools/qa/round35-till-discounts/split.mjs`.

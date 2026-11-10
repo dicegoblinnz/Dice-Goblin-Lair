@@ -1,6 +1,6 @@
 // Round 35 on the theme mock's demo (Practice sales: the till's own sums, no Lair app), in either look: dollars off each
-// one, the till's own limit (20% of its price for the thing), and the review's finding from round 34 still holding (Back
-// while a discount's PIN is being checked pays nothing).
+// one, the till's own limit (20% of its price for the thing), the review's finding from round 34 still holding (Back
+// while a discount's PIN is being checked pays nothing), and Discount on everything (11 Nov 2026).
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -171,6 +171,47 @@ const fresh = async () => {
   await T.pin('2580', 1600);
   const paid = await T.s();
   ok('Pay after that asks for the PIN again, and pays with cash', again.view === 'discountok' && paid.view === 'cash' && paid.pay === 'cash', JSON.stringify({ again: again.view, paid: paid.view }));
+  ok('no errors on the page', T.errors.length === 0, T.errors.join(' | '));
+  await ctx.close();
+}
+
+// 3. (Mo, 11 Nov 2026: "make $ off discount back") Discount on everything, on the till's own sums: dollars off the sale,
+//    shared across its things; a booking in the sale keeps its price
+{
+  const { T, ctx } = await fresh();
+  await T.sale();
+  const one = await T.page.evaluate(() => [...document.querySelectorAll('.t-off')].filter((b) => b.offsetParent).map((b) => b.textContent.trim()));
+  await T.scan('31283123823');
+  await T.scan('31283123821');
+  await T.noToast();
+  const three = await T.page.evaluate(() => [...document.querySelectorAll('.t-off')].filter((b) => b.offsetParent).map((b) => b.textContent.trim()));
+  ok('one thing in the sale has its own Discount only; with more, Discount on everything too', JSON.stringify(one) === JSON.stringify(['Discount']) && JSON.stringify(three) === JSON.stringify(['Discount', 'Discount', 'Discount', 'Discount on everything']), JSON.stringify({ one, three }));
+  const before = (await T.s()).prices.reduce((n, c) => n + c, 0);
+  const room = (await T.s()).prices.reduce((n, c) => n + Math.floor(c * 0.2), 0);
+  await T.click('[data-act="discount"][data-key="*"]');
+  const screen = await T.s();
+  ok('Discount on everything says what the things cost before it', screen.view === 'discount' && screen.lede === `$${(before / 100).toFixed(2)} before the discount.`, JSON.stringify(screen));
+  await T.type(((room + 1) / 100).toFixed(2));
+  const over = await T.s();
+  ok('a cent more than they can come down by between them: the till says the most, and stays', over.view === 'discount' && over.toast === `Everything in the sale can come down by $${(room / 100).toFixed(2)} at most.` && over.offs.every((c) => c === 0), JSON.stringify(over));
+  await T.noToast();
+  await T.type('2');
+  const set = await T.s();
+  const sum = set.offs.reduce((n, c) => n + c, 0);
+  ok('$2 is shared across the three, to the cent, each within 20% of its price', set.view === 'till' && sum === 200 && set.offs.every((c, i) => c > 0 && c <= Math.floor(set.prices[i] * 0.2)) && set.totals.includes('Staff discount −$2.00') && set.totals.includes(`Total $${((before - 200) / 100).toFixed(2)}`)
+    && set.toast === '$2.00 off the sale, shared across 3 things. Someone with Money approves it at Pay.', JSON.stringify(set));
+  await T.noToast();
+  // a booking's code adds what's left to pay on it: that keeps its price
+  await T.scan('PS-HYDRA-14');
+  await T.noToast();
+  const kinds = await T.page.evaluate(() => document.querySelector('lair-till').s.lines.map((l) => l.kind));
+  await T.click('[data-act="discount"][data-key="*"]');
+  const withBooking = await T.s();
+  const notes = await T.page.evaluate(() => [...document.querySelectorAll('[data-r="over"] .t-temp')].map((p) => p.textContent.replace(/\s+/g, ' ').trim()));
+  ok('with a booking in the sale, the things are the same and the note says bookings keep their price', kinds.includes('owed') && withBooking.lede === `$${(before / 100).toFixed(2)} before the discount.` && notes[0] === 'Bookings and tabs keep their price.', JSON.stringify({ kinds, lede: withBooking.lede, notes }));
+  await T.click('[data-act="discount-set"][data-c="0"]');
+  const off = await T.s();
+  ok('No discount takes it off everything', off.view === 'till' && off.toast === 'Discounts taken off.' && off.offs.every((c) => !c) && !off.totals.some((t) => /Staff discount/.test(t)), JSON.stringify(off));
   ok('no errors on the page', T.errors.length === 0, T.errors.join(' | '));
   await ctx.close();
 }

@@ -82,6 +82,9 @@ const PRODUCTS = {
   barrage: { id: '114', title: 'Barrage', type: 'Board Games', vendor: 'Cranio Creations', status: 'ACTIVE', giftCard: false, dice: false },
   wonders: { id: '115', title: '7 Wonders', type: 'Board Games', vendor: 'Repos Production', status: 'ACTIVE', giftCard: false, dice: false },
   lolly: { id: '116', title: 'Lolly', type: 'Food & Drink', vendor: 'Dice Goblin NZ', status: 'ACTIVE', giftCard: false, dice: false },
+  // (11 Nov 2026) the shop's other deal: a Commander deck comes with its sleeves free
+  deck: { id: '117', title: 'Final Fantasy Commander Deck', type: 'Trading Card Games', vendor: 'Wizards of the Coast', status: 'ACTIVE', giftCard: false, dice: false },
+  sleeves: { id: '118', title: 'Final Fantasy Commander Sleeves (100)', type: 'Trading Card Games', vendor: 'Ultra Pro', status: 'ACTIVE', giftCard: false, dice: false },
 };
 const VARIANTS = {
   5011: { product: 'oakie', id: '5011', title: 'Green', sku: null, barcodes: ['4056133701068'], price: 1599, tracked: true, stock: 35, oversell: false },
@@ -101,6 +104,8 @@ const VARIANTS = {
   5025: { product: 'barrage', id: '5025', title: 'Default Title', sku: null, barcodes: [], price: 9000, was: 10000, tracked: true, stock: 2, oversell: false },
   5026: { product: 'wonders', id: '5026', title: 'Default Title', sku: null, barcodes: [], price: 10500, tracked: true, stock: 4, oversell: false },
   5027: { product: 'lolly', id: '5027', title: 'Default Title', sku: null, barcodes: [], price: 4, tracked: false, stock: null, oversell: false },
+  5028: { product: 'deck', id: '5028', title: 'Default Title', sku: null, barcodes: [], price: 8999, tracked: true, stock: 3, oversell: false },
+  5029: { product: 'sleeves', id: '5029', title: 'Default Title', sku: null, barcodes: [], price: 1999, tracked: true, stock: 6, oversell: false },
 };
 const match = (id) => ({ product: { ...PRODUCTS[VARIANTS[id].product] }, variant: { ...VARIANTS[id] } });
 
@@ -109,7 +114,9 @@ const match = (id) => ({ product: { ...PRODUCTS[VARIANTS[id].product] }, variant
  * the shop's prices; a line's staff discount, dollars off each one of it (FIXED_AMOUNT: 2 at $5 off is $10, never more
  * than the price) or a percent of the line rounded down to the cent (PERCENTAGE: 2 x $15.99 at 20% is $6.39); then every
  * third dice free, at what it costs after its line's discount, its amount on the line it came from; a variant's
- * compare-at price (was); and GST. shop.staffExtra adds cents to each staff discount (Shopify going wrong).
+ * compare-at price (was); and GST. shop.staffExtra adds cents to each staff discount (Shopify going wrong). And the
+ * shop's other deal (10 Nov 2026, "Final Fantasy Commander deck + free sleeves": buy a deck, get one of its sleeves
+ * free): the sleeves' price comes off the sleeves' own line.
  */
 function figuresFor(lines) {
   const out = lines.map((l) => {
@@ -137,11 +144,26 @@ function figuresFor(lines) {
     deal += units[i].unit;
     out[units[i].line].paid -= units[i].unit;
   }
+  // a deck's sleeves, free: one for each deck, the cheapest first, at what they cost after their own line's discount
+  // (the real store, asked on 11 Nov 2026 with a deck and two lines of sleeves, one with $1.35 off: the deal took
+  // $23.65 off that line and left the other alone)
+  const decks = out.reduce((n, l) => n + (l.variantId === '5028' ? l.qty : 0), 0);
+  const packs = [];
+  out.forEach((l, i) => {
+    if (l.variantId === '5029') for (let n = 0; n < l.qty; n += 1) packs.push({ unit: l.each, line: i });
+  });
+  packs.sort((x, y) => x.unit - y.unit);
+  let sleeves = 0;
+  packs.slice(0, decks).forEach((u) => {
+    sleeves += u.unit;
+    out[u.line].paid -= u.unit;
+  });
   const subtotal = out.reduce((sum, l) => sum + l.total, 0);
   const staffTotal = out.reduce((sum, l) => sum + (l.staff || 0), 0);
-  const total = subtotal - deal - staffTotal;
+  const total = subtotal - deal - sleeves - staffTotal;
   return {
-    subtotal, discounts: deal ? [{ title: 'Buy any 2 dice, get the 3rd free', amount: deal }] : [], total, gst: Math.round((total * 3) / 23), taxIncluded: true,
+    subtotal, total, gst: Math.round((total * 3) / 23), taxIncluded: true,
+    discounts: [...(deal ? [{ title: 'Buy any 2 dice, get the 3rd free', amount: deal }] : []), ...(sleeves ? [{ title: 'Final Fantasy Commander deck + free sleeves', amount: sleeves }] : [])],
     lines: out.map(({ dice, each, ...l }) => l),
   };
 }
@@ -287,6 +309,8 @@ const COKE = '5024'; // $3, was $6: on sale already
 const BARRAGE = '5025'; // $90, was $100: $10
 const WONDERS = '5026'; // $105: $21
 const LOLLY = '5027'; // 4c
+const DECK = '5028'; // $89.99: $17.99; its sleeves come free with it
+const SLEEVES = '5029'; // $19.99: $3.99, when they're paid for
 /** A fresh PIN from Rua (Money), as the till's approval asks for one: unlocking gives the token that approves */
 const approve = async (id = RUA, pin = '4711') => ok(await call('POST', 'till/unlock', { id, pin }, OWNER)).token;
 const price = (lines, extra = {}) => call('POST', 'till/price', { lines, ...extra }, OWNER);
@@ -414,6 +438,33 @@ test("round 35: no dollars off on top of a deal: a die the dice deal takes off c
   assert.equal(mixed.total, 2000 + 3198 - 1599 - 400);
 });
 
+test("round 35: the price says which things a deal has taken something off: they can't come down, the rest still can", async () => {
+  // (11 Nov 2026, for "Discount on everything" in dollars: the till shares an amount across what can take it, so it
+  // has to know before it asks.) A Commander deck's free sleeves: the deal is on the sleeves' line
+  const sale = ok(await price([{ key: 'k', variantId: DECK, qty: 1 }, { key: 's', variantId: SLEEVES, qty: 1 }, { key: 'b', variantId: BOOSTER, qty: 1 }])).price;
+  assert.deepEqual(sale.discounts, [{ title: 'Final Fantasy Commander deck + free sleeves', amount: 1999 }]);
+  assert.deepEqual(sale.lines.map((l) => [l.key, l.most, l.deal]), [['k', 1799, undefined], ['s', 0, true], ['b', 220, undefined]]);
+  // sleeves bought without a deck are at the shop's price, and can come down
+  assert.deepEqual(ok(await price([{ key: 's', variantId: SLEEVES, qty: 1 }])).price.lines.map((l) => [l.most, l.deal]), [[399, undefined]]);
+  // two sleeves and one deck: one is free, so the line is on the deal
+  assert.deepEqual(ok(await price([{ key: 'k', variantId: DECK, qty: 1 }, { key: 's', variantId: SLEEVES, qty: 2 }])).price.lines.map((l) => [l.most, l.deal]), [[1799, undefined], [0, true]]);
+  // the dice deal the same: three on a line, one of them free; two, none
+  assert.deepEqual(ok(await price([{ key: 'o', variantId: OAKIE, qty: 3 }])).price.lines.map((l) => [l.most, l.deal]), [[0, true]]);
+  assert.deepEqual(ok(await price([{ key: 'o', variantId: OAKIE, qty: 2 }])).price.lines.map((l) => [l.most, l.deal]), [[319, undefined]]);
+  // three dice on two lines: only the line the free one came from
+  assert.deepEqual(ok(await price([{ key: 'g', variantId: '5022', qty: 1 }, { key: 'o', variantId: OAKIE, qty: 2 }])).price.lines.map((l) => [l.key, l.most, l.deal]), [['g', 400, undefined], ['o', 0, true]]);
+  // a discount on the deck doesn't put the deck on the deal: it's priced, with the sleeves still the deal's
+  const both = ok(await price([{ key: 'k', variantId: DECK, qty: 1, off: 1000 }, { key: 's', variantId: SLEEVES, qty: 1 }])).price;
+  assert.deepEqual(both.lines.map((l) => [l.key, l.most, l.deal]), [['k', 1799, undefined], ['s', 0, true]]);
+  assert.equal(both.total, 8999 - 1000);
+  // and a discount on the sleeves is refused as any on top of a deal is, its line saying it can't come down
+  const refusedSleeves = await price([{ key: 'k', variantId: DECK, qty: 1 }, { key: 's', variantId: SLEEVES, qty: 1, off: 100 }]);
+  said(refusedSleeves, 422, "Final Fantasy Commander Sleeves (100) is on a deal already, so it can't have a discount too. Take the discount off it.");
+  assert.deepEqual(refusedSleeves.data.line, { key: 's', unit: 1999, most: 0, deal: true });
+  // something on sale isn't on a deal: it says what it was, as before
+  assert.deepEqual(ok(await price([{ key: 'c', variantId: COKE, qty: 1 }])).price.lines.map((l) => [l.most, l.was, l.deal]), [[0, 600, undefined]]);
+});
+
 test('round 35: what Shopify took off is checked: something other than what was asked is refused, and nothing is sold', async () => {
   shop.staffExtra = 200;
   const words = "Riftbound Radiance · Booster Pack's discount didn't come out as asked. Take it off and add it again.";
@@ -445,7 +496,8 @@ test("round 35: a refusal over a line's discount says which line, with Shopify's
   assert.deepEqual(over.data.line, { key: 'b', unit: 1100, most: 220 });
   assert.deepEqual((await price([{ key: 'c', variantId: COKE, qty: 1, off: 50 }])).data.line, { key: 'c', unit: 300, most: 0, was: 600 });
   assert.deepEqual((await price([{ key: 'g', variantId: BARRAGE, qty: 1, off: 1001 }])).data.line, { key: 'g', unit: 9000, most: 1000, was: 10000 });
-  assert.deepEqual((await price([{ key: 'o', variantId: OAKIE, qty: 3, off: 100 }])).data.line, { key: 'o', unit: 1599, most: 319 });
+  // a line a deal took something off can't come down at all, and says it's the deal
+  assert.deepEqual((await price([{ key: 'o', variantId: OAKIE, qty: 3, off: 100 }])).data.line, { key: 'o', unit: 1599, most: 0, deal: true });
   // at Pay too
   await onTill(RUA, '4711');
   const lines = [{ key: 'b', variantId: BOOSTER, qty: 1, off: 220 }];

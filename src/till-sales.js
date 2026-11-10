@@ -225,7 +225,9 @@ export function tillBasketIn(list) {
  * (unit and total in cents, before discounts: the discounts are their own lines). Round 35: discount is { each, amount }
  * for dollars off each one ({ percent, amount } for round 34's percent), amount being what Shopify took off the line;
  * and a product at the shop's price (not a tab's) has most, the cents a discount could take off each one of it, and
- * was, its compare-at price, when it's on sale. Each is found by its uuid, or by its place.
+ * was, its compare-at price, when it's on sale. A line one of the shop's deals took something off (a free die, a
+ * deck's free sleeves) can't have a discount too, so its most is 0 and it says deal: true (11 Nov 2026: the till shares
+ * "Discount on everything" across what can take it). Each is found by its uuid, or by its place.
  */
 export function tillShownLines(lines, figures) {
   const byUuid = new Map((figures?.lines || []).filter((l) => l.uuid).map((l) => [l.uuid, l]));
@@ -244,8 +246,10 @@ export function tillShownLines(lines, figures) {
         ? { percent: l.discount, amount: taken ?? Math.round((total * l.discount) / 100) }
         : null;
     // round 35: what a discount could take off each one of a product at the shop's own price, and what it was when
-    // it's on sale
-    const most = l.variantId && l.cents == null && f ? { most: tillDiscountMost(f.unit, f.was), ...(f.was ? { was: f.was } : {}) } : {};
+    // it's on sale; nothing, when a deal has taken something off the line already (more came off it than its own
+    // discount, by over a cent: tillDiscountCheck's own test)
+    const dealt = Boolean(f) && Math.max(0, total - (f.paid ?? total)) - (discount ? taken ?? 0 : 0) > 1;
+    const most = l.variantId && l.cents == null && f ? { most: dealt ? 0 : tillDiscountMost(f.unit, f.was), ...(f.was ? { was: f.was } : {}), ...(dealt ? { deal: true } : {}) } : {};
     return { key: l.key, title, qty, unit, total, ...most, ...(discount ? { discount } : {}), ...(l.booking ? { booking: l.booking } : {}), ...(l.tab ? { tab: l.tab } : {}) };
   });
 }
