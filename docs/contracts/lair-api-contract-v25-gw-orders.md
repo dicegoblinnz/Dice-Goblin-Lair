@@ -3,7 +3,7 @@
 Round 25 (31 Oct 2026). From Mo's brief, 31 Oct 2026: any product on GW's latest ANZ order pad can be ordered online,
 in the Shop app and at the till. "If it's on our shelf, it says so. If not, it's clearly ordered in from Games Workshop,
 not in store." Orders close at midnight at the end of Monday (Auckland), Mo orders on Tuesday, GW ships on Thursday, and
-it should be with the customer two weeks after that Thursday. Mo gets the GW order list first thing Tuesday without
+it should be with the customer three weeks after the Monday (Mo, 10 Nov 2026; it was two weeks after the Thursday). Mo gets the GW order list first thing Tuesday without
 typing, sees the week's ordered-in sales, and Lair pickups are emailed when it's in. Mo's answers: one parcel when it's
 all in; the whole GW pack is ordered (extras go on the shelf).
 
@@ -18,7 +18,7 @@ No new routes. Nothing changes for any product until its variant is set to keep 
 ## The dates
 
 `gwSchedule(day, release, overrides)` → `{ cutoff, ships, promise }`, as the theme's `snippets/gw-dates.liquid` and
-`assets/gw.js`: the cutoff is the Monday on or after the order day (Auckland), ships 3 days after, promise 17 days after.
+`assets/gw.js`: the cutoff is the Monday on or after the order day (Auckland), ships 3 days after, promise 21 days after (three weeks after the Monday; 17 until 10 Nov 2026).
 A product released after the order day (`custom.gw_release_date`) counts from its release day. The shop metafield
 `gw.schedule` holds the Warhammer tab's changes, keyed by Monday: `{"overrides": {"2026-12-28": {"skip": true},
 "2027-01-04": {"promise": "2027-01-28"}}}`. A skipped Monday's orders join the next week.

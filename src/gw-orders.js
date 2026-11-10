@@ -3,8 +3,9 @@
  * If not, it's clearly ordered in from Games Workshop, not in store." Everything on GW's latest order pad keeps selling
  * when the shelf is empty (Shopify's "continue selling when out of stock"), and what the shelf can't cover is ordered in
  * from GW. Orders close at midnight at the end of Monday (Auckland); Mo orders on Tuesday, GW ships on Thursday, and it
- * should be with the customer two weeks after that Thursday: 17 days after the Monday ("Order by midnight Monday 2 Nov
- * and it should be with you by Thursday 19 Nov"). Mo picked one parcel: an order with ordered-in items goes out once it's
+ * takes GW 7 to 10 days to reach the shop. Mo (10 Nov 2026): "account for an extra 7 days for delivery just in case",
+ * and he picked three weeks after the Monday, so the promise is never a Sunday ("Order by midnight Monday 16 Nov and it
+ * should be with you by Monday 7 Dec"; it was 17 days after the Monday before). Mo picked one parcel: an order with ordered-in items goes out once it's
  * all in. Lair pickups get an email when it's in. The theme works out the same dates (snippets/gw-dates.liquid).
  *
  * What the Lair does:
@@ -40,9 +41,10 @@ export const GW_VENDOR = 'Games Workshop';
 const GW_CODE = /^\d{8,13}$/;
 /** The Tuesday list goes out from this hour (Auckland) */
 export const GW_LIST_HOUR = 6;
-/** Days from the Monday cutoff: GW ships on the Thursday, and it should be with the customer two weeks after */
+/** Days from the Monday cutoff: GW ships on the Thursday (3), and it should be with the customer three weeks after the
+ * Monday (21: GW's 7 to 10 days to the shop, a spare week, and never a Sunday; Mo, 10 Nov 2026, was 17) */
 export const GW_SHIPS_DAYS = 3;
-export const GW_PROMISE_DAYS = 17;
+export const GW_PROMISE_DAYS = 21;
 /** Most lines one order's GW check looks at; open lines one maintenance run checks, and ids a request asks about */
 const MOST_LINES = 50;
 const MOST_OPEN = 400;

@@ -203,20 +203,20 @@ afterEach(() => {
 /* ---------------- the dates and the words ---------------- */
 
 test('round 25: the dates, as the theme works them out', () => {
-  // Mo's own example: ordered on Saturday 31 October, by midnight Monday 2 Nov, should be with them by Thursday 19 Nov
-  assert.deepEqual(gwSchedule('2026-10-31'), { cutoff: '2026-11-02', ships: '2026-11-05', promise: '2026-11-19' });
+  // Mo's own example: ordered on Saturday 31 October, by midnight Monday 2 Nov, should be with them by Monday 23 Nov (three weeks after the Monday; 17 days, Thursday 19 Nov, until 10 Nov 2026)
+  assert.deepEqual(gwSchedule('2026-10-31'), { cutoff: '2026-11-02', ships: '2026-11-05', promise: '2026-11-23' });
   // a Monday is that Monday's (until midnight)
-  assert.deepEqual(gwSchedule('2026-11-02'), { cutoff: '2026-11-02', ships: '2026-11-05', promise: '2026-11-19' });
+  assert.deepEqual(gwSchedule('2026-11-02'), { cutoff: '2026-11-02', ships: '2026-11-05', promise: '2026-11-23' });
   // a Tuesday is next Monday's
-  assert.deepEqual(gwSchedule('2026-11-03'), { cutoff: '2026-11-09', ships: '2026-11-12', promise: '2026-11-26' });
+  assert.deepEqual(gwSchedule('2026-11-03'), { cutoff: '2026-11-09', ships: '2026-11-12', promise: '2026-11-30' });
   // a product released after the order day counts from its release day
-  assert.deepEqual(gwSchedule('2026-11-03', '2026-11-14'), { cutoff: '2026-11-16', ships: '2026-11-19', promise: '2026-12-03' });
-  assert.deepEqual(gwSchedule('2026-11-20', '2026-11-14'), { cutoff: '2026-11-23', ships: '2026-11-26', promise: '2026-12-10' });
+  assert.deepEqual(gwSchedule('2026-11-03', '2026-11-14'), { cutoff: '2026-11-16', ships: '2026-11-19', promise: '2026-12-07' });
+  assert.deepEqual(gwSchedule('2026-11-20', '2026-11-14'), { cutoff: '2026-11-23', ships: '2026-11-26', promise: '2026-12-14' });
   // the Warhammer tab's changes: a skipped Monday joins the next week, and a week's dates can be moved
   const changes = { '2026-12-28': { skip: true }, '2027-01-04': { promise: '2027-01-28', ships: '2027-01-07' } };
   assert.deepEqual(gwSchedule('2026-12-22', '', changes), { cutoff: '2027-01-04', ships: '2027-01-07', promise: '2027-01-28' });
-  assert.deepEqual(gwSchedule('2026-12-22', '', 'not an object'), { cutoff: '2026-12-28', ships: '2026-12-31', promise: '2027-01-14' });
-  // every day of a year agrees with the rule: the next Monday on or after, ships 3 days after, should be there 17 after
+  assert.deepEqual(gwSchedule('2026-12-22', '', 'not an object'), { cutoff: '2026-12-28', ships: '2026-12-31', promise: '2027-01-18' });
+  // every day of a year agrees with the rule: the next Monday on or after, ships 3 days after, should be there 21 after
   let day = '2026-10-01';
   for (let i = 0; i < 400; i += 1) {
     const { cutoff, ships, promise } = gwSchedule(day);
@@ -224,7 +224,7 @@ test('round 25: the dates, as the theme works them out', () => {
     assert.equal(wd, 1, `${day} closes on a Monday`);
     assert.ok(cutoff >= day && (Date.parse(cutoff) - Date.parse(day)) / 864e5 < 7, day);
     assert.equal((Date.parse(ships) - Date.parse(cutoff)) / 864e5, 3);
-    assert.equal((Date.parse(promise) - Date.parse(cutoff)) / 864e5, 17);
+    assert.equal((Date.parse(promise) - Date.parse(cutoff)) / 864e5, 21);
     day = new Date(Date.parse(day) + 864e5).toISOString().slice(0, 10);
   }
   assert.equal(gwLabel('2026-11-02', 'cutoff'), 'Monday 2 Nov');
@@ -262,15 +262,15 @@ test('round 25: the customer\'s words, word for word', () => {
 
 test('round 25: a GW kit that isn\'t on the shelf is ordered in: recorded, tagged, and the customer told the date', async () => {
   const paid = await pay(2041, [gwLine(1, KIT, 1)], { who: KAI, how: 'pickup' });
-  assert.deepEqual(paid.gw, { units: 1, lines: [{ code: '99120101386', quantity: 1, promise: '2026-11-26' }] });
+  assert.deepEqual(paid.gw, { units: 1, lines: [{ code: '99120101386', quantity: 1, promise: '2026-11-30' }] });
   const [row] = orderins();
   assert.equal(row.cutoff, '2026-11-09');
   assert.equal(row.quantity, 1);
   assert.equal(row.price, 21000);
-  assert.deepEqual(marks, [['gid://shopify/Order/2041', 'Ordered in', 'Ordered in from Games Workshop: 1 × Combat Patrol: Space Marines (99120101386). Should be with them by Thu 26 Nov. One parcel: send it all once it\'s in.']]);
+  assert.deepEqual(marks, [['gid://shopify/Order/2041', 'Ordered in', 'Ordered in from Games Workshop: 1 × Combat Patrol: Space Marines (99120101386). Should be with them by Mon 30 Nov. One parcel: send it all once it\'s in.']]);
   const [told] = mailsTo('kai@example.com');
   assert.equal(told.subject, 'Ordered in for you: order #2041');
-  assert.match(told.text, /Thanks, Kai! It isn't on our shelf, so it's going on our next order from Games Workshop\. It should be with you by Thursday 26 November\./);
+  assert.match(told.text, /Thanks, Kai! It isn't on our shelf, so it's going on our next order from Games Workshop\. It should be with you by Monday 30 November\./);
   assert.match(told.text, /1 × Combat Patrol: Space Marines/);
   assert.match(told.text, /We'll email you when it's in at the Lair, ready to collect\./);
   assert.match(told.text, /refund it in full/);
@@ -308,13 +308,13 @@ test('round 25: a counter sale with no customer is ordered in quietly, and an ad
   const counter = await pay(2050, [gwLine(1, KIT, 1)], { how: 'counter' });
   assert.equal(counter.gw.units, 1);
   assert.equal(mails.length, 0);
-  assert.match(marks[0][2], /^Ordered in from Games Workshop at the counter: 1 × Combat Patrol: Space Marines \(99120101386\)\. Should be in by Thu 26 Nov: put it aside for them\.$/);
+  assert.match(marks[0][2], /^Ordered in from Games Workshop at the counter: 1 × Combat Patrol: Space Marines \(99120101386\)\. Should be in by Mon 30 Nov: put it aside for them\.$/);
   const order = lair.sql.exec('SELECT * FROM gw_orders WHERE order_id = ?', 'gid://shopify/Order/2050').one();
   assert.equal(order.channel, 'counter');
   assert.equal(order.delivery, 'counter');
   const soon = await pay(2051, [gwLine(1, SOON, 1)], { who: MIA });
-  assert.equal(soon.gw.lines[0].promise, '2026-12-03');
-  assert.match(mailsTo('mia@example.com')[0].text, /Thursday 3 December/);
+  assert.equal(soon.gw.lines[0].promise, '2026-12-07');
+  assert.match(mailsTo('mia@example.com')[0].text, /Monday 7 December/);
 });
 
 test('round 25: an order placed before midnight on Monday is that week\'s, however late its webhook comes', async () => {
@@ -457,13 +457,14 @@ test('round 25: a refund or a cancelled order takes its ordered-in units off, an
 test('round 25: an order still waiting the day after its date is flagged to the shop once', async () => {
   await pay(2110, [gwLine(1, KIT, 1)], { who: KAI });
   mails = [];
-  assert.equal((await maintain(at('2026-11-26', 20))).orders, null);
-  const late = await maintain(at('2026-11-27', 9));
+  assert.equal((await maintain(at('2026-11-30', 20))).orders, null);
+  const late = await maintain(at('2026-12-01', 9));
   assert.deepEqual(late.orders, { late: ['#2110'] });
-  const [shop] = mailsTo('staff@example.com');
+  // (the day after is now a Tuesday, so the week's GW list goes to the shop that morning too)
+  const shop = mailsTo('staff@example.com').find((m) => m.subject.startsWith('Late'));
   assert.equal(shop.subject, 'Late from Games Workshop: 1 order');
-  assert.match(shop.text, /#2110 \(Kai\), due Thu 26 Nov/);
-  assert.equal((await maintain(at('2026-11-27', 10))).orders, null);
+  assert.match(shop.text, /#2110 \(Kai\), due Mon 30 Nov/);
+  assert.equal((await maintain(at('2026-12-01', 10))).orders, null);
 });
 
 /* ---------------- after the review ---------------- */

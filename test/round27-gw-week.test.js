@@ -280,7 +280,7 @@ test('round 27: the open week through the week, and skipped Mondays', () => {
   assert.equal(mondayOf('2026-11-03'), '2026-11-02');
   assert.equal(mondayOf('2026-11-02'), '2026-11-02');
   assert.equal(mondayOf('2026-11-08'), '2026-11-02');
-  assert.deepEqual(weekDates('2026-11-09'), { ships: '2026-11-12', promise: '2026-11-26', skip: false });
+  assert.deepEqual(weekDates('2026-11-09'), { ships: '2026-11-12', promise: '2026-11-30', skip: false });
   assert.deepEqual(weekDates('2026-11-09', { '2026-11-09': { ships: '2026-11-13', promise: '2026-12-01' } }), { ships: '2026-11-13', promise: '2026-12-01', skip: false });
   assert.equal(listWeek('2026-11-09', { '2026-11-09': { skip: true }, '2026-11-16': { skip: true } }), '2026-11-23');
   const open = (ms, overrides = {}) => lair.gwOpenWeek(ms, overrides);
@@ -380,21 +380,21 @@ test("round 27: GW couldn't supply: order it again next week, with the new date"
   await pay(2, [gwLine(21, KIT, 1)], { who: MIA, how: 'ship' });
   await maintain(at('2026-11-10', 6, 5));
   mails = [];
-  assert.equal(order(1).promise, '2026-11-26');
+  assert.equal(order(1).promise, '2026-11-30');
   // GW's trade site says Combat Patrol is out of stock: on next week's order
   const week = ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-09', code: CODE[KIT], choice: 'again', tell: true }));
   assert.equal(week.told, 2);
   const kit = lines().filter((l) => l.code === CODE[KIT]);
-  assert.deepEqual(kit.map((l) => [l.listed_for, l.promise]), [[null, '2026-12-03'], [null, '2026-12-03']]);
+  assert.deepEqual(kit.map((l) => [l.listed_for, l.promise]), [[null, '2026-12-07'], [null, '2026-12-07']]);
   assert.equal(lines().find((l) => l.code === CODE[PAINT]).listed_for, '2026-11-09', 'the paint is still on its way');
   // one parcel: the order's date is its latest line's
-  assert.equal(order(1).promise, '2026-12-03');
-  assert.equal(order(2).promise, '2026-12-03');
+  assert.equal(order(1).promise, '2026-12-07');
+  assert.equal(order(2).promise, '2026-12-07');
   const kai = mailsTo('kai@example.com');
   assert.equal(kai.length, 1);
   assert.equal(kai[0].subject, 'A new date for order #1');
   assert.equal(kai[0].replyTo, 'staff@example.com');
-  assert.match(kai[0].text, /Hi Kai! Games Workshop couldn't send 1 × Combat Patrol: Space Marines this week, so it's on our next order\. It should now be with you by Thursday 3 December\./);
+  assert.match(kai[0].text, /Hi Kai! Games Workshop couldn't send 1 × Combat Patrol: Space Marines this week, so it's on our next order\. It should now be with you by Monday 7 December\./);
   assert.match(kai[0].text, /Rather not wait\? Reply to this email and we'll refund it in full\./);
   assert.match(mailsTo('mia@example.com')[0].text, /We'll post your order in one parcel once everything's here\./);
   assert.deepEqual(week.sent.codes.find((c) => c.code === CODE[KIT]).unsupplied, { choice: 'again', units: 2, at: clock });
@@ -414,9 +414,6 @@ test("round 27: GW couldn't supply: order it again next week, with the new date"
   const list = mailsTo('staff@example.com').find((m) => m.subject.startsWith('GW order for Monday 16 Nov'));
   assert.match(list.text, /> 99120101386,2/);
   assert.deepEqual(lines().filter((l) => l.code === CODE[KIT]).map((l) => l.listed_for), ['2026-11-16', '2026-11-16']);
-  // not told late on the old date: the order isn't late until after 3 December
-  await maintain(at('2026-11-27', 9));
-  assert.equal(mailsTo('staff@example.com').filter((m) => /^Late from Games Workshop/.test(m.subject)).length, 0);
   // without telling them: their dates move, no email
   await pay(3, [gwLine(31, SOON, 1)], { who: LEO });
   await maintain(at('2026-12-01', 6, 5));
@@ -424,7 +421,10 @@ test("round 27: GW couldn't supply: order it again next week, with the new date"
   const quiet = ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-30', code: CODE[SOON], choice: 'again', tell: false }));
   assert.equal(quiet.told, 0);
   assert.equal(mails.length, 0);
-  assert.equal(order(3).promise, '2026-12-24');
+  assert.equal(order(3).promise, '2026-12-28');
+  // not told late on the old date (30 November): the order isn't late until after 7 December
+  await maintain(at('2026-12-01', 9));
+  assert.equal(mailsTo('staff@example.com').filter((m) => /^Late from Games Workshop/.test(m.subject)).length, 0);
 });
 
 test("round 27: GW couldn't supply: refund it, and nothing waits for it", async () => {
@@ -609,7 +609,7 @@ test('round 27: order dates: skip a week, change one, push a late one out, and b
   assert.equal(dates.open, '2026-11-09');
   assert.equal(dates.weeks.length, 17);
   const nine = (d) => d.weeks.find((w) => w.monday === '2026-11-09');
-  assert.deepEqual(nine(dates), { monday: '2026-11-09', ships: '2026-11-12', promise: '2026-11-26', skip: false, changed: false, sent: false, orders: 2, canSkip: true });
+  assert.deepEqual(nine(dates), { monday: '2026-11-09', ships: '2026-11-12', promise: '2026-11-30', skip: false, changed: false, sent: false, orders: 2, canSkip: true });
   assert.equal(dates.weeks.find((w) => w.monday === '2026-11-02').sent, true);
   assert.equal(dates.weeks.find((w) => w.monday === '2026-11-02').canSkip, false);
 
@@ -621,10 +621,10 @@ test('round 27: order dates: skip a week, change one, push a late one out, and b
   assert.equal(nine(dates).skip, true);
   assert.equal(nine(dates).orders, 0);
   assert.equal(dates.weeks.find((w) => w.monday === '2026-11-16').orders, 2);
-  assert.deepEqual(lines().map((l) => l.promise), ['2026-12-03', '2026-12-03']);
-  assert.equal(order(1).promise, '2026-12-03');
+  assert.deepEqual(lines().map((l) => l.promise), ['2026-12-07', '2026-12-07']);
+  assert.equal(order(1).promise, '2026-12-07');
   assert.equal(mailsTo('kai@example.com')[0].subject, 'A new date for order #1');
-  assert.match(mailsTo('kai@example.com')[0].text, /Hi Kai! Games Workshop's delivery is running later than usual, so your order should now be with you by Thursday 3 December\. Sorry for the wait\./);
+  assert.match(mailsTo('kai@example.com')[0].text, /Hi Kai! Games Workshop's delivery is running later than usual, so your order should now be with you by Monday 7 December\. Sorry for the wait\./);
   // Tuesday 10 Nov: no list for a skipped week; Tuesday 17 Nov: on 16 Nov's
   await maintain(at('2026-11-10', 6, 5));
   assert.equal(mailsTo('staff@example.com').filter((m) => m.subject.startsWith('GW order')).length, 0);
@@ -634,19 +634,19 @@ test('round 27: order dates: skip a week, change one, push a late one out, and b
 
   // deliveries slipping: 16 Nov's (already sent) pushed out a week, told
   mails = [];
-  dates = ok(await call('POST', 'gw/dates', { monday: '2026-11-16', ships: '2026-11-26', promise: '2026-12-10', tell: true }));
+  dates = ok(await call('POST', 'gw/dates', { monday: '2026-11-16', ships: '2026-11-26', promise: '2026-12-14', tell: true }));
   assert.equal(dates.told, 2);
-  assert.deepEqual(schedule.overrides['2026-11-16'], { ships: '2026-11-26', promise: '2026-12-10' });
-  assert.deepEqual(lines().map((l) => l.promise), ['2026-12-10', '2026-12-10']);
-  assert.match(mailsTo('mia@example.com')[0].text, /by Thursday 10 December/);
+  assert.deepEqual(schedule.overrides['2026-11-16'], { ships: '2026-11-26', promise: '2026-12-14' });
+  assert.deepEqual(lines().map((l) => l.promise), ['2026-12-14', '2026-12-14']);
+  assert.match(mailsTo('mia@example.com')[0].text, /by Monday 14 December/);
   // late was flagged on the old date, then told again on the new one
   lair.sql.exec("UPDATE gw_orders SET late_at = 1 WHERE order_id = 'gid://shopify/Order/1'");
-  ok(await call('POST', 'gw/dates', { monday: '2026-11-16', ships: '2026-11-26', promise: '2026-12-11', tell: false }));
+  ok(await call('POST', 'gw/dates', { monday: '2026-11-16', ships: '2026-11-26', promise: '2026-12-15', tell: false }));
   assert.equal(order(1).late_at, null);
   // the same dates as usual: back to usual; and reset
-  ok(await call('POST', 'gw/dates', { monday: '2026-11-16', ships: '2026-11-19', promise: '2026-12-03', tell: false }));
+  ok(await call('POST', 'gw/dates', { monday: '2026-11-16', ships: '2026-11-19', promise: '2026-12-07', tell: false }));
   assert.equal('2026-11-16' in schedule.overrides, false);
-  assert.deepEqual(lines().map((l) => l.promise), ['2026-12-03', '2026-12-03']);
+  assert.deepEqual(lines().map((l) => l.promise), ['2026-12-07', '2026-12-07']);
   ok(await call('POST', 'gw/dates', { monday: '2026-12-21', ships: '2026-12-24', promise: '2027-01-14', tell: false }));
   ok(await call('POST', 'gw/dates', { monday: '2026-12-21', reset: true }));
   assert.equal('2026-12-21' in schedule.overrides, false);

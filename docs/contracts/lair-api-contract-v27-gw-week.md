@@ -27,7 +27,7 @@ A week's orders close at midnight at the end of its Monday (its cutoff), and its
   then the Monday after. A skipped Monday passes it on to the next.
 - **Sent week**: the last list emailed. The Lair keeps it as it went (`meta` `gw-list-sent`: `{ cutoff, at, codes }`).
 - **A line's week**: the list it's on (`listed_for`), else the open week (or, ordered after the open week closed, its own
-  cutoff's), past any skipped Mondays. Its date is that week's (the week's own dates, else 17 days after the Monday).
+  cutoff's), past any skipped Mondays. Its date is that week's (the week's own dates, else 21 days after the Monday: three weeks, since 10 Nov 2026).
 
 ## Routes (owner only: anyone else gets 403)
 
