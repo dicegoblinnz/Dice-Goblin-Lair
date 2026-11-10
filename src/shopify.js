@@ -1557,14 +1557,15 @@ export class ShopifyAdmin {
 
   /* ---------- round 32, the till, part 3 (src/till-sales.js) ---------- */
   /**
-   * The variants whose barcode (in any of its forms) or SKU is `code`, up to 5, as the till needs them:
+   * The variants whose barcode (in any of its forms) or SKU is `code`, up to 20 (10 Nov 2026: was 5, and things that
+   * share a barcode are all offered at the till), as the till needs them:
    * [{ product: tillProductOf, variant: tillVariantOf }]. dice: the dice deal's collection (Product.inCollection), or null.
    */
   async tillVariants(code, dice) {
     const text = String(code ?? '').replace(/["\\]/g, '');
     const query = [...barcodeForms(text).map((form) => `barcode:"${form}"`), `sku:"${text}"`].join(' OR ');
     const data = await this.graphql(
-      `query LairTillVariants($query: String!${dice ? ', $dice: ID!' : ''}) { productVariants(first: 5, query: $query) { nodes {
+      `query LairTillVariants($query: String!${dice ? ', $dice: ID!' : ''}) { productVariants(first: 20, query: $query) { nodes {
         ${TILL_VARIANT_FIELDS} product { ${TILL_PRODUCT_FIELDS}${dice ? ' dice: inCollection(id: $dice)' : ''} } } } }`,
       { query, ...(dice ? { dice } : {}) },
       { version: this.tillVersion },

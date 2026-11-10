@@ -159,6 +159,21 @@ export function tillPick(matches, code) {
 }
 
 /**
+ * (Mo, 10 Nov 2026) Every variant the till sells that a barcode or SKU is, from Shopify's matches, in Shopify's order:
+ * the ones with that barcode, else the ones with that SKU. More than one and the till asks which, as Shopify POS does
+ * ("Shopify tells me to choose on its POS system, but my till doesn't do that"). Never a library copy or a gift card.
+ */
+export function tillChoices(matches, code) {
+  const list = matches || [];
+  const sellable = (hits) => {
+    const seen = new Set();
+    return hits.filter((m) => tillSellable(m.product) && !seen.has(String(m.variant.id)) && seen.add(String(m.variant.id)));
+  };
+  const byBarcode = sellable(list.filter((m) => m.variant.barcodes.some((b) => sameBarcode(b, code))));
+  return byBarcode.length ? byBarcode : sellable(list.filter((m) => sameBarcode(m.variant.sku, code)));
+}
+
+/**
  * The till's basket, checked: products by variant ({ key, variantId, qty }: up to TILL_QTY of each, the same variant
  * twice is one line), bookings by their code ({ key, code }, each once) and tabs by their id. Up to TILL_LINES lines.
  * Anything else is a 400. No awaits.
@@ -408,6 +423,8 @@ export const tillSalesMethods = {
    * POST /till/product { code } (the tablet's staff account): a barcode or SKU → { product, variant }: the variant whose
    * barcode (in any of its forms), then SKU, it is, with its product (only that variant). Shopify's answers are kept 5
    * minutes. 404 when the shop has none, 422 for a library copy or something not for sale, 503 when Shopify can't say.
+   * (10 Nov 2026) When several things the till sells share it, choices: [{ product, variant }] too, each with only its
+   * variant, for the till to ask which; product and variant are the first of them, for a till that doesn't ask yet.
    */
   async tillProductFind(body, who) {
     this.tillGate(who);
@@ -421,7 +438,9 @@ export const tillSalesMethods = {
     if (found === undefined) {
       if (!this.shopify?.configured) throw new RuleError(TILL_SALE_WORDS.shopify, 503);
       try {
-        found = tillPick(await this.shopify.tillVariants(code, this.tillDice()), code);
+        const matches = await this.shopify.tillVariants(code, this.tillDice());
+        found = tillPick(matches, code);
+        if (found) found = { ...found, choices: tillChoices(matches, code) };
       } catch (error) {
         console.error('Lair: the till could not look a barcode up in Shopify', error);
         throw new RuleError(TILL_SALE_WORDS.shopify, 503);
@@ -434,7 +453,9 @@ export const tillSalesMethods = {
     // (the gift card waits for Shopify to grant gift card permissions, as the till's plan says)
     if (found.product.giftCard) throw new RuleError(TILL_SALE_WORDS.giftCard, 422);
     if (!tillSellable(found.product)) throw new RuleError(TILL_SALE_WORDS.notForSale, 422);
-    return { product: tillProductView(found.product, [found.variant]), variant: tillVariantView(found.variant) };
+    const answer = { product: tillProductView(found.product, [found.variant]), variant: tillVariantView(found.variant) };
+    if (found.choices?.length > 1) answer.choices = found.choices.map((m) => ({ product: tillProductView(m.product, [m.variant]), variant: tillVariantView(m.variant) }));
+    return answer;
   },
 
   /**

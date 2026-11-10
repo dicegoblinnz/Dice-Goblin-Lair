@@ -74,6 +74,11 @@ const PRODUCTS = {
   old: { id: '106', title: 'Old promo', type: '', vendor: 'Dice Goblin NZ', status: 'ARCHIVED', giftCard: false, dice: false },
   libraryCopy: { id: '107', title: 'Catan (Library)', type: 'Board Games', vendor: 'Catan Studio', status: 'ACTIVE', giftCard: false, dice: false },
   card: { id: '108', title: 'Gift card', type: '', vendor: 'Dice Goblin NZ', status: 'ACTIVE', giftCard: true, dice: false },
+  // (10 Nov 2026) different things on one barcode: two sets' boosters, and a dice set whose colours share one
+  sparks: { id: '109', title: 'Pokemon Surging Sparks Booster', type: 'Trading Card Games', vendor: 'Pokemon', status: 'ACTIVE', giftCard: false, dice: false },
+  prism: { id: '110', title: 'Pokemon Prismatic Evolutions Booster', type: 'Trading Card Games', vendor: 'Pokemon', status: 'ACTIVE', giftCard: false, dice: false },
+  sparksCopy: { id: '111', title: 'Pokemon Surging Sparks Booster (Library)', type: 'Trading Card Games', vendor: 'Pokemon', status: 'ACTIVE', giftCard: false, dice: false },
+  glow: { id: '112', title: 'Glow Dice Set', type: 'Dice & Accessories', vendor: 'Dice Goblin NZ', status: 'ACTIVE', giftCard: false, dice: true },
 };
 const VARIANTS = {
   5011: { product: 'oakie', id: '5011', title: 'Green', sku: null, barcodes: ['4056133701068'], price: 1599, tracked: true, stock: 35, oversell: false },
@@ -84,6 +89,11 @@ const VARIANTS = {
   5016: { product: 'old', id: '5016', title: 'Default Title', sku: 'OLD-1', barcodes: ['9999000011'], price: 500, tracked: false, stock: null, oversell: false },
   5017: { product: 'libraryCopy', id: '5017', title: 'Default Title', sku: 'DGL34-M011', barcodes: [], price: 0, tracked: true, stock: 1, oversell: false },
   5018: { product: 'card', id: '5018', title: '$50', sku: null, barcodes: ['5555000011'], price: 5000, tracked: false, stock: null, oversell: false },
+  5019: { product: 'sparks', id: '5019', title: 'Default Title', sku: 'PKM-SSP-BP', barcodes: ['820650857442'], price: 1000, tracked: true, stock: 20, oversell: false },
+  5020: { product: 'prism', id: '5020', title: 'Default Title', sku: 'PKM-PRE-BP', barcodes: ['0820650857442'], price: 1400, tracked: true, stock: 0, oversell: false },
+  5021: { product: 'sparksCopy', id: '5021', title: 'Default Title', sku: null, barcodes: ['820650857442'], price: 0, tracked: true, stock: 1, oversell: false },
+  5022: { product: 'glow', id: '5022', title: 'Green', sku: null, barcodes: ['6900000000123'], price: 2000, tracked: true, stock: 3, oversell: false },
+  5023: { product: 'glow', id: '5023', title: 'Blue', sku: null, barcodes: ['6900000000123'], price: 2000, tracked: true, stock: 2, oversell: false },
 };
 const match = (id) => ({ product: { ...PRODUCTS[VARIANTS[id].product] }, variant: { ...VARIANTS[id] } });
 
@@ -279,6 +289,24 @@ test('round 32 part 3: a barcode is the shop\'s product, with the dice deal and 
   // asked once each: the same barcode again is the kept answer
   ok(await call('POST', 'till/product', { code: '4056133701068' }, OWNER));
   assert.deepEqual(shop.asked, ['4056133701068', 'dgd-f2-d20-33', '31283123850']);
+});
+
+test('a barcode several things share asks which one, as Shopify POS does (Mo, 10 Nov 2026)', async () => {
+  // Mo: "when I scan an item that shares the same barcode as other items but clearly they are different types Shopify
+  // tells me to choose on its POS system, but my till doesn't do that"
+  const both = ok(await call('POST', 'till/product', { code: '820650857442' }, OWNER));
+  // every one the till sells, in Shopify's order: never the library copy on the same barcode
+  assert.deepEqual(both.choices.map((c) => [c.product.title, c.variant.id]), [['Pokemon Surging Sparks Booster', '5019'], ['Pokemon Prismatic Evolutions Booster', '5020']]);
+  assert.deepEqual(both.choices[1].variant, { id: '5020', title: 'Default Title', price: 1400, sku: 'PKM-PRE-BP', available: false, stock: 0 });
+  assert.deepEqual(both.choices[1].product.variants, [both.choices[1].variant]);
+  // a till that doesn't know choices yet still gets one to add
+  assert.equal(both.variant.id, '5019');
+  // colours of one dice set on one barcode: one product, each colour a choice
+  const glow = ok(await call('POST', 'till/product', { code: '6900000000123' }, OWNER));
+  assert.deepEqual(glow.choices.map((c) => `${c.product.title} ${c.variant.title}`), ['Glow Dice Set Green', 'Glow Dice Set Blue']);
+  assert.equal(glow.choices[0].product.dice, true);
+  // a barcode only one thing has: no question to ask
+  assert.equal(ok(await call('POST', 'till/product', { code: '4056133701068' }, OWNER)).choices, undefined);
 });
 
 test('round 32 part 3: barcodes the till won\'t sell, ones the shop doesn\'t have, and Shopify down', async () => {
