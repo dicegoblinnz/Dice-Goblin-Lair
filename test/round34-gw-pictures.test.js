@@ -136,11 +136,15 @@ test('round 34: the data file: every code has at least one trade-site Resources 
   for (const code of CODES) {
     assert.match(code, /^\d{8,13}$/);
     assert.ok(picturesFor(code).length >= 1 && picturesFor(code).length <= 4, code);
-    for (const p of picturesFor(code)) assert.match(p, /^20\d\d\/\d\d\//);
+    for (const p of picturesFor(code)) assert.match(p, /^(?:20\d\d\/\d\d\/|https:\/\/cdn\.shopify\.com\/s\/files\/)/);
   }
   assert.equal(pictureUrl('2025/02/BSF-89-07-99120209148-Gloomspite Gitz Moonclan Stabbas.jpg'),
     'https://trade.games-workshop.com/assets/2025/02/BSF-89-07-99120209148-Gloomspite%20Gitz%20Moonclan%20Stabbas.jpg');
   assert.deepEqual(picturesFor('not a code'), []);
+  // a stockist's copy of GW's picture is used as its whole address
+  const copy = 'https://cdn.shopify.com/s/files/1/0022/1947/4990/products/SM_IF_Tor_Garadon_2019.jpg';
+  assert.equal(pictureUrl(copy), copy);
+  assert.ok(CODES.some((c) => picturesFor(c).some((p) => p.startsWith('https://'))));
 });
 
 test('round 34: products with no picture get GW\'s, a paint colour its pot on its variant, and once fetched they go online', async () => {

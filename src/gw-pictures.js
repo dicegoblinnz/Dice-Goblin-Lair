@@ -34,8 +34,11 @@ export const PICTURE_LIMITS = {
 };
 
 const ASSETS = 'https://trade.games-workshop.com/assets/';
-/** A Resources file's address (its path as the trade site names it, spaces and all) */
-export const pictureUrl = (path) => ASSETS + String(path).split('/').map(encodeURIComponent).join('/');
+/**
+ * A picture's address: a Resources file's path as the trade site names it (spaces and all), or, for a pad line with no
+ * Resources file, GW's own picture where another stockist shows it, as its whole https address (Mo, 10 Nov 2026)
+ */
+export const pictureUrl = (path) => (/^https:\/\//.test(String(path)) ? String(path) : ASSETS + String(path).split('/').map(encodeURIComponent).join('/'));
 
 export const GW_PICTURE_TABLES = [
   `CREATE TABLE IF NOT EXISTS gw_pictures (
