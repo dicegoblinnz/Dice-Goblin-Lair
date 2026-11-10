@@ -144,7 +144,7 @@ const TILL_VARIANT_FIELDS = 'id title sku price inventoryQuantity inventoryPolic
 const TILL_PRODUCT_FIELDS = 'id title productType vendor status isGiftCard';
 const tillMoney = (field) => `${field} { shopMoney { amount currencyCode } }`;
 const TILL_FIGURES = `taxesIncluded ${tillMoney('subtotalPriceSet')} ${tillMoney('totalPriceSet')} ${tillMoney('totalTaxSet')} platformDiscounts { title totalAmount { amount } }`;
-const TILL_LINE_FIELDS = `uuid custom quantity title variantTitle sku variant { id } ${tillMoney('originalUnitPriceSet')} ${tillMoney('originalTotalSet')} ${tillMoney('discountedTotalSet')} customAttributes { key value }`;
+const TILL_LINE_FIELDS = `uuid custom quantity title variantTitle sku variant { id } ${tillMoney('originalUnitPriceSet')} ${tillMoney('originalTotalSet')} ${tillMoney('discountedTotalSet')} customAttributes { key value } appliedDiscount { ${tillMoney('amountSet')} }`;
 /** An amount Shopify gives as text ("15.99") in cents, or null */
 const centsOf = (amount) => {
   if (amount == null || amount === '') return null;
@@ -177,7 +177,7 @@ export function tillVariantOf(v) {
  * variant at the shop's price (`cents` overrides it: a tab's things, at the tab's price), custom lines for what the Lair
  * charges (a booking's title and price, taxable), each with its uuid and properties; the shop's automatic discounts (the
  * dice deal); a $0 "Collected at the Lair" shipping line when there are products, as the cash orders have.
- * lines: [{ uuid, variantId, qty, cents?, attributes? } | { uuid, title, cents, attributes? }]
+ * lines: [{ uuid, variantId, qty, cents?, attributes?, discount?, discountNote? } | { uuid, title, cents, attributes? }]
  */
 export function tillDraftInput({ lines, currency }) {
   const money = (cents) => ({ amount: (Math.max(0, Math.round(Number(cents) || 0)) / 100).toFixed(2), currencyCode: currency });
@@ -195,6 +195,8 @@ export function tillDraftInput({ lines, currency }) {
           quantity: Math.max(1, Math.round(Number(l.qty) || 1)),
           ...(l.cents != null ? { priceOverride: money(l.cents) } : {}),
           ...(properties.length ? { customAttributes: properties } : {}),
+          // round 34: a staff discount, a percent off this line (src/till-discounts.js checks it, and what Shopify took)
+          ...(l.discount ? { appliedDiscount: { valueType: 'PERCENTAGE', value: Number(l.discount), title: 'Staff discount', ...(l.discountNote ? { description: String(l.discountNote).slice(0, 255) } : {}) } } : {}),
         };
       }
       return {
@@ -208,7 +210,7 @@ export function tillDraftInput({ lines, currency }) {
 /**
  * A draft's figures (or a calculation's), in cents: { subtotal (the lines before discounts), discounts: [{ title, amount }]
  * (the shop's automatic discounts that applied), total, gst, taxIncluded, lines: [{ uuid, title, variantTitle, variantId,
- * qty, unit, total (before discounts), paid (after them), custom, attributes }] }
+ * qty, unit, total (before discounts), paid (after them), custom, attributes, staff? (round 34: its staff discount) }] }
  */
 export function tillFiguresOf(d, lineNodes) {
   const lines = (lineNodes || []).map((l) => ({
@@ -216,6 +218,8 @@ export function tillFiguresOf(d, lineNodes) {
     variantId: l.variant?.id ? lastPart(l.variant.id) : null, qty: Number(l.quantity) || 1,
     unit: centsOf(l.originalUnitPriceSet?.shopMoney?.amount) ?? 0, total: centsOf(l.originalTotalSet?.shopMoney?.amount) ?? 0,
     paid: centsOf(l.discountedTotalSet?.shopMoney?.amount) ?? 0, custom: l.custom === true,
+    // round 34: what the line's own (staff) discount took off, when it has one
+    ...(l.appliedDiscount ? { staff: centsOf(l.appliedDiscount.amountSet?.shopMoney?.amount) ?? 0 } : {}),
     attributes: Object.fromEntries((l.customAttributes || []).map((a) => [a.key, a.value])),
   }));
   const discounts = (d?.platformDiscounts || [])

@@ -103,6 +103,7 @@ import { tillPeopleMethods } from './till-people.js';
 // Round 32, the till, part 3: real products, prices and sales saved to Shopify (src/till-sales.js, contract v32-till section 6)
 import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
 import { CREDIT_PAY_COLUMNS, CREDIT_PAY_INDEXES, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
+import { TILL_DISCOUNT_COLUMNS, tillDiscountMethods } from './till-discounts.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1194,7 +1195,8 @@ export class Lair {
     for (const statement of TILL_SALE_TABLES) this.sql.exec(statement);
     // Round 33: paying with store credit, in My Lair and at the till (src/credit-pay.js), and a till sale's store credit
     for (const statement of CREDIT_PAY_TABLES) this.sql.exec(statement);
-    for (const [table, column, type] of CREDIT_PAY_COLUMNS) {
+    // Round 34: who approved a till sale's discount, and what it took off (src/till-discounts.js)
+    for (const [table, column, type] of [...CREDIT_PAY_COLUMNS, ...TILL_DISCOUNT_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -11283,4 +11285,5 @@ Object.assign(Lair.prototype, tillMethods);
 Object.assign(Lair.prototype, tillPeopleMethods);
 // Round 32, the till, part 3: products, prices and sales (src/till-sales.js)
 Object.assign(Lair.prototype, tillSalesMethods);
+Object.assign(Lair.prototype, tillDiscountMethods);
 Object.assign(Lair.prototype, creditPayMethods);

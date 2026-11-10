@@ -32,6 +32,7 @@ import { TILL_ORDER_TAG } from './counter.js';
 import { maskEmail } from './till.js';
 import { TILL_PEOPLE_WORDS, TILL_UNPAYABLE } from './till-people.js';
 import { CREDIT_PAY, CREDIT_PAY_WORDS } from './credit-pay.js';
+import { TILL_DISCOUNT_TAG, TILL_DISCOUNT_WORDS, tillDiscountCheck, tillDiscountIn, tillDiscountsShown } from './till-discounts.js';
 
 const MIN = 60_000;
 const DAY = 24 * HOUR;
@@ -174,8 +175,8 @@ export function tillChoices(matches, code) {
 }
 
 /**
- * The till's basket, checked: products by variant ({ key, variantId, qty }: up to TILL_QTY of each, the same variant
- * twice is one line), bookings by their code ({ key, code }, each once) and tabs by their id. Up to TILL_LINES lines.
+ * The till's basket, checked: products by variant ({ key, variantId, qty, discount? }: up to TILL_QTY of each, the
+ * same variant twice is one line, with the same discount; round 34: discount, a percent off up to 25), bookings by their code ({ key, code }, each once) and tabs by their id. Up to TILL_LINES lines.
  * Anything else is a 400. No awaits.
  */
 export function tillBasketIn(list) {
@@ -186,6 +187,9 @@ export function tillBasketIn(list) {
   const tabs = [];
   for (const raw of list) {
     const key = String(raw?.key ?? '').slice(0, 80);
+    // round 34: a discount is a percent off one of the shop's products, never a booking or a tab
+    const discount = tillDiscountIn(raw?.discount);
+    if (discount && ((raw?.tab != null && raw.tab !== '') || (raw?.booking != null && raw.booking !== ''))) throw new RuleError(TILL_DISCOUNT_WORDS.notProduct, 400);
     if (raw?.tab != null && raw.tab !== '') {
       const id = String(raw.tab).trim();
       if (!/^[A-Za-z0-9_-]{1,40}$/.test(id)) throw new RuleError(TILL_SALE_WORDS.lines, 400);
@@ -204,17 +208,17 @@ export function tillBasketIn(list) {
     const have = items.get(variantId);
     if (have) {
       have.qty += qty;
-      if (have.qty > TILL_QTY) throw new RuleError(TILL_SALE_WORDS.lines, 400);
+      if (have.qty > TILL_QTY || (have.discount || null) !== discount) throw new RuleError(TILL_SALE_WORDS.lines, 400);
     } else {
-      items.set(variantId, { key: key || `v:${variantId}`, variantId, qty });
+      items.set(variantId, { key: key || `v:${variantId}`, variantId, qty, ...(discount ? { discount } : {}) });
     }
   }
   return { items: [...items.values()], codes, tabs };
 }
 
 /**
- * The sale's lines as Shopify priced them, for the till: [{ key, title, qty, unit, total, booking?, tab? }] (unit and
- * total in cents, before discounts: the discounts are their own lines). Each is found by its uuid, or by its place.
+ * The sale's lines as Shopify priced them, for the till: [{ key, title, qty, unit, total, discount?, booking?, tab? }]
+ * (unit and total in cents, before discounts: the discounts are their own lines; round 34: discount { percent, amount }). Each is found by its uuid, or by its place.
  */
 export function tillShownLines(lines, figures) {
   const byUuid = new Map((figures?.lines || []).filter((l) => l.uuid).map((l) => [l.uuid, l]));
@@ -224,7 +228,10 @@ export function tillShownLines(lines, figures) {
     const qty = f?.qty ?? l.qty ?? 1;
     const unit = f?.unit ?? l.cents ?? 0;
     const title = l.variantId && f ? [f.title, f.variantTitle].filter(Boolean).join(' · ') : l.title || f?.title || '';
-    return { key: l.key, title, qty, unit, total: f?.total ?? unit * qty, ...(l.booking ? { booking: l.booking } : {}), ...(l.tab ? { tab: l.tab } : {}) };
+    const total = f?.total ?? unit * qty;
+    // round 34: a staff discount's percent, and what Shopify took off for it
+    const discount = l.discount ? { percent: l.discount, amount: f ? f.staff ?? Math.max(0, total - (f.paid ?? total)) : Math.round((total * l.discount) / 100) } : null;
+    return { key: l.key, title, qty, unit, total, ...(discount ? { discount } : {}), ...(l.booking ? { booking: l.booking } : {}), ...(l.tab ? { tab: l.tab } : {}) };
   });
 }
 
@@ -276,6 +283,8 @@ export const tillSalesMethods = {
       paidAt: r.paid_at || null, by: r.by_name || null, handed: r.handed ?? null, change: r.change_given ?? null,
       // round 33: store credit taken for it, and what's left to pay by card or cash
       credit: r.credit || 0, due: r.total == null ? null : r.total - (r.credit || 0),
+      // round 34: a staff discount on it, and who approved it
+      staffDiscount: r.discount_by ? { amount: r.discount_total || 0, by: r.discount_by_name || null } : null,
       order: r.order_id ? { id: r.order_id, name: r.order_name || null } : null, saving: r.status === 'paid' && r.order_status !== 'made',
       receipt: r.status === 'paid' && member?.email ? maskEmail(member.email) : null,
     };
@@ -509,8 +518,14 @@ export const tillSalesMethods = {
       console.error('Lair: the till could not price a basket with Shopify', error);
       throw new RuleError(TILL_SALE_WORDS.shopify, 503);
     }
+    // --- no awaits from here on ---
+    // round 34: what the staff discount took off, checked (25% at most, never on top of a deal); approved only at Pay
+    const staff = tillDiscountCheck(lines, figures);
     return {
-      price: { lines: tillShownLines(lines, figures), subtotal: figures.subtotal, discounts: figures.discounts, total: figures.total, gst: figures.gst, taxIncluded: figures.taxIncluded },
+      price: {
+        lines: tillShownLines(lines, figures), subtotal: figures.subtotal, discounts: tillDiscountsShown(figures.discounts, staff.total), total: figures.total, gst: figures.gst, taxIncluded: figures.taxIncluded,
+        ...(lines.some((l) => l.discount) ? { needsOk: true, staffDiscount: staff.total } : {}),
+      },
       dropped: owed.dropped,
     };
   },
@@ -549,7 +564,11 @@ export const tillSalesMethods = {
       await this.creditPaySettled(customerId);
     }
     const tokenHash = body?.token ? await this.tillTokenHash(body.token) : null;
-    const tagged = tokenHash ? await this.tillTagged() : null;
+    // round 34: a discount goes through only with a PIN just put in by the owner or someone with Money (discountOk)
+    const discounted = basket.items.some((i) => i.discount);
+    if (discounted && !body?.discountOk) throw new RuleError(TILL_DISCOUNT_WORDS.needOk, 403);
+    const discountHash = discounted ? await this.tillTokenHash(body.discountOk) : null;
+    const tagged = tokenHash || discounted ? await this.tillTagged() : null;
     const rules = await this.rules();
     if (!this.shopify?.configured) throw new RuleError(TILL_SALE_WORDS.shopify, 503);
     // round 33: store credit needs a member on the sale, and their balance, read first
@@ -565,6 +584,9 @@ export const tillSalesMethods = {
     const raced = this.tillPayRepeat(key, till, method, customerId);
     if (raced) return raced;
     const me = tokenHash ? this.tillOn(tokenHash, this.tillTeamFrom(who, tagged)) : null;
+    // round 34: who approved the discount (checked before anything is checked in or made)
+    const approval = discounted ? this.tillDiscountApprover(discountHash, this.tillTeamFrom(who, tagged), till, now) : null;
+    const approvedBy = approval ? `Approved by ${approval.person.name} on the till` : null;
     if (useCredit && this.creditPayBusy(customerId)) throw new RuleError(CREDIT_PAY_WORDS.tillBusy, 409);
     const pending = this.tillPendingRefs(now);
     // the bookings as the till showed them, checked in, then read again: one with nothing to pay now (paid another way,
@@ -575,21 +597,22 @@ export const tillSalesMethods = {
     const owed = this.tillOwedLines(basket.codes, customerId, rules, now, pending, { drop: true });
     const dropped = [...new Set([...before.dropped, ...owed.dropped])];
     const tab = this.tillTabLines(basket.tabs, customerId, rules, now);
-    const lines = [...basket.items, ...owed.lines.map(({ row, ...l }) => l), ...tab.lines].map((l) => ({ ...l, uuid: crypto.randomUUID() }));
+    const lines = [...basket.items, ...owed.lines.map(({ row, ...l }) => l), ...tab.lines].map((l) => ({ ...l, ...(l.discount ? { discountNote: approvedBy } : {}), uuid: crypto.randomUUID() }));
     for (const old of this.sql.exec("SELECT * FROM till_sales WHERE till = ? AND status IN ('making', 'open')", till).toArray()) this.tillLetGo(old, 'another sale', now);
     if (!lines.length) return { sale: null, dropped, notices };
     const id = makeId('ts');
     this.write(
-      `INSERT INTO till_sales (id, till, customer_id, method, status, lines, refs, tabs, started_by, pay_key, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'making', ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO till_sales (id, till, customer_id, method, status, lines, refs, tabs, started_by, pay_key, created_at, updated_at, discount_by, discount_by_name, discount_ok)
+       VALUES (?, ?, ?, ?, 'making', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, till, customerId, method, JSON.stringify(lines), JSON.stringify(owed.refs), JSON.stringify(tab.tabIds), me ? me.id : null, key, now, now,
+      approval ? approval.person.id : null, approval ? approval.person.name : null, approval ? approval.tokenHash : null,
     );
     // its tab can't change in My Lair while it's being paid
     for (const tabId of tab.tabIds) this.write("UPDATE tabs SET status = 'in-cart', updated_at = ? WHERE id = ? AND status IN ('open', 'in-cart')", now, tabId);
     const rest = method === 'card' ? 'by card on the EFTPOS' : 'in cash';
     const how = !useCredit ? rest : method === 'credit' ? 'with store credit' : `with store credit and ${rest}`;
-    const note = `Sold on the Lair till, ${how}${me ? `, rung up by ${me.name}` : ''} (${id}).`;
-    const tags = [TILL_ORDER_TAG, 'till', method, ...(useCredit && method !== 'credit' ? ['credit'] : []), ...(useCredit ? ['store-credit'] : [])];
+    const note = `Sold on the Lair till, ${how}${me ? `, rung up by ${me.name}` : ''} (${id}).${approval ? ` Staff discount approved by ${approval.person.name}.` : ''}`;
+    const tags = [TILL_ORDER_TAG, 'till', method, ...(useCredit && method !== 'credit' ? ['credit'] : []), ...(useCredit ? ['store-credit'] : []), ...(approval ? [TILL_DISCOUNT_TAG] : [])];
     // --- Shopify: the draft, and its figures once it's worked them out ---
     const deadline = Date.now() + TILL_SHOPIFY_WAIT;
     const left = () => Math.max(1000, deadline - Date.now());
@@ -621,11 +644,19 @@ export const tillSalesMethods = {
       this.later(this.shopify.deleteDraftIfOpen(draft.id));
       throw new RuleError(TILL_SALE_WORDS.gone, 409);
     }
+    // round 34: what Shopify took off for the discount, checked again on the draft whose price is taken
+    let staff;
+    try {
+      staff = tillDiscountCheck(lines, draft);
+    } catch (error) {
+      this.tillLetGo({ ...fresh, draft_id: draft.id }, 'discount', Date.now());
+      throw error;
+    }
     const shown = tillShownLines(lines, draft);
     this.write(
-      `UPDATE till_sales SET status = 'open', draft_id = ?, subtotal = ?, total = ?, gst = ?, discounts = ?, shown = ?, updated_at = ?
+      `UPDATE till_sales SET status = 'open', draft_id = ?, subtotal = ?, total = ?, gst = ?, discounts = ?, shown = ?, discount_total = ?, updated_at = ?
          WHERE id = ? AND status = 'making'`,
-      draft.id, draft.subtotal, draft.total, draft.gst, JSON.stringify(draft.discounts), JSON.stringify(shown), Date.now(), id,
+      draft.id, draft.subtotal, draft.total, draft.gst, JSON.stringify(tillDiscountsShown(draft.discounts, staff.total)), JSON.stringify(shown), staff.total || null, Date.now(), id,
     );
     if (useCredit) return this.tillTakeCredit(id, { customerId, balance, method, deadline, me, dropped, notices });
     return { sale: this.tillSaleView(this.tillSaleRow(id)), dropped, notices };
