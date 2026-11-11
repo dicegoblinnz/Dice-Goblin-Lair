@@ -322,13 +322,18 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   the sale shared across its things by price, to the cent ($10 across a $105 game and two $11 boosters); more than
   they can come down by between them; the amount that's on shown when it's opened again; an amount three of one thing
   can't share to the cent (a cent under, said so); what stays out and why (a deck's free sleeves on the shop's other
-  deal, dice, a drink on sale already); a sale of only dice; and tapped before Shopify's price is in (the Lair app's
-  refusal names the line, and the next go leaves it out). No sideways scroll, no console errors (81 checks).
+  deal, dice, a drink on sale already); a sale of only dice; tapped before Shopify's price is in (the Lair app's
+  refusal names the line, and the till shares the same amount again across the rest by itself; Card tapped that early
+  needs only a second tap); the amount staying with the sale as it changes (one more of something, a thing taken out
+  and put back, a line's discount changed by hand letting go of it, nothing held over to the next sale); and
+  Shopify's price dropping before Pay with the sale's own discount on (nothing sold, shared again on the new price).
+  No sideways scroll, no console errors (96 checks).
   `DG_THEME=… [LOOK=pieces|first] [PORT=4997] [OUT=…] node tools/qa/round35-till-discounts/till.mjs`.
 - `round35-till-discounts/practice.mjs`: the same on the demo (Practice sales, the till's own sums): dollars off, the
   till's own limit, off each one, the Money PIN at Pay, round 34's review finding still holding (Back while the PIN
   is checked pays nothing), the demo still saying it's the demo (Demo codes, "Practice till"), and Discount on
-  everything on the till's own sums, with a booking in the sale keeping its price (19 checks).
+  everything on the till's own sums, staying the sale's when one more of something is added, with a booking in the
+  sale keeping its price (20 checks).
   `DG_THEME=… [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs`.
 - `round35-till-discounts/split.mjs`: the sharing itself (`LairTill.splitOff`, in the till's own page) on 10,000
   made-up baskets with up to 6, 12 and 99 of a thing: nothing gets more than it can come down by; never more comes off

@@ -22,7 +22,11 @@
 // 6b, 6c. Discount on everything (Mo, 11 Nov 2026: "make $ off discount back"): dollars off the whole sale, shared
 //     across its things by price as whole cents off each one, exact where the quantities allow.
 // 6d. What stays out of it, and why: a deck's free sleeves (the shop's other deal), dice, things on sale already.
-// 6e. Tapped before Shopify's price is in: the Lair app's refusal names the line, and the next go leaves it out.
+// 6e. Tapped before Shopify's price is in: the Lair app's refusal names the line, and the till shares the same amount
+//     again across the rest by itself; Card tapped that early needs only a second tap.
+// 6f. The amount stays with the sale as the sale changes: one more of something, a thing taken out and put back; a
+//     line's discount changed by hand lets go of it.
+// 6g. With the sale's own discount on, Shopify's price dropping before Pay: nothing's sold, and it's shared again.
 // And what the real till says about itself: no Demo codes on its start screen, no "Practice till" as staff sign in.
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4997] [OUT=dir] node tools/qa/round35-till-discounts/till.mjs
 import os from 'node:os';
@@ -450,6 +454,7 @@ await step('6b', async () => {
   check('$10: shared by price as whole cents off each one, $8.28 off 7 Wonders and 86c off each booster, which is $10.00 exactly',
     v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 828], ['5013', 86]]) && v.lines[0].sub === 'Staff discount: $8.28 off' && v.lines[1].sub === 'Booster Pack · Staff discount: $0.86 off each' && v.lines[2].sub === 'Classic', { v, sent: offsSent('till/price') });
   check('the sale says Staff discount −$10.00 and Total $120.00, and the till says how it was shared', v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $120.00') && v.toast === '$10.00 off the sale, shared across 2 things. Someone with Money approves it at Pay.', v);
+  check("the button in the sale's foot says what's on: $10.00 off everything", v.offs.at(-1) === '$10.00 off everything', v.offs);
   await noToast();
   await shot(page, 'till-9-everything-on');
   // Card asks for the PIN as for any discount
@@ -463,7 +468,7 @@ await step('6b', async () => {
   check('Discount on everything again shows the $10 that is on, and offers No discount', v.none && v.quick.includes('$10 off $117.00 (on)') && v.quick.filter((t) => / \(on\)$/.test(t)).length === 1, { none: v.none, quick: v.quick });
   await tap('[data-act="discount-set"][data-c="0"]', 1200);
   v = await look();
-  check('No discount takes it off every line: Total $130.00 again', v.view === 'till' && v.toast === 'Discounts taken off.' && v.totals.includes('Total $130.00') && !v.totals.some((t) => /Staff discount/.test(t)) && v.offs.slice(0, 3).every((t) => t === 'Discount'), v);
+  check('No discount takes it off every line: Total $130.00 again', v.view === 'till' && v.toast === 'Discounts taken off.' && v.totals.includes('Total $130.00') && !v.totals.some((t) => /Staff discount/.test(t)) && v.offs.slice(0, 3).every((t) => t === 'Discount') && v.offs.at(-1) === 'Discount on everything', v);
   await noToast();
 });
 
@@ -484,10 +489,11 @@ await step('6c', async () => {
   v = await look();
   check("$1 across three boosters is 33c each: 99c comes off, never more than was asked, and the till says why", v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5013', 33]]) && v.totals.includes('Staff discount −$0.99')
     && v.toast === "$0.99 off the sale: $1.00 didn't share out to the cent across these. Someone with Money approves it at Pay.", { v, sent: offsSent('till/price') });
+  check("the button says both: $0.99 of $1.00 off everything", v.offs.at(-1) === '$0.99 of $1.00 off everything', v.offs);
   await noToast();
   await tap('[data-act="discount"][data-key="*"]');
   v = await look();
-  check('opened again, the field has what is off the sale now: 0.99', v.field && v.field.value === '0.99', v.field);
+  check('opened again, the field has what was asked, and the screen says how much of it is off and why', v.field && v.field.value === '1.00' && v.lede === "$33.00 before the discount. $0.99 of the $1.00 is off: it doesn't share out to the cent across these.", { field: v.field, lede: v.lede });
   const prices = calls('till/price').length;
   await type('0.01');
   v = await look();
@@ -551,7 +557,8 @@ await step('6d', async () => {
 
 /* ---------- 6e. Tapped before Shopify's price is in ---------- */
 await step('6e', async () => {
-  // the till doesn't know yet that the sleeves are the deal's, so it shares across them too; the Lair app won't have it
+  // the till doesn't know yet that the sleeves are the deal's, so it shares across them too. The Lair app won't have
+  // it and says which line; the till shares the same $10 again across the rest by itself
   state.slowPrice = 2500;
   await tap('[data-act="quick"]').catch(() => {});
   await scan(CODE.deck, 400);
@@ -562,18 +569,122 @@ await step('6e', async () => {
   await type('10', 300);
   state.slowPrice = 0;
   await page.waitForFunction(() => /on a deal already/.test(document.querySelector('[data-r="toast"]')?.textContent || ''), null, { timeout: 12000 }).catch(() => {});
+  await settle(1300);
   v = await look();
-  check("the Lair app's own words for the sleeves, and the sale is still there",
-    v.view === 'till' && v.toast === "Final Fantasy Commander Sleeves (100) is on a deal already, so it can't have a discount too. Take the discount off it." && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5028', 819], ['5029', 181]]), { v, sent: offsSent('till/price') });
+  const sentOffs = (n) => calls('till/price').slice(-n).map((c) => c.body.lines.filter((l) => l.off != null).map((l) => [String(l.variantId), l.off]));
+  check("the Lair app won't have the sleeves' share: the till says why, and shares the $10 again across the rest",
+    v.view === 'till' && v.toast === "Final Fantasy Commander Sleeves (100) is on a deal already, so it can't have a discount too. The $10.00 off the sale is shared again to fit." && JSON.stringify(sentOffs(2)) === JSON.stringify([[['5028', 819], ['5029', 181]], [['5028', 1000]]]), { v, sent: sentOffs(2) });
+  check('the Lair app takes that: $10.00 off, Total $79.99, with nothing for staff to put right', v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $79.99') && v.offs.at(-1) === '$10.00 off everything' && v.lines[1].sub === '', v);
+  await noToast();
+  const steady = calls('till/price').length;
+  await settle(1200);
+  check("and it's settled: the till doesn't keep asking for the price", calls('till/price').length === steady, calls('till/price').length - steady);
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+  // Card tapped that early: the price is asked then, the same thing happens, and a second tap goes on to the PIN
+  state.slowPrice = 2500;
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.deck, 400);
+  await scan(CODE.sleeves, 400);
+  await tap('[data-act="discount"][data-key="*"]', 200);
+  await type('10', 150);
+  state.slowPrice = 0;
+  const pays = calls('till/pay').length;
+  await tap('[data-act="pay-card"]', 1500);
+  v = await look();
+  check("Card before the price is in: the till says the sleeves can't take it and that it's shared again, and nothing goes to Pay",
+    v.view === 'till' && !v.busy && v.toast === "Final Fantasy Commander Sleeves (100) is on a deal already, so it can't have a discount too. The $10.00 off the sale is shared again to fit. Pay again to carry on." && calls('till/pay').length === pays, { view: v.view, busy: v.busy, toast: v.toast });
+  await noToast();
+  await tap('[data-act="pay-card"]', 1500);
+  v = await look();
+  check('Card again asks for the PIN: $10.00 off, so the sale is $79.99', v.view === 'discountok' && /\$10\.00 off, so the sale is \$79\.99\./.test(v.lede), { view: v.view, lede: v.lede });
+  await tap('[data-act="back"]');
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+});
+
+/* ---------- 6f. The amount stays with the sale ---------- */
+await step('6f', async () => {
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.wonders);
+  await scan(CODE.booster);
+  await scan(CODE.booster, 1300);
   await noToast();
   await tap('[data-act="discount"][data-key="*"]');
-  v = await look();
-  check('Discount on everything now leaves the sleeves out', v.lede === '$89.99 before the discount.' && v.notes.includes('Things on a deal already stay as they are.') && v.quick.includes('$10 off $79.99 (on)'), { lede: v.lede, notes: v.notes, quick: v.quick });
   await tap('[data-act="discount-set"][data-c="1000"]', 1300);
-  v = await look();
-  check('$10 again: all of it off the deck, none on the sleeves, and the Lair app takes it', v.view === 'till' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5028', 1000]]) && v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $79.99')
-    && v.toast === '$10.00 off the sale. Someone with Money approves it at Pay.', { v, sent: offsSent('till/price') });
   await noToast();
+  // one more booster: still $10.00 off the sale, shared again
+  await tap('.t-line:nth-child(2) [data-act="more"]', 1300);
+  v = await look();
+  check('one more booster: the sale still has $10.00 off, shared again across what is there now ($7.63 and 79c each)',
+    JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 763], ['5013', 79]]) && v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $128.00') && v.offs.at(-1) === '$10.00 off everything', { v, sent: offsSent('till/price') });
+  // the game comes out: three boosters can come down by $6.60 between them, so that's what is off, and the till says so
+  await tap('.t-line:nth-child(1) [data-act="less"]', 1300);
+  v = await look();
+  check('7 Wonders taken out: $6.60 of the $10.00 is off (all three boosters can take), and Undo is still offered',
+    JSON.stringify(offsSent('till/price')) === JSON.stringify([['5013', 220]]) && v.totals.includes('Staff discount −$6.60') && v.totals.includes('Total $26.40') && v.offs.at(-1) === '$6.60 of $10.00 off everything' && /Undo/.test(v.toast), { v, sent: offsSent('till/price') });
+  await tap('[data-act="discount"][data-key="*"]');
+  v = await look();
+  check('its screen says how much of it is off and why, with the $10 still the one that is on', v.lede === "$33.00 before the discount. $6.60 of the $10.00 is off: that's the most these can come down by." && v.field && v.field.value === '10.00', { lede: v.lede, field: v.field, quick: v.quick });
+  await tap('[data-act="back"]');
+  // and back in: $10.00 again
+  await scan(CODE.wonders, 1300);
+  v = await look();
+  check('7 Wonders scanned back in: $10.00 off the sale again', v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $128.00') && v.offs.at(-1) === '$10.00 off everything' && JSON.stringify(offsSent('till/price').sort()) === JSON.stringify([['5013', 79], ['5026', 763]]), { v, sent: offsSent('till/price') });
+  await noToast();
+  // a line's discount changed by hand: the sale lets go of the amount, and every line keeps what it has
+  const boosterLine = v.lines.findIndex((l) => l.title === 'Riftbound Radiance') + 1;
+  await tap(`.t-line:nth-child(${boosterLine}) [data-act="discount"]`);
+  await tap('[data-act="discount-set"][data-c="100"]', 1300);
+  v = await look();
+  check("the boosters' discount set by hand ($1 each): the game keeps its $7.63, and the button is Discount on everything again",
+    v.totals.includes('Staff discount −$10.63') && v.offs.at(-1) === 'Discount on everything' && JSON.stringify(offsSent('till/price').sort()) === JSON.stringify([['5013', 100], ['5026', 763]]), { v, sent: offsSent('till/price') });
+  await noToast();
+  await tap(`.t-line:nth-child(${boosterLine}) [data-act="more"]`, 1300);
+  v = await look();
+  check('after that, one more booster is $1 more off, as any line with dollars off each', v.totals.includes('Staff discount −$11.63'), v.totals);
+  await noToast();
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.booster, 1300);
+  v = await look();
+  check('a new sale starts with no discount held over', !v.totals.some((t) => /Staff discount/.test(t)) && JSON.stringify(v.offs) === JSON.stringify(['Discount']), v);
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+});
+
+/* ---------- 6g. The sale's own discount, and Shopify's price dropping before Pay ---------- */
+await step('6g', async () => {
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.wonders);
+  await scan(CODE.booster, 1300);
+  await noToast();
+  await tap('[data-act="discount"][data-key="*"]');
+  await tap('[data-act="discount-set"][data-c="1000"]', 1300);
+  check('$10 off a game and a booster: $9.06 and 94c', JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 906], ['5013', 94]]), offsSent('till/price'));
+  await noToast();
+  // the booster drops to $4 in Shopify before Pay: 94c is more than 20% of that
+  VARIANTS[5013].price = 400;
+  try {
+    const drafts = shop.drafts.length;
+    await tap('[data-act="pay-card"]');
+    await tap(`[data-act="pick"][data-id="${OWNER}"]`);
+    await pin('2580', 1600);
+    v = await look();
+    check("Pay after the booster's price dropped: nothing is sold, and the till says why and that the $10 is shared again",
+      v.view === 'till' && v.toast === 'Riftbound Radiance · Booster Pack can come down by $0.80 at most. The $10.00 off the sale is shared again to fit. Pay again to carry on.' && shop.drafts.length === drafts + 1 && shop.deleted.includes(shop.drafts.at(-1).id), { view: v.view, toast: v.toast });
+    await settle(1000);
+    v = await look();
+    check('shared on the new price: $9.64 off the game and 36c off the booster, still $10.00', JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 964], ['5013', 36]]) && v.totals.includes('Staff discount −$10.00'), { sent: offsSent('till/price'), totals: v.totals });
+    await noToast();
+    await tap('[data-act="pay-card"]', 900);
+    v = await look();
+    check('Card again asks for a PIN afresh, since the discounts changed: $10.00 off, so the sale is $99.00', v.view === 'discountok' && /\$10\.00 off, so the sale is \$99\.00\./.test(v.lede), { view: v.view, lede: v.lede });
+    await tap('[data-act="back"]');
+  } finally {
+    VARIANTS[5013].price = 1100;
+  }
   await page.evaluate(() => document.querySelector('lair-till').nextSale());
   await settle(300);
 });

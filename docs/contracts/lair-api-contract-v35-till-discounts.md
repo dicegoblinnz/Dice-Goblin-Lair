@@ -23,8 +23,9 @@ the item at a sale price or on a deal.
   have a discount too, as before.
 - (11 Nov 2026) The till also takes dollars off the whole sale ("Discount on everything", Mo: "make $ off discount
   back"). That's the till's doing alone: it shares the amount across the sale's things as `off` on each line, by price
-  and within each thing's `most`, and sends lines as ever. Nothing here knows a shared discount from one put on by
-  hand, and every line is held to the same rule.
+  and within each thing's `most`, and sends lines as ever; it keeps the amount with the sale and shares it again when
+  the sale changes, or when a refusal here says a line can't take its share. Nothing here knows a shared discount from
+  one put on by hand, and every line is held to the same rule.
 - All of it is checked on Shopify's own figures (the price and compare-at price Shopify has for the item as it works
   the sale out, and what it took off the line): for the price, and again on the draft at Pay.
 - Approving is as v34: Pay takes a discounted basket only with `discountOk`.

@@ -201,6 +201,13 @@ const fresh = async () => {
   ok('$2 is shared across the three, to the cent, each within 20% of its price', set.view === 'till' && sum === 200 && set.offs.every((c, i) => c > 0 && c <= Math.floor(set.prices[i] * 0.2)) && set.totals.includes('Staff discount −$2.00') && set.totals.includes(`Total $${((before - 200) / 100).toFixed(2)}`)
     && set.toast === '$2.00 off the sale, shared across 3 things. Someone with Money approves it at Pay.', JSON.stringify(set));
   await T.noToast();
+  // the $2 stays with the sale when it changes: one more of the first thing, then one fewer
+  await T.click('[data-act="more"] >> nth=0');
+  const more = await T.s();
+  await T.click('[data-act="less"] >> nth=0');
+  const fewer = await T.s();
+  ok('one more of something and the sale still has $2.00 off; one fewer, the same', more.totals.includes('Staff discount −$2.00') && more.totals.includes(`Total $${((before + more.prices[0] - 200) / 100).toFixed(2)}`) && fewer.totals.includes('Staff discount −$2.00') && fewer.totals.includes(`Total $${((before - 200) / 100).toFixed(2)}`), JSON.stringify({ more: more.totals, fewer: fewer.totals }));
+  await T.noToast();
   // a booking's code adds what's left to pay on it: that keeps its price
   await T.scan('PS-HYDRA-14');
   await T.noToast();
