@@ -27,6 +27,7 @@
 // 6f. The amount stays with the sale as the sale changes: one more of something, a thing taken out and put back; a
 //     line's discount changed by hand lets go of it.
 // 6g. With the sale's own discount on, Shopify's price dropping before Pay: nothing's sold, and it's shared again.
+// 6h. Shopify's figures differing from the till's as the sale's own discount goes on: shared again on Shopify's, said.
 // And what the real till says about itself: no Demo codes on its start screen, no "Practice till" as staff sign in.
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4997] [OUT=dir] node tools/qa/round35-till-discounts/till.mjs
 import os from 'node:os';
@@ -685,6 +686,54 @@ await step('6g', async () => {
   } finally {
     VARIANTS[5013].price = 1100;
   }
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+});
+
+/* ---------- 6h. Shopify's figures differing from the till's when the sale's own discount goes on ---------- */
+await step('6h', async () => {
+  // (the second review) Card tapped before the price is in, and Shopify has the booster at $10, not the till's $11: the
+  // price is fine, but the shares are for Shopify's prices now, so Pay doesn't go ahead on the old ones, and says so
+  state.slowPrice = 2500;
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.wonders, 400);
+  await scan(CODE.booster, 400);
+  VARIANTS[5013].price = 1000;
+  try {
+    await tap('[data-act="discount"][data-key="*"]', 200);
+    await type('10', 150);
+    state.slowPrice = 0;
+    const pays = calls('till/pay').length;
+    await tap('[data-act="pay-card"]', 1500);
+    v = await look();
+    check("Card before the price is in, and Shopify's price for a thing isn't the till's: shared again on Shopify's, said so, nothing to Pay yet",
+      v.view === 'till' && !v.busy && v.toast === "The $10.00 off the sale is shared again on Shopify's prices. Pay again to carry on." && calls('till/pay').length === pays && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 914], ['5013', 86]]), { view: v.view, busy: v.busy, toast: v.toast, sent: offsSent('till/price') });
+    await noToast();
+    await tap('[data-act="pay-card"]', 1500);
+    v = await look();
+    check('Card again asks for the PIN: $10.00 off, so the sale is $105.00', v.view === 'discountok' && /\$10\.00 off, so the sale is \$105\.00\./.test(v.lede), { view: v.view, lede: v.lede });
+    await tap('[data-act="back"]');
+  } finally {
+    VARIANTS[5013].price = 1100;
+    state.slowPrice = 0;
+  }
+  await page.evaluate(() => document.querySelector('lair-till').nextSale());
+  await settle(300);
+  // more asked than the things turn out to be able to take: Barrage is on sale ($90, was $100), which the till learns
+  // from the refusal; as much as can comes off, and the button says both
+  state.slowPrice = 2500;
+  await tap('[data-act="quick"]').catch(() => {});
+  await scan(CODE.barrage, 400);
+  await scan(CODE.booster, 400);
+  await tap('[data-act="discount"][data-key="*"]', 200);
+  await type('15', 300);
+  state.slowPrice = 0;
+  await page.waitForFunction(() => /at most/.test(document.querySelector('[data-r="toast"]')?.textContent || ''), null, { timeout: 12000 }).catch(() => {});
+  await settle(1300);
+  v = await look();
+  check("$15 asked before the price is in, and Barrage can only come down by $10: the till says why and what the sale has off now",
+    v.view === 'till' && v.toast === "Barrage can come down by $10.00 at most. The sale has $12.20 off now: that's the most it can come down by." && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5025', 1000], ['5013', 220]]) && v.totals.includes('Staff discount −$12.20') && v.offs.at(-1) === '$12.20 of $15.00 off everything', { v, sent: offsSent('till/price') });
+  await noToast();
   await page.evaluate(() => document.querySelector('lair-till').nextSale());
   await settle(300);
 });
