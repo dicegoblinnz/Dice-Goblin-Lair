@@ -343,3 +343,25 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   shares follow the prices up to how far each thing can come down; and it's quick (16 checks). Breaking the sharing
   four ways on purpose (shares that ignore the price, no last step, room ignored, a cent too many) fails it each time.
   `DG_THEME=… [PORT=4989] [N=4000] node tools/qa/round35-till-discounts/split.mjs`.
+
+## till-fast-taps: the till's own taps (look and feel review chat, 13 Nov 2026)
+
+Mo, 13 Nov 2026: "It is requiring a long press for the buttons to work can you remove that function make it almost
+instantaneous when a button is pressed to register?" On the counter's tablet, in the new look, the browser's click
+after a quick touch didn't come, only after a long press (it couldn't be made to happen here), so the till recognises a
+tap itself from the finger's own events and presses the button when the finger lifts (tapStart to tapEcho in the
+theme's `assets/lair-till.js`).
+
+- `till-fast-taps/taps.mjs`: the theme mock (Practice sales), either look, with touches sent through the debugger as a
+  finger sends them and with bare touch events that no click follows (the tablet's case). Touch events alone press a
+  button; once only (PIN digits, +), with the browser's own click stopped at the touch, and held back if it comes all
+  the same (anywhere on that button, only until the next touch begins, however long the press took to deal with); the
+  press shows the moment the finger is down, stays shown on a button touched again straight away, and shows for a
+  moment after even the quickest tap on a button its own press drew again. Not a tap: a slide, a second finger (on
+  nothing, on another button, or still down when the first lifts), a touch that stops a list rolling from a flick, a
+  button that's off; a list the till moved itself doesn't put the next tap off. A button redrawn under the finger is
+  still pressed; a form's own button; "Staff: hold to go back" still wants its hold; a mouse and a keyboard as before;
+  a field takes its tap from the browser or from the till (by itself or by the words over it) and a tapped button puts
+  the keyboard away; the store-credit tick box by its words, by the box and with a real finger, once each (32 checks
+  per look). Breaking the taps 22 ways on purpose fails it each time.
+  `DG_THEME=… [LOOK=pieces|first] [PORT=4958] node tools/qa/till-fast-taps/taps.mjs`.
