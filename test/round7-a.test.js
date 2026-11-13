@@ -664,14 +664,14 @@ test('library (6): holds last until midnight on the third day; collected games a
     assert.equal((await call('POST', `library/holds/${hold.id}/update`, { status: 'collected' }, '1001')).status, 403);
     const collected = (await call('POST', `library/holds/${hold.id}/update`, { status: 'collected' }, 'staff')).data;
     assert.deepEqual([collected.hold.status, collected.hold.loanId, collected.loan.status, collected.loan.holdId, collected.loan.customerId, collected.loan.days], ['collected', collected.loan.id, 'out', hold.id, '1001', 0]);
-    assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: collected.loan.id, outAt: NOW }, heldFor: null });
+    assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: collected.loan.id, outAt: NOW }, heldFor: null, wanted: [], wantedMore: 0 });
     // Kiri holds the other copy; Leo is told when it's back; once both are at home there's no date to give
     const kiris = (await reserve({}, '1002')).data.hold;
     assert.deepEqual([(await reserve({}, '1003')).status, (await reserve({}, '1003')).data.error], [409, "Every copy is reserved or out on loan right now. It's back on the shelf by midnight Thu if nobody collects it."]);
-    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 1, out: 1, available: 0, nextFree: at('2026-10-09', 0), mine: null, atHome: null, heldFor: 'member' });
+    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 1, out: 1, available: 0, nextFree: at('2026-10-09', 0), mine: null, atHome: null, heldFor: 'member', wanted: [], wantedMore: 0 });
     const kiriLoan = (await call('POST', `library/holds/${kiris.id}/update`, { status: 'collected' }, 'staff')).data.loan;
     assert.deepEqual((await reserve({}, '1003')).data.error, 'Every copy is out on loan right now. Check back soon, friend.');
-    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 0, out: 2, available: 0, nextFree: null, mine: null, atHome: null, heldFor: null });
+    assert.deepEqual((await status('4401'))['4401'], { copies: 2, held: 0, out: 2, available: 0, nextFree: null, mine: null, atHome: null, heldFor: null, wanted: [], wantedMore: 0 });
     // Put back to held (it never went home): the loan goes, and the hold gets a fresh until
     Date.now = () => at('2026-10-07', 10);
     const back = (await call('POST', `library/holds/${kiris.id}/update`, { status: 'held' }, 'staff')).data;
@@ -685,7 +685,8 @@ test('library (6): holds last until midnight on the third day; collected games a
       { name: 'Stash', games: 3 }, 3, ['Azul', 'Cascadia'], [['Wingspan', 'https://www.dicegoblin.nz/cdn/shop/files/wingspan.jpg', 'out']],
     ]);
     // lent (16 Oct 2026): staff lent it outside a plan
-    assert.deepEqual(Object.keys(library.atHome[0]), ['id', 'variantId', 'productId', 'title', 'shelfCode', 'handle', 'image', 'status', 'outAt', 'returnedAt', 'holdId', 'lent']);
+    // (round 37 added perk, perkEnded and wanted: contract v37-gm-perk, 3.2)
+    assert.deepEqual(Object.keys(library.atHome[0]), ['id', 'variantId', 'productId', 'title', 'shelfCode', 'handle', 'image', 'status', 'outAt', 'returnedAt', 'holdId', 'lent', 'perk', 'perkEnded', 'wanted']);
     assert.deepEqual((await me()).holds.map((h) => [h.title, h.status]), [['Azul', 'held'], ['Cascadia', 'held'], ['Wingspan', 'collected']], 'round 6\'s holds stay as they were (active, then those that ended lately)');
     // The staff list: pictures, and the loan of a collected hold
     const all = (await call('GET', 'library/holds?status=all', null, 'staff')).data.holds;
@@ -828,7 +829,7 @@ test('library (16 Oct 2026, Mo: "user can only scan games to add to their librar
     assert.deepEqual(again.data, { result: 'at-home', loan, library: borrowed.library, message: atHome }, `action ${action}`);
   }
   assert.deepEqual(loans(), out, 'still the one loan, still out: no second borrow');
-  assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: loan.id, outAt: NOW }, heldFor: null }, 'the game\'s page still has it at home with him');
+  assert.deepEqual((await status('4401', '1001'))['4401'], { copies: 2, held: 0, out: 1, available: 1, nextFree: null, mine: null, atHome: { id: loan.id, outAt: NOW }, heldFor: null, wanted: [], wantedMore: 0 }, 'the game\'s page still has it at home with him');
   // My Library's "Back on the shelf" isn't for members any more: the one it's with, anyone else and nobody logged in get
   // the counter's words; a helper without the Library permission is a member here too. It stays out.
   const counter = "Staff check games back in at the counter. Bring it in and we'll scan it back onto the shelf.";
@@ -900,6 +901,8 @@ test('migration 17: round 6\'s database moves to round 7 with every row kept; ga
     created_at: NOW - DAY + HOUR, updated_at: NOW - DAY + HOUR,
     // library lending's columns (16 Oct 2026), made sure of on every start: not lent, no guest
     lent: 0, guest_name: null, guest_email: null, guest_mobile: null,
+    // round 37's columns (the GM perk), made sure of on every start too: not out on a perk, nobody told or nudged
+    perk: null, wanted_told: null, wanted_told_at: null, nudged_at: null, back_asked_at: null,
   }], 'the game collected in round 6 is at home');
   assert.deepEqual(sql.exec('SELECT variant_id, title, shelf_code FROM library_games ORDER BY variant_id').toArray().map((r) => [r.variant_id, r.title, r.shelf_code]), [['4401', 'Wingspan', 'DGL34-001'], ['4402', 'Azul', 'DGL34-002'], ['4403', 'Root', null]]);
   assert.deepEqual(sql.exec('SELECT key, variant_id FROM library_codes ORDER BY key').toArray().map((r) => [r.key, r.variant_id]), [['DGL34001', '4401'], ['DGL34002', '4402']]);

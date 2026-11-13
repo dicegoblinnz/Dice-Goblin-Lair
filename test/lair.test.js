@@ -5101,15 +5101,15 @@ test('library holds (round 6): members reserve by their plan (Simplee tags); hel
     const already = await reserve({ copies: 2 });
     assert.deepEqual([already.status, already.data.error], [409, "You've already reserved this one, friend. It's held until midnight, Sat 3 Oct."]);
     // Anyone can see what's free; Sam sees his own
-    assert.deepEqual((await libraryStatus('4401,gid://shopify/ProductVariant/4402'))['4401'], { copies: 2, held: 1, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: 'member' });
+    assert.deepEqual((await libraryStatus('4401,gid://shopify/ProductVariant/4402'))['4401'], { copies: 2, held: 1, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: 'member', wanted: [], wantedMore: 0 });
     assert.deepEqual((await libraryStatus('4401', '1001'))['4401'].mine, { id: hold.id, until: at('2026-10-04', 0) });
-    assert.deepEqual((await libraryStatus('4402'))['4402'], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: null }, 'a game the Lair has never seen: 1 copy');
+    assert.deepEqual((await libraryStatus('4402'))['4402'], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: null, wanted: [], wantedMore: 0 }, 'a game the Lair has never seen: 1 copy');
     // Kiri (library-member: 1 game) takes the other copy an hour later; then Leo (Grab) is told when it's back
     Date.now = () => NOW + HOUR;
     assert.equal((await reserve({ copies: 2 }, '1002')).status, 200);
     const full = await reserve({ copies: 2 }, '1003');
     assert.deepEqual([full.status, full.data.error], [409, "Every copy is reserved or out on loan right now. It's back on the shelf by midnight Sat if nobody collects it."]);
-    assert.deepEqual((await libraryStatus('4401', '1003'))['4401'], { copies: 2, held: 2, out: 0, available: 0, nextFree: at('2026-10-04', 0), mine: null, atHome: null, heldFor: 'member' });
+    assert.deepEqual((await libraryStatus('4401', '1003'))['4401'], { copies: 2, held: 2, out: 0, available: 0, nextFree: at('2026-10-04', 0), mine: null, atHome: null, heldFor: 'member', wanted: [], wantedMore: 0 });
     // Plan limits: Kiri has 1 at a time; Sam 3
     const limit = await reserve({ variantId: '4402', title: 'Azul (Library)' }, '1002');
     assert.deepEqual([limit.status, limit.data.error], [409, "Your plan has 1 game at a time, and you've got 1: 1 reserved. Return one or cancel a hold first."]);
@@ -5240,7 +5240,7 @@ test('library holds (round 6): copies come from Shopify (each kept 10 minutes); 
   assert.equal(asked.length, 1, 'kept for 10 minutes');
   // Three copies: three people can hold it, then it's reserved
   for (const who of ['1001', '1005']) assert.equal((await reserve({}, who)).status, 200);
-  assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 3, held: 2, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: 'member' });
+  assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 3, held: 2, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: 'member', wanted: [], wantedMore: 0 });
   // The page's copies count when Shopify doesn't know: a hold with copies 4 on the untracked game
   assert.equal((await reserve({ variantId: '4402', title: 'Azul (Library)', copies: 4 }, '1001')).status, 200);
   assert.deepEqual(await copies('4402'), { 4402: 4 }, 'the copies the page sent with a hold');
@@ -5260,7 +5260,7 @@ test('library holds (round 6): copies come from Shopify (each kept 10 minutes); 
   assert.deepEqual(await copies('4405,4406'), { 4405: 1, 4406: 1 });
   assert.equal(asked.length, 3);
   assert.equal((await reserve({ variantId: '4405', title: 'Root (Library)', copies: 2 }, '1001')).status, 200);
-  assert.deepEqual((await libraryStatus('4405'))['4405'], { copies: 2, held: 1, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: 'member' });
+  assert.deepEqual((await libraryStatus('4405'))['4405'], { copies: 2, held: 1, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: 'member', wanted: [], wantedMore: 0 });
   assert.equal(asked.length, 3, 'not asked again for 10 minutes');
   // At most 60 games at a time
   const many = Array.from({ length: 61 }, (_, i) => 5000 + i).join(',');
@@ -5285,7 +5285,7 @@ test('library holds (round 6): maintenance puts holds nobody collected back on t
     assert.equal((await reserve({}, '1002')).status, 409);
     // 12:05am Sunday: its time is up. Before maintenance runs it already counts as ended (nobody waits on it)
     Date.now = () => at('2026-10-04', 0, 5);
-    assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: null });
+    assert.deepEqual((await libraryStatus('4401'))['4401'], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: null, wanted: [], wantedMore: 0 });
     assert.deepEqual((await call('GET', 'me', null, '1001')).data.holds.map((h) => [h.title, h.status, h.endedAt]), [['Wingspan (Library)', 'expired', at('2026-10-04', 0)], ['Azul (Library)', 'expired', at('2026-10-04', 0)]]);
     const run = await maintenance();
     assert.deepEqual(run.data.libraryHolds, { expired: 2 });

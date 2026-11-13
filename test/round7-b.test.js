@@ -824,7 +824,8 @@ test('a GM picked from the customers (round 7): linked at once, with their membe
     assert.deepEqual([lair.game(listed.data.game.id).gmCustomerId, lair.game(listed.data.game.id).gmEmail, listed.data.invited, listed.data.notice], ['5005', 'sammy@example.com', undefined, undefined]);
     assert.equal(lair.memberRow('5005').name, 'Sammy Lee');
     await settle();
-    assert.deepEqual(mail.sent.filter((m) => m.to === 'sammy@example.com').map((m) => m.subject), ['Your game is live: Blades']);
+    // (round 37: a game on the board is also their first, so their GM perk goes on and says so: contract v37-gm-perk)
+    assert.deepEqual(mail.sent.filter((m) => m.to === 'sammy@example.com').map((m) => m.subject), ['Your game is live: Blades', 'Your GM perk is on: borrow an RPG book, free']);
     const staffGame = (await call('GET', 'floor', null, 'staff')).data.games.find((g) => g.id === listed.data.game.id);
     assert.deepEqual([staffGame.gmAccount, staffGame.gmEmail], ['linked', 'sammy@example.com']);
     // A member's email links them, as before (no invite)
