@@ -106,6 +106,11 @@ import { tillPeopleMethods } from './till-people.js';
 import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
 import { CREDIT_PAY_COLUMNS, CREDIT_PAY_INDEXES, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
 import { TILL_DISCOUNT_COLUMNS, tillDiscountMethods } from './till-discounts.js';
+// Round 37 (14 Nov 2026): changes people make themselves: a table booking's numbers and the seats or sign-ups someone
+// booked for friends, until 24 hours before; and a GM cancelling or moving a session, until 4 hours before
+// (src/changes.js, contract v37-changes)
+import { CHANGE_COLUMNS, CHANGE_WORDS, changeMethods } from './changes.js';
+import { gmChangeUntil, gmHoursOf } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1200,7 +1205,8 @@ export class Lair {
     // Round 33: paying with store credit, in My Lair and at the till (src/credit-pay.js), and a till sale's store credit
     for (const statement of CREDIT_PAY_TABLES) this.sql.exec(statement);
     // Round 34: who approved a till sale's discount, and what it took off (src/till-discounts.js)
-    for (const [table, column, type] of [...CREDIT_PAY_COLUMNS, ...TILL_DISCOUNT_COLUMNS]) {
+    // Round 37: when a seat's session last moved under it, and the series date a moved session fills (src/changes.js)
+    for (const [table, column, type] of [...CREDIT_PAY_COLUMNS, ...TILL_DISCOUNT_COLUMNS, ...CHANGE_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -1316,6 +1322,8 @@ export class Lair {
       ...(r.cover_of ? { coverOf: r.cover_of } : {}),
       // (refundAmount: a GM's charge's money to give back, or given back, src/gm-cover.js)
       ...(r.refund_amount != null ? { refundAmount: r.refund_amount } : {}),
+      // Round 37: when a seat's session last changed time under it (its player has a day from then to drop out)
+      ...(r.moved_at ? { movedAt: r.moved_at } : {}),
     };
   }
 
@@ -1335,6 +1343,8 @@ export class Lair {
       private: Boolean(r.private), interestOpen: Boolean(r.private) && Boolean(r.interest_open), inviteKey: r.invite_key || null,
       // Round 21: round 17's mark for its staff GM ('shifts'): working then (true), not (false), or their hours decide (null)
       gmOnShift: r.gm_on_shift == null ? null : Boolean(r.gm_on_shift), gmOnShiftBy: r.gm_on_shift_by || null,
+      // Round 37: the series date it fills, kept once that isn't the day it starts on (src/changes.js slotOf)
+      ...(r.slot_day ? { slotDay: r.slot_day } : {}),
     };
   }
 
@@ -1391,6 +1401,16 @@ export class Lair {
       // Round 15: until when they can cancel it themselves, whether it's locked in now, and owed or waived
       ...this.lockView(j), owed: this.joinOwed(j), waived: Boolean(j.waived),
     };
+  }
+
+  /**
+   * Round 37: a sign-up as whoever signed up sees it in My Lair: joinView, and who they can take off it now (change:
+   * { until, min, max, each, you, who }) while they can. Theirs alone: a guest on it, and the staff floor, get joinView,
+   * which says nothing of what each place costs. No awaits.
+   */
+  ownJoinView(j, guests = null) {
+    const list = guests || this.joinGuests(j.id);
+    return { ...this.joinView(j, list), ...this.joinChangeView(j, list) };
   }
 
   /**
@@ -1888,6 +1908,7 @@ export class Lair {
         rooms: r.rooms.map((room) => `${room.name}: ${room.tables.length} × ${room.seats} seats, $${room.price / 100}${room.minPeople ? `, min ${room.minPeople} people` : ''}${room.bookable ? '' : ', not bookable online'}`),
         hours: Object.entries(r.hours).map(([day, h]) => `${day} ${h ? `${String(Math.floor(h[0] / 60)).padStart(2, '0')}:${String(h[0] % 60).padStart(2, '0')}-${String(Math.floor(h[1] / 60)).padStart(2, '0')}:${String(h[1] % 60).padStart(2, '0')}` : 'closed'}`),
         refundHours: r.refundHours,
+        gmChangeHours: r.gmChangeHours,
         events: r.events.length,
       },
     });
@@ -2303,6 +2324,9 @@ export class Lair {
       if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
       if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
+      // Round 37: the session's GM (until 24 hours before) or staff move its day, time or tables, for that session or
+      // every later one too (src/changes.js)
+      if (a === 'games' && c === 'move' && !d) return json(await this.moveGame(b, body, who));
       // Round 18: a seat taken off a game (staff, or the game's staff GM), before adding players
       if (a === 'games' && c === 'players' && d && parts[4] === 'remove' && !parts[5]) return json(await this.removePlayer(b, decodeURIComponent(d), who, body));
       // Round 21, part 2: the session's GM (or staff) pays for a player's seat, or stops (src/gm-cover.js)
@@ -2327,6 +2351,8 @@ export class Lair {
       if (a === 'openings' && c === 'delete') return json(await this.removeOpening(b, who));
       if (a === 'checkin' && !b) return json(await this.checkIn(body, who));
       if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
+      // Round 37: whoever signed friends up takes off the ones who can't come, until it's locked in (src/changes.js)
+      if (a === 'events' && b === 'joins' && c && d === 'change' && !parts[4]) return json(await this.changeJoin(decodeURIComponent(c), body, who));
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
       // Round 9, team: staff add someone to an event date's sign-ups, by member code or by name and email
       if (a === 'events' && b && b !== 'joins' && c === 'joins' && !d) return json(await this.staffJoin(decodeURIComponent(b), body, who));
@@ -2659,8 +2685,9 @@ export class Lair {
       openings: st.openings.map((o) => (staffView ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: staffView,
       // payOnline: round 4's checkout for events paid online. Round 15: everything is on the tab, paid at the counter,
-      // so it's always false (a page from before shows only the counter).
-      features: { email: emailReady(this.env), payOnline: false },
+      // so it's always false (a page from before shows only the counter). Round 37: changes says this Lair app takes
+      // POST /games/:id/move, so the games board only offers "Change date or time" when it's there to answer.
+      features: { email: emailReady(this.env), payOnline: false, changes: true },
     };
   }
 
@@ -2877,6 +2904,8 @@ export class Lair {
         ],
         outro: [
           pay, cancel,
+          // Round 37: a booking for more than one seat says the numbers can still be changed, after the cancel line
+          ...(this.numbersLine(booking, rules) ? [this.numbersLine(booking, rules)] : []),
           // Round 7: a seat staff reserved at a weekly game for someone without an account says the account also saves
           // their seat every week (a guest's account picking up the seat is in the line above, round 15)
           ...(booking.customerId || !invite ? [] : [this.inviteLine(invite)]),
@@ -2897,7 +2926,8 @@ export class Lair {
           ['Setup', (booking.extras || []).map((x) => extras[x]).filter(Boolean).join(', ')], ['Fee', played?.fee && !booking.paid ? played.fee : fee], cardRow,
         ],
         // Round 31: a listed game says where it's listed and that they'll hear when someone joins
-        outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), ...(played?.note ? [played.note] : []), cancel],
+        // Round 37: and a table whose numbers they can still change says so, after the cancel line
+        outro: [pay, ...(booking.split ? [played ? played.split : SPLIT] : []), ...(played?.note ? [played.note] : []), cancel, ...(this.numbersLine(booking, rules) ? [this.numbersLine(booking, rules)] : [])],
       };
       // Round 11: and every other player with an email hears about it, once
       if (played) this.tellGamePlayers(booking, rules);
@@ -2964,6 +2994,9 @@ export class Lair {
       seriesId: b.seriesId || null, ticketCode: this.ticketCode(b), owed: this.isOwed(b), waived: Boolean(b.waived),
       // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
       ...this.lockView(b),
+      // Round 37: what whoever booked it can change about it now (a table: change: { until, min, max, each, keep };
+      // seats for friends: { until, min, max, each, who })
+      ...this.changeView(b),
       // Round 17: the library game on the table, and when it's held from
       ...(b.game ? { game: this.bookingGameView(b) } : {}),
     };
@@ -3010,7 +3043,9 @@ export class Lair {
     // Round 31: a listed game nobody has joined yet is free to cancel right up until it starts (src/open-games.js)
     const looking = x.kind === 'table' && Boolean(x.occurrenceId) && this.openGameLooking(x.id);
     const lockable = this.tabRules(x, now) && amount > 0 && !lateSeat && !gone && !looking;
-    const until = lockable ? cancelUntil(x, rules) : x.start;
+    // Round 37: a seat whose session changed time under it can be dropped for a day after the move (never after it
+    // starts), even inside the lock: the later of the two (src/changes.js movedUntil)
+    const until = lockable ? Math.max(cancelUntil(x, rules), this.movedUntil(x, rules)) : x.start;
     return { cancelUntil: until, locked: lockable && now >= until, lockable };
   }
 
@@ -3159,6 +3194,9 @@ export class Lair {
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       // Round 21: a GM's charge for a player's seat goes from the session ("Stop paying"), not as a booking
       if (own && booking.kind === 'gm-cover') throw new RuleError(GM_COVER_WORDS.stopFirst, 409);
+      // Round 37: how many are coming, and which of its tables it keeps (or, for seats booked for friends, who's still
+      // coming), are theirs to change until it's locked in (src/changes.js). Nothing else is.
+      if (own && patch.status == null && (patch.people != null || Array.isArray(patch.tables))) return this.changeOwnBooking(booking, patch, rules, now);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
       // Round 29: the person's own cancel, the same from My Lair and from their reminder's cancel link
       return this.cancelOwnBooking(booking, rules, now);
@@ -3202,6 +3240,10 @@ export class Lair {
         : next.occurrenceId && booking.people ? Math.round(booking.amount / booking.people)
           : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
       next.amount = unit * next.people;
+      // Round 37: fewer people on a seat: the players named go with the seats (the ones `staying` names by position, as
+      // My Lair's Change numbers sends for someone on the team changing their own; the first ones otherwise), so its GM's
+      // list of players never shows someone who isn't coming (src/changes.js)
+      if (next.kind === 'gm-seat' && Array.isArray(booking.party) && booking.party.length > next.people) next.party = this.partyStaying(booking, next.people, patch.staying);
       // Round 21: a seat its GM pays for still costs its players nothing (syncCover, after saving, moves the GM's charge)
       if (next.coveredBy) next.amount = 0;
       // A bigger group owes more; a smaller one may be paid up already.
@@ -3470,7 +3512,9 @@ export class Lair {
     const time = new LairTime(rules.tz);
     const details = parse(row.details, {});
     const tables = parse(row.tables, []);
-    const have = new Set(this.sql.exec('SELECT starts_at FROM games WHERE series_id = ?', row.id).toArray().map((r) => time.key(r.starts_at)));
+    // Round 37: a session fills the day it starts on and, once it's moved to another day, the series date it left
+    // (slot_day), so a date a session left never gets a second one (a moved session used to come back on its old day)
+    const have = new Set(this.sql.exec('SELECT starts_at, slot_day FROM games WHERE series_id = ?', row.id).toArray().flatMap((r) => [time.key(r.starts_at), r.slot_day]).filter(Boolean));
     const horizon = now + rules.horizonDays * 24 * HOUR;
     const lastKey = time.key(horizon);
     const created = [];
@@ -3896,6 +3940,9 @@ export class Lair {
         this.write('UPDATE series SET tables = ?, details = ?, updated_at = ? WHERE id = ?', JSON.stringify(place.tables), JSON.stringify({ ...parse(row.details, {}), staffTables: true }), now, game.seriesId);
       }
     }
+    // Round 37: a new time gives each seat's player a day to drop out, and the series date it left stays its date, so
+    // the top-up never puts a second session there (src/changes.js)
+    if (place.start !== game.start || place.end !== game.end) this.sessionTimeMoved(game, place, rules, now);
     // Round 21: a GM's charge for a player's seat follows the session's price and times (src/gm-cover.js)
     for (const session of sessions) this.syncCoversOn(session.id, now, rules);
     if (game.seriesId) {
@@ -3903,15 +3950,11 @@ export class Lair {
       if (series) this.write('UPDATE series SET details = ?, updated_at = ? WHERE id = ?', JSON.stringify({ ...parse(series.details, {}), ...shared }), now, game.seriesId);
     }
     const fresh = this.game(game.id);
+    // Round 37: "New time" to each seat, ending with its own way out now (a day from the move, at least), and to the
+    // regulars whose seats there are saved but not booked yet (src/changes.js movedLetters)
     if ((place.start !== game.start || place.end !== game.end) && emailReady(this.env)) {
-      const seats = this.gameBookings(game.id).filter((b) => b.kind === 'gm-seat' && ACTIVE.has(b.status) && isEmail(b.email));
-      this.later(this.mailMany(seats.map((seat) => this.letter(seat.email, `New time: ${fresh.title}, ${this.when(fresh, rules)}`, {
-        title: 'Your game has a new time',
-        intro: `Heads up, friend: ${fresh.title} has moved. Your seat moved with it.`,
-        details: [['Game', fresh.title], ['Now', this.when(fresh, rules)], ['Was', this.when(game, rules)], ['Where', `${fresh.tables.length > 1 ? 'Tables' : 'Table'} ${fresh.tables.join(', ')}`]],
-        outro: `Can't make the new time? Cancel your seat in My Lair and Gobgob will let your GM know. Less than ${rules.refundHours} hours away? Have a chat with us and we'll take it off your tab.`,
-        button: { label: 'See it in My Lair', url: this.page('myLair') },
-      }))));
+      const letters = this.movedLetters(fresh, game, rules, now);
+      if (letters.length) this.later(this.mailMany(letters));
     }
     return {
       game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: this.staffSees(who) }), sessions: sessions.length,
@@ -4598,8 +4641,9 @@ export class Lair {
       this.write("UPDATE games SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.id);
       this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND status IN ('held', 'confirmed', 'seated')", now, game.id);
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
-        // Round 30: GM credit goes once a session starts, and a GM can cancel until an hour in: a seat whose fee has gone
-        // to its GM tells staff, who decide (src/gm-credit.js; nothing is taken back by itself)
+        // Round 30: GM credit goes once a session starts, and staff can cancel a session that's under way (a GM could
+        // too, until an hour in, before round 37): a seat whose fee has gone to its GM tells staff, who decide
+        // (src/gm-credit.js; nothing is taken back by itself)
         this.gmCreditUndone(seat, { ...seat, status: 'cancelled' });
         affected += 1;
         this.dropDraft(seat);
@@ -4656,12 +4700,15 @@ export class Lair {
     if (!game) throw new RuleError('Game not found.', 404);
     const own = who.customerId && game.gmCustomerId === who.customerId;
     const scope = patch.scope === 'series' && game.seriesId ? 'series' : 'session';
-    // GMs can cancel a session until an hour after it starts (the group didn't show, the GM is sick).
-    const cancellable = (g) => now <= g.start + HOUR;
+    // Round 37 (Mo, 14 Nov 2026: "let gms cancel within 4 hours before the session not 24 hours. It's ok."): a GM
+    // cancels a session until gmChangeHours (4) before it starts. (It was until an hour after it starts.) Staff: any time.
+    const cancellable = (g) => this.gmCanChange(g, rules, now);
+    const gmHours = gmHoursOf(rules);
     // Round 9: staff here means GM games
-    if (!this.can(who, 'sessions')) {
+    const staffGames = this.can(who, 'sessions');
+    if (!staffGames) {
       if (!own || patch.status !== 'cancelled') throw new RuleError('Only staff can change that game.', 403);
-      if (scope === 'session' && !cancellable(game)) throw new RuleError('This session started more than an hour ago. Talk to staff at the counter.', 403);
+      if (scope === 'session' && !cancellable(game)) throw new RuleError(CHANGE_WORDS.gmCancelLocked(gmHours), 409);
     }
     if (game.status === 'cancelled' && patch.status && patch.status !== 'cancelled') {
       throw new RuleError('Cancelled games stay cancelled. List it again as a new game.', 409);
@@ -4669,14 +4716,21 @@ export class Lair {
     const before = game.status;
     let affected = 0;
     let refunds = 0;
+    // Round 37: a GM's "every future session" leaves the ones less than gmChangeHours (4) away on, and says so (kept)
+    let kept = [];
     if (patch.status === 'cancelled') {
       // A series: every future session, and this one too while it can still be cancelled. Round 18: a series can have
       // more than one GM once staff give some of it to another, so a GM cancels only the sessions they run, and the
       // series itself (no more dates, its regulars) only when it's theirs now (runsSeries).
-      const targets = scope === 'series'
+      const every = scope === 'series'
         ? this.ownSessionsOnly(who, this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND (starts_at > ? OR (id = ? AND starts_at >= ?))", game.seriesId, now, game.id, now - HOUR)
           .toArray().map((r) => this.rowToGame(r)))
-        : before === 'cancelled' ? [] : [game];
+        : [];
+      // (stays: the ones a GM can't cancel now. kept: those of them still to start, which the answer names; one that's
+      // already under way stays on without being said)
+      const stays = scope === 'series' && !staffGames ? every.filter((g) => !cancellable(g)) : [];
+      kept = stays.filter((g) => g.start > now);
+      const targets = scope === 'series' ? every.filter((g) => !stays.includes(g)) : before === 'cancelled' ? [] : [game];
       if (scope === 'series' && this.runsSeries(who, game.seriesId)) this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.seriesId);
       ({ affected, refunds } = this.cancelSessions(targets, rules, now));
       game.status = 'cancelled';
@@ -4693,7 +4747,15 @@ export class Lair {
     if (before === 'pending' && game.status === 'open') this.tellGmLive(game, rules);
     const fresh = this.game(id);
     // affected: seats cancelled (each player is emailed); refunds: how many of them were paid, so are flagged 'due'
-    return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: this.staffSees(who) }), affected, refunds };
+    const time = new LairTime(rules.tz);
+    return {
+      game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: this.staffSees(who) }), affected, refunds,
+      // Round 37: the sessions a GM's "every future session" left on (less than gmChangeHours away), and the words for it
+      ...(kept.length ? {
+        kept: kept.map((g) => ({ id: g.id, start: g.start, when: time.label(g.start) })),
+        notice: CHANGE_WORDS.keptSessions(kept.map((g) => time.label(g.start)), gmHours),
+      } : {}),
+    };
   }
 
   async creditGm(id, who, input = {}) {
@@ -6532,7 +6594,8 @@ export class Lair {
         // Round 29: a member's card, "9 of 12 so far" (none on a guest's sign-up)
         ['Entry', fee], [CARD_ROW, this.cardLine(join.customerId, rules)],
       ],
-      outro: [pay, cancel],
+      // Round 37: one for more than one person says the numbers can still be changed, after the cancel line
+      outro: [pay, cancel, ...(!online && this.numbersLine(join, rules, Date.now(), { join: true }) ? [this.numbersLine(join, rules, Date.now(), { join: true })] : [])],
       button: { label: 'See it in My Lair', url: this.page('myLair') },
     })));
     return true;
@@ -10600,6 +10663,9 @@ export class Lair {
       split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), owed: this.isOwed(b, now), waived: Boolean(b.waived), ...heldLink(b),
       // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
       ...this.lockView(b, rules, now),
+      // Round 37: what they can change about it now (a table: change: { until, min, max, each, keep }; seats booked
+      // for friends: { until, min, max, each, who })
+      ...this.changeView(b, rules, now),
       // Round 17: the library game on the table (My Lair's booking card shows it)
       ...(b.game ? { game: this.bookingGameView(b) } : {}),
     });
@@ -10625,7 +10691,8 @@ export class Lair {
     const joins = this.sql.exec('SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray()
       .map((r) => withLink(this.rowToJoin(r), r));
     // Round 8: and the sign-ups they're a guest on (someone else signed them up), in among their own, soonest first
-    const joinList = [...joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })), ...this.guestJoins(who.customerId, since, memberRow)].sort((a, b) => a.start - b.start);
+    // (round 37: their own carry what they can change about them, ownJoinView; one they're a guest on never does)
+    const joinList = [...joins.map((j) => ({ ...this.ownJoinView(j), ...heldLink(j) })), ...this.guestJoins(who.customerId, since, memberRow)].sort((a, b) => a.start - b.start);
     // Round 11: the games they're a named player in (someone else booked them), in among their own bookings, soonest first
     const playing = this.playerBookings(who.customerId, since, memberRow, rules);
     // Round 12: a sign-up, game table or interest whose event date isn't on the calendar any more (gone in Shopify) says
@@ -10666,6 +10733,8 @@ export class Lair {
       // they get for each player who pays (cents; 0 when there's none for them), as each one pays
       games: gameRows.map((g) => ({
         ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), gmCreditEach: autoCredit(g) ? this.gmSeatCredits(g).each : 0,
+        // Round 37: the last moment its GM can cancel or move it online (gmChangeHours, 4, before it starts)
+        changeUntil: gmChangeUntil(g, rules),
         ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}),
       })),
       joins: joinList.map((j) => gone(j)),
@@ -11299,3 +11368,5 @@ Object.assign(Lair.prototype, tillPeopleMethods);
 Object.assign(Lair.prototype, tillSalesMethods);
 Object.assign(Lair.prototype, tillDiscountMethods);
 Object.assign(Lair.prototype, creditPayMethods);
+// Round 37: changes people make themselves: a booking's numbers, and a GM cancelling or moving a session (src/changes.js)
+Object.assign(Lair.prototype, changeMethods);

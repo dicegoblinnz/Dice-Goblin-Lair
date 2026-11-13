@@ -301,9 +301,10 @@ test('GM credit (round 30): a session cancelled after its GM had credit for it t
   await pay(mias);
   await settled();
   assert.deepEqual(credited, [[RANGI, 500]]);
-  // the rest of the group didn't come: Rangi calls it off 20 minutes in (GMs can, until an hour after it starts)
+  // the rest of the group didn't come, so it's called off 20 minutes in. Round 37: by staff (a GM could, until an hour
+  // after it starts; now a GM cancels until 24 hours before, and after that it's staff)
   nowIs(at('2026-10-27', 18, 30));
-  ok(await call('POST', `games/${id}/update`, { status: 'cancelled' }, RANGI));
+  ok(await call('POST', `games/${id}/update`, { status: 'cancelled' }, OWNER));
   assert.deepEqual(alerts.filter((a) => a.subject.startsWith('GM credit')).map((a) => [a.subject, a.intro]), [
     ['GM credit to check: Rangi Hohaia', W.undone('Rangi Hohaia', '$5.00', "Mia's seat at Rangi's one-shot", W.cancelled)],
   ]);

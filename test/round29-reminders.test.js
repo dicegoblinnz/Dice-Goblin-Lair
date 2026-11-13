@@ -364,13 +364,14 @@ test('round 29: a booking moved to another day or time gets its reminder again, 
   assert.equal(again.length, 2);
   assert.match(again[1].text, /When: +Sunday 15 November, 6pm to 10pm/);
   assert.deepEqual(keyOf(again[1]), keyOf(first), 'one key per booking');
-  // and then just its time: 7pm the same day, moved on the Saturday before (still free to cancel until 7pm)
+  // and then just its time: 7pm the same day, moved on the Saturday before, at 8am. Round 37: a seat whose session
+  // moved is free to cancel for a day after the move, so until 8am Sunday (it was 7pm Saturday, 24 hours before)
   nowIs(at('2026-11-14', 8));
   ok(await call('POST', `games/${g.id}/edit`, { start: at('2026-11-15', 19), end: at('2026-11-15', 22) }, OWNER));
   assert.equal(went(await runAt(at('2026-11-14', 9))), 1);
   const third = reminders('ria@example.com')[2];
   assert.equal(third.subject, 'See you Sunday at 7pm?');
-  assert.match(third.text, /Cancel free until 7pm Saturday/);
+  assert.match(third.text, /Cancel free until 8am Sunday/);
   assert.equal(went(await runAt(at('2026-11-14', 9, 10))), 0);
 });
 
@@ -635,7 +636,9 @@ test('round 29: GET /ics/b/<booking id>.ics: the seat or table as a calendar fil
   assert.match(ics, /\r\nLOCATION:Dice Goblin\\, 56\/691 Manukau Road\\, Royal Oak\\, Auckland 1023\r\n/);
   assert.match(ics, /\r\nDESCRIPTION:See it in My Lair: https:\/\/www\.dicegoblin\.nz\/pages\/my-lair\r\n/);
   assert.match(ics, /\r\nURL:https:\/\/www\.dicegoblin\.nz\/pages\/my-lair\r\n/);
-  for (const secret of ['Ria', 'ria@', '021', ria.ref, 'Ellie', 'ellie@']) assert.ok(!ics.includes(secret), `no ${secret} in it`);
+  // (the mobile as it was typed and as its digits, not just '021': the file's UID is the booking's id, 16 random hex
+  // characters, and about one run in 300 those spelled "021" and failed this check by chance; found 14 Nov 2026)
+  for (const secret of ['Ria', 'ria@', MOBILE, MOBILE.replace(/\s/g, ''), '+6421', ria.ref, 'Ellie', 'ellie@']) assert.ok(!ics.includes(secret), `no ${secret} in it`);
   const tableIcs = (await get(`/ics/b/${kais.id}.ics`)).text.replace(/\r\n /g, '');
   assert.match(tableIcs, /\r\nSUMMARY:Table for 4 at Dice Goblin\r\n/);
   assert.match(tableIcs, /\r\nDTSTART:20261108T010000Z\r\nDTEND:20261108T040000Z\r\n/);

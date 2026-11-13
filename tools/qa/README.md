@@ -407,3 +407,30 @@ theme's `assets/lair-till.js`).
   over it) and a tapped button puts the keyboard away; the store-credit tick box by its words, by the box and with a
   real finger, once each (39 checks per look). Breaking the taps 27 ways on purpose fails it each time.
   `DG_THEME=… [LOOK=pieces|first] [PORT=4958] node tools/qa/till-fast-taps/taps.mjs`.
+
+## round37-changes: changes people make themselves (the changes chat, 14 Nov 2026)
+
+Mo (14 Nov 2026): a customer dropped from 9 players to 6, three days early, "but wasn't given an option other than
+cancelling"; and GMs cancel their own games "so long as they are before the 24 hour period" and "change the time and
+date", for that session or every later one. Contract v37-changes.
+
+- `round37-changes/changes.mjs`: the theme's demo on the theme mock, at 320, 390 and 1280 wide. My Lair: a table for
+  nine on three tables (the demo makes one, three days out) has Change numbers and "Change or cancel by …"; nine
+  become six, one table goes back (the last unless they pick), the notice, the ticket, the demo's state and the free
+  table follow; up to every seat at the tables kept and no further; a table inside 24 hours has neither button; one
+  that passes its moment while the dialog is open gets the Lair app's words and shows locked after. Games I run:
+  Change date or time (to the board), Open game, Cancel this session and Cancel all future sessions with until when;
+  cancelling asks first and says who was emailed; a session less than 24 hours away has a note in place of the
+  buttons, and "all future sessions" says before and after that it stays on. The games board: My Lair's link opens
+  the game's Change date or time and `?move` leaves the address; a weekly game asks Which sessions?; nothing changed
+  says so; the next day, just this session; this and every later session; a one-shot has no Which sessions?; a
+  session too close has a note and no buttons; a Lair app from before round 37 gets no Change date or time; staff
+  keep both until a session ends, and someone on the team changes their own table the same way; a link to move a
+  session that's under way opens the game and says why not. No sideways scroll,
+  no console errors, axe on each new part (73 checks a size).
+  `DG_THEME=… [AXE=…/axe.min.js] [PORT=4937] [OUT=…] node tools/qa/round37-changes/changes.mjs [small|phone|desktop]`.
+- `round37-changes/emails.mjs`: **the Lair app itself** with the email service stood in for, writing each email of
+  the contract's section 5 as it would go (HTML and text) for a look before they're switched on: a table's
+  confirmation and two-day reminder with their new last line, "Your booking's changed", "New time" (a player's, and
+  the team's "Moved by its GM") and "New day and time". Nothing is sent.
+  `node tools/qa/round37-changes/emails.mjs [out dir]`.
