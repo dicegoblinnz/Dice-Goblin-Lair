@@ -11,9 +11,9 @@
 //  3. The press shows the moment the finger is down.
 //  4. A finger that wobbles on its button and lifts still on it has pressed it (a browser calls that the start of a
 //     scroll and clicks nothing); in a list that can roll, moving along the list is rolling it. Not a tap: a finger
-//     that slides off its button (and one that comes back), a second finger, a touch that lands while a list is
-//     rolling from a flick (left to the browser), a button that's off. A list the till moved itself doesn't put the
-//     next tap off.
+//     that slides off its button (and one that comes back), a long stroke along a wide button, a second finger, a
+//     touch that lands while a list is rolling from a flick (left to the browser), a button that's off. A list the
+//     till moved itself doesn't put the next tap off.
 //  5. A button redrawn under the finger is still pressed (the sale's panel is redrawn when a price comes in), unless
 //     what it says has changed.
 //  6. "Staff: hold to go back" still wants its hold.
@@ -83,10 +83,12 @@ for (look of LOOKS) {
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }, [sel, nth]);
-  /** A finger, through the debugger: down, held `ms`, perhaps slid `dx` across and `dy` down (and `back` again), up */
-  const finger = async (sel, { ms = 30, dx = 0, dy = 0, back = false, nth = 0, wait = 350 } = {}) => {
+  /** A finger, through the debugger: down (`ox` across from the middle), held `ms`, perhaps slid `dx` across and `dy`
+      down (and `back` again), up */
+  const finger = async (sel, { ms = 30, ox = 0, dx = 0, dy = 0, back = false, nth = 0, wait = 350 } = {}) => {
     const p = await at(sel, nth);
     if (!p) throw new Error(`no ${sel} on the screen`);
+    p.x += ox;
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y, radiusX: 3, radiusY: 3, force: 0.3 }] });
     await page.waitForTimeout(ms);
     if (dx || dy) {
@@ -268,6 +270,11 @@ for (look of LOOKS) {
     await finger('[data-act="more"]', { dx: 45, back: true });
     v = await till();
     check('nor is one that slides off and comes back', v.lines[0][1] === slid0 && v.down.length === 0, { lines: v.lines, slid0 });
+    // (down near the button's edge, and off it within a jab's length: the button's own edge is what counts)
+    await finger('[data-act="more"]', { ox: 16, dx: 22 });
+    v = await till();
+    got = await clicks();
+    check('nor one that comes down near its button\'s edge and slips off it, however short the slip', v.lines[0][1] === slid0 && got.length === 0, { lines: v.lines, slid0, got });
     await clicks();
     p = await at('[data-act="more"]');
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y, radiusX: 3, radiusY: 3, id: 0 }] });
@@ -514,6 +521,14 @@ for (look of LOOKS) {
     await page.waitForTimeout(250);
     let n = await wides();
     check('the browser\'s own click on another part of the button the till has just pressed is held back too', n === 1, { n, wide });
+    // a long stroke along a wide button isn't a jab at it (a cloth, a sleeve): nothing's pressed. A wobble on it is.
+    await page.waitForTimeout(800);
+    const stroke0 = await wides();
+    await finger('#qa-wide', { dx: 60 });
+    const stroke1 = await wides();
+    await finger('#qa-wide', { dx: 22 });
+    n = await wides();
+    check('a long stroke along a wide button isn\'t a tap; a wobble on it is', stroke1 === stroke0 && n === stroke0 + 1, { stroke0, stroke1, n });
     // ... and when it comes late, once the next touch has begun (the separate review's note)
     await page.waitForTimeout(800);
     const w0 = await wides();

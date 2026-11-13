@@ -360,11 +360,12 @@ theme's `assets/lair-till.js`).
   down, stays shown on a button touched again straight away, and shows for a moment after even the quickest tap on a
   button its own press drew again. A finger that wobbles on its button and lifts still on it has pressed it (where
   the browser clicks nothing); in a list that can roll, moving along the list is rolling it; with the page pinched in,
-  only a still touch is a tap. Not a tap: sliding off the button (or off and back), a second finger (on nothing, on
-  another button, or still down when the first lifts), a touch that stops a list rolling from a flick, a button
-  that's off; a list the till moved itself doesn't put the next tap off. A button redrawn under the finger is still
+  only a still touch is a tap. Not a tap: sliding off the button (off and back, or off its edge within a jab's
+  length), a long stroke along a wide button, a second finger (on nothing, on another button, or still down when the
+  first lifts), a touch that stops a list rolling from a flick, a button that's off; a list the till moved itself
+  doesn't put the next tap off. A button redrawn under the finger is still
   pressed, unless what it says has changed; a form's own button; "Staff: hold to go back" still wants its hold; a
   mouse and a keyboard as before; a field takes its tap from the browser or from the till (by itself or by the words
   over it) and a tapped button puts the keyboard away; the store-credit tick box by its words, by the box and with a
-  real finger, once each (37 checks per look). Breaking the taps 26 ways on purpose fails it each time.
+  real finger, once each (39 checks per look). Breaking the taps 27 ways on purpose fails it each time.
   `DG_THEME=… [LOOK=pieces|first] [PORT=4958] node tools/qa/till-fast-taps/taps.mjs`.
