@@ -467,6 +467,15 @@ export class ShopifyAdmin {
     return { rooms, events, settingsText, theme, shop: { name: data.shop?.name || null, address } };
   }
 
+  /**
+   * Round 36: the shop owner's email address as Shopify has it (Shop.email: Settings, Store details), where the email
+   * about a till discount past 20% goes when no address is set for it. → the address, or null
+   */
+  async shopOwnerEmail({ timeout = SHOPIFY_ORDER_TIMEOUT } = {}) {
+    const data = await this.graphql('query LairShopOwner { shop { email } }', {}, { timeout });
+    return String(data?.shop?.email || '').trim() || null;
+  }
+
   /** Which permissions the store granted the app, for the health check. */
   async appInfo() {
     const data = await this.graphql('query Scopes { currentAppInstallation { accessScopes { handle } app { title } } shop { name ianaTimezone } }');

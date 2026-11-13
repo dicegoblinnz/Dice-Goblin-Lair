@@ -11150,7 +11150,7 @@ export class Lair {
     // until they're made (src/till-sales.js)
     try {
       const till = await this.tillSalesUpkeep(Date.now());
-      if (till.letGo || till.orders || till.fulfilled) result.tillSales = till;
+      if (till.letGo || till.orders || till.fulfilled || till.over) result.tillSales = till;
     } catch (error) {
       console.error('Lair: could not look after till sales', error);
     }

@@ -23,6 +23,10 @@ export const CONFIG_KEYS = [
   'LIBRARY_POSTAGE',
   // Round 19: where the weekly numbers go on Monday morning (an email address), 'off' for nowhere; STAFF_EMAIL when unset
   'REPORT_EMAIL',
+  // Round 36: where the owner's email about a till sale with a discount past 20% goes: one email address, or 'off' for
+  // nowhere. With nothing set it goes to the shop owner's own address as Shopify has it (Settings, Store details). It's
+  // the owner's alone: it never goes to STAFF_EMAIL.
+  'DISCOUNT_EMAIL',
 ];
 const TTL = 60_000;
 let cache = null;

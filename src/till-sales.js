@@ -32,7 +32,7 @@ import { TILL_ORDER_TAG } from './counter.js';
 import { maskEmail } from './till.js';
 import { TILL_PEOPLE_WORDS, TILL_UNPAYABLE } from './till-people.js';
 import { CREDIT_PAY, CREDIT_PAY_WORDS } from './credit-pay.js';
-import { TILL_DISCOUNT_TAG, TILL_DISCOUNT_WORDS, tillDiscountCheck, tillDiscountIn, tillDiscountMost, tillDiscountsShown, tillOffIn } from './till-discounts.js';
+import { TILL_DISCOUNT_TAG, TILL_DISCOUNT_WORDS, TILL_OVER_A_RUN, tillDiscountCheck, tillDiscountIn, tillDiscountMost, tillDiscountsShown, tillOffIn, tillOverAsk, tillOverFacts } from './till-discounts.js';
 
 const MIN = 60_000;
 const DAY = 24 * HOUR;
@@ -227,7 +227,9 @@ export function tillBasketIn(list) {
  * and a product at the shop's price (not a tab's) has most, the cents a discount could take off each one of it, and
  * was, its compare-at price, when it's on sale. A line one of the shop's deals took something off (a free die, a
  * deck's free sleeves) can't have a discount too, so its most is 0 and it says deal: true (11 Nov 2026: the till shares
- * "Discount on everything" across what can take it). Each is found by its uuid, or by its place.
+ * "Discount on everything" across what can take it). Round 36: most is how far it can come down before it's past 20%
+ * (a discount can go past it, once the till has asked), and dollars off past it say so: discount.over is true. Each is
+ * found by its uuid, or by its place.
  */
 export function tillShownLines(lines, figures) {
   const byUuid = new Map((figures?.lines || []).filter((l) => l.uuid).map((l) => [l.uuid, l]));
@@ -240,16 +242,18 @@ export function tillShownLines(lines, figures) {
     const total = f?.total ?? unit * qty;
     // rounds 34 and 35: a staff discount (dollars off each one, or the older percent), and what Shopify took off for it
     const taken = f ? f.staff ?? Math.max(0, total - (f.paid ?? total)) : null;
-    const discount = l.off
-      ? { each: l.off, amount: taken ?? l.off * qty }
-      : l.discount
-        ? { percent: l.discount, amount: taken ?? Math.round((total * l.discount) / 100) }
-        : null;
     // round 35: what a discount could take off each one of a product at the shop's own price, and what it was when
     // it's on sale; nothing, when a deal has taken something off the line already (more came off it than its own
     // discount, by over a cent: tillDiscountCheck's own test)
-    const dealt = Boolean(f) && Math.max(0, total - (f.paid ?? total)) - (discount ? taken ?? 0 : 0) > 1;
-    const most = l.variantId && l.cents == null && f ? { most: dealt ? 0 : tillDiscountMost(f.unit, f.was), ...(f.was ? { was: f.was } : {}), ...(dealt ? { deal: true } : {}) } : {};
+    const dealt = Boolean(f) && Math.max(0, total - (f.paid ?? total)) - (l.off || l.discount ? taken ?? 0 : 0) > 1;
+    const room = f ? tillDiscountMost(f.unit, f.was) : null;
+    const discount = l.off
+      // round 36: dollars off that take it past 20% (under 80% of its full price) say so
+      ? { each: l.off, amount: taken ?? l.off * qty, ...(room != null && !dealt && l.off > room ? { over: true } : {}) }
+      : l.discount
+        ? { percent: l.discount, amount: taken ?? Math.round((total * l.discount) / 100) }
+        : null;
+    const most = l.variantId && l.cents == null && f ? { most: dealt ? 0 : room, ...(f.was ? { was: f.was } : {}), ...(dealt ? { deal: true } : {}) } : {};
     return { key: l.key, title, qty, unit, total, ...most, ...(discount ? { discount } : {}), ...(l.booking ? { booking: l.booking } : {}), ...(l.tab ? { tab: l.tab } : {}) };
   });
 }
@@ -515,7 +519,8 @@ export const tillSalesMethods = {
    * POST /till/price { lines, person? } (the tablet's staff account): what the basket comes to, as Shopify works it out
    * at checkout (the shop's prices, the dice deal, GST), its bookings at what's left to pay and its tab at the tab's
    * prices. Nothing is made or checked in. → { price: { lines, subtotal, discounts, total, gst, taxIncluded }, dropped }
-   * (dropped: booking codes with nothing to pay now).
+   * (dropped: booking codes with nothing to pay now). Round 36: with dollars off that take something past 20%, the price
+   * has over: [{ key, off, most, unit, was?, percent }], for the till to ask about before Pay.
    */
   async tillPriceOf(body, who) {
     this.tillGate(who);
@@ -538,13 +543,14 @@ export const tillSalesMethods = {
       throw new RuleError(TILL_SALE_WORDS.shopify, 503);
     }
     // --- no awaits from here on ---
-    // rounds 34 and 35: what the staff discount took off, checked on Shopify's figures (no item under 80% of its full
-    // price, never on top of a deal); approved only at Pay
+    // rounds 34 to 36: what the staff discount took off, checked on Shopify's figures (never on top of a deal, never
+    // more than the price); approved only at Pay. Round 36: lines it takes past 20% are listed, for the till to ask about
     const staff = tillDiscountCheck(lines, figures);
     return {
       price: {
         lines: tillShownLines(lines, figures), subtotal: figures.subtotal, discounts: tillDiscountsShown(figures.discounts, staff.total), total: figures.total, gst: figures.gst, taxIncluded: figures.taxIncluded,
         ...(lines.some((l) => l.discount || l.off) ? { needsOk: true, staffDiscount: staff.total } : {}),
+        ...(staff.over.length ? { over: staff.over.map(tillOverFacts) } : {}),
       },
       dropped: owed.dropped,
     };
@@ -559,7 +565,8 @@ export const tillSalesMethods = {
    * pass covered them at check-in); { sale: null } when nothing's left to pay. (the review, 8 Nov 2026) key: the till's own
    * for this Pay (8 to 64 letters, numbers, dashes or underscores): asking again with it gives back that sale as it stands
    * (repeated: true), so a lost answer never takes store credit twice; one still being made is a 409 `making`, and one
-   * that was let go starts afresh.
+   * that was let go starts afresh. Round 36: overOk (true): the till asked about the discounts past 20% and yes was
+   * said; with lines past it and no yes, a 422 naming them ({ over, line }), and nothing is sold.
    */
   async tillPay(body, who, client = '') {
     this.tillGate(who);
@@ -622,9 +629,9 @@ export const tillSalesMethods = {
     if (!lines.length) return { sale: null, dropped, notices };
     const id = makeId('ts');
     this.write(
-      `INSERT INTO till_sales (id, till, customer_id, method, status, lines, refs, tabs, started_by, pay_key, created_at, updated_at, discount_by, discount_by_name, discount_ok)
-       VALUES (?, ?, ?, ?, 'making', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id, till, customerId, method, JSON.stringify(lines), JSON.stringify(owed.refs), JSON.stringify(tab.tabIds), me ? me.id : null, key, now, now,
+      `INSERT INTO till_sales (id, till, customer_id, method, status, lines, refs, tabs, started_by, started_by_name, pay_key, created_at, updated_at, discount_by, discount_by_name, discount_ok)
+       VALUES (?, ?, ?, ?, 'making', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, till, customerId, method, JSON.stringify(lines), JSON.stringify(owed.refs), JSON.stringify(tab.tabIds), me ? me.id : null, me ? me.name : null, key, now, now,
       approval ? approval.person.id : null, approval ? approval.person.name : null, approval ? approval.tokenHash : null,
     );
     // its tab can't change in My Lair while it's being paid
@@ -668,15 +675,21 @@ export const tillSalesMethods = {
     let staff;
     try {
       staff = tillDiscountCheck(lines, draft);
+      // round 36: past 20% only once the till has asked and yes was said (overOk)
+      if (staff.over.length && body?.overOk !== true) throw tillOverAsk(staff.over);
     } catch (error) {
       this.tillLetGo({ ...fresh, draft_id: draft.id }, 'discount', Date.now());
       throw error;
     }
     const shown = tillShownLines(lines, draft);
+    // round 36: which lines were past 20%, kept with the sale: once it's paid its order is flagged and the owner
+    // emailed (tillOverSoon)
+    const past = staff.over.length ? JSON.stringify(staff.over) : null;
     this.write(
-      `UPDATE till_sales SET status = 'open', draft_id = ?, subtotal = ?, total = ?, gst = ?, discounts = ?, shown = ?, discount_total = ?, updated_at = ?
-         WHERE id = ? AND status = 'making'`,
-      draft.id, draft.subtotal, draft.total, draft.gst, JSON.stringify(tillDiscountsShown(draft.discounts, staff.total)), JSON.stringify(shown), staff.total || null, Date.now(), id,
+      `UPDATE till_sales SET status = 'open', draft_id = ?, subtotal = ?, total = ?, gst = ?, discounts = ?, shown = ?, discount_total = ?, discount_over = ?,
+         over_mark = ?, over_mail = ?, updated_at = ? WHERE id = ? AND status = 'making'`,
+      draft.id, draft.subtotal, draft.total, draft.gst, JSON.stringify(tillDiscountsShown(draft.discounts, staff.total)), JSON.stringify(shown), staff.total || null, past,
+      past ? 'due' : null, past ? 'due' : null, Date.now(), id,
     );
     if (useCredit) return this.tillTakeCredit(id, { customerId, balance, method, deadline, me, dropped, notices });
     return { sale: this.tillSaleView(this.tillSaleRow(id)), dropped, notices };
@@ -905,6 +918,8 @@ export const tillSalesMethods = {
       }, Date.now());
     }
     this.tillFulfilSoon(id);
+    // round 36: a discount took something past 20%: its order is flagged now, and the owner emailed
+    this.tillOverSoon(id);
     return order;
   },
 
@@ -935,6 +950,8 @@ export const tillSalesMethods = {
         : `Make it by hand in Shopify admin: Orders, Create order${r.customer_id ? ` for ${who}` : ''}, with what's below, then mark it as paid.`}`,
       details: [['Paid', dollars(r.total)], ['What it was for', lines.map((l) => (l.qty > 1 ? `${l.qty} × ${l.title}` : l.title)).join('\n')], ['Why', String(error).slice(0, 200)], ...(draft ? [['Draft order', draft]] : [])],
     }, now);
+    // round 36: a discount past 20% is still emailed to the owner, saying there's no order to flag
+    this.tillOverSoon(r.id);
   },
 
   /** Claim and make a paid sale's order when its wait is up (or its try never finished). The try, or null. No awaits before the claim. */
@@ -1024,12 +1041,13 @@ export const tillSalesMethods = {
   /* ---------------- the 10-minute run ---------------- */
   /**
    * Sales left waiting for their money for TILL_SALE_OPEN_MS are let go; paid sales' orders still to make, and made
-   * orders still to fulfil, are tried again (a few a run). → { letGo, orders, fulfilled } (how many were looked at)
+   * orders still to fulfil, are tried again (a few a run). Round 36: so are the flags and emails still due for paid
+   * sales a discount took past 20%. → { letGo, orders, fulfilled, over } (how many were looked at)
    */
   async tillSalesUpkeep(now = Date.now()) {
     const stale = this.sql.exec("SELECT * FROM till_sales WHERE status IN ('making', 'open') AND created_at < ?", now - TILL_SALE_OPEN_MS).toArray();
     for (const r of stale) this.tillLetGo(r, 'not paid', now);
-    if (!this.shopify?.configured) return { letGo: stale.length, orders: 0, fulfilled: 0 };
+    if (!this.shopify?.configured) return { letGo: stale.length, orders: 0, fulfilled: 0, over: 0 };
     const orders = this.sql
       .exec(
         "SELECT id FROM till_sales WHERE status = 'paid' AND order_status IN ('making', 'failed') AND (order_next_at IS NULL OR order_next_at <= ?) ORDER BY paid_at LIMIT ?",
@@ -1053,6 +1071,19 @@ export const tillSalesMethods = {
       const making = this.tillFulfilClaim(id);
       if (making) await making;
     }
-    return { letGo: stale.length, orders: orders.length, fulfilled: fulfils.length };
+    // round 36: a paid sale past 20% whose order's flag or owner's email is still due (src/till-discounts.js)
+    const overs = this.sql
+      .exec(
+        `SELECT id FROM till_sales WHERE status = 'paid' AND discount_over IS NOT NULL AND (over_mark = 'due' OR over_mail = 'due')
+           AND (over_next_at IS NULL OR over_next_at <= ?) ORDER BY paid_at LIMIT ?`,
+        Date.now(), TILL_OVER_A_RUN,
+      )
+      .toArray()
+      .map((r) => r.id);
+    for (const id of overs) {
+      const telling = this.tillOverClaim(id);
+      if (telling) await telling;
+    }
+    return { letGo: stale.length, orders: orders.length, fulfilled: fulfils.length, over: overs.length };
   },
 };

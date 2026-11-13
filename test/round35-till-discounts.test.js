@@ -4,6 +4,10 @@
 // 20% off, he picked "Already on sale"). A discount is dollars off each one of a shop product; no item sells for less
 // than 80% of its full price because of one (its compare-at price when it's on sale); a line on a deal can't have one
 // too; Shopify's own figures are what's checked. Approving is round 34's (test/round34-till-discounts.test.js).
+// Round 36 (Mo, 13 Nov 2026: "instead of locking it just create a warning message"): dollars off past 20% are no longer
+// refused; the till asks first, the sale is flagged and the owner emailed (test/round36-till-discount-over.test.js). The
+// four tests here that said they were refused say what happens now; a percent, from a till that hasn't reloaded, is
+// held to the 80% as it was.
 // The words are written out here as the contract has them, not taken from the code.
 // Run with: npm test
 import { test, beforeEach, afterEach } from 'node:test';
@@ -407,25 +411,30 @@ test('round 35: the price shows the dollars off straight away, what each thing c
   assert.equal(lines[2].was, undefined);
 });
 
-test('round 35: more than the item can come down by is refused, with the most it can', async () => {
-  said(await price([{ key: 'b', variantId: BOOSTER, qty: 1, off: 221 }]), 422, 'Riftbound Radiance · Booster Pack can come down by $2.20 at most. Change the discount, or take it off.');
-  said(await price([{ key: 'b', variantId: BOOSTER, qty: 3, off: 221 }]), 422, 'Riftbound Radiance · Booster Pack can come down by $2.20 each at most. Change the discount, or take it off.');
-  said(await price([{ key: 'w', variantId: WONDERS, qty: 1, off: 2101 }]), 422, '7 Wonders can come down by $21.00 at most. Change the discount, or take it off.');
+test('round 35, as round 36 left it: more than 20% off is priced, not refused (the till asks first); more than the price still is refused', async () => {
+  assert.equal(ok(await price([{ key: 'b', variantId: BOOSTER, qty: 1, off: 221 }])).price.total, 879);
+  assert.equal(ok(await price([{ key: 'b', variantId: BOOSTER, qty: 3, off: 221 }])).price.staffDiscount, 663);
+  assert.equal(ok(await price([{ key: 'w', variantId: WONDERS, qty: 1, off: 2101 }])).price.total, 8399);
   // far more than its price (Shopify would take the whole price off and say nothing)
-  said(await price([{ key: 'b', variantId: BOOSTER, qty: 1, off: 5000 }]), 422, 'Riftbound Radiance · Booster Pack can come down by $2.20 at most. Change the discount, or take it off.');
-  // right on the most is fine
+  said(await price([{ key: 'b', variantId: BOOSTER, qty: 1, off: 5000 }]), 422, "Riftbound Radiance · Booster Pack is $11.00, so it can't come down by more than that. Change the discount, or take it off.");
+  // right on the 20% is as it was, and says nothing about being past it
   assert.equal(ok(await price([{ key: 'b', variantId: BOOSTER, qty: 3, off: 220 }])).price.staffDiscount, 660);
   assert.equal(ok(await price([{ key: 'w', variantId: WONDERS, qty: 1, off: 2100 }])).price.total, 8400);
+  assert.equal(ok(await price([{ key: 'w', variantId: WONDERS, qty: 1, off: 2100 }])).price.over, undefined);
 });
 
-test("round 35: something on sale comes down only as far as 80% of what it was, and one already there can't have a discount", async () => {
-  // $6, now $3: it's under 80% only because Shopify already has it there
-  said(await price([{ key: 'c', variantId: COKE, qty: 1, off: 50 }]), 422, "Coca-Cola – Half Price (Flat) · Classic is on sale already, so it can't have a discount too. Take the discount off it.");
-  // $100, now $90: $10 more and no further
+test('round 35, as round 36 left it: something on sale is within 20% only as far as 80% of what it was, and past that it is priced, not refused', async () => {
+  // $6, now $3: any more off is past 20% of what it was
+  const coke = ok(await price([{ key: 'c', variantId: COKE, qty: 1, off: 50 }])).price;
+  assert.equal(coke.total, 250);
+  assert.equal(coke.lines[0].most, 0);
+  assert.equal(coke.over.length, 1);
+  // $100, now $90: $10 more is within it, a cent more is past it
   assert.equal(ok(await price([{ key: 'g', variantId: BARRAGE, qty: 1, off: 1000 }])).price.total, 8000);
-  said(await price([{ key: 'g', variantId: BARRAGE, qty: 1, off: 1001 }]), 422, 'Barrage can come down by $10.00 at most. Change the discount, or take it off.');
+  assert.equal(ok(await price([{ key: 'g', variantId: BARRAGE, qty: 1, off: 1000 }])).price.over, undefined);
+  assert.equal(ok(await price([{ key: 'g', variantId: BARRAGE, qty: 1, off: 1001 }])).price.over.length, 1);
   // too cheap for 20% to be a cent
-  said(await price([{ key: 'l', variantId: LOLLY, qty: 5, off: 1 }]), 422, "Lolly can't have a discount. Take the discount off it.");
+  assert.equal(ok(await price([{ key: 'l', variantId: LOLLY, qty: 5, off: 1 }])).price.total, 15);
 });
 
 test("round 35: no dollars off on top of a deal: a die the dice deal takes off can't have a discount too", async () => {
@@ -490,12 +499,14 @@ test("round 35: a discounted line Shopify's figures don't have is refused, never
 });
 
 test("round 35: a refusal over a line's discount says which line, with Shopify's figures for it now", async () => {
-  // so the till can offer what the item can take: its price, the most it can come down by, and what it was when on sale
-  const over = await price([{ key: 'w', variantId: WONDERS, qty: 1 }, { key: 'b', variantId: BOOSTER, qty: 2, off: 221 }]);
+  // so the till can offer what the item can take: its price, what it can come down by before it's past 20%, and what
+  // it was when on sale. (Round 36: past 20% isn't refused at the price any more; more than the price is, and so is
+  // Pay without the till's yes.)
+  const over = await price([{ key: 'w', variantId: WONDERS, qty: 1 }, { key: 'b', variantId: BOOSTER, qty: 2, off: 1101 }]);
   said(over, 422);
   assert.deepEqual(over.data.line, { key: 'b', unit: 1100, most: 220 });
-  assert.deepEqual((await price([{ key: 'c', variantId: COKE, qty: 1, off: 50 }])).data.line, { key: 'c', unit: 300, most: 0, was: 600 });
-  assert.deepEqual((await price([{ key: 'g', variantId: BARRAGE, qty: 1, off: 1001 }])).data.line, { key: 'g', unit: 9000, most: 1000, was: 10000 });
+  assert.deepEqual((await price([{ key: 'c', variantId: COKE, qty: 1, off: 301 }])).data.line, { key: 'c', unit: 300, most: 0, was: 600 });
+  assert.deepEqual((await price([{ key: 'g', variantId: BARRAGE, qty: 1, off: 9001 }])).data.line, { key: 'g', unit: 9000, most: 1000, was: 10000 });
   // a line a deal took something off can't come down at all, and says it's the deal
   assert.deepEqual((await price([{ key: 'o', variantId: OAKIE, qty: 3, off: 100 }])).data.line, { key: 'o', unit: 1599, most: 0, deal: true });
   // at Pay too
@@ -541,14 +552,14 @@ test('round 35: Pay takes dollars off only with a PIN from someone with Money, o
   assert.equal(saleRow(sale.id).discount_total, 400);
 });
 
-test('round 35: at Pay the draft is checked again: a price that dropped in Shopify since leaves less room, and nothing is sold', async () => {
+test('round 35, as round 36 left it: at Pay the draft is checked again: a price that dropped in Shopify since puts it past 20%, and nothing is sold until the till has asked', async () => {
   await onTill(RUA, '4711');
   const lines = [{ key: 'b', variantId: BOOSTER, qty: 1, off: 220 }];
   assert.equal(ok(await price(lines)).price.total, 880);
   // Mo drops the booster to $10 in Shopify before Pay: $2.20 off is more than 20% of it now
   VARIANTS[BOOSTER].price = 1000;
   try {
-    said(await pay({ lines, method: 'card', discountOk: await approve() }), 422, 'Riftbound Radiance · Booster Pack can come down by $2.00 at most. Change the discount, or take it off.');
+    said(await pay({ lines, method: 'card', discountOk: await approve() }), 422, "Riftbound Radiance · Booster Pack would be more than 20% off, and the till hasn't asked about that yet. Change the discount, or tap Pay again to be asked.");
   } finally {
     VARIANTS[BOOSTER].price = 1100;
   }
