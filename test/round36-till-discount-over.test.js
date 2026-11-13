@@ -560,6 +560,11 @@ test("round 36: once it's paid, its order is flagged in Shopify and one email go
   // nobody else hears: no alert for the team, and what the till is told says nothing of a flag or an email
   assert.deepEqual(lair.alerts, []);
   for (const answer of [sale, done]) assert.deepEqual([...keysOf(answer)].filter((k) => /mail|flag|told|mark|tag|note/i.test(k)), []);
+  // (the review, 13 Nov 2026) nor that it's past 20% at all: Pay's and Paid's answers are what they'd be for any
+  // discounted sale, line for line (the price is where the till is told, before it asks)
+  for (const answer of [sale, done]) assert.ok(!keysOf(answer).has('over'), JSON.stringify(answer.lines));
+  assert.deepEqual(sale.lines.find((l) => l.key === 'w').discount, { each: 5000, amount: 5000 });
+  assert.ok(!/"over"/.test(saleRow(sale.id).shown));
   const row = saleRow(sale.id);
   assert.equal(row.over_mark, 'done');
   assert.equal(row.over_mail, 'sent');

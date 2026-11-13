@@ -478,6 +478,8 @@ await step('5', async () => {
     calls('till/pay').length === before + 1 && sent.body.overOk === true && Boolean(sent.body.discountOk) && JSON.stringify(offsSent('till/pay')) === JSON.stringify([['5026', 5000], ['5013', 400], ['5024', 50]]), sent.body);
   check('the EFTPOS screen says $71.50', v.view === 'card' && v.amount === '$71.50' && v.steps[0] === 'Key $71.50 into the EFTPOS', v);
   check("what Pay answered, and the screen, say nothing of a flag or an email", sent.status === 200 && !QUIET.test(sent.text) && !QUIET.test(v.overText), { text: sent.text.slice(0, 400), over: v.overText });
+  // (the review, 13 Nov 2026) nor that the sale is past 20% at all: its answer is any discounted sale's
+  check('nor does Pay\'s answer mark any line as past 20%', !/"over"/.test(sent.text), sent.text.slice(0, 600));
   check('nothing is flagged or sent before it is paid', shop.marked.length === 0 && mails.length === 0, { marked: shop.marked.length, mails: mails.length });
 });
 
@@ -507,7 +509,7 @@ await step('6', async () => {
   ];
   const missing = wanted.filter((w) => !text.includes(w));
   check('it says who rang it up, who approved it, how it was paid and what came off what', missing.length === 0, { missing, text });
-  check('the team hear nothing, and neither the Done screen nor what the Lair app answered says anything of it', alerts.length === 0 && !QUIET.test(v.overText) && !v.toast && !QUIET.test(confirmed.text), { alerts, over: v.overText, toast: v.toast, text: String(confirmed.text).slice(0, 300) });
+  check('the team hear nothing, and neither the Done screen nor what the Lair app answered says anything of it', alerts.length === 0 && !QUIET.test(v.overText) && !v.toast && !QUIET.test(confirmed.text) && !/"over"/.test(confirmed.text), { alerts, over: v.overText, toast: v.toast, text: String(confirmed.text).slice(0, 300) });
   await shot(page, 'over-4-done');
 });
 

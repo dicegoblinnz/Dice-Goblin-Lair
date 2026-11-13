@@ -228,10 +228,12 @@ export function tillBasketIn(list) {
  * was, its compare-at price, when it's on sale. A line one of the shop's deals took something off (a free die, a
  * deck's free sleeves) can't have a discount too, so its most is 0 and it says deal: true (11 Nov 2026: the till shares
  * "Discount on everything" across what can take it). Round 36: most is how far it can come down before it's past 20%
- * (a discount can go past it, once the till has asked), and dollars off past it say so: discount.over is true. Each is
- * found by its uuid, or by its place.
+ * (a discount can go past it, once the till has asked), and dollars off past it say so: discount.over is true. That's
+ * for the price, where the till is told before it asks; a sale's own lines (marks: false, at Pay) never say it, so
+ * what Pay and Paid answer is what it would be for any discounted sale (the review, 13 Nov 2026). Each is found by its
+ * uuid, or by its place.
  */
-export function tillShownLines(lines, figures) {
+export function tillShownLines(lines, figures, { marks = true } = {}) {
   const byUuid = new Map((figures?.lines || []).filter((l) => l.uuid).map((l) => [l.uuid, l]));
   const samePlaces = (figures?.lines || []).length === lines.length;
   return lines.map((l, i) => {
@@ -249,7 +251,7 @@ export function tillShownLines(lines, figures) {
     const room = f ? tillDiscountMost(f.unit, f.was) : null;
     const discount = l.off
       // round 36: dollars off that take it past 20% (under 80% of its full price) say so
-      ? { each: l.off, amount: taken ?? l.off * qty, ...(room != null && !dealt && l.off > room ? { over: true } : {}) }
+      ? { each: l.off, amount: taken ?? l.off * qty, ...(marks && room != null && !dealt && l.off > room ? { over: true } : {}) }
       : l.discount
         ? { percent: l.discount, amount: taken ?? Math.round((total * l.discount) / 100) }
         : null;
@@ -681,7 +683,8 @@ export const tillSalesMethods = {
       this.tillLetGo({ ...fresh, draft_id: draft.id }, 'discount', Date.now());
       throw error;
     }
-    const shown = tillShownLines(lines, draft);
+    // (round 36: the sale's own lines don't say which are past 20%: they're what the till is given back)
+    const shown = tillShownLines(lines, draft, { marks: false });
     // round 36: which lines were past 20%, kept with the sale: once it's paid its order is flagged and the owner
     // emailed (tillOverSoon)
     const past = staff.over.length ? JSON.stringify(staff.over) : null;
