@@ -18,6 +18,16 @@ for (const item of list) {
   const page = await ctx.newPage();
   await page.setContent(fs.readFileSync(path.join(dir, `${item.name}.html`), 'utf8'), { waitUntil: 'load' }).catch(() => {});
   await page.waitForTimeout(300);
+  // where the shop's pictures can't be loaded (a sandbox), the logo's own words stand in for it, as a mail app does
+  await page.evaluate(() => {
+    for (const img of document.querySelectorAll('img')) {
+      if (img.complete && img.naturalWidth > 0) continue;
+      const span = document.createElement('span');
+      span.textContent = img.alt || '';
+      span.style.cssText = `${img.style.cssText};display:block;height:auto;`;
+      img.replaceWith(span);
+    }
+  });
   await page.screenshot({ path: path.join(dir, `${item.name}.png`), fullPage: true });
   await page.close();
   console.log(`${item.name}.png: ${item.subject}`);
