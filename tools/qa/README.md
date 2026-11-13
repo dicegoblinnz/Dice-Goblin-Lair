@@ -373,7 +373,7 @@ it where they typed too much (they meet the question now, and say No).
   was typed (the line says so, the PIN screen says so, Pay carries the yes); two things' prices dropping in Shopify
   between the price and Pay (nothing sold, the till has both lines right at once from what the Lair app said, and the
   next Pay asks for a PIN on a screen that names both); a scan while it asks. No sideways scroll, no console errors
-  (70 checks).
+  (71 checks).
   `DG_THEME=… [LOOK=pieces|first] [PORT=4996] [OUT=…] node tools/qa/round36-till-discount-over/till.mjs`.
 - `round36-till-discount-over/practice.mjs`: the same on the demo (Practice sales, the till's own sums, nothing
   saved, so no flag and no email): the question, No, Yes, more than a thing costs, the PIN screen's words, cash after
