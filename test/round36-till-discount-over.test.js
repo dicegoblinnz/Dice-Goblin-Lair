@@ -17,6 +17,7 @@ import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings, DEFAULT_HOURS } from '../src/core.js';
 import { CONFIG_KEYS } from '../src/config.js';
 import { TILL_DISCOUNT_MAX, TILL_OVER_WORDS, tillDiscountMost } from '../src/till-discounts.js';
+import { ShopifyAdmin } from '../src/shopify.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -881,6 +882,54 @@ test("round 36: the email goes to the shop owner's own address, as Shopify has i
   assert.equal(mails.length, 4);
   assert.ok(mails.every((m) => m.to !== ENV.STAFF_EMAIL));
   assert.deepEqual(lair.alerts, []);
+});
+
+test("round 36: the shop owner's address is asked of Shopify itself (Shop.email), tidied, and null when Shopify has none", async () => {
+  // (everything above stands in for this one call: here it's the real one, against a stand-in for Shopify's API)
+  const admin = new ShopifyAdmin({ SHOP: 'dice-goblin.myshopify.com', SHOPIFY_CLIENT_ID: 'id', SHOPIFY_CLIENT_SECRET: 'secret', API_VERSION: '2026-07' }, fakeCtx().storage);
+  const asked = [];
+  const answers = [{ data: { shop: { email: ' the-owner@example.com ' } } }, { data: { shop: { email: '' } } }, { data: { shop: null } }];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/admin/oauth/access_token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 86399 }), { status: 200 });
+    asked.push({ url: String(url), query: JSON.parse(init.body).query });
+    return new Response(JSON.stringify(answers.shift()));
+  };
+  assert.equal(await admin.shopOwnerEmail(), 'the-owner@example.com');
+  assert.match(asked[0].url, /^https:\/\/dice-goblin\.myshopify\.com\/admin\/api\/2026-07\/graphql\.json$/);
+  assert.match(asked[0].query, /shop \{ email \}/);
+  assert.equal(await admin.shopOwnerEmail(), null);
+  assert.equal(await admin.shopOwnerEmail(), null);
+  assert.equal(asked.length, 3);
+});
+
+test("round 36: the email as the email service gets it: one request, to the owner alone, with the sale's own key", async () => {
+  // (everything above stands in for the Lair's own send: here it's the real one, against a stand-in for Resend's API)
+  const { sale, hemi } = await overSale();
+  delete lair.mail;
+  const sent = [];
+  globalThis.fetch = async (url, init) => {
+    sent.push({ url: String(url), headers: init.headers, body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 });
+  };
+  const done = ok(await paid({ sale: sale.id, token: hemi, expect: OVER_TOTAL })).sale;
+  await settle();
+  assert.equal(sent.length, 1);
+  const [request] = sent;
+  assert.equal(request.url, 'https://api.resend.com/emails');
+  assert.equal(request.headers['Idempotency-Key'], `till-over-${sale.id}`);
+  assert.deepEqual(request.body.to, [OWNER_NOTES]);
+  assert.equal(request.body.cc, undefined);
+  assert.equal(request.body.bcc, undefined);
+  assert.equal(request.body.from, ENV.FROM_EMAIL);
+  assert.equal(request.body.subject, `Till discount over 20%: ${done.order.name}, $55.00 off`);
+  assert.match(request.body.html, /A discount over 20%/);
+  assert.match(request.body.text, /Nobody at the till was told about this email/);
+  assert.equal(saleRow(sale.id).over_mail, 'sent');
+  // the 10-minute run sends nothing more
+  nowIs(NOW + 11 * MIN);
+  await lair.tillSalesUpkeep(Date.now());
+  await settle();
+  assert.equal(sent.length, 1);
 });
 
 test('round 36: with email not set up at all, the order is still flagged', async () => {
