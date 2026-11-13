@@ -1467,6 +1467,12 @@ test('1.5, 3.2: a staff slot\'s game is marked once its holder leaves the team; 
   const mine = (await me(BEN)).library;
   assert.deepEqual([mine.perk, mine.atHome.map((l) => [l.title, l.perk, l.perkEnded])], [null, [['Catan', 'staff', true]]]);
   assert.equal(said(await scan(AZUL, BEN)), '403 Join the library to borrow games.');
+  // staff sort it in person, and the Library tab is where they see it: it still says so after the Lair restarts (a
+  // helper taken off the team is in the Lair's own table, so that is known for good)
+  const benLoan = async () => ok(await call('GET', 'library/loans', null, ANA)).loans.find((l) => l.title === 'Catan');
+  assert.deepEqual([(await benLoan()).perk, (await benLoan()).perkEnded], ['staff', true]);
+  lair.people.clear(); // the Lair restarted
+  assert.equal((await benLoan()).perkEnded, true, 'taken off the team: still ended after a restart');
   // the main account's game (they're tagged staff in Shopify, which the Lair only remembers until it next restarts):
   // after a restart it's still theirs on the staff page: "ended" is said once the Lair knows they're off the team,
   // never because it hasn't heard yet

@@ -102,9 +102,9 @@ still need a plan, and perk games are never posted.
 ### 1.5 When a perk ends with a game at home
 
 Nothing is taken back or charged. The game stays at home with them, marked `perkEnded` for them and for staff, and they
-can't take another on the perk. (A staff slot's game is marked once the Lair knows its holder is off the team. The main
-account is on the team by its Shopify tag, which the Lair remembers only until it next restarts: not having heard yet
-is never "ended".) The email that says the GM perk is resting asks for the book back, and one more email
+can't take another on the perk. (A staff slot's game is marked once the Lair knows its holder is off the team. A helper
+taken off the team on the Team tab is in the Lair's own table, so that's known for good. The main account is on the
+team by its Shopify tag, which the Lair remembers only until it next restarts: not having heard yet is never "ended".) The email that says the GM perk is resting asks for the book back, and one more email
 asks again 7 days later if it's still out (5.5). When staff take a perk, or someone leaves the team, nothing is emailed:
 staff sort that in person, and the Library tab shows the game.
 

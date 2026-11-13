@@ -195,6 +195,16 @@ export const gmPerkMethods = {
     return this.perkTeam(customerId, who) === true;
   },
 
+  /**
+   * Whether the Lair's own table says they were a helper and were taken off the team: kept for good, so it's known
+   * after a restart too. Only a game at home's "perk ended" mark reads it (loanPerkFields); who gets a perk doesn't.
+   * No awaits.
+   */
+  perkLeftTeam(customerId) {
+    const id = String(customerId ?? '').trim();
+    return Boolean(id) && this.sql.exec("SELECT 1 FROM staff_helpers WHERE customer_id = ? AND status = 'removed' LIMIT 1", id).toArray().length > 0;
+  },
+
   /** Someone's GM perk record, or null. No awaits. */
   perkRecord(customerId) {
     const id = String(customerId ?? '').trim();
@@ -720,8 +730,10 @@ export const gmPerkMethods = {
     const out = l.status === 'out';
     // A staff slot's game has ended once the Lair KNOWS they're off the team (and no GM perk of theirs covers it). The
     // main account is on the team by its Shopify tags, which the Lair remembers only until it next restarts: not having
-    // heard yet is not "ended" (their own next request says).
-    const ended = Boolean(perk) && out && !this.perkCovers(this.perkState(l.customerId), l) && !(perk === 'staff' && this.perkTeam(l.customerId) === null);
+    // heard yet is not "ended" (their own next request says). A helper taken off the team is in the Lair's own table,
+    // so that stays known across a restart.
+    const unheard = perk === 'staff' && this.perkTeam(l.customerId) === null && !this.perkLeftTeam(l.customerId);
+    const ended = Boolean(perk) && out && !this.perkCovers(this.perkState(l.customerId), l) && !unheard;
     return {
       perk, perkEnded: ended,
       wanted: out ? this.bookWanted(l.variantId, now, { forId: l.customerId, staff, memo }).wanted : [],
