@@ -523,9 +523,10 @@ export const changeMethods = {
   },
 
   /**
-   * `change` on their view of a sign-up, while they can take people off it ({} otherwise): { until, min: 1, max (its
-   * people), each, you (what their own place costs), who: [{ name, cost }] } (everyone coming with them, in order).
-   * guests: its guest rows, when the caller has them. No awaits.
+   * `change` on their own view of a sign-up (lair.js's ownJoinView: never a guest's view of it, or staff's), while they
+   * can take people off it ({} otherwise): { until, min: 1, max (its people), each, you (what their own place costs),
+   * who: [{ name, cost }] } (everyone coming with them, in order). guests: its guest rows, when the caller has them.
+   * No awaits.
    */
   joinChangeView(join, guests = null, rules = this.rulesCache, now = Date.now()) {
     if (!this.canChangeJoin(join, rules, now)) return {};
@@ -575,7 +576,7 @@ export const changeMethods = {
     if (!Number.isInteger(people) || people < 1) throw new RuleError(W.joinPeople);
     if (people > join.people) throw new RuleError(W.joinMore);
     const staying = stayingOf(patch.staying, shape.who.length, people - 1, W.joinWho);
-    if (people === join.people) return { ok: true, join: this.joinView(join, guests), changed: null };
+    if (people === join.people) return { ok: true, join: this.ownJoinView(join, guests), changed: null };
     const kept = staying.map((i) => shape.who[i]);
     const amount = shape.you + kept.reduce((sum, p) => sum + p.cost, 0);
     if ((join.paidAmount || 0) > amount) throw new RuleError(W.paid, 409);
@@ -598,7 +599,7 @@ export const changeMethods = {
     this.tellJoinChanged(join, fresh, rules);
     return {
       ok: true,
-      join: this.joinView(fresh),
+      join: this.ownJoinView(fresh),
       changed: {
         people: { from: join.people, to: people }, guests: { from: guests.map((g) => g.name), to: kept.filter((p) => p.row).map((p) => p.row.name) },
         amount: { from: join.amount || 0, to: amount },

@@ -1400,9 +1400,17 @@ export class Lair {
       guests: (guests || this.joinGuests(j.id)).map((g) => ({ name: g.name, member: Boolean(g.customer_id) })),
       // Round 15: until when they can cancel it themselves, whether it's locked in now, and owed or waived
       ...this.lockView(j), owed: this.joinOwed(j), waived: Boolean(j.waived),
-      // Round 37: who they can take off it now (change: { until, min, max, each, you, who }), while they can
-      ...this.joinChangeView(j, guests),
     };
+  }
+
+  /**
+   * Round 37: a sign-up as whoever signed up sees it in My Lair: joinView, and who they can take off it now (change:
+   * { until, min, max, each, you, who }) while they can. Theirs alone: a guest on it, and the staff floor, get joinView,
+   * which says nothing of what each place costs. No awaits.
+   */
+  ownJoinView(j, guests = null) {
+    const list = guests || this.joinGuests(j.id);
+    return { ...this.joinView(j, list), ...this.joinChangeView(j, list) };
   }
 
   /**
@@ -10683,7 +10691,8 @@ export class Lair {
     const joins = this.sql.exec('SELECT * FROM event_joins WHERE customer_id = ? AND ends_at > ? ORDER BY starts_at', who.customerId, since).toArray()
       .map((r) => withLink(this.rowToJoin(r), r));
     // Round 8: and the sign-ups they're a guest on (someone else signed them up), in among their own, soonest first
-    const joinList = [...joins.map((j) => ({ ...this.joinView(j), ...heldLink(j) })), ...this.guestJoins(who.customerId, since, memberRow)].sort((a, b) => a.start - b.start);
+    // (round 37: their own carry what they can change about them, ownJoinView; one they're a guest on never does)
+    const joinList = [...joins.map((j) => ({ ...this.ownJoinView(j), ...heldLink(j) })), ...this.guestJoins(who.customerId, since, memberRow)].sort((a, b) => a.start - b.start);
     // Round 11: the games they're a named player in (someone else booked them), in among their own bookings, soonest first
     const playing = this.playerBookings(who.customerId, since, memberRow, rules);
     // Round 12: a sign-up, game table or interest whose event date isn't on the calendar any more (gone in Shopify) says

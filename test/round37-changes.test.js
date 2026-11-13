@@ -1209,11 +1209,18 @@ test('sign-ups: three people become two, a fortnight ahead: the entry follows, t
   const mine = (await me(MIA)).joins.find((j) => j.id === signed.join.id);
   assert.deepEqual(mine.change, { until: at('2026-11-28', 12), min: 1, max: 3, each: 1000, you: 1000, who: [{ name: 'Kai Tane', cost: 1000 }, { name: 'Jo', cost: 1000 }] });
   assert.equal(mine.cancelUntil, mine.change.until);
+  // (from the separate review) it's Mia's alone: Kai, on it as her guest, sees none of what it costs or who else is on
+  // it, and nothing to change; neither does the staff floor's list of sign-ups (staff change one their own way)
+  const kaisView = (await me(KAI)).joins.find((j) => j.id === signed.join.id);
+  assert.deepEqual([kaisView.guestOf, kaisView.amount, kaisView.canCancel, kaisView.change], [{ name: 'Mia' }, 0, false, undefined]);
+  const floor = ok(await call('GET', `floor?from=${at('2026-11-29', 0)}&to=${at('2026-11-30', 0)}`, null, OWNER));
+  assert.equal(floor.joins.find((j) => j.id === signed.join.id).change, undefined);
   // Jo can't come
   const done = ok(await changeJoin(signed.join.id, { people: 2, staying: [0] }));
   assert.deepEqual(done.changed, { people: { from: 3, to: 2 }, guests: { from: ['Kai Tane', 'Jo'], to: ['Kai Tane'] }, amount: { from: 3000, to: 2000 } });
   assert.deepEqual([done.join.people, done.join.amount, done.join.due, done.join.status], [2, 2000, 2000, 'confirmed']);
   assert.deepEqual(done.join.guests, [{ name: 'Kai Tane', member: true }]);
+  assert.deepEqual(done.join.change.who, [{ name: 'Kai Tane', cost: 1000 }], 'the answer says what can still change');
   assert.equal(joinRow(signed.join.id).note, '[Changed online: 3 to 2 people]');
   // the place is back: 38 of 40 left for the next person
   assert.equal(ok(await signUp(CLOCKTOWER, { name: 'Ria Moana', email: 'ria@example.com', people: 1 }, RIA)).spacesLeft, 37);
