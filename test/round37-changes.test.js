@@ -395,12 +395,24 @@ test('GM cancel: "all future sessions" cancels the ones more than 24 hours away;
   const all = ok(await cancelGame(other.sessions[0].id, OWNER, 'series'));
   assert.equal(all.kept, undefined);
   for (const s of other.sessions) assert.equal(gameRow(s.id).status, 'cancelled');
+  // half an hour into a session, its GM's "all future sessions" leaves it running without a word about it (it isn't
+  // "less than 24 hours away": it's on), and cancels the rest
+  const third = await list({ start: at('2026-11-15', 18), end: at('2026-11-15', 22), schedule: 'weekly', tables: ['B3'], title: 'Sunday campaign' });
+  nowIs(at('2026-11-15', 18) + 30 * 60 * 1000);
+  const late = ok(await cancelGame(third.sessions[0].id, RANGI, 'series'));
+  assert.equal(late.kept, undefined);
+  assert.equal(late.notice, undefined);
+  assert.equal(gameRow(third.sessions[0].id).status, 'open', "the one that's under way carries on");
+  for (const s of third.sessions.slice(1)) assert.equal(gameRow(s.id).status, 'cancelled', s.id);
 });
 
 test('GM cancel: My Lair tells a GM until when each session is theirs to change', async () => {
   const { game } = await list();
   const mine = (await me(RANGI)).games.find((g) => g.id === game.id);
   assert.equal(mine.changeUntil, at('2026-11-17', 18) - 24 * HOUR);
+  // and the floor says this Lair app can move a session, so the games board offers "Change date or time"
+  const floor = ok(await call('GET', `floor?from=${at('2026-11-17', 0)}&to=${at('2026-11-18', 0)}`, null, RANGI));
+  assert.equal(floor.features.changes, true);
 });
 
 /* ================= 3. a GM moves a session ================= */

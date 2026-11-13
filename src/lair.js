@@ -2670,8 +2670,9 @@ export class Lair {
       openings: st.openings.map((o) => (staffView ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: staffView,
       // payOnline: round 4's checkout for events paid online. Round 15: everything is on the tab, paid at the counter,
-      // so it's always false (a page from before shows only the counter).
-      features: { email: emailReady(this.env), payOnline: false },
+      // so it's always false (a page from before shows only the counter). Round 37: changes says this Lair app takes
+      // POST /games/:id/move, so the games board only offers "Change date or time" when it's there to answer.
+      features: { email: emailReady(this.env), payOnline: false, changes: true },
     };
   }
 
@@ -4702,8 +4703,11 @@ export class Lair {
         ? this.ownSessionsOnly(who, this.sql.exec("SELECT * FROM games WHERE series_id = ? AND status != 'cancelled' AND (starts_at > ? OR (id = ? AND starts_at >= ?))", game.seriesId, now, game.id, now - HOUR)
           .toArray().map((r) => this.rowToGame(r)))
         : [];
-      if (scope === 'series' && !staffGames) kept = every.filter((g) => !cancellable(g));
-      const targets = scope === 'series' ? every.filter((g) => !kept.includes(g)) : before === 'cancelled' ? [] : [game];
+      // (stays: the ones a GM can't cancel now. kept: those of them still to start, which the answer names; one that's
+      // already under way stays on without being said)
+      const stays = scope === 'series' && !staffGames ? every.filter((g) => !cancellable(g)) : [];
+      kept = stays.filter((g) => g.start > now);
+      const targets = scope === 'series' ? every.filter((g) => !stays.includes(g)) : before === 'cancelled' ? [] : [game];
       if (scope === 'series' && this.runsSeries(who, game.seriesId)) this.write("UPDATE series SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.seriesId);
       ({ affected, refunds } = this.cancelSessions(targets, rules, now));
       game.status = 'cancelled';

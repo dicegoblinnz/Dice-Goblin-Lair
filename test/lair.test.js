@@ -191,7 +191,8 @@ test('tables, walk-ins and game seats are paid at the counter: pay is ignored an
   // The old "let people pay online" theme setting doesn't matter any more. Round 15: everything goes on the tab, paid at
   // the counter, so payOnline is false even with Shopify's checkout working.
   lair.rulesCache = { ...lair.rulesCache, payOnline: false };
-  assert.deepEqual((await call('GET', 'floor')).data.features, { email: false, payOnline: false });
+  // (round 37: changes says this Lair app takes POST /games/:id/move, for the games board's "Change date or time")
+  assert.deepEqual((await call('GET', 'floor')).data.features, { email: false, payOnline: false, changes: true });
 });
 
 /** An event whose game spots are paid online: checkouts, holds and the payment webhook are tested with these. */

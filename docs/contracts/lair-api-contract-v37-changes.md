@@ -109,7 +109,8 @@ starts" (contract v3). Staff with GM games cancel at any time, as before.
   dates (when the series is theirs), as before. A session less than 24 hours away stays on, and the answer says so:
   `kept: [{ id, start, when }]` and `notice`, for example
   `Saturday, 21 November at 6:00 pm is less than 24 hours away, so it's still on. Give us a call if it can't run.`
-  (`Those sessions are` for more than one, with each date).
+  (`Those sessions are` for more than one, with each date). One that's already under way stays on too, and isn't
+  named: it isn't away, it's on.
 - Everything a cancel does is as before: every player's email, paid seats flagged "refund due", the GM's charges.
 - `GET /me`'s `games` each have `changeUntil` (ms): the last moment their GM can cancel or move that session online.
 
@@ -193,6 +194,9 @@ Why a later session stays (`kept[].reason`): the GM rules' own words, or
   `mv:<series or game id>`).
 - **New columns**, made sure of on every start: `bookings.moved_at` (when its session's time last changed under it),
   `games.slot_day` (`YYYY-MM-DD`).
+- **`GET /floor`'s `features.changes: true`** says this Lair app takes `POST /games/:id/move`. The games board offers
+  "Change date or time" only when it's there, so a newer website on an older Lair app never shows a button that can't
+  answer. My Lair goes by `change` on a booking and `changeUntil` on a game the same way.
 
 ## 5. The emails
 
@@ -237,6 +241,28 @@ are written as the Lair's other emails write them.
 
 ## 6. The website
 
-In the lab first (`website-lab`): My Lair's booking ticket gets **Change numbers** beside Cancel booking; Games I run
-gets **Change date or time**, **Cancel this session** and **Cancel all future sessions** on each game, and the game's
-own sheet on the board gets **Change date or time**. The theme's demo answers the same way.
+In the lab first (`website-lab`), then the preview and live with Mo's yes. The theme's demo answers as this contract
+does, with the same words.
+
+- **My Lair, a table's ticket:** **Change numbers** beside Add to calendar while the booking carries `change`, and
+  the line beside Cancel booking reads `Change or cancel by Mon 16 Nov, 6pm` (one moment for both). The dialog,
+  "How many are coming?": the tables and the time, a stepper from `min` to `max`, `6 people · $60 (it was $90)`, and,
+  when that many may keep fewer tables (`keep`), "Which table goes back?" with a chip a table (the last ones unless
+  they pick), then `Change it again any time until Mon 16 Nov, 6pm.` **Update booking** sends `{ people, tables }`.
+  After: `Updated: Tables T5 and T6 for 6, Tue 17 Nov. T4 is back on the map for someone else. It's $60 now.` The Lair
+  app's refusals show in the dialog in its words; after a 409 the page looks again when the dialog closes.
+- **My Lair, Games I run**, on each game while it carries `changeUntil`: **Change date or time** (a link to the
+  board, `?move=1#game=<session id>`), **Open game** (`#game=<session id>`), **Cancel this session**, **Cancel all
+  future sessions** (a weekly, fortnightly or flexible game with another session to cancel) and
+  `Change or cancel by Tue 17 Nov, 6pm`. Cancelling asks first in a dialog: who has a seat, who hears, any session too
+  close to cancel (it stays on), and that it can't be undone. Less than 24 hours away: `Too close to change online` with
+  `It's less than 24 hours away, so it can't be moved or cancelled online now. Give us a call or see us at the counter, and we'll sort it out with your players.`
+  in place of the buttons. Someone on the team isn't held to the 24 hours (the Lair app decides).
+- **The games board, a GM's own game:** **Change date or time** among its buttons while `GET /floor` says
+  `features.changes`, and under them `Can't run it? Cancel up to 24 hours before it starts. Everyone with a seat gets an email, and anyone who's already paid gets a refund.`
+  (staff: `Staff can cancel a session until it ends. …`). The sheet has the day, time and table picker starting where
+  the session is, with its own tables free to it and, for its GM, nothing sooner than the lead time (24 hours once
+  anyone has a seat); a weekly or fortnightly game asks **Which sessions?**: `Just this session` (a one-off) or
+  `This and every later session` (the game's new day and time). After: `Moved to Thursday 19 November, 6pm to 10pm. Gobgob emailed 2 people the new time.`,
+  with `Every later session moves with it.` and each session that stayed, with why.
+- **A newer website on an older Lair app** shows none of it: no `change`, no `changeUntil`, no `features.changes`.
