@@ -832,6 +832,10 @@ test('3.5: the picker lists the RPG shelf\'s books from the catalogue: every wor
   assert.equal((await find('')).length, 12);
 });
 
+test('3.11: the floor tells the website this Lair knows a game\'s books, so Run a game shows its picker', async () => {
+  for (const who of ['', RANGI, OWNER]) assert.equal(ok(await call('GET', 'floor', null, who)).features.books, true, who || 'logged out');
+});
+
 test('1.6, 3.6: Run a game takes up to 3 library books, by variant or product id, checked before anything is saved', async () => {
   const before = lair.sql.exec('SELECT COUNT(*) AS n FROM games').one().n;
   const tryWith = (books) => call('POST', 'games', { ...details(RANGI), gmCustomerId: RANGI, gmCustomerName: NAMES[RANGI], gmEmail: emailOf(RANGI), books }, OWNER);

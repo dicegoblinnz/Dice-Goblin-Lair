@@ -2708,7 +2708,8 @@ export class Lair {
       // payOnline: round 4's checkout for events paid online. Round 15: everything is on the tab, paid at the counter,
       // so it's always false (a page from before shows only the counter). Round 37: changes says this Lair app takes
       // POST /games/:id/move, so the games board only offers "Change date or time" when it's there to answer.
-      features: { email: emailReady(this.env), payOnline: false, changes: true },
+      // books: round 37 (contract v37-gm-perk, 3.11): this Lair knows a game's library books, so Run a game shows its picker
+      features: { email: emailReady(this.env), payOnline: false, changes: true, books: true },
     };
   }
 

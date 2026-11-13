@@ -285,6 +285,11 @@ use:
   team: [{ customerId, name, loan }] }    // people on the team with a game at home on the staff slot
 ```
 
+### 3.11 `GET /floor`: `features.books`
+
+`features` adds `books: true`: this Lair knows a game's books (3.5 to 3.7). A page shows Run a game's book picker only
+when it's there, so a page talking to an older Lair shows the form as it was.
+
 ## 4. Words (word for word)
 
 Exported from `src/gm-perk.js` as `GM_PERK_WORDS`. `{when}` is "Sun 15 Nov, 6pm".
@@ -355,18 +360,26 @@ Listing a game, staff approving one, a game joining an account and My Lair openi
 their Shopify tags have been read since the Lair last started (staff listing a game for a GM reads them then). Someone
 it knows nothing about waits for the run.
 
-## 7. The theme (to build once Mo has picked from the mockups)
+## 7. The theme
 
-Not built in this round's Lair work. The Lair's answers above are what it reads:
+Mo picked from the mockups on 14 Nov 2026 ("1.A 2.A 3.A. Happy with everything else. Go live"): the perk as **a card
+of its own** in My Library, **a search box** for a game's books on Run a game, and a borrower **told as they take** a
+wanted book. The Lair's answers above are what the pages read; with a Lair from before this round none of it shows.
 
-- **My Library:** the perk's card (on, resting, the slot's game), perk games tagged, "Wanted back by…" on a game at
-  home, the scan's heads-up (`wantedLine`, in a box of its own).
-- **Run a game** and **Games I run:** the book picker (`GET /library/books`, `books` on `POST /games`,
-  `POST /games/:id/books`).
-- **Library pages:** "A table wants this one on…" from `GET /library/status`.
-- **Staff page:** the member's page (give, take, the log), the Library tab's loans (perk, wanted, nudged), a GM perks
-  list (`GET /gm-perks`).
-- **The demo backend** (`assets/lair-demo.js`) does the same.
+- **My Library** (`assets/lair-my-library.js`): the perk's card first (on with Scan a book, the game on the slot, or
+  resting and why, with an ask for the book); a perk game tagged GM perk or Staff slot, never Lent; one whose perk has
+  ended marked and quietly asked back (1.5); "A table would like it on…" on a game at home; and the scan's heads-up
+  (`wantedLine`) in a box of its own under the usual words.
+- **Run a game** (`assets/lair-session-form.js`): Books for the table in step 3, shown when the floor's `features.books`
+  is true (3.11): a search of the RPG shelf (`GET /library/books`), up to 3, sent as `books` on `POST /games`.
+- **Games I run** (`<lair-game-books>` in `assets/lair-my-library.js`): each game's books and where each one is (at home
+  with them, at home with someone, on the shelf), and Change the books (`POST /games/:id/books`, the default scope).
+- **A library game's page** (`assets/lair-library.js`): when the next other table would like it, or that it's down for
+  their own game, from `GET /library/status`.
+- **Staff page** (`assets/lair-staff-perks.js`): a member's GM perk or staff slot with Give and Take it away (each asks
+  first), the Library tab's loans (GM perk or Staff slot, Perk ended, Wanted, Nudged) and a GM perks list
+  (`GET /gm-perks`).
+- **The demo backend** (`assets/lair-demo.js`, the lab) does the same.
 
 ## 8. Checks
 
@@ -380,3 +393,7 @@ limits; and Cloudflare's SQL limits on every query.
 
 Each rule was also checked the other way round: 100 deliberate breakages of the code (a number changed, a check
 dropped, an order swapped), one at a time, and the tests fail for every one.
+
+The pages: `tools/qa/round37-gm-perk/` (its section of `tools/qa/README.md`): the theme's demo at phone and desktop
+size, the theme in live mode against this Lair with a fake Shopify, and the new theme against the Lair from before this
+round.
