@@ -425,8 +425,9 @@ date", for that session or every later one. Contract v37-changes.
   the game's Change date or time and `?move` leaves the address; a weekly game asks Which sessions?; nothing changed
   says so; the next day, just this session; this and every later session; a one-shot has no Which sessions?; a
   session too close has a note and no buttons; a Lair app from before round 37 gets no Change date or time; staff
-  keep both until a session ends, and someone on the team changes their own table the same way. No sideways scroll,
-  no console errors, axe on each new part (71 checks a size).
+  keep both until a session ends, and someone on the team changes their own table the same way; a link to move a
+  session that's under way opens the game and says why not. No sideways scroll,
+  no console errors, axe on each new part (73 checks a size).
   `DG_THEME=… [AXE=…/axe.min.js] [PORT=4937] [OUT=…] node tools/qa/round37-changes/changes.mjs [small|phone|desktop]`.
 - `round37-changes/emails.mjs`: **the Lair app itself** with the email service stood in for, writing each email of
   the contract's section 5 as it would go (HTML and text) for a look before they're switched on: a table's

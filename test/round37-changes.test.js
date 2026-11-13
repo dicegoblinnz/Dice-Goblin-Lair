@@ -758,8 +758,37 @@ test('numbers: a monthly account is held to its credit limit when a booking grow
   const booked = ok(await book({ tables: ['T6', 'T7'], people: 5 })).booking;
   assert.equal(said(await change(booked.id, { people: 6 })), '409 That would take your Lair account over its $50 limit ($50 left). Pay your bill online or at the counter, then book again.');
   assert.equal(row('bookings', booked.id).people, 5);
+  // (from the separate review: it's the whole new amount that's held to the limit, not just what's added. A table
+  // still to come isn't on the account yet, so $55 of limit doesn't cover a $60 table, as it wouldn't for a new one)
+  ok(await call('POST', `members/${MIA}/account`, { billing: 'monthly', creditLimit: 5500 }, OWNER));
+  assert.equal(said(await change(booked.id, { people: 6 })), '409 That would take your Lair account over its $55 limit ($55 left). Pay your bill online or at the counter, then book again.');
+  assert.equal(said(await book({ tables: ['T10', 'T11'], people: 6, start: at('2026-11-18', 18), end: at('2026-11-18', 21) })), '409 That would take your Lair account over its $55 limit ($55 left). Pay your bill online or at the counter, then book again.');
+  ok(await call('POST', `members/${MIA}/account`, { billing: 'monthly', creditLimit: 6000 }, OWNER));
+  assert.equal(ok(await change(booked.id, { people: 6 })).booking.amount, 6000);
   // a smaller group is always fine
   assert.deepEqual(ok(await change(booked.id, { people: 4 })).booking.tables, ['T6']);
+});
+
+test('numbers: the note for staff is always whole, after the customer\'s own notes, and only the latest change is noted', async () => {
+  // (from the separate review: a long note of the customer's own used to push the staff note off the end)
+  const long = 'We are bringing a cake and nine very excited ten-year-olds for a birthday. '.repeat(7).slice(0, 499).concat('!');
+  assert.equal(long.length, 500);
+  const booked = ok(await book({ notes: long })).booking;
+  ok(await change(booked.id, { people: 6, tables: ['T6', 'T7'] }));
+  let notes = row('bookings', booked.id).notes;
+  assert.ok(notes.endsWith(' [Changed online: 9 to 6 people, T8 freed]'), notes.slice(-80));
+  assert.ok(notes.length <= 500, String(notes.length));
+  assert.ok(notes.startsWith('We are bringing a cake'), 'their own words come first, cut only at the end');
+  // a second change: one note, the latest
+  ok(await change(booked.id, { people: 8 }));
+  notes = row('bookings', booked.id).notes;
+  assert.ok(notes.endsWith(' [Changed online: 6 to 8 people]'), notes.slice(-60));
+  assert.equal(notes.match(/\[Changed online:/g).length, 1);
+  assert.ok(notes.length <= 500);
+  // a short note keeps every word
+  const short = ok(await book({ tables: ['T10'], people: 4, notes: 'Window seat please' })).booking;
+  ok(await change(short.id, { people: 3 }));
+  assert.equal(row('bookings', short.id).notes, 'Window seat please [Changed online: 4 to 3 people]');
 });
 
 test('numbers: a table\'s confirmation and its two-day reminder say its numbers can still be changed; a guest\'s and a locked one\'s don\'t', async () => {

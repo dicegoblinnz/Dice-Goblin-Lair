@@ -126,6 +126,7 @@ const sheetOf = (page) => page.evaluate(() => {
   return {
     open: d.open, title: f(q('[data-sheet-title]')?.textContent), flash: f(q('.gm-flash span')?.textContent),
     intro: f(q('.gm-form__intro')?.textContent), scopes: [...d.querySelectorAll('[data-move-form] [name="scope"]')].map((r) => `${r.value}${r.checked ? '*' : ''}`),
+    scopeWords: [...d.querySelectorAll('[data-move-form] .pay-option__body')].map((b) => f(b.textContent)),
     day: q('[data-days] .is-selected')?.dataset.day || '', days: [...d.querySelectorAll('[data-days] [data-day]')].slice(0, 3).map((b) => `${f(b.textContent)}${b.disabled ? ' (off)' : ''}`),
     slot: q('[data-slots] .is-selected')?.dataset.slot || '', tell: f(q('.gm-move__tell')?.textContent), status: f(q('[data-form-status]')?.textContent),
     go: f(q('[data-move-submit]')?.textContent), facts: [...d.querySelectorAll('.gm-facts li')].map((li) => f(li.textContent)),
@@ -365,6 +366,8 @@ for (const size of sizes) {
     check(`${tag} C1 My Lair's link opens the game's Change date or time`, s.open && s.title === 'Change date or time' && s.intro.startsWith(`Move ${first.title} to a new day, time or tables. Right now it’s ${firstDay.long},`), s.intro);
     check(`${tag} C1 and ?move leaves the address (a reload opens the game alone)`, address === `/pages/gm-games#game=${first.id}`, address);
     check(`${tag} C2 a weekly game asks Which sessions?, just this one unless they say`, s.scopes.join() === 'session*,series' && s.go === 'Move this session', s);
+    // (straight from the link, before the board has heard which games are theirs: it's still "Your")
+    check(`${tag} C2 the two choices in words`, s.scopeWords.join(' | ') === 'Just this sessionA one-off. Your other sessions stay where they are. | This and every later sessionThe game’s new day and time from here on.', s.scopeWords);
     check(`${tag} C2 the picker starts where the session is, and today is too soon`, s.day === firstDay.key && Number(s.slot) === 18 * 60 && /Today.*Too soon.*\(off\)/.test(s.days[0]), [s.day, s.slot, s.days]);
     check(`${tag} C2 it says who hears and why a day's notice`, s.tell === '3 seats are taken. Gobgob emails everyone the new time, and they get 24 hours to drop out if they can’t make it. So pick a time at least 24 hours away.', s.tell);
     await shot(page, `${size}-c2-move`);
@@ -465,6 +468,23 @@ for (const size of sizes) {
     }, single.id);
     check(`${tag} C6 and the demo refuses both in the Lair app's words`, refused[0] === "409 It's less than 24 hours away, so it can't be cancelled online now. Give us a call or see us at the counter, and we'll sort it out with your players."
       && refused[1] === "409 It's less than 24 hours away, so it can't be moved online now. Give us a call or see us at the counter, and we'll sort it out with your players.", refused);
+
+    // 8. (from the separate review) a link to move a session that's already under way: the game opens and says why
+    // there's nothing to move
+    await page.evaluate((id) => {
+      const be = window.Lair.store.backend;
+      const g = be.state.games.find((x) => x.id === id);
+      const length = g.end - g.start;
+      const start = Date.now() - 30 * 60000;
+      Object.assign(g, { start, end: start + length });
+      be.state.bookings.forEach((b) => { if (b.gameId === id) Object.assign(b, { start, end: start + length }); });
+      be.commit();
+    }, single.id);
+    await go(page, BASE, `/pages/gm-games?move=1#game=${single.id}`, RANGI);
+    await settle(page, 1200);
+    s = await sheetOf(page);
+    check(`${tag} C8 a link to move a session that's under way opens the game and says why not`, s.open && s.title !== 'Change date or time' && s.flash === 'This session has already started, so it can’t be moved online now.'
+      && s.own && !s.own.buttons.includes('Change date or time') && !s.own.locked, { title: s.title, flash: s.flash, own: s.own });
 
     // 7. a Lair app from before round 37 doesn't say features.changes: no Change date or time
     await page.evaluate((id) => {

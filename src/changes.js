@@ -239,7 +239,11 @@ export const changeMethods = {
     if (this.changesToday(`ch:${booking.id}`, now) >= CHANGE_LIMITS.numbers) throw new RuleError(W.tooOften, 429);
     const freed = booking.tables.filter((t) => !tables.includes(t));
     const note = W.note(booking.people, people, freed);
-    const next = { ...booking, people, tables, amount, notes: `${booking.notes ? `${booking.notes} ` : ''}${note}`.slice(0, 500) };
+    // The note for staff comes whole, after the customer's own notes: an earlier change's note goes (the latest is the
+    // one the desk needs), and their own words are cut at the end if the two wouldn't fit in the notes' 500
+    const own = String(booking.notes || '').replace(/\s*\[Changed online: [^\]]*\]/g, '').trim();
+    const notes = `${own ? `${own.slice(0, Math.max(0, 500 - note.length - 1)).trimEnd()} ` : ''}${note}`;
+    const next = { ...booking, people, tables, amount, notes };
     next.paid = settled(next);
     this.saveBooking(next, now);
     this.noteChange(`ch:${booking.id}`, booking.id, 'change', note, 'member', now);

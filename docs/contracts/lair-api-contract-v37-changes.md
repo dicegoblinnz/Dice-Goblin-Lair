@@ -59,7 +59,8 @@ a free one until it starts). One booked inside the 24 hours is locked at once, a
   booking's own words).
 - Tables it lets go are free at once.
 - Its library game, its pass and the split-the-bill tick stay as they were. Its notes gain a line for staff, like
-  `[Changed online: 9 to 6 people, T8 freed]`, so the desk can see why a table went.
+  `[Changed online: 9 to 6 people, T8 freed]`, so the desk can see why a table went. It's always whole and last: a
+  note from an earlier change goes, and the customer's own notes are cut at their end if both wouldn't fit in 500.
 - The booker gets one email, "Your booking's changed" (section 5). Staff aren't emailed.
 - Six changes a booking in 24 hours, then it's a call (each one emails the address on the booking, which whoever
   booked it typed). A change that changes nothing isn't counted.
