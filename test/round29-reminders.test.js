@@ -636,7 +636,9 @@ test('round 29: GET /ics/b/<booking id>.ics: the seat or table as a calendar fil
   assert.match(ics, /\r\nLOCATION:Dice Goblin\\, 56\/691 Manukau Road\\, Royal Oak\\, Auckland 1023\r\n/);
   assert.match(ics, /\r\nDESCRIPTION:See it in My Lair: https:\/\/www\.dicegoblin\.nz\/pages\/my-lair\r\n/);
   assert.match(ics, /\r\nURL:https:\/\/www\.dicegoblin\.nz\/pages\/my-lair\r\n/);
-  for (const secret of ['Ria', 'ria@', '021', ria.ref, 'Ellie', 'ellie@']) assert.ok(!ics.includes(secret), `no ${secret} in it`);
+  // (the mobile as it was typed and as its digits, not just '021': the file's UID is the booking's id, 16 random hex
+  // characters, and about one run in 300 those spelled "021" and failed this check by chance; found 14 Nov 2026)
+  for (const secret of ['Ria', 'ria@', MOBILE, MOBILE.replace(/\s/g, ''), '+6421', ria.ref, 'Ellie', 'ellie@']) assert.ok(!ics.includes(secret), `no ${secret} in it`);
   const tableIcs = (await get(`/ics/b/${kais.id}.ics`)).text.replace(/\r\n /g, '');
   assert.match(tableIcs, /\r\nSUMMARY:Table for 4 at Dice Goblin\r\n/);
   assert.match(tableIcs, /\r\nDTSTART:20261108T010000Z\r\nDTEND:20261108T040000Z\r\n/);
