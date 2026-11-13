@@ -9,15 +9,19 @@
 //  2. Once only: four quick taps are four PIN digits, one tap on + is one more, and the browser's own click for a touch
 //     the till has handled is held back.
 //  3. The press shows the moment the finger is down.
-//  4. Not a tap: a finger that slides (a scroll), a second finger, a touch that lands while a list is rolling from a
-//     flick (left to the browser), a button that's off. A list the till moved itself doesn't put the next tap off.
-//  5. A button redrawn under the finger is still pressed (the sale's panel is redrawn when a price comes in).
+//  4. A finger that wobbles on its button and lifts still on it has pressed it (a browser calls that the start of a
+//     scroll and clicks nothing); in a list that can roll, moving along the list is rolling it. Not a tap: a finger
+//     that slides off its button (and one that comes back), a second finger, a touch that lands while a list is
+//     rolling from a flick (left to the browser), a button that's off. A list the till moved itself doesn't put the
+//     next tap off.
+//  5. A button redrawn under the finger is still pressed (the sale's panel is redrawn when a price comes in), unless
+//     what it says has changed.
 //  6. "Staff: hold to go back" still wants its hold.
 //  7. A mouse and a keyboard click as they always have; a field takes its tap (from the browser, or from the till when
 //     the browser's doesn't come), by itself or by the words over it, and a tapped button puts the keyboard away.
 //  8. A tick box (Use their store credit) is tapped the same way, by its words or by the box, once.
-//  9. The browser's own click for a touch the till has pressed is held back anywhere on that button, and only until
-//     the next touch begins; a button touched again straight after a tap keeps its pressed look.
+//  9. The browser's own click for a touch the till has pressed is held back anywhere on that button, late or not,
+//     however long the press took; a button touched again straight after a tap keeps its pressed look.
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4958] node tools/qa/till-fast-taps/taps.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -79,13 +83,18 @@ for (look of LOOKS) {
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }, [sel, nth]);
-  /** A finger, through the debugger: down, held `ms`, perhaps slid `dx`, up */
-  const finger = async (sel, { ms = 30, dx = 0, nth = 0, wait = 350 } = {}) => {
+  /** A finger, through the debugger: down, held `ms`, perhaps slid `dx` across and `dy` down (and `back` again), up */
+  const finger = async (sel, { ms = 30, dx = 0, dy = 0, back = false, nth = 0, wait = 350 } = {}) => {
     const p = await at(sel, nth);
     if (!p) throw new Error(`no ${sel} on the screen`);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y, radiusX: 3, radiusY: 3, force: 0.3 }] });
     await page.waitForTimeout(ms);
-    if (dx) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: p.x + dx, y: p.y, radiusX: 3, radiusY: 3, force: 0.3 }] });
+    if (dx || dy) {
+      for (const part of back ? [0.5, 1, 0.5, 0] : [0.5, 1]) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: p.x + dx * part, y: p.y + dy * part, radiusX: 3, radiusY: 3, force: 0.3 }] });
+        await page.waitForTimeout(8);
+      }
+    }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await page.waitForTimeout(wait);
     return p;
@@ -193,11 +202,72 @@ for (look of LOOKS) {
     check('even the quickest tap shows: the button as its own press drew it again looks pressed for a moment', quickest.redrawn && quickest.down.length === 1 && quickest.down[0] === 'more' && quickest.there && v.down.length === 0, { quickest, after: v.down });
     await clicks();
 
-    /* 4. not a tap */
+    /* 4. a wobble is still a tap. (A browser calls a touch that moves more than a little the start of a scroll, and
+       clicks nothing: on the counter's tablet that's 8dp, about 1.4mm, which a quick jab at a key easily does.) */
+    const wob0 = (await till()).lines[0][1];
+    await finger('[data-act="more"]', { dx: 12 });
+    const wob1 = (await till()).lines[0][1];
+    await finger('[data-act="more"]', { dx: 18 });
+    const wob2 = (await till()).lines[0][1];
+    await finger('[data-act="more"]', { dy: -18 });
+    v = await till();
+    got = await clicks();
+    check('a finger that wobbles on its button and lifts still on it has pressed it, once each time', wob1 === wob0 + 1 && wob2 === wob0 + 2 && v.lines[0][1] === wob0 + 3 && got.filter((c) => !c.stopped).length === 3 && v.down.length === 0, { wob0, wob1, wob2, lines: v.lines, got });
+    // in a list that can roll, a finger that moves along it is rolling it, not tapping; across it, it's still on its button
+    const squeeze = () => page.evaluate(() => {
+      const btn = [...document.querySelectorAll('lair-till [data-act="more"]')].find((b) => b.offsetParent);
+      for (let el = btn.parentElement; el && el.tagName !== 'LAIR-TILL'; el = el.parentElement) {
+        if (/auto|scroll/.test(getComputedStyle(el).overflowY)) {
+          // (the list, made just tall enough for its first line, so the rest is a roll away)
+          el.style.maxHeight = `${el.firstElementChild.offsetHeight + 16}px`;
+          el.scrollTop = 0;
+          return el.scrollHeight > el.clientHeight + 1;
+        }
+      }
+      return false;
+    });
+    const unsqueeze = () => page.evaluate(() => {
+      for (const el of document.querySelectorAll('lair-till [style*="max-height"]')) el.style.maxHeight = '';
+    });
+    const canRoll = await squeeze();
+    await page.waitForTimeout(300);
+    const roll0 = (await till()).lines[0][1];
+    await finger('[data-act="more"]', { dy: -18 });
+    const roll1 = (await till()).lines[0][1];
+    // (the list is put back to its top, and left to come to rest: a touch on a list still rolling from a flick is
+    // the browser's, further down)
+    await squeeze();
+    await page.waitForTimeout(300);
+    await finger('[data-act="more"]', { dx: 18 });
+    v = await till();
+    await unsqueeze();
+    check('in a list that can roll, moving along it is rolling it and presses nothing; across it, the finger is still on its button', canRoll && roll1 === roll0 && v.lines[0][1] === roll0 + 1, { canRoll, roll0, roll1, lines: v.lines });
+    await page.waitForTimeout(300);
+    await clicks();
+    // with the page pinched in, a finger that moves is moving the page about: only one that's hardly moved is a tap
+    await page.evaluate(() => {
+      window.__scale = 2;
+      Object.defineProperty(window.visualViewport, 'scale', { configurable: true, get: () => window.__scale });
+    });
+    const zoom0 = (await till()).lines[0][1];
+    await finger('[data-act="more"]', { dx: 18 });
+    const zoom1 = (await till()).lines[0][1];
+    await finger('[data-act="more"]');
+    v = await till();
+    await page.evaluate(() => {
+      window.__scale = 1;
+    });
+    check('with the page pinched in, a wobble isn\'t a tap (the finger is moving the page), and a still touch is', zoom1 === zoom0 && v.lines[0][1] === zoom0 + 1, { zoom0, zoom1, lines: v.lines });
+    await clicks();
+
+    /* not a tap */
     const slid0 = (await till()).lines[0][1];
     await finger('[data-act="more"]', { dx: 40 });
     v = await till();
-    check('a finger that slides isn\'t a tap: nothing is pressed', v.lines[0][1] === slid0 && v.down.length === 0, { lines: v.lines, slid0 });
+    check('a finger that slides off its button isn\'t a tap: nothing is pressed', v.lines[0][1] === slid0 && v.down.length === 0, { lines: v.lines, slid0 });
+    await finger('[data-act="more"]', { dx: 45, back: true });
+    v = await till();
+    check('nor is one that slides off and comes back', v.lines[0][1] === slid0 && v.down.length === 0, { lines: v.lines, slid0 });
     await clicks();
     p = await at('[data-act="more"]');
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y, radiusX: 3, radiusY: 3, id: 0 }] });
@@ -292,6 +362,24 @@ for (look of LOOKS) {
     v = await till();
     check('a button redrawn under the finger is still pressed when the finger lifts', lifted.gone && lifted.other && v.lines[0][1] === qty + 1, { lifted, lines: v.lines, qty });
     await clicks();
+    // ... unless what it says has changed (Card · $28.00 to Card · $27.00, as Shopify's price comes in): that isn't the
+    // button the finger came down on (the separate review's note)
+    await bare('[data-act="more"]', { only: 'down', wait: 30 });
+    await page.evaluate(() => document.querySelector('lair-till').paintSale());
+    const reworded = await page.evaluate(() => {
+      const old = window.__touched;
+      const now = [...document.querySelectorAll('lair-till [data-act="more"]')].find((b) => b.offsetParent);
+      now.textContent = '++';
+      const r = now.getBoundingClientRect();
+      const t = new Touch({ identifier: 7, target: old, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, radiusX: 3, radiusY: 3 });
+      old.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, composed: true, touches: [], targetTouches: [], changedTouches: [t] }));
+      return { gone: !old.isConnected };
+    });
+    await page.waitForTimeout(350);
+    v = await till();
+    got = await clicks();
+    check('but a button whose words changed under the finger isn\'t pressed: it isn\'t the one that was touched', reworded.gone && v.lines[0][1] === qty + 1 && got.length === 0, { reworded, lines: v.lines, got });
+    await page.evaluate(() => document.querySelector('lair-till').paintSale());
 
     /* a form's own button: the dollars typed for a discount, then Use it */
     await quiet();
@@ -426,14 +514,16 @@ for (look of LOOKS) {
     await page.waitForTimeout(250);
     let n = await wides();
     check('the browser\'s own click on another part of the button the till has just pressed is held back too', n === 1, { n, wide });
+    // ... and when it comes late, once the next touch has begun (the separate review's note)
     await page.waitForTimeout(800);
     const w0 = await wides();
     await bare('#qa-wide', { wait: 20 });
-    await finger('[data-act="more"]', { dx: 40, wait: 20 });
+    await bare('[data-act="more"]', { only: 'down', wait: 20 });
     await page.mouse.click(wide.x, wide.y);
     await page.waitForTimeout(250);
     n = await wides();
-    check('but a click that comes once the next touch has begun is its own, and counts', n === w0 + 2, { n, w0 });
+    check('and it\'s held back when it comes late, once the next touch has begun', n === w0 + 1, { n, w0 });
+    await bare('[data-act="more"]', { only: 'up' });
     await page.waitForTimeout(800);
     await bare('#qa-wide', { wait: 10 });
     await bare('#qa-wide', { only: 'down', wait: 160 });
