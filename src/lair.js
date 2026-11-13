@@ -106,6 +106,8 @@ import { tillPeopleMethods } from './till-people.js';
 import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
 import { CREDIT_PAY_COLUMNS, CREDIT_PAY_INDEXES, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
 import { TILL_DISCOUNT_COLUMNS, tillDiscountMethods } from './till-discounts.js';
+// Round 37 (14 Nov 2026): the GM perk, the staff slot and a game's books (src/gm-perk.js, contract v37-gm-perk)
+import { GM_PERK_COLUMNS, GM_PERK_TABLES, gmPerkMethods } from './gm-perk.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1208,6 +1210,16 @@ export class Lair {
       }
     }
     for (const statement of CREDIT_PAY_INDEXES) this.sql.exec(statement);
+    // Round 37: GM perks, their log and games' books (made when missing), and what a loan and a cancelled session keep for
+    // them (src/gm-perk.js)
+    for (const [table, column, type] of GM_PERK_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+    for (const statement of GM_PERK_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -2043,7 +2055,7 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till'].includes(a))
+          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till'].includes(a))
           || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
@@ -2076,6 +2088,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
       // 17 Oct 2026 (contract v18-private): the private game an invite link is for
       if (request.method === 'GET' && a === 'games' && b === 'invite' && c && !parts[3]) return json(await this.gameByInvite(decodeURIComponent(c), who));
+      // Round 37 (contract v37-gm-perk): a game's library books for its GM and staff, and the staff's list of GM perks
+      if (request.method === 'GET' && a === 'games' && b && c === 'books' && !parts[3]) return json(this.gameBooks(decodeURIComponent(b), who));
+      if (request.method === 'GET' && a === 'gm-perks' && !b) return json(await this.listGmPerks(who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
       // Round 31: the open games of the next four game nights (src/open-games.js); first names to members only
       if (request.method === 'GET' && a === 'open-games' && !b) return json(await this.openGamesList(url, who));
@@ -2111,6 +2126,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'offers' && b && !c) return json(this.offerDetail(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'products' && b === 'search' && !c) return json(await this.productSearch(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'status' && !c) return json(await this.libraryStatus(url, who));
+      // Round 37: the RPG shelf's books, for Run a game's picker (src/gm-perk.js)
+      if (request.method === 'GET' && a === 'library' && b === 'books' && !c) return json(this.libraryBooks(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'holds' && !c) return json(await this.listHolds(url, who));
       if (request.method === 'GET' && a === 'library' && b === 'loans' && !c) return json(await this.listLoans(url, who));
       // Round 10: library memberships and damage charges for staff
@@ -2226,6 +2243,8 @@ export class Lair {
       if (a === 'members' && b && c === 'new-code') return json(await this.newMemberCode(decodeURIComponent(b), who));
       if (a === 'members' && b && c === 'gift') return json(await this.giveGift(decodeURIComponent(b), body, who));
       if (a === 'members' && b && c === 'rolls') return json(await this.giveRolls(decodeURIComponent(b), body, who));
+      // Round 37: staff give the GM perk, or take it away (src/gm-perk.js)
+      if (a === 'members' && b && c === 'gm-perk' && !d) return json(await this.staffGmPerk(decodeURIComponent(b), body, who));
       // Round 30: staff with Money say what happened to a store credit gift Shopify didn't confirm (src/credit-gifts.js)
       if (a === 'credit-gifts' && b && c === 'settle' && !d) return json(this.settleCreditGift(decodeURIComponent(b), body, who));
       // Round 22: stamps staff add on a member's page, and taking one back (src/stamps.js)
@@ -2303,6 +2322,8 @@ export class Lair {
       if (a === 'games' && c === 'join-series') return json(await this.joinSeries(b, body, who, client));
       if (a === 'games' && c === 'message') return json(await this.messagePlayers(b, body, who));
       if (a === 'games' && c === 'edit') return json(await this.editGame(b, body, who));
+      // Round 37: the library books a game names, from here on (its GM, or staff with GM games)
+      if (a === 'games' && c === 'books' && !d) return json(this.setGameBooks(b, body, who));
       // Round 18: a seat taken off a game (staff, or the game's staff GM), before adding players
       if (a === 'games' && c === 'players' && d && parts[4] === 'remove' && !parts[5]) return json(await this.removePlayer(b, decodeURIComponent(d), who, body));
       // Round 21, part 2: the session's GM (or staff) pays for a player's seat, or stops (src/gm-cover.js)
@@ -3450,6 +3471,8 @@ export class Lair {
       this.write('UPDATE games SET private = 1, interest_open = ?, invite_key = ? WHERE id = ?', base.interestOpen ? 1 : 0, base.inviteKey || null, game.id);
       Object.assign(game, { private: true, interestOpen: Boolean(base.interestOpen), inviteKey: base.inviteKey || null });
     }
+    // Round 37 (contract v37-gm-perk, 1.6): a game's library books are every session's
+    this.carryBooks(game, base, now);
     const holdId = makeId('bk');
     this.saveBooking({
       id: holdId, ref: this.newCode(game.gm, 'booking', holdId, now), kind: 'gm', gameId: game.id, tables: game.tables, room: game.room, start: game.start, end: game.end,
@@ -3641,6 +3664,9 @@ export class Lair {
     if (who.staff && (input.gmCustomerId || input.gmEmail)) this.requireStaff(who, 'sessions');
     const staffGames = this.can(who, 'sessions');
     const rules = await this.rules();
+    // Round 37: a game staff list for a GM switches that GM's perk on, unless they're on the team: their tags are read
+    // now (kept 5 minutes), so the main account is known for what it is (src/gm-perk.js)
+    if (staffGames && input.gmCustomerId && String(input.gmCustomerId) !== String(who.customerId || '')) await this.taggedPerson(trimmed(input.gmCustomerId, 40));
     // --- no awaits from here on ---
     const now = Date.now();
     this.checkRate(who, client, now);
@@ -3652,6 +3678,9 @@ export class Lair {
     // Round 7: staff make sessions under the GMs' rules (hours, whole hours, lead time, horizon, locked event tables),
     // with the shop tables open to them
     const first = checkGameSession(input, details, { state: st, rules, time, now, shopTables: staffGames });
+    // Round 37 (contract v37-gm-perk, 1.6): the library books the game names (undefined: none sent), checked before
+    // anything is saved
+    const books = this.checkBooks(input.books);
     // Staff can list a game for a GM (round 7): gmCustomerId, picked from the customers (with gmCustomerName and gmEmail
     // from the picker when they aren't a member yet), or gmEmail with the board name in gm. An email a member has links
     // them; any other is an invite: the game waits on that email with no account, the GM is emailed to make one, and
@@ -3685,8 +3714,10 @@ export class Lair {
         seriesId, details.schedule, gmCustomerId, JSON.stringify({ ...details, gmEmail, staffCreated: staffGames, ...(privacy.private ? privacy : {}) }), JSON.stringify(first.tables),
         time.minutesOf(first.start), first.end - first.start, time.key(first.start), approved ? 1 : 0, now, now,
       );
+      // Round 37: the series keeps the game's books for the sessions it adds
+      if (books) this.patchSeries(seriesId, { books }, now);
     }
-    const base = { ...details, gmCustomerId, gmEmail, status: approved ? 'open' : 'pending', credited: null, seriesId, feeApproved, ...privacy };
+    const base = { ...details, gmCustomerId, gmEmail, status: approved ? 'open' : 'pending', credited: null, seriesId, feeApproved, ...privacy, ...(books ? { books } : {}) };
     const game = this.saveSession(base, first, now);
     let skipped = [];
     let sessions = [game];
@@ -3720,12 +3751,18 @@ export class Lair {
         ? `Gobgob emailed ${gmEmail} to make an account. The game joins their account when they log in with that email.`
         : `Emails aren't set up, so Gobgob couldn't email ${gmEmail}. The game joins their account when they log in with that email.`;
     } else if (forGm) this.tellGmLive(game, rules, { listedForThem: true });
+    // Round 37 (contract v37-gm-perk, 1.2): a game on the board switches its GM's perk on, the first time (never the team's)
+    const perkOn = gmCustomerId ? this.gmPerkListed(gmCustomerId, String(gmCustomerId) === String(who.customerId || '') ? who : null, now) : false;
     const view = this.state(game.start - 1, game.end + 1);
     return {
-      // 17 Oct 2026: a private game's invite link, for its GM to share
-      game: { ...this.gameView(game, view, rules, null, { staff: this.staffSees(who) }), ...(this.inviteFor(game, who) ? { invite: this.inviteFor(game, who) } : {}) },
+      // 17 Oct 2026: a private game's invite link, for its GM to share. Round 37: and the library books it names
+      game: {
+        ...this.gameView(game, view, rules, null, { staff: this.staffSees(who) }), ...(this.inviteFor(game, who) ? { invite: this.inviteFor(game, who) } : {}),
+        books: this.gameBooksView(game.id, who.customerId),
+      },
       sessions: sessions.map((g) => ({ id: g.id, start: g.start })), skipped, pending: !approved,
       emailed: emailReady(this.env) && Boolean(gmEmail), ...(invited ? { invited: true } : {}), ...(notice ? { notice } : {}),
+      ...(perkOn ? { perk: { on: true } } : {}),
     };
   }
 
@@ -4595,7 +4632,8 @@ export class Lair {
     const refunds = [];
     for (const game of games) {
       const linked = this.gameBookings(game.id).filter((b) => ACTIVE.has(b.status));
-      this.write("UPDATE games SET status = 'cancelled', updated_at = ? WHERE id = ?", now, game.id);
+      // (round 37: when it was cancelled, so the GM perk knows a session called off on the day from one cancelled well ahead)
+      this.write("UPDATE games SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE id = ?", now, now, game.id);
       this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND status IN ('held', 'confirmed', 'seated')", now, game.id);
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
         // Round 30: GM credit goes once a session starts, and a GM can cancel until an hour in: a seat whose fee has gone
@@ -4690,7 +4728,11 @@ export class Lair {
         this.write('UPDATE series SET approved = 1, updated_at = ? WHERE id = ?', now, game.seriesId);
       }
     }
-    if (before === 'pending' && game.status === 'open') this.tellGmLive(game, rules);
+    if (before === 'pending' && game.status === 'open') {
+      this.tellGmLive(game, rules);
+      // Round 37: approved, so it's on the board: its GM's perk goes on, the first time (src/gm-perk.js)
+      this.gmPerkListed(game.gmCustomerId, null, now);
+    }
     const fresh = this.game(id);
     // affected: seats cancelled (each player is emailed); refunds: how many of them were paid, so are flagged 'due'
     return { game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: this.staffSees(who) }), affected, refunds };
@@ -8786,6 +8828,8 @@ export class Lair {
     const now = Date.now();
     const held = this.heldByVariant(ids, now);
     const loans = this.outByVariant(ids);
+    // Round 37 (contract v37-gm-perk, 3.4): the sessions that want each game
+    const wants = this.wantedSessions(ids, now);
     const games = {};
     for (const id of ids) {
       const holds = held.get(id) || [];
@@ -8799,6 +8843,7 @@ export class Lair {
         copies, held: holds.length, out: out.length, available, nextFree: !available && holds.length ? holds[0].until : null,
         mine: mine ? { id: mine.id, until: mine.until } : null, atHome: home ? { id: home.id, outAt: home.outAt } : null,
         heldFor: heldFor(holds),
+        ...this.wantedShown(wants.get(id) || [], who.customerId, Boolean(who.staff)),
       };
     }
     return { games };
@@ -9048,6 +9093,8 @@ export class Lair {
       customerId: r.customer_id, staffNote: r.staff_note || '',
       // 16 Oct 2026: lent outside a plan, and who it was lent to when the Lair didn't know them (customerId '')
       lent: Boolean(r.lent), guestName: r.guest_name || '', guestEmail: r.guest_email || '', guestMobile: r.guest_mobile || '',
+      // Round 37: the perk it went out on ('gm', 'staff' or null), and when its one nudge went
+      perk: r.perk || null, nudgedAt: r.nudged_at || null,
     };
   }
 
@@ -9059,13 +9106,15 @@ export class Lair {
   /**
    * A game at home as its member sees it: { id, variantId, productId, title, shelfCode, handle, image, status: 'out' |
    * 'returned', outAt, returnedAt, holdId, lent }. image: the loan's picture, else the one the Lair knows for the game.
-   * lent (16 Oct 2026): staff lent it outside a library plan, with nothing to pay.
+   * lent (16 Oct 2026): staff lent it outside a library plan, with nothing to pay. Round 37 (contract v37-gm-perk): perk
+   * ('gm', 'staff' or null: the perk it went out on), perkEnded (that perk doesn't cover it any more) and wanted (the
+   * sessions that want it); perkFields: those three when the caller has them already (staff's).
    */
-  loanView(l) {
+  loanView(l, perkFields = null) {
     return {
       id: l.id, variantId: l.variantId, productId: l.productId, title: l.title, shelfCode: l.shelfCode, handle: l.handle,
       image: l.image || this.libraryGame(l.variantId)?.image || null, status: l.status, outAt: l.outAt, returnedAt: l.returnedAt, holdId: l.holdId,
-      lent: Boolean(l.lent),
+      lent: Boolean(l.lent), ...(perkFields || this.loanPerkFields(l)),
     };
   }
 
@@ -9086,9 +9135,11 @@ export class Lair {
     }
     const time = lairTime(this.rulesCache?.tz);
     return {
-      ...this.loanView(l), customerId: l.customerId || null, guest, name: m?.name || m?.first_name || l.guestName || '', email: m?.email || l.guestEmail || '',
+      // Round 37: staff see a private game's name on who wants it, and when the one nudge went
+      ...this.loanView(l, this.loanPerkFields(l, { staff: true, now, memo })), customerId: l.customerId || null, guest,
+      name: m?.name || m?.first_name || l.guestName || '', email: m?.email || l.guestEmail || '',
       mobile: guest ? l.guestMobile : '', code: m?.code || null, days: Math.max(0, time.daysBetween(time.key(l.outAt), time.key(l.returnedAt || now))),
-      staffNote: l.staffNote,
+      staffNote: l.staffNote, nudgedAt: l.nudgedAt || null,
     };
   }
 
@@ -9162,7 +9213,7 @@ export class Lair {
    * GET /me's library (round 7): { plan: { name, games } | null (from their Shopify tags), used (active holds + games at
    * home), holds (active, soonest until first), atHome (out, longest at home first) }. No awaits.
    */
-  libraryFor(customerId, tags, now = Date.now()) {
+  libraryFor(customerId, tags, now = Date.now(), who = null) {
     // Round 10: the plan comes from their library membership (Simplee's tags until everyone has moved across); blocked
     // while a payment is outstanding
     const plan = this.planOf(customerId, tags, now);
@@ -9170,7 +9221,12 @@ export class Lair {
     const atHome = this.loansOut(customerId);
     // 16 Oct 2026: games staff lent outside a plan are at home with them but never use up the plan
     const used = holds.length + atHome.filter((l) => !l.lent).length;
-    return { plan: this.planWords(plan), used, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)) };
+    return {
+      plan: this.planWords(plan), used, holds: holds.map((h) => this.holdView(h, now)), atHome: atHome.map((l) => this.loanView(l)),
+      // Round 37 (contract v37-gm-perk): their GM perk or staff slot, or null (who: their own request's person, when it's
+      // them asking, so the main account is known to be on the team)
+      perk: this.perkView(customerId, who, now),
+    };
   }
 
   /** A scanned or typed code, cleaned: trimmed, 1 to 40 letters, numbers and . _ - +. Anything else is a 422 with `message`. */
@@ -9245,16 +9301,19 @@ export class Lair {
    * A new loan: the game goes home with the member. hold: the hold it collected, or null. 16 Oct 2026: lent, when staff
    * lend it outside a plan; guest { name, email, mobile } for someone the Lair doesn't know (customerId ''). No awaits.
    */
-  makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null, lent = false, guest = null } = {}) {
+  makeLoan(game, customerId, now, { holdId = null, by = 'member', note = null, lent = false, guest = null, perk = null } = {}) {
     // Round 30: never a game that stays in the Lair (the scan and the desk refuse it first, in their own words)
     this.refuseGoingHome(game);
     const id = makeId('ln');
+    // Round 37: a game that goes out on a perk ('gm' or 'staff') is a lent one too: outside every plan, nothing to pay
+    const onPerk = ['gm', 'staff'].includes(perk) ? perk : null;
     this.write(
       `INSERT INTO library_loans (id, variant_id, product_id, title, shelf_code, handle, image, customer_id, hold_id, status, out_at, returned_at,
-         out_by, returned_by, staff_note, created_at, updated_at, lent, guest_name, guest_email, guest_mobile)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+         out_by, returned_by, staff_note, created_at, updated_at, lent, guest_name, guest_email, guest_mobile, perk)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'out', ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id, String(game.variantId), game.productId || null, game.title, game.shelfCode || null, game.handle || null, game.image || null,
-      customerId ? String(customerId) : '', holdId, now, by, note, now, now, lent ? 1 : 0, guest?.name || null, guest?.email || null, guest?.mobile || null,
+      customerId ? String(customerId) : '', holdId, now, by, note, now, now, lent || onPerk ? 1 : 0, guest?.name || null, guest?.email || null, guest?.mobile || null,
+      onPerk,
     );
     const loan = this.loanRow(id);
     // Round 17: it's at home with them, so it's done in their queue
@@ -9300,7 +9359,7 @@ export class Lair {
     const mine = this.loansOut(me).find((l) => l.variantId === game.variantId);
     if (mine) {
       return {
-        result: 'at-home', loan: this.loanView(mine), library: this.libraryFor(me, who.tags, now),
+        result: 'at-home', loan: this.loanView(mine), library: this.libraryFor(me, who.tags, now, who),
         message: `${game.title} is already in your library. To return it, bring it to the counter and staff will scan it back onto the shelf.`,
       };
     }
@@ -9312,27 +9371,37 @@ export class Lair {
       throw new RuleError(held ? IN_STORE_WORDS.scanHeld(game.title) : IN_STORE_WORDS.scan(game.title), 422);
     }
     const plan = this.planOf(me, who.tags, now);
-    if (!plan) throw new RuleError('Join the library to borrow games.', 403);
-    this.checkPlanOpen(plan);
     const holds = this.activeHolds(me, now);
     const hold = holds.find((h) => h.variantId === game.variantId) || null;
+    // Round 37 (contract v37-gm-perk, 1.4): a hold of theirs first (a plan's), then their GM perk or staff slot when it
+    // covers this game and is free, then their plan as before. With no plan, a perk that didn't take it says why
+    const slot = hold ? null : this.perkSlot(me, who, game);
+    const onPerk = Boolean(slot?.take);
+    if (!onPerk) {
+      if (!plan) throw this.perkRefusal(slot) || new RuleError('Join the library to borrow games.', 403);
+      this.checkPlanOpen(plan);
+    }
     let loan;
     if (hold) {
       loan = this.collectHold(hold, now, 'member');
     } else {
       // 16 Oct 2026: games staff lent outside a plan don't use up the plan
       const home = this.planLoans(me);
-      if (holds.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, holds.length, home.length), 409);
+      if (!onPerk && holds.length + home.length >= plan.games) throw new RuleError(this.planFull(plan, holds.length, home.length), 409);
       const copies = fromShopify ?? this.pageCopies(game.variantId) ?? 1;
       if (this.copiesFree(game.variantId, copies, now).free < 1) throw new RuleError(`Every copy of ${game.title} is reserved or out on loan. Ask us at the counter.`, 409);
-      loan = this.makeLoan(game, me, now);
+      loan = this.makeLoan(game, me, now, onPerk ? { perk: slot.kind } : {});
     }
     this.touchMember(me, {}, now);
     // Round 17: borrowing is acting, so a stalled queue of theirs starts again
     this.queueMemberActed(me, who, now);
+    // Round 37 (1.7): whoever takes a book a table wants is told there and then; it never stops the loan
+    const want = this.bookWanted(game.variantId, now, { forId: me });
+    const heads = this.wantedWords(want, me);
+    const said = loan.perk ? this.perkBorrowed(loan.perk, game.title) : `${game.title} is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf.`;
     return {
-      result: 'borrowed', loan: this.loanView(loan), hold: hold ? this.holdView(this.holdRow(hold.id), now) : null, library: this.libraryFor(me, who.tags, now),
-      message: `${game.title} is yours to take home. When you're done, bring it to the counter and we'll scan it back onto the shelf.`,
+      result: 'borrowed', loan: this.loanView(loan), hold: hold ? this.holdView(this.holdRow(hold.id), now) : null, library: this.libraryFor(me, who.tags, now, who),
+      message: heads ? `${said} ${heads}` : said, wanted: want.wanted, wantedLine: heads || null,
     };
   }
 
@@ -9428,7 +9497,9 @@ export class Lair {
       const plan = this.planOf(member.customer_id, tags, now);
       const hold = this.activeHolds(member.customer_id, now).find((h) => h.variantId === game.variantId) || null;
       const before = this.copiesFree(game.variantId, copies, now, { exceptHold: hold?.id });
-      loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by, lent: !plan });
+      // Round 37 (contract v37-gm-perk, 1.4): their GM perk or staff slot takes it first, when it covers this game and is free
+      const slot = hold ? null : this.perkSlot(member.customer_id, person?.customerId === member.customer_id ? person : null, game);
+      loan = hold ? this.collectHold(hold, now, by) : this.makeLoan(game, member.customer_id, now, { by, lent: !plan, perk: slot?.take ? slot.kind : null });
       // no plan: lent, with nothing to pay (a hold they had is collected as a lent game too)
       if (!plan && !loan.lent) {
         this.write('UPDATE library_loans SET lent = 1, updated_at = ? WHERE id = ?', now, loan.id);
@@ -9436,7 +9507,9 @@ export class Lair {
       }
       const used = this.activeHolds(member.customer_id, now).length + this.planLoans(member.customer_id).length;
       const name = member.first_name || String(member.name || '').split(/\s+/)[0] || 'They';
-      if (plan?.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
+      // (round 37: a game out on a perk is outside their plan, so the plan has nothing to say about it)
+      if (loan.perk) notices.length = 0;
+      else if (plan?.blocked) notices.push(`${name === 'They' ? 'Their' : `${name}'s`} last library payment ${plan.bankCheck ? 'is waiting on their bank check' : "didn't go through"}.`);
       else if (plan && used > plan.games) notices.push(`That's more than ${name === 'They' ? 'their' : `${name}'s`} plan (${plural(plan.games, 'game', 'games')} at a time).`);
       if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
       // Round 17: borrowing at the counter is acting, so a stalled queue of theirs starts again
@@ -9446,7 +9519,10 @@ export class Lair {
       loan = this.makeLoan(game, '', now, { by, lent: true, guest });
       if (before.free < 1) notices.push('Shopify thinks every copy is out. Check the copies on the product.');
     }
-    return { loan: this.staffLoanView(loan, now), lent: Boolean(loan.lent), notice: notices.length ? notices.join(' ') : null };
+    // Round 37 (1.7): a table wants this book, so staff can say so as they hand it over
+    const heads = this.wantedWords(this.bookWanted(game.variantId, now, { forId: loan.customerId, staff: true }), loan.customerId, true);
+    if (heads) notices.push(heads);
+    return { loan: this.staffLoanView(loan, now), lent: Boolean(loan.lent), perk: loan.perk || null, notice: notices.length ? notices.join(' ') : null };
   }
 
   /**
@@ -9817,6 +9893,8 @@ export class Lair {
           // Round 9: the last 5 games they brought back, newest first
           returns: this.sql.exec("SELECT * FROM library_loans WHERE customer_id = ? AND status = 'returned' ORDER BY returned_at DESC, rowid DESC LIMIT 5", id).toArray().map((r) => this.staffLoanView(this.rowToLoan(r), now, memo)),
         },
+        // Round 37 (contract v37-gm-perk, 3.8): their GM perk or staff slot, for staff: where it stands, why, and its log
+        perk: this.staffPerkView(id, { team: Boolean(person?.staff), now, memo }),
         // Round 10: their library membership (the current one, else the latest), or null
         membership: this.staffMembershipFor(id, now),
         // Round 9: their tab and account (GET /me's, plus the note, who set it, their bills and a limit warning)
@@ -10581,6 +10659,9 @@ export class Lair {
     this.touchMember(who.customerId, { name: trimmed(url?.searchParams.get('name'), 80) }, now);
     if (account.fetched) this.write('UPDATE members SET account_email = ?, account_email_at = ? WHERE customer_id = ?', account.email, now, String(who.customerId));
     if (account.email) this.adoptGuestBookings(who.customerId, account.email, now);
+    // Round 37 (contract v37-gm-perk, 1.2): the GM of a game on the board has the GM perk from here on (a game that just
+    // joined their account counts)
+    this.gmPerkListed(who.customerId, who, now);
     const member = this.memberView(this.memberRow(who.customerId), now);
     // The loyalty card (round 6); the old `rolls` mirrors its rolls for clients from before
     const loyalty = this.loyaltyOf(who.customerId, rules, { details: true });
@@ -10667,6 +10748,8 @@ export class Lair {
       games: gameRows.map((g) => ({
         ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), gmCreditEach: autoCredit(g) ? this.gmSeatCredits(g).each : 0,
         ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}),
+        // Round 37: the library books it names, and whether each is on the shelf or with them
+        books: this.gameBooksView(g.id, who.customerId),
       })),
       joins: joinList.map((j) => gone(j)),
       credits,
@@ -10701,7 +10784,7 @@ export class Lair {
       // Library holds (round 6): active ones, soonest first, then any that ended in the last 3 days
       holds: this.memberHolds(who.customerId, now),
       // Round 7: My Library: their plan, how many they have (holds and games at home), their holds and games at home
-      library: this.libraryFor(who.customerId, who.tags, now),
+      library: this.libraryFor(who.customerId, who.tags, now, who),
       // Round 10: their library membership (plan, next bill, card, charges, damage charges, the plans to pick from), or null
       membership: this.membershipForMember(who.customerId, now),
       // Round 7: the player profile (the GM profile stays its own block, gmProfile)
@@ -11036,6 +11119,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not email GMs their GM credit', error);
     }
+    // Round 37 (src/gm-perk.js): new GMs' perks on, quiet and idle perks rested, rested ones back once a game of theirs
+    // has been played, and the emails about books a table wants
+    try {
+      const perks = await this.gmPerkUpkeep(Date.now());
+      if (Object.values(perks).some(Boolean)) result.gmPerks = perks;
+    } catch (error) {
+      console.error('Lair: GM perk upkeep failed', error);
+    }
     // Round 30 (src/credit-gifts.js): store credit gifts whose answer Shopify lost are looked for, and finished
     try {
       const gifts = await this.creditGiftUpkeep(Date.now());
@@ -11299,3 +11390,5 @@ Object.assign(Lair.prototype, tillPeopleMethods);
 Object.assign(Lair.prototype, tillSalesMethods);
 Object.assign(Lair.prototype, tillDiscountMethods);
 Object.assign(Lair.prototype, creditPayMethods);
+// Round 37: the GM perk, the staff slot and a game's books (src/gm-perk.js)
+Object.assign(Lair.prototype, gmPerkMethods);
