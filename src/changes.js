@@ -6,14 +6,22 @@
  * as they are before the 24 hour period and they even have the chance to change the time and date and given the option
  * to choose to keep that new date or is it a one off etc."
  *
- * One rule for all of it: whoever made it can change it themselves until refundHours (24) before it starts, the moment
- * round 15 locks a booking in. After that staff sort it out.
+ * Whoever made it can change it themselves: a customer until refundHours (24) before it starts, the moment round 15
+ * locks a booking in; a GM their own session until gmChangeHours (4) before it starts (Mo, the same morning, once he'd
+ * seen it at 24: "Actually let gms cancel within 4 hours before the session not 24 hours. It's ok."). After that staff
+ * sort it out.
  *
  *  - A table booking's numbers (changeOwnBooking, from updateBooking): whoever booked it changes how many are coming, and
  *    which of its tables it keeps. The price follows, the tables it lets go are free at once, and they get an email.
  *    Nothing here ever makes a refund: a booking with more paid on it than the new amount is staff's to change.
- *  - A GM cancels until 24 hours before (gmCanChange, read by updateGame). It was an hour after the start.
- *  - A GM moves a session (moveGame, POST /games/:id/move): its day, time or tables, for that session only or, in a
+ *  - Seats and sign-ups booked for friends (Mo, 9:25am: "I want people who bought tickets to Thier friends can cancel
+ *    themselves. Just like gms."): whoever booked several seats at a TTRPG session (changeOwnSeats, from updateBooking),
+ *    or signed friends up to an event (changeJoin, POST /events/joins/:id/change), takes off the ones who can't come,
+ *    until it's locked in, in place of cancelling the lot. Fewer only: bringing someone else is still a call. The price
+ *    follows, the places are free at once, they get an email, and a session's GM hears.
+ *  - A GM cancels until 4 hours before (gmCanChange, read by updateGame). It was an hour after the start.
+ *  - A GM moves a session (moveGame, POST /games/:id/move), until 4 hours before too: its day, time or tables, for that
+ *    session only or, in a
  *    weekly or fortnightly game, for every later session too (the game takes the new day and time). Players hear, and
  *    a seat whose time changed can be dropped for 24 hours after the move even inside the usual lock (movedUntil, read
  *    by cancelRule).
@@ -25,7 +33,8 @@
  * keeps its rule: every await first, then one synchronous read-check-write.
  */
 import {
-  ACTIVE, HOUR, MIN, LairTime, ONLINE_LIMITS, RuleError, addDays, cancelUntil, checkGameSession, makeId, maxGameTables, maxOnlineTables, tableIndex,
+  ACTIVE, GUEST_MESSAGES, HOUR, MIN, LairTime, ONLINE_LIMITS, RuleError, addDays, checkGameSession, findOccurrence, gmChangeUntil, gmHoursOf, makeId,
+  maxGameTables, maxOnlineTables, tableIndex,
 } from './core.js';
 import { emailReady } from './shopify.js';
 import { clockLabel } from './email.js';
@@ -67,6 +76,21 @@ export const CHANGE_WORDS = {
   tooOften: `That's ${CHANGE_LIMITS.numbers} changes to this booking today. Give us a call and we'll sort the rest out.`,
   /** on the booking's notes, for staff: "[Changed online: 9 to 6 people, T8 freed]" */
   note: (from, to, freed) => `[Changed online: ${from === to ? plural(to, 'person', 'people') : `${from} to ${plural(to, 'person', 'people')}`}${freed.length ? `, ${freed.join(', ')} freed` : ''}]`,
+  /* ---- seats at a TTRPG session booked for friends ---- */
+  seats: 'Tell us how many seats to keep. To give them all up, cancel the booking instead.',
+  seatsMore: 'To bring someone else, give us a call or ask at the counter. Here you can give seats up.',
+  seatsWho: "Pick who's still coming: one name for each seat you're keeping.",
+  /** a seat booking its GM pays for, inside the lock (nothing of it is on the player's tab) */
+  lockedCovered: (hours) => `It's less than ${hours} hours away, so it can't be changed online now. Your GM pays for your seats if you come. Have a chat with us at the counter or give us a call, and we'll sort it out.`,
+  /** "[Changed online: 3 to 2 seats]" */
+  noteSeats: (from, to) => `[Changed online: ${from} to ${plural(to, 'seat', 'seats')}]`,
+  /* ---- an event sign-up with friends on it ---- */
+  joinPeople: 'Tell us how many people are coming. To call it off, cancel your sign-up instead.',
+  joinMore: 'To bring someone else, give us a call or ask at the counter. Here you can take people off.',
+  joinWho: "Pick who's still coming with you.",
+  joinOwn: "Only whoever signed up can change who's coming.",
+  joinNotHere: "That sign-up can't be changed online. Have a chat with us and we'll sort it out.",
+  joinCancelled: "That sign-up's been cancelled, so there's nothing to change.",
   /* ---- a GM cancelling ---- */
   gmCancelLocked: (hours) => `It's less than ${hours} hours away, so it can't be cancelled online now. Give us a call or see us at the counter, and we'll sort it out with your players.`,
   keptSessions: (whens, hours) => (whens.length === 1
@@ -98,6 +122,14 @@ export const CHANGE_WORDS = {
   changedSubject: (what, day) => `Booking changed: ${what} on ${day}`,
   changedTitle: "Your booking's changed",
   changedIntro: (name) => `Kia ora ${name}, Gobgob has updated your table at the Dice Goblin Lair.`,
+  changedIntroSeats: (name, title) => `Kia ora ${name}, Gobgob has updated your seats at ${title}.`,
+  changedIntroJoin: (name, title) => `Kia ora ${name}, Gobgob has updated your sign-up for ${title}.`,
+  /** to a session's GM, when a player keeps some of their seats: "Seat dropped: <game>, <when>", as a whole drop's is */
+  gmFewerSubject: (title, when) => `Seat dropped: ${title}, ${when}`,
+  gmFewerTitle: 'A player gave up a seat',
+  gmFewerIntro: (gm, name, dropped, was, title, where) => `Kia ora ${gm}, ${name} dropped ${dropped} of their ${was} seats at ${title}. ${where}`,
+  gmFewerBack: (n) => (n === 1 ? "The spot's back on the games board for someone else." : 'The spots are back on the games board for someone else.'),
+  gmFewerHeld: (n) => (n === 1 ? "Gobgob's keeping the spot for one of your regulars." : "Gobgob's keeping the spots for your regulars."),
   wasPeople: (now, was) => `${now} (it was ${was})`,
   freed: (kept, freed) => `${tablesWord(kept)} (${freed.join(', ')} ${freed.length === 1 ? 'is' : 'are'} back on the map for someone else)`,
   /** one more line under a table's confirmation and its two-day reminder, while its numbers can be changed */
@@ -137,6 +169,27 @@ const parse = (text, fallback) => {
 /** What's still owed on a booking, and whether it's paid up (lair.js's owing and settled) */
 const owing = (x) => Math.max(0, (x.amount || 0) - (x.covered || 0) - (x.paidAmount || 0));
 const settled = (x) => ((x.amount || 0) > 0 ? owing(x) === 0 : Boolean(x.paid));
+/** A whole number as a form or a script sends it (6 or "6"), or NaN */
+const wholeNumber = (raw) => (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '') ? Number(raw) : NaN);
+/**
+ * Which of `total` places stay, by position from 0, `keep` of them: the ones a patch names (`staying`: each a position,
+ * once), or the first ones when it names none (the last go). Anything else is refused in `words`.
+ */
+const stayingOf = (given, total, keep, words) => {
+  if (given == null) return Array.from({ length: keep }, (_, i) => i);
+  if (!Array.isArray(given)) throw new RuleError(words);
+  const list = [...new Set(given.map(wholeNumber))];
+  if (list.length !== given.length || list.length !== keep || list.some((i) => !Number.isInteger(i) || i < 0 || i >= total)) throw new RuleError(words);
+  return list.sort((a, b) => a - b);
+};
+/**
+ * A note for staff put whole after someone's own notes: an earlier change's note goes (the latest is the one the desk
+ * needs), and their own words are cut at the end if the two wouldn't fit in `limit`
+ */
+const withNote = (own, note, limit) => {
+  const theirs = String(own || '').replace(/\s*\[Changed online: [^\]]*\]/g, '').trim();
+  return `${theirs ? `${theirs.slice(0, Math.max(0, limit - note.length - 1)).trimEnd()} ` : ''}${note}`;
+};
 /** Tables in table order: T2 before T10, a room's together */
 const inTableOrder = (ids) => [...ids].sort((a, b) => String(a).localeCompare(String(b), 'en', { numeric: true }));
 const sameTables = (a, b) => inTableOrder(a).join() === inTableOrder(b).join();
@@ -175,20 +228,27 @@ export const changeMethods = {
 
   /**
    * Whether whoever booked a booking can change its numbers now, as changeOwnBooking would let them: their table (not a
-   * game table at an event), confirmed, still to come and not locked in. No awaits.
+   * game table at an event), or their seats at a TTRPG session when there's more than one (one seat's change is its
+   * cancel), confirmed, still to come and not locked in. No awaits.
    */
   canChangeOwn(booking, rules, now = Date.now()) {
-    if (!booking || !rules || !booking.customerId || booking.kind !== 'table' || booking.occurrenceId) return false;
+    if (!booking || !rules || !booking.customerId) return false;
+    if (booking.kind === 'gm-seat' ? (booking.people || 1) < 2 : booking.kind !== 'table' || Boolean(booking.occurrenceId)) return false;
     if (booking.status !== 'confirmed' || booking.arrivedAt || booking.start <= now) return false;
     return !this.cancelRule(booking, rules, now).locked;
   },
 
   /**
-   * `change` on their view of a booking: { until, min, max, each, keep } while they can change it, {} otherwise.
-   * keep[i]: the tables it may keep with min + i people. No awaits.
+   * `change` on their view of a booking, while they can change it ({} otherwise). A table: { until, min, max, each,
+   * keep }, keep[i] being the tables it may keep with min + i people. Seats at a session: { until, min: 1, max (the
+   * seats it has), each, who: [{ name, cost }] }, one for each seat in order. No awaits.
    */
   changeView(booking, rules = this.rulesCache, now = Date.now()) {
     if (!this.canChangeOwn(booking, rules, now)) return {};
+    if (booking.kind === 'gm-seat') {
+      const each = this.seatEach(booking);
+      return { change: { until: this.cancelRule(booking, rules, now).cancelUntil, min: 1, max: booking.people, each, who: this.seatNames(booking).map((p) => ({ name: p.name, cost: each })) } };
+    }
     const shape = this.changeShape(booking, rules);
     if (!shape) return {};
     const keep = [];
@@ -204,6 +264,8 @@ export const changeMethods = {
   changeOwnBooking(booking, patch, rules, now) {
     const W = CHANGE_WORDS;
     if (booking.status === 'cancelled') throw new RuleError(W.cancelled, 409);
+    // seats at a TTRPG session: fewer of them (changeOwnSeats)
+    if (booking.kind === 'gm-seat') return this.changeOwnSeats(booking, patch, rules, now);
     if (booking.kind !== 'table' || booking.occurrenceId || booking.status === 'held') throw new RuleError(W.notHere, 409);
     if (booking.status !== 'confirmed' || booking.arrivedAt || booking.start <= now) throw new RuleError(W.started, 409);
     if (this.cancelRule(booking, rules, now).locked) throw new RuleError(W.locked(hoursOf(rules)), 409);
@@ -239,10 +301,8 @@ export const changeMethods = {
     if (this.changesToday(`ch:${booking.id}`, now) >= CHANGE_LIMITS.numbers) throw new RuleError(W.tooOften, 429);
     const freed = booking.tables.filter((t) => !tables.includes(t));
     const note = W.note(booking.people, people, freed);
-    // The note for staff comes whole, after the customer's own notes: an earlier change's note goes (the latest is the
-    // one the desk needs), and their own words are cut at the end if the two wouldn't fit in the notes' 500
-    const own = String(booking.notes || '').replace(/\s*\[Changed online: [^\]]*\]/g, '').trim();
-    const notes = `${own ? `${own.slice(0, Math.max(0, 500 - note.length - 1)).trimEnd()} ` : ''}${note}`;
+    // The note for staff comes whole, after the customer's own notes (withNote), within the notes' 500
+    const notes = withNote(booking.notes, note, 500);
     const next = { ...booking, people, tables, amount, notes };
     next.paid = settled(next);
     this.saveBooking(next, now);
@@ -274,12 +334,295 @@ export const changeMethods = {
   },
 
   /**
-   * One more line for a table's confirmation and its two-day reminder, while whoever booked it can change its numbers:
-   * by the same moment as cancelling, or any time before it starts for one that never locks. '' otherwise. No awaits.
+   * One more line for a confirmation and a two-day reminder, while whoever made it can change its numbers (a table, a
+   * booking for more than one seat, or with join: true a sign-up for more than one person): by the same moment as
+   * cancelling, or any time before it starts for one that never locks. '' otherwise. No awaits.
    */
-  numbersLine(booking, rules, now = Date.now()) {
-    if (!this.canChangeOwn(booking, rules, now)) return '';
-    return this.cancelRule(booking, rules, now).lockable ? CHANGE_WORDS.numbersBy : CHANGE_WORDS.numbersAny;
+  numbersLine(x, rules, now = Date.now(), { join = false } = {}) {
+    if (!(join ? this.canChangeJoin(x, rules, now) && this.joinShape(x, rules, now) : this.canChangeOwn(x, rules, now))) return '';
+    return this.cancelRule(x, rules, now).lockable ? CHANGE_WORDS.numbersBy : CHANGE_WORDS.numbersAny;
+  },
+
+  /* ---------------- seats at a TTRPG session booked for friends ---------------- */
+  /**
+   * A seat booking's players, one for each seat in order: its party, filled out as a booking page from before named
+   * seats would have been ("Mia Chen +1"). No awaits.
+   */
+  seatNames(booking) {
+    const party = Array.isArray(booking.party) ? booking.party : [];
+    return Array.from({ length: Math.max(1, booking.people || 1) }, (_, i) => ({
+      name: String(party[i]?.name || '').trim() || (i === 0 ? booking.name || 'Player' : `${booking.name || 'Player'} +${i}`),
+      character: party[i]?.character || '',
+    }));
+  },
+
+  /**
+   * A seat booking's players once it has fewer seats (staff's change, updateBooking): the ones `given` names by position
+   * when that's a fair pick of `people` of them, the first ones otherwise. No awaits.
+   */
+  partyStaying(booking, people, given) {
+    const names = this.seatNames(booking);
+    let staying;
+    try {
+      staying = stayingOf(given, names.length, people, '');
+    } catch (error) {
+      if (!(error instanceof RuleError)) throw error;
+      staying = Array.from({ length: Math.min(people, names.length) }, (_, i) => i);
+    }
+    return staying.map((i) => names[i]);
+  },
+
+  /** What one of a booking's seats costs its player now: its own price a seat; nothing while its GM pays. No awaits. */
+  seatEach(booking) {
+    return booking.coveredBy ? 0 : Math.round((booking.amount || 0) / Math.max(1, booking.people || 1));
+  },
+
+  /**
+   * Whoever booked several seats at a session keeps some of them (people: how many; staying: which of its players, by
+   * position, or the first ones): from updateBooking, once it's checked the booking is theirs. Until it's locked in, as
+   * cancelling is. Each seat keeps its price, the ones let go are back on the board at once (or kept for the game's
+   * regulars), the booker gets an email and so does their GM, and a GM who pays for them pays for the ones that stay.
+   * Nothing is saved, and nobody is emailed, when what's asked is how it stands. → { booking, changed }. No awaits.
+   */
+  changeOwnSeats(booking, patch, rules, now) {
+    const W = CHANGE_WORDS;
+    // (a seat's tables are its session's: nothing of theirs to change, as before)
+    if (Array.isArray(patch.tables)) throw new RuleError('Only staff can change that booking.', 403);
+    if (booking.status === 'held') throw new RuleError(W.notHere, 409);
+    if (booking.status !== 'confirmed' || booking.arrivedAt || booking.start <= now) throw new RuleError(W.started, 409);
+    if (this.cancelRule(booking, rules, now).locked) throw new RuleError(booking.coveredBy ? W.lockedCovered(hoursOf(rules)) : W.locked(hoursOf(rules)), 409);
+    const people = wholeNumber(patch.people);
+    if (!Number.isInteger(people) || people < 1) throw new RuleError(W.seats);
+    if (people > booking.people) throw new RuleError(W.seatsMore);
+    const names = this.seatNames(booking);
+    const staying = stayingOf(patch.staying, names.length, people, W.seatsWho);
+    if (people === booking.people) return { booking: this.ownView(booking), changed: null };
+    const amount = this.seatEach(booking) * people;
+    // Money already on it for more seats than this: staff make that change, with the money back
+    if ((booking.paidAmount || 0) + (booking.covered || 0) > amount) throw new RuleError(W.paid, 409);
+    if (this.changesToday(`ch:${booking.id}`, now) >= CHANGE_LIMITS.numbers) throw new RuleError(W.tooOften, 429);
+    const party = staying.map((i) => names[i]);
+    const note = W.noteSeats(booking.people, people);
+    const next = { ...booking, people, party, amount, notes: withNote(booking.notes, note, 500) };
+    // (a seat its GM pays for is never the player's to pay: syncCover, below, moves the GM's charge)
+    next.paid = next.coveredBy ? false : settled(next);
+    this.saveBooking(next, now);
+    this.noteChange(`ch:${booking.id}`, booking.id, 'change', note, 'member', now);
+    if (next.coveredBy) this.syncCover(next.id, now, rules);
+    // a bill with it on stays true (as a staff change does)
+    this.reconcileBills(rules, now);
+    const fresh = this.booking(booking.id);
+    this.tellSeatsChanged(booking, fresh, rules);
+    this.tellGmSeatsFewer(booking, fresh, rules);
+    return {
+      booking: this.ownView(fresh),
+      changed: {
+        people: { from: booking.people, to: people }, players: { from: names.map((p) => p.name), to: party.map((p) => p.name) },
+        amount: { from: booking.amount || 0, to: fresh.amount || 0 },
+      },
+    };
+  },
+
+  /** What's to pay on something, in a confirmation's words (lair.js's confirm and confirmJoin). No awaits. */
+  feeWords(x) {
+    const due = x.paid || x.waived ? 0 : owing(x);
+    const paidSoFar = x.paidAmount || 0;
+    if (x.waived || !(x.amount > 0)) return 'Nothing to pay';
+    if (due === 0) return `${dollars(x.amount)}, paid. Thank you!`;
+    if (paidSoFar > 0) return `${dollars(due)} left on your tab (${dollars(paidSoFar)} of ${dollars(x.amount)} paid)`;
+    return `${dollars(x.amount)}, ${x.customerId ? 'on your tab' : 'pay at the counter on the day'}`;
+  },
+
+  /** "Your booking's changed", to whoever booked the seats: how many it was and is, who's coming, then its tab lines. No awaits. */
+  tellSeatsChanged(before, after, rules) {
+    if (!emailReady(this.env) || !isEmail(after.email)) return false;
+    const W = CHANGE_WORDS;
+    const game = after.gameId ? this.game(after.gameId) : null;
+    const title = game?.title || 'your game';
+    const fee = this.feeWords(after);
+    this.later(this.mail(this.letter(after.email, W.changedSubject(plural(after.people, 'seat', 'seats'), longDay(after.start, rules.tz)), {
+      title: W.changedTitle,
+      intro: W.changedIntroSeats(after.name, title),
+      details: [
+        ['Game', `${title}${game?.system ? ` (${game.system})` : ''}`], ['When', this.when(after, rules)], ['Seats', W.wasPeople(after.people, before.people)],
+        ['Players', this.partyLine(after.party)], ['Where', tablesWord(after.tables)],
+        ['Fee', (after.amount || 0) !== (before.amount || 0) ? W.wasPeople(fee, dollars(before.amount || 0)) : fee],
+      ],
+      outro: this.tabLines(after, rules, { spot: 'seat' }),
+      button: { label: 'See it in My Lair', url: this.page('myLair') },
+    })));
+    return true;
+  },
+
+  /**
+   * A player kept some of their seats: their GM hears how many came free and who's still coming, as they hear when a
+   * whole seat is dropped (tellGmSeatDropped). A seat that's now held for a regular isn't promised to the board. No awaits.
+   */
+  tellGmSeatsFewer(before, after, rules) {
+    const game = after.gameId ? this.game(after.gameId) : null;
+    if (!game || !emailReady(this.env) || !isEmail(game.gmEmail)) return false;
+    const W = CHANGE_WORDS;
+    const dropped = before.people - after.people;
+    const { taken, held } = this.gameView(game, this.state(game.start - 1, game.end + 1), rules);
+    const where = held > 0 && taken >= game.seats ? W.gmFewerHeld(dropped) : W.gmFewerBack(dropped);
+    this.later(this.mail(this.letter(game.gmEmail, W.gmFewerSubject(game.title, this.when(game, rules)), {
+      title: W.gmFewerTitle,
+      intro: W.gmFewerIntro(game.gm, after.name, dropped, before.people, game.title, where),
+      details: [
+        ['Game', game.title], ['When', this.when(game, rules)], ['Still coming', this.partyLine(after.party)],
+        ['Seats taken', `${taken} of ${game.seats}${held > 0 ? `, ${held} held for regulars` : ''}`],
+      ],
+      button: { label: 'See the games board', url: this.page('gm') },
+      signoff: 'Gobgob',
+    })));
+    return true;
+  },
+
+  /* ---------------- an event sign-up with friends on it ---------------- */
+  /**
+   * What a sign-up's places cost today, each on its own, as the door would price them (src/library-rules.js): `each`,
+   * what a paying place costs on it (what it was signed up at; the event's entry when every place was free); `you`, the
+   * account holder's own place; `who`, everyone coming with them in order (its guests, then friends without names), each
+   * { name ('' without one), cost, row (its guest row, or null) }. At an event free for library members the holder's
+   * place, and a guest's added by member code, is free while their plan lets them borrow today. null when it can't be
+   * priced here: its date isn't on the calendar any more, or it has free places from a rule the date no longer has.
+   * No awaits.
+   */
+  joinShape(join, rules, now = Date.now(), guests = this.joinGuests(join.id)) {
+    const o = join.occurrenceId ? findOccurrence(rules, join.occurrenceId) : null;
+    if (!o) return null;
+    const freeDate = this.memberFreeDate(o);
+    const freeThen = (join.memberFree ? 1 : 0) + (join.freeGuests || 0);
+    if (!freeDate && freeThen > 0) return null;
+    const people = Math.max(1, join.people || 1);
+    const payingThen = Math.max(0, people - freeThen);
+    const each = payingThen > 0 ? Math.round((join.amount || 0) / payingThen) : o.entryFee || 0;
+    // each account once, never the holder again (as freePlaces counts them)
+    const seen = new Set([String(join.customerId || '')]);
+    const freeNow = (customerId) => {
+      const id = String(customerId ?? '').trim();
+      if (!freeDate || !id || seen.has(id)) return false;
+      seen.add(id);
+      return this.libraryEntry(id, null, now).free;
+    };
+    const you = freeDate && this.libraryEntry(join.customerId, null, now).free ? 0 : each;
+    const who = guests.slice(0, people - 1).map((g) => ({ name: g.name || '', cost: freeNow(g.customer_id) ? 0 : each, row: g }));
+    while (who.length < people - 1) who.push({ name: '', cost: each, row: null });
+    return { each, you, who };
+  },
+
+  /**
+   * Whether whoever signed up can take people off a sign-up now, as changeOwnJoin would let them: theirs, for more than
+   * one person, confirmed, paid at the counter (one paid online is locked in from the start), still to come and not
+   * locked in. No awaits.
+   */
+  canChangeJoin(join, rules, now = Date.now()) {
+    if (!join || !rules || !join.customerId || (join.people || 1) < 2 || join.pay === 'now') return false;
+    if (join.status !== 'confirmed' || join.arrivedAt || join.start <= now) return false;
+    return !this.cancelRule(join, rules, now).locked;
+  },
+
+  /**
+   * `change` on their view of a sign-up, while they can take people off it ({} otherwise): { until, min: 1, max (its
+   * people), each, you (what their own place costs), who: [{ name, cost }] } (everyone coming with them, in order).
+   * guests: its guest rows, when the caller has them. No awaits.
+   */
+  joinChangeView(join, guests = null, rules = this.rulesCache, now = Date.now()) {
+    if (!this.canChangeJoin(join, rules, now)) return {};
+    const shape = this.joinShape(join, rules, now, guests || this.joinGuests(join.id));
+    if (!shape) return {};
+    return {
+      change: { until: this.cancelRule(join, rules, now).cancelUntil, min: 1, max: join.people, each: shape.each, you: shape.you, who: shape.who.map(({ name, cost }) => ({ name, cost })) },
+    };
+  },
+
+  /**
+   * POST /events/joins/:id/change { people, staying? } (whoever signed up): fewer people on their sign-up. people: how
+   * many are coming now, themselves counted; staying: which of the people coming with them, by position (its guests in
+   * order, then friends without names), or the first ones. → { ok, join, changed }
+   */
+  async changeJoin(id, body, who) {
+    const patch = body && typeof body === 'object' ? body : {};
+    const rules = await this.rules();
+    // --- no awaits from here on ---
+    const now = Date.now();
+    const join = this.joinById(id);
+    if (!join) throw new RuleError('Sign-up not found.', 404);
+    if (!who?.customerId || join.customerId !== who.customerId) {
+      // someone else signed a guest up, so it's that person's to change (as cancelling it is)
+      const guest = Boolean(who?.customerId) && this.joinGuests(join.id).some((g) => String(g.customer_id || '') === String(who.customerId));
+      throw new RuleError(guest ? GUEST_MESSAGES.guestOnly : CHANGE_WORDS.joinOwn, 403);
+    }
+    return this.changeOwnJoin(join, patch, rules, now);
+  },
+
+  /**
+   * Whoever signed up takes people off their sign-up: until it's locked in, as cancelling is. Each place that stays is
+   * priced as the door would price it today, the places let go are free at once, and they get an email. Nothing here
+   * ever makes a refund: one with more paid on it than the new amount, or paid online, is staff's to change. Nothing is
+   * saved, and nobody is emailed, when what's asked is how it stands. → { ok, join, changed }. No awaits.
+   */
+  changeOwnJoin(join, patch, rules, now) {
+    const W = CHANGE_WORDS;
+    if (join.status === 'cancelled') throw new RuleError(W.joinCancelled, 409);
+    if (join.status === 'held' || join.pay === 'now') throw new RuleError(W.joinNotHere, 409);
+    if (join.status !== 'confirmed' || join.arrivedAt || join.start <= now) throw new RuleError(W.started, 409);
+    if (this.cancelRule(join, rules, now).locked) throw new RuleError(W.locked(hoursOf(rules)), 409);
+    const guests = this.joinGuests(join.id);
+    const shape = this.joinShape(join, rules, now, guests);
+    if (!shape) throw new RuleError(W.joinNotHere, 409);
+    const people = wholeNumber(patch.people);
+    if (!Number.isInteger(people) || people < 1) throw new RuleError(W.joinPeople);
+    if (people > join.people) throw new RuleError(W.joinMore);
+    const staying = stayingOf(patch.staying, shape.who.length, people - 1, W.joinWho);
+    if (people === join.people) return { ok: true, join: this.joinView(join, guests), changed: null };
+    const kept = staying.map((i) => shape.who[i]);
+    const amount = shape.you + kept.reduce((sum, p) => sum + p.cost, 0);
+    if ((join.paidAmount || 0) > amount) throw new RuleError(W.paid, 409);
+    // (a place that stopped being free since they signed up can make fewer people cost more: a monthly account is held
+    // to its limit then, as a new sign-up would be)
+    if (amount > (join.amount || 0)) this.checkAccountLimit(join.customerId, amount, rules, now, 'join');
+    if (this.changesToday(`ch:${join.id}`, now) >= CHANGE_LIMITS.numbers) throw new RuleError(W.tooOften, 429);
+    const note = W.note(join.people, people, []);
+    const gone = shape.who.filter((p, i) => p.row && !staying.includes(i));
+    for (const p of gone) this.write('DELETE FROM event_join_guests WHERE id = ?', p.row.id);
+    const paid = amount > 0 ? (join.paidAmount || 0) >= amount : Boolean(join.paid);
+    this.write(
+      'UPDATE event_joins SET people = ?, amount = ?, paid = ?, member_free = ?, free_guests = ?, note = ?, updated_at = ? WHERE id = ?',
+      people, amount, paid ? 1 : 0, shape.you === 0 && shape.each > 0 ? 1 : 0, kept.filter((p) => p.row && p.cost === 0 && shape.each > 0).length,
+      withNote(join.note, note, 300), now, join.id,
+    );
+    this.noteChange(`ch:${join.id}`, join.id, 'change', note, 'member', now);
+    this.reconcileBills(rules, now);
+    const fresh = this.joinById(join.id);
+    this.tellJoinChanged(join, fresh, rules);
+    return {
+      ok: true,
+      join: this.joinView(fresh),
+      changed: {
+        people: { from: join.people, to: people }, guests: { from: guests.map((g) => g.name), to: kept.filter((p) => p.row).map((p) => p.row.name) },
+        amount: { from: join.amount || 0, to: amount },
+      },
+    };
+  },
+
+  /** "Your booking's changed", to whoever signed up: how many it was and is, who's coming, then its tab lines. No awaits. */
+  tellJoinChanged(before, after, rules) {
+    if (!emailReady(this.env) || !isEmail(after.email)) return false;
+    const W = CHANGE_WORDS;
+    const fee = this.feeWords(after);
+    this.later(this.mail(this.letter(after.email, W.changedSubject(plural(after.people, 'person', 'people'), longDay(after.start, rules.tz)), {
+      title: W.changedTitle,
+      intro: W.changedIntroJoin(after.name, after.title),
+      details: [
+        ['Event', after.title], ['When', this.when(after, rules)], ['People', W.wasPeople(after.people, before.people)],
+        ['Coming', after.people > 1 ? this.comingLine(after) : ''],
+        ['Entry', (after.amount || 0) !== (before.amount || 0) ? W.wasPeople(fee, dollars(before.amount || 0)) : fee],
+      ],
+      outro: this.tabLines(after, rules, { spot: 'spot' }),
+      button: { label: 'See it in My Lair', url: this.page('myLair') },
+    })));
+    return true;
   },
 
   /** "Your booking's changed", to whoever booked it: what it was and is, then its own tab lines. No awaits. */
@@ -310,10 +653,10 @@ export const changeMethods = {
     return true;
   },
 
-  /* ---------------- a GM's own changes: until 24 hours before ---------------- */
-  /** Whether a session's GM can still cancel or move it online: more than refundHours before it starts. No awaits. */
+  /* ---------------- a GM's own changes: until 4 hours before ---------------- */
+  /** Whether a session's GM can still cancel or move it online: more than gmChangeHours (4) before it starts. No awaits. */
   gmCanChange(game, rules, now = Date.now()) {
-    return now < cancelUntil(game, rules);
+    return now < gmChangeUntil(game, rules);
   },
 
   /**
@@ -412,8 +755,8 @@ export const changeMethods = {
 
   /**
    * POST /games/:id/move { start?, end?, tables?, scope? } (the session's GM, or staff with GM games): a session's day,
-   * time or tables. Its GM: until refundHours before it starts, in a room with the same table fee, with a day's notice
-   * when anyone has a seat, and never past the sessions either side of it. scope 'series' (a weekly or fortnightly game,
+   * time or tables. Its GM: until gmChangeHours (4) before it starts, in a room with the same table fee, with a day's
+   * notice (refundHours, their players' own 24) when anyone has a seat, and never past the sessions either side of it. scope 'series' (a weekly or fortnightly game,
    * by whoever runs it): every later session on the game's usual day and time moves by the same number of days to the
    * new time, where its tables are free then, and the game takes the new day and time for the dates it adds later.
    * → { game, scope, moved, kept: [{ id, start, when, reason }], told }
@@ -450,8 +793,8 @@ export const changeMethods = {
     const tables = wantsTables ? [...new Set(input.tables.map(String))] : game.tables;
     const timeChanged = start !== game.start || end !== game.end;
     const tablesChanged = !sameTables(tables, game.tables);
-    // Its GM: until refundHours before it starts, as for cancelling. Staff: until it ends.
-    if (!staffGames && !this.gmCanChange(game, rules, now)) throw new RuleError(W.moveLocked(hours), 409);
+    // Its GM: until gmChangeHours (4) before it starts, as for cancelling. Staff: until it ends.
+    if (!staffGames && !this.gmCanChange(game, rules, now)) throw new RuleError(W.moveLocked(gmHoursOf(rules)), 409);
     const view = (g) => this.gameView(g, this.state(g.start - 1, g.end + 1), rules, null, { staff: this.staffSees(who) });
     if (!timeChanged && !tablesChanged) return { game: view(game), scope, moved: 0, kept: [], told: 0 };
     const seats = this.gameBookings(game.id).filter((b) => b.kind === 'gm-seat' && ACTIVE.has(b.status));

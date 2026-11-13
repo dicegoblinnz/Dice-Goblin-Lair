@@ -106,9 +106,11 @@ import { tillPeopleMethods } from './till-people.js';
 import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
 import { CREDIT_PAY_COLUMNS, CREDIT_PAY_INDEXES, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
 import { TILL_DISCOUNT_COLUMNS, tillDiscountMethods } from './till-discounts.js';
-// Round 37 (14 Nov 2026): changes people make themselves: a table booking's numbers, and a GM cancelling or moving a
-// session, each until 24 hours before (src/changes.js, contract v37-changes)
+// Round 37 (14 Nov 2026): changes people make themselves: a table booking's numbers and the seats or sign-ups someone
+// booked for friends, until 24 hours before; and a GM cancelling or moving a session, until 4 hours before
+// (src/changes.js, contract v37-changes)
 import { CHANGE_COLUMNS, CHANGE_WORDS, changeMethods } from './changes.js';
+import { gmChangeUntil, gmHoursOf } from './core.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1398,6 +1400,8 @@ export class Lair {
       guests: (guests || this.joinGuests(j.id)).map((g) => ({ name: g.name, member: Boolean(g.customer_id) })),
       // Round 15: until when they can cancel it themselves, whether it's locked in now, and owed or waived
       ...this.lockView(j), owed: this.joinOwed(j), waived: Boolean(j.waived),
+      // Round 37: who they can take off it now (change: { until, min, max, each, you, who }), while they can
+      ...this.joinChangeView(j, guests),
     };
   }
 
@@ -1896,6 +1900,7 @@ export class Lair {
         rooms: r.rooms.map((room) => `${room.name}: ${room.tables.length} × ${room.seats} seats, $${room.price / 100}${room.minPeople ? `, min ${room.minPeople} people` : ''}${room.bookable ? '' : ', not bookable online'}`),
         hours: Object.entries(r.hours).map(([day, h]) => `${day} ${h ? `${String(Math.floor(h[0] / 60)).padStart(2, '0')}:${String(h[0] % 60).padStart(2, '0')}-${String(Math.floor(h[1] / 60)).padStart(2, '0')}:${String(h[1] % 60).padStart(2, '0')}` : 'closed'}`),
         refundHours: r.refundHours,
+        gmChangeHours: r.gmChangeHours,
         events: r.events.length,
       },
     });
@@ -2338,6 +2343,8 @@ export class Lair {
       if (a === 'openings' && c === 'delete') return json(await this.removeOpening(b, who));
       if (a === 'checkin' && !b) return json(await this.checkIn(body, who));
       if (a === 'events' && b === 'joins' && d === 'cancel') return json(await this.cancelJoin(c, who));
+      // Round 37: whoever signed friends up takes off the ones who can't come, until it's locked in (src/changes.js)
+      if (a === 'events' && b === 'joins' && c && d === 'change' && !parts[4]) return json(await this.changeJoin(decodeURIComponent(c), body, who));
       if (a === 'events' && b && c === 'join') return json(await this.joinEvent(decodeURIComponent(b), body, who, client));
       // Round 9, team: staff add someone to an event date's sign-ups, by member code or by name and email
       if (a === 'events' && b && b !== 'joins' && c === 'joins' && !d) return json(await this.staffJoin(decodeURIComponent(b), body, who));
@@ -2889,6 +2896,8 @@ export class Lair {
         ],
         outro: [
           pay, cancel,
+          // Round 37: a booking for more than one seat says the numbers can still be changed, after the cancel line
+          ...(this.numbersLine(booking, rules) ? [this.numbersLine(booking, rules)] : []),
           // Round 7: a seat staff reserved at a weekly game for someone without an account says the account also saves
           // their seat every week (a guest's account picking up the seat is in the line above, round 15)
           ...(booking.customerId || !invite ? [] : [this.inviteLine(invite)]),
@@ -2977,7 +2986,8 @@ export class Lair {
       seriesId: b.seriesId || null, ticketCode: this.ticketCode(b), owed: this.isOwed(b), waived: Boolean(b.waived),
       // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
       ...this.lockView(b),
-      // Round 37: what whoever booked a table can change about it now (change: { until, min, max, each, keep })
+      // Round 37: what whoever booked it can change about it now (a table: change: { until, min, max, each, keep };
+      // seats for friends: { until, min, max, each, who })
       ...this.changeView(b),
       // Round 17: the library game on the table, and when it's held from
       ...(b.game ? { game: this.bookingGameView(b) } : {}),
@@ -3176,8 +3186,8 @@ export class Lair {
       if (own && booking.kind === 'gm') throw new RuleError('To cancel your game, cancel it from the games board.', 403);
       // Round 21: a GM's charge for a player's seat goes from the session ("Stop paying"), not as a booking
       if (own && booking.kind === 'gm-cover') throw new RuleError(GM_COVER_WORDS.stopFirst, 409);
-      // Round 37: how many are coming, and which of its tables it keeps, are theirs to change until it's locked in
-      // (src/changes.js). Nothing else is.
+      // Round 37: how many are coming, and which of its tables it keeps (or, for seats booked for friends, who's still
+      // coming), are theirs to change until it's locked in (src/changes.js). Nothing else is.
       if (own && patch.status == null && (patch.people != null || Array.isArray(patch.tables))) return this.changeOwnBooking(booking, patch, rules, now);
       if (!own || patch.status !== 'cancelled' || booking.start <= now) throw new RuleError('Only staff can change that booking.', 403);
       // Round 29: the person's own cancel, the same from My Lair and from their reminder's cancel link
@@ -3222,6 +3232,10 @@ export class Lair {
         : next.occurrenceId && booking.people ? Math.round(booking.amount / booking.people)
           : tableIndex(rules.rooms).get(next.tables[0])?.roomObj.price || rules.prices.table;
       next.amount = unit * next.people;
+      // Round 37: fewer people on a seat: the players named go with the seats (the ones `staying` names by position, as
+      // My Lair's Change numbers sends for someone on the team changing their own; the first ones otherwise), so its GM's
+      // list of players never shows someone who isn't coming (src/changes.js)
+      if (next.kind === 'gm-seat' && Array.isArray(booking.party) && booking.party.length > next.people) next.party = this.partyStaying(booking, next.people, patch.staying);
       // Round 21: a seat its GM pays for still costs its players nothing (syncCover, after saving, moves the GM's charge)
       if (next.coveredBy) next.amount = 0;
       // A bigger group owes more; a smaller one may be paid up already.
@@ -4678,14 +4692,15 @@ export class Lair {
     if (!game) throw new RuleError('Game not found.', 404);
     const own = who.customerId && game.gmCustomerId === who.customerId;
     const scope = patch.scope === 'series' && game.seriesId ? 'series' : 'session';
-    // Round 37 (Mo, 14 Nov 2026: "so long as they are before the 24 hour period"): a GM cancels a session until
-    // refundHours before it starts, as a player gives up a seat. (It was until an hour after it starts.) Staff: any time.
+    // Round 37 (Mo, 14 Nov 2026: "let gms cancel within 4 hours before the session not 24 hours. It's ok."): a GM
+    // cancels a session until gmChangeHours (4) before it starts. (It was until an hour after it starts.) Staff: any time.
     const cancellable = (g) => this.gmCanChange(g, rules, now);
+    const gmHours = gmHoursOf(rules);
     // Round 9: staff here means GM games
     const staffGames = this.can(who, 'sessions');
     if (!staffGames) {
       if (!own || patch.status !== 'cancelled') throw new RuleError('Only staff can change that game.', 403);
-      if (scope === 'session' && !cancellable(game)) throw new RuleError(CHANGE_WORDS.gmCancelLocked(rules.refundHours), 409);
+      if (scope === 'session' && !cancellable(game)) throw new RuleError(CHANGE_WORDS.gmCancelLocked(gmHours), 409);
     }
     if (game.status === 'cancelled' && patch.status && patch.status !== 'cancelled') {
       throw new RuleError('Cancelled games stay cancelled. List it again as a new game.', 409);
@@ -4693,7 +4708,7 @@ export class Lair {
     const before = game.status;
     let affected = 0;
     let refunds = 0;
-    // Round 37: a GM's "every future session" leaves the ones less than refundHours away on, and says so (kept)
+    // Round 37: a GM's "every future session" leaves the ones less than gmChangeHours (4) away on, and says so (kept)
     let kept = [];
     if (patch.status === 'cancelled') {
       // A series: every future session, and this one too while it can still be cancelled. Round 18: a series can have
@@ -4727,10 +4742,10 @@ export class Lair {
     const time = new LairTime(rules.tz);
     return {
       game: this.gameView(fresh, this.state(fresh.start - 1, fresh.end + 1), rules, null, { staff: this.staffSees(who) }), affected, refunds,
-      // Round 37: the sessions a GM's "every future session" left on (less than refundHours away), and the words for it
+      // Round 37: the sessions a GM's "every future session" left on (less than gmChangeHours away), and the words for it
       ...(kept.length ? {
         kept: kept.map((g) => ({ id: g.id, start: g.start, when: time.label(g.start) })),
-        notice: CHANGE_WORDS.keptSessions(kept.map((g) => time.label(g.start)), rules.refundHours),
+        notice: CHANGE_WORDS.keptSessions(kept.map((g) => time.label(g.start)), gmHours),
       } : {}),
     };
   }
@@ -6571,7 +6586,8 @@ export class Lair {
         // Round 29: a member's card, "9 of 12 so far" (none on a guest's sign-up)
         ['Entry', fee], [CARD_ROW, this.cardLine(join.customerId, rules)],
       ],
-      outro: [pay, cancel],
+      // Round 37: one for more than one person says the numbers can still be changed, after the cancel line
+      outro: [pay, cancel, ...(!online && this.numbersLine(join, rules, Date.now(), { join: true }) ? [this.numbersLine(join, rules, Date.now(), { join: true })] : [])],
       button: { label: 'See it in My Lair', url: this.page('myLair') },
     })));
     return true;
@@ -10639,7 +10655,8 @@ export class Lair {
       split: Boolean(b.split), ticketCode: this.ticketCode(b, memberRow), owed: this.isOwed(b, now), waived: Boolean(b.waived), ...heldLink(b),
       // Round 15: until when they can cancel it themselves, and whether it's locked in now (on their tab for good)
       ...this.lockView(b, rules, now),
-      // Round 37: what they can change about a table booking now (change: { until, min, max, each, keep })
+      // Round 37: what they can change about it now (a table: change: { until, min, max, each, keep }; seats booked
+      // for friends: { until, min, max, each, who })
       ...this.changeView(b, rules, now),
       // Round 17: the library game on the table (My Lair's booking card shows it)
       ...(b.game ? { game: this.bookingGameView(b) } : {}),
@@ -10707,8 +10724,8 @@ export class Lair {
       // they get for each player who pays (cents; 0 when there's none for them), as each one pays
       games: gameRows.map((g) => ({
         ...this.gameView(g, span, rules, seriesInfo), players: this.gamePlayers(span, g.id), gmCreditEach: autoCredit(g) ? this.gmSeatCredits(g).each : 0,
-        // Round 37: the last moment its GM can cancel or move it online (refundHours before it starts)
-        changeUntil: cancelUntil(g, rules),
+        // Round 37: the last moment its GM can cancel or move it online (gmChangeHours, 4, before it starts)
+        changeUntil: gmChangeUntil(g, rules),
         ...(g.private && g.inviteKey ? { invite: this.inviteFor(g, who) } : {}),
       })),
       joins: joinList.map((j) => gone(j)),

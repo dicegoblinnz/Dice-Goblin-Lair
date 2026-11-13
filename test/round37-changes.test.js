@@ -4,8 +4,13 @@
 // an option other than cancelling. [...] Also for gms and their games I want them to have the chance to cancel their
 // games too so long as they are before the 24 hour period and they even have the chance to change the time and date and
 // given the option to choose to keep that new date or is it a one off etc."
-// The rule, as dice-goblin-shop has it for cancelling: whoever made it changes it themselves until 24 hours before it
-// starts; after that it's locked in and only staff can. Each check below is written from the contract's words.
+// And at 9:25am, once he'd seen it: "Actually let gms cancel within 4 hours before the session not 24 hours. It's ok.
+// I want people who bought tickets to Thier friends can cancel themselves. Just like gms. So that it is all working
+// together. [...] customers who signed up to cancel up to 24 hours before the session is due and must call us to cancel
+// if it is within that time frame."
+// The rules: a customer changes what they booked until 24 hours before it starts (as dice-goblin-shop has it for
+// cancelling); after that it's locked in and it's a call. A GM cancels or moves their own session until 4 hours before
+// it starts. Each check below is written from the contract's words.
 // Run with: npm test
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -282,11 +287,12 @@ test('numbers: what stops it, and nothing changes when it does', async () => {
   const fancy = ok(await book({ tables: ['F1'], people: 6, start: at('2026-11-18', 18), end: at('2026-11-18', 21) })).booking;
   assert.equal(said(await change(fancy.id, { people: 3 })), '422 Fancy room is for groups of 4 or more. To come with fewer, cancel this booking and book another table.');
   assert.equal(ok(await change(fancy.id, { people: 4 })).booking.amount, 6000, '$15 a person there');
-  // a TTRPG seat's numbers aren't changed this way
-  const { game } = await list({ start: at('2026-11-19', 18), end: at('2026-11-19', 22) });
-  const seats = ok(await seat(game.id, MIA, 'Mia', 2)).booking;
-  assert.equal(said(await change(seats.id, { people: 1 })), "409 That booking's numbers can't be changed online. Have a chat with us and we'll sort it out.");
-  assert.equal(row('bookings', seats.id).people, 2);
+  // (seats at a TTRPG session booked for friends are changed their own way since Mo's second message: section 5 below)
+  // a game table at an event isn't changed this way: its players are named, and each pays their own share
+  lair.sql.exec("UPDATE bookings SET occurrence_id = 'warhammer-night@2026-11-19' WHERE id = ?", fancy.id);
+  assert.equal(said(await change(fancy.id, { people: 5 })), "409 That booking's numbers can't be changed online. Have a chat with us and we'll sort it out.");
+  assert.equal((await me(MIA)).bookings.find((b) => b.id === fancy.id).change, undefined);
+  lair.sql.exec('UPDATE bookings SET occurrence_id = NULL WHERE id = ?', fancy.id);
   // cancelled
   ok(await change(fancy.id, { status: 'cancelled' }));
   assert.equal(said(await change(fancy.id, { people: 5 })), "409 That booking's been cancelled, so there's nothing to change.");
@@ -350,23 +356,32 @@ test('numbers: staff change a booking the staff way, as before, and their own ca
 
 /* ================= 2. a GM cancels until 24 hours before ================= */
 
-test('GM cancel: a GM cancels their own session until 24 hours before it starts; after that only staff can', async () => {
+test('GM cancel: a GM cancels their own session until 4 hours before it starts; after that only staff can', async () => {
   const early = (await list()).game;
   const start = at('2026-11-17', 18);
-  ok(await seat(early.id, MIA, 'Mia'));
+  const mias = ok(await seat(early.id, MIA, 'Mia')).booking;
   await settle();
   sent = [];
-  nowIs(start - 24 * HOUR - MIN);
+  // Tuesday 1:59pm, a minute more than 4 hours before. Mia's own seat has been locked in since Monday 6pm
+  nowIs(start - 4 * HOUR - MIN);
+  assert.equal((await me(MIA)).seats.find((s) => s.id === mias.id).locked, true);
   const done = ok(await cancelGame(early.id, RANGI));
   assert.equal(done.game.status, 'cancelled');
   assert.equal(done.affected, 1);
   await settle();
   assert.equal(mailTo('mia@example.com').length, 1, 'its player hears');
-  // another, at 24 hours before on the dot
+  assert.equal(mailTo('mia@example.com')[0].subject, "Cancelled: Rangi's game, Tuesday, 17 November at 6:00 pm to 10:00 pm");
+  // her seat went with the session: it isn't on her tab, then or once its time has passed
+  assert.equal(row('bookings', mias.id).status, 'cancelled');
+  nowIs(start + 5 * HOUR);
+  const after = await me(MIA);
+  assert.equal(after.seats.find((s) => s.id === mias.id).owed, false);
+  assert.deepEqual(after.dueNow, []);
+  // another, at 4 hours before on the dot
   nowIs(NOW);
   const late = (await list({ start: at('2026-11-18', 18), end: at('2026-11-18', 22), title: 'Wednesday one-shot' })).game;
-  const locked = "409 It's less than 24 hours away, so it can't be cancelled online now. Give us a call or see us at the counter, and we'll sort it out with your players.";
-  nowIs(at('2026-11-18', 18) - 24 * HOUR);
+  const locked = "409 It's less than 4 hours away, so it can't be cancelled online now. Give us a call or see us at the counter, and we'll sort it out with your players.";
+  nowIs(at('2026-11-18', 18) - 4 * HOUR);
   assert.equal(said(await cancelGame(late.id, RANGI)), locked);
   // and twenty minutes in (the old rule let them, until an hour after the start)
   nowIs(at('2026-11-18', 18, 20));
@@ -378,14 +393,15 @@ test('GM cancel: a GM cancels their own session until 24 hours before it starts;
   assert.equal(ok(await cancelGame(late.id, ANA)).game.status, 'cancelled');
 });
 
-test('GM cancel: "all future sessions" cancels the ones more than 24 hours away; one that\'s closer stays on, and the answer says so', async () => {
-  // a weekly game from tonight (listed this morning, so tonight's is already inside the 24 hours)
+test('GM cancel: "all future sessions" cancels the ones more than 4 hours away; one that\'s closer stays on, and the answer says so', async () => {
+  // a weekly game from tonight; by 3pm tonight's is inside the 4 hours
   const listed = await list({ start: at('2026-11-14', 18), end: at('2026-11-14', 22), schedule: 'weekly', title: 'Saturday campaign' });
   const ids = listed.sessions.map((s) => s.id);
   assert.ok(ids.length >= 8);
+  nowIs(at('2026-11-14', 15));
   const done = ok(await cancelGame(ids[1], RANGI, 'series'));
   assert.deepEqual(done.kept, [{ id: ids[0], start: at('2026-11-14', 18), when: 'Saturday, 14 November at 6:00 pm' }]);
-  assert.equal(done.notice, "Saturday, 14 November at 6:00 pm is less than 24 hours away, so it's still on. Give us a call if it can't run.");
+  assert.equal(done.notice, "Saturday, 14 November at 6:00 pm is less than 4 hours away, so it's still on. Give us a call if it can't run.");
   assert.equal(gameRow(ids[0]).status, 'open', "tonight's is still on");
   for (const id of ids.slice(1)) assert.equal(gameRow(id).status, 'cancelled', id);
   // the game adds no more dates
@@ -396,7 +412,7 @@ test('GM cancel: "all future sessions" cancels the ones more than 24 hours away;
   assert.equal(all.kept, undefined);
   for (const s of other.sessions) assert.equal(gameRow(s.id).status, 'cancelled');
   // half an hour into a session, its GM's "all future sessions" leaves it running without a word about it (it isn't
-  // "less than 24 hours away": it's on), and cancels the rest
+  // "less than 4 hours away": it's on), and cancels the rest
   const third = await list({ start: at('2026-11-15', 18), end: at('2026-11-15', 22), schedule: 'weekly', tables: ['B3'], title: 'Sunday campaign' });
   nowIs(at('2026-11-15', 18) + 30 * 60 * 1000);
   const late = ok(await cancelGame(third.sessions[0].id, RANGI, 'series'));
@@ -409,7 +425,10 @@ test('GM cancel: "all future sessions" cancels the ones more than 24 hours away;
 test('GM cancel: My Lair tells a GM until when each session is theirs to change', async () => {
   const { game } = await list();
   const mine = (await me(RANGI)).games.find((g) => g.id === game.id);
-  assert.equal(mine.changeUntil, at('2026-11-17', 18) - 24 * HOUR);
+  assert.equal(mine.changeUntil, at('2026-11-17', 18) - 4 * HOUR);
+  // (a customer's own lock is still 24 hours before: the two rules sit side by side)
+  assert.equal(lair.rulesCache.refundHours, 24);
+  assert.equal(lair.rulesCache.gmChangeHours, 4);
   // and the floor says this Lair app can move a session, so the games board offers "Change date or time"
   const floor = ok(await call('GET', `floor?from=${at('2026-11-17', 0)}&to=${at('2026-11-18', 0)}`, null, RANGI));
   assert.equal(floor.features.changes, true);
@@ -472,19 +491,42 @@ test('move: a seat whose session moved can be dropped until 24 hours after the m
   assert.match(said(await change(kais.id, { status: 'cancelled' }, KAI)), /^409 It's less than 24 hours away, so it can't be cancelled online now/);
 });
 
-test('move: a GM can\'t move a session inside its last 24 hours; staff can, and its players still get their day', async () => {
+test('move: a GM moves a session until 4 hours before it starts; inside their players\' 24 hours the new time still needs a day\'s notice, and each player gets a day to drop out', async () => {
+  const { game } = await list();
+  const mias = ok(await seat(game.id, MIA, 'Mia')).booking;
+  // Tuesday 1pm, five hours before: Mia's seat has been locked in since Monday 6pm
+  nowIs(at('2026-11-17', 13));
+  assert.equal((await me(MIA)).seats.find((s) => s.id === mias.id).locked, true);
+  // later tonight isn't a day's notice
+  assert.equal(said(await move(game.id, { start: at('2026-11-17', 19), end: at('2026-11-17', 23) })), "422 Your players need a day's notice. Pick a time at least 24 hours from now.");
+  // Thursday is
+  sent = [];
+  const done = ok(await move(game.id, { start: at('2026-11-19', 18), end: at('2026-11-19', 22) }));
+  assert.equal(done.moved, 1);
+  assert.equal(done.told, 1);
+  // her seat is hers to drop again: until Wednesday 6pm, 24 hours before the new time (later than a day after the move)
+  const hers = (await me(MIA)).seats.find((s) => s.id === mias.id);
+  assert.equal(hers.start, at('2026-11-19', 18));
+  assert.equal(hers.locked, false);
+  assert.equal(hers.cancelUntil, at('2026-11-18', 18));
+  await settle();
+  assert.ok(mailTo('mia@example.com').at(-1).text.includes("Can't make the new time? Cancel your seat in My Lair by Wednesday, 18 November at 6:00 pm and Gobgob will let your GM know. After that it stays on your tab."), mailTo('mia@example.com').at(-1).text);
+  assert.equal(ok(await change(mias.id, { status: 'cancelled' })).booking.status, 'cancelled');
+});
+
+test('move: a GM can\'t move a session inside its last 4 hours; staff can, and its players still get their day', async () => {
   const { game } = await list();
   const mias = ok(await seat(game.id, MIA, 'Mia')).booking;
   const start = at('2026-11-17', 18);
-  nowIs(start - 24 * HOUR);
-  const locked = "409 It's less than 24 hours away, so it can't be moved online now. Give us a call or see us at the counter, and we'll sort it out with your players.";
+  nowIs(start - 4 * HOUR);
+  const locked = "409 It's less than 4 hours away, so it can't be moved online now. Give us a call or see us at the counter, and we'll sort it out with your players.";
   assert.equal(said(await move(game.id, { start: at('2026-11-19', 18), end: at('2026-11-19', 22) })), locked);
   assert.equal(gameRow(game.id).starts_at, start);
   // someone else, or nobody
   assert.equal(said(await move(game.id, { start: at('2026-11-19', 18) }, MIA)), '403 Only the GM or staff can move a session.');
   assert.equal(said(await move(game.id, { start: at('2026-11-19', 18) }, '')), '403 Only the GM or staff can move a session.');
-  // staff with GM games, six hours before, to tonight an hour later
-  nowIs(at('2026-11-17', 12));
+  // staff with GM games, two hours before, to tonight an hour later
+  nowIs(at('2026-11-17', 16));
   sent = [];
   const done = ok(await move(game.id, { start: at('2026-11-17', 19) }, ANA));
   assert.equal(done.game.end, at('2026-11-17', 23), 'as long as it was');
@@ -917,4 +959,379 @@ test('move: a regular whose seat at the moved session is saved, not booked yet, 
   assert.ok(mia[0].text.includes('Heads up, friend: Curse of Strahd has moved. Gobgob saves your seat at the new time.'), mia[0].text);
   assert.ok(mia[0].text.includes("Can't make the new time? Skip a session or stop saving your seat in My Lair."), mia[0].text);
   assert.ok(mailTo('kai@example.com')[0].text.includes('Your seat moved with it.'));
+});
+
+/* ================= 5. seats and sign-ups booked for friends: drop some without cancelling the lot ================= */
+// Mo, 9:25am the same morning: "I want people who bought tickets to Thier friends can cancel themselves. Just like gms.
+// So that it is all working together. Effortlessly. [...] customers who signed up to cancel up to 24 hours before the
+// session is due and must call us to cancel if it is within that time frame." (contract v37-changes, section 2)
+
+/** Mia books a seat for each name at a session (the first is hers unless said) */
+const seats = (gameId, names, who = MIA, over = {}) => call('POST', 'bookings', {
+  kind: 'gm-seat', gameId, people: names.length, name: 'Mia Chen', email: 'mia@example.com', phone: '021 555 0100', players: names.map((name) => ({ name })), ...over,
+}, who);
+const LOCKED_CHANGE = "409 It's less than 24 hours away, so it can't be changed online now: it stays on your tab as it is. Have a chat with us at the counter or give us a call, and we'll sort it out.";
+
+test('seats: three seats become two, three days ahead: the price follows, the seat goes back on the board, their GM hears, and they get one email', async () => {
+  const { game } = await list();
+  const booked = ok(await seats(game.id, ['Mia', 'Kiri', 'Jo'])).booking;
+  assert.equal(booked.amount, 4500);
+  await settle();
+  sent = [];
+  // My Lair says what can change: one to three seats, who's on them, $15 each, until Monday 6pm (as cancelling)
+  const mine = (await me(MIA)).seats.find((s) => s.id === booked.id);
+  assert.deepEqual(mine.change, {
+    until: at('2026-11-16', 18), min: 1, max: 3, each: 1500, who: [{ name: 'Mia', cost: 1500 }, { name: 'Kiri', cost: 1500 }, { name: 'Jo', cost: 1500 }],
+  });
+  assert.equal(mine.cancelUntil, mine.change.until);
+  // Kiri can't come
+  const done = ok(await change(booked.id, { people: 2, staying: [0, 2] }));
+  assert.deepEqual(done.changed, { people: { from: 3, to: 2 }, players: { from: ['Mia', 'Kiri', 'Jo'], to: ['Mia', 'Jo'] }, amount: { from: 4500, to: 3000 } });
+  const now = (await me(MIA)).seats.find((s) => s.id === booked.id);
+  assert.deepEqual([now.people, now.amount, now.due, now.status, now.paid], [2, 3000, 3000, 'confirmed', false]);
+  assert.deepEqual(now.players.map((p) => p.name), ['Mia', 'Jo']);
+  assert.deepEqual([now.change.max, now.change.who.length], [2, 2]);
+  await settle();
+  const mail = mailTo('mia@example.com');
+  assert.equal(mail.length, 1);
+  assert.equal(mail[0].subject, 'Booking changed: 2 seats on Tuesday 17 November');
+  for (const words of [
+    "Kia ora Mia Chen, Gobgob has updated your seats at Rangi's game.", '2 (it was 3)', 'Mia, Jo', '$30.00, on your tab (it was $45.00)',
+    "Can't make it? Cancel in My Lair by Monday, 16 November at 6:00 pm (24 hours before). After that it stays on your tab, even if you can't come.",
+  ]) assert.ok(mail[0].text.includes(words), `${words}\n${mail[0].text}`);
+  assert.ok(!mail[0].text.includes('Kiri'), 'nobody who dropped out is named');
+  // their GM hears, with who's still coming
+  const gm = mailTo('rangi@example.com');
+  assert.equal(gm.length, 1);
+  assert.equal(gm[0].subject, "Seat dropped: Rangi's game, Tuesday, 17 November at 6:00 pm to 10:00 pm");
+  assert.ok(gm[0].text.includes("Kia ora Rangi, Mia Chen dropped 1 of their 3 seats at Rangi's game. The spot's back on the games board for someone else."), gm[0].text);
+  assert.ok(gm[0].text.includes('Mia, Jo') && gm[0].text.includes('2 of 4'), gm[0].text);
+  assert.deepEqual(mailTo('staff@dicegoblin.test'), [], 'nothing for the team to do');
+  // the seat is back on the board: Kai takes the other two, and then it's full
+  ok(await seat(game.id, KAI, 'Kai', 2));
+  assert.equal(said(await seat(game.id, RIA, 'Ria')), '409 This table is full.');
+  // the note for staff, on the booking
+  assert.equal(row('bookings', booked.id).notes, '[Changed online: 3 to 2 seats]');
+});
+
+test('seats: left to the Lair, the last seats go; and what stops a change changes nothing', async () => {
+  const { game } = await list();
+  const booked = ok(await seats(game.id, ['Mia', 'Kiri', 'Jo'])).booking;
+  await settle();
+  sent = [];
+  const same = async () => {
+    const r = row('bookings', booked.id);
+    assert.deepEqual([r.people, r.amount, r.party], [3, 4500, JSON.stringify([{ name: 'Mia', character: '' }, { name: 'Kiri', character: '' }, { name: 'Jo', character: '' }])]);
+  };
+  const count = '422 Tell us how many seats to keep. To give them all up, cancel the booking instead.';
+  for (const people of [0, -1, 1.5, 'two', '']) assert.equal(said(await change(booked.id, { people, staying: [0] })), count, String(people));
+  assert.equal(said(await change(booked.id, { people: 4 })), '422 To bring someone else, give us a call or ask at the counter. Here you can give seats up.');
+  const who = "422 Pick who's still coming: one name for each seat you're keeping.";
+  for (const staying of [[0], [0, 1, 2], [0, 0], [0, 3], [0, -1], [0, 1.5], 'Mia', [0, 'Jo']]) assert.equal(said(await change(booked.id, { people: 2, staying })), who, JSON.stringify(staying));
+  // their tables aren't theirs to change, and nobody else can change it at all
+  assert.equal(said(await change(booked.id, { tables: ['B2'] })), '403 Only staff can change that booking.');
+  assert.equal(said(await change(booked.id, { people: 2 }, KAI)), '403 Only staff can change that booking.');
+  assert.equal(said(await change(booked.id, { people: 2 }, '')), '403 Only staff can change that booking.');
+  await same();
+  // asking for what it is already changes nothing and emails nobody
+  assert.equal(ok(await change(booked.id, { people: 3 })).changed, null);
+  assert.equal(ok(await change(booked.id, { people: '3', staying: [2, 1, 0] })).changed, null);
+  await same();
+  await settle();
+  assert.deepEqual(sent, []);
+  // no names sent: the last seats go
+  const done = ok(await change(booked.id, { people: 1 }));
+  assert.deepEqual(done.changed.players, { from: ['Mia', 'Kiri', 'Jo'], to: ['Mia'] });
+  assert.equal(done.booking.amount, 1500);
+  await settle();
+  assert.ok(mailTo('rangi@example.com')[0].text.includes("Mia Chen dropped 2 of their 3 seats at Rangi's game. The spots are back on the games board for someone else."), mailTo('rangi@example.com')[0].text);
+  assert.equal(mailTo('mia@example.com')[0].subject, 'Booking changed: 1 seat on Tuesday 17 November');
+  // one seat has nothing to change here: giving it up is the cancel
+  assert.equal((await me(MIA)).seats.find((s) => s.id === booked.id).change, undefined);
+  assert.equal(ok(await change(booked.id, { status: 'cancelled' })).booking.status, 'cancelled');
+  assert.equal(said(await change(booked.id, { people: 1 })), "409 That booking's been cancelled, so there's nothing to change.");
+});
+
+test('seats: the last moment is 24 hours before it starts, to the minute; after that it\'s a call, and staff still can', async () => {
+  const { game } = await list();
+  const start = at('2026-11-17', 18);
+  const booked = ok(await seats(game.id, ['Mia', 'Kiri', 'Jo'])).booking;
+  nowIs(start - 24 * HOUR - MIN);
+  assert.equal(ok(await change(booked.id, { people: 2 })).booking.people, 2);
+  nowIs(start - 24 * HOUR);
+  assert.equal(said(await change(booked.id, { people: 1 })), LOCKED_CHANGE);
+  const mine = (await me(MIA)).seats.find((s) => s.id === booked.id);
+  assert.deepEqual([mine.people, mine.locked, mine.change], [2, true, undefined]);
+  // the call: someone at the desk takes a seat off it the staff way, as before
+  assert.equal(ok(await change(booked.id, { people: 1 }, HEMI)).booking.people, 1);
+  assert.equal(row('bookings', booked.id).amount, 1500);
+  // booked inside the 24 hours: locked in at once, as it says before they book
+  nowIs(NOW);
+  const tonight = (await list({ start: at('2026-11-14', 18), end: at('2026-11-14', 22), tables: ['B2'], title: 'Tonight' })).game;
+  const late = ok(await seats(tonight.id, ['Mia', 'Kiri'])).booking;
+  assert.equal(said(await change(late.id, { people: 1 })), LOCKED_CHANGE);
+  // and once it has started
+  nowIs(at('2026-11-14', 18, 5));
+  assert.equal(said(await change(late.id, { people: 1 })), "409 That one has already started, so it can't be changed online. Have a chat with us at the counter.");
+});
+
+test('seats: taken off the staff way (the desk, or someone on the team changing their own in My Lair), the players named go with the seats', async () => {
+  const { game } = await list();
+  const booked = ok(await seats(game.id, ['Mia', 'Kiri', 'Jo'])).booking;
+  // the desk takes one off (the call inside 24 hours): the last name goes with it
+  nowIs(at('2026-11-17', 12));
+  assert.equal(ok(await change(booked.id, { people: 2 }, HEMI)).booking.people, 2);
+  assert.deepEqual(JSON.parse(row('bookings', booked.id).party).map((p) => p.name), ['Mia', 'Kiri']);
+  // so their GM's list of players shows who's coming, not who was
+  assert.deepEqual((await me(RANGI)).games.find((g) => g.id === game.id).players.map((p) => p.name), ['Mia', 'Kiri']);
+  // Mo's own seats, changed in My Lair with his staff login: the staff way (no lock, no email), keeping who he picked
+  nowIs(NOW);
+  const other = (await list({ start: at('2026-11-18', 18), end: at('2026-11-18', 22), tables: ['B2'], title: 'Wednesday' })).game;
+  const own = ok(await seats(other.id, ['Mo', 'Ana', 'Hemi'], OWNER, { name: 'Mo Ashgrove', email: 'owner@example.com' })).booking;
+  nowIs(at('2026-11-18', 12));
+  assert.equal(ok(await change(own.id, { people: 2, staying: [0, 2] }, OWNER)).booking.people, 2);
+  assert.deepEqual(JSON.parse(row('bookings', own.id).party).map((p) => p.name), ['Mo', 'Hemi']);
+  assert.equal(row('bookings', own.id).amount, 3000);
+  // a pick that isn't one falls back to the first names; more people than names leaves the names alone
+  ok(await change(own.id, { people: 1, staying: ['nope'] }, OWNER));
+  assert.deepEqual(JSON.parse(row('bookings', own.id).party).map((p) => p.name), ['Mo']);
+  ok(await change(own.id, { people: 2 }, OWNER));
+  assert.deepEqual(JSON.parse(row('bookings', own.id).party).map((p) => p.name), ['Mo']);
+});
+
+test('seats: money already on them for more seats than they\'re keeping is staff\'s to sort; less than that is fine', async () => {
+  const { game } = await list();
+  const booked = ok(await seats(game.id, ['Mia', 'Kiri', 'Jo'])).booking;
+  // $30 paid at the counter ahead of time (two of the three seats)
+  lair.write('UPDATE bookings SET paid_amount = 3000 WHERE id = ?', booked.id);
+  assert.equal(said(await change(booked.id, { people: 1 })), "409 You've paid for more people than that already. Have a chat with us at the counter or give us a call, and we'll sort out the change and your money back.");
+  assert.equal(row('bookings', booked.id).people, 3);
+  const done = ok(await change(booked.id, { people: 2 }));
+  assert.deepEqual([done.booking.amount, done.booking.paid, done.booking.due], [3000, true, 0]);
+});
+
+test('seats: a seat booking its GM pays for: the GM\'s charge follows the seats that stay, and its lock has its own words', async () => {
+  const { game } = await list();
+  const booked = ok(await seats(game.id, ['Mia', 'Kiri'])).booking;
+  ok(await call('POST', `games/${game.id}/players/${encodeURIComponent(booked.ref)}/cover`, {}, RANGI));
+  const charge = () => lair.sql.exec("SELECT people, amount, status FROM bookings WHERE cover_of = ? AND kind = 'gm-cover'", booked.id).one();
+  assert.deepEqual({ ...charge() }, { people: 2, amount: 2000, status: 'confirmed' });
+  const mine = (await me(MIA)).seats.find((s) => s.id === booked.id);
+  assert.deepEqual([mine.amount, mine.coveredByGm, mine.change.each], [0, true, 0]);
+  await settle();
+  sent = [];
+  const done = ok(await change(booked.id, { people: 1, staying: [1] }));
+  assert.deepEqual(done.changed, { people: { from: 2, to: 1 }, players: { from: ['Mia', 'Kiri'], to: ['Kiri'] }, amount: { from: 0, to: 0 } });
+  assert.deepEqual({ ...charge() }, { people: 1, amount: 1000, status: 'confirmed' });
+  await settle();
+  assert.ok(mailTo('mia@example.com')[0].text.includes('Nothing to pay'), mailTo('mia@example.com')[0].text);
+  // (two seats again, to try the lock)
+  const other = (await list({ start: at('2026-11-18', 18), end: at('2026-11-18', 22), tables: ['B2'], title: 'Wednesday' })).game;
+  const pair = ok(await seats(other.id, ['Mia', 'Kiri'])).booking;
+  ok(await call('POST', `games/${other.id}/players/${encodeURIComponent(pair.ref)}/cover`, {}, RANGI));
+  nowIs(at('2026-11-18', 18) - 24 * HOUR);
+  assert.equal(said(await change(pair.id, { people: 1 })), "409 It's less than 24 hours away, so it can't be changed online now. Your GM pays for your seats if you come. Have a chat with us at the counter or give us a call, and we'll sort it out.");
+});
+
+test('seats: a regular who brings a friend drops one seat for a session; Gobgob saves both again for the next', async () => {
+  const { ids, seriesId } = await weekly();
+  ok(await call('POST', `games/${ids[0]}/join-series`, { people: 2, name: 'Mia Chen', email: 'mia@example.com', phone: '021 555 0100', players: [{ name: 'Mia' }, { name: 'Kiri' }] }, MIA));
+  const first = lair.sql.exec("SELECT id, people FROM bookings WHERE game_id = ? AND customer_id = ? AND kind = 'gm-seat'", ids[0], MIA).one();
+  assert.equal(first.people, 2);
+  const done = ok(await change(first.id, { people: 1, staying: [0] }));
+  assert.deepEqual([done.booking.people, done.booking.amount], [1, 1500]);
+  assert.equal(lair.sql.exec('SELECT people FROM series_members WHERE series_id = ? AND customer_id = ?', seriesId, MIA).one().people, 2, 'they still save two seats a session');
+  // Saturday's session ends, and the 10-minute run saves their seats in the next one: both of them
+  nowIs(at('2026-11-21', 22) + MIN);
+  lair.rollSeries(lair.rulesCache, Date.now());
+  const next = lair.sql.exec("SELECT people, amount FROM bookings WHERE game_id = ? AND customer_id = ? AND kind = 'gm-seat'", ids[1], MIA).one();
+  assert.deepEqual({ ...next }, { people: 2, amount: 3000 });
+});
+
+test('seats: a booking for more than one seat says in its confirmation and its two-day reminder that the numbers can change; one seat\'s don\'t', async () => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', lair_booking_reminders: true }, ROOMS, []);
+  const line = 'Numbers changed? Update them in My Lair by then too.';
+  const { game } = await list();
+  ok(await seats(game.id, ['Mia', 'Kiri']));
+  ok(await seat(game.id, KAI, 'Kai'));
+  await settle();
+  const confirmation = mailTo('mia@example.com').at(-1);
+  assert.match(confirmation.subject, /^Seat saved/);
+  assert.ok(confirmation.text.includes(`Can't make it? Cancel in My Lair by Monday, 16 November at 6:00 pm (24 hours before). After that it stays on your tab, even if you can't come.\n\n${line}`), confirmation.text);
+  assert.ok(!mailTo('kai@example.com').at(-1).text.includes('Numbers changed?'), 'one seat: cancelling is the change');
+  sent = [];
+  nowIs(at('2026-11-15', 9));
+  ok(await call('POST', 'internal/reminders', { at: at('2026-11-15', 9) }, '', { 'X-Lair-Internal': '1' }));
+  await settle();
+  const reminder = mailTo('mia@example.com').find((m) => /^See you /.test(m.subject));
+  assert.ok(reminder, sent.map((m) => `${m.to}: ${m.subject}`).join(' | '));
+  assert.ok(reminder.text.includes(`After that, the $30 stays on your tab. ${line}`), reminder.text);
+  const kais = mailTo('kai@example.com').find((m) => /^See you /.test(m.subject));
+  assert.ok(kais && !kais.text.includes('Numbers changed?'), kais?.text);
+});
+
+/* ---- event sign-ups with friends ---- */
+// Blood on the Clocktower as it's run: Sunday 29 November, 12pm to 6pm, $10, 40 places. A library social the same
+// afternoon that's free for library members ($10 for anyone else), and a championship that's paid online.
+const EVENTS = [
+  { id: 'clocktower', title: 'Blood on the Clocktower', start: at('2026-11-29', 12), end: at('2026-11-29', 18), tables: '', capacity: 40, entryFee: 1000 },
+  { id: 'social', title: 'Library social', start: at('2026-11-29', 13), end: at('2026-11-29', 17), tables: '', capacity: 20, entryFee: 1000, memberFree: true, type: 'social' },
+  { id: 'champs', title: 'Riftbound championship', start: at('2026-11-29', 11), end: at('2026-11-29', 17), tables: '', capacity: 32, entryFee: 2500, payment: 'online' },
+];
+const CLOCKTOWER = 'clocktower@2026-11-29';
+const SOCIAL = 'social@2026-11-29';
+const CHAMPS = 'champs@2026-11-29';
+const withEvents = (settings = {}) => {
+  lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', ...settings }, ROOMS, EVENTS);
+};
+const signUp = (occurrence, body = {}, who = MIA) => call('POST', `events/${occurrence}/join`, { name: 'Mia Chen', email: 'mia@example.com', phone: '021 555 0100', ...body }, who);
+const changeJoin = (id, body, who = MIA) => call('POST', `events/joins/${id}/change`, body, who);
+const codeOf = async (who) => (await me(who)).member.code;
+const joinRow = (id) => row('event_joins', id);
+/** A Lair library membership that lets them borrow today (as test/round30-library.test.js makes one) */
+let plans = 0;
+const libraryMember = (customerId) => {
+  plans += 1;
+  lair.sql.exec(
+    'INSERT INTO memberships (id, contract_gid, customer_id, status, tier, billing_tier, cancel_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    `ms-test-${plans}`, `gid://shopify/SubscriptionContract/9${plans}`, customerId, 'active', 'grab', 'grab', null, NOW - 30 * 24 * HOUR,
+  );
+};
+
+test('sign-ups: three people become two, a fortnight ahead: the entry follows, the place goes back, and they get one email', async () => {
+  withEvents();
+  const kai = await codeOf(KAI);
+  const signed = ok(await signUp(CLOCKTOWER, { guests: [{ code: kai }, { name: 'Jo' }] }));
+  assert.deepEqual([signed.join.people, signed.join.amount, signed.spacesLeft], [3, 3000, 37]);
+  await settle();
+  sent = [];
+  // My Lair says what can change: who's coming with them, $10 a place, until Saturday noon (as cancelling)
+  const mine = (await me(MIA)).joins.find((j) => j.id === signed.join.id);
+  assert.deepEqual(mine.change, { until: at('2026-11-28', 12), min: 1, max: 3, each: 1000, you: 1000, who: [{ name: 'Kai Tane', cost: 1000 }, { name: 'Jo', cost: 1000 }] });
+  assert.equal(mine.cancelUntil, mine.change.until);
+  // Jo can't come
+  const done = ok(await changeJoin(signed.join.id, { people: 2, staying: [0] }));
+  assert.deepEqual(done.changed, { people: { from: 3, to: 2 }, guests: { from: ['Kai Tane', 'Jo'], to: ['Kai Tane'] }, amount: { from: 3000, to: 2000 } });
+  assert.deepEqual([done.join.people, done.join.amount, done.join.due, done.join.status], [2, 2000, 2000, 'confirmed']);
+  assert.deepEqual(done.join.guests, [{ name: 'Kai Tane', member: true }]);
+  assert.equal(joinRow(signed.join.id).note, '[Changed online: 3 to 2 people]');
+  // the place is back: 38 of 40 left for the next person
+  assert.equal(ok(await signUp(CLOCKTOWER, { name: 'Ria Moana', email: 'ria@example.com', people: 1 }, RIA)).spacesLeft, 37);
+  // Kai still has it in his My Lair, as Mia's guest
+  assert.equal((await me(KAI)).joins.filter((j) => j.id === signed.join.id).length, 1);
+  await settle();
+  const mail = mailTo('mia@example.com');
+  assert.equal(mail.length, 1);
+  assert.equal(mail[0].subject, 'Booking changed: 2 people on Sunday 29 November');
+  for (const words of [
+    'Kia ora Mia Chen, Gobgob has updated your sign-up for Blood on the Clocktower.', '2 (it was 3)', 'Mia Chen, Kai Tane', '$20.00, on your tab (it was $30.00)',
+    "Can't make it? Cancel in My Lair by Saturday, 28 November at 12:00 pm (24 hours before). After that it stays on your tab, even if you can't come.",
+  ]) assert.ok(mail[0].text.includes(words), `${words}\n${mail[0].text}`);
+  assert.ok(!mail[0].text.includes('Jo'), 'nobody who dropped out is named');
+  // then Kai can't either: it's just Mia, and it leaves his My Lair
+  const alone = ok(await changeJoin(signed.join.id, { people: 1 }));
+  assert.deepEqual([alone.join.people, alone.join.amount, alone.join.guests], [1, 1000, []]);
+  assert.equal((await me(KAI)).joins.filter((j) => j.id === signed.join.id).length, 0);
+  assert.equal((await me(MIA)).joins.find((j) => j.id === signed.join.id).change, undefined, 'one person: cancelling is the change');
+});
+
+test('sign-ups: what stops a change changes nothing, and only whoever signed up can make one', async () => {
+  withEvents();
+  const kai = await codeOf(KAI);
+  const id = ok(await signUp(CLOCKTOWER, { guests: [{ code: kai }, { name: 'Jo' }] })).join.id;
+  await settle();
+  sent = [];
+  const count = '422 Tell us how many people are coming. To call it off, cancel your sign-up instead.';
+  for (const people of [0, -2, 2.5, 'some', null, undefined]) assert.equal(said(await changeJoin(id, { people })), count, String(people));
+  assert.equal(said(await changeJoin(id, { people: 4 })), '422 To bring someone else, give us a call or ask at the counter. Here you can take people off.');
+  const who = "422 Pick who's still coming with you.";
+  for (const staying of [[], [0, 1], [2], [-1], [0.5], 'Kai', ['Kai']]) assert.equal(said(await changeJoin(id, { people: 2, staying })), who, JSON.stringify(staying));
+  // Kai is on it as a guest: it's Mia's to change. Ria isn't on it at all. Staff cancel one or add one, as before.
+  assert.equal(said(await changeJoin(id, { people: 2 }, KAI)), '403 Only the person who signed up can change this. Ask them, or the counter.');
+  assert.equal(said(await changeJoin(id, { people: 2 }, RIA)), '403 Only whoever signed up can change who\'s coming.');
+  assert.equal(said(await changeJoin(id, { people: 2 }, '')), '403 Only whoever signed up can change who\'s coming.');
+  assert.equal(said(await changeJoin(id, { people: 2 }, HEMI)), '403 Only whoever signed up can change who\'s coming.');
+  assert.equal(said(await changeJoin('ej-nope', { people: 2 })), '404 Sign-up not found.');
+  assert.deepEqual([joinRow(id).people, joinRow(id).amount], [3, 3000]);
+  // what it is already: nothing changes, nobody's emailed
+  assert.equal(ok(await changeJoin(id, { people: 3 })).changed, null);
+  assert.equal(ok(await changeJoin(id, { people: 3, staying: [1, 0] })).changed, null);
+  await settle();
+  assert.deepEqual(sent, []);
+  // the last moment is 24 hours before it starts, to the minute; after that it's a call
+  nowIs(at('2026-11-29', 12) - 24 * HOUR - MIN);
+  assert.equal(ok(await changeJoin(id, { people: 2, staying: [1] })).join.guests[0].name, 'Jo');
+  nowIs(at('2026-11-29', 12) - 24 * HOUR);
+  assert.equal(said(await changeJoin(id, { people: 1 })), LOCKED_CHANGE);
+  assert.deepEqual([(await me(MIA)).joins.find((j) => j.id === id).locked, (await me(MIA)).joins.find((j) => j.id === id).change], [true, undefined]);
+  // started, and cancelled
+  nowIs(at('2026-11-29', 12, 10));
+  assert.equal(said(await changeJoin(id, { people: 1 })), "409 That one has already started, so it can't be changed online. Have a chat with us at the counter.");
+  nowIs(NOW);
+  const other = ok(await signUp(CLOCKTOWER, { name: 'Ria Moana', email: 'ria@example.com', people: 2 }, RIA)).join.id;
+  ok(await call('POST', `events/joins/${other}/cancel`, {}, RIA));
+  assert.equal(said(await changeJoin(other, { people: 1 }, RIA)), "409 That sign-up's been cancelled, so there's nothing to change.");
+});
+
+test('sign-ups: friends without names (an older page) come off by the number, and money already on it for more people is staff\'s to sort', async () => {
+  withEvents();
+  const id = ok(await signUp(CLOCKTOWER, { people: 4 })).join.id;
+  const mine = (await me(MIA)).joins.find((j) => j.id === id);
+  assert.deepEqual(mine.change.who, [{ name: '', cost: 1000 }, { name: '', cost: 1000 }, { name: '', cost: 1000 }]);
+  assert.deepEqual(ok(await changeJoin(id, { people: 3 })).changed, { people: { from: 4, to: 3 }, guests: { from: [], to: [] }, amount: { from: 4000, to: 3000 } });
+  // $20 paid at the counter ahead of time
+  lair.write('UPDATE event_joins SET paid_amount = 2000 WHERE id = ?', id);
+  assert.equal(said(await changeJoin(id, { people: 1 })), "409 You've paid for more people than that already. Have a chat with us at the counter or give us a call, and we'll sort out the change and your money back.");
+  const done = ok(await changeJoin(id, { people: 2 }));
+  assert.deepEqual([done.join.amount, done.join.paid, done.join.due], [2000, true, 0]);
+  // one from before everything went on the tab (round 15), held for an online payment and then paid online, so locked
+  // in with staff deciding on money back: neither changes here
+  const held = ok(await signUp(CHAMPS, { name: 'Ria Moana', email: 'ria@example.com', people: 2 }, RIA)).join;
+  assert.notEqual((await me(RIA)).joins.find((j) => j.id === held.id).change, undefined, 'on their tab, it can change');
+  lair.write("UPDATE event_joins SET status = 'held', pay = 'now' WHERE id = ?", held.id);
+  const notHere = "409 That sign-up can't be changed online. Have a chat with us and we'll sort it out.";
+  assert.equal(said(await changeJoin(held.id, { people: 1 }, RIA)), notHere);
+  lair.write("UPDATE event_joins SET status = 'confirmed', paid = 1, paid_amount = 5000 WHERE id = ?", held.id);
+  assert.equal(said(await changeJoin(held.id, { people: 1 }, RIA)), notHere);
+  assert.equal((await me(RIA)).joins.find((j) => j.id === held.id).change, undefined);
+});
+
+test('sign-ups: at an event free for library members, a place comes off at what that place costs today, as the door prices it', async () => {
+  withEvents();
+  // Mia and Kai are library members; Jo comes by name, so Jo pays
+  libraryMember(MIA);
+  libraryMember(KAI);
+  const kai = await codeOf(KAI);
+  const signed = ok(await signUp(SOCIAL, { guests: [{ code: kai }, { name: 'Jo' }] })).join;
+  assert.deepEqual([signed.people, signed.amount, signed.memberFree, signed.freeGuests], [3, 1000, true, 1]);
+  const mine = (await me(MIA)).joins.find((j) => j.id === signed.id);
+  assert.deepEqual(mine.change, { until: at('2026-11-28', 13), min: 1, max: 3, each: 1000, you: 0, who: [{ name: 'Kai Tane', cost: 0 }, { name: 'Jo', cost: 1000 }] });
+  // Kai drops out: Jo's $10 stays
+  const kaiOut = ok(await changeJoin(signed.id, { people: 2, staying: [1] }));
+  assert.deepEqual([kaiOut.join.amount, kaiOut.join.memberFree, kaiOut.join.freeGuests], [1000, true, undefined]);
+  assert.deepEqual(kaiOut.changed.amount, { from: 1000, to: 1000 });
+  // then Jo does: nothing to pay
+  const joOut = ok(await changeJoin(signed.id, { people: 1 }));
+  assert.deepEqual([joOut.join.amount, joOut.join.people, joOut.join.memberFree], [0, 1, true]);
+});
+
+test('sign-ups: one for more than one person says in its confirmation and its two-day reminder that the numbers can change; one person\'s don\'t', async () => {
+  withEvents({ lair_booking_reminders: true });
+  const line = 'Numbers changed? Update them in My Lair by then too.';
+  ok(await signUp(CLOCKTOWER, { guests: [{ name: 'Jo' }] }));
+  ok(await signUp(CLOCKTOWER, { name: 'Ria Moana', email: 'ria@example.com', people: 1 }, RIA));
+  await settle();
+  const confirmation = mailTo('mia@example.com').at(-1);
+  assert.match(confirmation.subject, /^You're in/);
+  assert.ok(confirmation.text.includes(`Can't make it? Cancel in My Lair by Saturday, 28 November at 12:00 pm (24 hours before). After that it stays on your tab, even if you can't come.\n\n${line}`), confirmation.text);
+  assert.ok(!mailTo('ria@example.com').at(-1).text.includes('Numbers changed?'), 'one person: cancelling is the change');
+  sent = [];
+  nowIs(at('2026-11-27', 9));
+  ok(await call('POST', 'internal/reminders', { at: at('2026-11-27', 9) }, '', { 'X-Lair-Internal': '1' }));
+  await settle();
+  const reminder = mailTo('mia@example.com').find((m) => /^See you /.test(m.subject));
+  assert.ok(reminder, sent.map((m) => `${m.to}: ${m.subject}`).join(' | '));
+  assert.ok(reminder.text.includes(`After that, the $20 stays on your tab. ${line}`), reminder.text);
+  const rias = mailTo('ria@example.com').find((m) => /^See you /.test(m.subject));
+  assert.ok(rias && !rias.text.includes('Numbers changed?'), rias?.text);
 });

@@ -1,6 +1,7 @@
 // Round 37 (14 Nov 2026, contract v37-changes), on the theme mock (demo mode). Mo: a customer dropped from 9 players to
-// 6, three days early, "but wasn't given an option other than cancelling"; and GMs cancel their own games "so long as
-// they are before the 24 hour period" and "change the time and date", for that session or every later one.
+// 6, three days early, "but wasn't given an option other than cancelling"; and GMs cancel their own games and "change
+// the time and date", for that session or every later one. Then, once he'd seen it: "let gms cancel within 4 hours
+// before the session not 24 hours", and "people who bought tickets to Thier friends can cancel themselves".
 //  A. My Lair, Ruby's table for nine on three tables (the demo makes one, three days out):
 //     1. its ticket has Change numbers beside Add to calendar, and "Change or cancel by …" beside Cancel booking;
 //     2. the dialog: 9, nothing to save yet; down to 6: $60 (it was $90), one table goes back (the last unless she
@@ -13,7 +14,7 @@
 //        future sessions and "Change or cancel by …";
 //     2. Cancel this session asks first (who has a seat, who hears, no undo), then says who was emailed; the next
 //        session is the card's;
-//     3. a session less than 24 hours away: a note in place of the buttons; Cancel all future sessions says before
+//     3. a session less than 4 hours away: a note in place of the buttons; Cancel all future sessions says before
 //        and after that it stays on.
 //  C. The games board, as Rangi:
 //     1. My Lair's link opens the game's Change date or time, and ?move leaves the address;
@@ -22,9 +23,18 @@
 //        where they were, and each player has a day to drop out;
 //     4. This and every later session: the button says so, and every later session moves by the same days;
 //     5. a one-shot has no Which sessions?;
-//     6. his own game says Cancel up to 24 hours before; one that's closer has a note and no buttons;
+//     6. his own game says Cancel up to 4 hours before; one 22 hours away (inside his players' 24) is still his to
+//        change; one that's closer than 4 hours has a note and no buttons;
 //     7. a Lair app from before round 37 (no features.changes): no Change date or time.
 //  D. Staff on the board: Change date or time on a session that's hours away, and "Staff can cancel … until it ends".
+//  E. My Lair, seats and a sign-up Ruby booked for friends (the demo makes three seats at a session and a sign-up for
+//     three, each a few days out):
+//     1. the seats' ticket has Change numbers, and "Change or cancel by …" beside Give up my seats;
+//     2. "Who's still coming?": everyone ticked and nothing to save; untick Kiri: 2 seats, $30 (it was $45); untick
+//        everyone: it says to keep one; Update booking: the notice, the ticket and the demo follow, and the seat is
+//        back on the board;
+//     3. the sign-up's ticket and dialog the same way ("Coming with you"), down to just her;
+//     4. it passes its moment while the dialog is open: the Lair app's words, then Locked in.
 // No sideways scroll, no console errors, and axe on each new part. 320, 390 and 1280 wide.
 // Usage: DG_THEME=/path/to/theme [PORT=4937] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round37-changes/changes.mjs [small|phone|desktop]
 import os from 'node:os';
@@ -78,6 +88,14 @@ const demo = (page) => page.evaluate(() => {
   return {
     bookings: be.state.bookings.filter((b) => String(b.customerId || '') === id && b.kind === 'table').map((b) => ({ id: b.id, ref: b.ref, tables: b.tables, people: b.people, amount: b.amount, start: b.start, end: b.end, status: b.status, notes: b.notes || '' })),
     games: be.state.games.filter((g) => String(g.gmCustomerId || '') === id).sort((a, b) => a.start - b.start).map((g) => ({ id: g.id, title: g.title, start: g.start, end: g.end, tables: g.tables, status: g.status, seriesId: g.seriesId || null, schedule: g.schedule })),
+    seats: be.state.bookings.filter((b) => String(b.customerId || '') === id && b.kind === 'gm-seat').map((b) => {
+      const g = be.state.games.find((x) => x.id === b.gameId) || {};
+      return { id: b.id, ref: b.ref, people: b.people, amount: b.amount, start: b.start, status: b.status, notes: b.notes || '', players: (b.players || []).map((p) => p.name), title: g.title || '', taken: g.taken, seats: g.seats, gameId: b.gameId };
+    }),
+    joins: (be.state.joins || []).filter((j) => String(j.customerId || '') === id).map((j) => {
+      const o = be.occurrenceOf(j);
+      return { id: j.id, ref: j.ref, people: j.people, amount: j.amount, status: j.status, pay: j.pay, note: j.note || '', guests: (j.guests || []).map((g) => g.name), title: o ? o.title : '', start: o ? o.startMs : null, taken: (be.state.eventJoins || {})[j.occurrenceId] || 0 };
+    }),
   };
 });
 const dialogOf = (page) => page.evaluate(() => {
@@ -91,6 +109,7 @@ const dialogOf = (page) => page.evaluate(() => {
     less: q('[data-change-step="-1"]')?.disabled, more: q('[data-change-step="1"]')?.disabled,
     limit: shown(q('[data-change-limit]')) ? f(q('[data-change-limit]').textContent) : '',
     tables: shown(q('[data-change-tables]')) ? { legend: f(q('[data-change-legend]').textContent), hint: f(q('[data-change-hint]').textContent), chips: [...d.querySelectorAll('[data-change-table]')].map((c) => `${c.value}${c.checked ? '*' : ''}`), type: q('[data-change-table]')?.type, keeping: f(q('[data-change-keeping]').textContent) } : null,
+    who: q('[data-change-who-set]') ? { legend: f(q('[data-change-who-set] legend').textContent), chips: [...d.querySelectorAll('[data-change-who]')].map((c) => `${f(c.closest('label').textContent)}${c.checked ? '*' : ''}`) } : null,
     save: q('[data-confirm-change]') ? { text: f(q('[data-confirm-change]').textContent), disabled: q('[data-confirm-change]').disabled } : null,
     error: shown(q('[data-cancel-error]')) ? f(q('[data-cancel-error]').textContent) : '',
     buttons: [...d.querySelectorAll('.modal__body .button')].map((b) => f(b.textContent)),
@@ -275,7 +294,7 @@ for (const size of sizes) {
     const weekly = games.filter((g) => g.seriesId && g.status !== 'cancelled');
     check(`${tag} B the demo gives his weekly game four sessions, a week apart`, weekly.length === 4 && weekly.every((g, i) => i === 0 || Math.round((g.start - weekly[i - 1].start) / (24 * HOUR)) === 7), weekly.map((g) => new Date(g.start).toISOString()));
     const first = weekly[0];
-    const by = await days(page, first.start - 24 * HOUR);
+    const by = await days(page, first.start - 4 * HOUR);
     let cards = await gameCards(page);
     let card = cards.find((c) => c.title === first.title);
     check(`${tag} B1 the game's own buttons: Change date or time (to the board) and Open game`, card && card.links.length === 2 && card.links[0][0] === 'Change date or time' && card.links[0][1] === `/pages/gm-games?move=1#game=${first.id}`
@@ -309,14 +328,14 @@ for (const size of sizes) {
     const secondDay = await days(page, second.start);
     check(`${tag} B2 the card is the next session's now`, card && card.when.includes(secondDay.long) && card.sub.includes('2 more sessions booked') && card.links[0][1].endsWith(`#game=${second.id}`), card);
 
-    // 3. less than 24 hours away: a note in place of the buttons, and "all future sessions" leaves it on
+    // 3. less than 4 hours away: a note in place of the buttons, and "all future sessions" leaves it on
     await page.evaluate((id) => {
       const be = window.Lair.store.backend;
       const g = be.state.games.find((x) => x.id === id);
       const length = g.end - g.start;
       const t = window.Lair.store.time;
-      // tomorrow at 11am (the clock says 1pm today): 22 hours away
-      const start = t.at(t.addDays(t.today(), 1), 11 * 60);
+      // today at 4pm (the clock says 1pm): 3 hours away
+      const start = t.at(t.today(), 16 * 60);
       Object.assign(g, { start, end: start + length });
       be.state.bookings.forEach((b) => { if (b.gameId === id) Object.assign(b, { start, end: start + length }); });
       be.commit();
@@ -325,7 +344,7 @@ for (const size of sizes) {
     cards = await gameCards(page);
     card = cards.find((c) => c.title === first.title);
     check(`${tag} B3 too close: a note in place of Change and Cancel this session`, card && card.links.map((l) => l[0]).join('|') === 'Open game' && card.cancels.join('|') === 'Cancel all future sessions,series'
-      && card.lock === 'Too close to change online It’s less than 24 hours away, so it can’t be moved or cancelled online now. Give us a call or see us at the counter, and we’ll sort it out with your players.', card);
+      && card.lock === 'Too close to change online It’s less than 4 hours away, so it can’t be moved or cancelled online now. Give us a call or see us at the counter, and we’ll sort it out with your players.', card);
     await shot(page, `${size}-b3-locked`, '[data-panel="games"]');
     await axeFree(page, `${tag} B3 Games I run, one too close`, '[data-panel="games"]');
     await page.locator(`[data-game-cancel="${second.id}"][data-scope="series"]`).click();
@@ -333,14 +352,14 @@ for (const size of sizes) {
     d = await dialogOf(page);
     const close = await days(page, (await demo(page)).games.find((g) => g.id === second.id).start);
     check(`${tag} B3 "all future sessions" says which it means, and which stays on`, d.title === 'Cancel all future sessions?' && d.text.includes('2 sessions.')
-      && d.text.includes(`${close.long} is less than 24 hours away, so it stays on. Give us a call if it can’t run.`) && d.buttons.join('|') === 'Cancel all 2|Keep them', d);
+      && d.text.includes(`${close.long} is less than 4 hours away, so it stays on. Give us a call if it can’t run.`) && d.buttons.join('|') === 'Cancel all 2|Keep them', d);
     await shot(page, `${size}-b3-ask`);
     await axe(page, `${tag} B3 the dialog`, '[data-cancel-dialog]');
     await page.locator('[data-confirm-game-cancel]').click();
     await settle(page, 900);
     said = await noticeOf(page);
     check(`${tag} B3 after: the Lair app's own words for the one it left on`, said.startsWith(`Cancelled: ${first.title}, every future session. Nobody had a seat, so there was no one to tell. `)
-      && said.endsWith("is less than 24 hours away, so it's still on. Give us a call if it can't run."), said);
+      && said.endsWith("is less than 4 hours away, so it's still on. Give us a call if it can't run."), said);
     games = (await demo(page)).games;
     check(`${tag} B3 the close one is still on, the two after it are cancelled`, games.find((g) => g.id === second.id).status !== 'cancelled' && weekly.slice(2).every((w) => games.find((g) => g.id === w.id).status === 'cancelled'),
       games.map((g) => g.status));
@@ -403,8 +422,8 @@ for (const size of sizes) {
     await page.evaluate((id) => document.querySelector('gm-board').openGame(id), second.id);
     await settle(page, 400);
     s = await sheetOf(page);
-    check(`${tag} C6 his own game: Change date or time among its buttons, and Cancel up to 24 hours before`, s.own && s.own.buttons.includes('Change date or time') && s.own.buttons.includes('Cancel this session') && s.own.buttons.includes('Cancel all future sessions')
-      && s.own.hint === 'Can’t run it? Cancel up to 24 hours before it starts. Everyone with a seat gets an email, and anyone who’s already paid gets a refund.', s.own);
+    check(`${tag} C6 his own game: Change date or time among its buttons, and Cancel up to 4 hours before`, s.own && s.own.buttons.includes('Change date or time') && s.own.buttons.includes('Cancel this session') && s.own.buttons.includes('Cancel all future sessions')
+      && s.own.hint === 'Can’t run it? Cancel up to 4 hours before it starts. Everyone with a seat gets an email, and anyone who’s already paid gets a refund.', s.own);
     await page.evaluate(() => document.querySelector('gm-board dialog .gm-own')?.scrollIntoView({ block: 'start' }));
     await shot(page, `${size}-c6-own`, 'gm-board dialog .gm-own');
     await axe(page, `${tag} C6 his game's own panel`, 'gm-board dialog .gm-own');
@@ -433,24 +452,33 @@ for (const size of sizes) {
     s = await sheetOf(page);
     check(`${tag} C5 a one-shot has no Which sessions?`, s.title === 'Change date or time' && s.scopes.length === 0 && s.tell === 'Nobody has a seat yet, so there’s no one to tell.', s);
 
-    // 6. a session that's closer than 24 hours: a note, and no buttons to change it
-    await page.evaluate((id) => {
+    // 6. a session 22 hours away (tomorrow at 11am; the clock says 1pm): inside his players' 24 hours, and still his to
+    // move or cancel; then one 3 hours away (today at 4pm): a note, and no buttons to change it
+    const putAt = (id, days, minutes) => page.evaluate(([gameId, d, mins]) => {
       const be = window.Lair.store.backend;
-      const g = be.state.games.find((x) => x.id === id);
+      const g = be.state.games.find((x) => x.id === gameId);
       const length = g.end - g.start;
       const t = window.Lair.store.time;
-      const start = t.at(t.addDays(t.today(), 1), 11 * 60);
+      const start = t.at(t.addDays(t.today(), d), mins);
       Object.assign(g, { start, end: start + length });
-      be.state.bookings.forEach((b) => { if (b.gameId === id) Object.assign(b, { start, end: start + length }); });
+      be.state.bookings.forEach((b) => { if (b.gameId === gameId) Object.assign(b, { start, end: start + length }); });
       be.commit();
-    }, single.id);
+    }, [id, days, minutes]);
+    await putAt(single.id, 1, 11 * 60);
+    await page.evaluate(() => window.Lair.store.refresh());
+    await settle(page, 300);
+    await page.evaluate((id) => document.querySelector('gm-board').openGame(id), single.id);
+    await settle(page, 400);
+    s = await sheetOf(page);
+    check(`${tag} C6 22 hours away, inside his players' 24: still his to move or cancel`, s.own && s.own.buttons.includes('Change date or time') && s.own.buttons.includes('Cancel this session') && !s.own.locked, s.own);
+    await putAt(single.id, 0, 16 * 60);
     await page.evaluate(() => window.Lair.store.refresh());
     await settle(page, 300);
     await page.evaluate((id) => document.querySelector('gm-board').openGame(id), single.id);
     await settle(page, 400);
     s = await sheetOf(page);
     check(`${tag} C6 too close: a note, and no Change date or time or Cancel this session`, s.own && !s.own.buttons.includes('Change date or time') && !s.own.buttons.includes('Cancel this session')
-      && s.own.locked === 'Too close to change online. It’s less than 24 hours away, so it can’t be moved or cancelled online now. Give us a call or see us at the counter, and we’ll sort it out with your players.', s.own);
+      && s.own.locked === 'Too close to change online. It’s less than 4 hours away, so it can’t be moved or cancelled online now. Give us a call or see us at the counter, and we’ll sort it out with your players.', s.own);
     await page.evaluate(() => document.querySelector('gm-board dialog .gm-own')?.scrollIntoView({ block: 'start' }));
     await shot(page, `${size}-c6-locked`, 'gm-board dialog .gm-own');
     await axe(page, `${tag} C6 the game's sheet, too close`, 'gm-board dialog');
@@ -466,8 +494,8 @@ for (const size of sizes) {
       }
       return out;
     }, single.id);
-    check(`${tag} C6 and the demo refuses both in the Lair app's words`, refused[0] === "409 It's less than 24 hours away, so it can't be cancelled online now. Give us a call or see us at the counter, and we'll sort it out with your players."
-      && refused[1] === "409 It's less than 24 hours away, so it can't be moved online now. Give us a call or see us at the counter, and we'll sort it out with your players.", refused);
+    check(`${tag} C6 and the demo refuses both in the Lair app's words`, refused[0] === "409 It's less than 4 hours away, so it can't be cancelled online now. Give us a call or see us at the counter, and we'll sort it out with your players."
+      && refused[1] === "409 It's less than 4 hours away, so it can't be moved online now. Give us a call or see us at the counter, and we'll sort it out with your players.", refused);
 
     // 8. (from the separate review) a link to move a session that's already under way: the game opens and says why
     // there's nothing to move
@@ -534,6 +562,142 @@ for (const size of sizes) {
     check(`${tag} D someone on the team changes their own table from My Lair the same way`, Boolean(ticket) && ticket.rows.People === '6' && ticket.rows['Table fee'] === '$60'
       && /^Updated: Tables \S+ and \S+ for 6, .+\. \S+ is back on the map for someone else\. It’s \$60 now\.$/.test(said), { said, ticket });
     check(`${tag} D no console errors`, page.errors.length === 0, page.errors);
+    await ctx.close();
+  }
+}
+
+for (const size of sizes) {
+  const tag = `[${size}]`;
+  m.globalSettings.lair_mode = 'demo';
+
+  /* ================= E. seats and a sign-up booked for friends ================= */
+  {
+    const ctx = await context(size);
+    const page = await fresh(ctx);
+    await myLair(page, RUBY);
+    let mine = await demo(page);
+    const three = mine.seats.find((b) => b.people === 3 && b.status === 'confirmed');
+    check(`${tag} E the demo gives her three seats at a session a few days out`, Boolean(three) && three.amount === 4500 && three.players.join() === 'Ruby,Kiri,Jo', mine.seats);
+    const key = `st-${three.ref}`;
+    const by = await days(page, three.start - 24 * HOUR);
+    let ticket = await ticketOf(page, key);
+    check(`${tag} E1 the seats' ticket has Change numbers beside Add to calendar`, ticket && ticket.actions.join('|') === 'Add to calendar|Change numbers|Give up my seats', ticket && ticket.actions);
+    check(`${tag} E1 one moment for both: "Change or cancel by ${by.lock}"`, ticket && ticket.by === `Change or cancel by ${by.lock}`, ticket && ticket.by);
+    await shot(page, `${size}-e1-seats`, `article[aria-labelledby="ml-${key}"]`);
+    await axeFree(page, `${tag} E1 the seats' ticket`, `article[aria-labelledby="ml-${key}"]`);
+
+    // 2. who's still coming
+    await page.locator(`[data-change="${key}"]`).click();
+    await settle(page);
+    let d = await dialogOf(page);
+    check(`${tag} E2 the dialog asks "Who’s still coming?" with the game and the time`, d.open && d.title === 'Who’s still coming?' && d.text.startsWith(three.title), d.text.slice(0, 120));
+    check(`${tag} E2 everyone's ticked, and there's nothing to save yet`, d.who && d.who.legend === 'On your seats' && d.who.chips.join() === 'Ruby*,Kiri*,Jo*' && d.sum === '3 seats · $45' && d.save.disabled, d);
+    check(`${tag} E2 it says what giving a seat up means, until when, and how to bring someone else`, d.text.includes(`A seat you give up goes back on the board for someone else. Change it until ${by.lock}. Bringing someone else? Give us a call or ask at the counter.`), d.text);
+    await page.locator('[data-change-who="1"]').uncheck();
+    await settle(page, 150);
+    d = await dialogOf(page);
+    check(`${tag} E2 Kiri can't come: 2 seats, $30 (it was $45)`, d.who.chips.join() === 'Ruby*,Kiri,Jo*' && d.sum === '2 seats · $30 (it was $45)' && !d.save.disabled, d);
+    await shot(page, `${size}-e2-who`);
+    await axe(page, `${tag} E2 the dialog`, '[data-cancel-dialog]');
+    check(`${tag} E2 no sideways scroll with the dialog open`, (await overflowX(page)) <= 0);
+    await page.locator('[data-change-who="0"]').uncheck();
+    await page.locator('[data-change-who="2"]').uncheck();
+    await settle(page, 150);
+    d = await dialogOf(page);
+    check(`${tag} E2 nobody ticked: it says to keep one, and there's nothing to save`, d.save.disabled && d.limit === 'Keep one seat at least. To give them all up, give up your seats instead.' && d.sum === '', d);
+    await page.locator('[data-change-who="0"]').check();
+    await page.locator('[data-change-who="2"]').check();
+    await settle(page, 150);
+    await page.locator('[data-confirm-change]').click();
+    await settle(page, 900);
+    await page.evaluate(() => document.querySelectorAll('details.ml-later').forEach((x) => { x.open = true; }));
+    const day = await days(page, three.start);
+    let said = await noticeOf(page);
+    check(`${tag} E2 the notice says what it is now and that a seat went back`, said === `Updated: 2 seats at ${three.title}, ${day.short}. One seat is back on the board for someone else. It’s $30 now.`, said);
+    ticket = await ticketOf(page, key);
+    check(`${tag} E2 the ticket follows: Ruby and Jo, $30 on her tab`, ticket && /Ruby/.test(ticket.rows.Players) && /Jo/.test(ticket.rows.Players) && !/Kiri/.test(ticket.rows.Players) && ticket.rows.Seats === '$30' && /^\$30/.test(ticket.stub), ticket);
+    mine = await demo(page);
+    let state = mine.seats.find((b) => b.id === three.id);
+    check(`${tag} E2 the demo keeps it, with a note for staff, and the seat is back on the board`, state.people === 2 && state.amount === 3000 && state.players.join() === 'Ruby,Jo' && state.notes === '[Changed online: 3 to 2 seats]' && state.taken === three.taken - 1, state);
+    check(`${tag} E2 no console errors`, page.errors.length === 0, page.errors);
+
+    // 4. it passes its moment while the dialog is open (the demo's session is moved to 23 hours away under it)
+    await page.locator(`[data-change="${key}"]`).click();
+    await settle(page);
+    await page.locator('[data-change-who="1"]').uncheck();
+    await page.evaluate((id) => {
+      const be = window.Lair.store.backend;
+      const b = be.state.bookings.find((x) => x.id === id);
+      const length = b.end - b.start;
+      b.start = Date.now() + 23 * 3600000;
+      b.end = b.start + length;
+      be.commit();
+    }, three.id);
+    await page.locator('[data-confirm-change]').click();
+    await settle(page, 600);
+    d = await dialogOf(page);
+    check(`${tag} E4 refused once it's inside 24 hours, in the Lair app's words`, d.open && d.error === "It's less than 24 hours away, so it can't be changed online now: it stays on your tab as it is. Have a chat with us at the counter or give us a call, and we'll sort it out.", d.error);
+    await page.locator('[data-cancel-dialog] [data-dialog-close]').first().click();
+    await settle(page, 900);
+    await page.evaluate(() => document.querySelectorAll('details.ml-later').forEach((x) => { x.open = true; }));
+    ticket = await ticketOf(page, key);
+    check(`${tag} E4 and the ticket shows it locked in, with no Change numbers`, ticket && !ticket.actions.includes('Change numbers') && !ticket.actions.includes('Give up my seats') && /^Locked in: on your tab/.test(ticket.lock), ticket);
+
+    // 3. the sign-up for three
+    const trio = mine.joins.find((j) => j.people === 3 && j.status === 'confirmed');
+    check(`${tag} E the demo gives her a sign-up for three at an event a few days out`, Boolean(trio) && trio.guests.join() === 'Kiri,Jo' && trio.amount > 0 && trio.amount % 3 === 0, mine.joins);
+    const jkey = `ej-${trio.ref}`;
+    const each = trio.amount / 300;
+    ticket = await ticketOf(page, jkey);
+    const jby = await days(page, trio.start - 24 * HOUR);
+    check(`${tag} E3 the sign-up's ticket has Change numbers, and until when`, ticket && ticket.actions.join('|') === 'Add to calendar|Change numbers|Cancel my sign-up' && ticket.by === `Change or cancel by ${jby.lock}`, ticket);
+    await page.locator(`[data-change="${jkey}"]`).click();
+    await settle(page);
+    d = await dialogOf(page);
+    check(`${tag} E3 its dialog: who's coming with her, all ticked`, d.open && d.title === 'Who’s still coming?' && d.who && d.who.legend === 'Coming with you' && d.who.chips.join() === 'Kiri*,Jo*' && d.sum === `3 people · $${each * 3}` && d.save.disabled, d);
+    check(`${tag} E3 it says what giving a place up means`, d.text.includes(`A place you give up goes back for someone else. Change it until ${jby.lock}. Bringing someone else? Give us a call or ask at the counter.`), d.text);
+    await page.locator('[data-change-who="0"]').uncheck();
+    await page.locator('[data-change-who="1"]').uncheck();
+    await settle(page, 150);
+    d = await dialogOf(page);
+    check(`${tag} E3 neither can come: just her, $${each} (it was $${each * 3})`, d.sum === `1 person · $${each} (it was $${each * 3})` && !d.save.disabled && !d.limit, d);
+    await shot(page, `${size}-e3-signup`);
+    await axe(page, `${tag} E3 the dialog`, '[data-cancel-dialog]');
+    await page.locator('[data-confirm-change]').click();
+    await settle(page, 900);
+    await page.evaluate(() => document.querySelectorAll('details.ml-later').forEach((x) => { x.open = true; }));
+    const jday = await days(page, trio.start);
+    said = await noticeOf(page);
+    check(`${tag} E3 the notice: one person, two places back`, said === `Updated: 1 person for ${trio.title}, ${jday.short}. 2 places are back for someone else. It’s $${each} now.`, said);
+    ticket = await ticketOf(page, jkey);
+    check(`${tag} E3 the ticket follows: one person, and nothing more to change here`, ticket && ticket.rows.People === '1' && !ticket.actions.includes('Change numbers') && ticket.actions.includes('Cancel my sign-up'), ticket);
+    state = (await demo(page)).joins.find((j) => j.id === trio.id);
+    check(`${tag} E3 the demo keeps it, and two places are back`, state.people === 1 && state.amount === each * 100 && state.guests.length === 0 && state.note === '[Changed online: 3 to 1 person]' && state.taken === trio.taken - 2, state);
+    check(`${tag} E no sideways scroll`, (await overflowX(page)) <= 0);
+    check(`${tag} E no console errors`, page.errors.length === 0, page.errors);
+    await ctx.close();
+  }
+  {
+    // someone on the team changing their own seats in My Lair: the staff way in the Lair app (no lock, no email), and
+    // the page reads the same
+    const ctx = await context(size);
+    const page = await fresh(ctx);
+    await myLair(page, STAFF);
+    const three = (await demo(page)).seats.find((b) => b.people === 3 && b.status === 'confirmed');
+    const key = three ? `st-${three.ref}` : '';
+    if (three) {
+      await page.locator(`[data-change="${key}"]`).click();
+      await settle(page);
+      await page.locator('[data-change-who="1"]').uncheck();
+      await page.locator('[data-confirm-change]').click();
+      await settle(page, 900);
+      await page.evaluate(() => document.querySelectorAll('details.ml-later').forEach((x) => { x.open = true; }));
+    }
+    const said = await noticeOf(page);
+    const state = three ? (await demo(page)).seats.find((b) => b.id === three.id) : null;
+    check(`${tag} E someone on the team changes their own seats the same way`, Boolean(state) && state.people === 2 && state.amount === 3000 && state.players.length === 2 && !state.players.includes('Kiri')
+      && /^Updated: 2 seats at .+\. One seat is back on the board for someone else\. It’s \$30 now\.$/.test(said), { said, state });
+    check(`${tag} E (team) no console errors`, page.errors.length === 0, page.errors);
     await ctx.close();
   }
 }

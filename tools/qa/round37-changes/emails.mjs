@@ -5,6 +5,8 @@
 //  3. "New time": a GM moved one session (a player's, and the team's "Moved by its GM")
 //  4. "New day and time": a GM moved this and every later session of a weekly game
 //  5. The two-day reminder for a table, with the same new line
+//  6. Seats booked for friends: "Your booking's changed" (three seats became two), and what their GM gets
+//  7. A sign-up with friends on it: "Your booking's changed" (three people became two)
 // Usage: node tools/qa/round37-changes/emails.mjs [out dir]   (then open the .html files, or shots.mjs for pictures)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -42,6 +44,8 @@ const ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 20, seats: 4, order: 1 },
   { id: 'gaming-room', name: 'Gaming room', code: 'G', tables: 4, seats: 4, order: 2 },
 ];
+// Blood on the Clocktower as it's run: Sunday 29 November, 12pm to 6pm, $10, 40 places
+const EVENTS = [{ id: 'clocktower', title: 'Blood on the Clocktower', start: time.at('2026-11-29', 12 * 60), end: time.at('2026-11-29', 18 * 60), tables: '', capacity: 40, entryFee: 1000 }];
 const OWNER = '9001';
 const RANGI = '5001';
 const MIA = '6001';
@@ -63,7 +67,7 @@ lair.taggedPerson = async (id) => {
 lair.shopify.orderSpend = async () => null;
 lair.shopify.orderBuyer = async () => null;
 Object.defineProperty(lair.shopify, 'configured', { get: () => false, configurable: true });
-lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', lair_booking_reminders: true }, ROOMS, []);
+lair.rulesCache = rulesFromSettings({ lair_hours: DEFAULT_HOURS, lair_shop_tables: '', lair_booking_reminders: true }, ROOMS, EVENTS);
 lair.rulesLoadedAt = clock + 10 * 365 * 24 * HOUR;
 for (const [id, name] of [[OWNER, 'Mo Ashgrove'], [RANGI, 'Rangi Hohaia'], [MIA, 'Mia Chen'], [KAI, 'Kai Tane']]) {
   lair.makeMember({ customerId: id, name, email: `${name.split(' ')[0].toLowerCase()}@example.com` }, clock);
@@ -128,6 +132,31 @@ await keep('3b-team', 'And what the team gets when a GM moves a session', () => 
 // this and every later session: Saturdays 6pm become Fridays 7pm, from 27 November
 await call('POST', `games/${ids[1]}/move`, { start: at('2026-11-27', 19), end: at('2026-11-27', 23), scope: 'series' }, RANGI);
 await keep('4-new-day', 'A GM moved this and every later session of a weekly game', (m) => m.to === 'mia@example.com');
+
+// 6: Mia's three seats at a one-shot of Rangi's (Thursday 19 November), then Kiri can't come
+const oneShot = await call('POST', 'games', {
+  title: 'Goblin Kitchen Nightmares', system: 'Honey Heist', gm: 'Rangi', blurb: 'A one-shot.', seats: 5, tables: ['G3', 'G4'], start: at('2026-11-19', 18), end: at('2026-11-19', 21),
+  email: 'rangi@example.com',
+}, RANGI);
+const three = await call('POST', 'bookings', {
+  kind: 'gm-seat', gameId: oneShot.game.id, people: 3, name: 'Mia Chen', email: 'mia@example.com', phone: '021 555 0100', players: [{ name: 'Mia' }, { name: 'Kiri' }, { name: 'Jo' }],
+}, MIA);
+await settle();
+sent = [];
+await call('POST', `bookings/${three.booking.id}/update`, { people: 2, staying: [0, 2] }, MIA);
+await settle();
+const fewer = sent.slice();
+sent = fewer.filter((m) => m.to === 'mia@example.com');
+await keep('6-seats-changed', 'Three seats became two: what whoever booked them gets', () => true);
+sent = fewer.filter((m) => m.to === 'rangi@example.com');
+await keep('6b-gm-seat-dropped', 'And what their GM gets', () => true);
+
+// 7: Mia's sign-up for three at Blood on the Clocktower, then Jo can't come
+const signed = await call('POST', 'events/clocktower@2026-11-29/join', { name: 'Mia Chen', email: 'mia@example.com', phone: '021 555 0100', guests: [{ name: 'Kai' }, { name: 'Jo' }] }, MIA);
+await settle();
+sent = [];
+await call('POST', `events/joins/${signed.join.id}/change`, { people: 2, staying: [0] }, MIA);
+await keep('7-signup-changed', 'A sign-up for three became two', (m) => m.to === 'mia@example.com');
 
 fs.writeFileSync(path.join(OUT, 'index.json'), JSON.stringify(saved, null, 1));
 console.log(`\nSaved to ${OUT}`);

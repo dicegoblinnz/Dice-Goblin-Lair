@@ -293,8 +293,9 @@ export const bookingReminderMethods = {
       details,
       button: { label: W.calendar, url: ics },
       links,
-      // Round 37: a table whose numbers they can still change says so, after the cancel paragraph (src/changes.js)
-      outro: [this.reminderCancelLine(d, rules, rule, until), type === 'table' ? this.numbersLine(x, rules, now) : ''].filter(Boolean).join(' '),
+      // Round 37: one whose numbers they can still change (a table, seats or a sign-up for more than one) says so,
+      // after the cancel paragraph (src/changes.js)
+      outro: [this.reminderCancelLine(d, rules, rule, until), this.numbersLine(x, rules, now, { join: type === 'signup' })].filter(Boolean).join(' '),
     });
   },
 

@@ -1113,6 +1113,17 @@ export function refundFor(booking, rules, cancelledAt) {
  */
 export const cancelUntil = (item, rules) => item.start - (Number(rules?.refundHours) >= 0 ? Number(rules.refundHours) : 24) * HOUR;
 
+/**
+ * Round 37 (Mo, 14 Nov 2026, once he'd seen it at 24: "Actually let gms cancel within 4 hours before the session not 24
+ * hours. It's ok."): a session's own GM cancels or moves it online until `gmChangeHours` (the theme's
+ * lair_gm_change_hours, 4) before it starts. Their players keep refundHours (24) for their own seats, so a GM can call
+ * a session off inside its players' lock: the seats go with it and nobody owes for them. gmHoursOf: the number;
+ * gmChangeUntil: the last moment a GM can.
+ */
+export const GM_CHANGE_HOURS = 4;
+export const gmHoursOf = (rules) => (Number(rules?.gmChangeHours) >= 0 ? Number(rules.gmChangeHours) : GM_CHANGE_HOURS);
+export const gmChangeUntil = (game, rules) => game.start - gmHoursOf(rules) * HOUR;
+
 /** The words for the tab and its lock, word for word in the contract (v15-tab); the theme's demo says the same */
 export const TAB_WORDS = {
   /** A cancel inside the lock (POST /bookings/:id/update, /events/joins/:id/cancel) */
@@ -1139,6 +1150,13 @@ export const ONLINE_WORDS = {
   lockedIn: "You paid online, so you're locked in. Can't make it after all? Cancel in My Lair and have a chat with us about a refund.",
   /** a table the first release took payment for online: its old refund policy */
   refund: (hours) => `Need to cancel? Do it in My Lair or call us at least ${hours} hours before, and you'll get your money back. After that the fee can't be refunded.`,
+};
+
+/** A number-of-hours theme setting: the number typed (0 or more), or the fallback when it's missing, empty or isn't one */
+const hoursSetting = (value, fallback) => {
+  if (value == null || String(value).trim() === '') return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 };
 
 export function rulesFromSettings(settings = {}, rooms = [], events = [], shop = {}) {
@@ -1170,6 +1188,9 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // counter; each event says how it's paid).
     payOnline: settings.lair_pay_online !== false,
     refundHours: Number(settings.lair_refund_hours ?? 24),
+    // Round 37: how long before a session its own GM can still cancel or move it online (Mo: 4). A theme from before
+    // the setting, or one left empty, means 4.
+    gmChangeHours: hoursSetting(settings.lair_gm_change_hours, GM_CHANGE_HOURS),
     // Round 29: "Email a reminder two days before each booking" (src/booking-reminders.js): on only once the live
     // theme's settings say true, so a Lair deployed before its theme (no key yet) sends none
     bookingReminders: settings.lair_booking_reminders === true,
