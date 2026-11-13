@@ -293,7 +293,8 @@ export const bookingReminderMethods = {
       details,
       button: { label: W.calendar, url: ics },
       links,
-      outro: this.reminderCancelLine(d, rules, rule, until),
+      // Round 37: a table whose numbers they can still change says so, after the cancel paragraph (src/changes.js)
+      outro: [this.reminderCancelLine(d, rules, rule, until), type === 'table' ? this.numbersLine(x, rules, now) : ''].filter(Boolean).join(' '),
     });
   },
 

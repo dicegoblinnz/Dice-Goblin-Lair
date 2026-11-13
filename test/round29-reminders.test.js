@@ -364,13 +364,14 @@ test('round 29: a booking moved to another day or time gets its reminder again, 
   assert.equal(again.length, 2);
   assert.match(again[1].text, /When: +Sunday 15 November, 6pm to 10pm/);
   assert.deepEqual(keyOf(again[1]), keyOf(first), 'one key per booking');
-  // and then just its time: 7pm the same day, moved on the Saturday before (still free to cancel until 7pm)
+  // and then just its time: 7pm the same day, moved on the Saturday before, at 8am. Round 37: a seat whose session
+  // moved is free to cancel for a day after the move, so until 8am Sunday (it was 7pm Saturday, 24 hours before)
   nowIs(at('2026-11-14', 8));
   ok(await call('POST', `games/${g.id}/edit`, { start: at('2026-11-15', 19), end: at('2026-11-15', 22) }, OWNER));
   assert.equal(went(await runAt(at('2026-11-14', 9))), 1);
   const third = reminders('ria@example.com')[2];
   assert.equal(third.subject, 'See you Sunday at 7pm?');
-  assert.match(third.text, /Cancel free until 7pm Saturday/);
+  assert.match(third.text, /Cancel free until 8am Sunday/);
   assert.equal(went(await runAt(at('2026-11-14', 9, 10))), 0);
 });
 

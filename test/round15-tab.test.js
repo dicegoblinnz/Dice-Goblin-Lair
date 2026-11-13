@@ -752,7 +752,9 @@ test('round 15: a guest on someone else\'s sign-up never sees it as owed in My L
   assert.deepEqual([kiri.dueNow, kiri.account.owed.items], [[], []]);
 });
 
-test('round 15: a game\'s players hear about a new time or a cancelled game with no code to show; a new time says to have a chat inside the 24 hours', async () => {
+// Round 37 (14 Nov 2026): a seat whose session moved can be dropped for 24 hours after the move, so the email says by
+// when, in place of "Less than 24 hours away? Have a chat with us and we'll take it off your tab."
+test('round 15: a game\'s players hear about a new time or a cancelled game with no code to show; a new time says until when they can drop out', async () => {
   const game = await oneShot(); // Friday 6pm
   const mia = (await seat(game.id, 'Mia', MIA)).data.booking;
   const mail = captureEmails();
@@ -764,9 +766,10 @@ test('round 15: a game\'s players hear about a new time or a cancelled game with
     assert.match(told.subject, /^New time: Tomb of Horrors, /);
     assert.doesNotMatch(told.text, /Your code/);
     assert.ok(!`${told.subject}\n${told.text}`.includes(mia.ref), 'no booking code');
-    assert.ok(told.text.includes("Can't make the new time? Cancel your seat in My Lair and Gobgob will let your GM know. Less than 24 hours away? Have a chat with us and we'll take it off your tab."), told.text);
-    // Her seat moved with it, and so did the last moment to cancel it
-    assert.deepEqual((await me(MIA)).seats.map((s) => [s.id, s.start, s.cancelUntil, s.locked]), [[mia.id, at('2026-10-02', 19), at('2026-10-01', 19), false]]);
+    assert.ok(told.text.includes("Can't make the new time? Cancel your seat in My Lair by Friday, 2 October at 1:00 pm and Gobgob will let your GM know. After that it stays on your tab."), told.text);
+    // Her seat moved with it, and so did the last moment to cancel it: a day after the move (Thursday 1pm), which is
+    // later than 24 hours before the new start
+    assert.deepEqual((await me(MIA)).seats.map((s) => [s.id, s.start, s.cancelUntil, s.locked]), [[mia.id, at('2026-10-02', 19), at('2026-10-02', 13), false]]);
     mail.sent.length = 0;
     assert.equal((await call('POST', `games/${game.id}/update`, { status: 'cancelled' }, 'gm')).status, 200);
     await settle();

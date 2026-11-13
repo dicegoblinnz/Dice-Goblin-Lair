@@ -450,7 +450,8 @@ test('cancelling a game frees its seats; staff holds report clashing bookings', 
   const listed = await call('POST', 'games', game, 'gm');
   const seat = await call('POST', 'bookings', { kind: 'gm-seat', gameId: listed.data.game.id, people: 2, name: 'Mia', email: 'mia@example.com', pay: 'day' }, 'mia');
   assert.equal(seat.status, 200);
-  const cancelled = await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'gm');
+  // (round 37: it's tonight, inside the 24 hours, so it's staff who cancel it now)
+  const cancelled = await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'staff');
   assert.deepEqual([cancelled.data.affected, cancelled.data.refunds], [1, 0]);
   const floor = await call('GET', 'floor', null, 'staff');
   assert.equal(floor.data.bookings.find((b) => b.ref === seat.data.booking.ref).status, 'cancelled');
@@ -577,13 +578,19 @@ test('staff moves stay in one room; a GM game moves and stretches with its playe
   assert.equal((await call('POST', 'bookings', tableBooking({ tables: ['B1'], start: at('2026-10-01', 15), end: at('2026-10-01', 16) }))).status, 200);
 });
 
-test('GMs: no cancelling more than an hour after the start, no cancelling the table hold alone, no reopening cancelled games', async () => {
+// Round 37 (Mo, 14 Nov 2026: "so long as they are before the 24 hour period"): a GM cancels until 24 hours before it
+// starts. It was until an hour after the start (contract v3), and this check said so.
+test('GMs: no cancelling inside the last 24 hours, no cancelling the table hold alone, no reopening cancelled games', async () => {
   const game = { title: 'Rules game', system: 'D&D 5e', gm: 'Ellie', blurb: 'x', seats: 3, tables: ['B3'], start: at('2026-10-01', 15), end: at('2026-10-01', 18) };
   const listed = await call('POST', 'games', game, 'gm');
   const gmBooking = (await call('GET', 'floor', null, 'staff')).data.bookings.find((b) => b.gameId === listed.data.game.id);
   assert.equal((await call('POST', `bookings/${gmBooking.id}/update`, { status: 'cancelled' }, 'gm')).status, 403);
+  // listed for this afternoon: it's inside the 24 hours already, and stays so once it's started
+  assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'gm')).status, 409);
+  Date.now = () => at('2026-10-01', 15, 20);
+  assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'gm')).status, 409);
   Date.now = () => at('2026-10-01', 16, 1);
-  assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'gm')).status, 403);
+  assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'gm')).status, 409);
   assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'cancelled' }, 'staff')).status, 200);
   assert.equal((await call('POST', `games/${listed.data.game.id}/update`, { status: 'open' }, 'staff')).status, 409);
 });
@@ -1146,7 +1153,8 @@ test('GM games: weekly series, GM fees, seat names, approval for a whole series,
   const trusted = await call('POST', 'games', { ...game, title: 'Trusted $10 game', tables: ['B1'], schedule: 'one-shot' }, 'gm');
   assert.equal(trusted.data.pending, false, 'no GM fee needs a manager OK: a trusted GM goes straight on the board');
   assert.equal(trusted.data.game.gmFeeApproved, true);
-  await call('POST', `games/${trusted.data.game.id}/update`, { status: 'cancelled' }, 'gm');
+  // (round 37: it's tonight, inside the 24 hours, so it's staff who take it off the board)
+  await call('POST', `games/${trusted.data.game.id}/update`, { status: 'cancelled' }, 'staff');
   const listed = await call('POST', 'games', game, 'tui');
   assert.equal(listed.status, 200, listed.data.error);
   assert.equal(listed.data.pending, true, 'a GM who is not tagged gm waits for a manager OK');
@@ -1593,12 +1601,14 @@ test('GM games: seats count players only, and a seat booking takes 1 up to the s
   assert.equal((await seat(2, 'two')).status, 200);
 });
 
-test('GM cancelling: up to an hour after the start, or a whole series; every player is emailed and paid seats are flagged for a refund', async () => {
+// Round 37 (Mo, 14 Nov 2026): until 24 hours before, so the series here starts on Saturday (it was this afternoon, and
+// the GM cancelled it 45 minutes in, as they could until an hour after the start)
+test('GM cancelling: until 24 hours before, or a whole series; every player is emailed and paid seats are flagged for a refund', async () => {
   const mail = captureEmails();
   try {
     const listed = await call('POST', 'games', {
       title: 'Cancel me', system: 'Other', gm: 'Ellie', email: 'ellie@example.com', blurb: 'x', seats: 4, tables: ['A1'],
-      start: at('2026-10-01', 15), end: at('2026-10-01', 18), schedule: 'weekly',
+      start: at('2026-10-03', 15), end: at('2026-10-03', 18), schedule: 'weekly',
     }, 'gm');
     const [first, second] = listed.data.sessions;
     const seat = (gameId, name) => call('POST', 'bookings', { kind: 'gm-seat', gameId, people: 1, name, email: `${name.toLowerCase()}@example.com`, pay: 'day' }, name.toLowerCase());
@@ -1609,7 +1619,7 @@ test('GM cancelling: up to an hour after the start, or a whole series; every pla
     await settle();
     mail.sent.length = 0;
 
-    Date.now = () => at('2026-10-01', 15, 45);
+    Date.now = () => at('2026-10-02', 14, 59);
     const res = await call('POST', `games/${first.id}/update`, { status: 'cancelled', scope: 'series' }, 'gm');
     assert.equal(res.status, 200, res.data.error);
     assert.equal(res.data.affected, 3);
@@ -3454,7 +3464,8 @@ test('split the bill: a part-paid seat in a cancelled game gets back what was pa
   assert.deepEqual([lair.booking(seat.id).paidAmount, lair.booking(seat.id).paid], [1500, false]);
   const mail = captureEmails();
   try {
-    await call('POST', `games/${game.data.game.id}/update`, { status: 'cancelled' }, 'gm');
+    // (round 37: it's tonight, inside the 24 hours, so it's staff who cancel it)
+    await call('POST', `games/${game.data.game.id}/update`, { status: 'cancelled' }, 'staff');
     assert.equal(lair.booking(seat.id).refund, 'due');
     await settle();
     assert.match(mail.sent.find((m) => m.to === 'staff@dicegoblin.test' && /Refunds due/.test(m.subject)).text, /Mia: \$15\.00 for/);
