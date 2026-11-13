@@ -861,7 +861,7 @@ test("GET /library/status says who the soonest hold is for: heldFor 'table' for 
     catan.variantId, catan.id, at('2026-11-09', 21), NOW, NOW,
   );
   const status = (await call('GET', `library/status?ids=${azul.variantId},${catan.variantId},${uno.variantId}`, null, KIRI)).data.games;
-  assert.deepEqual(status[azul.variantId], { copies: 1, held: 1, out: 0, available: 0, nextFree: at('2026-11-12', 0), mine: null, atHome: null, heldFor: 'member' });
-  assert.deepEqual(status[catan.variantId], { copies: 1, held: 1, out: 0, available: 0, nextFree: at('2026-11-09', 21), mine: null, atHome: null, heldFor: 'table' });
-  assert.deepEqual(status[uno.variantId], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: null });
+  assert.deepEqual(status[azul.variantId], { copies: 1, held: 1, out: 0, available: 0, nextFree: at('2026-11-12', 0), mine: null, atHome: null, heldFor: 'member', wanted: [], wantedMore: 0 });
+  assert.deepEqual(status[catan.variantId], { copies: 1, held: 1, out: 0, available: 0, nextFree: at('2026-11-09', 21), mine: null, atHome: null, heldFor: 'table', wanted: [], wantedMore: 0 });
+  assert.deepEqual(status[uno.variantId], { copies: 1, held: 0, out: 0, available: 1, nextFree: null, mine: null, atHome: null, heldFor: null, wanted: [], wantedMore: 0 });
 });

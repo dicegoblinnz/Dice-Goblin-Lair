@@ -35,6 +35,8 @@
 //        quantity }] }   round 9: a product early access offers find (LairOfferProducts, LairOfferProduct); their
 //        checkouts are LairOfferDraft draft orders (kept with the others, so DraftStatus, DraftOpen and D work on them).
 //        POST /__fake/set { denyOfferStock } answers like a store without read_inventory (the Lair asks again without it)
+//   POST /__fake/set { pickCatalog: true }   round 37: the catalogue sync (LairPickCatalog) lists the library copies made
+//        with /__fake/variant-code (those with a libraryCode and productId; tags: their own, else Board Game Rental)
 //   GET  /__fake/calls                       every GraphQL call so far (operation, variables)
 //   GET  /__fake/emails                      every email the app sent (Resend stand-in at /resend/emails[/batch])
 import http from 'node:http';
@@ -58,6 +60,7 @@ const state = {
   scopes: null,
   variants: {}, // round 6: variant id -> { quantity, tracked }
   variantCodes: [], // round 7: variants found by barcode or SKU (LairVariantByCode)
+  pickCatalog: false, // round 37: answer the catalogue sync (LairPickCatalog) from variantCodes' library copies
   failVariantCode: false, // round 7: LairVariantByCode refused (read_products not approved)
   discountUses: {}, // round 7: discount code (upper case) -> times used (LairGiftCodeUse)
   customers: {
@@ -359,6 +362,24 @@ function answer(op, query, v) {
         },
       };
     }
+    // Round 37 (the GM perk's flow, tools/qa/round37-gm-perk/live.mjs): the library's listings for the Lair's catalogue
+    // sync, made from the variants POST /__fake/variant-code gave a libraryCode (their tags: x.tags, else Board Game
+    // Rental; stock from POST /__fake/variant, else 1). Only after POST /__fake/set { pickCatalog: true }: until then the
+    // sync gets "unknown operation" as before, so the other flows run on an empty catalogue as they always have.
+    case 'LairPickCatalog': {
+      if (!state.pickCatalog) return null;
+      const nodes = state.variantCodes.filter((x) => x.libraryCode && x.productId).map((x) => ({
+        id: `gid://shopify/Product/${x.productId}`, handle: x.handle || '', title: x.productTitle || '', status: x.status || 'ACTIVE',
+        tags: Array.isArray(x.tags) ? x.tags : ['Board Game Rental'], vendor: x.vendor || '', createdAt: '2026-10-01T00:00:00Z', updatedAt: new Date().toISOString(),
+        descriptionHtml: '', featuredMedia: x.productImage ? { preview: { image: { url: x.productImage } } } : null,
+        variants: { nodes: [{ id: `gid://shopify/ProductVariant/${x.id}`, inventoryQuantity: state.variants[String(x.id)]?.quantity ?? 1, inventoryItem: { tracked: state.variants[String(x.id)]?.tracked !== false } }] },
+        libraryCode: { value: x.libraryCode }, players: null, playTime: null, difficulty: null, missingPieces: null, missingNote: null, blurb: null, shopCopy: null,
+      }));
+      return { products: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } };
+    }
+    case 'LairPickShop':
+      if (!state.pickCatalog) return null;
+      return { products: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } };
     // Round 7: a birthday gift's product code as Shopify sees it: made (discountCodeBasicCreate) and how often it's been used
     case 'LairGiftCodeUse': {
       const made = state.discounts.find((d) => String(d.code || '').toUpperCase() === String(v.code || '').toUpperCase());

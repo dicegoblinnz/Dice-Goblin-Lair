@@ -460,3 +460,31 @@ game shows its shelf code where a shop product shows its price. Live since 14 No
   closed sheet, and after a failed answer Enter still searches; no script errors, axe on the open sheet (44 checks a
   size and script, 440 in all; 41 without AXE). On the theme as it was before (website-lab 07683e5), 180 fail.
   `DG_THEME=… [PORT=4987] [AXE=…/axe.min.js] [OUT=…] node tools/qa/search-codes/search.mjs`.
+
+## round37-gm-perk: the GM perk, the staff slot and a game's books (GM perk chat, 14 Nov 2026)
+
+Mo, 14 Nov 2026: a perk for the people who run roleplaying games (one book from the library's RPG shelf at home at a
+time, free; on when their game is listed, resting after 3 sessions in a row with nobody at the table or 3 weeks with no
+game), a staff slot for the team (any library game), and a game naming the books it's run from, so whoever has one at
+home hears a table would like it back. Contract v37-gm-perk; the rules' own tests are `test/round37-gm-perk.test.js`.
+From the mockups he picked the perk as a card of its own in My Library, a search box for the books on Run a game, and
+telling a borrower as they take a wanted book.
+
+- `round37-gm-perk/demo.mjs`: the theme mock in demo mode, phone (390) then desktop (1280). A GM with no plan: the
+  perk's card and Scan a book, a board game refused, an RPG book home free with the heads-up in a box of its own, one
+  at a time, and how resting, idle, taken away and no perk each read (`?perk=resting|idle|off|none|staff`). Games I
+  run: the game's books and where each is, and Change the books (the search, Add, three at most, Save). Run a game:
+  Books for the table in step 3, and the game sent with its ids. A book's page: which table would like it. Staff: the
+  staff slot's card, a member's GM perk (Take it away and Give ask first), the Library tab's badges and the GM perks
+  list. A save or a search whose card My Lair redrew before the answer landed still ends on the card that's there
+  (from the separate review). No sideways scroll, no console errors, 44px to tap. 72 checks on a phone, 67 on a
+  desktop.
+  `DG_THEME=… [PORT=4993] node tools/qa/round37-gm-perk/demo.mjs [phone|desktop]`.
+- `round37-gm-perk/live.mjs`: the same pages in live mode against the real Lair app (40 checks): the Lair's own sync
+  reads the RPG shelf from the fake Shopify (`POST /__fake/set { pickCatalog: true }` makes it answer the catalogue
+  sync from the library copies given to `/__fake/variant-code`), then the routes the pages call and the words they
+  show, the two emails that should go and the one that shouldn't. Start the stack first (`sh tools/qa/live/up.sh`).
+  `DG_THEME=… node tools/qa/round37-gm-perk/live.mjs`.
+- `round37-gm-perk/compat.mjs`: the new theme against the Lair app as it was before round 37 (16 checks), since the
+  theme goes live first: every page this round touches works as it did, with none of the new parts showing. Start the
+  old Lair's stack from a checkout of it (`sh /path/to/old/tools/qa/live/up.sh`), then run this from here.
