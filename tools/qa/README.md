@@ -47,6 +47,12 @@ The other scripts are screenshot and flow checks built on it.
 
 **Gotcha:** inside `{% liquid %}`, a comment line that starts with punctuation or holds quotes or brackets breaks liquidjs. Real Shopify is fine with it, so rephrase the comment.
 
+**Like Shopify, where liquidjs isn't** (14 Nov 2026; each was seen on the shop first, and a theme bug passed here until the mock did the same):
+
+- `/search/suggest?q=…&section_id=<a section file>` renders that section with a `predictive_search` object, as Shopify's Predictive Search API does through the Section Rendering API (the theme's search box is drawn that way: `sections/predictive-search.liquid`). `/search/suggest.json` answers as before, with the same products.
+- `search.terms` and `predictive_search.terms` come HTML-escaped and marked so: someone types `d&d`, Liquid gets `d&amp;d`. `escape` and `t` leave them as they are, so they read right; `url_encode` and the rest see the escaped text, so a link built with `url_encode` searches for "d&amp;d".
+- `escape_once` leaves any entity already in the text alone (liquidjs only knew the five it writes itself), and `replace` reads a backslash in the text it puts in as an instruction, as Ruby's gsub does (`\0` is the matched text, `\\` one backslash): text someone typed goes in with `split`, or with the `t` filter's own markers.
+
 ## round5: theme checks for the round 5 branches
 
 These run the theme in demo mode through `theme-mock`, at phone size and then desktop.
@@ -434,3 +440,23 @@ date", for that session or every later one. Contract v37-changes.
   confirmation and two-day reminder with their new last line, "Your booking's changed", "New time" (a player's, and
   the team's "Moved by its GM") and "New day and time". Nothing is sent.
   `node tools/qa/round37-changes/emails.mjs [out dir]`.
+
+## search-codes: the search box's shelf codes (the search codes chat, 14 Nov 2026)
+
+Mo (14 Nov 2026): "display the QR code like DGL34-M011 as a tag instead of the library tag during search, if it has a
+code then it's clearly library if it doesn't it is for sale". The suggestions under the header's search box are drawn
+in Liquid (the theme's `sections/predictive-search.liquid`, which `assets/theme.js` asks Shopify for), so a library
+game shows its shelf code where a shop product shows its price. Live since 14 Nov 2026 (r17-theme 453ba36).
+
+- `search-codes/search.mjs`: the search box on the theme mock at 320, 360, 390, 480 and 1280 wide, with the shrunk
+  script and the full one (Theme settings › Use full scripts). The box asks for the section with the options it always
+  sent, and never for the JSON; a library game shows its name without "(Library)" and its code in the library badge,
+  a shop game its price; the code decides, not the name or a price (a copy with no "(Library)" in its name, a priced
+  RPG book, the membership); under 480px the price or the code sits under the name, from 480px it ends the row, whole
+  on one line and nothing off the sheet; the results page's card shows the same code; sold-out products stay out and
+  nothing found brings Gobgob; See all results and the results page's Clear filters search for exactly what was typed
+  (`d&d`, quotes, a backslash), and the words read back as typed; collections and pages come as plain rows; what a
+  screen reader hears, and the arrow keys; an older answer never lands on a newer one, on an emptied box or on a
+  closed sheet, and after a failed answer Enter still searches; no script errors, axe on the open sheet (44 checks a
+  size and script, 440 in all; 41 without AXE). On the theme as it was before (website-lab 07683e5), 180 fail.
+  `DG_THEME=… [PORT=4987] [AXE=…/axe.min.js] [OUT=…] node tools/qa/search-codes/search.mjs`.

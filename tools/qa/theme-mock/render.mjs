@@ -446,14 +446,30 @@ const lookup = (key) => key.split('.').reduce((o, k) => (o ? o[k] : undefined), 
    "We&#39;re", which a JSON words block hands JS as is). DG_T_ESCAPE=0 turns that off. */
 const tEscape = process.env.DG_T_ESCAPE !== '0';
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+/* Search terms as Shopify hands them to Liquid: already HTML-escaped, and marked so (someone types d&d, search.terms
+   and predictive_search.terms are d&amp;d; seen on the shop, 14 Nov 2026). The escape filter and the t filter leave
+   such text as it is, so it reads right; url_encode, replace and the rest see the escaped text, so a link built with
+   url_encode searches for "d&amp;d" here as it does on the shop. */
+class Escaped extends String {}
+const escapedTerms = (typed) => new Escaped(escapeHtml(typed));
+// a value as liquidjs's own filters read it: nothing for nil, a list's items run together
+const asText = (v) => (v == null ? '' : Array.isArray(v) ? v.map(asText).join('') : String(v));
+// liquidjs's own escape, letter for letter, except that text already escaped stays as it is
+engine.registerFilter('escape', (v) => (v instanceof Escaped ? String(v) : asText(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&#34;', "'": '&#39;' })[c])));
 engine.registerFilter('t', (key, ...args) => {
   let v = lookup(key);
   const params = {};
   for (const a of args) if (Array.isArray(a)) params[a[0]] = a[1];
   if (v && typeof v === 'object') v = params.count === 1 ? v.one : v.other;
   if (v == null) return `[missing ${key}]`;
-  const out = String(v).replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => params[k] ?? '');
-  return tEscape && !/_html$/.test(String(key)) ? escapeHtml(out) : out;
+  // the words and what goes into them are escaped piece by piece (the same as escaping the whole, a letter at a
+  // time), so text that came escaped already isn't escaped twice
+  const escaping = tEscape && !/_html$/.test(String(key));
+  return String(v).split(/(\{\{\s*\w+\s*\}\})/).map((piece) => {
+    const marker = piece.match(/^\{\{\s*(\w+)\s*\}\}$/);
+    const text = marker ? params[marker[1]] ?? '' : piece;
+    return escaping && !(text instanceof Escaped) ? escapeHtml(text) : String(text);
+  }).join('');
 });
 const hsl = (hex) => {
   const n = parseInt(hex.slice(1), 16);
@@ -501,6 +517,17 @@ engine.registerFilter('image_tag', (u, ...args) => {
     .map(([k, v]) => ` ${k}="${v}"`)
     .join('');
   return `<img src="${u}"${extra}>`;
+});
+// escape_once as Shopify's Liquid does it: any &name; or &#39; already in the text is left alone. liquidjs's own only
+// knows the five it writes itself (&#34;, not &quot;), so it escaped the & of a &quot; Shopify had already written
+engine.registerFilter('escape_once', (s) => asText(s).replace(/["><']|&(?!([a-zA-Z]+|(#\d+));)/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]));
+// replace as Shopify's Liquid does it (Ruby's gsub with a string to put in): a backslash in what goes in is an
+// instruction, so \0 and \& are the text that was matched, \\ is one backslash and \1 to \9 are nothing. Seen on the
+// shop, 14 Nov 2026: search words typed with a backslash, put into a line with replace, came out changed.
+engine.registerFilter('replace', (v, pattern, replacement = '') => {
+  const p = asText(pattern);
+  const r = asText(replacement).replace(/\\([\\0-9&`'])/g, (m, c) => (c === '\\' ? '\\' : c === '0' || c === '&' ? p : ''));
+  return asText(v).split(p).join(r);
 });
 const money = (c) => `$${(Number(c || 0) / 100).toFixed(2)}`;
 engine.registerFilter('money', money);
@@ -687,7 +714,8 @@ function libraryRoute(url) {
     else if (unavailable === 'last') found = [...found.filter((p) => p.available), ...found.filter((p) => !p.available)];
     const { kept, filters } = storeFilters(found, url);
     const results = kept.map((p) => ({ ...p, object_type: 'product' }));
-    return () => renderPage('search', { search: { performed: Boolean(q), terms: q, results, results_count: results.length, filters, sort_options: [] }, request: { page_type: 'search', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'search' } });
+    // search.terms comes HTML-escaped and marked so, as Shopify hands it to Liquid (Escaped, by the t filter)
+    return () => renderPage('search', { search: { performed: Boolean(q), terms: escapedTerms(q), results, results_count: results.length, filters, sort_options: [] }, request: { page_type: 'search', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'search' } });
   }
   if (url.pathname === '/cart-membership') {
     const line = (p, qty, extra = {}) => ({ key: `${p.handle}:1`, url: p.url, image: p.featured_media, product: p, variant: { title: 'Default Title', quantity_rule: {} }, quantity: qty, final_line_price: p.price * qty, original_line_price: p.price * qty, properties: {}, line_level_discount_allocations: [], ...extra });
@@ -748,7 +776,9 @@ function shopCollectionRoute(url) {
 }
 PAGES['/collections/trading-card-games'] = () => shopCollectionPage('trading-card-games');
 PAGES['/collections/role-playing-game'] = () => shopCollectionPage('role-playing-game');
-function librarySuggest(url) {
+/* What the shop's predictive search finds for ?q=, as whole products: both /search/suggest.json and the section the
+   theme draws its suggestions with (below) list these. */
+function suggestMatches(url) {
   const q = (url.searchParams.get('q') || '').toLowerCase();
   // resources[options][fields]=variants.barcode,variants.sku: a scanned code finds the product it's on (ml3)
   const fields = url.searchParams.get('resources[options][fields]') || '';
@@ -759,9 +789,43 @@ function librarySuggest(url) {
   let matches = Object.values(allProducts).filter((p) => !p.unlisted && (p.title.toLowerCase().includes(q) || byCode(p)));
   if (unavailable === 'hide') matches = matches.filter((p) => p.available);
   else if (unavailable === 'last') matches = [...matches.filter((p) => p.available), ...matches.filter((p) => !p.available)];
-  const products = matches.slice(0, 6)
+  return matches;
+}
+function librarySuggest(url) {
+  const products = suggestMatches(url).slice(0, 6)
     .map((p) => ({ title: p.title, handle: p.handle, url: p.url, price: (p.price / 100).toFixed(2), available: Boolean(p.available), tags: p.tags || [], image: `/img/${encodeURIComponent(p.featured_media?.__seed || 'x')}.svg?x=1` }));
   return { resources: { results: { products, collections: [], pages: [] } } };
+}
+/* The search box's suggestions drawn in Liquid (the theme's sections/predictive-search.liquid, 14 Nov 2026, so a
+   library game can show its shelf code): GET /search/suggest?q=…&section_id=<a section file> renders that section with
+   a predictive_search object, as Shopify's Predictive Search API does through the Section Rendering API. The products
+   are the ones /search/suggest.json finds, whole, so Liquid has their metafields. Collections and pages match by
+   title, for the types asked for (resources[type]); resources[limit] counts across every type, products first (the
+   API's default, limit_scope=all, up to 10). A section file the theme doesn't have answers null: a 404, as on Shopify.
+   predictive_search.terms comes HTML-escaped and marked so, as Shopify hands it to Liquid (Escaped, by the t filter):
+   a theme that url_encodes it into a link searches for the escaped words, here as there. */
+async function suggestSection(url) {
+  const id = url.searchParams.get('section_id') || '';
+  if (!/^[a-z0-9-]+$/.test(id) || !fs.existsSync(path.join(THEME, 'sections', `${id}.liquid`))) return null;
+  const terms = url.searchParams.get('q') || '';
+  const q = terms.toLowerCase();
+  const types = (url.searchParams.get('resources[type]') || 'query,product,collection,page').split(',').map((t) => t.trim());
+  const limit = Math.min(10, Math.max(1, Number(url.searchParams.get('resources[limit]')) || 10));
+  const byTitle = (list) => Object.values(list).filter((x) => x.title && x.title.toLowerCase().includes(q));
+  const products = types.includes('product') ? suggestMatches(url).slice(0, limit) : [];
+  const foundCollections = types.includes('collection') ? byTitle(collections).slice(0, limit - products.length) : [];
+  const foundPages = types.includes('page') ? byTitle(pages).slice(0, limit - products.length - foundCollections.length) : [];
+  const predictive_search = { performed: true, terms: escapedTerms(terms), types, resources: { products, collections: foundCollections, pages: foundPages, articles: [], queries: [] } };
+  const saved = engine.options.globals;
+  const local = makeScope({ predictive_search });
+  engine.options.globals = local;
+  try {
+    const schema = schemaOf(`sections/${id}.liquid`);
+    const html = await engine.parseAndRender(read(`sections/${id}.liquid`), { ...local, section: { id, settings: resolveSettings(schema.settings, {}), blocks: [] } });
+    return sectionWrapper(id, schema, html);
+  } finally {
+    engine.options.globals = saved;
+  }
 }
 
 /* ---- my-lair worktree: the My Lair page, a /collections/all/products.json feed (Shopify's shape, paged) and a
@@ -1203,6 +1267,12 @@ export function serve(port = 4173) {
       if (url.pathname === '/search/suggest.json') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(librarySuggest(url)));
+        return;
+      }
+      if (url.pathname === '/search/suggest' && url.searchParams.has('section_id')) {
+        const html = await suggestSection(url);
+        res.writeHead(html === null ? 404 : 200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html || '');
         return;
       }
       const page = shopCollectionRoute(url) || PAGES[url.pathname] || libraryRoute(url) || pageWithTemplate(url); // r7 shell: shop collections read their filters first
