@@ -391,15 +391,21 @@ test('round 36: the 20% is still where the limit sits: what a thing can come dow
   assert.equal(tillDiscountMost(300, 600), 0);
 });
 
-test("round 36: the flag and the email write how far off to one decimal place, and never as 20% for something that's past it", () => {
-  const line = (percent) => TILL_OVER_WORDS.noteLine({ title: 'Catan', qty: 1, off: 500, percent });
-  assert.equal(line(47.62), 'Catan, $5.00 off (47.6% off)');
-  assert.equal(line(25), 'Catan, $5.00 off (25% off)');
-  assert.equal(line(100), 'Catan, $5.00 off (100% off)');
-  assert.equal(line(20.09), 'Catan, $5.00 off (20.1% off)');
-  // a cent past 20% on something dear is 20.01%: "20% off" would read as within it
-  assert.equal(line(20.01), 'Catan, $5.00 off (just over 20% off)');
-  assert.equal(line(20.04), 'Catan, $5.00 off (just over 20% off)');
+test("round 36: the flag and the email write how far off to one decimal place, worked out once, and never as 20% for something that's past it", () => {
+  // (unit: its price; off: dollars off each; was: its price before its own sale)
+  const line = (unit, off, was) => TILL_OVER_WORDS.noteLine({ title: 'Catan', qty: 1, unit, off, ...(was ? { was } : {}) });
+  assert.equal(line(10500, 5000), 'Catan, $50.00 off (47.6% off)');
+  assert.equal(line(2000, 500), 'Catan, $5.00 off (25% off)');
+  assert.equal(line(500, 500), 'Catan, $5.00 off (100% off)');
+  assert.equal(line(100000, 20090), 'Catan, $200.90 off (20.1% off)');
+  // a cent past 20% on something dear is 20.001%: "20% off" would read as within it
+  assert.equal(line(100000, 20001), 'Catan, $200.01 off (just over 20% off)');
+  assert.equal(line(100000, 20040), 'Catan, $200.40 off (just over 20% off)');
+  // $2.59 off $11 is 23.545%: 23.5%, not the 23.6% that rounding it to 23.55% first and then again would make
+  assert.equal(line(1100, 259), 'Catan, $2.59 off (23.5% off)');
+  // on sale already: a share of what it was
+  assert.equal(line(300, 50, 600), 'Catan, $0.50 off (58.3% off what it was)');
+  assert.equal(TILL_OVER_WORDS.overLine({ title: 'Booster', qty: 2, unit: 1100, off: 259, percent: 23.55 }), '2 × Booster: $2.59 off each, 23.5% off ($11.00 down to $8.41 each)');
 });
 
 test('round 36: a discount of more than 20% off is no longer refused: the price comes back, and says which things are past 20%', async () => {

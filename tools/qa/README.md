@@ -328,7 +328,10 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   and put back, a line's discount changed by hand letting go of it, nothing held over to the next sale); and
   Shopify's price dropping before Pay with the sale's own discount on (nothing sold, shared again on the new price);
   and Shopify's figures differing from the till's as the discount goes on (Pay says it's shared again on Shopify's
-  prices; more asked than the things turn out to take). No sideways scroll, no console errors (99 checks).
+  prices; more asked than the things turn out to take). No sideways scroll, no console errors (99 checks; 104 since
+  round 36, 13 Nov 2026, which changed what happens past 20%: where a step here typed too much it now meets the
+  question "This exceeds the 20% discount threshold. Are you sure you want to continue?" and says No, something on
+  sale already can have dollars typed, and a price that drops before Pay is asked about at the next Pay, not refused).
   `DG_THEME=… [LOOK=pieces|first] [PORT=4997] [OUT=…] node tools/qa/round35-till-discounts/till.mjs`.
 - `round35-till-discounts/practice.mjs`: the same on the demo (Practice sales, the till's own sums): dollars off, the
   till's own limit, off each one, the Money PIN at Pay, round 34's review finding still holding (Back while the PIN
@@ -343,6 +346,41 @@ players are back end only, the staff page's (contract `docs/contracts/lair-api-c
   shares follow the prices up to how far each thing can come down; and it's quick (16 checks). Breaking the sharing
   four ways on purpose (shares that ignore the price, no last step, room ignored, a cent too many) fails it each time.
   `DG_THEME=… [PORT=4989] [N=4000] node tools/qa/round35-till-discounts/split.mjs`.
+
+## round36-till-discount-over: a discount past 20% asks first (look and feel review chat, 13 Nov 2026)
+
+Mo (13 Nov 2026): "for the discount limitation of 20% instead of locking it just create a warning message that this
+happened and flag it and send a special email when it happens so I would know [...] a warning message saying this
+exceeds the 20% threshold of discounts are you sure you wanna continue and when the transaction is done an automatic
+email is sent without alerting anyone". Contract v36-till-discount-over. Round 35's checks above were brought up to
+it where they typed too much (they meet the question now, and say No).
+
+- `round36-till-discount-over/till.mjs`: the till's own script in a browser (the theme mock, Sales: Live, 1280×800)
+  against **the Lair app itself**, as round 35's, with Shopify and the email service stood in for (the order's tag and
+  note, the shop owner's address, every email and every team alert are kept to look at). $50 typed on a $105 game:
+  the question in Mo's words with what it would come to, nothing on the sale or priced yet, nothing on it about a flag
+  or an email, both buttons a thumb's size, the keyboard starting on No; No (the Discount screen again, with what was
+  typed back in its field and picked out, to type over); a Yes pressed as the question appears isn't taken, then Yes (the line says it's over 20%, the Lair prices it); more than
+  the thing costs still turned down, the whole price asked about as 100% off; off each one; something on sale already
+  (dollars can be typed now, and it's a share of what it was); Card: the PIN screen saying what the PIN is a yes to
+  and still fitting; Pay carrying the till's yes, and its answer saying nothing of a flag or an email; paid: the
+  order tagged `discount-over-20` with its note, one email to the shop owner's own address with who rang it up, who
+  approved it and what came off what, the team hearing nothing and the Done screen saying nothing; a sale within 20%
+  afterwards (no question, no yes sent, no flag, no email); "Discount on everything" past what keeps the things
+  within 20% (the question with each share, No, more than the things cost, Yes and the shares by price); the amount
+  staying with the sale as it grows, and only the same share of it staying when things come out; back within 20%
+  with no question; a deal's line still with nothing to type; Shopify's figures putting a discount past 20% after it
+  was typed (the line says so, the PIN screen says so, Pay carries the yes); two things' prices dropping in Shopify
+  between the price and Pay (nothing sold, the till has both lines right at once from what the Lair app said, and the
+  next Pay asks for a PIN on a screen that names both); a scan while it asks. No sideways scroll, no console errors
+  (70 checks).
+  `DG_THEME=… [LOOK=pieces|first] [PORT=4996] [OUT=…] node tools/qa/round36-till-discount-over/till.mjs`.
+- `round36-till-discount-over/practice.mjs`: the same on the demo (Practice sales, the till's own sums, nothing
+  saved, so no flag and no email): the question, No, Yes, more than a thing costs, the PIN screen's words, cash after
+  the PIN; and the whole sale past 20%: every share within its thing's price and by price, more than the things cost,
+  the dollars staying when the sale grows, the same share staying when two of three things come out, and within 20%
+  again with no question (17 checks).
+  `DG_THEME=… [LOOK=pieces|first] [PORT=4989] node tools/qa/round36-till-discount-over/practice.mjs`.
 
 ## till-fast-taps: the till's own taps (look and feel review chat, 13 Nov 2026)
 

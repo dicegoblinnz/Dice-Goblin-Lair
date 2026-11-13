@@ -128,13 +128,19 @@ export const TILL_DISCOUNT_WORDS = {
 
 /** Round 36: every word of the flag on a sale's order and of the owner's email, word for word in the contract (v36) */
 export const TILL_OVER_WORDS = {
-  /** How far off, to one decimal place: "47.6%", "25%"; a hair past 20 is "just over 20%", never "20%" */
-  percent: (p) => {
-    const one = Math.round((Number(p) || 0) * 10) / 10;
+  /**
+   * How far under its full price a line past 20% sells, to one decimal place: "47.6%", "25%". Worked out once, on the
+   * line's own figures (its price, what it was when it's on sale, the dollars off): its percent to 2 places rounded
+   * again would make 23.6% of 23.545%. A hair past 20 is "just over 20%", never "20%".
+   */
+  percent: (l) => {
+    const unit = Math.max(0, Math.round(Number(l.unit) || 0));
+    const full = Math.max(unit, Math.round(Number(l.was) || 0));
+    const one = full > 0 ? Math.round(((full - unit + Math.round(Number(l.off) || 0)) * 1000) / full) / 10 : 100;
     return one <= TILL_DISCOUNT_MAX ? `just over ${TILL_DISCOUNT_MAX}%` : `${one}%`;
   },
   /** One line past 20%, for the order's note: "2 × Catan, $5.00 off each (45% off)" */
-  noteLine: (l) => `${l.qty > 1 ? `${l.qty} × ` : ''}${l.title}, ${dollars(l.off)} off${l.qty > 1 ? ' each' : ''} (${TILL_OVER_WORDS.percent(l.percent)} off${l.was ? ' what it was' : ''})`,
+  noteLine: (l) => `${l.qty > 1 ? `${l.qty} × ` : ''}${l.title}, ${dollars(l.off)} off${l.qty > 1 ? ' each' : ''} (${TILL_OVER_WORDS.percent(l)} off${l.was ? ' what it was' : ''})`,
   note: (lines) => `More than ${TILL_DISCOUNT_MAX}% off, said yes to at the till: ${lines.join('; ')}.`,
   noteMore: (n) => `and ${n} more`,
   subject: (order, total) => `Till discount over ${TILL_DISCOUNT_MAX}%: ${order}, ${dollars(total)} off`,
@@ -154,7 +160,7 @@ export const TILL_OVER_WORDS = {
     return `${dollars(r.total)} ${how}${r.by_name ? `, taken by ${r.by_name}` : ''}`;
   },
   /** One line past 20%, for the email: "7 Wonders: $50.00 off, 47.6% off ($105.00 down to $55.00)" */
-  overLine: (l) => `${l.qty > 1 ? `${l.qty} × ` : ''}${l.title}: ${dollars(l.off)} off${l.qty > 1 ? ' each' : ''}, ${TILL_OVER_WORDS.percent(l.percent)} off${l.was ? ' what it was' : ''} (${l.was ? `${dollars(l.was)} before its sale, ` : ''}${dollars(l.unit)} down to ${dollars(l.unit - l.off)}${l.qty > 1 ? ' each' : ''})`,
+  overLine: (l) => `${l.qty > 1 ? `${l.qty} × ` : ''}${l.title}: ${dollars(l.off)} off${l.qty > 1 ? ' each' : ''}, ${TILL_OVER_WORDS.percent(l)} off${l.was ? ' what it was' : ''} (${l.was ? `${dollars(l.was)} before its sale, ` : ''}${dollars(l.unit)} down to ${dollars(l.unit - l.off)}${l.qty > 1 ? ' each' : ''})`,
   /** A discounted line within 20%: "2 × Riftbound Radiance · Booster Pack: $2.00 off each" */
   otherLine: (l) => `${l.qty > 1 ? `${l.qty} × ` : ''}${l.title}: ${dollars(l.discount.each ?? l.discount.amount)} off${l.qty > 1 && l.discount.each ? ' each' : ''}`,
   button: 'Open the order in Shopify',

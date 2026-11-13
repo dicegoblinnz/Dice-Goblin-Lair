@@ -29,6 +29,11 @@
 // 6g. With the sale's own discount on, Shopify's price dropping before Pay: nothing's sold, and it's shared again.
 // 6h. Shopify's figures differing from the till's as the sale's own discount goes on: shared again on Shopify's, said.
 // And what the real till says about itself: no Demo codes on its start screen, no "Practice till" as staff sign in.
+// Round 36 (Mo, 13 Nov 2026: "instead of locking it just create a warning message"): more than 20% off is no longer
+// refused. The till asks first ("This exceeds the 20% discount threshold. Are you sure you want to continue?"), so the
+// steps here that typed too much (3, 4, 6b, 7) now meet that question and say No; 6f, 6g, 6h and 10 say what the till
+// does now when a sale's own discount or Shopify's prices would take something past it. The whole of the new way is in
+// tools/qa/round36-till-discount-over/till.mjs.
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4997] [OUT=dir] node tools/qa/round35-till-discounts/till.mjs
 import os from 'node:os';
 import path from 'node:path';
@@ -298,12 +303,19 @@ const look = () => page.evaluate(() => {
     field: over?.querySelector('#t-off') ? { label: f(over.querySelector('label[for="t-off"]')?.textContent), sign: f(over.querySelector('.t-discount__type span')?.textContent), value: over.querySelector('#t-off').value } : null,
     none: Boolean(over?.querySelector('[data-act="discount-set"][data-c="0"]')),
     notes: [...(over?.querySelectorAll('.t-temp') || [])].map((p) => f(p.textContent)),
+    // round 36: the question a discount past 20% asks (its lines and its buttons), and what the PIN screen says of one
+    past: [...(over?.querySelectorAll('.t-warn li') || [])].map((li) => f(li.textContent)), warn: f(over?.querySelector('p.t-warn')?.textContent),
+    asks: [...(over?.querySelectorAll('[data-act="over-yes"], [data-act="over-no"]') || [])].map((b) => f(b.textContent)),
     overText: f(over?.textContent),
     approvers: [...(over?.querySelectorAll('.t-staff [data-act="pick"]') || [])].map((b) => f(b.textContent)),
     amount: f(over?.querySelector('.t-paying__amount')?.textContent), steps: [...(over?.querySelectorAll('.t-steps li') || [])].map((li) => f(li.textContent)),
     toast: f(q('[data-r="toast"]')?.textContent),
   };
 });
+const ASK = 'This exceeds the 20% discount threshold. Are you sure you want to continue?';
+/** The till is asking about a discount past 20%, with these lines */
+const asking = (view, lines) => view.view === 'discountover' && view.title === 'More than 20% off' && view.lede === ASK && JSON.stringify(view.past) === JSON.stringify(lines)
+  && JSON.stringify(view.asks) === JSON.stringify(['Yes, continue', 'No, go back']);
 const step = async (name, fn) => {
   try {
     await fn();
@@ -356,13 +368,15 @@ await step('2', async () => {
   check('the Discount screen: no sideways scroll', (await overflowX(page)) <= 0);
 });
 
-/* ---------- 3. More than it can come down by; then what it can ---------- */
+/* ---------- 3. More than 20% off asks first (round 36); then what's within it ---------- */
 await step('3', async () => {
   const prices = calls('till/price').length;
   await type('25');
   v = await look();
-  check('$25 typed: the till says the most 7 Wonders can come down by, and stays on Discount', v.view === 'discount' && v.toast === '7 Wonders can come down by $21.00 at most.' && calls('till/price').length === prices, v);
-  await noToast();
+  check('$25 typed (round 36): the till asks first, with what it would come to, and nothing is priced yet', asking(v, ['7 Wonders: $25.00 off, so $80.00 (23.8% off)']) && !v.toast && calls('till/price').length === prices, v);
+  await tap('[data-act="over-no"]');
+  v = await look();
+  check('No, go back: Discount on 7 Wonders again, with nothing on it and the $25 that was typed still in its field', v.view === 'discount' && v.title === '7 Wonders' && v.field.value === '25.00' && !v.none && calls('till/price').length === prices, v);
   await type('21', 1200);
   v = await look();
   check('$21: back at the sale, the line says so, and the Lair app is asked for the price with 2100 off that line only',
@@ -381,8 +395,8 @@ await step('4', async () => {
   await shot(page, 'till-2-discount-each');
   await type('2.21');
   v = await look();
-  check('$2.21 typed: $2.20 each at most', v.view === 'discount' && v.toast === 'Riftbound Radiance can come down by $2.20 each at most.', v);
-  await noToast();
+  check('$2.21 typed (round 36): a cent past 20% each, so the till asks', asking(v, ['2 × Riftbound Radiance: $2.21 off each, so $8.79 each (20.1% off)']), v);
+  await tap('[data-act="over-no"]');
   await tap('[data-act="discount-set"][data-c="200"]', 1200);
   v = await look();
   check('$2 off: the line says $2.00 off each, and the Lair app is asked with 200 off each on that line too',
@@ -405,11 +419,13 @@ await step('5', async () => {
   check('Card asks to Approve the discount first, and nothing has gone to Pay', v.view === 'discountok' && v.title === 'Approve the discount' && calls('till/pay').length === before, { view: v.view, title: v.title });
   check('it says what comes off and what the sale is: $25.00 off, so the sale is $102.00', /\$25\.00 off, so the sale is \$102\.00\./.test(v.lede), v.lede);
   check('only people with Money are offered: Mo and Rua, not Hemi', v.approvers.length === 2 && v.approvers.some((t) => /Mo/.test(t)) && v.approvers.some((t) => /Rua/.test(t)), v.approvers);
+  const gateWarn = v.warn;
   await tap(`[data-act="pick"][data-id="${RUA}"]`);
   await pin('4711', 1200);
   v = await look();
   const sent = calls('till/pay').at(-1)?.body || {};
   check("Rua's PIN: Pay gets her approval, card, and the lines' dollars off", calls('till/pay').length === before + 1 && sent.method === 'card' && Boolean(sent.discountOk) && sent.discountOk !== sent.token && JSON.stringify(offsSent('till/pay')) === JSON.stringify([['5026', 2100], ['5013', 200]]), sent);
+  check('everything is within 20%: the PIN screen said nothing of the threshold, and Pay says no yes was needed', !gateWarn && sent.overOk === undefined, { warn: gateWarn, overOk: sent.overOk });
   check('the EFTPOS screen says $102.00', v.view === 'card' && v.amount === '$102.00' && v.steps[0] === 'Key $102.00 into the EFTPOS', v);
   const draft = shop.drafts.at(-1)?.input;
   check('Shopify was asked for a draft with those dollars off each line, saying who approved it, tagged staff-discount',
@@ -448,8 +464,10 @@ await step('6b', async () => {
   const prices = calls('till/price').length;
   await type('30');
   v = await look();
-  check('$30 typed: the most the sale can come down by ($21.00 and 2 x $2.20), and it stays', v.view === 'discount' && v.toast === 'Everything in the sale can come down by $25.40 at most.' && calls('till/price').length === prices, v);
-  await noToast();
+  check('$30 typed (round 36): more than the $25.40 that keeps these within 20%, so the till asks, with each share', asking(v, ['7 Wonders: $24.82 off, so $80.18 (23.6% off)', '2 × Riftbound Radiance: $2.59 off each, so $8.41 each (23.5% off)']) && calls('till/price').length === prices, v);
+  await tap('[data-act="over-no"]');
+  v = await look();
+  check('No, go back: Discount on everything again, with nothing on and the $30 that was typed still in its field', v.view === 'discount' && v.title === 'Everything in the sale' && v.field.value === '30.00' && !v.none, v);
   await type('10', 1300);
   v = await look();
   check('$10: shared by price as whole cents off each one, $8.28 off 7 Wonders and 86c off each booster, which is $10.00 exactly',
@@ -626,7 +644,7 @@ await step('6f', async () => {
     JSON.stringify(offsSent('till/price')) === JSON.stringify([['5013', 220]]) && v.totals.includes('Staff discount −$6.60') && v.totals.includes('Total $26.40') && v.offs.at(-1) === '$6.60 of $10.00 off everything' && /Undo/.test(v.toast), { v, sent: offsSent('till/price') });
   await tap('[data-act="discount"][data-key="*"]');
   v = await look();
-  check('its screen says how much of it is off and why, with the $10 still the one that is on', v.lede === "$33.00 before the discount. $6.60 of the $10.00 is off: that's the most these can come down by." && v.field && v.field.value === '10.00', { lede: v.lede, field: v.field, quick: v.quick });
+  check('its screen says how much of it is off and why, with the $10 still the one that is on', v.lede === '$33.00 before the discount. $6.60 of the $10.00 is off: any more would be past 20%.' && v.field && v.field.value === '10.00', { lede: v.lede, field: v.field, quick: v.quick });
   await tap('[data-act="back"]');
   // and back in: $10.00 again
   await scan(CODE.wonders, 1300);
@@ -665,7 +683,7 @@ await step('6g', async () => {
   await tap('[data-act="discount-set"][data-c="1000"]', 1300);
   check('$10 off a game and a booster: $9.06 and 94c', JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 906], ['5013', 94]]), offsSent('till/price'));
   await noToast();
-  // the booster drops to $4 in Shopify before Pay: 94c is more than 20% of that
+  // the booster drops to $4 in Shopify before Pay: 94c is more than 20% of that, and nobody was asked about it
   VARIANTS[5013].price = 400;
   try {
     const drafts = shop.drafts.length;
@@ -674,14 +692,14 @@ await step('6g', async () => {
     await pin('2580', 1600);
     v = await look();
     check("Pay after the booster's price dropped: nothing is sold, and the till says why and that the $10 is shared again",
-      v.view === 'till' && v.toast === 'Riftbound Radiance · Booster Pack can come down by $0.80 at most. The $10.00 off the sale is shared again to fit. Pay again to carry on.' && shop.drafts.length === drafts + 1 && shop.deleted.includes(shop.drafts.at(-1).id), { view: v.view, toast: v.toast });
+      v.view === 'till' && v.toast === "Riftbound Radiance would be more than 20% off on Shopify's price now. The $10.00 off the sale is shared again to fit. Pay again to carry on." && shop.drafts.length === drafts + 1 && shop.deleted.includes(shop.drafts.at(-1).id), { view: v.view, toast: v.toast });
     await settle(1000);
     v = await look();
     check('shared on the new price: $9.64 off the game and 36c off the booster, still $10.00', JSON.stringify(offsSent('till/price')) === JSON.stringify([['5026', 964], ['5013', 36]]) && v.totals.includes('Staff discount −$10.00'), { sent: offsSent('till/price'), totals: v.totals });
     await noToast();
     await tap('[data-act="pay-card"]', 900);
     v = await look();
-    check('Card again asks for a PIN afresh, since the discounts changed: $10.00 off, so the sale is $99.00', v.view === 'discountok' && /\$10\.00 off, so the sale is \$99\.00\./.test(v.lede), { view: v.view, lede: v.lede });
+    check('Card again asks for a PIN afresh, since the discounts changed: $10.00 off, so the sale is $99.00, and nothing is past 20% now', v.view === 'discountok' && /\$10\.00 off, so the sale is \$99\.00\./.test(v.lede) && !v.warn, { view: v.view, lede: v.lede, warn: v.warn });
     await tap('[data-act="back"]');
   } finally {
     VARIANTS[5013].price = 1100;
@@ -719,8 +737,9 @@ await step('6h', async () => {
   }
   await page.evaluate(() => document.querySelector('lair-till').nextSale());
   await settle(300);
-  // more asked than the things turn out to be able to take: Barrage is on sale ($90, was $100), which the till learns
-  // from the refusal; as much as can comes off, and the button says both
+  // more asked than keeps the things within 20%: Barrage is on sale ($90, was $100), which the till learns from the
+  // price (round 36: it isn't refused); nobody said yes to going past 20%, so as much as stays within it comes off,
+  // and the till and the button say so
   state.slowPrice = 2500;
   await tap('[data-act="quick"]').catch(() => {});
   await scan(CODE.barrage, 400);
@@ -728,11 +747,11 @@ await step('6h', async () => {
   await tap('[data-act="discount"][data-key="*"]', 200);
   await type('15', 300);
   state.slowPrice = 0;
-  await page.waitForFunction(() => /at most/.test(document.querySelector('[data-r="toast"]')?.textContent || ''), null, { timeout: 12000 }).catch(() => {});
+  await page.waitForFunction(() => /past 20%/.test(document.querySelector('[data-r="toast"]')?.textContent || ''), null, { timeout: 12000 }).catch(() => {});
   await settle(1300);
   v = await look();
-  check("$15 asked before the price is in, and Barrage can only come down by $10: the till says why and what the sale has off now",
-    v.view === 'till' && v.toast === "Barrage can come down by $10.00 at most. The sale has $12.20 off now: that's the most it can come down by." && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5025', 1000], ['5013', 220]]) && v.totals.includes('Staff discount −$12.20') && v.offs.at(-1) === '$12.20 of $15.00 off everything', { v, sent: offsSent('till/price') });
+  check("$15 asked before the price is in, and Barrage is within 20% only as far as $10: the till says what the sale has off now",
+    v.view === 'till' && v.toast === 'The sale has $12.20 off now: any more would be past 20%.' && JSON.stringify(offsSent('till/price')) === JSON.stringify([['5025', 1000], ['5013', 220]]) && v.totals.includes('Staff discount −$12.20') && v.offs.at(-1) === '$12.20 of $15.00 off everything', { v, sent: offsSent('till/price') });
   await noToast();
   await page.evaluate(() => document.querySelector('lair-till').nextSale());
   await settle(300);
@@ -746,17 +765,21 @@ await step('7', async () => {
   await noToast();
   await tap('[data-act="discount"] >> nth=0');
   v = await look();
-  check("the half-price drink ($6, now $3) can't have a discount: it says why, and offers no amounts",
-    v.title === 'Coca-Cola – Half Price (Flat)' && v.lede === "$3.00, down from $6.00. It's on sale already, so it can't have a discount too." && v.quick.length === 0 && v.field === null, v);
+  check('the half-price drink ($6, now $3) (round 36): it says what it was, offers no ready amounts (any would be past 20% of what it was), and dollars can be typed',
+    v.title === 'Coca-Cola – Half Price (Flat)' && v.lede === '$3.00, down from $6.00.' && v.quick.length === 0 && v.field && v.field.label === 'Type the dollars off', v);
   await shot(page, 'till-5-on-sale');
+  await type('0.50');
+  v = await look();
+  check('50c off it: the till asks, since that is past 20% of what it was', asking(v, ['Coca-Cola – Half Price (Flat): $0.50 off, so $2.50 (58.3% off what it was)']), v);
+  await tap('[data-act="over-no"]');
   await tap('[data-act="back"]');
   await tap('[data-act="discount"] >> nth=1');
   v = await look();
   check('Barrage ($100, now $90) is offered up to $10 off', JSON.stringify(v.quick) === JSON.stringify(['$0.50 off $89.50', '$1 off $89.00', '$2 off $88.00', '$5 off $85.00', '$10 off $80.00']), v.quick);
   await type('10.01');
   v = await look();
-  check('$10.01 typed: $10.00 at most (80% of what it was)', v.view === 'discount' && v.toast === 'Barrage can come down by $10.00 at most.', v);
-  await noToast();
+  check('$10.01 typed (round 36): a cent past 80% of what it was, so the till asks', asking(v, ['Barrage: $10.01 off, so $79.99 (just over 20% off what it was)']), v);
+  await tap('[data-act="over-no"]');
   await type('$10', 1200);
   v = await look();
   check('$10: Staff discount −$10.00, Total $83.00', v.view === 'till' && v.totals.includes('Staff discount −$10.00') && v.totals.includes('Total $83.00'), v);
@@ -830,35 +853,35 @@ await step('9', async () => {
 
 /* ---------- 10. The price in Shopify dropping between the price and Pay ---------- */
 await step('10', async () => {
-  // $5 off a $105 game is fine; Mo drops it to $20 in Shopify before Pay, and $5 is more than 20% of that
+  // $5 off a $105 game is within 20%; Mo drops it to $20 in Shopify before Pay, and $5 is past 20% of that. Round 36:
+  // nothing is sold on a yes nobody gave. The Lair app lets the sale go and says which line; the till says so, and the
+  // next Pay asks for a PIN on a screen that says what it's saying yes to
   VARIANTS[5026].price = 2000;
   const drafts = shop.drafts.length;
   await tap('[data-act="pay-card"]');
   await tap(`[data-act="pick"][data-id="${OWNER}"]`);
   await pin('2580', 1400);
   v = await look();
-  check("Pay after the price dropped: the Lair app's words, and the sale is still there, unpaid", v.view === 'till' && /7 Wonders can come down by \$4\.00 at most\. Change the discount, or take it off\./.test(v.toast), v);
+  check("Pay after the price dropped: nothing is sold, and the till says it's past 20% on Shopify's price now", v.view === 'till' && v.toast === "7 Wonders is more than 20% off on Shopify's price now. Pay again to carry on, or change the discount.", v);
   check('the draft Shopify made for it was deleted, and the sale let go', shop.drafts.length === drafts + 1 && shop.deleted.includes(shop.drafts.at(-1).id) && saleRow().ended_why === 'discount', { drafts: shop.drafts.length - drafts, why: saleRow().ended_why });
+  check('its line says it is over 20% now', v.lines[0].sub === 'Staff discount: $5.00 off · over 20%', v.lines);
   await settle(1200);
-  await noToast();
-  const pays = calls('till/pay').length;
-  await tap('[data-act="pay-card"]', 900);
-  v = await look();
-  check('Card again says why without sending anything to Pay, until the discount is changed', v.view === 'till' && !v.busy && /can come down by \$4\.00 at most/.test(v.toast) && calls('till/pay').length === pays, { view: v.view, toast: v.toast });
-  await noToast();
-  // the price goes back up in Shopify: the very same basket is fine again, and Card finds that out by asking
-  VARIANTS[5026].price = 10500;
-  await tap('[data-act="pay-card"]', 1100);
-  v = await look();
-  check("a refusal doesn't stick: once Shopify's price allows it again, Card goes through (Mo's PIN from a minute ago still approves this basket): $100.00 on the EFTPOS screen", v.view === 'card' && v.amount === '$100.00', { view: v.view, amount: v.amount, toast: v.toast });
-  await tap('[data-act="back"]');
-  VARIANTS[5026].price = 2000;
-  await tap('[data-act="pay-card"]', 1100);
   await noToast();
   await tap('[data-act="discount"] >> nth=0');
   v = await look();
-  check("Discount now offers what it can take at its new price (the refusal said the line's figures): up to $2 off $20.00, and what's on it in the field",
+  check("Discount offers what's within 20% at its new price (the Lair app said the line's figures): up to $2 off $20.00, and what's on it in the field",
     v.lede === '$20.00 before the discount.' && JSON.stringify(v.quick) === JSON.stringify(['$0.50 off $19.50', '$1 off $19.00', '$2 off $18.00']) && v.field.value === '5.00', v);
+  await tap('[data-act="back"]');
+  const pays = calls('till/pay').length;
+  await tap('[data-act="pay-card"]', 1500);
+  v = await look();
+  check('Card again asks for a PIN afresh, and says what it is a yes to: $5.00 off, so the sale is $15.00, and 7 Wonders is 25% off',
+    v.view === 'discountok' && /\$5\.00 off, so the sale is \$15\.00\./.test(v.lede) && v.warn === 'This exceeds the 20% discount threshold: 7 Wonders is 25% off. A PIN says yes to that.' && calls('till/pay').length === pays, { view: v.view, lede: v.lede, warn: v.warn, toast: v.toast });
+  await tap(`[data-act="pick"][data-id="${OWNER}"]`);
+  await pin('2580', 1400);
+  v = await look();
+  const sent = calls('till/pay').at(-1)?.body || {};
+  check("Mo's PIN: Pay goes with the till's yes, and the EFTPOS screen says $15.00", v.view === 'card' && v.amount === '$15.00' && sent.overOk === true && calls('till/pay').length === pays + 1, { view: v.view, amount: v.amount, overOk: sent.overOk, toast: v.toast });
   await tap('[data-act="back"]');
   VARIANTS[5026].price = 10500;
 });

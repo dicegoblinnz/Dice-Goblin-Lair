@@ -1,6 +1,9 @@
 // Round 35 on the theme mock's demo (Practice sales: the till's own sums, no Lair app), in either look: dollars off each
 // one, the till's own limit (20% of its price for the thing), the review's finding from round 34 still holding (Back
 // while a discount's PIN is being checked pays nothing), and Discount on everything (11 Nov 2026).
+// Round 36 (Mo, 13 Nov 2026: "instead of locking it just create a warning message"): past 20% the till asks first
+// where it used to say the most a thing could come down by; the checks below that typed a cent too much meet that
+// question and say No. The whole of the new way on the practice till is tools/qa/round36-till-discount-over/practice.mjs.
 // Usage: DG_THEME=/path/to/theme [LOOK=pieces|first] [PORT=4990] node tools/qa/round35-till-discounts/practice.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -48,6 +51,7 @@ const fresh = async () => {
         view: s.view, mode: s.mode, pay: s.pay ? s.pay.method : null, discountOk: Boolean(s.discountOk), busy: Boolean(s.busy), offs: s.lines.map((l) => l.off || 0),
         prices: s.lines.map((l) => l.price), totals: [...(sale?.querySelectorAll('.t-totals p') || [])].map((p) => [...p.children].map((c) => f(c.textContent)).join(' ')),
         toast: f(document.querySelector('[data-r="toast"]')?.textContent), lede: f(document.querySelector('[data-r="over"] .t-lede')?.textContent),
+        title: f(document.querySelector('[data-r="over"] .t-h1')?.textContent),
       };
     }),
     click: async (sel, wait = 400) => {
@@ -128,8 +132,10 @@ const fresh = async () => {
   ok('Discount says the price before the discount, with no percent and no limit', screen.view === 'discount' && screen.lede === `$${(price / 100).toFixed(2)} before the discount.`, JSON.stringify(screen));
   await T.type(((most + 1) / 100).toFixed(2));
   const over = await T.s();
-  ok('a cent more than 20% of it: the till says the most it can come down by, and stays', over.view === 'discount' && new RegExp(`can come down by \\$${(most / 100).toFixed(2).replace('.', '\\.')} at most\\.$`).test(over.toast) && over.offs[0] === 0, JSON.stringify(over));
-  await T.noToast();
+  ok('a cent more than 20% of it (round 36): the till asks first, and nothing is on the line', over.view === 'discountover' && over.title === 'More than 20% off' && over.lede === 'This exceeds the 20% discount threshold. Are you sure you want to continue?' && !over.toast && over.offs[0] === 0, JSON.stringify(over));
+  await T.click('[data-act="over-no"]');
+  const back = await T.s();
+  ok('No, go back: the Discount screen again', back.view === 'discount' && back.offs[0] === 0, JSON.stringify(back));
   await T.type((most / 100).toFixed(2));
   const set = await T.s();
   ok('exactly 20% of it is taken: the sale says Staff discount and the total', set.view === 'till' && set.offs[0] === most && set.totals.includes(`Staff discount −$${(most / 100).toFixed(2)}`) && set.totals.includes(`Total $${((price - most) / 100).toFixed(2)}`), JSON.stringify(set));
@@ -193,8 +199,8 @@ const fresh = async () => {
   ok('Discount on everything says what the things cost before it', screen.view === 'discount' && screen.lede === `$${(before / 100).toFixed(2)} before the discount.`, JSON.stringify(screen));
   await T.type(((room + 1) / 100).toFixed(2));
   const over = await T.s();
-  ok('a cent more than they can come down by between them: the till says the most, and stays', over.view === 'discount' && over.toast === `Everything in the sale can come down by $${(room / 100).toFixed(2)} at most.` && over.offs.every((c) => c === 0), JSON.stringify(over));
-  await T.noToast();
+  ok('a cent more than keeps them within 20% between them (round 36): the till asks first, and nothing is on the lines', over.view === 'discountover' && over.title === 'More than 20% off' && over.offs.every((c) => c === 0), JSON.stringify(over));
+  await T.click('[data-act="over-no"]');
   await T.type('2');
   const set = await T.s();
   const sum = set.offs.reduce((n, c) => n + c, 0);

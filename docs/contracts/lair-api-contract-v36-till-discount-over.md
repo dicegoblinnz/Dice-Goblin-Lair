@@ -29,6 +29,23 @@ and what `most` is) and v34-till-discounts (approving, the `staff-discount` tag 
   of it checked on Shopify's own figures, for the price and again on the draft at Pay.
 - v34's percent (`discount`, from a till that hasn't reloaded since round 35) is held to the 80% exactly as v35 left
   it: it's refused past it, never asked about.
+- `overOk` is the till's word that it asked: the Lair doesn't know which lines the question named. What's flagged and
+  emailed is what the draft's own figures show past 20% at Pay, whatever the till had on its screen.
+- **The till's side** (the theme's `assets/lair-till.js`; `tools/qa/round36-till-discount-over/`):
+  - Its Discount screens are as they were: buttons for amounts within 20%, and dollars typed. Dollars that would
+    take a thing past 20% get the question before anything is on the sale: `More than 20% off`, `This exceeds the 20%
+    discount threshold. Are you sure you want to continue?`, a line for each thing with what it would come to
+    (`7 Wonders: $50.00 off, so $55.00 (47.6% off)`), and `Yes, continue` or `No, go back` (which puts what was
+    typed back in the field, picked out, to type over). A line past 20% says `· over 20%` in the sale.
+  - The PIN screen says what the PIN is a yes to (`This exceeds the 20% discount threshold: 7 Wonders is 47.6% off.
+    A PIN says yes to that.`), and the till sends `overOk: true` only when the approval's PIN went in on a screen that
+    named exactly the things that are past 20% now. So figures that moved since (the 422 above, or a price that
+    came in later) always mean a fresh PIN on a screen that says so.
+  - "Discount on everything" past what keeps the things within 20% asks the same way, then shares the amount by
+    price, each thing as far as its whole price. The yes is to that share of the sale: a bigger sale keeps the
+    dollars, a smaller one keeps the same share of what's left, never more. Things on sale as far as 20% goes, a
+    deal's lines and dice stay out of it, as v35.
+  - Nothing on the till says anything of the flag or the email.
 
 ## 2. Routes
 
@@ -64,8 +81,8 @@ tagged `staff-discount`, with who approved it on its note), and for a sale with 
 - the order's tag `discount-over-20` (Orders, filter by the tag, lists them all);
 - a paragraph on its note:
   `More than 20% off, said yes to at the till: 7 Wonders, $50.00 off (47.6% off); 2 × Coca-Cola – Half Price (Flat) · Classic, $0.50 off each (58.3% off what it was).`
-  Its first 8 lines, then `and 3 more`. The percent is to one decimal place, and `just over 20%` for anything that
-  would round to 20.
+  Its first 8 lines, then `and 3 more`. The percent is to one decimal place, worked out once on the line's own
+  figures, and `just over 20%` for anything that would round to 20.
 
 The flag goes on once the order exists (`gwMarkOrder`, which adds the tag and the paragraph once however often it's
 asked). An order Shopify is slow to make is flagged when it's made. One that can't be made at all (the team's
@@ -157,4 +174,5 @@ Not set: the shop owner's address in Shopify. It's deliberately not in `wrangler
 The Lair first, then the till. A till from before this round never sends more than `most` once Shopify has priced
 the basket, so it carries on as it was; the rare amount it lets through on its own sum (typed before the first price
 came back, on something Shopify has on sale) is refused at Pay with the first error above, and its Discount screen
-then offers what the item can take.
+then offers what the item can take. (The other way round, a till from this round against a Lair from before it would
+say yes to a discount the Lair then refuses in v35's words.)
