@@ -476,7 +476,9 @@ telling a borrower as they take a wanted book.
   run: the game's books and where each is, and Change the books (the search, Add, three at most, Save). Run a game:
   Books for the table in step 3, and the game sent with its ids. A book's page: which table would like it. Staff: the
   staff slot's card, a member's GM perk (Take it away and Give ask first), the Library tab's badges and the GM perks
-  list. No sideways scroll, no console errors, 44px to tap. 67 checks on a phone, 62 on a desktop.
+  list. A save or a search whose card My Lair redrew before the answer landed still ends on the card that's there
+  (from the separate review). No sideways scroll, no console errors, 44px to tap. 72 checks on a phone, 67 on a
+  desktop.
   `DG_THEME=… [PORT=4993] node tools/qa/round37-gm-perk/demo.mjs [phone|desktop]`.
 - `round37-gm-perk/live.mjs`: the same pages in live mode against the real Lair app (40 checks): the Lair's own sync
   reads the RPG shelf from the fake Shopify (`POST /__fake/set { pickCatalog: true }` makes it answer the catalogue

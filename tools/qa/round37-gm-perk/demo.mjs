@@ -233,6 +233,72 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
     return mine.map((g) => (g.books || []).map((b) => b.shelfCode).join('+'));
   });
   check(tag, later.length > 1 && later.every((x) => x === 'DGLRPG-012+DGLRPG-010'), 'every later session of the weekly game names them too', later.join(' | '));
+
+  // From the separate review: My Lair draws its cards afresh on every reload (a scan, another save, coming back to the
+  // page), so the card that started a save or a search may be gone when the answer lands. The card on the page then
+  // has to follow: never an editor stuck on "saving".
+  const booksCard = () => page.locator('article.ml-game', { has: page.locator('lair-game-books') }).first().locator('lair-game-books');
+  const reloadMidway = async () => {
+    // mark the card that's there, ask My Lair to load again, and wait for a new card in its place
+    await page.evaluate(() => {
+      document.querySelector('lair-game-books').dataset.qaOld = '1';
+      document.querySelector('my-lair').dispatchEvent(new CustomEvent('lair:refresh'));
+    });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('lair-game-books');
+      return el && !el.dataset.qaOld;
+    }, null, { timeout: 8000 });
+  };
+  const holdSaves = (fail) => page.evaluate((failing) => {
+    const be = window.Lair.store.backend;
+    if (!be.qaRealSet) be.qaRealSet = be.setGameBooks;
+    window.qaHeld = null;
+    be.setGameBooks = (...args) => new Promise((resolve, reject) => {
+      window.qaHeld = () => {
+        be.setGameBooks = be.qaRealSet;
+        if (failing) reject(Object.assign(new Error('That isn\'t one of the library\'s RPG books. Pick one from the list.'), { status: 422 }));
+        else be.qaRealSet(...args).then(resolve, reject);
+      };
+    });
+  }, fail);
+  const letGo = () => page.evaluate(() => window.qaHeld && window.qaHeld());
+  // a save that lands after the card was redrawn
+  await booksCard().locator('[data-books-edit]').click();
+  await booksCard().locator('[data-books-off]').nth(1).click(); // the Dungeon Master's Guide comes off
+  await holdSaves(false);
+  await booksCard().locator('[data-books-save]').click();
+  await page.waitForFunction(() => typeof window.qaHeld === 'function', null, { timeout: 5000 });
+  await reloadMidway();
+  check(tag, (await booksCard().locator('[data-books-save][aria-busy="true"]').count()) === 1, 'a reload while a save is on its way: the new card shows the editor, still saving');
+  await letGo();
+  await page.waitForFunction(() => !document.querySelector('lair-game-books .mgb--edit'), null, { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(600);
+  text = flat(await booksCard().innerText());
+  check(tag, (await page.locator('lair-game-books .mgb--edit').count()) === 0 && text.includes("Your game's books are saved.") && !text.includes("Dungeon Master's Guide") && text.endsWith('Change the books'),
+    'when the save lands, the card on the page closes its editor, says it saved and shows the books (never stuck on saving)', text.slice(0, 300));
+  // a save the Lair refuses, landing after the card was redrawn
+  await booksCard().locator('[data-books-edit]').click();
+  await booksCard().locator('[data-books-search]').fill('blades');
+  await page.waitForSelector('lair-game-books [data-books-add]', { timeout: 5000 });
+  await booksCard().locator('[data-books-add]').click();
+  await holdSaves(true);
+  await booksCard().locator('[data-books-save]').click();
+  await page.waitForFunction(() => typeof window.qaHeld === 'function', null, { timeout: 5000 });
+  await reloadMidway();
+  await letGo();
+  await page.waitForFunction(() => /RPG books/.test(document.querySelector('lair-game-books [data-books-error]')?.textContent || ''), null, { timeout: 8000 }).catch(() => {});
+  text = flat(await booksCard().innerText());
+  check(tag, text.includes("That isn't one of the library's RPG books. Pick one from the list.") && (await booksCard().locator('[data-books-save]:not([disabled])').count()) === 1 && (await booksCard().locator('.mgb-pick').count()) === 2,
+    'a refused save says why on the card that\'s there, with Save ready again and the books as they were picked', text.slice(0, 300));
+  // a search whose card was redrawn before its answer (or before it was even sent)
+  await booksCard().locator('[data-books-search]').fill('monster');
+  await reloadMidway();
+  await page.waitForSelector('lair-game-books .mgb-found', { timeout: 6000 }).catch(() => {});
+  text = flat(await booksCard().locator('[data-books-results]').innerText().catch(() => ''));
+  check(tag, (await booksCard().locator('[data-books-search]').inputValue()) === 'monster' && text === 'Dungeons & Dragons Monster Manual (5th Edition) DGLRPG-011 Add', 'a search typed just before a reload still shows what it found', text);
+  await booksCard().locator('[data-books-cancel]').click();
+  text = flat(await booksCard().innerText());
+  check(tag, text.endsWith('Change the books') && !text.includes('Blades in the Dark'), 'Cancel leaves the game\'s books as they were', text.slice(0, 200));
   check(tag, (await overflow(page)) === 0, 'Games I run: no sideways scroll');
 
   /* ---------- 3. Run a game: Books for the table ---------- */
@@ -341,6 +407,15 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   await page.locator('my-library .mlib-perk').screenshot({ path: `${OUT}${tag}-1-staff-slot.png` });
 
   await visit(page, STAFF, '/pages/lair-staff');
+  // another table names the GM's book (staff set it on the next game on the board that isn't hers: which of the demo's
+  // games are on the board depends on the day and on who's logged in, so the check makes its own)
+  const wantedBy = await page.evaluate(async (gm) => {
+    const be = window.Lair.store.backend;
+    const g = be.state.games.filter((x) => x.status === 'open' && x.end > Date.now() && !x.private && String(x.gmCustomerId || '') !== gm).sort((a, b) => a.start - b.start)[0];
+    await be.setGameBooks(g.id, { books: ['48100000000021'], scope: 'session' });
+    return g.title;
+  }, String(GM.id));
+  await visit(page, STAFF, '/pages/lair-staff');
   // (the Pieces look groups the tabs, so the Library tab's button can be folded away: the page's own setTab opens it)
   await page.waitForFunction(() => typeof document.querySelector('lair-staff')?.setTab === 'function' && document.querySelector('[data-library]'), null, { timeout: 10000 });
   await page.evaluate(() => document.querySelector('lair-staff').setTab('library'));
@@ -351,7 +426,7 @@ for (const size of Object.keys(SIZES).filter((s) => !only || s === only)) {
   text = flat(await row('Blades in the Dark').innerText());
   check(tag, text.includes('GM perk') && !text.includes('Lent'), 'Games at home: a perk book says GM perk, not Lent', text.slice(0, 200));
   text = flat(await row("Player's Handbook").innerText());
-  check(tag, text.includes('GM perk') && /Wanted \w{3} \d{1,2} \w{3}, \d/.test(text), 'the GM\'s book: GM perk, and the table that would like it', text.slice(0, 260));
+  check(tag, text.includes('GM perk') && /Wanted \w{3} \d{1,2} \w{3}, \d/.test(text) && text.includes(`· ${wantedBy}`), 'the GM\'s book: GM perk, and the table that would like it, by name', text.slice(0, 260));
   await page.locator('[data-lib-loans]').screenshot({ path: `${OUT}${tag}-4b-loans.png` });
   text = flat(await page.locator('staff-gm-perks').innerText());
   check(tag, text.startsWith('GM perks') && /\bOn\b/.test(text) && text.includes('Resting') && text.includes('Taken away by Mo'), 'the GM perks list: on, resting, taken away', text.slice(0, 500));

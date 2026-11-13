@@ -83,8 +83,9 @@ const TEAM_SEEN = 6 * HOUR;
 export const GM_PERK_COLUMNS = [
   ['library_loans', 'perk', 'TEXT'], ['library_loans', 'wanted_told', 'TEXT'], ['library_loans', 'wanted_told_at', 'INTEGER'], ['library_loans', 'nudged_at', 'INTEGER'],
   ['library_loans', 'back_asked_at', 'INTEGER'],
-  // when a session was cancelled (cancelSessions), so "inside 24 hours of its start" never depends on a later edit
-  ['games', 'cancelled_at', 'INTEGER'],
+  // when a session was cancelled (cancelSessions), so "inside 24 hours of its start" never depends on a later edit,
+  // and what it was then ('open' or 'pending'): one that was never approved doesn't count either way (1.3)
+  ['games', 'cancelled_at', 'INTEGER'], ['games', 'cancelled_from', 'TEXT'],
 ];
 
 /** The round's tables and indexes, made when missing */
@@ -299,14 +300,16 @@ export const gmPerkMethods = {
    * How many of someone's sessions in a row were quiet, counting back from their latest (1.3): sessions that started
    * at or after `since` and have ended. Played (on the board with a player) ends the count; quiet (on the board with no
    * player, or cancelled inside GM_PERK.cancelHours of its start, or after it) adds one; one cancelled further ahead
-   * doesn't count either way; one never approved isn't read at all. No awaits.
+   * doesn't count either way; one never approved isn't read at all, nor is one staff turned down while it waited
+   * (cancelled_from 'pending'). No awaits.
    */
   perkQuiet(customerId, since, now = Date.now()) {
     const rows = this.sql.exec(
       `SELECT g.status AS status, g.starts_at AS starts_at, COALESCE(g.cancelled_at, g.updated_at) AS cancelled_at,
               CASE WHEN ${PLAYED} THEN 1 ELSE 0 END AS played
          FROM games g
-        WHERE g.gm_customer_id = ? AND g.starts_at >= ? AND g.ends_at <= ? AND g.status IN ('open', 'cancelled')
+        WHERE g.gm_customer_id = ? AND g.starts_at >= ? AND g.ends_at <= ?
+          AND (g.status = 'open' OR (g.status = 'cancelled' AND COALESCE(g.cancelled_from, 'open') != 'pending'))
         ORDER BY g.ends_at DESC, g.starts_at DESC, g.id DESC LIMIT 40`,
       String(customerId), Number(since) || 0, now,
     ).toArray();
@@ -630,7 +633,9 @@ export const gmPerkMethods = {
     if (!game) throw new RuleError('Game not found.', 404);
     if (!this.booksAreTheirs(game, who)) throw new RuleError(W.booksOwn, 403);
     if (game.status === 'cancelled') throw new RuleError(W.booksCancelled, 409);
-    const books = this.checkBooks(input?.books ?? []);
+    // (the books are a list here, always: an empty one clears them, and a request without one changes nothing)
+    if (!Array.isArray(input?.books)) throw new RuleError(W.booksList);
+    const books = this.checkBooks(input.books);
     const scope = game.seriesId && input?.scope !== 'session' ? 'series' : 'session';
     let targets = [game];
     if (scope === 'series') {
@@ -707,14 +712,18 @@ export const gmPerkMethods = {
 
   /**
    * What a loan view adds (3.2): perk ('gm', 'staff' or null), perkEnded (it went out on a perk that doesn't cover it
-   * any more: resting, taken, off the team) and wanted (who wants it, as its borrower would see it; staff see private
+   * any more: resting, taken, or known to be off the team) and wanted (who wants it, as its borrower would see it; staff see private
    * games' titles too). No awaits.
    */
   loanPerkFields(l, { staff = false, now = Date.now(), memo = null } = {}) {
     const perk = l.perk || null;
     const out = l.status === 'out';
+    // A staff slot's game has ended once the Lair KNOWS they're off the team (and no GM perk of theirs covers it). The
+    // main account is on the team by its Shopify tags, which the Lair remembers only until it next restarts: not having
+    // heard yet is not "ended" (their own next request says).
+    const ended = Boolean(perk) && out && !this.perkCovers(this.perkState(l.customerId), l) && !(perk === 'staff' && this.perkTeam(l.customerId) === null);
     return {
-      perk, perkEnded: Boolean(perk) && out && !this.perkCovers(this.perkState(l.customerId), l),
+      perk, perkEnded: ended,
       wanted: out ? this.bookWanted(l.variantId, now, { forId: l.customerId, staff, memo }).wanted : [],
     };
   },
@@ -939,8 +948,8 @@ export const gmPerkMethods = {
    * The emails about games at home (1.5, 1.7), at most GM_PERK.emailsPerRun a run, each marked before it goes so none
    * goes twice: a game that wants a book someone has (once a game a loan), the nudge a week after a session that wanted
    * it and a week after that email (once a loan), and one more ask for a perk book a week into the perk's rest (once a
-   * loan). → { told, nudged,
-   * asked }. No awaits.
+   * loan). What each letter marked is kept (claims), so a batch Resend couldn't take is unmarked and goes on the next
+   * run (deliverPerkLoanMails). → { told, nudged, asked }. No awaits.
    */
   perkLoanMails(now = Date.now()) {
     const sent = { told: 0, nudged: 0, asked: 0 };
@@ -949,6 +958,7 @@ export const gmPerkMethods = {
     const loans = this.sql.exec("SELECT * FROM library_loans WHERE status = 'out' AND customer_id != '' ORDER BY out_at, created_at LIMIT ?", GM_PERK.loansPerRun).toArray();
     if (!loans.length) return sent;
     const letters = [];
+    const claims = [];
     const room = () => letters.length < GM_PERK.emailsPerRun;
     const members = new Map();
     const memberOf = (id) => {
@@ -972,12 +982,14 @@ export const gmPerkMethods = {
       const member = memberOf(borrower);
       // told or not, these games are done for this loan: someone with no address can't be told later either. When the
       // email goes is kept too: the nudge never follows it inside a week
+      const marked = JSON.stringify([...told, ...games.keys()].slice(-60));
       this.sql.exec(
         'UPDATE library_loans SET wanted_told = ?, wanted_told_at = CASE WHEN ? THEN ? ELSE wanted_told_at END WHERE id = ?',
-        JSON.stringify([...told, ...games.keys()].slice(-60)), member ? 1 : 0, now, l.id,
+        marked, member ? 1 : 0, now, l.id,
       );
       if (!member) continue;
       letters.push(this.wantedLetter(this.rowToLoan(l), member, [...games.values()], tz));
+      claims.push({ kind: 'told', id: l.id, marked, was: l.wanted_told ?? null, wasAt: l.wanted_told_at ?? null });
       sent.told += 1;
     }
     // (b) the nudge: a session that wanted it started a week ago or more, while it was out, and its borrower was emailed
@@ -1010,6 +1022,7 @@ export const gmPerkMethods = {
         const member = memberOf(String(l.customer_id));
         if (!member) continue;
         letters.push(this.nudgeLetter(this.rowToLoan(l), member, session, tz));
+        claims.push({ kind: 'nudged', id: l.id });
         sent.nudged += 1;
       }
     }
@@ -1024,9 +1037,29 @@ export const gmPerkMethods = {
       const member = this.perkMailTo(l.customer_id);
       if (!member) continue;
       letters.push(this.backAskLetter(this.rowToLoan(l), member));
+      claims.push({ kind: 'asked', id: l.id });
       sent.asked += 1;
     }
-    if (letters.length) this.later(this.mailMany(letters));
+    if (letters.length) this.later(this.deliverPerkLoanMails(letters, claims, now));
     return sent;
+  },
+
+  /**
+   * Send perkLoanMails' letters in one batch. Resend down or busy (a 5xx or a 429): what this run marked for them is
+   * unmarked, so the next run tries again; anything else (an address Resend refused, or no answer at all) isn't tried
+   * again, as with the booking reminders (deliverBookingReminders). After the await only these loans' marks change, and
+   * only where they're still as this run set them.
+   */
+  async deliverPerkLoanMails(letters, claims, at) {
+    const result = await this.mailMany(letters);
+    if (!result.ok && (result.status >= 500 || result.status === 429)) {
+      for (const c of claims) {
+        if (c.kind === 'told') {
+          this.sql.exec('UPDATE library_loans SET wanted_told = ?, wanted_told_at = ? WHERE id = ? AND wanted_told = ? AND wanted_told_at = ?', c.was, c.wasAt, c.id, c.marked, at);
+        } else if (c.kind === 'nudged') this.sql.exec('UPDATE library_loans SET nudged_at = NULL WHERE id = ? AND nudged_at = ?', c.id, at);
+        else this.sql.exec('UPDATE library_loans SET back_asked_at = NULL WHERE id = ? AND back_asked_at = ?', c.id, at);
+      }
+    }
+    return result;
   },
 };

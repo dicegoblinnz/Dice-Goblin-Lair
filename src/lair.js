@@ -4676,8 +4676,9 @@ export class Lair {
     const refunds = [];
     for (const game of games) {
       const linked = this.gameBookings(game.id).filter((b) => ACTIVE.has(b.status));
-      // (round 37: when it was cancelled, so the GM perk knows a session called off on the day from one cancelled well ahead)
-      this.write("UPDATE games SET status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE id = ?", now, now, game.id);
+      // (round 37: when it was cancelled, so the GM perk knows a session called off on the day from one cancelled well
+      // ahead, and what it was until then, so one that was never approved doesn't count against its GM)
+      this.write("UPDATE games SET cancelled_from = status, status = 'cancelled', cancelled_at = ?, updated_at = ? WHERE id = ?", now, now, game.id);
       this.write("UPDATE bookings SET status = 'cancelled', hold_until = NULL, updated_at = ? WHERE game_id = ? AND status IN ('held', 'confirmed', 'seated')", now, game.id);
       for (const seat of linked.filter((b) => b.kind === 'gm-seat')) {
         // Round 30: GM credit goes once a session starts, and staff can cancel a session that's under way (a GM could

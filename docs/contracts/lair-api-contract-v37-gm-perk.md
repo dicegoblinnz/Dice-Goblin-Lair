@@ -75,7 +75,10 @@ A session counts once its **end** has passed, for whoever is its GM then.
 - **Quiet:** on the board with no player; or **cancelled within 24 hours of its start, or after it** (the group didn't
   show, nobody had booked).
 - **Doesn't count either way:** a session cancelled more than 24 hours before its start (plans changed), and one that
-  was never approved.
+  was never approved, whenever staff turned it down (a cancelled session keeps what it was until then,
+  `games.cancelled_from`).
+- A GM can cancel their own session until 4 hours before it starts (v37-changes). One they call off inside the last 24
+  hours counts as quiet, as above: it's the same rule whoever cancels.
 
 ### 1.4 Borrowing with a perk
 
@@ -99,7 +102,9 @@ still need a plan, and perk games are never posted.
 ### 1.5 When a perk ends with a game at home
 
 Nothing is taken back or charged. The game stays at home with them, marked `perkEnded` for them and for staff, and they
-can't take another on the perk. The email that says the GM perk is resting asks for the book back, and one more email
+can't take another on the perk. (A staff slot's game is marked once the Lair knows its holder is off the team. The main
+account is on the team by its Shopify tag, which the Lair remembers only until it next restarts: not having heard yet
+is never "ended".) The email that says the GM perk is resting asks for the book back, and one more email
 asks again 7 days later if it's still out (5.5). When staff take a perk, or someone leaves the team, nothing is emailed:
 staff sort that in person, and the Library tab shows the game.
 
@@ -127,6 +132,9 @@ A book is **wanted** by each session on the board (`open`, not ended) whose game
   same way. Never to the GM of the game that wants it: it's with the right person.
 - **One nudge** a loan: when a session that wanted it started 7 days ago or more, while it was out, it's still out,
   and the email above went 7 days ago or more (5.4). Never about the borrower's own game.
+- A session its GM moves to another day or time (v37-changes) is the same game: whoever has the book isn't emailed
+  again, and My Library, the book's page and the staff page show the new day. (Telling them again would be a new
+  email: Mo's to approve.)
 - Private games want books too; only their GM and staff see the game's name (everyone else sees no title).
 
 ### 1.8 Staff give and take
@@ -150,6 +158,7 @@ Made when the Lair starts (added when missing; nothing to run by hand).
 | `library_loans.wanted_told_at` | when that email last went |
 | `library_loans.nudged_at` | when the one nudge went (1.7) |
 | `library_loans.back_asked_at` | when the second ask for a book whose perk ended went (1.5) |
+| `games.cancelled_at`, `games.cancelled_from` | when a session was cancelled, and what it was until then (`open` or `pending`): 1.3's 24 hours never depend on a later edit, and a session that was never approved doesn't count |
 
 ## 3. Routes
 
@@ -227,7 +236,9 @@ For the game's GM (a series: whoever runs it, v18-gm-sessions) or staff with GM 
 404 for no such game.
 
 - `GET` → `{ books, scope }`: `scope` is `'series'` for a session of a series, else `'session'`.
-- `POST { books, scope? }`: the same checks as 3.6; 409 `booksCancelled` for a cancelled game. `scope: 'series'` (the
+- `POST { books, scope? }`: the same checks as 3.6, and `books` must be there: an empty list clears the game's books,
+  and a request with no list (or `null`) is a 422 `booksList` and changes nothing; 409 `booksCancelled` for a cancelled
+  game. `scope: 'series'` (the
   default for a session of a series) sets them on this session and every later session of the series that hasn't
   ended and that they run, and on the series for the sessions it adds; `'session'` on this one only. → `{ books,
   sessions }` (`sessions`: how many sessions were changed).
@@ -323,8 +334,14 @@ A private game in `wantedLine` is "a private game". `{name}` is their first name
 Gobgob's, through the Lair's own layout, only when email is set up and the Lair has an address for them. Someone on
 the team is never emailed about a GM perk. Each is a notice about the person's own perk or a game they have at home
 (an account notice, not marketing: no offer rides along, and it goes whatever their marketing setting says), with one
-job and one button. Config `GM_PERK_EMAILS` = `off` stops all five and changes nothing else. **Mo approves each one's
-words and trigger before this round goes live.**
+job and one button. Config `GM_PERK_EMAILS` = `off` stops all five and changes nothing else. **Mo approved all five,
+their words and when they go, as the mockups showed them (E1 to E5), on 14 Nov 2026: "Happy with everything else. Go
+live".**
+
+3, 4 and 5 go from the 10-minute run, each marked on its loan before it goes so none goes twice. When Resend is down
+or busy (a 5xx or a 429) what that run marked is unmarked, so the next run sends them; an email Resend refuses outright
+isn't tried again (as the booking reminders do, v29-roleplayers). 1 and 2 go once, when the perk changes: if that send
+fails it isn't tried again (the Lair's health note says so), and the perk's card in My Library says the same thing.
 
 | | Goes when | To | Stops | Subject | Button |
 | --- | --- | --- | --- | --- | --- |

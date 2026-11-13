@@ -465,6 +465,29 @@ test('1.3: a session called off within 24 hours of its start (or after it) is qu
   assert.equal(ok(await call('GET', `members/${WIREMU}`, null, ANA)).member.perk.lastPlayed, null);
 });
 
+test('1.3: a game that was never approved does not count either way, even when staff turn it down on the day', async () => {
+  // Rangi has the perk, with two quiet sessions behind him
+  const s = await weekly(RANGI);
+  nowIs(after(s[1]));
+  await run();
+  assert.deepEqual([(await perkOf(RANGI)).status, (await perkOf(RANGI)).quiet], ['on', 2]);
+  // he lists another game himself for that Friday: it waits for approval, and staff turn it down that afternoon
+  const own = ok(await listOwn(RANGI, { tables: ['B2'], title: 'Never approved', start: at('2026-11-27', 18), end: at('2026-11-27', 22) }));
+  assert.equal(own.game.status, 'pending');
+  nowIs(at('2026-11-27', 15));
+  ok(await cancel(own.game.id));
+  nowIs(at('2026-11-27', 23));
+  await run();
+  assert.deepEqual([(await perkOf(RANGI)).status, (await perkOf(RANGI)).quiet], ['on', 2], 'it was never on the board: not a third quiet session');
+  // the same afternoon's cancel of a game that WAS on the board is one (the rule's other half, beside it)
+  const open = await listFor(RANGI, { tables: ['B2'], title: 'Approved, then called off', start: at('2026-11-28', 18), end: at('2026-11-28', 22) });
+  nowIs(at('2026-11-28', 15));
+  ok(await cancel(open.game.id));
+  nowIs(at('2026-11-28', 23));
+  await run();
+  assert.equal((await perkOf(RANGI)).status, 'resting', 'called off on the day: the third quiet session');
+});
+
 test('1.2: three weeks with no session played and none coming up and the perk rests (idle); a session coming up, even one waiting for approval, keeps it', async () => {
   const mail = captureEmails();
   // staff give Rangi the perk; he never lists a game
@@ -900,6 +923,11 @@ test('1.6, 3.7: a GM changes their game\'s books later: this and every later ses
   const set = ok(await call('POST', `games/${s[1].id}/books`, { books: [PHB.variantId] }, RANGI));
   assert.deepEqual([set.books.map((b) => b.title), set.sessions], [["Player's Handbook"], s.length - 1]);
   assert.deepEqual([booksOf(s[0].id), booksOf(s[1].id), booksOf(s[s.length - 1].id)], [[], ["Player's Handbook"], ["Player's Handbook"]]);
+  // 3.7: the books are a list, always: a request without one (or with null) changes nothing, where an empty list clears
+  for (const body of [{}, { books: null }, { scope: 'series' }, { books: PHB.variantId }]) {
+    assert.equal(said(await call('POST', `games/${s[1].id}/books`, body, RANGI)), `422 ${W.booksList}`, JSON.stringify(body));
+  }
+  assert.deepEqual(booksOf(s[1].id), ["Player's Handbook"], 'still named');
   // and the series keeps them for the sessions it adds
   nowIs(NOW + 7 * DAY);
   lair.extendSeries(lair.rulesCache, Date.now());
@@ -1249,6 +1277,77 @@ test('section 5: GM_PERK_EMAILS = off stops every one of this round\'s emails an
   assert.deepEqual(await mail.to(SAM), ["Could you bring Player's Handbook back?"]);
 });
 
+test('section 5: with Resend down or busy (a 5xx or a 429) the emails about a game at home go on the next run, once; one it refuses outright is not tried again', async () => {
+  const mail = captureEmails();
+  // Resend answers its next request (or next `times` requests) with `status`, then works again
+  const working = globalThis.fetch;
+  let failing = { status: 0, times: 0 };
+  const failNext = (status, times = 1) => {
+    failing = { status, times };
+  };
+  globalThis.fetch = async (url, init) => {
+    if (failing.times > 0 && String(url).startsWith('https://api.resend.com/')) {
+      failing.times -= 1;
+      return new Response(JSON.stringify({ name: 'application_error', message: 'Not now.' }), { status: failing.status });
+    }
+    return working(url, init);
+  };
+  const marks = (who) => {
+    const r = lair.sql.exec('SELECT wanted_told, wanted_told_at, nudged_at, back_asked_at FROM library_loans WHERE customer_id = ?', who).toArray()[0];
+    return [JSON.parse(r.wanted_told || '[]').length, r.wanted_told_at, r.nudged_at, r.back_asked_at];
+  };
+  // 5.3: a table wants the book Sam has
+  const sessions = await weekly(RANGI, { title: 'The Ember Road', books: [PHB.variantId] });
+  ok(await scan(PHB, SAM));
+  await mail.all();
+  failNext(503);
+  await run();
+  assert.deepEqual(await mail.to(SAM), [], 'Resend was down: nothing went');
+  assert.deepEqual(marks(SAM), [0, null, null, null], 'and the loan is as it was, so the next run tries again');
+  await run();
+  assert.deepEqual(await mail.to(SAM), ["A table wants Player's Handbook on Wed 18 Nov"], 'the next run sends it');
+  assert.deepEqual(marks(SAM).slice(0, 2), [1, NOW]);
+  await run();
+  assert.deepEqual(await mail.to(SAM), [], 'once');
+  // 5.4: the nudge, a week after the session, with Resend busy the first time
+  // (a 429 is asked once more after a second, as every email is: busy both times)
+  nowIs(sessions[0].start + 7 * DAY);
+  failNext(429, 2);
+  await run();
+  await new Promise((r) => setTimeout(r, 1150));
+  assert.deepEqual([await mail.to(SAM), marks(SAM)[2]], [[], null], 'busy: no nudge yet, and it is not marked as sent');
+  await run();
+  assert.deepEqual(await mail.to(SAM), ["Could you bring Player's Handbook back?"]);
+  assert.equal(marks(SAM)[2], sessions[0].start + 7 * DAY);
+  await run();
+  assert.deepEqual(await mail.to(SAM), [], 'one nudge a loan');
+  // 1.5, 5.5: the second ask for a resting perk's book, with Resend down the first time
+  const quiet = await weekly(WIREMU, { tables: ['B2'], title: 'Quiet nights', start: at('2026-12-02', 18), end: at('2026-12-02', 22) });
+  ok(await scan(MOTHERSHIP, WIREMU));
+  assert.deepEqual(await mail.to(WIREMU), ['Your GM perk is on: borrow an RPG book, free']);
+  nowIs(after(quiet[2]));
+  await run();
+  assert.deepEqual(await mail.to(WIREMU), ['Your GM perk is having a rest']);
+  nowIs(after(quiet[2]) + 7 * DAY);
+  failNext(500);
+  await run();
+  assert.deepEqual([await mail.to(WIREMU), marks(WIREMU)[3]], [[], null]);
+  await run();
+  assert.deepEqual(await mail.to(WIREMU), ['Could you bring Mothership back?']);
+  await run();
+  assert.deepEqual(await mail.to(WIREMU), [], 'once');
+  // an email Resend refuses outright (a 422: an address it won't send to) isn't tried again
+  const soon = time.key(Date.now() + 3 * DAY);
+  await listFor(HANA, { tables: ['B3'], title: 'Lancer nights', start: at(soon, 18), end: at(soon, 22), books: [BLADES.variantId] });
+  ok(await desk(BLADES, KAI));
+  await mail.all();
+  failNext(422);
+  await run();
+  await run();
+  assert.deepEqual(await mail.to(KAI), [], 'refused: not sent, and not tried again');
+  assert.equal(marks(KAI)[0], 1, 'it stays marked');
+});
+
 test('section 5: what each email says: the perk and how to keep it; why it rests and how it comes back; and each subject fits a phone', async () => {
   const mail = captureEmails();
   const s = await weekly(RANGI, { title: 'The Ember Road' });
@@ -1368,6 +1467,21 @@ test('1.5, 3.2: a staff slot\'s game is marked once its holder leaves the team; 
   const mine = (await me(BEN)).library;
   assert.deepEqual([mine.perk, mine.atHome.map((l) => [l.title, l.perk, l.perkEnded])], [null, [['Catan', 'staff', true]]]);
   assert.equal(said(await scan(AZUL, BEN)), '403 Join the library to borrow games.');
+  // the main account's game (they're tagged staff in Shopify, which the Lair only remembers until it next restarts):
+  // after a restart it's still theirs on the staff page: "ended" is said once the Lair knows they're off the team,
+  // never because it hasn't heard yet
+  ok(await scan(MOTHERSHIP, OWNER));
+  const ownerLoan = async () => ok(await call('GET', 'library/loans', null, ANA)).loans.find((l) => l.title === 'Mothership');
+  assert.deepEqual([(await ownerLoan()).perk, (await ownerLoan()).perkEnded], ['staff', false]);
+  lair.people.clear(); // the Lair restarted
+  assert.equal((await ownerLoan()).perkEnded, false, 'not known yet is not ended');
+  // once Shopify says they're no longer staff, it is
+  TAGS[OWNER] = [];
+  await me(OWNER);
+  assert.equal((await ownerLoan()).perkEnded, true, 'known to be off the team: ended');
+  TAGS[OWNER] = ['staff'];
+  lair.people.clear();
+  ok(await back(MOTHERSHIP, ANA));
   // a perk book back on the shelf
   await listFor(RANGI, { title: 'The Ember Road', books: [MOTHERSHIP.variantId] });
   ok(await scan(MOTHERSHIP, RANGI));
