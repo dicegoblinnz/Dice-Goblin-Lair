@@ -642,7 +642,7 @@ r38Decks.selected_or_first_available_variant = r38Decks.variants[0];
 const r38Sleeves = product('dragon-shield-matte-sleeves', 'Dragon Shield Matte Sleeves', 'Dragon Shield', 20, 20, null, true, 30, 1000, 1000, { type: 'Card Accessories', tags: ['Accessories'] });
 const r38Dice = product('galaxy-dice-set', 'Galaxy Dice Set', 'Dice Goblin NZ', 50, 50, null, true, 6, 1000, 1000, { type: 'Dice', tags: ['Dice'] });
 const r38Line = (key, p, variantTitle, quantity, each) => ({
-  key, url: p.url, image: p.featured_media, product: p, vendor: p.vendor, variant: { title: variantTitle, quantity_rule: {} }, quantity,
+  key, url: p.url, image: p.featured_media, product: p, product_id: p.id, vendor: p.vendor, variant: { title: variantTitle, quantity_rule: {} }, quantity,
   final_line_price: each * 100 * quantity, original_line_price: each * 100 * quantity, properties: {}, line_level_discount_allocations: [],
 });
 const r38Cart = (items) => ({ ...emptyCart, item_count: items.reduce((n, l) => n + l.quantity, 0), total_price: items.reduce((n, l) => n + l.final_line_price, 0), items });
@@ -707,6 +707,37 @@ PAGES['/r38-commander'] = () => renderPage('collection', {
   collection: { ...collections['r38-commander'], filters: [], tags: [], all_tags: [], sort_by: '' }, settings: r38Settings,
   request: { page_type: 'collection', locale: { iso_code: 'en' }, origin: '', path: '/collections/r38-commander' }, template: { name: 'collection', suffix: null },
 });
+/* ---- round 38, 15 Nov 2026 (Mo: "give suggestions as you would with dice when someone buys something. Inside the
+   cart", and "make sure the sleeve collection is wider"): the store's Card sleeves collection (every Card Accessories
+   product with Sleeve in its title, best sellers first), Katana sleeves in colours (one sold out), penny sleeves, and
+   the carts where the deal has made a pack free, or hasn't ---- */
+export const r38SleevesColours = (() => {
+  const p = product('ultimate-guard-katana-sleeves', 'Ultimate Guard Katana Sleeves', 'Ultimate Guard', 24.99, 24.99, null, false, 10, 1000, 1000, { type: 'Card Accessories', tags: ['Accessories'] });
+  p.variants = [r38Variant(3821, 'Obsidian Shard', 24.99), { ...r38Variant(3822, 'Rising Sun', 24.99), available: false, inventory_quantity: 0 }, r38Variant(3823, 'Great Wave', 24.99)];
+  p.options_with_values = [{ name: 'Color', position: 1, selected_value: 'Obsidian Shard', values: p.variants.map((v) => v.title) }];
+  p.selected_or_first_available_variant = p.variants[0];
+  return p;
+})();
+const r38Penny = product('penny-sleeves-geek-culture', 'Penny Sleeves - Geek Culture', 'Geek Culture', 5, 5, null, true, 146, 1000, 1000, { type: 'Card Accessories', tags: ['Accessories'] });
+collections['card-sleeves'] = coll('card-sleeves', 'Card sleeves', [r38SleevesColours, r38Sleeves, r38Penny], 17);
+PAGES['/products/ultimate-guard-katana-sleeves'] = r38ProductPage(r38SleevesColours);
+const r38FreeSleeves = (line, amount) => ({ ...line, final_line_price: line.final_line_price - amount,
+  line_level_discount_allocations: [{ amount, discount_application: { title: 'Free sleeves with a Commander deck', type: 'automatic' } }] });
+PAGES['/cart-r38-sleeves-free'] = r38CartPage(r38Cart([
+  r38Line('r38s:1', r38Decks, 'Limit Break (Cloud, Final Fantasy VII)', 1, 140),
+  r38FreeSleeves(r38Line('r38s:2', r38Sleeves, 'Default Title', 1, 20), 2000),
+]));
+// two decks and two packs, one pack made free (the other deck not in Shopify's deal yet): one pack is free, not two
+PAGES['/cart-r38-sleeves-one'] = r38CartPage(r38Cart([
+  r38Line('r38s:5', r38Decks, 'Limit Break (Cloud, Final Fantasy VII)', 2, 140),
+  r38FreeSleeves(r38Line('r38s:6', r38Sleeves, 'Default Title', 1, 20), 2000),
+  r38Line('r38s:7', r38Penny, 'Default Title', 1, 5),
+]));
+// a deck and sleeves with nothing taken off: the deal isn't on, so the cart says nothing about sleeves
+PAGES['/cart-r38-sleeves-off'] = r38CartPage(r38Cart([
+  r38Line('r38s:3', r38Decks, 'Limit Break (Cloud, Final Fantasy VII)', 1, 140),
+  r38Line('r38s:4', r38Sleeves, 'Default Title', 1, 20),
+]));
 
 /* ---- round 25, Games Workshop ordered in (31 Oct 2026): kits on the shelf, ordered in and with one left, and a cart
    with each. Everything on GW's pad keeps selling at 0 (inventory_policy continue). ---- */
@@ -1005,6 +1036,10 @@ const feedProducts = (() => {
 })();
 collections.all = coll('all', 'All products', [...arrivals, ...boardGames], feedProducts.length);
 const variantIndex = new Map(feedProducts.flatMap((p) => p.variants.map((v) => [Number(v.id), { product: p, variant: v }])));
+// round 38: the live cart can hold the decks, boxes and sleeves above (their ids are clear of the catalogue's)
+for (const p of [r38Hobbit, r38Decks, r38Sleeves, r38SleevesColours, r38Penny, ...Object.values(r38Commander)]) {
+  for (const v of p.variants) if (!variantIndex.has(Number(v.id))) variantIndex.set(Number(v.id), { product: p, variant: v });
+}
 // round 25: the GW kits can go in the live cart too (quick add on /collections/war-game, the cart's Ordered in notes)
 for (const p of [gwInStore, gwOrderedIn, gwLastOne, gwDropped]) for (const v of p.variants) variantIndex.set(Number(v.id), { product: p, variant: v });
 /* ---- round 16, the game page: product types as the store has them (games are Board Games or Card Games, library copies
@@ -1129,6 +1164,19 @@ function pricedCart() {
     const hit = variantIndex.get(Number(l.variantId));
     return { ...l, product: hit.product, variant: hit.variant, unit: hit.variant.price, off: 0, allocations: [] };
   });
+  // round 38 (15 Nov 2026): Shopify's automatic "Free sleeves with a Commander deck", a pack free for each deck, the
+  // cheapest packs first (snippets/deck-sleeves.liquid's rules for a deck and a sleeve)
+  const isDeck = (l) => /^wizards of the coast$/i.test(String(l.product.vendor || '').trim()) && !/\(library\)/i.test(l.product.title)
+    && (/commander deck/i.test(l.product.title) || /commander$/i.test(l.product.title.trim()) || /commander deck/i.test(String(l.variant.title || '')));
+  const isSleeve = (l) => (l.product.type || l.product.product_type) === 'Card Accessories' && /sleeve/i.test(l.product.title);
+  let freeSleeves = lines.filter(isDeck).reduce((n, l) => n + l.quantity, 0);
+  for (const l of lines.filter(isSleeve).sort((a, b) => a.unit - b.unit)) {
+    const take = Math.min(freeSleeves, l.quantity);
+    if (take < 1) break;
+    l.off += take * l.unit;
+    l.allocations.push({ amount: take * l.unit, discount_application: { title: 'Free sleeves with a Commander deck', type: 'automatic' } });
+    freeSleeves -= take;
+  }
   const applicable = {};
   for (const code of mockCart.codes) {
     if (/^NAT1-/i.test(code)) {
@@ -1171,7 +1219,8 @@ function cartLiquid() {
   return {
     ...emptyCart, note: mockCart.note, item_count: c.lines.reduce((s, l) => s + l.quantity, 0), total_price: c.total, cart_level_discount_applications: c.cartLevel,
     items: c.lines.map((l) => ({
-      key: l.key, url: l.product.url, image: l.product.featured_media, product: l.product, variant: { ...l.variant, quantity_rule: {} }, quantity: l.quantity,
+      key: l.key, url: l.product.url, image: l.product.featured_media, product: l.product, product_id: l.product.id, vendor: l.product.vendor,
+      variant: { ...l.variant, quantity_rule: {} }, quantity: l.quantity,
       final_line_price: l.unit * l.quantity - l.off, original_line_price: l.unit * l.quantity, properties: l.properties || {}, line_level_discount_allocations: l.allocations,
     })),
   };

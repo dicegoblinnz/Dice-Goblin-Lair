@@ -77,7 +77,7 @@ export const ORDER_ROLL_TABLES = [
      id TEXT PRIMARY KEY, order_id TEXT NOT NULL, customer_id TEXT NOT NULL, order_name TEXT, rolls INTEGER NOT NULL,
      unrolled INTEGER NOT NULL, rolled INTEGER NOT NULL, credit_asked INTEGER NOT NULL DEFAULT 0, credit_taken INTEGER,
      status TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0, note TEXT, claimed_at INTEGER, noted_at INTEGER,
-     created_at INTEGER NOT NULL, updated_at INTEGER)`,
+     created_at INTEGER NOT NULL, updated_at INTEGER, debiting_at INTEGER, midway INTEGER NOT NULL DEFAULT 0)`,
   'CREATE INDEX IF NOT EXISTS roll_takebacks_status ON roll_takebacks (status, created_at)',
 ];
 
@@ -104,6 +104,8 @@ export const ORDER_ROLL_WORDS = Object.freeze({
   // a refund's line on the order's note
   takenBack: (rolls, rolled) => `Refund: ${rolls === 1 ? 'a d20 roll' : `${rolls} d20 rolls`} taken back${
     rolled ? ` (${rolls === 1 ? 'rolled already' : `${rolled} rolled already`})` : rolls === 1 ? ', not rolled yet' : ', none rolled yet'}.`,
+  // a roll taken back while Shopify was still adding its credit, which landed after
+  takenBackMidway: 'Refund: a d20 roll taken back as it was being rolled.',
   creditBack: (taken, asked, rolled) => {
     const gave = rolled === 1 ? 'it gave' : 'they gave';
     if (taken >= asked) return `${money(asked)} of the store credit ${gave} was taken back.`;
@@ -495,7 +497,8 @@ export const orderRollMethods = {
    * A take-back's store credit, then its line on the order's note. The credit comes off what's still in their account,
    * never more (spent credit stays spent). Claimed before the first await, so it's taken once: Shopify saying no is
    * tried again by the 10-minute run (3 times, then staff are told); no answer at all may have gone through, so staff
-   * check it by hand and it's never tried again. Never throws.
+   * check it by hand and it's never tried again. So does one the Lair stopped in the middle of (debiting_at still set:
+   * the separate review, 15 Nov 2026), since Shopify may have taken it before the Lair could say so. Never throws.
    */
   async rollTakebackFollowUp(id) {
     const read = () => this.sql.exec('SELECT * FROM roll_takebacks WHERE id = ?', id).toArray()[0];
@@ -504,6 +507,10 @@ export const orderRollMethods = {
     if (tb.claimed_at && Date.now() - tb.claimed_at < ORDER_ROLLS.followClaimMs) return false;
     this.sql.exec('UPDATE roll_takebacks SET claimed_at = ? WHERE id = ?', Date.now(), id);
     const words = ORDER_ROLL_WORDS;
+    if (tb.status === 'credit' && tb.debiting_at) {
+      this.rollTakebackCheck(tb, 'The Lair stopped while Shopify was taking it back, so it may or may not have gone through.');
+      tb = read();
+    }
     if (tb.status === 'credit') {
       const currency = this.env.CURRENCY || 'NZD';
       let balance = null;
@@ -515,36 +522,29 @@ export const orderRollMethods = {
         return false;
       }
       const take = Math.min(tb.credit_asked, Math.max(0, Math.round(Number(balance) || 0)));
-      this.sql.exec('UPDATE roll_takebacks SET tries = tries + 1, updated_at = ? WHERE id = ?', Date.now(), id);
+      // debiting_at: set while Shopify is asked, so a Lair stopped in the middle never asks again (above)
+      this.sql.exec('UPDATE roll_takebacks SET tries = tries + 1, debiting_at = ?, updated_at = ? WHERE id = ?', Date.now(), Date.now(), id);
       try {
         if (take > 0) await this.shopify.changeStoreCredit(tb.customer_id, -take, currency);
-        this.sql.exec("UPDATE roll_takebacks SET status = 'done', credit_taken = ?, note = NULL, updated_at = ? WHERE id = ?", take, Date.now(), id);
+        this.sql.exec("UPDATE roll_takebacks SET status = 'done', credit_taken = ?, note = NULL, debiting_at = NULL, updated_at = ? WHERE id = ?", take, Date.now(), id);
       } catch (error) {
         const message = String(error.message || error).slice(0, 300);
         const tries = read()?.tries || 0;
         if (error.refused && tries < ORDER_ROLLS.takeBackTries) {
           // Shopify said no, so nothing moved: tried again by the 10-minute run
-          this.sql.exec('UPDATE roll_takebacks SET note = ?, claimed_at = NULL, updated_at = ? WHERE id = ?', message, Date.now(), id);
+          this.sql.exec('UPDATE roll_takebacks SET note = ?, claimed_at = NULL, debiting_at = NULL, updated_at = ? WHERE id = ?', message, Date.now(), id);
           this.note({ rollTakebackError: { message, order: tb.order_name, at: new Date().toISOString() } });
           return false;
         }
-        this.sql.exec("UPDATE roll_takebacks SET status = 'check', note = ?, updated_at = ? WHERE id = ?", message, Date.now(), id);
-        const member = this.memberRow(tb.customer_id);
-        this.notifyStaff(`Store credit to take back: ${tb.order_name || 'a refunded order'}`, {
-          title: words.checkTitle,
-          intro: words.checkIntro,
-          details: [
-            ['Order', tb.order_name || tb.order_id], ['Store credit to take back', money(tb.credit_asked)],
-            ['Customer', `${member?.name || 'Unknown'}${member?.code ? ` (${member.code})` : ''}`], ['Why', message],
-          ],
-        });
+        this.rollTakebackCheck(tb, message);
       }
       tb = read();
     }
     if (!tb || tb.noted_at || tb.status === 'credit' || !this.shopify.configured) return tb?.status === 'done';
+    const head = tb.midway ? words.takenBackMidway : words.takenBack(tb.rolls, tb.rolled);
     const line = tb.status === 'check'
-      ? `${words.takenBack(tb.rolls, tb.rolled)} ${words.checkNote(tb.credit_asked)}`
-      : `${words.takenBack(tb.rolls, tb.rolled)}${tb.credit_asked > 0 ? ` ${words.creditBack(tb.credit_taken || 0, tb.credit_asked, tb.rolled)}` : ''}`;
+      ? `${head} ${words.checkNote(tb.credit_asked)}`
+      : `${head}${tb.credit_asked > 0 ? ` ${words.creditBack(tb.credit_taken || 0, tb.credit_asked, tb.rolled)}` : ''}`;
     try {
       await this.shopify.gwMarkOrder(tb.order_id, ORDER_ROLLS.takeBackTag, line);
       this.sql.exec('UPDATE roll_takebacks SET noted_at = ?, claimed_at = NULL WHERE id = ?', Date.now(), id);
@@ -553,5 +553,42 @@ export const orderRollMethods = {
       this.note({ rollTakebackError: { message: String(error.message || error).slice(0, 300), order: tb.order_name, at: new Date().toISOString() } });
     }
     return tb.status === 'done';
+  },
+
+  /** A take-back's store credit left for staff to check by hand (status 'check', never tried again), and the email */
+  rollTakebackCheck(tb, message) {
+    const words = ORDER_ROLL_WORDS;
+    this.sql.exec("UPDATE roll_takebacks SET status = 'check', note = ?, debiting_at = NULL, updated_at = ? WHERE id = ?", message, Date.now(), tb.id);
+    const member = this.memberRow(tb.customer_id);
+    this.notifyStaff(`Store credit to take back: ${tb.order_name || 'a refunded order'}`, {
+      title: words.checkTitle,
+      intro: words.checkIntro,
+      details: [
+        ['Order', tb.order_name || tb.order_id], ['Store credit to take back', money(tb.credit_asked)],
+        ['Customer', `${member?.name || 'Unknown'}${member?.code ? ` (${member.code})` : ''}`], ['Why', message],
+      ],
+    });
+  },
+
+  /**
+   * roll() (src/lair.js) found its prize taken back by a refund while Shopify was adding the prize's credit, and
+   * Shopify did add it (the separate review, 15 Nov 2026): that credit, and only that, comes back the way a rolled
+   * roll's does, as a take-back of its own (midway) with its own line on the order. No awaits. Returns whether there
+   * was one.
+   */
+  rollTakenBackMidway(prizeId, amount) {
+    const r = this.sql.exec('SELECT taken_back_id FROM member_rolls WHERE prize_id = ?', String(prizeId)).toArray()[0];
+    const tb = r?.taken_back_id ? this.sql.exec('SELECT * FROM roll_takebacks WHERE id = ?', r.taken_back_id).toArray()[0] : null;
+    const cents = Math.round(Number(amount) || 0);
+    if (!tb || cents < 1) return false;
+    const id = makeId('tb');
+    const now = Date.now();
+    this.sql.exec(
+      `INSERT INTO roll_takebacks (id, order_id, customer_id, order_name, rolls, unrolled, rolled, credit_asked, credit_taken, status, created_at, updated_at, midway)
+       VALUES (?, ?, ?, ?, 0, 0, 1, ?, NULL, 'credit', ?, ?, 1)`,
+      id, tb.order_id, tb.customer_id, tb.order_name, cents, now, now,
+    );
+    this.later(this.rollTakebackFollowUp(id));
+    return true;
   },
 };

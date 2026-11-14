@@ -112,6 +112,61 @@ const html = async (path) => (await fetch(base + path)).text();
   ok('the cart counts 4 decks (not the bundle, the booster box or the library copy)', nudge.trim() === '4 free packs of sleeves to pick', nudge);
 }
 
+/* ---- 4. the sleeves deal in the cart (Mo, 15 Nov 2026: "give suggestions as you would with dice when someone buys
+   something. Inside the cart", "make sure the sleeve collection is wider and say commander decks come with free
+   sleeves") ---- */
+{
+  // a deck with no sleeves: how many packs are free, and two to add right there (the sold-out colour isn't offered)
+  const deckCart = await html('/cart-r38-deck');
+  const main = deckCart.slice(deckCart.indexOf('<main'));
+  ok('a deck with no sleeves: "A free pack of sleeves to pick"', /A free pack of sleeves to pick/.test(main));
+  const picks = main.match(/<li class="dice-deal-pick sleeve-pick">[\s\S]*?<\/li>/g) || [];
+  ok('two sleeves to add in the cart, in the collection\'s order', picks.length === 2 && picks[0].includes('Ultimate Guard Katana Sleeves') && picks[1].includes('Dragon Shield Matte Sleeves'), `${picks.length} picks`);
+  const options = (picks[0]?.match(/<option[\s\S]*?<\/option>/g) || []).map((o) => o.replace(/<[^>]+>/g, '').trim());
+  ok('the colours in stock to choose from, the sold-out one left out', JSON.stringify(options) === JSON.stringify(['Obsidian Shard', 'Great Wave']), JSON.stringify(options));
+  ok('the colour list says what it\'s for', /Color for Ultimate Guard Katana Sleeves/.test(picks[0] || ''));
+  ok('one with no colours adds its only kind', /<input type="hidden" name="id" value="\d+">/.test(picks[1] || ''));
+  ok('a link to every sleeve', /href="\/collections\/card-sleeves">See all sleeves</.test(main));
+  // the deal made a pack free: the cart says so, and what it saved
+  const free = await html('/cart-r38-sleeves-free');
+  ok('once Shopify has made them free: "Your sleeves are free" and what it saved', /Your sleeves are free/.test(free) && /You saved \$20\.00/.test(free));
+  // two packs in the cart and only one made free: the cart counts what Shopify made free (from the separate review)
+  const one = await html('/cart-r38-sleeves-one');
+  ok('one pack of two made free: "Your sleeves are free" for that one, not two', /Your sleeves are free/.test(one) && !/2 packs of sleeves are free/.test(one) && /You saved \$20\.00/.test(one));
+  // a deck and sleeves with nothing taken off: no promise
+  const off = await html('/cart-r38-sleeves-off');
+  ok('a deck and sleeves with nothing off: the cart says nothing about sleeves', !/deal-line--sleeves/.test(off.slice(off.indexOf('<main'))));
+  // a sleeve's own page and card
+  ok('a sleeve\'s page: "Free with a Commander deck"', /Free with a Commander deck/.test(await html('/products/ultimate-guard-katana-sleeves')));
+  const cards = (await html('/r38-collection')).split(/class="product-card(?=[" ])/).slice(1);
+  const sleeveCard = cards.find((c) => c.includes('href="/products/dragon-shield-matte-sleeves"'));
+  ok('a sleeve\'s card: "Free with a deck"', Boolean(sleeveCard) && /Free with a deck/.test(sleeveCard));
+  // in a browser: a deck in the live cart, a colour chosen, Add, and the pack is free right there
+  m.mockCart.lines.length = 0;
+  await fetch(`${base}/cart/add.js`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 3803, quantity: 1 }) });
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e.message).slice(0, 160)));
+  await page.goto(`${base}/cart`, { waitUntil: 'networkidle' });
+  const pick = page.locator('main .sleeve-pick').first();
+  await pick.locator('select').selectOption({ label: 'Great Wave' });
+  await pick.getByRole('button', { name: /Add/ }).click();
+  await page.waitForFunction(() => /Your sleeves are free/.test(document.querySelector('main')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  const after = await page.evaluate(() => ({
+    panel: document.querySelector('main .deal-line--sleeves')?.textContent.replace(/\s+/g, ' ').trim(),
+    drawerOpen: Boolean(document.querySelector('cart-drawer dialog[open]')),
+    width: document.documentElement.scrollWidth,
+  }));
+  ok('picked in the cart: the pack is free right there, and the cart says what it saved', /Your sleeves are free/.test(after.panel || '') && /You saved \$24\.99/.test(after.panel || ''), JSON.stringify(after));
+  ok('the colour picked is the one in the cart', m.mockCart.lines.some((l) => Number(l.variantId) === 3823));
+  ok('the cart page stays put: no drawer opens over it', !after.drawerOpen);
+  ok('no sideways scroll at 390', after.width <= 390, String(after.width));
+  ok('no page errors', errors.length === 0, errors.join(' / '));
+  await page.screenshot({ path: '/tmp/r38-sleeves-after.png', fullPage: false });
+  await browser.close();
+}
+
 server.close();
 console.log(failed ? `${failed} FAILED` : 'All passed');
 process.exit(failed ? 1 : 0);

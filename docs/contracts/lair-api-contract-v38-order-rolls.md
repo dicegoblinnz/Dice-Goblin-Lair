@@ -97,7 +97,12 @@ ultimately the dice gets removed if refunded. And if it was used for credit that
   back stops counting as used, so it never eats into the card's later rolls.
 - The store credit is taken once: claimed before Shopify is asked. Shopify saying no is tried again by the 10-minute
   run, 3 times, then staff are emailed ("Store credit to take back by hand"); no answer at all may have gone through,
-  so staff are emailed at once and it's never tried again.
+  so staff are emailed at once and it's never tried again. Nor is one the Lair stopped in the middle of
+  (`debiting_at` still set): staff check it by hand.
+- A roll taken back while Shopify is still adding its credit (the refund lands mid-roll): when the credit lands,
+  `roll()` hands it to a take-back of its own (`midway`), which takes back that credit and only that, with its own line
+  on the order (`Refund: a d20 roll taken back as it was being rolled. …`). Staff aren't asked to give its prize.
+- My Lair's history of rolls leaves out the ones taken back.
 - The order is tagged `Rolls taken back` with a line on its note: `Refund: 2 d20 rolls taken back (1 rolled already).
   $15.00 of the store credit it gave was taken back.` (or `…; the rest was spent.`, or `The $15.00 store credit it
   gave was spent, so none was taken back.`, or `Refund: a d20 roll taken back, not rolled yet.`).
@@ -113,7 +118,8 @@ follow-up under way: another run leaves it alone for 5 minutes, so the 10-minute
 `refund_checked_at`.
 `roll_takebacks`: one row per refund that took rolls back: `id`, `order_id`, `customer_id`, `order_name`, `rolls`,
 `unrolled`, `rolled`, `credit_asked` and `credit_taken` (cents), `status` (`credit`, `done` or `check`), `tries`,
-`note`, `claimed_at`, `noted_at`. `member_rolls` gains `taken_back_at` and `taken_back_id`.
+`note`, `claimed_at`, `noted_at`, `debiting_at` (while Shopify is asked) and `midway`. `member_rolls` gains
+`taken_back_at` and `taken_back_id`.
 ordersPaid's answer adds `orderRolls: { rolls?, parcel? }`; the 10-minute run's `orderRolls: { emails, tags, takenBack? }`.
 Needs `read_store_credit_accounts` and `write_store_credit_account_transactions` (as round 9's staff page) for the
 store credit, and `write_orders` for the order's line.

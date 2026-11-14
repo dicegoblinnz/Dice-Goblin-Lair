@@ -7399,7 +7399,11 @@ export class Lair {
     // --- no awaits from here on: only this prize's own row changes ---
     this.write("UPDATE prizes SET status = ?, note = ?, updated_at = ? WHERE id = ? AND status = 'pending'", problem ? 'pending' : 'added', problem, Date.now(), prizeId);
     const prize = this.prizeRow(prizeId);
-    if (problem) {
+    // Round 38: a refund took this roll back while Shopify was adding its credit (src/order-rolls.js): the credit that
+    // landed comes back as a rolled roll's does, and there's no prize left to give at the counter
+    const takenBack = prize?.status === 'taken back';
+    if (takenBack && !problem) this.rollTakenBackMidway(prizeId, won.amount);
+    if (problem && !takenBack) {
       const member = this.memberRow(who.customerId);
       this.notifyStaff(`Prize to give at the counter: ${member?.name || member?.code || 'a member'}`, {
         title: 'A dice prize to give at the counter',
@@ -7580,7 +7584,7 @@ export class Lair {
     const history = this.sql
       .exec(
         `SELECT r.id AS roll_id, r.prize_id AS prize_id, r.created_at AS at, r.roll AS roll, r.pick AS pick, p.amount AS amount, p.status AS status
-           FROM member_rolls r LEFT JOIN prizes p ON p.id = r.prize_id WHERE r.customer_id = ? AND r.kind = 'loyalty'
+           FROM member_rolls r LEFT JOIN prizes p ON p.id = r.prize_id WHERE r.customer_id = ? AND r.kind = 'loyalty' AND r.taken_back_at IS NULL
           ORDER BY r.created_at DESC, r.rowid DESC LIMIT 20`,
         id,
       )

@@ -701,3 +701,65 @@ test('an order refunded before its email goes gets none, and one only part refun
   const emails = await mail.ours();
   assert.deepEqual(emails.map((m) => m.subject), ['A d20 roll for your order #2610']);
 });
+
+test('from the separate review: a take-back cut off mid-way (Shopify took the credit, the Lair stopped before it said so) is left for staff, never taken twice', async () => {
+  const told = [];
+  lair.notifyStaff = (subject, mail) => told.push([subject, mail]);
+  const lines = [dice(26111, 200)];
+  ok(await paid(webOrder(2611, lines)));
+  ok(await roll(MIA, 'sure'));
+  balances.set(MIA, 3000);
+  // Shopify takes it, and the Lair never hears back (stopped mid-way)
+  lair.shopify.changeStoreCredit = async (id, cents) => {
+    debits.push([String(id), cents]);
+    return new Promise(() => {});
+  };
+  refund(2611, lines);
+  await check();
+  assert.deepEqual(debits, [[MIA, -1000]]);
+  assert.equal(takebacks()[0].status, 'credit');
+  // the 10-minute run comes back to it: it may have gone through, so staff check, and it isn't taken again
+  await check();
+  await check();
+  assert.deepEqual(debits, [[MIA, -1000]]);
+  assert.equal(takebacks()[0].status, 'check');
+  assert.equal(told.length, 1);
+  assert.equal(told[0][1].title, 'Store credit to take back by hand');
+});
+
+test('from the separate review: a roll taken back while Shopify is still adding its credit has that credit taken back too, and staff aren\'t asked to give it', async () => {
+  const told = [];
+  lair.notifyStaff = (subject, mail) => told.push([subject, mail]);
+  const lines = [dice(26121, 200)];
+  ok(await paid(webOrder(2612, lines)));
+  balances.set(MIA, 2500);
+  // Shopify takes its time adding the roll's credit
+  let answer;
+  lair.shopify.creditCustomer = async (customerId, cents) => {
+    await new Promise((resolve) => {
+      answer = resolve;
+    });
+    credited.push([customerId, cents]);
+    return true;
+  };
+  const rolling = roll(MIA, 'sure');
+  await settle();
+  // the refund lands meanwhile, and takes that roll back
+  refund(2612, lines);
+  assert.deepEqual(await check(), { takenBack: 1 });
+  assert.deepEqual(debits, [], 'nothing to take back yet: the credit isn\'t added');
+  // Shopify adds it after all: it comes back like any rolled roll's credit
+  answer();
+  ok(await rolling);
+  await settle();
+  assert.deepEqual(debits, [[MIA, -1000]]);
+  const [first, midway] = takebacks();
+  assert.deepEqual([first.rolls, first.credit_asked, first.status], [1, 0, 'done']);
+  assert.deepEqual([midway.midway, midway.rolls, midway.credit_asked, midway.credit_taken, midway.status], [1, 0, 1000, 1000, 'done']);
+  assert.equal(marked.at(-1)[2], 'Refund: a d20 roll taken back as it was being rolled. $10.00 of the store credit it gave was taken back.');
+  assert.equal(told.length, 0, 'staff aren\'t asked to give a prize that was taken back');
+  // and My Lair's history doesn't show a roll that was taken back as a win
+  const mine = (await call('GET', 'me', null, MIA)).data.loyalty;
+  assert.deepEqual([mine.rolls.available, mine.rolls.used], [0, 0]);
+  assert.equal((mine.history || []).length, 0);
+});
