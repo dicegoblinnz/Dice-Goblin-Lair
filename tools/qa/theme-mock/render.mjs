@@ -757,8 +757,11 @@ const bfLine = (key, p, quantity, each, free = 0, title = BF_DICE_TITLE) => ({
   line_level_discount_allocations: free ? [{ amount: free * each * 100, discount_application: { title, type: 'automatic' } }] : [],
 });
 const bfRequest = (pageType, path) => ({ page_type: pageType, locale: { iso_code: 'en' }, origin: '', path });
+// the weekend's carts are double days for the d20 rolls (Theme settings › Lair bookings › Double days, 27 to 30 Nov)
 const bfCartPage = (lines, settings = bfSettings) => () => renderPage('cart', {
-  cart: r38Cart(lines), settings: { ...settings, dice_deal_collection: collections['bf-dice'] }, template: { name: 'cart' }, request: bfRequest('cart', '/cart'),
+  cart: r38Cart(lines),
+  settings: { ...settings, dice_deal_collection: collections['bf-dice'], ...(settings.black_friday_on ? { lair_order_rolls: true, lair_rolls_double_days: '2020-01-01 to 2099-12-31' } : {}) },
+  template: { name: 'cart' }, request: bfRequest('cart', '/cart'),
 });
 const [bfGalaxy, bfEmber, bfMoss] = bfDice;
 Object.assign(PAGES, {
