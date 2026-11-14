@@ -191,8 +191,9 @@ const NO_CAMERA = () => {
 /* ---------- reading the page as someone at the stall would ---------- */
 const flat = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 const stock = (page) => page.locator('lair-stock');
+// (a thing's name, and which one of it when it has options: the page shows the two on lines of their own)
 const lines = (page) => page.evaluate(() => [...document.querySelectorAll('lair-stock .so-line')].map((li) => ({
-  title: li.querySelector('.so-line__title').textContent.trim(),
+  title: [li.querySelector('.so-line__title').textContent.trim(), ((li.querySelector('.so-line__option') || {}).textContent || '').trim()].filter(Boolean).join(' · '),
   qty: Number(li.querySelector('.so-step__count').lastChild.textContent),
   hint: ((li.querySelector('.so-line__hint') || {}).textContent || '').trim(),
   status: li.dataset.status,
@@ -332,6 +333,10 @@ if (wanted('A')) {
   await settle(page, 150);
   check('A6 minus on the last one takes the line off the list', !(await lines(page)).some((l) => l.title.includes('Jet')));
   check('A6 the Sold button counts what is on the lot', flat(await page.locator('[data-act="sold"]').textContent()).startsWith('Sold5'), await page.locator('[data-act="sold"]').textContent());
+  check('A6 which one of a thing it is shows in full on a line of its own, however long the name', await page.evaluate(() => {
+    const option = [...document.querySelectorAll('lair-stock .so-line__option')].find((el) => el.textContent.trim() === 'Night (Umbreon)');
+    return Boolean(option) && option.scrollWidth <= option.clientWidth && option.getBoundingClientRect().height > 0;
+  }));
   check('A6 no sideways scroll with a lot on the list', (await overflowX(page)) === 0);
   await axe(page, 'the page with a lot on it', 'lair-stock');
   await shot(page, 'a6-lot');
