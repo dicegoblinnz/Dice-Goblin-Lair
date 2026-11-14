@@ -498,10 +498,13 @@ choose ("make it clear that this exists"). Contract v38-order-rolls; the rules' 
 `test/round38-order-rolls.test.js`. The theme mock's pages: `/cart-r38`, `-nudge`, `-deck`, `-double`, `-off`,
 `-commander`, `/products/r38-hobbit`, `/products/r38-decks`, `/r38-collection` and `/r38-commander`.
 
-- `round38-order-rolls/theme.mjs`: the three things the separate review of the website's side found (15 Nov 2026), 48
-  checks. The cart's two bars, the free-shipping bar and the roll meter, each grow from their own last amount when a
-  quantity goes up (a browser at 390, with a free-shipping amount set). The cart's double days against the Lair app's
+- `round38-order-rolls/theme.mjs`: 64 checks. The three things the separate review of the website's side found (15 Nov
+  2026): the cart's two bars, the free-shipping bar and the roll meter, each grow from their own last amount when a
+  quantity goes up (a browser at 390, with a free-shipping amount set); the cart's double days against the Lair app's
   `parseDoubleDays` and `doubleDayOn` for 30 ways of writing them, so the cart's "Today every dollar counts double" is
-  always the app's answer. Free sleeves on the store's own Commander titles: a deck's card, page and cart line, never a
-  Commander's Bundle, a set's booster box or a library copy.
+  always the app's answer; free sleeves on the store's own Commander titles (a deck's card, page and cart line, never a
+  Commander's Bundle, a set's booster box or a library copy). Then the sleeves in the cart (Mo, 15 Nov 2026: "give
+  suggestions as you would with dice when someone buys something. Inside the cart"): two packs to add right there, the
+  sold-out colours left out, "Your sleeves are free" counted on what Shopify made free, nothing said when nothing came
+  off, a sleeve's card and page, and in a browser a colour picked and added in the cart, free right there.
   `DG_THEME=… [PORT=4996] node tools/qa/round38-order-rolls/theme.mjs`.
