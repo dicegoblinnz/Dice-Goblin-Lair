@@ -45,8 +45,8 @@ side is section 6.
 | Setting | What it is |
 | --- | --- |
 | `lair_order_rolls` | checkbox, "d20 rolls on online orders": on only when the live theme says `true`, so a Lair deployed before its theme gives none, and Mo switches the whole thing on in one place |
-| `lair_rolls_every` | number, "A d20 roll for every ($)": 200; empty or not a positive number means 200 |
-| `lair_rolls_double_days` | text, "Double days": days or ranges in NZ dates, split by commas, `2026-11-27 to 2026-11-30, 2026-12-26` (also `..`). A part that isn't one is left out |
+| `lair_rolls_every` | number, "A d20 roll for every ($)": 200, rounded to whole dollars as the cart rounds it (150.5 is 151); empty, or under $1 once rounded, means 200 |
+| `lair_rolls_double_days` | text, "Double days": days or ranges in NZ dates, split by commas, semicolons or new lines, `2026-11-27 to 2026-11-30, 2026-12-26` (also `..`, `–` or `-`, with or without spaces, in any case). A part that isn't one, or has a date that isn't real (2026-02-30), is left out, and only the first 50 count. The cart reads them the same way (snippets/roll-meter.liquid), checked against `parseDoubleDays` by tools/qa/round38-order-rolls/theme.mjs |
 
 The Lair reads them every 5 minutes with the other booking rules (`rules.rolls: { on, every, doubleDays }`).
 
@@ -95,7 +95,11 @@ ordersPaid's answer adds `orderRolls: { rolls?, parcel? }`; the 10-minute run's 
   and how much more for the next, worked out the same way (Magic boxes double, double days double), with a line saying
   Magic boxes count double when there's one in the cart. It's the cart's figure; the order's own is what counts.
 - Badges on the deal items: Magic booster boxes (the roll per $100), and the shop's own deals (the dice deal, free
-  sleeves with Commander decks), on product cards and pages.
+  sleeves with Commander decks), on product cards and pages. A Commander deck is Wizards of the Coast's, not a library
+  copy, with "Commander Deck" (or Decks) in its variant's or product's title, or a product title ending in "Commander"
+  (MTG - Super Heroes - Commander); a Commander's Bundle isn't one. The automatic discount's decks are the same list.
+- The cart's bars (the free-shipping bar and the roll meter) each grow from their own last amount when the cart
+  redraws: each fill has `data-cart-bar`.
 - My Lair's card already shows rolls to use; nothing else changes there.
 
 ## 7. Going live

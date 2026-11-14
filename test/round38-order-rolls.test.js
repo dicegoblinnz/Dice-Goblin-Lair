@@ -203,6 +203,10 @@ test('round 38: the theme\'s settings: on only once the live theme says true, a 
   assert.equal(rulesFromSettings({ lair_order_rolls: true }, ROOMS, []).rolls.on, true);
   assert.equal(rulesFromSettings({ lair_order_rolls: true, lair_rolls_every: '' }, ROOMS, []).rolls.every, 200);
   assert.equal(rulesFromSettings({ lair_order_rolls: true, lair_rolls_every: 150 }, ROOMS, []).rolls.every, 150);
+  // rounded to whole dollars as the cart rounds them (snippets/roll-meter.liquid's | round; the separate review of the
+  // website's side, 15 Nov 2026), so a theme setting of 150.5 is $151 in both, and anything under $1 is $200
+  const every = (value) => rulesFromSettings({ lair_order_rolls: true, lair_rolls_every: value }, ROOMS, []).rolls.every;
+  assert.deepEqual([every(150.5), every(150.4), every('250'), every(0.4), every(0), every(-5), every('ten')], [151, 150, 250, 200, 200, 200, 200]);
   assert.deepEqual(parseDoubleDays('2026-11-27 to 2026-11-30, 2026-12-26'), [['2026-11-27', '2026-11-30'], ['2026-12-26', '2026-12-26']]);
   assert.deepEqual(parseDoubleDays('2026-11-30..2026-11-27; nonsense\n2026-02-30, 2026-12-31 - 2027-01-02'), [['2026-11-27', '2026-11-30'], ['2026-12-31', '2027-01-02']]);
   assert.deepEqual(parseDoubleDays(''), []);

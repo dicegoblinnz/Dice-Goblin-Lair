@@ -670,6 +670,43 @@ Object.assign(PAGES, {
     request: { page_type: 'collection', locale: { iso_code: 'en' }, origin: '', path: '/collections/r38-deals' }, template: { name: 'collection', suffix: null },
   }),
 });
+/* ---- round 38, from the separate review (15 Nov 2026): the store's own titles that say Commander, so the free
+   sleeves go only on decks. A Commander's Bundle isn't a deck; Super Heroes' Commander product is one deck per
+   variant; Star Trek and Reality Fracture have decks among their boxes; a library copy is never one. Their pages,
+   one collection of them and a cart with one of each (4 decks in it) ---- */
+const r38Cmd = (handle, title, rows) => {
+  const p = product(handle, title, 'Wizards of the Coast', 100, 100, null, !rows, 6, 1000, 1000, { type: 'Trading Card Games', tags: ['Magic: The Gathering', 'TCG'] });
+  if (rows) {
+    p.variants = rows.map(([id, name, price]) => r38Variant(id, name, price));
+    p.options_with_values = [{ name: 'Type', position: 1, selected_value: p.variants[0].title, values: p.variants.map((v) => v.title) }];
+    p.selected_or_first_available_variant = p.variants[0];
+  }
+  return p;
+};
+export const r38Commander = {
+  bundle: r38Cmd('r38-avatar-commanders-bundle', "Magic MTG: Avatar the Last Airbender - Commander's Bundle"),
+  heroes: r38Cmd('r38-super-heroes-commander', 'MTG - Super Heroes - Commander', [[3811, 'Wakanda Forever', 120], [3812, "Collector's Commander Deck Set", 1200]]),
+  trek: r38Cmd('r38-star-trek', 'Magic the Gathering - Star Trek', [[3813, 'Booster Box', 380], [3814, 'Commander Deck - Klingon Fury', 120], [3815, 'Collector Commander Deck - Klingon Fury', 320]]),
+  fracture: r38Cmd('r38-reality-fracture', 'Reality Fracture', [[3816, 'Booster Box', 380], [3817, 'Commander Deck', 100]]),
+  aetherdrift: r38Cmd('r38-aetherdrift-living-energy', 'MTG - Aetherdrift - Commander Deck - Living Energy'),
+  library: r38Cmd('r38-commander-decks-library', 'Magic: The Gathering Commander Decks (Library)'),
+};
+collections['r38-commander'] = coll('r38-commander', 'Commander', Object.values(r38Commander), 6);
+for (const p of Object.values(r38Commander)) PAGES[`/products/${p.handle}`] = r38ProductPage(p);
+const r38c = r38Commander;
+PAGES['/cart-r38-commander'] = r38CartPage(r38Cart([
+  r38Line('r38c:1', r38c.bundle, 'Default Title', 1, 240),
+  r38Line('r38c:2', r38c.trek, 'Booster Box', 1, 380),
+  r38Line('r38c:3', r38c.trek, 'Commander Deck - Klingon Fury', 1, 120),
+  r38Line('r38c:4', r38c.heroes, 'Wakanda Forever', 1, 120),
+  r38Line('r38c:5', r38c.aetherdrift, 'Default Title', 1, 90),
+  r38Line('r38c:6', r38c.fracture, 'Commander Deck', 1, 100),
+  r38Line('r38c:7', r38c.library, 'Default Title', 1, 0),
+]));
+PAGES['/r38-commander'] = () => renderPage('collection', {
+  collection: { ...collections['r38-commander'], filters: [], tags: [], all_tags: [], sort_by: '' }, settings: r38Settings,
+  request: { page_type: 'collection', locale: { iso_code: 'en' }, origin: '', path: '/collections/r38-commander' }, template: { name: 'collection', suffix: null },
+});
 
 /* ---- round 25, Games Workshop ordered in (31 Oct 2026): kits on the shelf, ordered in and with one left, and a cart
    with each. Everything on GW's pad keeps selling at 0 (inventory_policy continue). ---- */

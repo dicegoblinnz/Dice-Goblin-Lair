@@ -488,3 +488,20 @@ telling a borrower as they take a wanted book.
 - `round37-gm-perk/compat.mjs`: the new theme against the Lair app as it was before round 37 (16 checks), since the
   theme goes live first: every page this round touches works as it did, with none of the new parts showing. Start the
   old Lair's stack from a checkout of it (`sh /path/to/old/tools/qa/live/up.sh`), then run this from here.
+
+## round38-order-rolls: d20 rolls on online orders, on the website (14 Nov 2026)
+
+Mo, 14 Nov 2026: a d20 roll for store credit for every $200 in an online order, each order on its own ("The $200 is
+for a transaction not a running total"), Magic booster boxes counting double, every dollar double on the double days,
+the running total in the cart ("shows a running total there for people to see"), and the deals said where people
+choose ("make it clear that this exists"). Contract v38-order-rolls; the rules' own tests are
+`test/round38-order-rolls.test.js`. The theme mock's pages: `/cart-r38`, `-nudge`, `-deck`, `-double`, `-off`,
+`-commander`, `/products/r38-hobbit`, `/products/r38-decks`, `/r38-collection` and `/r38-commander`.
+
+- `round38-order-rolls/theme.mjs`: the three things the separate review of the website's side found (15 Nov 2026), 48
+  checks. The cart's two bars, the free-shipping bar and the roll meter, each grow from their own last amount when a
+  quantity goes up (a browser at 390, with a free-shipping amount set). The cart's double days against the Lair app's
+  `parseDoubleDays` and `doubleDayOn` for 30 ways of writing them, so the cart's "Today every dollar counts double" is
+  always the app's answer. Free sleeves on the store's own Commander titles: a deck's card, page and cart line, never a
+  Commander's Bundle, a set's booster box or a library copy.
+  `DG_THEME=… [PORT=4996] node tools/qa/round38-order-rolls/theme.mjs`.

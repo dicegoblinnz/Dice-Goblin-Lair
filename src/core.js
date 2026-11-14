@@ -1195,10 +1195,11 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // theme's settings say true, so a Lair deployed before its theme (no key yet) sends none
     bookingReminders: settings.lair_booking_reminders === true,
     // Round 38: d20 rolls on online orders (src/order-rolls.js): on only once the live theme's settings say true, like
-    // the reminders above; a roll for every $ (200 when it's empty), and the double days, when every dollar counts double
+    // the reminders above; a roll for every $ (200 when it's empty), and the double days, when every dollar counts double.
+    // Whole dollars, rounded as the cart rounds them (snippets/roll-meter.liquid), so both count to the same amount
     rolls: {
       on: settings.lair_order_rolls === true,
-      every: Number(settings.lair_rolls_every) > 0 ? Number(settings.lair_rolls_every) : 200,
+      every: Math.round(Number(settings.lair_rolls_every)) >= 1 ? Math.round(Number(settings.lair_rolls_every)) : 200,
       doubleDays: parseDoubleDays(settings.lair_rolls_double_days),
     },
     prices,
