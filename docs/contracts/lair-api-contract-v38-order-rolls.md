@@ -17,13 +17,15 @@ side is section 6.
 
 - **Online orders only.** A paid order earns rolls when it's from the website or another online channel: never a
   counter sale (Shopify POS, the Lair's till, Pay on Verifone), never a draft order (the Lair's own checkouts and bills,
-  and orders staff make in Shopify admin), never a subscription's own billing (a library membership's month, a damage
-  charge on its card), and only with a customer on it. A pickup order is an online order.
+  and orders staff make in Shopify admin; an order with no source at all is taken as one, as ordersPaid does), never a
+  subscription's own billing (a library membership's month, a damage charge on its card), and only with a customer on
+  it. A pickup order is an online order.
 - **Each order on its own.** Nothing carries over from one order to the next.
 - **A roll for every $200** of what the order's products cost after their discounts (each line's price times its
   quantity, less what discounts took off it; a free die is $0). Delivery, gift cards and library damage charges don't
   count: what a gift card later pays for does. How it's paid doesn't matter (store credit, card).
-- **Magic booster boxes count double**, a roll for every $100 of them: Wizards of the Coast's products whose variant is
+- **Magic booster boxes count double** (Mo: they "trigger the special $100"), so a roll for every $100 of them while the
+  setting is $200, and for every half of whatever it's set to: Wizards of the Coast's products whose variant is
   a box of boosters ("Box", "Booster Box", "Collector Box", "Play Booster Box" …), or with no variants of their own,
   titled one. Never a scene box, bundle, Commander deck, Draft Night or pack, and never another game's boxes (Mo: "Don't
   do that with any other game, only magic the gathering").
@@ -81,7 +83,9 @@ it, and with it the parcel code (the email is the only place it's told).
 
 `order_rolls`: one row per order that earned rolls: `order_id` (key), `customer_id`, `order_name`, `counted` and
 `boxes` (cents), `doubled`, `rolls`, `paid_at`, `created_at`, `parcel_ok`, `parcel_code` (unique), `parcel_ends`,
-`parcel_tried_at`, `parcel_order_id`, `parcel_order_name`, `parcel_tagged_at`, `emailed_at`, `status` (`active`).
+`parcel_tried_at`, `parcel_order_id`, `parcel_order_name`, `parcel_tagged_at`, `emailed_at`, `follow_at` (the email's
+follow-up under way: another run leaves it alone for 5 minutes, so the 10-minute run never sends it without its parcel),
+`status` (`active`).
 ordersPaid's answer adds `orderRolls: { rolls?, parcel? }`; the 10-minute run's `orderRolls: { emails, tags }`.
 
 ## 6. The theme's side

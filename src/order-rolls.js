@@ -42,6 +42,8 @@ export const ORDER_ROLLS = Object.freeze({
   // the 10-minute run keeps trying an email for this long after the order, and a parcel tag for a day
   emailWithinMs: 2 * HOUR,
   tagWithinMs: 24 * HOUR,
+  // a follow-up under way is left alone this long by any other run (one a restart cut short is picked up after it)
+  followClaimMs: 5 * MIN,
 });
 
 export const ORDER_ROLL_TABLES = [
@@ -49,7 +51,7 @@ export const ORDER_ROLL_TABLES = [
      order_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, order_name TEXT, counted INTEGER NOT NULL, boxes INTEGER NOT NULL,
      doubled INTEGER NOT NULL DEFAULT 0, rolls INTEGER NOT NULL, paid_at INTEGER NOT NULL, created_at INTEGER NOT NULL,
      parcel_ok INTEGER NOT NULL DEFAULT 0, parcel_code TEXT, parcel_ends INTEGER, parcel_tried_at INTEGER,
-     parcel_order_id TEXT, parcel_order_name TEXT, parcel_tagged_at INTEGER, emailed_at INTEGER,
+     parcel_order_id TEXT, parcel_order_name TEXT, parcel_tagged_at INTEGER, emailed_at INTEGER, follow_at INTEGER,
      status TEXT NOT NULL DEFAULT 'active')`,
   'CREATE INDEX IF NOT EXISTS order_rolls_customer ON order_rolls (customer_id, status)',
   'CREATE UNIQUE INDEX IF NOT EXISTS order_rolls_parcel ON order_rolls (parcel_code) WHERE parcel_code IS NOT NULL',
@@ -174,7 +176,8 @@ export const orderRollMethods = {
     // online only: never a counter sale (Shopify POS, the till, Pay on Verifone), never a draft order (the Lair's own
     // checkouts and bills, and orders staff make in Shopify admin), never a subscription's own billing (a library
     // membership's month, a damage charge on its card), and only for an order with a customer
-    const notOnline = pos || source === 'shopify_draft_order' || /subscription/i.test(source);
+    // (no source at all is taken as a draft, as ordersPaid takes it)
+    const notOnline = pos || !source || source === 'shopify_draft_order' || /subscription/i.test(source);
     if (!setup?.on || notOnline || !spend?.customerId) return Object.keys(result).length ? result : null;
     if (this.sql.exec('SELECT 1 AS n FROM order_rolls WHERE order_id = ?', orderId).toArray().length) return Object.keys(result).length ? result : null;
     const paidAt = Number(spend.processedAt) || now;
@@ -240,12 +243,15 @@ export const orderRollMethods = {
     const read = () => this.sql.exec('SELECT * FROM order_rolls WHERE order_id = ?', orderId).toArray()[0];
     let row = read();
     if (!row || row.status !== 'active' || row.emailed_at) return false;
+    // one follow-up at a time (the separate review: the 10-minute run meeting one mid-way sent the email without its
+    // parcel): claimed before the first await, and left alone by any other run for 5 minutes
+    if (row.follow_at && Date.now() - row.follow_at < ORDER_ROLLS.followClaimMs) return false;
+    this.sql.exec('UPDATE order_rolls SET follow_at = ? WHERE order_id = ?', Date.now(), orderId);
     if (String(this.env.ORDER_ROLL_EMAILS || '').trim().toLowerCase() === 'off' || !emailReady(this.env)) return false;
     const to = await this.orderRollEmailTo(row.customer_id);
     if (!to.email) return false;
     const rules = await this.rules();
-    // read again after the awaits: another run (the 10-minute one) may have got here first. From the read to the mark
-    // there's no await, so only one of them tries the code.
+    // read again after the awaits: from the read to the mark there's no await
     row = read();
     if (!row || row.emailed_at) return false;
     if (row.parcel_ok && !row.parcel_tried_at && this.shopify.configured) {

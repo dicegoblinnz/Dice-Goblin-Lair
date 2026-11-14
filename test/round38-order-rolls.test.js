@@ -433,6 +433,44 @@ test('the 10-minute run: an email a restart cut short goes out once, and a parce
   assert.equal(marked.length, 2);
 });
 
+test('a follow-up already under way is left to finish (from the separate review): the 10-minute run meeting it mid-way sends nothing, so the email keeps its parcel', async () => {
+  const mail = captureEmails();
+  // Shopify takes its time saying how the order is reaching them
+  let answer;
+  const slow = new Promise((resolve) => {
+    answer = resolve;
+  });
+  const realInfo = lair.shopify.gwOrderInfo;
+  lair.shopify.gwOrderInfo = async (orderId) => {
+    await slow;
+    return realInfo(orderId);
+  };
+  ok(await paid(webOrder(2401, [box(24011, 380)])));
+  await settle();
+  // the 10-minute run comes round while the first follow-up waits on Shopify
+  nowIs(NOW + 30_000);
+  assert.equal(await lair.orderRollsUpkeep(Date.now()), null);
+  assert.equal((await mail.ours()).length, 0);
+  answer();
+  const [email, ...more] = await mail.ours();
+  assert.equal(more.length, 0);
+  assert.match(email.html, />Add to this parcel</);
+  assert.equal(codesMade.length, 1);
+  // one that died mid-way (a restart) is picked up once it's been 5 minutes
+  lair.orderRollsFollowUp = async () => false;
+  ok(await paid(webOrder(2402, [dice(24021, 200)])));
+  delete lair.orderRollsFollowUp;
+  lair.sql.exec('UPDATE order_rolls SET follow_at = ? WHERE order_id = ?', Date.now(), 'gid://shopify/Order/2402');
+  assert.equal(await lair.orderRollsUpkeep(Date.now()), null);
+  nowIs(NOW + 30_000 + 5 * MIN + 1000);
+  assert.deepEqual(await lair.orderRollsUpkeep(Date.now()), { emails: 1, tags: 0 });
+});
+
+test('an order Shopify gives no source for is never taken as online (as ordersPaid takes it as a draft)', async () => {
+  ok(await paid(webOrder(2501, [dice(25011, 400)], { source: '' })));
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM order_rolls').one().n, 0);
+});
+
 test('a same-parcel code is never guessable: six of 31 letters and numbers from crypto, none of 0, O, 1, I or L', () => {
   const seen = new Set();
   for (let i = 0; i < 300; i += 1) seen.add(parcelCode());
