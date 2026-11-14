@@ -508,3 +508,24 @@ choose ("make it clear that this exists"). Contract v38-order-rolls; the rules' 
   sold-out colours left out, "Your sleeves are free" counted on what Shopify made free, nothing said when nothing came
   off, a sleeve's card and page, and in a browser a colour picked and added in the cart, free right there.
   `DG_THEME=… [PORT=4996] node tools/qa/round38-order-rolls/theme.mjs`.
+
+## round39-stock-off: the Stock off page (the stock off chat, 15 Nov 2026)
+
+Mo: "scan my items to then click a button to decrease the quantity of that item by the amount scanned [...] a relatively
+quick and easy way to handle so it doesnt slow me up during markets". The theme's side of round 39
+(`sections/lair-stock.liquid`, `assets/lair-stock.js` and `.css`; the mock serves it at `/pages/stock`, the shop at the
+staff page with `?view=stock`), written from the contract's section 7 (`docs/contracts/lair-api-contract-v39-stock-off.md`).
+
+`DG_THEME=… [PORT=4996] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round39-stock-off/stock.mjs [A|B|C|D|E|F|G …]`
+(about 200 checks, five minutes; exits 1 on a FAIL). It needs no Lair app and no camera:
+
+- **A stand-in Lair app** (`lairApp()` in the file) answers the stock routes as the contract says: the shop's count,
+  never below zero, a lot under its key taken off once however often it's sent, all or nothing, undo. Its `signal` can
+  be `down` (nothing gets through) or `lost` (the lot arrives and its answer doesn't come back).
+- **A stand-in barcode reader** behind Chromium's fake camera: the check "holds up" codes with `window.__hold([[code, x,
+  y]])`, x and y as shares of the picture, so the frame and the nearest-the-middle rule are checked for real.
+- The parts: A the lab, practising on made-up things (390×844, 360×640 and 1280×800); B the real shop on Live (each lot
+  one `POST /stock/off` in the order tapped, no signal, a lost answer, Undo three ways, a lot the Lair refuses, the
+  list, a hand scanner); C who may use it, a Lair app from before round 39, and a page that's ready before the Lair app
+  answers; D two tabs on one phone; E no camera; F the staff page's link; G markup typed by staff, held in a QR code or
+  sent back by the Lair app shows as words.
