@@ -108,6 +108,36 @@ ultimately the dice gets removed if refunded. And if it was used for credit that
   gave was spent, so none was taken back.`, or `Refund: a d20 roll taken back, not rolled yet.`).
 - An order refunded before its email goes gets none; one partly refunded is told the rolls it still earns.
 
+## 4c. New Commander decks join the free sleeves deal
+
+Mo, 15 Nov 2026, told that a new Commander deck had to go into Shopify's discount by hand: "Yes make a lair app to add
+them automatically". `src/commander-deal.js`, tests `test/round38-commander-deal.test.js`.
+
+- The deal is Shopify's automatic discount "Free sleeves with a Commander deck" (Buy X get Y: each Commander deck makes
+  one pack from the Card sleeves collection free, every time). The Lair finds it by the theme's title (Theme settings ›
+  Commander decks › Discount title, `deck_sleeves_discount`; empty is that title), matched exactly as the cart matches
+  it, among the live and scheduled automatic Buy X get Y discounts: at most two (one live, one to follow).
+- Once an hour, while the live theme says Commander decks come with free sleeves (`deck_sleeves_show`), the 10-minute
+  run asks Shopify, in one search, for the products and options with Commander in their titles (Wizards of the Coast's;
+  products not archived), works out which are decks by section 6's rule (a product counts whole, every option; else an
+  option counts alone), and adds the ones each deal is missing, with its Customer buys quantity sent back as it was. The
+  setup check (`/setup`) looks straight away. With fewer than 5 of the run's outside calls left (Cloudflare's free plan:
+  50 an invocation) it waits for the next run. The hour is claimed before Shopify is asked, so a failure tries again
+  in an hour, not every 10 minutes.
+- It only ever adds. Nothing comes out of a deal: a deck renamed or archived, anything staff put in by hand. An option
+  whose whole product is in the deal isn't added on its own. A product or option that was in a deal when the Lair
+  looked (or that the Lair put in), and isn't now, was taken out in Shopify by hand, and stays out. A new deal with the
+  same title (made again) starts afresh.
+- Staff are emailed what was added ("New Commander decks in the free sleeves deal": each deck, "Every option" or the
+  option's name), so one that shouldn't count is caught; taking it out of the discount in Shopify keeps it out. And
+  once, until it works again, when the deal can't be kept: no live discount with that title while the theme still
+  says decks come with free sleeves ("Free sleeves: the deal is missing in Shopify"), Customer buys that's a
+  collection rather than products ("Free sleeves: new decks can't go in"), more than 250 products or options to read
+  ("Free sleeves: the deal's too long to check"), or Shopify saying no ("Free sleeves: Shopify said no to new decks",
+  with its words and the decks; tried again every hour).
+- Tried on a throwaway discount (scheduled for 2030, then deleted) on 15 Nov 2026: adding keeps what's there, and
+  adding one that's there already, or an option of a product that's in whole, is no error.
+
 ## 5. Data
 
 `order_rolls`: one row per order that earned rolls: `order_id` (key), `customer_id`, `order_name`, `counted` and
@@ -120,9 +150,14 @@ follow-up under way: another run leaves it alone for 5 minutes, so the 10-minute
 `unrolled`, `rolled`, `credit_asked` and `credit_taken` (cents), `status` (`credit`, `done` or `check`), `tries`,
 `note`, `claimed_at`, `noted_at`, `debiting_at` (while Shopify is asked) and `midway`. `member_rolls` gains
 `taken_back_at` and `taken_back_id`.
-ordersPaid's answer adds `orderRolls: { rolls?, parcel? }`; the 10-minute run's `orderRolls: { emails, tags, takenBack? }`.
+`commander_deal_items` (section 4c): `discount_id` and `item_id` (a product's or option's Shopify id; together the key),
+`title` (the decks the Lair added), `seen_at` and `added_at`. `meta` keys `commander-deal-at` (the last look) and
+`commander-deal-state` (`ok`, `missing`, `collections`, `too-many` or `refused`: what staff were last told).
+ordersPaid's answer adds `orderRolls: { rolls?, parcel? }`; the 10-minute run's `orderRolls: { emails, tags, takenBack? }`
+and, the hours it looks, `commanderDeal: { deals, added, problem? }`.
 Needs `read_store_credit_accounts` and `write_store_credit_account_transactions` (as round 9's staff page) for the
-store credit, and `write_orders` for the order's line.
+store credit, and `write_orders` for the order's line. The free sleeves deal needs `read_products` and `write_discounts`
+(both granted already).
 
 ## 6. The theme's side
 
@@ -133,7 +168,8 @@ store credit, and `write_orders` for the order's line.
 - Badges on the deal items: Magic booster boxes (the roll per $100), and the shop's own deals (the dice deal, free
   sleeves with Commander decks), on product cards and pages. A Commander deck is Wizards of the Coast's, not a library
   copy, with "Commander Deck" (or Decks) in its variant's or product's title, or a product title ending in "Commander"
-  (MTG - Super Heroes - Commander); a Commander's Bundle isn't one. The automatic discount's decks are the same list.
+  (MTG - Super Heroes - Commander); a Commander's Bundle isn't one. The automatic discount's decks are the same list, and
+  new ones go into it by themselves (section 4c).
 - The cart's bars (the free-shipping bar and the roll meter) each grow from their own last amount when the cart
   redraws: each fill has `data-cart-bar`.
 - My Lair's card already shows rolls to use; nothing else changes there.

@@ -1202,6 +1202,13 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
       every: Math.round(Number(settings.lair_rolls_every)) >= 1 ? Math.round(Number(settings.lair_rolls_every)) : 200,
       doubleDays: parseDoubleDays(settings.lair_rolls_double_days),
     },
+    // Round 38, part 2: free sleeves with a Commander deck (src/commander-deal.js): the Lair keeps the deal's decks
+    // current only while the live theme says Commander decks come with free sleeves (Theme settings › Commander decks),
+    // and finds the deal by the theme's Discount title, as the cart does (snippets/deck-sleeves.liquid)
+    sleeves: {
+      on: settings.deck_sleeves_show === true,
+      title: String(settings.deck_sleeves_discount ?? '').trim() || 'Free sleeves with a Commander deck',
+    },
     prices,
     rooms: builtRooms,
     events,

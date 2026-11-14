@@ -115,6 +115,7 @@ import { gmChangeUntil, gmHoursOf } from './core.js';
 import { GM_PERK_COLUMNS, GM_PERK_TABLES, gmPerkMethods } from './gm-perk.js';
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (contract v38-order-rolls)
 import { ORDER_ROLL_COLUMNS, ORDER_ROLL_TABLES, orderRollMethods } from './order-rolls.js';
+import { COMMANDER_DEAL_TABLES, commanderDealMethods } from './commander-deal.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -128,6 +129,8 @@ const REQUIRED_SCOPES = ['read_customers', 'read_metaobjects', 'read_themes', 'r
 const FEATURE_SCOPES = { write_discounts: 'birthday gift product codes', read_products: 'library copies, scanning library games and tab items', read_inventory: 'library copies on the shelf', write_metaobjects: 'staff adding and editing events', write_files: 'event pictures' };
 // Round 9, team: a member's store credit balance on their staff page
 FEATURE_SCOPES.read_store_credit_accounts = 'store credit balances on the staff member page';
+// Round 38: the same-parcel codes (src/order-rolls.js), and new Commander decks added to the free sleeves deal (src/commander-deal.js)
+FEATURE_SCOPES.write_discounts += ', same-parcel delivery codes and new Commander decks in the free sleeves deal';
 // Round 25: Games Workshop orders tagged Ordered in, with a note; round 26: the staff page's Warhammer tab adding GW's
 // order pad (new products stocked at 0 and on the till, prices and costs kept current)
 FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in';
@@ -1238,6 +1241,9 @@ export class Lair {
         this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
     }
+    // Round 38, part 2: what the Lair has seen in the free sleeves deal, so a deck taken out by hand stays out
+    // (src/commander-deal.js)
+    for (const statement of COMMANDER_DEAL_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -11231,6 +11237,14 @@ export class Lair {
     } catch (error) {
       console.error('Lair: order rolls upkeep failed', error);
     }
+    // Round 38, part 2 (src/commander-deal.js): once an hour, new Commander decks into the free sleeves deal, with what's
+    // left of this run's outside calls (the setup check looks straight away)
+    try {
+      const commanderDeal = await this.commanderDealUpkeep(rules, Date.now(), { force, budget: callBudget(callsAtStart) });
+      if (commanderDeal) result.commanderDeal = commanderDeal;
+    } catch (error) {
+      console.error('Lair: could not add new Commander decks to the free sleeves deal', error);
+    }
     // Round 30 (src/credit-gifts.js): store credit gifts whose answer Shopify lost are looked for, and finished
     try {
       const gifts = await this.creditGiftUpkeep(Date.now());
@@ -11500,3 +11514,5 @@ Object.assign(Lair.prototype, changeMethods);
 Object.assign(Lair.prototype, gmPerkMethods);
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)
 Object.assign(Lair.prototype, orderRollMethods);
+// Round 38, part 2: new Commander decks join the free sleeves deal by themselves (src/commander-deal.js)
+Object.assign(Lair.prototype, commanderDealMethods);

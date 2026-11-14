@@ -2021,6 +2021,86 @@ export class ShopifyAdmin {
     return orders;
   }
 
+  /**
+   * Round 38, part 2 (src/commander-deal.js): in one call, the products and options with Commander in their titles
+   * (Wizards of the Coast's; products not archived) and the shop's live and scheduled automatic Buy X get Y discounts.
+   * Returns { products: [{ id, title, vendor, status }], variants: [{ id, title, product: { id, title, vendor, status } }],
+   * more (past the first 250 of either), deals: [{ id, title, status }] }. The caller sorts out which are decks.
+   */
+  async commanderDealSearch() {
+    const data = await this.graphql(
+      `query LairCommanderDecks($products: String!, $variants: String!, $deals: String!) {
+        products(first: 250, query: $products) { nodes { id title vendor status } pageInfo { hasNextPage } }
+        productVariants(first: 250, query: $variants) { nodes { id title product { id title vendor status } } pageInfo { hasNextPage } }
+        discountNodes(first: 50, query: $deals) { nodes { id discount { __typename ... on DiscountAutomaticBxgy { title status } } } }
+      }`,
+      {
+        products: "vendor:'Wizards of the Coast' AND -status:archived AND title:*commander*",
+        variants: "vendor:'Wizards of the Coast' AND title:*commander*",
+        deals: 'method:automatic AND type:bxgy AND status:active,scheduled',
+      },
+    );
+    return {
+      products: data.products?.nodes || [],
+      variants: (data.productVariants?.nodes || []).filter((v) => v?.product),
+      more: Boolean(data.products?.pageInfo?.hasNextPage || data.productVariants?.pageInfo?.hasNextPage),
+      deals: (data.discountNodes?.nodes || [])
+        .filter((n) => n?.discount?.__typename === 'DiscountAutomaticBxgy')
+        .map((n) => ({ id: n.id, title: n.discount.title, status: n.discount.status })),
+    };
+  }
+
+  /**
+   * One automatic Buy X get Y discount's Customer buys: { id, title, status, kind ('products', 'collections', 'all' or
+   * 'other'), value ({ quantity } or { amount }, as Shopify has it), products and variants (ids), more (past the first
+   * 250 of either) }, or null when it's gone.
+   */
+  async freeSleevesDeal(id) {
+    const data = await this.graphql(
+      `query LairCommanderDeal($id: ID!) { discountNode(id: $id) { id discount { __typename ... on DiscountAutomaticBxgy { title status
+        customerBuys { value { __typename ... on DiscountQuantity { quantity } ... on DiscountPurchaseAmount { amount } }
+          items { __typename ... on DiscountProducts {
+            products(first: 250) { nodes { id } pageInfo { hasNextPage } }
+            productVariants(first: 250) { nodes { id } pageInfo { hasNextPage } } } } } } } } }`,
+      { id },
+    );
+    const discount = data.discountNode?.discount;
+    if (!discount || discount.__typename !== 'DiscountAutomaticBxgy') return null;
+    const buys = discount.customerBuys || {};
+    const items = buys.items || {};
+    const kind = { DiscountProducts: 'products', DiscountCollections: 'collections', AllDiscountItems: 'all' }[items.__typename] || 'other';
+    const v = buys.value || {};
+    const value = v.__typename === 'DiscountQuantity' ? { quantity: v.quantity } : v.__typename === 'DiscountPurchaseAmount' ? { amount: v.amount } : null;
+    return {
+      id, title: discount.title, status: discount.status, kind, value,
+      products: (items.products?.nodes || []).map((n) => n.id),
+      variants: (items.productVariants?.nodes || []).map((n) => n.id),
+      more: Boolean(items.products?.pageInfo?.hasNextPage || items.productVariants?.pageInfo?.hasNextPage),
+    };
+  }
+
+  /**
+   * Adds products and options (ids) to an automatic Buy X get Y discount's Customer buys, with its value sent back as it
+   * was (tried on a throwaway discount on 15 Nov 2026: what's there stays, and adding one that's there already, or an
+   * option of a product that's in whole, is no error). Nothing is ever taken out. Shopify saying no throws an error
+   * with refused: true and said (Shopify's words): nothing changed.
+   */
+  async addToFreeSleevesDeal(id, { products = [], variants = [], value = null } = {}) {
+    const add = { ...(products.length ? { productsToAdd: products } : {}), ...(variants.length ? { productVariantsToAdd: variants } : {}) };
+    const data = await this.graphql(
+      `mutation LairCommanderDealAdd($id: ID!, $buys: DiscountCustomerBuysInput!) {
+        discountAutomaticBxgyUpdate(id: $id, automaticBxgyDiscount: { customerBuys: $buys }) { automaticDiscountNode { id } userErrors { field message code } }
+      }`,
+      { id, buys: { ...(value ? { value } : {}), items: { products: add } } },
+    );
+    const errors = data.discountAutomaticBxgyUpdate?.userErrors || [];
+    if (errors.length) {
+      const said = errors.map((e) => e.message).join('; ');
+      throw Object.assign(new Error(`Shopify said no: ${said}`), { refused: true, said });
+    }
+    return true;
+  }
+
   /** Where Shopify currently sends orders/paid for this app */
   async webhookUris() {
     const data = await this.graphql('query Hooks { webhookSubscriptions(first: 25, topics: [ORDERS_PAID]) { nodes { id uri } } }');
