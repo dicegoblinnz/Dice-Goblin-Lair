@@ -523,8 +523,9 @@ over them, and on wins when both are ticked. The theme mock's pages: `/bf-home`,
 and `-off`, and the carts `/cart-bf-one`, `-two`, `-two-none`, `-wrong-deal`, `-three` and `-off-two`, priced as
 Shopify prices them that weekend.
 
-- `black-friday/theme.mjs`: 41 checks. The banner, the link and the deals with Black Friday on, coming (the ribbon's
-  second line, the coming link, the deals' start date and the usual dice deal), both ticked (on wins) and none of it
+- `black-friday/theme.mjs`: 43 checks. The banner, the link and the deals with Black Friday on, coming (the ribbon's
+  second line, the coming link, the deals' start date, From Fri 27 Nov over each Black Friday deal and the usual dice
+  deal), both ticked (on wins) and none of it
   off, with the theme mock leaving out settings the home page's template doesn't carry, as Shopify does; in a browser
   at 360, 390 and 1440, on and coming, the page no wider than the screen, the banner across Gobgob below his face, and
   the link landing on the deals' heading under the sticky header; the dice cards, a dice's page and the cart in twos,

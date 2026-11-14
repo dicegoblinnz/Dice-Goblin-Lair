@@ -66,10 +66,15 @@ const count = (h, re) => (h.match(re) || []).length;
   const soonLink = soon.match(/<p class="home-lid__deals">\s*<a class="bf-ribbon bf-ribbon--link" href="([^"]*)">\s*<span>([^<]*)<\/span>/);
   ok('coming: the link in the lid says "Black Friday deals coming Friday" and goes to the deals', soonLink && soonLink[1] === '#black-friday' && soonLink[2] === 'Black Friday deals coming Friday');
   ok('coming: the deals show, saying when they start', /id="black-friday"/.test(soon) && text(main(soon)).includes('Coming Friday 27 November, until Monday 30th') && !text(main(soon)).includes('Friday 27 to Monday 30 November') && count(soon, /class="piece piece--\w+ home-bf__deal"/g) === 3);
+  // On a phone the start date scrolls away before the second deal, and someone ordering online today mustn't expect
+  // double rolls: each Black Friday deal says when it starts, and a deal with its own tag (Every day) keeps it
+  const tagsOf = (h) => [...main(h).matchAll(/<li class="piece piece--\w+ home-bf__deal"[\s\S]*?<\/li>/g)].map((d) => (d[0].match(/<p class="home-bf__tag">([^<]*)<\/p>/) || [])[1] || '');
+  ok('coming: the Black Friday deals say "From Fri 27 Nov" over them, the everyday one keeps Every day', tagsOf(soon).join('|') === 'From Fri 27 Nov|From Fri 27 Nov|Every day', tagsOf(soon).join(' | '));
   const soonCards = [...main(await html('/bf-dice-collection-soon')).matchAll(/<span class="badge badge--sale">([^<]*)<\/span>/g)].map((x) => x[1]);
   ok('coming: the dice keep the usual deal, "3rd free", until it starts', soonCards.length === 3 && soonCards.every((b) => b === '3rd free'), String(soonCards));
   const both = await html('/bf-home-both');
   ok('both ticked: Black Friday is on wins (one line on the banner, the deals link, the dates)', /<span class="bf-ribbon"><span>Black Friday<\/span><\/span>/.test(both) && !/bf-ribbon--two/.test(both) && both.includes('<span>Check out our Black Friday deals</span>') && text(main(both)).includes('Friday 27 to Monday 30 November'));
+  ok('both ticked: no "From Fri 27 Nov" over the deals', tagsOf(both).join('|') === '||Every day', tagsOf(both).join(' | '));
 }
 
 /* ---- the home page in a browser: the banner never widens the page, and the link lands on the deals ---- */
