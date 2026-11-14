@@ -517,7 +517,7 @@ quick and easy way to handle so it doesnt slow me up during markets". The theme'
 staff page with `?view=stock`), written from the contract's section 7 (`docs/contracts/lair-api-contract-v39-stock-off.md`).
 
 `DG_THEME=… [PORT=4996] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round39-stock-off/stock.mjs [A|B|C|D|E|F|G …]`
-(about 220 checks, six minutes; exits 1 on a FAIL). It needs no Lair app and no camera:
+(about 225 checks, six minutes; exits 1 on a FAIL). It needs no Lair app and no camera:
 
 - **A stand-in Lair app** (`lairApp()` in the file) answers the stock routes as the contract says: the shop's count,
   never below zero, a lot under its key taken off once however often it's sent, all or nothing, undo. Its `signal` can

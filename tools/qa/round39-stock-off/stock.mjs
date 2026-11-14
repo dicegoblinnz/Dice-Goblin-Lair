@@ -1072,6 +1072,30 @@ if (wanted('H')) {
     await ctx.close();
   }
 
+  // 7. (the second review, of the fixes) A lot taken back before its answer came, and by the time the phone has signal
+  //    the Lair can only say it may already be off the count: that isn't "nothing came off", so it isn't forgotten
+  lair = lairApp();
+  v = await visit({ shop: true, section: 'live', lair });
+  await place(v.page);
+  await scan(v.page, CATAN);
+  await settle(v.page);
+  lair.state.signal = 'down';
+  await tap(v.page, '[data-act="sold"]');
+  await settle(v.page, 400);
+  await tap(v.page, '[data-act="undo"]');
+  await settle(v.page, 300);
+  await v.page.locator('[data-act="less"]').click(); // (the lines came back: off the list again, so only the old lot is in play)
+  lair.state.stale = true;
+  lair.state.signal = 'up';
+  await online(v.page);
+  await settle(v.page, 900);
+  check('H7 a lot taken back that the Lair says may already be off the count is not quietly forgotten', (await banner(v.page)).includes('1 lot needs a look'), [await banner(v.page), lair.state.calls.slice(-3).map((c) => [c.name, c.status])]);
+  await tap(v.page, '[data-act="held"]');
+  sheet = flat(await v.page.locator('lair-stock dialog[open]').textContent());
+  check('H7 its sheet says it could not be taken back, with the Lair\'s words, and never that nothing came off', sheet.includes("This lot couldn't be taken back.") && sheet.includes('That lot may already be off the count. Check it in Shopify') && !sheet.includes('Nothing in it has come off yet.'), sheet);
+  check('H7 and the only way out is to say you have seen it', JSON.stringify((await v.page.locator('lair-stock dialog[open] .so-sheet__actions button').allTextContents()).map(flat)) === JSON.stringify(['Got it']));
+  await v.ctx.close();
+
   // 6. 99 of one thing, then its other barcode: the page says it's full, and nothing is quietly lost
   lair = lairApp();
   lair.state.things[4001].variant.stock = 500;
