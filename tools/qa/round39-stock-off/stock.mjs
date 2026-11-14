@@ -21,8 +21,11 @@
 //  E. No camera: the page says so and opens the box to type in.
 //  F. The staff page links to it, and its top bar still fits a phone.
 //  G. Hostile text (what staff type, what a QR code holds, and everything the Lair app sends back) shows as text.
+//  H. What the separate review found (15 Nov 2026), each of which failed here before its fix: Undo while a lot's
+//     scans are still being looked up; a lot that may already be off the count; two tabs, one of which takes a lot
+//     back; a lab page asked to send a lot it isn't allowed to; and 99 of one thing scanned under two barcodes.
 // No sideways scroll, no console errors and axe at each size (390×844, 360×640, 1280×800).
-// Usage: DG_THEME=/path/to/theme [PORT=4996] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round39-stock-off/stock.mjs [A|B|C|D|E|F|G ...]
+// Usage: DG_THEME=/path/to/theme [PORT=4996] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round39-stock-off/stock.mjs [A|B|C|D|E|F|G|H ...]
 import os from 'node:os';
 import path from 'node:path';
 
@@ -44,6 +47,7 @@ const WINGSPAN = '9300000000024';
 const SLEEVES = '9300000000031'; // two colours share it
 const OWN_DICE = '9300000000048';
 const TICKET = '9300000000055';
+const CATAN_CASE = '9300000000062'; // a second barcode of Catan's (its carton, say)
 const REASONS = [
   { key: 'damaged', label: 'Damaged' }, { key: 'gift', label: 'Gift or giveaway' }, { key: 'prize', label: 'Prize' },
   { key: 'lost', label: 'Lost or stolen' }, { key: 'other', label: 'Something else' },
@@ -55,7 +59,9 @@ function lairApp({ round39 = true, who = 'staff' } = {}) {
     signal: 'up', // 'up' | 'down' (nothing gets through) | 'lost' (the next answer to /stock/off or /stock/undo is lost on the way back)
     who,
     things: { 4001: thing(4001, 'Catan', '', 5), 4002: thing(4002, 'Wingspan', '', 1), 4003: thing(4003, 'Dragon Shield Matte Sleeves', 'Jet', 4), 4004: thing(4004, 'Dragon Shield Matte Sleeves', 'Crimson', 0), 4005: thing(4005, 'Event Ticket', '', 9) },
-    codes: { [CATAN]: ['4001'], [WINGSPAN]: ['4002'], [SLEEVES]: ['4003', '4004'], [TICKET]: ['4005'] },
+    codes: { [CATAN]: ['4001'], [CATAN_CASE]: ['4001'], [WINGSPAN]: ['4002'], [SLEEVES]: ['4003', '4004'], [TICKET]: ['4005'] },
+    stale: false, // every new lot is answered as one whose answer never came (the Lair's 409)
+    expired: false, // the login runs out after the page has started: taking off and putting back answer 401
     cantComeOff: {}, // variantId → words: a thing the Lair refuses when its lot arrives
     lots: new Map(),
     events: ['Armageddon Auckland', 'Oddity Alley'],
@@ -81,7 +87,9 @@ function lairApp({ round39 = true, who = 'staff' } = {}) {
     'POST stock/off': (b) => {
       const stop = gate();
       if (stop) return stop;
+      if (state.expired) return answer(401, { error: 'Log in with your staff account to use Stock off.' });
       if (!round39) return answer(404, { error: 'Not found' });
+      if (state.stale && !state.lots.has(b.id)) return answer(409, { error: 'That lot may already be off the count. Check it in Shopify, then start a new one.' });
       if (!/^so-[0-9a-f]{32}$/.test(String(b.id || ''))) return answer(400, { error: "That lot's details didn't come through. Try again." });
       const canon = JSON.stringify([b.event || '', b.outcome, b.reason || null, b.note || null, b.lines]);
       const had = state.lots.get(b.id);
@@ -104,6 +112,7 @@ function lairApp({ round39 = true, who = 'staff' } = {}) {
     'POST stock/undo': (b) => {
       const stop = gate();
       if (stop) return stop;
+      if (state.expired) return answer(401, { error: 'Log in with your staff account to use Stock off.' });
       const had = state.lots.get(b.id);
       if (!had) return answer(404, { error: "Gobgob can't find that lot." });
       if (!had.lot.undone) {
@@ -247,7 +256,7 @@ if (wanted('A')) {
   await axe(page, 'the where sheet', 'lair-stock dialog[open]');
   await place(page, 'Armageddon Auckland');
   check('A1 the place shows in the top bar', flat(await page.locator('.so-top__where-name').textContent()) === 'Armageddon Auckland');
-  check('A1 it says practice, and that nothing comes off', (await banner(page)).includes('Practice: nothing comes off the count.'));
+  check('A1 it says practice on made-up things, that nothing comes off, and how to try the shop\'s own', (await banner(page)).includes("Practice on made-up things: nothing comes off. Log in as staff to scan the shop's own."), await banner(page));
   check('A1 one h1, the page\'s name', (await page.locator('h1').count()) === 1 && flat(await page.locator('h1').textContent()) === 'Stock off');
   check('A1 nothing scanned: Sold and Not sold are off', (await page.locator('[data-act="sold"]').isDisabled()) && (await page.locator('[data-act="not-sold"]').isDisabled()));
   check('A1 the shop\'s header and footer are out of the way', await page.evaluate(() => [...document.querySelectorAll('.shopify-section-group-header-group, .shopify-section-group-footer-group')].every((el) => getComputedStyle(el).display === 'none')));
@@ -407,6 +416,23 @@ if (wanted('A')) {
   check('A11 At the shop is the shop', flat(await page.locator('.so-top__where-name').textContent()) === 'At the shop');
   errorsOf(page, 'A');
   await ctx.close();
+
+  // in a theme preview Shopify lays its own strip along the bottom of the screen: the buttons stay clear of it
+  {
+    const v = await visit();
+    await place(v.page);
+    await v.page.evaluate(() => {
+      const strip = document.createElement('div');
+      strip.id = 'PBarNextFrameWrapper';
+      strip.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:68px;z-index:2147483647;background:#fff';
+      document.body.append(strip);
+      window.dispatchEvent(new Event('resize'));
+    });
+    await settle(v.page, 300);
+    const clear = await v.page.evaluate(() => ({ bar: Math.round(document.querySelector('lair-stock .so-bar').getBoundingClientRect().bottom), strip: Math.round(document.getElementById('PBarNextFrameWrapper').getBoundingClientRect().top), sold: Math.round(document.querySelector('[data-act="sold"]').getBoundingClientRect().height) }));
+    check('A13 in a theme preview, Sold and Not sold sit above Shopify\'s strip, not under it', clear.bar <= clear.strip + 1 && clear.sold >= 64, clear);
+    await v.ctx.close();
+  }
 
   // the same page on a small phone and a wide screen
   for (const [name, size] of [['small', SMALL], ['wide', WIDE]]) {
@@ -941,6 +967,122 @@ if (wanted('G')) {
   check('G2 a lot in the list whose every part is markup shows them all as words', (flat(await v.page.locator('lair-stock dialog[open]').textContent()).match(/<script>window\.__xss=1<\/script>/g) || []).length >= 5, flat(await v.page.locator('lair-stock dialog[open]').textContent()));
   await safe(v.page, 'the list');
   errorsOf(v.page, 'G');
+  await v.ctx.close();
+}
+
+/* ============ H. What the separate review found ============ */
+if (wanted('H')) {
+  const slowLookups = (app, ms) => {
+    const handle = app.handle.bind(app);
+    app.handle = async (route) => {
+      if (/\/stock\/product$/.test(new URL(route.request().url()).pathname)) await new Promise((r) => setTimeout(r, ms));
+      return handle(route);
+    };
+    return app;
+  };
+
+  // 1. Undo while the lot's scan is still being looked up: the lot must not go once the look-up comes back
+  let lair = slowLookups(lairApp(), 2500);
+  let v = await visit({ shop: true, section: 'live', lair });
+  await place(v.page);
+  await scan(v.page, TICKET);
+  await settle(v.page, 200);
+  await tap(v.page, '[data-act="sold"]');
+  await settle(v.page, 300);
+  await tap(v.page, '[data-act="undo"]');
+  check('H1 (Undo tapped while the scan was still being looked up: the lot is back on the list)', (await lines(v.page)).length === 1 && !offCalls(lair).length, await lines(v.page));
+  await settle(v.page, 6000);
+  check('H1 a lot taken back while its scan was being looked up is never sent', !offCalls(lair).length && lair.state.things[4005].variant.stock === 9, offCalls(lair).map((c) => [c.status, c.body.lines]));
+  check('H1 and the list still has it, to send again', (await lines(v.page)).length === 1 && (await lines(v.page))[0].title === 'Event Ticket', await lines(v.page));
+  await tap(v.page, '[data-act="sold"]');
+  await settle(v.page, 700);
+  check('H1 tapped again, it goes once', offCalls(lair).filter((c) => c.status === 200).length === 1 && lair.state.things[4005].variant.stock === 8, offCalls(lair).map((c) => c.status));
+  errorsOf(v.page, 'H1');
+  await v.ctx.close();
+
+  // 2. A lot whose answer never came, a day on: the Lair says it may already be off the count
+  lair = lairApp();
+  v = await visit({ shop: true, section: 'live', lair });
+  await place(v.page);
+  await scan(v.page, CATAN);
+  await settle(v.page);
+  lair.state.stale = true;
+  await tap(v.page, '[data-act="sold"]');
+  await settle(v.page, 600);
+  await tap(v.page, '[data-act="held"]');
+  let sheet = flat(await v.page.locator('lair-stock dialog[open]').textContent());
+  check('H2 a lot that may already be off the count shows the Lair\'s words', sheet.includes('That lot may already be off the count. Check it in Shopify, then start a new one.'), sheet);
+  check('H2 and never says nothing has come off', !sheet.includes('Nothing in it has come off yet.'), sheet);
+  const ways = (await v.page.locator('lair-stock dialog[open] .so-sheet__actions button').allTextContents()).map(flat);
+  check('H2 the two ways out say what each means', JSON.stringify(ways) === JSON.stringify(["It's off the count: forget this lot", "It isn't: put it back on the list"]), ways);
+  await shot(v.page, 'h2-may-be-off');
+  await axe(v.page, 'the may-be-off sheet', 'lair-stock dialog[open]');
+  await tap(v.page, '[data-act="held-drop"]');
+  check('H2 forgetting it leaves nothing on the list and nothing waiting', (await lines(v.page)).length === 0 && !(await banner(v.page)).length, [await lines(v.page), await banner(v.page)]);
+  await v.ctx.close();
+
+  // 3. Two tabs of the page on one phone, both with a lot that hasn't gone: taken back in one, it must not go from the other
+  lair = lairApp();
+  lair.state.signal = 'down';
+  const a = await visit({ shop: true, section: 'live', lair });
+  await place(a.page, 'Oddity Alley');
+  await scan(a.page, TICKET);
+  await settle(a.page, 400);
+  await tap(a.page, '[data-act="sold"]');
+  await settle(a.page, 300);
+  const b = await visit({ shop: true, section: 'live', lair, context: a.ctx }); // the second tab reads the lot off the phone
+  await a.page.bringToFront();
+  await settle(a.page, 12500); // (the toast has gone: the list is the way to take it back)
+  await tap(a.page, '[data-act="list"]');
+  const waitingBack = a.page.locator('lair-stock dialog[open] [data-act="unsend"]').first();
+  check('H3 (the first tab lists the lot as still on the phone)', (await waitingBack.count()) === 1);
+  await waitingBack.click();
+  await waitingBack.click();
+  await settle(a.page, 400);
+  lair.state.signal = 'up';
+  await online(a.page);
+  await online(b.page);
+  await b.page.bringToFront();
+  await settle(b.page, 2500);
+  check('H3 a lot taken back in one tab is not sent by the other', !offCalls(lair).some((c) => c.status === 200) && lair.state.things[4005].variant.stock === 9, lair.state.calls.filter((c) => /stock\/(off|undo)$/.test(c.name)).map((c) => [c.name, c.status, c.got]));
+  check('H3 and neither tab still shows it waiting', !(await banner(b.page)).some((x) => x.includes('waiting')) && !(await banner(a.page)).some((x) => x.includes('waiting')), [await banner(a.page), await banner(b.page)]);
+  await a.ctx.close();
+
+  // 4. A page that isn't allowed to send (the lab logged out; a login that ran out) with a lot left on the phone by the live page
+  const leftOver = (id) => `(() => { try { localStorage.setItem('dg-stock-off-v1', JSON.stringify({ queue: [{ id: '${id}', event: '', outcome: 'sold', reason: null, note: null, at: Date.now(), lines: [{ code: '${CATAN}', variantId: '4001', title: 'Catan', qty: 1, stock: 5 }], status: 'waiting', tries: 0, tried: false, nextAt: 0, error: null }] })); } catch (e) {} })();`;
+  for (const [label, opts, app] of [
+    ['the lab with nobody logged in', { shop: false, section: 'live', customer: null }, lairApp({ who: 'nobody' })],
+    ['the lab with a login that has run out', { shop: false, section: 'live', customer: STAFF }, Object.assign(lairApp(), { expire: true })],
+  ]) {
+    if (app.expire) app.state.expired = true;
+    m.globalSettings.lair_mode = 'demo';
+    m.mockState.customer = opts.customer;
+    m.mockState.sectionSettings = { 'lair-stock': { stock: opts.section } };
+    const ctx = await browser.newContext({ viewport: PHONE, deviceScaleFactor: 2, isMobile: true, hasTouch: true, permissions: ['camera'] });
+    await ctx.addInitScript(READER);
+    await ctx.addInitScript(leftOver(`so-${'a'.repeat(32)}`));
+    await ctx.route(`**${API}/**`, (route) => app.handle(route));
+    const page = watch(await ctx.newPage());
+    await page.goto(`${BASE}/pages/stock`, { waitUntil: 'domcontentloaded', timeout: 60000 }); // (asked over and over, the page never goes quiet)
+    await settle(page, 3500);
+    const asked = app.state.calls.filter((c) => /stock\/(off|undo)$/.test(c.name)).length;
+    // (it waits 3 seconds before a second go, then longer each time: two in this while is that, hundreds was the bug)
+    check(`H4 ${label}: a lot left on the phone is not asked for over and over`, asked <= 2, asked);
+    check(`H4 ${label}: and nothing came off`, app.state.things[4001].variant.stock === 5);
+    await ctx.close();
+  }
+
+  // 6. 99 of one thing, then its other barcode: the page says it's full, and nothing is quietly lost
+  lair = lairApp();
+  lair.state.things[4001].variant.stock = 500;
+  v = await visit({ shop: true, section: 'live', lair });
+  await place(v.page);
+  await v.page.evaluate((code) => { for (let i = 0; i < 99; i += 1) document.querySelector('lair-stock').onCode(code); }, CATAN);
+  await settle(v.page, 500);
+  await scan(v.page, CATAN_CASE);
+  await settle(v.page, 500);
+  const full = await lines(v.page);
+  check('H6 the hundredth of one thing, scanned by its other barcode, is not quietly dropped: the page says 99 is the most', full.length === 1 && full[0].qty === 99 && (await said(v.page)) === "That's 99, the most of one thing in a lot.", [full, await said(v.page)]);
   await v.ctx.close();
 }
 

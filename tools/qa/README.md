@@ -517,7 +517,7 @@ quick and easy way to handle so it doesnt slow me up during markets". The theme'
 staff page with `?view=stock`), written from the contract's section 7 (`docs/contracts/lair-api-contract-v39-stock-off.md`).
 
 `DG_THEME=… [PORT=4996] [AXE=/path/to/axe.min.js] [OUT=dir] node tools/qa/round39-stock-off/stock.mjs [A|B|C|D|E|F|G …]`
-(about 200 checks, five minutes; exits 1 on a FAIL). It needs no Lair app and no camera:
+(about 220 checks, six minutes; exits 1 on a FAIL). It needs no Lair app and no camera:
 
 - **A stand-in Lair app** (`lairApp()` in the file) answers the stock routes as the contract says: the shop's count,
   never below zero, a lot under its key taken off once however often it's sent, all or nothing, undo. Its `signal` can
@@ -528,4 +528,6 @@ staff page with `?view=stock`), written from the contract's section 7 (`docs/con
   one `POST /stock/off` in the order tapped, no signal, a lost answer, Undo three ways, a lot the Lair refuses, the
   list, a hand scanner); C who may use it, a Lair app from before round 39, and a page that's ready before the Lair app
   answers; D two tabs on one phone; E no camera; F the staff page's link; G markup typed by staff, held in a QR code or
-  sent back by the Lair app shows as words.
+  sent back by the Lair app shows as words; H what the separate review found (15 Nov 2026): Undo while a lot's scans
+  are still being looked up, a lot that may already be off the count, a lot taken back in one of two tabs, a lab page
+  asked to send what it may not, and 99 of one thing scanned under two barcodes.

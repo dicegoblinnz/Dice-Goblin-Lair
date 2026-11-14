@@ -183,6 +183,10 @@ at the hall) is in the next morning's.
   back. Its numbers are what was scanned: what left the stall, whatever the count had.
 - **One a morning.** A lot that turns up after that morning's list has been written waits for the next morning's.
   Lots that were all taken back make no email.
+- **A lot is in one list.** One taken back after its list was written isn't in a later list: the count is put right
+  in Shopify and the page's list says who took it back, and the email already sent stays as it was. (The page offers
+  Undo straight after the tap and in today's list, both before the lot's list is written. Found by the separate
+  review, 15 Nov 2026, and left as it is.)
 - **Once.** The email is written once and kept with its key, so a try that may have gone is never followed by a second,
   different one. A try that fails is tried again by each run for 23 hours, then given up on (the status table's
   `stockOff` says why). The lots are on the page's list either way.
@@ -195,13 +199,28 @@ it on the staff page for staff. Its checks: `tools/qa/round39-stock-off/`.
 
 - **One screen, for a phone.** The camera stays on at the top, the lot being scanned is under it, and Sold and Not
   sold are at the bottom. A scan adds one; the same thing again adds another once the camera has lost sight of it, and
-  each line has its own minus and plus. Sold is one tap, with Undo offered straight after. Not sold asks why first.
+  each line has its own minus and plus. Only a barcode inside the frame counts, and of those the one nearest its
+  middle. Sold is one tap, with Undo offered straight after. Not sold asks why first. A hand scanner that types the
+  numbers and presses Enter works too, and so does typing them.
 - **Where you are** is asked once a day and remembered on the phone, with the last places a tap away.
-- **Slow or no signal.** A lot is saved on the phone the moment its button is tapped, and sent when the Lair can be
-  reached: the same key every time, so it never comes off twice. A scan that couldn't be looked up is looked up before
-  its lot is sent; one that turns out to be a thing that can't come off holds its lot back and says so.
+- **Slow or no signal.** The page is up and scanning before the Lair app has answered. A lot is saved on the phone
+  the moment its button is tapped, and sent when the Lair can be reached, in the order they were tapped: the same key
+  every time, so it never comes off twice. A scan that couldn't be looked up is looked up before its lot is sent; one
+  that turns out to be a thing that can't come off holds its lot back and says so. With no connection at all (the
+  phone says so itself) nothing is tried.
+- **Undo, whatever the signal.** A lot that never left the phone is forgotten. Any other may be off the count
+  whatever the phone heard back, so it's sent (again, under its key) and then taken back with `POST /stock/undo`,
+  before any lot tapped after it. A lot taken back while its scans are still being looked up is never sent.
+- **A lot the Lair refuses** is held, with the Lair's words on the things that can't come off, and can be sent without
+  them (under a new key), put back on the list or dropped. One the Lair answers 409 for may already be off the count:
+  the page never says it hasn't come off, and its two ways out say what each means (it's off: forget it; it isn't:
+  back on the list), for someone who has looked in Shopify.
+- **More than one tab of the page on a phone.** Each sends what the others left waiting, so nothing is lost when one
+  is closed, and a lot one of them has finished with or taken back is finished for all (the phone keeps their keys
+  for 8 days).
 - **The section's Stock setting.** Practice (the default): everything works and nothing is saved or taken off, on
-  the shop's real products where the Lair app answers and on made-up ones otherwise. Live: lots come off in Shopify.
-  With the booking system on Demo (the lab) it's always practice.
+  the shop's real products where the Lair app answers and on made-up ones otherwise (the lab with nobody logged in,
+  which says so). Live: lots come off in Shopify. With the booking system on Demo (the lab) it's always practice, and
+  a page on made-up things never sends a lot, even one the live page left waiting on the same phone.
 - **Before this round is live in the Lair app**, a practice page looks codes up through the till's
   `POST /proxy/till/product`, so the lab can be tried on the shop's real barcodes.
