@@ -79,14 +79,44 @@ it, and with it the parcel code (the email is the only place it's told).
   Needs `write_orders` (as round 25) and `write_discounts` (as the birthday codes).
 - The second order earns its own rolls as any order.
 
+## 4b. Refunds
+
+Mo, 15 Nov 2026: "The credit they gave is removed and if it was used to buy something nothing we can do about it. But
+ultimately the dice gets removed if refunded. And if it was used for credit that credit is removed instead."
+
+- The 10-minute run asks Shopify about orders with rolls left, paid in the last 60 days (Shopify's window for the
+  app's orders), each at most every 30 minutes, up to 100 a run: a cheap look at which have money back or are
+  cancelled, then those orders' lines as they stand (`currentQuantity`).
+- The order is counted again on what's left of it, with the roll size and double day it was paid on (`every_cents`,
+  `doubled`): the refunded lines' share comes off the points it was counted on, so an order nothing came back from
+  keeps its rolls exactly. A cancelled order keeps none. A refund of an amount with no items in it changes nothing.
+- The rolls it no longer earns come off the loyalty card. Rolls not rolled yet go first. If the card has fewer left
+  than that, the rest were rolled: the newest loyalty rolls made since the order was paid are taken back, and the
+  store credit they gave comes off their account, as much as is still there, never more (spent credit stays spent).
+  A prize still waiting to be given at the counter is no longer to give (`prizes.status` `taken back`). A roll taken
+  back stops counting as used, so it never eats into the card's later rolls.
+- The store credit is taken once: claimed before Shopify is asked. Shopify saying no is tried again by the 10-minute
+  run, 3 times, then staff are emailed ("Store credit to take back by hand"); no answer at all may have gone through,
+  so staff are emailed at once and it's never tried again.
+- The order is tagged `Rolls taken back` with a line on its note: `Refund: 2 d20 rolls taken back (1 rolled already).
+  $15.00 of the store credit it gave was taken back.` (or `…; the rest was spent.`, or `The $15.00 store credit it
+  gave was spent, so none was taken back.`, or `Refund: a d20 roll taken back, not rolled yet.`).
+- An order refunded before its email goes gets none; one partly refunded is told the rolls it still earns.
+
 ## 5. Data
 
 `order_rolls`: one row per order that earned rolls: `order_id` (key), `customer_id`, `order_name`, `counted` and
 `boxes` (cents), `doubled`, `rolls`, `paid_at`, `created_at`, `parcel_ok`, `parcel_code` (unique), `parcel_ends`,
 `parcel_tried_at`, `parcel_order_id`, `parcel_order_name`, `parcel_tagged_at`, `emailed_at`, `follow_at` (the email's
 follow-up under way: another run leaves it alone for 5 minutes, so the 10-minute run never sends it without its parcel),
-`status` (`active`).
-ordersPaid's answer adds `orderRolls: { rolls?, parcel? }`; the 10-minute run's `orderRolls: { emails, tags }`.
+`status` (`active`), `every_cents` (the roll size it was counted on), `taken_back` (rolls refunds took back) and
+`refund_checked_at`.
+`roll_takebacks`: one row per refund that took rolls back: `id`, `order_id`, `customer_id`, `order_name`, `rolls`,
+`unrolled`, `rolled`, `credit_asked` and `credit_taken` (cents), `status` (`credit`, `done` or `check`), `tries`,
+`note`, `claimed_at`, `noted_at`. `member_rolls` gains `taken_back_at` and `taken_back_id`.
+ordersPaid's answer adds `orderRolls: { rolls?, parcel? }`; the 10-minute run's `orderRolls: { emails, tags, takenBack? }`.
+Needs `read_store_credit_accounts` and `write_store_credit_account_transactions` (as round 9's staff page) for the
+store credit, and `write_orders` for the order's line.
 
 ## 6. The theme's side
 

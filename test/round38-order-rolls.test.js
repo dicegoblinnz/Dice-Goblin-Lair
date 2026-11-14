@@ -65,6 +65,11 @@ let codesMade;
 let marked;
 let credited;
 let reached;
+// Shopify's side of a refund: each order's lines as they stand now (refund()), customers' store credit and what's
+// taken off it
+let refunds;
+let balances;
+let debits;
 const realFetch = globalThis.fetch;
 
 async function call(method, path, body, customer = '', extraHeaders = {}) {
@@ -163,6 +168,17 @@ beforeEach(async () => {
   };
   lair.shopify.gwMarkOrder = async (orderId, tag, paragraph) => {
     marked.push([orderId, tag, paragraph]);
+  };
+  refunds = new Map();
+  balances = new Map();
+  debits = [];
+  // only the orders with money back or cancelled come back, as Shopify's screen of them does
+  lair.shopify.orderRollRefunds = async (ids) => ids.map((id) => ({ id, ...refunds.get(String(id).split('/').pop()) })).filter((o) => o.lines);
+  lair.shopify.storeCreditBalance = async (id) => balances.get(String(id)) ?? 0;
+  lair.shopify.changeStoreCredit = async (id, cents) => {
+    debits.push([String(id), cents]);
+    balances.set(String(id), (balances.get(String(id)) ?? 0) + cents);
+    return { id: 'gid://shopify/StoreCreditAccountDebitTransaction/1', balanceAfter: balances.get(String(id)) };
   };
   lair.accountEmail = async () => ({ fetched: false, email: '' });
   lair.checkGiftCodes = async () => 0;
@@ -483,4 +499,205 @@ test('a same-parcel code is never guessable: six of 31 letters and numbers from 
   // a fixed source gives a fixed code, skipping bytes past the last whole run of the alphabet
   const fixed = (n) => Uint8Array.from({ length: n }, (_, i) => (i === 0 ? 250 : i));
   assert.equal(parcelCode(fixed), 'PARCEL-BCDEFG');
+});
+
+/* ---------------- refunds (Mo, 15 Nov 2026) ---------------- */
+// "The credit they gave is removed and if it was used to buy something nothing we can do about it. But ultimately the
+// dice gets removed if refunded. And if it was used for credit that credit is removed instead."
+
+/** Shopify once part of an order is refunded: back maps a line's id to how many of it came back ('all': everything) */
+const refund = (n, lines, back = 'all', { cancelled = false } = {}) => {
+  refunds.set(String(n), {
+    cancelled,
+    lines: lines.map((l) => ({ ...l, current_quantity: Math.max(0, l.quantity - (back === 'all' ? l.quantity : back[l.id] || 0)) })),
+  });
+};
+const takebacks = () => lair.sql.exec('SELECT * FROM roll_takebacks ORDER BY created_at, rowid').toArray();
+/** The 10-minute run, once each order is due to be asked about again (every 30 minutes) */
+const check = async (ms = 31 * MIN) => {
+  nowIs(Date.now() + ms);
+  const done = await lair.orderRollsUpkeep(Date.now());
+  await settle();
+  return done;
+};
+
+test('a refund takes back the rolls it earned (Mo: "ultimately the dice gets removed if refunded"): counted again on what\'s left of the order, the ones not rolled yet first', async () => {
+  const lines = [dice(26011, 250), dice(26012, 250)];
+  ok(await paid(webOrder(2601, lines)));
+  assert.equal((await card(MIA)).rolls.available, 2);
+  // Shopify is asked: nothing refunded, nothing changes
+  assert.equal(await check(), null);
+  assert.equal((await card(MIA)).rolls.available, 2);
+  // half of it comes back: the $250 left is one roll
+  refund(2601, lines, { 26012: 1 });
+  assert.deepEqual(await check(), { takenBack: 1 });
+  let mine = await card(MIA);
+  assert.deepEqual([mine.rolls.available, mine.rolls.earned.orders], [1, 1]);
+  assert.deepEqual([rowOf(2601).rolls, rowOf(2601).taken_back], [1, 1]);
+  assert.deepEqual(debits, [], 'a roll not rolled yet is simply gone: no store credit moves');
+  // the order says so in Shopify admin, where the refund was made
+  assert.deepEqual(marked.at(-1), ['gid://shopify/Order/2601', 'Rolls taken back', 'Refund: a d20 roll taken back, not rolled yet.']);
+  // asked again: nothing more comes back, however often
+  assert.equal(await check(), null);
+  assert.equal(await check(), null);
+  // then the rest of it
+  refund(2601, lines);
+  assert.deepEqual(await check(), { takenBack: 1 });
+  mine = await card(MIA);
+  assert.equal(mine.rolls.available, 0);
+  assert.equal(mine.rolls.earned.orders, undefined, 'no rolls from orders: the card reads as it did before round 38');
+  // an order with no rolls left is never asked about again
+  const asked = [];
+  lair.shopify.orderRollRefunds = async (ids) => {
+    asked.push(...ids);
+    return [];
+  };
+  assert.equal(await check(), null);
+  assert.deepEqual(asked, []);
+});
+
+test('rolled already (Mo: "if it was used for credit that credit is removed instead"): the store credit those rolls gave comes back, and they stop counting as used, so later rolls are untouched', async () => {
+  const lines = [dice(26021, 400)];
+  ok(await paid(webOrder(2602, lines)));
+  const first = ok(await roll(MIA)).prize.amount;
+  ok(await roll(MIA, 'sure'));
+  balances.set(MIA, 4500);
+  assert.equal((await card(MIA)).rolls.available, 0);
+  refund(2602, lines);
+  assert.deepEqual(await check(), { takenBack: 2 });
+  assert.deepEqual(debits, [[MIA, -(first + 1000)]]);
+  const [tb] = takebacks();
+  assert.deepEqual([tb.rolls, tb.unrolled, tb.rolled, tb.credit_asked, tb.credit_taken, tb.status], [2, 0, 2, first + 1000, first + 1000, 'done']);
+  const after = await card(MIA);
+  assert.deepEqual([after.rolls.available, after.rolls.used], [0, 0]);
+  // a roll the card earns later is theirs: the rolls taken back never eat into it
+  lair.sql.exec("INSERT INTO loyalty_grants (id, customer_id, kind, count, created_at) VALUES ('g1', ?, 'staff', 1, ?)", MIA, Date.now());
+  assert.equal((await card(MIA)).rolls.available, 1);
+  assert.equal(marked.at(-1)[2], `Refund: 2 d20 rolls taken back (2 rolled already). $${((first + 1000) / 100).toFixed(2)} of the store credit they gave was taken back.`);
+  // and it's done once
+  assert.equal(await check(), null);
+  assert.equal(debits.length, 1);
+});
+
+test('spent already (Mo: "if it was used to buy something nothing we can do about it"): only what\'s left of their store credit comes back, never more, and a prize not given yet isn\'t given', async () => {
+  const lines = [dice(26031, 600)];
+  ok(await paid(webOrder(2603, lines)));
+  ok(await roll(MIA, 'sure'));
+  // Shopify couldn't add the next one, so it waits to be given at the counter
+  lair.shopify.creditCustomer = async () => {
+    throw new Error('Shopify is down');
+  };
+  ok(await roll(MIA, 'sure'));
+  assert.equal(lair.memberPrizes(MIA, { pending: true }).length, 1);
+  // they've spent most of the $10 already
+  balances.set(MIA, 400);
+  refund(2603, lines);
+  assert.deepEqual(await check(), { takenBack: 3 });
+  assert.deepEqual(debits, [[MIA, -400]]);
+  const [tb] = takebacks();
+  assert.deepEqual([tb.rolls, tb.unrolled, tb.rolled, tb.credit_asked, tb.credit_taken], [3, 1, 2, 1000, 400]);
+  assert.equal(lair.memberPrizes(MIA, { pending: true }).length, 0, 'the prize waiting at the counter is no longer to give');
+  assert.equal(marked.at(-1)[2], 'Refund: 3 d20 rolls taken back (2 rolled already). $4.00 of the $10.00 store credit they gave was taken back; the rest was spent.');
+  // none left at all: nothing is taken, and the order says why
+  ok(await paid(webOrder(2604, [dice(26041, 200)])));
+  lair.shopify.creditCustomer = async () => true;
+  ok(await roll(MIA, 'sure'));
+  balances.set(MIA, 0);
+  refund(2604, [dice(26041, 200)]);
+  assert.deepEqual(await check(), { takenBack: 1 });
+  assert.deepEqual(debits, [[MIA, -400]], 'nothing more taken');
+  assert.equal(marked.at(-1)[2], 'Refund: a d20 roll taken back (rolled already). The $10.00 store credit it gave was spent, so none was taken back.');
+});
+
+test('counted as it was paid: a double day\'s order with a Magic box keeps that day\'s doubles and roll size when part of it comes back, and a cancelled order keeps none', async () => {
+  nowIs(DOUBLE);
+  const lines = [box(26051, 380), dice(26052, 20, 2)];
+  // ($380 + $40) twice over: 840 of $200s, 4 rolls
+  ok(await paid(webOrder(2605, lines)));
+  assert.equal(rowOf(2605).rolls, 4);
+  // the theme's roll size changes after; the order is counted on its own
+  lair.rulesCache = rulesFromSettings({ ...SETTINGS, lair_rolls_every: 100, lair_rolls_double_days: '' }, ROOMS, []);
+  // one of the two dice back: $800 of points is still 4
+  refund(2605, lines, { 26052: 1 });
+  assert.equal(await check(), null);
+  assert.equal(rowOf(2605).rolls, 4);
+  // both: $760 is 3
+  refund(2605, lines, { 26052: 2 });
+  assert.deepEqual(await check(), { takenBack: 1 });
+  assert.equal(rowOf(2605).rolls, 3);
+  // cancelled: none, whatever its lines say
+  refund(2605, lines, {}, { cancelled: true });
+  assert.deepEqual(await check(), { takenBack: 3 });
+  assert.equal((await card(MIA)).rolls.available, 0);
+});
+
+test('the credit comes back once: Shopify saying no is tried again by the 10-minute run, and an answer that never came is left for staff to check, never tried twice', async () => {
+  const told = [];
+  lair.notifyStaff = (subject, mail) => told.push([subject, mail]);
+  const lines = [dice(26061, 200)];
+  ok(await paid(webOrder(2606, lines)));
+  ok(await roll(MIA, 'sure'));
+  balances.set(MIA, 1000);
+  let tries = 0;
+  const realChange = lair.shopify.changeStoreCredit;
+  lair.shopify.changeStoreCredit = async () => {
+    tries += 1;
+    throw Object.assign(new Error('Try again later'), { refused: true });
+  };
+  refund(2606, lines);
+  assert.deepEqual(await check(), { takenBack: 1 });
+  assert.deepEqual([tries, takebacks()[0].status], [1, 'credit']);
+  assert.equal(marked.length, 0, 'the order\'s line waits until the credit is settled');
+  // the next run tries again, and it goes through
+  lair.shopify.changeStoreCredit = realChange;
+  await check();
+  assert.deepEqual(debits, [[MIA, -1000]]);
+  assert.equal(takebacks()[0].status, 'done');
+  assert.equal(marked.length, 1);
+  // no answer at all: it may have gone through, so staff look, and it's never tried again
+  ok(await paid(webOrder(2607, [dice(26071, 200)])));
+  ok(await roll(MIA, 'sure'));
+  balances.set(MIA, 1000);
+  lair.shopify.changeStoreCredit = async () => {
+    tries += 1;
+    throw new Error('The operation timed out');
+  };
+  refund(2607, [dice(26071, 200)]);
+  await check();
+  await check();
+  assert.equal(tries, 2);
+  assert.equal(takebacks()[1].status, 'check');
+  assert.equal(told.length, 1);
+  assert.equal(told[0][1].title, 'Store credit to take back by hand');
+  assert.deepEqual(told[0][1].details.slice(0, 2), [['Order', '#2607'], ['Store credit to take back', '$10.00']]);
+  // and three refusals in a row go to staff too
+  ok(await paid(webOrder(2608, [dice(26081, 200)])));
+  ok(await roll(MIA, 'sure'));
+  lair.shopify.changeStoreCredit = async () => {
+    tries += 1;
+    throw Object.assign(new Error('Access denied'), { refused: true });
+  };
+  refund(2608, [dice(26081, 200)]);
+  await check();
+  await check();
+  await check();
+  await check();
+  assert.equal(tries, 5);
+  assert.equal(takebacks()[2].status, 'check');
+  assert.equal(told.length, 2);
+});
+
+test('an order refunded before its email goes gets none, and one only part refunded is told the rolls it still earned', async () => {
+  const mail = captureEmails();
+  // the Lair stopped before its background work
+  lair.orderRollsFollowUp = async () => false;
+  ok(await paid(webOrder(2609, [dice(26091, 200)])));
+  ok(await paid(webOrder(2610, [dice(26101, 200), dice(26102, 200)])));
+  delete lair.orderRollsFollowUp;
+  refund(2609, [dice(26091, 200)]);
+  refund(2610, [dice(26101, 200), dice(26102, 200)], { 26102: 1 });
+  const done = await check(5 * MIN);
+  assert.deepEqual(done, { emails: 1, tags: 0, takenBack: 2 });
+  const emails = await mail.ours();
+  assert.deepEqual(emails.map((m) => m.subject), ['A d20 roll for your order #2610']);
 });

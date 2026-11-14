@@ -114,7 +114,7 @@ import { gmChangeUntil, gmHoursOf } from './core.js';
 // Round 37 (14 Nov 2026): the GM perk, the staff slot and a game's books (src/gm-perk.js, contract v37-gm-perk)
 import { GM_PERK_COLUMNS, GM_PERK_TABLES, gmPerkMethods } from './gm-perk.js';
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (contract v38-order-rolls)
-import { ORDER_ROLL_TABLES, orderRollMethods } from './order-rolls.js';
+import { ORDER_ROLL_COLUMNS, ORDER_ROLL_TABLES, orderRollMethods } from './order-rolls.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1228,8 +1228,16 @@ export class Lair {
       }
     }
     for (const statement of GM_PERK_TABLES) this.sql.exec(statement);
-    // Round 38: each online order's rolls, its same-parcel code and its second order (src/order-rolls.js)
+    // Round 38: each online order's rolls, its same-parcel code and its second order, and what refunds took back
+    // (src/order-rolls.js); then the columns that mark a loyalty roll a refund took back
     for (const statement of ORDER_ROLL_TABLES) this.sql.exec(statement);
+    for (const [table, column, type] of ORDER_ROLL_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -7560,7 +7568,9 @@ export class Lair {
     // rolls.waiting), so a card from before reads as it did
     const orders = this.orderRollsEarned(id);
     if (orders) earned.orders = orders;
-    const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty'", id).one().n;
+    // (round 38: a roll a refund took back no longer counts as used: Mo, "if it was used for credit that credit is
+    // removed instead", so it never eats into the card's later rolls)
+    const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty' AND taken_back_at IS NULL", id).one().n;
     const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes + orders - used);
     const rolls = { available, earned, used, ...(welcome.waiting ? { waiting: welcome.waiting } : {}) };
     // round 29: how the card looks (12 slots, Gobgob's 2 on every card) comes with it; how it counts doesn't change

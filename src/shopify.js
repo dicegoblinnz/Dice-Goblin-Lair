@@ -1979,6 +1979,48 @@ export class ShopifyAdmin {
     return result.codeDiscountNode.id;
   }
 
+  /**
+   * Round 38, refunds (src/order-rolls.js): of these orders (admin GraphQL ids), the ones with money back or cancelled,
+   * each with its lines as they stand: [{ id, cancelled, lines }], each line in the orders/paid webhook's shape
+   * (title, variant_title, vendor, gift_card, price, quantity, discount_allocations) plus current_quantity, what's left
+   * of it after refunds. A cheap look at all of them first, then the lines of only those, 10 orders a call (Shopify's
+   * query cost). Orders past Shopify's window for the app (60 days without read_all_orders) don't come back.
+   */
+  async orderRollRefunds(orderIds) {
+    const ids = [...new Set((orderIds || []).map(String))].slice(0, 250);
+    if (!ids.length) return [];
+    const screen = await this.graphql(
+      'query LairRollRefundScreen($ids: [ID!]!) { nodes(ids: $ids) { ... on Order { id cancelledAt displayFinancialStatus } } }',
+      { ids },
+    );
+    const changed = (screen.nodes || [])
+      .filter((o) => o?.id && (o.cancelledAt || ['PARTIALLY_REFUNDED', 'REFUNDED'].includes(o.displayFinancialStatus)))
+      .map((o) => o.id);
+    const money = (set) => set?.shopMoney?.amount ?? '0';
+    const orders = [];
+    for (let i = 0; i < changed.length; i += 10) {
+      const data = await this.graphql(
+        `query LairRollRefundLines($ids: [ID!]!) { nodes(ids: $ids) { ... on Order { id cancelledAt
+          lineItems(first: 50) { nodes { title variantTitle vendor isGiftCard quantity currentQuantity
+            originalUnitPriceSet { shopMoney { amount } } discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } } } }`,
+        { ids: changed.slice(i, i + 10) },
+      );
+      for (const o of data.nodes || []) {
+        if (!o?.id) continue;
+        orders.push({
+          id: o.id,
+          cancelled: Boolean(o.cancelledAt),
+          lines: (o.lineItems?.nodes || []).map((l) => ({
+            title: l.title, variant_title: l.variantTitle, vendor: l.vendor, gift_card: l.isGiftCard === true, price: money(l.originalUnitPriceSet),
+            quantity: l.quantity, current_quantity: l.currentQuantity,
+            discount_allocations: (l.discountAllocations || []).map((d) => ({ amount: money(d.allocatedAmountSet) })),
+          })),
+        });
+      }
+    }
+    return orders;
+  }
+
   /** Where Shopify currently sends orders/paid for this app */
   async webhookUris() {
     const data = await this.graphql('query Hooks { webhookSubscriptions(first: 25, topics: [ORDERS_PAID]) { nodes { id uri } } }');
