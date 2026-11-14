@@ -6,7 +6,9 @@
 // 2. the home page's Black Friday deals, under On tonight (#black-friday);
 // 3. the dice deal as Shopify gives it that weekend, "Black Friday: buy any dice, get one free": cards, the line under a
 //    dice's price and the cart count dice in twos, and the cart says free only once that discount took money off.
-// Off, everything is as it was: no banner, no link, no section, and the usual buy 2, get the 3rd free.
+// Off, everything is as it was: no banner, no link, no section, and the usual buy 2, get the 3rd free. Before it starts,
+// Black Friday is coming (Mo: "put a banner up saying black Friday deals coming Friday"): the banner with its date, the
+// link and the deals saying when they start, and the dice as usual.
 // Usage: DG_THEME=/path/to/theme [PORT=4997] node tools/qa/black-friday/theme.mjs
 process.env.TZ = 'Pacific/Auckland';
 
@@ -29,7 +31,7 @@ const count = (h, re) => (h.match(re) || []).length;
 {
   const on = await html('/bf-home');
   const off = await html('/bf-home-off');
-  const sash = on.match(/<span class="home-lid__sash" aria-hidden="true"><span class="bf-ribbon">([^<]*)<\/span><\/span>/);
+  const sash = on.match(/<span class="home-lid__sash" aria-hidden="true"><span class="bf-ribbon"><span>([^<]*)<\/span><\/span><\/span>/);
   ok('on: a banner across Gobgob says Black Friday, beside him in the lid, hidden from screen readers (the link says it in words)', sash && sash[1] === 'Black Friday' && on.indexOf('home-lid__gobgob') < on.indexOf('home-lid__sash') && on.indexOf('home-lid__sash') < on.indexOf('home-lid__box'));
   const link = on.match(/<p class="home-lid__deals">\s*<a class="bf-ribbon bf-ribbon--link" href="([^"]*)">\s*<span>([^<]*)<\/span>/);
   ok('on: "Check out our Black Friday deals" in the gold lid goes to #black-friday', link && link[1] === '#black-friday' && link[2] === 'Check out our Black Friday deals'
@@ -54,19 +56,31 @@ const count = (h, re) => (h.match(re) || []).length;
   ok('on: the deals say what Shopify and the Lair app give', deals[0]?.info.includes('the cheaper of each two is free') && deals[1]?.info.includes('a d20 roll for every $100, not $200') && deals[2]?.info.includes("one's free with each deck"));
   // Shopify still prints the section's empty wrapper (div.shopify-section.section-home-bf), which takes no room
   ok('off: no banner, no link in the lid, no deals section, nothing for the editor either', !/home-lid__sash|home-lid__deals|class="home-bf|id="black-friday"|bf-ribbon/.test(off));
+
+  // Black Friday is coming (Mo, 15 Nov 2026: "put a banner up saying black Friday deals coming Friday")
+  const soon = await html('/bf-home-soon');
+  const soonSash = soon.match(/<span class="home-lid__sash" aria-hidden="true"><span class="bf-ribbon bf-ribbon--two"><span>([^<]*)<\/span><small>([^<]*)<\/small><\/span><\/span>/);
+  ok('coming: the banner across Gobgob says Black Friday, Coming Fri 27 Nov under it', soonSash && soonSash[1] === 'Black Friday' && soonSash[2] === 'Coming Fri 27 Nov', soonSash ? soonSash.slice(1).join(' / ') : 'none');
+  const soonLink = soon.match(/<p class="home-lid__deals">\s*<a class="bf-ribbon bf-ribbon--link" href="([^"]*)">\s*<span>([^<]*)<\/span>/);
+  ok('coming: the link in the lid says "Black Friday deals coming Friday" and goes to the deals', soonLink && soonLink[1] === '#black-friday' && soonLink[2] === 'Black Friday deals coming Friday');
+  ok('coming: the deals show, saying when they start', /id="black-friday"/.test(soon) && text(main(soon)).includes('Coming Friday 27 November, until Monday 30th') && !text(main(soon)).includes('Friday 27 to Monday 30 November') && count(soon, /class="piece piece--\w+ home-bf__deal"/g) === 3);
+  const soonCards = [...main(await html('/bf-dice-collection-soon')).matchAll(/<span class="badge badge--sale">([^<]*)<\/span>/g)].map((x) => x[1]);
+  ok('coming: the dice keep the usual deal, "3rd free", until it starts', soonCards.length === 3 && soonCards.every((b) => b === '3rd free'), String(soonCards));
+  const both = await html('/bf-home-both');
+  ok('both ticked: Black Friday is on wins (one line on the banner, the deals link, the dates)', /<span class="bf-ribbon"><span>Black Friday<\/span><\/span>/.test(both) && !/bf-ribbon--two/.test(both) && both.includes('<span>Check out our Black Friday deals</span>') && text(main(both)).includes('Friday 27 to Monday 30 November'));
 }
 
 /* ---- the home page in a browser: the banner never widens the page, and the link lands on the deals ---- */
 {
   const browser = await chromium.launch();
-  for (const width of [360, 390, 1440]) {
+  for (const [width, path] of [[360, '/bf-home'], [390, '/bf-home'], [1440, '/bf-home'], [360, '/bf-home-soon'], [390, '/bf-home-soon'], [1440, '/bf-home-soon']]) {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e.message).slice(0, 160)));
-    await page.goto(`${base}/bf-home`, { waitUntil: 'networkidle' });
+    await page.goto(`${base}${path}`, { waitUntil: 'networkidle' });
     await page.waitForTimeout(900); // the dice's tumble
     const wide = await page.evaluate(() => document.documentElement.scrollWidth);
-    ok(`${width}px: the page is still ${width}px wide with the banner on Gobgob`, wide === width, `${wide}px`);
+    ok(`${path} ${width}px: the page is still ${width}px wide with the banner on Gobgob`, wide === width, `${wide}px`);
     const box = await page.evaluate(() => {
       const gob = document.querySelector('.home-lid__gobgob').getBoundingClientRect();
       const r = document.querySelector('.home-lid__sash .bf-ribbon').getBoundingClientRect();
@@ -75,7 +89,7 @@ const count = (h, re) => (h.match(re) || []).length;
     const [gl, gt, gr, gb] = box.gob;
     const [rl, rt, rr, rb] = box.r;
     const midY = (rt + rb) / 2;
-    ok(`${width}px: the banner is across Gobgob, below his face (its middle 45-75% of the way down him)`, rl < gr && rr > gl && midY > gt + (gb - gt) * 0.45 && midY < gt + (gb - gt) * 0.75, JSON.stringify(box));
+    ok(`${path} ${width}px: the banner is across Gobgob, below his face (its middle 45-75% of the way down him), at most a fifth wider than him`, rl < gr && rr > gl && midY > gt + (gb - gt) * 0.45 && midY < gt + (gb - gt) * 0.75 && rr - rl <= (gr - gl) * 1.2, JSON.stringify(box));
     if (width === 390) {
       await page.click('.home-lid__deals a');
       await page.waitForTimeout(600);
@@ -84,9 +98,9 @@ const count = (h, re) => (h.match(re) || []).length;
         const header = document.querySelector('header, .header, [data-header]')?.getBoundingClientRect();
         return { top: h.top, header: header ? header.bottom : 0, hash: location.hash };
       });
-      ok('390px: the link jumps to the deals, their heading just under the sticky header', landed.hash === '#black-friday' && landed.top >= landed.header - 1 && landed.top < landed.header + 80, JSON.stringify(landed));
+      ok(`${path} 390px: the link jumps to the deals, their heading just under the sticky header`, landed.hash === '#black-friday' && landed.top >= landed.header - 1 && landed.top < landed.header + 80, JSON.stringify(landed));
     }
-    ok(`${width}px: no script errors`, errors.length === 0, errors.join(' | '));
+    ok(`${path} ${width}px: no script errors`, errors.length === 0, errors.join(' | '));
     await page.close();
   }
   await browser.close();

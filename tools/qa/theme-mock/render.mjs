@@ -743,9 +743,9 @@ PAGES['/cart-r38-sleeves-off'] = r38CartPage(r38Cart([
    twos under Shopify's "Black Friday: buy any dice, get one free", a banner across Gobgob and the deals under On
    tonight. Three dice at three prices for the cart's suggestions, and carts as Shopify prices them that weekend: the
    cheapest dice of each two free, by that discount ---- */
-const bfSettings = { ...globalSettings, black_friday_on: true };
+const bfSettings = { ...globalSettings, black_friday_on: true, black_friday_soon: false };
 // off as the live theme has it, whatever the theme being checked (the lab has it on)
-const bfOff = { ...globalSettings, black_friday_on: false };
+const bfOff = { ...globalSettings, black_friday_on: false, black_friday_soon: false };
 const bfDie = (handle, title, price) => product(handle, title, 'Dice Goblin NZ', price, price, null, true, 6, 1000, 1000, { type: 'Dice', tags: ['Dice'] });
 export const bfDice = [bfDie('bf-galaxy-dice', 'Galaxy Dice Set', 50), bfDie('bf-ember-dice', 'Ember Dice Set', 30), bfDie('bf-moss-dice', 'Moss Dice Set', 20)];
 collections['bf-dice'] = coll('bf-dice', 'Dice and accessories', bfDice, 3);
@@ -789,6 +789,13 @@ Object.assign(PAGES, {
   }),
   '/bf-home': () => renderPage('index', { settings: bfSettings }),
   '/bf-home-off': () => renderPage('index', { settings: bfOff }),
+  // Black Friday is coming (Mo, 15 Nov 2026: "put a banner up saying black Friday deals coming Friday"), and both ticked
+  '/bf-home-soon': () => renderPage('index', { settings: { ...bfOff, black_friday_soon: true } }),
+  '/bf-home-both': () => renderPage('index', { settings: { ...bfSettings, black_friday_soon: true } }),
+  '/bf-dice-collection-soon': () => renderPage('collection', {
+    collection: { ...collections['bf-dice'], filters: [], tags: [], all_tags: [], sort_by: '' }, settings: { ...bfOff, black_friday_soon: true },
+    request: bfRequest('collection', '/collections/bf-dice'), template: { name: 'collection', suffix: null },
+  }),
 });
 
 /* ---- round 25, Games Workshop ordered in (31 Oct 2026): kits on the shelf, ordered in and with one left, and a cart
