@@ -116,6 +116,8 @@ import { GM_PERK_COLUMNS, GM_PERK_TABLES, gmPerkMethods } from './gm-perk.js';
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (contract v38-order-rolls)
 import { ORDER_ROLL_COLUMNS, ORDER_ROLL_TABLES, orderRollMethods } from './order-rolls.js';
 import { COMMANDER_DEAL_TABLES, commanderDealMethods } from './commander-deal.js';
+// Round 39: Stock off: lots scanned off the shop's count at a market or in the shop, with no order (src/stock-off.js)
+import { STOCK_OFF_TABLES, stockOffMethods } from './stock-off.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1159,6 +1161,8 @@ export class Lair {
     for (const statement of GW_WEEK_TABLES) this.sql.exec(statement);
     // Round 30: store credit gifts from one member to another (src/credit-gifts.js), made when missing
     for (const statement of CREDIT_GIFT_TABLES) this.sql.exec(statement);
+    // Round 39: Stock off's lots and the owner's lists (src/stock-off.js)
+    for (const statement of STOCK_OFF_TABLES) this.sql.exec(statement);
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -2094,8 +2098,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2195,6 +2199,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'gw' && b === 'find' && !c) return json(this.gwFind(url, who));
       if (request.method === 'GET' && a === 'gw' && b === 'receiving' && !c) return json(this.gwReceiving(who));
       if (request.method === 'GET' && a === 'gw' && b === 'dates' && !c) return json(await this.gwDates(who));
+      // Round 39: Stock off (src/stock-off.js): the page's start, and a day's lots
+      if (request.method === 'GET' && a === 'stock' && !b) return json(this.stockOffStart(who));
+      if (request.method === 'GET' && a === 'stock' && b === 'log' && !c) return json(this.stockOffLog(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
@@ -2314,6 +2321,10 @@ export class Lair {
       if (a === 'till' && b === 'pay' && !c) return json(await this.tillPay(body, who, client));
       if (a === 'till' && b === 'pay' && c === 'cancel' && !d) return json(this.tillPayCancel(body, who));
       if (a === 'till' && b === 'paid' && !c) return json(await this.tillPaid(body, who));
+      // Round 39: Stock off (src/stock-off.js): a scanned code, a lot off the shop's count, and a lot taken back
+      if (a === 'stock' && b === 'product' && !c) return json(await this.stockOffProduct(body, who));
+      if (a === 'stock' && b === 'off' && !c) return json(await this.stockOffApply(body, who));
+      if (a === 'stock' && b === 'undo' && !c) return json(await this.stockOffUndo(body, who));
       // Round 9, team: helpers, and store credit and emails from a member's page
       if (a === 'team' && !b) return json(await this.addHelper(body, who));
       // Round 17: GM credit for staff (the team's setting), and each person's hours
@@ -11245,6 +11256,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not add new Commander decks to the free sleeves deal', error);
     }
+    // Round 39 (src/stock-off.js): the owner's list of what came off the shop's count, each morning from 8am
+    try {
+      const stockOff = await this.stockOffUpkeep(Date.now());
+      if (stockOff) result.stockOff = stockOff;
+    } catch (error) {
+      console.error("Lair: could not send the owner's Stock off list", error);
+    }
     // Round 30 (src/credit-gifts.js): store credit gifts whose answer Shopify lost are looked for, and finished
     try {
       const gifts = await this.creditGiftUpkeep(Date.now());
@@ -11512,6 +11530,8 @@ Object.assign(Lair.prototype, creditPayMethods);
 Object.assign(Lair.prototype, changeMethods);
 // Round 37: the GM perk, the staff slot and a game's books (src/gm-perk.js)
 Object.assign(Lair.prototype, gmPerkMethods);
+// Round 39: Stock off
+Object.assign(Lair.prototype, stockOffMethods);
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)
 Object.assign(Lair.prototype, orderRollMethods);
 // Round 38, part 2: new Commander decks join the free sleeves deal by themselves (src/commander-deal.js)
