@@ -1194,10 +1194,37 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // Round 29: "Email a reminder two days before each booking" (src/booking-reminders.js): on only once the live
     // theme's settings say true, so a Lair deployed before its theme (no key yet) sends none
     bookingReminders: settings.lair_booking_reminders === true,
+    // Round 38: d20 rolls on online orders (src/order-rolls.js): on only once the live theme's settings say true, like
+    // the reminders above; a roll for every $ (200 when it's empty), and the double days, when every dollar counts double
+    rolls: {
+      on: settings.lair_order_rolls === true,
+      every: Number(settings.lair_rolls_every) > 0 ? Number(settings.lair_rolls_every) : 200,
+      doubleDays: parseDoubleDays(settings.lair_rolls_double_days),
+    },
     prices,
     rooms: builtRooms,
     events,
   };
+}
+
+/**
+ * Round 38: the theme's double days ("2026-11-27 to 2026-11-30, 2026-12-26"): days or ranges of days in the shop's
+ * time zone, split by commas, semicolons or new lines, each range "from to to" (or "from..to"). A part that isn't one is
+ * left out. Returns [[from, to], …] as day keys, earliest first in each pair; at most 50.
+ */
+export function parseDoubleDays(text) {
+  const real = (key) => {
+    const ms = Date.parse(`${key}T00:00:00Z`);
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === key;
+  };
+  const days = [];
+  for (const part of String(text ?? '').split(/[,;\n]+/)) {
+    const m = part.trim().match(/^(\d{4}-\d{2}-\d{2})(?:\s*(?:to|\.\.|–|-)\s*(\d{4}-\d{2}-\d{2}))?$/i);
+    if (!m || !real(m[1]) || (m[2] && !real(m[2]))) continue;
+    const to = m[2] || m[1];
+    days.push(m[1] <= to ? [m[1], to] : [to, m[1]]);
+  }
+  return days.slice(0, 50);
 }
 
 /** settings_data.json may start with a comment block and keep values under "current" (object or preset name) */

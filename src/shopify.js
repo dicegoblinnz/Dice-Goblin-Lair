@@ -1954,6 +1954,31 @@ export class ShopifyAdmin {
     return result.codeDiscountNode.id;
   }
 
+  /**
+   * Round 38: an hour's free delivery for a second order in the same parcel (src/order-rolls.js): a code only that
+   * customer can use, once, from a minute ago until endsAt, on any delivery, alongside the shop's other discounts. Needs
+   * write_discounts (as the birthday codes). Returns the discount's ID; throws when Shopify says no.
+   */
+  async createParcelCode({ title, code, customerId, endsAt }) {
+    const data = await this.graphql(
+      `mutation LairParcel($discount: DiscountCodeFreeShippingInput!) {
+        discountCodeFreeShippingCreate(freeShippingCodeDiscount: $discount) { codeDiscountNode { id } userErrors { field message code } }
+      }`,
+      {
+        discount: {
+          title, code, startsAt: new Date(Date.now() - 60_000).toISOString(), endsAt: new Date(endsAt).toISOString(),
+          usageLimit: 1, appliesOncePerCustomer: true,
+          context: { customers: { add: [`gid://shopify/Customer/${customerId}`] } },
+          destination: { all: true },
+          combinesWith: { productDiscounts: true, orderDiscounts: true, shippingDiscounts: false },
+        },
+      },
+    );
+    const result = data.discountCodeFreeShippingCreate;
+    if (result.userErrors.length) throw new Error(result.userErrors.map((e) => e.message).join('; '));
+    return result.codeDiscountNode.id;
+  }
+
   /** Where Shopify currently sends orders/paid for this app */
   async webhookUris() {
     const data = await this.graphql('query Hooks { webhookSubscriptions(first: 25, topics: [ORDERS_PAID]) { nodes { id uri } } }');

@@ -113,6 +113,8 @@ import { CHANGE_COLUMNS, CHANGE_WORDS, changeMethods } from './changes.js';
 import { gmChangeUntil, gmHoursOf } from './core.js';
 // Round 37 (14 Nov 2026): the GM perk, the staff slot and a game's books (src/gm-perk.js, contract v37-gm-perk)
 import { GM_PERK_COLUMNS, GM_PERK_TABLES, gmPerkMethods } from './gm-perk.js';
+// Round 38: d20 rolls on online orders, and a second order in the same parcel (contract v38-order-rolls)
+import { ORDER_ROLL_TABLES, orderRollMethods } from './order-rolls.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1226,6 +1228,8 @@ export class Lair {
       }
     }
     for (const statement of GM_PERK_TABLES) this.sql.exec(statement);
+    // Round 38: each online order's rolls, its same-parcel code and its second order (src/order-rolls.js)
+    for (const statement of ORDER_ROLL_TABLES) this.sql.exec(statement);
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -5255,6 +5259,9 @@ export class Lair {
       this.write('INSERT INTO spend (order_id, customer_id, amount, source, created_at) VALUES (?, ?, ?, ?, ?)', orderId, spend.customerId, spend.amount, counterSource(order) || spend.source || source || null, Date.now());
       counted = spend.amount;
     }
+    // Round 38: d20 rolls on online orders, once per order (src/order-rolls.js), and a second order for the same parcel
+    // linked to its first. No awaits: its email, code and tags go in the background.
+    const orderRolls = this.orderRollsPaid(order, orderId, { pos, spend, rules, now: Date.now() });
     const passes = this.issueOrderPasses(orderId, passLines, buyer, { pos, rules, now: Date.now() });
     const gifts = this.issueGiftPasses(orderId, giftLines, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules, now: Date.now() });
     if (gifts.length) this.sendGiftCodes(gifts, giver, { orderName: giver.orderName || spend?.name || buyer.orderName, rules });
@@ -5277,6 +5284,7 @@ export class Lair {
       ...(stamps ? { stamps } : {}),
       ...(sessionsPaid.length ? { sessionsPaid } : {}),
       ...(gw ? { gw } : {}),
+      ...(orderRolls ? { orderRolls } : {}),
     };
   }
 
@@ -7531,7 +7539,7 @@ export class Lair {
    * A member's loyalty card (GET /me, the roll, staff views): { stamps (0-9 on this card), cardSize, cards (full cards),
    * card (round 7: the number of the card they're on, cards + 1), slots, headStart, onCard (round 29, the head start:
    * 12 slots, Gobgob's 2 and the stamps on this card, cardView), rolls: { available, earned: { cards, welcome,
-   * birthday, staff, codes }, used }, sure }. A full card earns a roll and the next card starts at once; so do the welcome
+   * birthday, staff, codes, orders (round 38: online orders' rolls, when there are some) }, used }, sure }. A full card earns a roll and the next card starts at once; so do the welcome
    * rolls given in round 6, birthday gifts' rolls, rolls staff give and (round 7) loot codes' rolls. used: loyalty rolls
    * spent, rolled or taken as the sure $10 (the old spend dice's rolls never count). sure (round 23): the store credit,
    * in cents, any roll can be taken as instead of rolling, so a page offers it only when the Lair does. details adds
@@ -7548,8 +7556,12 @@ export class Lair {
     const grants = new Map(this.sql.exec('SELECT kind, COALESCE(SUM(count), 0) AS n FROM loyalty_grants WHERE customer_id = ? GROUP BY kind', id).toArray().map((r) => [r.kind, r.n]));
     const welcome = this.welcomeOf(id, tally);
     const earned = { cards, welcome: grants.get('welcome') || 0, birthday: this.giftedRolls(id), staff: grants.get('staff') || 0, codes: (grants.get('code') || 0) + welcome.ready };
+    // Round 38: orders, the rolls online orders earned (src/order-rolls.js), there only once they have some (like
+    // rolls.waiting), so a card from before reads as it did
+    const orders = this.orderRollsEarned(id);
+    if (orders) earned.orders = orders;
     const used = this.sql.exec("SELECT COUNT(*) AS n FROM member_rolls WHERE customer_id = ? AND kind = 'loyalty'", id).one().n;
-    const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes - used);
+    const available = Math.max(0, earned.cards + earned.welcome + earned.birthday + earned.staff + earned.codes + orders - used);
     const rolls = { available, earned, used, ...(welcome.waiting ? { waiting: welcome.waiting } : {}) };
     // round 29: how the card looks (12 slots, Gobgob's 2 on every card) comes with it; how it counts doesn't change
     const card = { ...cardView({ stamps, cards }), rolls, sure: LOYALTY_SURE };
@@ -11198,6 +11210,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: GM perk upkeep failed', error);
     }
+    // Round 38 (src/order-rolls.js): an online order's email a restart cut short, and a parcel's tags not on yet
+    try {
+      const orderRolls = await this.orderRollsUpkeep(Date.now());
+      if (orderRolls) result.orderRolls = orderRolls;
+    } catch (error) {
+      console.error('Lair: order rolls upkeep failed', error);
+    }
     // Round 30 (src/credit-gifts.js): store credit gifts whose answer Shopify lost are looked for, and finished
     try {
       const gifts = await this.creditGiftUpkeep(Date.now());
@@ -11465,3 +11484,5 @@ Object.assign(Lair.prototype, creditPayMethods);
 Object.assign(Lair.prototype, changeMethods);
 // Round 37: the GM perk, the staff slot and a game's books (src/gm-perk.js)
 Object.assign(Lair.prototype, gmPerkMethods);
+// Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)
+Object.assign(Lair.prototype, orderRollMethods);
