@@ -14,6 +14,8 @@ process.env.TZ = 'Pacific/Auckland';
 
 const { chromium, m } = await import('../round15/lib.mjs');
 
+// As Shopify: a section setting its template doesn't list is blank, not the schema's default (the mock's templateGaps)
+m.mockState.templateGaps = true;
 const PORT = Number(process.env.PORT || 4997);
 const base = `http://localhost:${PORT}`;
 const server = await m.serve(PORT);
