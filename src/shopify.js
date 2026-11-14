@@ -142,6 +142,15 @@ const orderOf = (o) => {
 export const TILL_API_VERSION = '2026-10';
 const TILL_VARIANT_FIELDS = 'id title sku price inventoryQuantity inventoryPolicy inventoryItem { tracked } barcodes(first: 5) { nodes { value } }';
 const TILL_PRODUCT_FIELDS = 'id title productType vendor status isGiftCard';
+/**
+ * Round 39, Stock off (src/stock-off.js): a variant with its count at one location ($location: the shop's own, not
+ * every location's together) and whether its product is in the dice deal ($dice). Its calls give up after 15 seconds:
+ * someone is standing at a stall with a phone.
+ */
+const STOCK_OFF_VARIANT = `id title sku barcodes(first: 5) { nodes { value } }
+  inventoryItem { id tracked inventoryLevel(locationId: $location) { quantities(names: ["available"]) { name quantity } } }
+  product { ${TILL_PRODUCT_FIELDS} dice: inCollection(id: $dice) }`;
+const STOCK_OFF_TIMEOUT = 15_000;
 const tillMoney = (field) => `${field} { shopMoney { amount currencyCode } }`;
 const TILL_FIGURES = `taxesIncluded ${tillMoney('subtotalPriceSet')} ${tillMoney('totalPriceSet')} ${tillMoney('totalTaxSet')} platformDiscounts { title totalAmount { amount } }`;
 // (round 35: the variant's compare-at price, its full price when it's on sale: a staff discount is held to 80% of it)
@@ -170,6 +179,26 @@ export function tillVariantOf(v) {
     id: lastPart(v?.id), title: v?.title || 'Default Title', sku: v?.sku || null,
     barcodes: (v?.barcodes?.nodes || []).map((b) => String(b?.value || '').trim()).filter(Boolean),
     price: centsOf(v?.price) ?? 0, tracked, stock: tracked && v?.inventoryQuantity != null && Number.isFinite(stock) ? stock : null, oversell: v?.inventoryPolicy === 'CONTINUE',
+  };
+}
+
+/**
+ * Round 39: a variant as Stock off sees it, or null for anything that isn't one: { product: tillProductOf's, variant:
+ * { id (numeric), title, sku, barcodes, tracked, itemId (its inventory item), stock (the count at the location asked
+ * about, or null when it has none there) } }
+ */
+export function stockOffMatch(node) {
+  if (!node?.id || !node.product || !node.inventoryItem) return null;
+  const level = node.inventoryItem.inventoryLevel;
+  const available = (level?.quantities || []).find((q) => q?.name === 'available');
+  const stock = available && Number.isFinite(Number(available.quantity)) ? Number(available.quantity) : null;
+  return {
+    product: tillProductOf(node.product),
+    variant: {
+      id: lastPart(node.id), title: node.title || 'Default Title', sku: node.sku || null,
+      barcodes: (node.barcodes?.nodes || []).map((b) => String(b?.value || '').trim()).filter(Boolean),
+      tracked: node.inventoryItem.tracked === true, itemId: node.inventoryItem.id || null, stock: level ? stock : null,
+    },
   };
 }
 
@@ -1522,6 +1551,67 @@ export class ShopifyAdmin {
           changes: changes.map((c) => ({ inventoryItemId: c.inventoryItemId, locationId, delta: c.delta, changeFromQuantity: null })),
         },
       },
+    ));
+    const answer = data?.inventoryAdjustQuantities;
+    if (answer?.userErrors?.length) return { errors: answer.userErrors.map((e) => ({ code: e.code || null, message: String(e.message || '') })) };
+    if (answer?.inventoryAdjustmentGroup) return { ok: true };
+    throw new Error('Shopify gave no answer for it.');
+  }
+
+  /* ---------- round 39, Stock off (src/stock-off.js) ---------- */
+  /**
+   * The variants whose barcode (in any of its forms) or SKU is `code`, up to 20, as Stock off needs them:
+   * [{ product: { id, title, type, vendor, status, giftCard, dice }, variant: { id, title, sku, barcodes, tracked,
+   * itemId, stock } }]. stock: the count at `location` alone (the shop's own, not every location's together), or null
+   * when the thing has no count there. dice: the dice deal's collection (Product.inCollection). The till's API version,
+   * for a variant's barcodes.
+   */
+  async stockOffByCode(code, { location, dice }) {
+    const text = String(code ?? '').replace(/["\\]/g, '');
+    const query = [...barcodeForms(text).map((form) => `barcode:"${form}"`), `sku:"${text}"`].join(' OR ');
+    const data = await this.graphql(
+      `query LairStockOffByCode($query: String!, $location: ID!, $dice: ID!) { productVariants(first: 20, query: $query) { nodes { ${STOCK_OFF_VARIANT} } } }`,
+      { query, location, dice },
+      { version: this.tillVersion, timeout: STOCK_OFF_TIMEOUT },
+    );
+    return (data.productVariants?.nodes || []).map(stockOffMatch).filter(Boolean);
+  }
+
+  /** A lot's things by their variant numbers (up to 40), each as stockOffByCode gives it: a Map of number → match */
+  async stockOffByIds(ids, { location, dice }) {
+    const data = await this.graphql(
+      `query LairStockOffByIds($ids: [ID!]!, $location: ID!, $dice: ID!) { nodes(ids: $ids) { ... on ProductVariant { ${STOCK_OFF_VARIANT} } } }`,
+      { ids: ids.slice(0, 250).map((id) => `gid://shopify/ProductVariant/${id}`), location, dice },
+      { version: this.tillVersion, timeout: STOCK_OFF_TIMEOUT },
+    );
+    const found = new Map();
+    for (const node of data.nodes || []) {
+      const match = stockOffMatch(node);
+      if (match) found.set(match.variant.id, match);
+    }
+    return found;
+  }
+
+  /**
+   * A change to the count at a location (inventoryAdjustQuantities, name available) with Shopify's idempotency key: the
+   * same key again within 24 hours gets the first answer and changes nothing more. changes: [{ inventoryItemId, delta,
+   * from }]: from is the count the change was worked out on (changeFromQuantity), and Shopify refuses the lot whole
+   * (CHANGE_FROM_QUANTITY_STALE) when a count isn't that any more; null skips the check. { ok: true } once it's made;
+   * { errors: [{ code, message }] } when Shopify said no (nothing changed, and that key is spent); throws when Shopify
+   * didn't answer.
+   */
+  async stockOffAdjust(changes, locationId, key, reason, reference) {
+    const data = await madeAnyway(this.graphql(
+      `mutation LairStockOff($input: InventoryAdjustQuantitiesInput!, $key: String!) {
+        inventoryAdjustQuantities(input: $input) @idempotent(key: $key) { inventoryAdjustmentGroup { id } userErrors { field message code } } }`,
+      {
+        key,
+        input: {
+          name: 'available', reason, referenceDocumentUri: reference,
+          changes: changes.map((c) => ({ inventoryItemId: c.inventoryItemId, locationId, delta: c.delta, changeFromQuantity: c.from ?? null })),
+        },
+      },
+      { timeout: STOCK_OFF_TIMEOUT },
     ));
     const answer = data?.inventoryAdjustQuantities;
     if (answer?.userErrors?.length) return { errors: answer.userErrors.map((e) => ({ code: e.code || null, message: String(e.message || '') })) };
