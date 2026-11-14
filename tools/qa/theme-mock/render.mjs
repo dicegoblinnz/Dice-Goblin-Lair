@@ -626,6 +626,51 @@ const PAGES = {
   '/pages/contact': () => renderPage(hasTemplate('page.contact') ? 'page.contact' : 'page', { page: pages.contact, template: { name: 'page', suffix: 'contact' } }),
 };
 
+/* ---- round 38, d20 rolls on online orders (14 Nov 2026, Lair contract v38-order-rolls): a Magic set with a pack and a
+   booster box, Final Fantasy's Commander decks, Dragon Shield sleeves and a dice set; carts that earn rolls, carts a
+   little short, a deck with no sleeves; the settings that switch it all on, as the live theme will have them ---- */
+const r38Settings = { ...globalSettings, lair_order_rolls: true, lair_rolls_every: 200, lair_rolls_double_days: '', deck_sleeves_show: true, cart_store_credit_note: true };
+const r38Variant = (id, title, price) => ({ id, title, price: price * 100, compare_at_price: null, available: true, inventory_management: 'shopify', inventory_quantity: 5, options: [title], featured_media: null, quantity_rule: {}, requires_shipping: true });
+const r38Hobbit = product('mtg-the-hobbit', 'MTG - The Hobbit', 'Wizards of the Coast', 15, 380, null, false, 12, 1000, 1000, { type: 'Trading Card Games', tags: ['Magic: The Gathering', 'TCG'] });
+r38Hobbit.variants = [r38Variant(3801, 'Booster Pack', 15), r38Variant(3802, 'Booster Box', 380)];
+r38Hobbit.options_with_values = [{ name: 'Types', position: 1, selected_value: 'Booster Pack', values: ['Booster Pack', 'Booster Box'] }];
+r38Hobbit.selected_or_first_available_variant = r38Hobbit.variants[0];
+const r38Decks = product('final-fantasy-commander-decks', 'Magic the Gathering: Final Fantasy Commander Decks', 'Wizards of the Coast', 140, 140, null, false, 8, 1000, 1000, { type: 'Trading Card Games', tags: ['Magic: The Gathering', 'TCG'] });
+r38Decks.variants = [r38Variant(3803, 'Limit Break (Cloud, Final Fantasy VII)', 140), r38Variant(3804, 'Counter Blitz (Tidus, Final Fantasy X)', 140)];
+r38Decks.options_with_values = [{ name: 'Deck', position: 1, selected_value: 'Limit Break (Cloud, Final Fantasy VII)', values: ['Limit Break (Cloud, Final Fantasy VII)', 'Counter Blitz (Tidus, Final Fantasy X)'] }];
+r38Decks.selected_or_first_available_variant = r38Decks.variants[0];
+const r38Sleeves = product('dragon-shield-matte-sleeves', 'Dragon Shield Matte Sleeves', 'Dragon Shield', 20, 20, null, true, 30, 1000, 1000, { type: 'Card Accessories', tags: ['Accessories'] });
+const r38Dice = product('galaxy-dice-set', 'Galaxy Dice Set', 'Dice Goblin NZ', 50, 50, null, true, 6, 1000, 1000, { type: 'Dice', tags: ['Dice'] });
+const r38Line = (key, p, variantTitle, quantity, each) => ({
+  key, url: p.url, image: p.featured_media, product: p, vendor: p.vendor, variant: { title: variantTitle, quantity_rule: {} }, quantity,
+  final_line_price: each * 100 * quantity, original_line_price: each * 100 * quantity, properties: {}, line_level_discount_allocations: [],
+});
+const r38Cart = (items) => ({ ...emptyCart, item_count: items.reduce((n, l) => n + l.quantity, 0), total_price: items.reduce((n, l) => n + l.final_line_price, 0), items });
+const r38Carts = {
+  // a $380 box counts double: 760 of $200s, 3 rolls and $40 to the next
+  earned: r38Cart([r38Line('r38:1', r38Hobbit, 'Booster Box', 1, 380)]),
+  // $150 of dice: $50 short of a roll
+  nudge: r38Cart([r38Line('r38:2', r38Dice, 'Default Title', 3, 50)]),
+  // a Commander deck with no sleeves, and a pack: $155 short ($140 + $15)
+  deck: r38Cart([r38Line('r38:3', r38Decks, 'Limit Break (Cloud, Final Fantasy VII)', 1, 140), r38Line('r38:4', r38Hobbit, 'Booster Pack', 1, 15)]),
+};
+const r38CartPage = (cart, extra = {}) => () => renderPage('cart', { cart, settings: r38Settings, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' }, ...extra });
+const r38ProductPage = (p) => () => renderPage('product', { product: p, settings: r38Settings, request: { page_type: 'product', locale: { iso_code: 'en' }, origin: '' }, template: { name: 'product' } });
+collections['r38-deals'] = coll('r38-deals', 'Deals', [r38Hobbit, r38Decks, r38Sleeves, r38Dice], 4);
+Object.assign(PAGES, {
+  '/cart-r38': r38CartPage(r38Carts.earned),
+  '/cart-r38-nudge': r38CartPage(r38Carts.nudge, { customer: { first_name: 'Mia', store_credit_account: { balance: 2300 } } }),
+  '/cart-r38-deck': r38CartPage(r38Carts.deck),
+  '/cart-r38-double': () => renderPage('cart', { cart: r38Carts.nudge, settings: { ...r38Settings, lair_rolls_double_days: '2020-01-01 to 2099-12-31' }, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
+  '/cart-r38-off': () => renderPage('cart', { cart: r38Carts.earned, template: { name: 'cart' }, request: { page_type: 'cart', locale: { iso_code: 'en' }, origin: '' } }),
+  '/products/r38-hobbit': r38ProductPage(r38Hobbit),
+  '/products/r38-decks': r38ProductPage(r38Decks),
+  '/r38-collection': () => renderPage('collection', {
+    collection: { ...collections['r38-deals'], filters: [], tags: [], all_tags: [], sort_by: '' }, settings: r38Settings,
+    request: { page_type: 'collection', locale: { iso_code: 'en' }, origin: '', path: '/collections/r38-deals' }, template: { name: 'collection', suffix: null },
+  }),
+});
+
 /* ---- round 25, Games Workshop ordered in (31 Oct 2026): kits on the shelf, ordered in and with one left, and a cart
    with each. Everything on GW's pad keeps selling at 0 (inventory_policy continue). ---- */
 const gwKit = (handle, title, inv, policy = 'continue', price = 89) => {
