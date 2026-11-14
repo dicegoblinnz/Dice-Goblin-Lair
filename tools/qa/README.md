@@ -508,3 +508,21 @@ choose ("make it clear that this exists"). Contract v38-order-rolls; the rules' 
   sold-out colours left out, "Your sleeves are free" counted on what Shopify made free, nothing said when nothing came
   off, a sleeve's card and page, and in a browser a colour picked and added in the cart, free right there.
   `DG_THEME=… [PORT=4996] node tools/qa/round38-order-rolls/theme.mjs`.
+
+## black-friday: Black Friday on the website (15 Nov 2026)
+
+Mo, 15 Nov 2026: "make it clear on the homepage like maybe a banner across the gobgob logo ... Put a black black Friday
+banner ... on him to show it and even have a quick check out our black Friday deals". Theme settings › Black Friday
+turns on a black ribbon across Gobgob in the home page's gold lid, "Check out our Black Friday deals" in the lid, the
+home page's deals under On tonight (#black-friday), and the dice deal counting in twos under Shopify's "Black Friday:
+buy any dice, get one free". Scheduled tasks turn it on at 12:02am on 27 Nov 2026 and off at 11:58pm on 30 Nov. The
+theme mock's pages: `/bf-home` and `/bf-home-off`, `/products/bf-galaxy-dice` and `/bf-product-off`,
+`/bf-dice-collection` and `-off`, and the carts `/cart-bf-one`, `-two`, `-two-none`, `-wrong-deal`, `-three` and
+`-off-two`, priced as Shopify prices them that weekend.
+
+- `black-friday/theme.mjs`: 26 checks. The banner, the link and the deals with Black Friday on, and none of it off;
+  in a browser at 360, 390 and 1440, the page no wider than the screen, the banner across Gobgob below his face, and
+  the link landing on the deals' heading under the sticky header; the dice cards, a dice's page and the cart in twos,
+  "free" only once the Black Friday discount took money off (never the usual deal's discount), and the usual deal's
+  words with it off.
+  `DG_THEME=… [PORT=4997] node tools/qa/black-friday/theme.mjs`.

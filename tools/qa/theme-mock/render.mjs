@@ -739,6 +739,55 @@ PAGES['/cart-r38-sleeves-off'] = r38CartPage(r38Cart([
   r38Line('r38s:4', r38Sleeves, 'Default Title', 1, 20),
 ]));
 
+/* ---- Black Friday (15 Nov 2026, Mo: "Yes please do all that"; Theme settings › Black Friday): the dice deal counts in
+   twos under Shopify's "Black Friday: buy any dice, get one free", a banner across Gobgob and the deals under On
+   tonight. Three dice at three prices for the cart's suggestions, and carts as Shopify prices them that weekend: the
+   cheapest dice of each two free, by that discount ---- */
+const bfSettings = { ...globalSettings, black_friday_on: true };
+// off as the live theme has it, whatever the theme being checked (the lab has it on)
+const bfOff = { ...globalSettings, black_friday_on: false };
+const bfDie = (handle, title, price) => product(handle, title, 'Dice Goblin NZ', price, price, null, true, 6, 1000, 1000, { type: 'Dice', tags: ['Dice'] });
+export const bfDice = [bfDie('bf-galaxy-dice', 'Galaxy Dice Set', 50), bfDie('bf-ember-dice', 'Ember Dice Set', 30), bfDie('bf-moss-dice', 'Moss Dice Set', 20)];
+collections['bf-dice'] = coll('bf-dice', 'Dice and accessories', bfDice, 3);
+export const BF_DICE_TITLE = 'Black Friday: buy any dice, get one free';
+const bfLine = (key, p, quantity, each, free = 0, title = BF_DICE_TITLE) => ({
+  ...r38Line(key, p, 'Default Title', quantity, each),
+  original_price: each * 100,
+  final_line_price: (quantity - free) * each * 100,
+  line_level_discount_allocations: free ? [{ amount: free * each * 100, discount_application: { title, type: 'automatic' } }] : [],
+});
+const bfRequest = (pageType, path) => ({ page_type: pageType, locale: { iso_code: 'en' }, origin: '', path });
+const bfCartPage = (lines, settings = bfSettings) => () => renderPage('cart', {
+  cart: r38Cart(lines), settings: { ...settings, dice_deal_collection: collections['bf-dice'] }, template: { name: 'cart' }, request: bfRequest('cart', '/cart'),
+});
+const [bfGalaxy, bfEmber, bfMoss] = bfDice;
+Object.assign(PAGES, {
+  // one dice: one more and the cheaper of the two is free, with dice to pick
+  '/cart-bf-one': bfCartPage([bfLine('bf:1', bfGalaxy, 1, 50)]),
+  // two dice, Shopify took the cheaper one off
+  '/cart-bf-two': bfCartPage([bfLine('bf:1', bfGalaxy, 1, 50), bfLine('bf:2', bfEmber, 1, 30, 1)]),
+  // two dice with nothing off (the discount isn't on yet, or has ended): the cart says nothing
+  '/cart-bf-two-none': bfCartPage([bfLine('bf:1', bfGalaxy, 1, 50), bfLine('bf:2', bfEmber, 1, 30)]),
+  // the usual deal's discount on two of three dice while the theme says Black Friday: never read as Black Friday's
+  '/cart-bf-wrong-deal': bfCartPage([bfLine('bf:1', bfGalaxy, 2, 50), bfLine('bf:2', bfEmber, 1, 30, 1, 'Buy any 2 dice, get the 3rd free')]),
+  // three dice, one free: one more for another
+  '/cart-bf-three': bfCartPage([bfLine('bf:1', bfGalaxy, 2, 50), bfLine('bf:2', bfEmber, 1, 30, 1)]),
+  // Black Friday off: two dice are one short of the usual third free
+  '/cart-bf-off-two': bfCartPage([bfLine('bf:1', bfGalaxy, 1, 50), bfLine('bf:2', bfEmber, 1, 30)], bfOff),
+  '/products/bf-galaxy-dice': () => renderPage('product', { product: bfGalaxy, settings: bfSettings, request: bfRequest('product', bfGalaxy.url), template: { name: 'product' } }),
+  '/bf-product-off': () => renderPage('product', { product: bfGalaxy, settings: bfOff, request: bfRequest('product', bfGalaxy.url), template: { name: 'product' } }),
+  '/bf-dice-collection': () => renderPage('collection', {
+    collection: { ...collections['bf-dice'], filters: [], tags: [], all_tags: [], sort_by: '' }, settings: bfSettings,
+    request: bfRequest('collection', '/collections/bf-dice'), template: { name: 'collection', suffix: null },
+  }),
+  '/bf-dice-collection-off': () => renderPage('collection', {
+    collection: { ...collections['bf-dice'], filters: [], tags: [], all_tags: [], sort_by: '' }, settings: bfOff,
+    request: bfRequest('collection', '/collections/bf-dice'), template: { name: 'collection', suffix: null },
+  }),
+  '/bf-home': () => renderPage('index', { settings: bfSettings }),
+  '/bf-home-off': () => renderPage('index', { settings: bfOff }),
+});
+
 /* ---- round 25, Games Workshop ordered in (31 Oct 2026): kits on the shelf, ordered in and with one left, and a cart
    with each. Everything on GW's pad keeps selling at 0 (inventory_policy continue). ---- */
 const gwKit = (handle, title, inv, policy = 'continue', price = 89) => {
@@ -1036,6 +1085,8 @@ const feedProducts = (() => {
 })();
 collections.all = coll('all', 'All products', [...arrivals, ...boardGames], feedProducts.length);
 const variantIndex = new Map(feedProducts.flatMap((p) => p.variants.map((v) => [Number(v.id), { product: p, variant: v }])));
+// Black Friday's dice, so a cart can add them (the cart's suggestions)
+for (const p of bfDice) for (const v of p.variants) variantIndex.set(Number(v.id), { product: p, variant: v });
 // round 38: the live cart can hold the decks, boxes and sleeves above (their ids are clear of the catalogue's)
 for (const p of [r38Hobbit, r38Decks, r38Sleeves, r38SleevesColours, r38Penny, ...Object.values(r38Commander)]) {
   for (const v of p.variants) if (!variantIndex.has(Number(v.id))) variantIndex.set(Number(v.id), { product: p, variant: v });
