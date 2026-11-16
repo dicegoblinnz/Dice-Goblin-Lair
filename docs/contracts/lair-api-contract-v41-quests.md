@@ -27,6 +27,8 @@ the quest's name in `title` and a unique `key` (below). The card counts them lik
 - It runs on GET /me (at most once a minute a member) and GET /me/quests, after a paid order, a library scan (a borrow
   or Playing it here), an invite code used and a member's code scanned at the counter.
 - Rolls already rolled stay rolled, as with any stamp a session lost.
+- A quest that can't be worked out never breaks the route it rides on (GET /me, a sale, a scan at the counter): it's
+  logged, and the next sync tries again.
 
 Keys: `dice:<order>:<line>:<unit>`, `library:join:<membership>`, `library:renew:<charge>`, `bounty:<kind>:<day>`, `weekly:<quest>:<week>`,
 `once:<quest>`, `invite-friend`, `invite-bring:<friend>`, `gm-new:<player>`, `gm-back:<player>`, each prefixed with the
@@ -104,7 +106,8 @@ Storyteller, Librarian, Regular), for the Discord role and the Goblin card's bad
 ### Bring a friend
 GET /me/quests gives each member their own invite code (`FRIEND-` and 6 letters and numbers, crypto random). A friend
 types it under "Got a code?" in My Lair (POST /me/codes/redeem):
-- only someone new (no session at Dice Goblin before today, as a welcome code), once ever, and never their own;
+- only someone new (no session at Dice Goblin before today, as a welcome code), once ever, never their own, and never the code
+  of someone they brought themselves (two new players can't swap codes);
 - when the friend's first paid session stamps, the friend gets 1 stamp (`invite-friend`) and the bringer 1
   (`invite-bring:<friend>`);
 - not when a mobile number on the friend's bookings is one on the bringer's: GET /me/quests lists that friend as not
@@ -132,7 +135,7 @@ one of their sessions, and 1 more (`gm-back:<player>`) once that player has a se
 
 `quest_riddles`: one a week (`week`: its Monday), with its text, a hint, and its answer (a library game: product, title
 and shelf code). Out from 10am that Monday. Riddles are written four at a time for Mo's OK (the first four are set up
-on the Lair's first start, for the four weeks from the next Monday); staff with Members manage them:
+the first time quests are on, for the four weeks from the next Monday); staff with Members manage them:
 
 - GET /quests/riddles (staff, Members): every riddle from last week on, oldest first: `{ riddles: [{ id, week, text,
   hint, answer: { productId, title, shelfCode }, solvedBy }] }`.
@@ -151,7 +154,9 @@ on the Lair's first start, for the four weeks from the next Monday); staff with 
   loyalty }`. `stamps`: every quest stamp on their card; `loyalty`: their card, as GET /me has it.
 - **POST /library/scan** `{ code, action: 'play' }` (logged in): "Playing it here". No plan needed, In Store Only games
   too, nothing goes home: `{ result: 'playing', game: { title, shelfCode }, riddle (true when it solved the week's
-  riddle), message }`. A game they already scanned in the last hour answers the same and changes nothing.
+  riddle), message }`. A game they already scanned in the last hour answers the same and changes nothing; at most 30 scans a day are kept.
+  `riddle` is true only when this scan landed the week's riddle stamp, so a scan on a day they weren't in the Lair never
+  gives the answer away (the separate review, 16 Nov 2026).
 - **POST /pick/rolled** `{ productId }` (logged in): the website's d20 picker landed on this game for them: `{ ok: true }`.
   10 a day a member.
 - **POST /me/codes/redeem** `{ code }`: an invite code (above) → `{ kind: 'invite', message, loyalty }`.
