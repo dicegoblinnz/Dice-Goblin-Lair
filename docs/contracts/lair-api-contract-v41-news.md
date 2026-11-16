@@ -11,6 +11,8 @@ Built and deployed **switched off**. Nothing goes to customers until the config 
 | `weekly` | "This week at the Lair": from now to Sunday, every event date (an event over days in a row once, like Oddity Alley) and every public TTRPG session with seats anyone can book (a weekly game's next session only), soonest first, at most 12; then "New in the hoard": products created on the website in the last 7 days, in stock, on the Online Store, never Games Workshop's or a library copy (4 shown with picture and price, the count of all, "See everything new"). Nothing on and nothing new: no email that week. | Mondays from 10am, made once; anything not sent by the end of Tuesday is let go |
 | `black-friday-2026` | Buy one dice set, get one free, Friday 27 to Monday 30 November, double d20 rolls online, the fine print, and four of the newest Dice Goblin dice in stock. | Once, the first run after it's switched on, from 17 to 30 November; nothing goes after the 30th |
 
+Pictures (Mo, later on 16 Nov 2026: "I want the game images be included with the events inside the email. Not just text for the events."): each event row leads with the event's picture from Shopify (lair_event `image`, read when the email is made; Shopify's CDN crops it to a 240 × 135 thumbnail, shown 120 wide) and each TTRPG session with its game's picture; a row with none gets a dark tile with its day in goblin green. If Shopify won't give the pictures, the email goes as the plain list. The plain-text copy is unchanged.
+
 Words: `NEWS_WORDS` in src/news.js (Gobgob's voice; the deal's facts plainly). Links carry `utm_medium=email`, `utm_source` (`weekly-email`, `black-friday`) and `utm_campaign` (`events`, `ttrpg`, `tables`, `shop`).
 
 ## Who gets them

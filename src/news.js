@@ -1,5 +1,8 @@
 /**
- * Round 41, news emails (16 Nov 2026). Mo asked: "Can we do our own marketing email to our customers? [...] Like adding new
+ * Round 41, news emails (16 Nov 2026). Later that night (Mo: "I want the game images be included with the events inside
+ * the email. Not just text for the events."): each event in the weekly email shows its picture from Shopify, and each
+ * TTRPG session its game's picture, with a day tile where there's none.
+ * Mo asked: "Can we do our own marketing email to our customers? [...] Like adding new
  * items added etc." He saw test copies of the weekly email and the Black Friday email in his inbox the same night and
  * said: "I'm happy lets build it but don't send anything yet remind me again next week Monday to send one incase I
  * changed my mind". So everything here is built and nothing sends until NEWS_EMAILS says so.
@@ -227,7 +230,14 @@ export const newsMethods = {
   async newsContent(kind, rules, now) {
     if (kind === 'weekly') {
       const fresh = await this.shopify.newInStock({ since: now - 7 * 24 * 3_600_000, limit: TILES });
-      return this.weeklyContent(rules, now, fresh);
+      // the events' pictures (Mo: "I want the game images be included with the events"); without them it still goes
+      let pictures = new Map();
+      try {
+        pictures = await this.shopify.eventImages();
+      } catch (error) {
+        console.error('Lair: could not read the events\' pictures for the weekly email', error);
+      }
+      return this.weeklyContent(rules, now, fresh, pictures);
     }
     if (kind === 'black-friday-2026') {
       const dice = await this.shopify.newInStock({ vendor: 'Dice Goblin NZ', limit: TILES });
@@ -242,7 +252,7 @@ export const newsMethods = {
    * first; then what's new in the hoard. The subject names the first event that isn't on every week, else the first
    * session. No awaits. → content, or null with nothing on and nothing new.
    */
-  weeklyContent(rules, now, fresh = { count: 0, items: [] }) {
+  weeklyContent(rules, now, fresh = { count: 0, items: [] }, pictures = new Map()) {
     const W = NEWS_WORDS.weekly;
     const SRC = 'weekly-email';
     const time = new LairTime(rules.tz);
@@ -266,7 +276,7 @@ export const newsMethods = {
       const [d2, n2] = dayParts(o.lastStart, rules.tz);
       const when = o.days > 1 ? [`${d1}–${d2}`, `${n1.split(' ')[0]}–${n2}`] : [d1, n1];
       const hours = `${clockLabel(time.minutesOf(o.start))} to ${clockLabel(time.minutesOf(o.end))}${o.days > 1 ? ' each day' : ''}`;
-      rows.push({ start: o.start, weekly: ev.repeat === 'weekly', row: { when, title: o.title, detail: [hours, this.newsPrice(o, ev)].filter(Boolean).join(' · '), url: tagged(this.page('events') || this.link('/pages/our-games'), SRC, 'events') } });
+      rows.push({ start: o.start, weekly: ev.repeat === 'weekly', row: { when, title: o.title, detail: [hours, this.newsPrice(o, ev)].filter(Boolean).join(' · '), url: tagged(this.page('events'), SRC, 'events'), image: pictures.get(o.eventId) || null } });
     }
     // TTRPG sessions with seats anyone can book now
     const st = this.state(now, end + 1);
@@ -285,6 +295,8 @@ export const newsMethods = {
           when: dayParts(g.start, rules.tz), title: g.system ? `${g.title} (${g.system})` : g.title,
           detail: [`${W.ttrpg}${gm ? ` ${W.withGm(gm)}` : ''}`, `${clockLabel(time.minutesOf(g.start))} to ${clockLabel(time.minutesOf(g.end))}`, price ? W.seat(money(price)) : '', W.seats(left)].filter(Boolean).join(' · '),
           url: tagged(`${this.page('gm')}?join=${encodeURIComponent(g.id)}`, SRC, 'ttrpg'),
+          // the game's own picture, as the games board shows it
+          image: this.imageUrl(g.imageId),
         },
       });
     }
@@ -301,7 +313,7 @@ export const newsMethods = {
       preheader: W.preheader(agenda.length, count),
       intro: agenda.length ? W.intro : W.quiet,
       agenda: agenda.map((r) => r.row),
-      button: agenda.length ? { label: W.button, url: tagged(this.page('events') || this.link('/pages/our-games'), SRC, 'events') } : { label: W.book, url: tagged(this.page('book') || this.link('/pages/book-a-table'), SRC, 'tables') },
+      button: agenda.length ? { label: W.button, url: tagged(this.page('events'), SRC, 'events') } : { label: W.book, url: tagged(this.page('book'), SRC, 'tables') },
       section: items.length ? {
         heading: W.newHeading,
         intro: W.newIntro(count),

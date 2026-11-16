@@ -726,6 +726,25 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 41 (Mo, 16 Nov 2026: "I want the game images be included with the events inside the email"): each event's
+   * picture (lair_event "image", a Shopify Files picture), by the event's handle. read_metaobjects and read_files; the
+   * caller goes on without pictures when it can't. → Map of handle → picture URL
+   */
+  async eventImages() {
+    const data = await this.graphql(
+      'query LairEventImages { metaobjects(type: "lair_event", first: 250) { nodes { handle image: field(key: "image") { reference { ... on MediaImage { image { url } } } } } } }',
+      {},
+      { timeout: 15_000 },
+    );
+    const found = new Map();
+    for (const n of data.metaobjects?.nodes || []) {
+      const url = n.image?.reference?.image?.url;
+      if (n.handle && /^https:\/\//.test(String(url || ''))) found.set(n.handle, url);
+    }
+    return found;
+  }
+
+  /**
    * Round 41: products new on the website since `since` (ms), in stock, newest first, for a news email's "New in the
    * hoard": active, on the Online Store (onlineStoreUrl), with stock, never Games Workshop's (ordered in, and their own
    * words only) or a library copy. vendor: only that vendor's ("Dice Goblin NZ" for dice). read_products.
