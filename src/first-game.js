@@ -436,15 +436,17 @@ export const firstGameMethods = {
     if (misses.length >= CANCEL_TRIES) throw new RuleError(UNSUBSCRIBE_WORDS.tooMany, 429);
     const ref = typeof input?.ref === 'string' ? input.ref.trim().slice(0, 40) : '';
     const key = typeof input?.key === 'string' ? input.key.trim().slice(0, 64) : '';
-    const row = ref ? this.sql.exec("SELECT * FROM bookings WHERE ref = ? AND kind = 'gm-seat'", ref).toArray()[0] : null;
-    const stored = row?.followup_key || '';
+    // Round 41: a news email's code (NEWS-<16 hex>, src/news.js) is an address's own, with its own key
+    const news = /^NEWS-/.test(ref) ? this.newsKeyRow(ref) : null;
+    const row = news ? null : ref && !/^NEWS-/.test(ref) ? this.sql.exec("SELECT * FROM bookings WHERE ref = ? AND kind = 'gm-seat'", ref).toArray()[0] : null;
+    const stored = news?.key || row?.followup_key || '';
     if (!(safeEqual(key || '-', stored || NO_KEY) && Boolean(stored) && Boolean(key))) {
       misses.push(now);
       if (this.stopMisses.size > 2000) this.stopMisses.clear();
       this.stopMisses.set(where, misses);
       throw new RuleError(UNSUBSCRIBE_WORDS.wrong, 404);
     }
-    return this.rowToBooking(row);
+    return news ? { email: news.email, ref } : this.rowToBooking(row);
   },
 
   /** POST /unsubscribe/view { ref, key } (anyone with the link): { link: { stopped } }, and nothing else about anyone. No awaits. */
