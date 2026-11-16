@@ -1198,9 +1198,9 @@ export class Lair {
     for (const statement of CREDIT_GIFT_TABLES) this.sql.exec(statement);
     // Round 39: Stock off's lots and the owner's lists (src/stock-off.js)
     for (const statement of STOCK_OFF_TABLES) this.sql.exec(statement);
-    // Round 41: quests' facts, weeks, riddles and invite codes (src/quests.js), and the first four riddles
+    // Round 41: quests' facts, weeks, riddles and invite codes (src/quests.js); the first four riddles go in once quests
+    // are on
     for (const statement of QUEST_TABLES) this.sql.exec(statement);
-    this.questSeedRiddles(Date.now());
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -9613,7 +9613,7 @@ export class Lair {
     // Round 17: borrowing is acting, so a stalled queue of theirs starts again
     this.queueMemberActed(me, who, now);
     // Round 41: a game picked up counts for their quests (src/quests.js), the week's riddle too
-    this.questSync(me, now, rules, { force: true });
+    this.questSafeSync(me, now, rules);
     // Round 37 (1.7): whoever takes a book a table wants is told there and then; it never stops the loan
     const want = this.bookWanted(game.variantId, now, { forId: me });
     const heads = this.wantedWords(want, me);
@@ -10883,7 +10883,7 @@ export class Lair {
     this.gmPerkListed(who.customerId, who, now);
     const member = this.memberView(this.memberRow(who.customerId), now);
     // Round 41: their quest stamps, up to date (at most once a minute; src/quests.js)
-    this.questSync(who.customerId, now, rules);
+    this.questSafeSync(who.customerId, now, rules, {});
     // The loyalty card (round 6); the old `rolls` mirrors its rolls for clients from before
     const loyalty = this.loyaltyOf(who.customerId, rules, { details: true });
     const since = now - 30 * 24 * HOUR;

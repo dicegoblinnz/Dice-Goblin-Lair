@@ -61,6 +61,8 @@ export const QUESTS_CONFIG = Object.freeze({
   refundEvery: 30 * MIN,
   // the d20 picker's games remembered for a member, a day
   rolledDaily: 10,
+  // Playing it here: scans kept a member a day (the rest are answered but not kept)
+  playScansDaily: 30,
   // Playing it here: at most this many different games a day count, and only on a day they were in the Lair
   playsDaily: 5,
   // a riddle's words
@@ -151,6 +153,7 @@ export const QUEST_WORDS = Object.freeze({
   inviteNotNew: 'Invite codes are for players new to Dice Goblin. Welcome back, friend!',
   inviteOnce: "You've used an invite code already. It's one each.",
   inviteOwn: "That's your own invite code. Send it to a friend!",
+  inviteBack: "You brought them, so their code can't bring you too. Send yours to someone new!",
   inviteDone: (first) => `You're in, friend! Once you've played your first paid session, you and ${first || 'your friend'} each get a stamp.`,
   riddleWeek: 'Pick the Monday the riddle goes out.',
   riddleText: `Write the riddle: up to ${QUESTS_CONFIG.riddleChars} characters.`,
@@ -269,6 +272,8 @@ export const questMethods = {
    */
   questsFromWeek(now = Date.now(), rules = this.rulesCache) {
     const time = this.questTime(rules);
+    // the first four riddles go in the first time quests are on (the review: seeded at deploy they could all be past)
+    this.questSeedRiddles(now, rules);
     this.sql.exec("INSERT OR IGNORE INTO meta (key, value) VALUES ('quests-from', ?)", weekOf(time.key(now)));
     return this.sql.exec("SELECT value FROM meta WHERE key = 'quests-from'").one().value;
   },
@@ -405,7 +410,7 @@ export const questMethods = {
       const minutes = Math.round((paidAt - time.at(day, 0)) / MIN);
       if (minutes >= QUESTS_CONFIG.lateFrom || minutes < QUESTS_CONFIG.lateUntil) this.questFact({ ...base, key: `late:${orderId}`, kind: 'late' }, now);
     }
-    this.questSync(customerId, now, rules, { force: true });
+    this.questSafeSync(customerId, now, rules);
     return dice || bounties ? { dice, bounties } : null;
   },
 
@@ -413,8 +418,13 @@ export const questMethods = {
   questCounterScan(customerId, now = Date.now(), rules = this.rulesCache) {
     const id = plainId(customerId);
     if (!id || !this.questsOn(rules)) return;
-    const day = this.questTime(rules).key(now);
-    if (this.questFact({ key: `scan:${id}:${day}`, customerId: id, kind: 'scan', day, at: now, pos: true }, now)) this.questSync(id, now, rules, { force: true });
+    try {
+      const day = this.questTime(rules).key(now);
+      if (this.questFact({ key: `scan:${id}:${day}`, customerId: id, kind: 'scan', day, at: now, pos: true }, now)) this.questSafeSync(id, now, rules);
+    } catch (error) {
+      // never in the way of the counter
+      console.error('Lair: Show your face could not be kept', error);
+    }
   },
 
   /**
@@ -427,13 +437,22 @@ export const questMethods = {
     const me = String(who.customerId);
     const time = this.questTime(rules);
     const day = time.key(now);
+    const week = weekOf(day);
     const productId = plainId(game.productId);
-    // one fact a game an hour (a riddle that comes out at 10am is solved by a scan after it, the same day)
+    // one fact a game an hour (a riddle that comes out at 10am is solved by a scan after it, the same day), and at most
+    // playScansDaily a day kept (the review: nothing else limited the writes)
     const hour = Math.floor((now - time.at(day, 0)) / HOUR);
-    this.questFact({ key: `play:${me}:${game.variantId}:${day}:${hour}`, customerId: me, kind: 'play', productId, variantId: String(game.variantId), day, at: now }, now);
+    const today = this.sql.exec("SELECT COUNT(*) AS n FROM quest_facts WHERE customer_id = ? AND kind = 'play' AND day = ?", me, day).one().n;
+    if (today < QUESTS_CONFIG.playScansDaily) {
+      this.questFact({ key: `play:${me}:${game.variantId}:${day}:${hour}`, customerId: me, kind: 'play', productId, variantId: String(game.variantId), day, at: now }, now);
+    }
     this.touchMember(me, {}, now);
-    const solved = this.questRiddleSolvedBy(me, productId, now, rules);
-    this.questSync(me, now, rules, { force: true });
+    const key = `quest:${me}:weekly:riddle:${week}`;
+    const had = this.sql.exec("SELECT 1 AS n FROM loyalty_stamps WHERE key = ? AND undone_at IS NULL", key).toArray().length > 0;
+    this.questSafeSync(me, now, rules);
+    // solved: the week's riddle stamp landed with this scan. Only then is it said, so a scan from home, or before
+    // they've been in that day, never gives the answer away (the review: the reply was an answer oracle)
+    const solved = !had && this.sql.exec("SELECT 1 AS n FROM loyalty_stamps WHERE key = ? AND undone_at IS NULL", key).toArray().length > 0;
     return {
       result: 'playing', game: { title: game.title, shelfCode: game.shelfCode || '' }, riddle: solved,
       message: solved ? QUEST_WORDS.riddleSolved(game.title) : QUEST_WORDS.playing(game.title),
@@ -498,10 +517,14 @@ export const questMethods = {
     if (!this.questsOn(rules)) throw new RuleError(QUEST_WORDS.off, 409);
     if (invite.customer_id === id) throw new RuleError(QUEST_WORDS.inviteOwn, 422);
     if (this.sql.exec('SELECT 1 AS n FROM quest_invited WHERE friend_id = ?', id).toArray().length) throw new RuleError(QUEST_WORDS.inviteOnce, 409);
+    // two new players swapping codes would each be the other's friend: one way only (the review)
+    if (this.sql.exec('SELECT 1 AS n FROM quest_invited WHERE friend_id = ? AND bringer_id = ?', invite.customer_id, id).toArray().length) {
+      throw new RuleError(QUEST_WORDS.inviteBack, 409);
+    }
     if (this.playedBefore(id, this.todayStarts(now), this.stampTally(id, now))) throw new RuleError(QUEST_WORDS.inviteNotNew, 409);
     this.touchMember(id, {}, now);
     this.sql.exec('INSERT INTO quest_invited (friend_id, bringer_id, at) VALUES (?, ?, ?)', id, invite.customer_id, now);
-    this.questSync(id, now, rules, { force: true });
+    this.questSafeSync(id, now, rules);
     const bringer = this.memberRow(invite.customer_id);
     const first = bringer?.first_name || String(bringer?.name || '').split(/\s+/)[0] || '';
     return { kind: 'invite', message: QUEST_WORDS.inviteDone(first), loyalty: this.loyaltyOf(id, rules, { details: true }) };
@@ -540,6 +563,9 @@ export const questMethods = {
     const ofKind = (kind) => facts.filter((f) => f.kind === kind);
     const tally = this.stampTally(id, now, rules);
     const visits = tally.sessions.filter((r) => VISIT_KINDS.has(r.kind)).sort((a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id)));
+    // the sessions as the card counts them (stampTally's rows): a Session rung up at the counter for a booked table is
+    // the same session, so it drops out here (the review, 16 Nov 2026: Lair dweller counted it twice)
+    const counted = tally.rows.filter((r) => VISIT_KINDS.has(r.kind)).sort((a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id)));
     const details = this.questVisitDetails(visits);
     const dayOf = (ms) => time.key(ms);
 
@@ -626,7 +652,7 @@ export const questMethods = {
           const v = weekVisits.find((x) => x.kind === 'table' && details.bookings.get(String(x.id))?.customer_id === id && Number(details.bookings.get(String(x.id))?.people) >= QUESTS_CONFIG.fullHouse);
           if (v) give(`weekly:full-house:${week}`, 'full-house', v.at);
         } else if (quest === 'lair-dweller') {
-          const ids = [...new Map(weekVisits.map((v) => [`${v.kind}:${v.id}`, v])).values()];
+          const ids = [...new Map(counted.filter((v) => inWeek(v.at)).map((v) => [`${v.kind}:${v.id}`, v])).values()];
           if (ids.length >= QUESTS_CONFIG.dwellerSessions) give(`weekly:lair-dweller:${week}`, 'lair-dweller', ids[QUESTS_CONFIG.dwellerSessions - 1].at);
         } else if (quest === 'bounty-hunter') {
           const done = bounties.filter((b) => inWeek(b.at));
@@ -878,6 +904,16 @@ export const questMethods = {
     return { added, taken };
   },
 
+  /** questSync that never throws: a quest bug must never break the route it rides on (GET /me, a sale, a scan) */
+  questSafeSync(customerId, now = Date.now(), rules = this.rulesCache, options = { force: true }) {
+    try {
+      return this.questSync(customerId, now, rules, options);
+    } catch (error) {
+      console.error('Lair: quests could not be worked out', error);
+      return null;
+    }
+  },
+
   /* ---------------- My Lair ---------------- */
 
   /** GET /me/quests (logged in): the member's quests, as the contract's section 5. */
@@ -889,7 +925,7 @@ export const questMethods = {
     const now = Date.now();
     const id = String(who.customerId);
     this.touchMember(id, {}, now);
-    this.questSync(id, now, rules, { force: true });
+    this.questSafeSync(id, now, rules);
     const time = this.questTime(rules);
     const day = time.key(now);
     const week = weekOf(day);
@@ -939,7 +975,7 @@ export const questMethods = {
     const time = this.questTime(rules);
     const from = time.at(week, 0);
     const to = time.at(addDays(week, 7), 0);
-    const visits = this.stampTally(customerId, now, rules).sessions.filter((r) => VISIT_KINDS.has(r.kind) && r.at >= from && r.at < to);
+    const visits = this.stampTally(customerId, now, rules).rows.filter((r) => VISIT_KINDS.has(r.kind) && r.at >= from && r.at < to);
     const bounties = this.sql.exec(
       "SELECT key FROM loyalty_stamps WHERE customer_id = ? AND kind = 'quest' AND undone_at IS NULL AND note LIKE 'bounty-%' AND at >= ? AND at < ?",
       String(customerId), from, to,
@@ -965,6 +1001,7 @@ export const questMethods = {
   async listRiddles(who) {
     this.requireStaff(who, 'members');
     const rules = await this.rules();
+    if (this.questsOn(rules)) this.questSeedRiddles(Date.now(), rules);
     const since = addDays(weekOf(this.questTime(rules).key(Date.now())), -7);
     return { riddles: this.sql.exec('SELECT * FROM quest_riddles WHERE week >= ? ORDER BY week', since).toArray().map((r) => this.questRiddleView(r)) };
   },

@@ -215,6 +215,7 @@ test('round 41: off until the live theme says so: no Shopify, no facts, no stamp
   ok(await paid(order(1001, [line(1, 101, 30, 3)])));
   assert.deepEqual(asked, []);
   assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM quest_facts').one().n, 0);
+  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM quest_riddles').one().n, 0, 'the first riddles go in once quests are on');
   assert.equal(count(MIA), 0);
   const res = await call('GET', 'me/quests', null, MIA);
   assert.equal(res.status, 409);
@@ -323,6 +324,18 @@ test('weekly: Full house (a table they booked for 3 or more) and Lair dweller (3
   const s = questStamps(MIA);
   assert.equal(s[`weekly:full-house:${WEEK}`], 1);
   assert.equal(s[`weekly:lair-dweller:${WEEK}`], 1);
+  // a Session rung up at the counter for a booked table is the same session: never two towards Lair dweller (the review)
+  lair.sql.exec("UPDATE quest_weeks SET weeklies = '[\"lair-dweller\",\"clean-sweep\"]' WHERE week = ?", WEEK);
+  session(NOVA, { start: at('2026-11-23', 18) });
+  lair.sql.exec(
+    "INSERT INTO loyalty_stamps (id, customer_id, kind, count, title, order_id, line_id, unit, at, created_at, amount) VALUES ('ls1', ?, 'sale', 1, 'Dice Goblin Day Pass', 'o1', 'l1', 1, ?, ?, 1000)",
+    NOVA, at('2026-11-23', 19), NOW,
+  );
+  session(NOVA, { start: at('2026-11-24', 18) });
+  sync(NOVA);
+  assert.equal(questStamps(NOVA)[`weekly:lair-dweller:${WEEK}`], undefined, 'two sessions, one of them rung up again at the counter');
+  assert.deepEqual((await quests(NOVA)).weekly.find((x) => x.id === 'lair-dweller').have, 2);
+  lair.sql.exec("UPDATE quest_weeks SET weeklies = '[\"full-house\",\"lair-dweller\"]' WHERE week = ?", WEEK);
   // a table someone else booked for four, with Mia on it, isn't Mia's Full house
   lair.sql.exec("UPDATE quest_weeks SET weeklies = '[\"full-house\",\"clean-sweep\"]' WHERE week = ?", WEEK);
   session(KAI, { start: at(TODAY, 12), people: 4, booker: MIA });
@@ -353,20 +366,25 @@ test('the riddle: staff set it for a Monday; it\'s out from 10am; scanning the a
   nowIs(at(WEEK, 19));
   const wrong = ok(await call('POST', 'library/scan', { code: 'DGL34-M011', action: 'play' }, MIA));
   assert.deepEqual([wrong.result, wrong.riddle, wrong.message], ['playing', false, W.playing('Catan')]);
+  // the right one, but they haven't been in today: it doesn't count yet, and the reply gives nothing away
   const right = ok(await call('POST', 'library/scan', { code: 'DGL34-M007', action: 'play' }, MIA));
-  assert.deepEqual([right.riddle, right.message], [true, W.riddleSolved('Azul')]);
+  assert.deepEqual([right.riddle, right.message], [false, W.playing('Azul')]);
   assert.equal(questStamps(MIA)[`weekly:riddle:${WEEK}`], undefined, 'a scan from a photo at home is not a visit');
-  // their table that evening is the visit
+  // their table that evening is the visit: that day's scan counts, and a scan now says so
   session(MIA, { start: at(WEEK, 18) });
-  sync(MIA);
+  nowIs(at(WEEK, 20, 30));
+  const again = ok(await call('POST', 'library/scan', { code: 'DGL34-M007', action: 'play' }, MIA));
+  assert.deepEqual([again.riddle, again.message], [true, W.riddleSolved('Azul')]);
   assert.equal(questStamps(MIA)[`weekly:riddle:${WEEK}`], 1);
+  // and once solved, another scan doesn't say it again
+  nowIs(at(WEEK, 21, 30));
+  assert.equal(ok(await call('POST', 'library/scan', { code: 'DGL34-M007', action: 'play' }, MIA)).riddle, false);
   const q = await quests(MIA);
   assert.equal(q.riddle.solved, true);
   // once someone has solved it, it stays
   assert.equal((await call('POST', `quests/riddles/${riddle.id}/remove`, {}, OWNER)).data.error, W.riddleSolvedAlready);
   // playing here needs no library plan, and is counted once a game an hour
-  ok(await call('POST', 'library/scan', { code: 'DGL34-M007', action: 'play' }, MIA));
-  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM quest_facts WHERE kind = 'play' AND customer_id = ?", MIA).one().n, 3);
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM quest_facts WHERE kind = 'play' AND customer_id = ?", MIA).one().n, 5);
 });
 
 /* ---------------- one-off and secret quests from sessions ---------------- */
@@ -577,6 +595,14 @@ test('bring a friend: a code each, only for someone new, once, never their own; 
   assert.equal(questStamps(NOVA)['invite-friend'], 1);
   assert.equal(questStamps(MIA)[`invite-bring:${NOVA}`], 1);
   assert.equal((await quests(MIA)).invite.brought, 1);
+});
+
+test('bring a friend: two new players can\'t swap codes and be each other\'s friend (the review)', async () => {
+  const mias = (await quests(MIA)).invite.code;
+  const novas = (await quests(NOVA)).invite.code;
+  ok(await call('POST', 'me/codes/redeem', { code: mias }, NOVA));
+  const back = await call('POST', 'me/codes/redeem', { code: novas }, MIA);
+  assert.deepEqual([back.status, back.data.error], [409, W.inviteBack]);
 });
 
 test('bring a friend: someone "bringing" themselves (the same mobile number on their bookings) earns nothing', async () => {
