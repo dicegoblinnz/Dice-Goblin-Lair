@@ -39,7 +39,8 @@ Nothing is stored: it's worked out each time, so a session taken back (a no-show
 
 ## 3. The list
 
-`GET /ads/walkins.csv` on the Lair app's own address (`https://dice-goblin-lair.dicegoblinnz.workers.dev`), for Google
+`GET /ads/walkins.csv` (and the same list at `/ads/first-visits.csv`, the address Google Ads reads: Data Manager kept
+the first version's columns for the old one) on the Lair app's own address (`https://dice-goblin-lair.dicegoblinnz.workers.dev`), for Google
 Ads' Data Manager to read every day:
 
 ```

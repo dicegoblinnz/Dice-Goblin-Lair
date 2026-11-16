@@ -14,7 +14,7 @@
 //                            booking's own random id, never its code)
 //   /feeds/<key>.ics         round 13: a followed game's calendar, every date of its events (public; also through the
 //                            app proxy at www.dicegoblin.nz/apps/liar/feeds/<key>.ics, which the Our games page uses)
-//   /ads/walkins.csv         round 40: walk-ins from Google ads, for Google Ads' Data Manager to read daily (only with the
+//   /ads/walkins.csv         round 40: walk-ins from Google ads (also /ads/first-visits.csv), for Google Ads' Data Manager to read daily (only with the
 //                            list's password, ADS_FEED_KEY: username google, or ?key=)
 //   /health                  uptime check
 //   cron (every 10 minutes)  the same health check; results land in the config database's status table
@@ -217,7 +217,8 @@ export default {
     if (feed) return lair(env).fetch(new Request(`${url.origin}/internal/feed/${feed[1]}`, { headers: { 'X-Lair-Internal': '1' } }));
 
     // Round 40: the walk-ins list Google Ads reads every day (src/walkins.js), only with the list's password
-    if (url.pathname === '/ads/walkins.csv' && ['GET', 'HEAD'].includes(request.method)) {
+    // (/ads/first-visits.csv is the same list: Google Ads' Data Manager kept the first file's columns for the old address)
+    if ((url.pathname === '/ads/walkins.csv' || url.pathname === '/ads/first-visits.csv') && ['GET', 'HEAD'].includes(request.method)) {
       if (!feedAllowed(request, env.ADS_FEED_KEY)) {
         return new Response('Not allowed', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="Dice Goblin walk-ins"', 'Cache-Control': 'no-store' } });
       }
