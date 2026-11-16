@@ -228,7 +228,10 @@ const feed = async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get('Content-Type'), /^text\/csv/);
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
-  return (await response.text()).trim().split('\n');
+  const lines = (await response.text()).trim().split('\n');
+  // the example row Data Manager needs to connect, always last: Order ID example, never a real click
+  assert.equal(lines.at(-1), `example-not-a-click,First visit,${walkinTime(Date.now())},example`);
+  return lines.slice(0, -1);
 };
 const HEADER = ['Google Click ID,Conversion Name,Conversion Time,Order ID'];
 

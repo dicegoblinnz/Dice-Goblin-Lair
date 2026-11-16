@@ -49,7 +49,9 @@ Google Click ID,Conversion Name,Conversion Time,Order ID
 ```
 
 Data Manager reads the first line as the column names, so there's no `Parameters:TimeZone` line: each time carries
-Auckland's offset (+13:00 in summer, +12:00 in winter).
+Auckland's offset (+13:00 in summer, +12:00 in winter). The list always ends with one example row
+(`example-not-a-click,First visit,<now>,example`), because Data Manager won't connect to a list with no rows; the
+connection's filter leaves out Order ID `example`, and its click ID isn't one, so it's never counted.
 
 - The Order ID is the session's own random ID, so a row read again on later days is counted once.
 - Only the click ID and the time go to Google: no name, email or phone.

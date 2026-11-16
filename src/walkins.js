@@ -36,6 +36,8 @@ export const WALKIN = Object.freeze({
   listDays: 60,
   /** the list's password is at least this long */
   minKey: 24,
+  /** the example row's click ID: never a real one */
+  example: 'example-not-a-click',
 });
 
 /** Round 40's columns on members, made sure of on every start (added when missing) */
@@ -150,7 +152,11 @@ export const walkinMethods = {
   /** GET /internal/walkins (the Worker checked the list's password): Google's conversions-from-clicks file */
   walkinFile(now = Date.now()) {
     const rows = this.walkins(now).map((w) => [w.gclid, WALKIN.name, walkinTime(w.at), w.orderId].join(','));
-    const body = ['Google Click ID,Conversion Name,Conversion Time,Order ID', ...rows].join('\n') + '\n';
+    // (After going live: Data Manager won't connect to a list with no rows, as it works out each column's type from them,
+    // so the list always ends with one example row. Its Order ID is "example", which the connection's filter leaves out,
+    // and its click ID isn't one, so Google could never count it either way.)
+    const example = [WALKIN.example, WALKIN.name, walkinTime(now), 'example'].join(',');
+    const body = ['Google Click ID,Conversion Name,Conversion Time,Order ID', ...rows, example].join('\n') + '\n';
     return new Response(body, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store' } });
   },
 };
