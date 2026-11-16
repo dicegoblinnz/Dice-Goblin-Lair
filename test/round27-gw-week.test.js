@@ -288,12 +288,12 @@ test('round 27: the open week through the week, and skipped Mondays', () => {
   assert.equal(open(NOW), '2026-11-09');
   // a Monday: today's, until midnight
   assert.equal(open(at('2026-11-09', 23, 59)), '2026-11-09');
-  // after midnight on Monday, before the list goes at 6am: still that Monday's
+  // after midnight on Monday, before the list goes at 10am: still that Monday's
   assert.equal(open(at('2026-11-10', 5)), '2026-11-09');
   lair.sql.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('gw-list', '2026-11-09')");
-  assert.equal(open(at('2026-11-10', 7)), '2026-11-16');
+  assert.equal(open(at('2026-11-10', 11)), '2026-11-16');
   // a skipped Monday passes it on
-  assert.equal(open(at('2026-11-10', 7), { '2026-11-16': { skip: true } }), '2026-11-23');
+  assert.equal(open(at('2026-11-10', 11), { '2026-11-16': { skip: true } }), '2026-11-23');
 });
 
 /* ---------------- this week's order ---------------- */
@@ -324,8 +324,8 @@ test("round 27: this week's order: so far, shelf top-ups, the list as it went, a
   assert.equal(said(await call('POST', 'gw/topups', { cutoff: '2026-11-16', code: CODE[NULN], packs: 1 })), `422 ${W.closed}`);
   assert.equal(said(await call('POST', 'gw/topups', { cutoff: '2026-11-02', code: CODE[NULN], packs: 1 })), `422 ${W.closed}`);
 
-  // Tuesday 10 November, 6am: the list goes with the top-ups on it
-  await maintain(at('2026-11-10', 6, 5));
+  // Tuesday 10 November, 10am: the list goes with the top-ups on it
+  await maintain(at('2026-11-10', 10, 5));
   const list = mailsTo('staff@example.com').find((m) => m.subject.startsWith('GW order for Monday 9 Nov'));
   assert.ok(list, 'the list went');
   assert.match(list.subject, /3 codes/);
@@ -378,7 +378,7 @@ test('round 27: a line on the pad by barcode, code or words', async () => {
 test("round 27: GW couldn't supply: order it again next week, with the new date", async () => {
   await pay(1, [gwLine(11, KIT, 1), gwLine(12, PAINT, 1)], { who: KAI });
   await pay(2, [gwLine(21, KIT, 1)], { who: MIA, how: 'ship' });
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   mails = [];
   assert.equal(order(1).promise, '2026-11-30');
   // GW's trade site says Combat Patrol is out of stock: on next week's order
@@ -410,13 +410,13 @@ test("round 27: GW couldn't supply: order it again next week, with the new date"
   assert.equal(said(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-09', code: CODE[KIT], choice: 'later' })), `422 ${W.choice}`);
   assert.equal(said(await call('POST', 'gw/unsupplied', { cutoff: '2026-09-07', code: CODE[KIT], choice: 'again' })), `422 ${W.oldList}`);
   // Tuesday 17 November: it's on that list
-  await maintain(at('2026-11-17', 6, 5));
+  await maintain(at('2026-11-17', 10, 5));
   const list = mailsTo('staff@example.com').find((m) => m.subject.startsWith('GW order for Monday 16 Nov'));
   assert.match(list.text, /> 99120101386,2/);
   assert.deepEqual(lines().filter((l) => l.code === CODE[KIT]).map((l) => l.listed_for), ['2026-11-16', '2026-11-16']);
   // without telling them: their dates move, no email
   await pay(3, [gwLine(31, SOON, 1)], { who: LEO });
-  await maintain(at('2026-12-01', 6, 5));
+  await maintain(at('2026-12-01', 10, 5));
   mails = [];
   const quiet = ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-30', code: CODE[SOON], choice: 'again', tell: false }));
   assert.equal(quiet.told, 0);
@@ -429,7 +429,7 @@ test("round 27: GW couldn't supply: order it again next week, with the new date"
 
 test("round 27: GW couldn't supply: refund it, and nothing waits for it", async () => {
   await pay(1, [gwLine(11, KIT, 1), gwLine(12, PAINT, 1)], { who: KAI });
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   mails = [];
   // GW can't supply the Combat Patrol at all: refund it
   let week = ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-09', code: CODE[KIT], choice: 'refund', tell: true }));
@@ -475,7 +475,7 @@ test("round 27: GW couldn't supply: refund it, and nothing waits for it", async 
 
 test("round 27: GW couldn't supply the only thing on an order: ready, and told nothing's coming", async () => {
   await pay(1, [gwLine(11, KIT, 1)], { who: KAI });
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   mails = [];
   ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-09', code: CODE[KIT], choice: 'refund', tell: true }));
   assert.equal(mails.length, 1, 'just the refund email: nothing is in, so no It\'s in, and no list for the shop');
@@ -491,7 +491,7 @@ test('round 27: the box comes: added to stock once, customers told straight away
   await pay(1, [gwLine(11, KIT, 1)], { who: KAI });
   await pay(2, [gwLine(21, PAINT, 2)], { who: MIA, how: 'ship' });
   ok(await call('POST', 'gw/topups', { cutoff: '2026-11-09', code: CODE[PAINT], packs: 1 }));
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   mails = [];
   nowIs(at('2026-11-19', 11));
   let screen = ok(await call('GET', 'gw/receiving'));
@@ -532,7 +532,7 @@ test('round 27: the box comes: added to stock once, customers told straight away
 
 test('round 27: a delivery in parts, and what Shopify turns away', async () => {
   await pay(1, [gwLine(11, KIT, 1)], { who: KAI });
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   // too many lines, the same code twice, no units, a bad receipt
   const many = Array.from({ length: RECEIVE_PART + 1 }, (_, i) => ({ code: String(99120100000 + i), units: 1 }));
   assert.equal(said(await call('POST', 'gw/receive', { receipt: RECEIPT, part: 1, parts: 1, items: many })), `413 ${W.tooMany}`);
@@ -626,9 +626,9 @@ test('round 27: order dates: skip a week, change one, push a late one out, and b
   assert.equal(mailsTo('kai@example.com')[0].subject, 'A new date for order #1');
   assert.match(mailsTo('kai@example.com')[0].text, /Hi Kai! Games Workshop's delivery is running later than usual, so your order should now be with you by Monday 7 December\. Sorry for the wait\./);
   // Tuesday 10 Nov: no list for a skipped week; Tuesday 17 Nov: on 16 Nov's
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   assert.equal(mailsTo('staff@example.com').filter((m) => m.subject.startsWith('GW order')).length, 0);
-  await maintain(at('2026-11-17', 6, 5));
+  await maintain(at('2026-11-17', 10, 5));
   assert.equal(mailsTo('staff@example.com').filter((m) => m.subject.startsWith('GW order for Monday 16 Nov')).length, 1);
   assert.deepEqual(lines().map((l) => l.listed_for), ['2026-11-16', '2026-11-16']);
 
@@ -716,7 +716,7 @@ test('round 27 (the review): customers are told in one batch, and told counts wh
   await pay(1, [gwLine(11, KIT, 1)], { who: KAI });
   await pay(2, [gwLine(21, KIT, 1)], { who: MIA, how: 'ship' });
   await pay(3, [gwLine(31, KIT, 1)], { who: LEO, how: 'counter' });
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   mails = [];
   batches = [];
   const singles = () => mails.filter((m) => m.to !== 'staff@example.com').length - batches.flat().length;
@@ -726,7 +726,7 @@ test('round 27 (the review): customers are told in one batch, and told counts wh
   assert.deepEqual(batches, [['kai@example.com', 'mia@example.com', 'leo@example.com']]);
   assert.equal(singles(), 0);
   // the box completes all three: Kai (pickup) and Leo (counter) hear it's in, together
-  await maintain(at('2026-11-17', 6, 5));
+  await maintain(at('2026-11-17', 10, 5));
   mails = [];
   batches = [];
   ok(await call('POST', 'gw/receive', { receipt: 'b1b2c3d4-0001', part: 1, parts: 1, items: [{ code: CODE[KIT], units: 3 }] }));
@@ -736,7 +736,7 @@ test('round 27 (the review): customers are told in one batch, and told counts wh
   // Resend down: told says nobody heard
   await pay(4, [gwLine(41, SOON, 1)], { who: KAI });
   await pay(5, [gwLine(51, SOON, 1)], { who: MIA });
-  await maintain(at('2026-11-24', 6, 5));
+  await maintain(at('2026-11-24', 10, 5));
   mailDown = true;
   const down = ok(await call('POST', 'gw/unsupplied', { cutoff: '2026-11-23', code: CODE[SOON], choice: 'refund', tell: true }));
   assert.equal(down.told, 0);
@@ -756,7 +756,7 @@ test('round 27 (the review): shelf top-ups follow their week when it is skipped'
 
 test('round 27 (the review): a delivery that looks the same as one just added asks first', async () => {
   await pay(1, [gwLine(11, KIT, 1)], { who: KAI });
-  await maintain(at('2026-11-10', 6, 5));
+  await maintain(at('2026-11-10', 10, 5));
   nowIs(at('2026-11-19', 15, 40));
   ok(await call('POST', 'gw/receive', { receipt: 'c1b2c3d4-0001', part: 1, parts: 1, items: [{ code: CODE[KIT], units: 1 }, { code: CODE[PAINT], units: 6 }] }));
   // the same count again from another tab, or the tablet: nothing added until they say so

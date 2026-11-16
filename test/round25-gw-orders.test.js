@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings, DEFAULT_HOURS } from '../src/core.js';
-import { GW_WORDS as W, gwSchedule, gwLabel, isGwItem, packsFor, deliveryOf } from '../src/gw-orders.js';
+import { GW_WORDS as W, gwSchedule, gwOrderDay, gwLabel, isGwItem, packsFor, deliveryOf } from '../src/gw-orders.js';
 
 const time = new LairTime('Pacific/Auckland');
 const HOUR = 3_600_000;
@@ -339,7 +339,7 @@ test('round 25: tags Shopify turned down (the scope not approved yet) are tried 
 
 /* ---------------- the Tuesday list ---------------- */
 
-test('round 25: Tuesday\'s GW order list: once per cutoff from 6am, in packs, with the week\'s numbers and the odd ones out', async () => {
+test('round 25: Tuesday\'s GW order list: once per cutoff from 10am, in packs, with the week\'s numbers and the odd ones out', async () => {
   // the first run only notes the week, so the first list is a whole week's
   assert.deepEqual((await maintain(at('2026-11-03', 14))).list, { list: '2026-11-02', baseline: true });
   nowIs(NOW + HOUR);
@@ -347,10 +347,10 @@ test('round 25: Tuesday\'s GW order list: once per cutoff from 6am, in packs, wi
   await pay(2071, [gwLine(1, PAINT, 1)], { how: 'counter' });
   // a kit that's below zero with no order to explain it (counted wrong, or sold before this went live)
   stock.set('gid://shopify/ProductVariant/505', { code: '99120105555', title: 'Stormcast Eternals: Vindictors', available: -1, policy: 'CONTINUE', pack: 1, release: '', price: '95.00' });
-  // nothing on Monday, nor before 6am on Tuesday
+  // nothing on Monday, nor before 10am on Tuesday
   assert.equal((await maintain(at('2026-11-09', 23, 50))).list, null);
-  assert.equal((await maintain(at('2026-11-10', 5, 50))).list, null);
-  const run = await maintain(at('2026-11-10', 6, 10));
+  assert.equal((await maintain(at('2026-11-10', 9, 50))).list, null);
+  const run = await maintain(at('2026-11-10', 10, 10));
   assert.deepEqual(run.list, { list: '2026-11-09', codes: 2, packs: 3 });
   const [list] = mailsTo('staff@example.com');
   assert.equal(list.subject, 'GW order for Monday 9 Nov: 2 codes');
@@ -379,7 +379,7 @@ test('round 25: a week the Warhammer tab skipped has no list, and a failed send 
   nowIs(NOW + HOUR);
   await pay(2080, [gwLine(1, KIT, 1)], { who: KAI });
   assert.equal(orderins()[0].cutoff, '2026-11-16');
-  assert.deepEqual((await maintain(at('2026-11-10', 7))).list, { list: '2026-11-09', skipped: true });
+  assert.deepEqual((await maintain(at('2026-11-10', 11))).list, { list: '2026-11-09', skipped: true });
   assert.equal(mailsTo('staff@example.com').length, 0);
   // the next week's send fails once: nothing's marked, and the next run sends it
   overrides = {};
@@ -387,13 +387,13 @@ test('round 25: a week the Warhammer tab skipped has no list, and a failed send 
     mails.push(message);
     return { ok: false, attempted: true, status: 500 };
   };
-  await maintain(at('2026-11-17', 6, 5));
+  await maintain(at('2026-11-17', 10, 5));
   assert.equal(orderins()[0].listed_for, null);
   lair.mail = async (message) => {
     mails.push(message);
     return { ok: true, attempted: true, status: 200 };
   };
-  const run = await maintain(at('2026-11-17', 6, 15));
+  const run = await maintain(at('2026-11-17', 10, 15));
   assert.deepEqual(run.list, { list: '2026-11-16', codes: 1, packs: 1 });
   assert.equal(orderins()[0].listed_for, '2026-11-16');
 });
@@ -458,7 +458,7 @@ test('round 25: an order still waiting the day after its date is flagged to the 
   await pay(2110, [gwLine(1, KIT, 1)], { who: KAI });
   mails = [];
   assert.equal((await maintain(at('2026-11-30', 20))).orders, null);
-  const late = await maintain(at('2026-12-01', 9));
+  const late = await maintain(at('2026-12-01', 10, 30));
   assert.deepEqual(late.orders, { late: ['#2110'] });
   // (the day after is now a Tuesday, so the week's GW list goes to the shop that morning too)
   const shop = mailsTo('staff@example.com').find((m) => m.subject.startsWith('Late'));
@@ -545,4 +545,15 @@ test('round 25: every open line is checked each run, however many there are', as
   assert.deepEqual(run.orders, { cancelled: 1 });
   assert.equal(calls.filter((c) => c[0] === 'gwState').length, 2);
   assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM gw_orderins WHERE arrived > 0').one().n, 0);
+});
+
+test('orders close at 10am Tuesday (Mo, 16 Nov 2026): an order before 10am on a Tuesday counts as Monday\'s, so it goes on that week\'s list and keeps its dates', () => {
+  const at = (iso) => Date.parse(iso);
+  // NZDT is UTC+13 in November
+  assert.equal(gwOrderDay(at('2026-11-16T22:30:00+13:00')), '2026-11-16', 'Monday night is Monday');
+  assert.equal(gwOrderDay(at('2026-11-17T09:59:00+13:00')), '2026-11-16', 'Tuesday 9:59am is still Monday\'s');
+  assert.equal(gwOrderDay(at('2026-11-17T10:00:00+13:00')), '2026-11-17', 'Tuesday 10am is the next week');
+  assert.equal(gwOrderDay(at('2026-11-18T08:00:00+13:00')), '2026-11-18', 'any other morning is its own day');
+  assert.deepEqual(gwSchedule(gwOrderDay(at('2026-11-17T09:00:00+13:00'))), { cutoff: '2026-11-16', ships: '2026-11-19', promise: '2026-12-07' });
+  assert.deepEqual(gwSchedule(gwOrderDay(at('2026-11-17T11:00:00+13:00'))), { cutoff: '2026-11-23', ships: '2026-11-26', promise: '2026-12-14' });
 });

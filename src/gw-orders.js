@@ -2,9 +2,9 @@
  * Round 25 (31 Oct 2026, contract v25-gw-orders): Games Workshop items ordered in. Mo: "If it's on our shelf, it says so.
  * If not, it's clearly ordered in from Games Workshop, not in store." Everything on GW's latest order pad keeps selling
  * when the shelf is empty (Shopify's "continue selling when out of stock"), and what the shelf can't cover is ordered in
- * from GW. Orders close at midnight at the end of Monday (Auckland); Mo orders on Tuesday, GW ships on Thursday, and it
+ * from GW. Orders close at 10am on Tuesday (Auckland; midnight Monday until 16 Nov 2026); Mo orders on Tuesday, GW ships on Thursday, and it
  * takes GW 7 to 10 days to reach the shop. Mo (10 Nov 2026): "account for an extra 7 days for delivery just in case",
- * and he picked three weeks after the Monday, so the promise is never a Sunday ("Order by midnight Monday 16 Nov and it
+ * and he picked three weeks after the Monday, so the promise is never a Sunday ("Order by 10am Tuesday 17 Nov and it
  * should be with you by Monday 7 Dec"; it was 17 days after the Monday before). Mo picked one parcel: an order with ordered-in items goes out once it's
  * all in. Lair pickups get an email when it's in. The theme works out the same dates (snippets/gw-dates.liquid).
  *
@@ -15,7 +15,7 @@
  *    units. Only a variant that keeps selling counts (one that's dropped off the pad can't be ordered in). Worked out once
  *    per order. The order is tagged "Ordered in" with a note for the shop, and a customer with an email hears what's
  *    ordered in and when it should be with them. A product released after the order day counts from its release day.
- *  - From 6am on Tuesday, once per cutoff (gwOrderList): the GW order list, emailed to the shop: each code and how many
+ *  - From 10am on Tuesday, once per cutoff (gwOrderList): the GW order list, emailed to the shop: each code and how many
  *    packs to order, rounded up to GW's pack (variant metafield custom.gw_pack_size), ready to paste into the trade site
  *    and as a CSV, with the week's ordered-in sales, counter sales with no customer on them, and anything below zero that
  *    no order explains. A week the Warhammer tab skipped (gw.schedule) has no list: its orders are in the next week's.
@@ -40,7 +40,8 @@ export const GW_VENDOR = 'Games Workshop';
 /** A GW product code (the variant's SKU, from the order pad). Library copies' SKUs (DGLRPG-…) never match. */
 const GW_CODE = /^\d{8,13}$/;
 /** The Tuesday list goes out from this hour (Auckland) */
-export const GW_LIST_HOUR = 6;
+/** Tuesday's GW list goes when orders close, at 10am (Mo, 16 Nov 2026; it was 6am) */
+export const GW_LIST_HOUR = 10;
 /** Days from the Monday cutoff: GW ships on the Thursday (3), and it should be with the customer three weeks after the
  * Monday (21: GW's 7 to 10 days to the shop, a spare week, and never a Sunday; Mo, 10 Nov 2026, was 17) */
 export const GW_SHIPS_DAYS = 3;
@@ -95,8 +96,8 @@ export const GW_WORDS = {
   lateIntro: 'These orders were due by the date shown and their ordered-in items aren\'t in stock yet. Check with GW, and let the customers know.',
   listSubject: (cutoff, codes) => `GW order for ${cutoff}: ${codes === 0 ? 'nothing ordered in' : codes === 1 ? '1 code' : `${codes} codes`}`,
   listTitle: "This week's Games Workshop order",
-  listIntro: (cutoff) => `Orders closed at midnight on ${cutoff}. Here's what to order from Games Workshop for customers' ordered-in items, rounded up to GW's packs: paste these lines into the trade site, or use the CSV attached. Extras from a pack go on the shelf.`,
-  listNothing: (cutoff) => `Orders closed at midnight on ${cutoff}, and nothing was ordered in from Games Workshop this week.`,
+  listIntro: (cutoff) => `Orders for ${cutoff}'s week closed at 10am the next day. Here's what to order from Games Workshop for customers' ordered-in items, rounded up to GW's packs: paste these lines into the trade site, or use the CSV attached. Extras from a pack go on the shelf.`,
+  listNothing: (cutoff) => `Orders for ${cutoff}'s week closed at 10am the next day, and nothing was ordered in from Games Workshop this week.`,
   listOutro: 'The Lair has these down as ordered. When GW\'s delivery comes, add it to stock on the staff page\'s Warhammer tab (When the box comes) or in Shopify, and the Lair emails the customers whose items are in.',
   listPacks: (title, units, packs, pack) => (pack > 1 ? `${title}: ${units} ordered in, so ${packs === 1 ? '1 pack' : `${packs} packs`} of ${pack} (${packs * pack - units} extra for the shelf)` : `${title}: ${units}`),
   // Round 27: shelf top-ups from the Warhammer tab
@@ -121,6 +122,19 @@ const isoWeekday = (key) => new Date(`${key}T00:00:00Z`).getUTCDay() || 7;
  * midnight), ships (GW's Thursday), promise }. A product released after `day` counts from its release day. `overrides`
  * (shop metafield gw.schedule's): a Monday skipped joins the next week; ships or promise set for a Monday win.
  */
+/** Orders close at 10am on Tuesday (Mo, 16 Nov 2026: Mo sends GW's order Tuesday morning; it was midnight Monday) */
+export const GW_CLOSE_HOUR = 10;
+
+/**
+ * The day an order counts as (YYYY-MM-DD, Auckland) for gwSchedule: its own day, except that before 10am on a Tuesday it
+ * still counts as Monday's, so it goes on that week's list with that week's dates.
+ */
+export function gwOrderDay(ms, tz = TZ) {
+  const time = new LairTime(tz);
+  const key = time.key(ms);
+  return isoWeekday(key) === 2 && time.parts(ms).h < GW_CLOSE_HOUR ? addDays(key, -1) : key;
+}
+
 export function gwSchedule(day, release = '', overrides = {}) {
   const changes = overrides && typeof overrides === 'object' ? overrides : {};
   const start = validKey(release) && release > day ? release : day;
@@ -252,7 +266,7 @@ export const gwOrderMethods = {
     if (this.gwKnown(orderId)) return null; // another delivery of the webhook got here first
     const now = Date.now();
     const placedAt = Date.parse(info?.createdAt || '') || now;
-    const day = new LairTime(this.rulesCache?.tz || TZ).key(placedAt);
+    const day = gwOrderDay(placedAt, this.rulesCache?.tz || TZ);
     // Stock that came in before this sale goes to what was already waiting, oldest first, even when maintenance hasn't
     // seen it yet: what the variant was short before this order is its stock now plus this order's units of it.
     const mine = new Map();
@@ -549,7 +563,7 @@ export const gwOrderMethods = {
     return shown;
   },
 
-  /** The cutoff whose Tuesday list is due at `now` (the last Monday before today), or null before 6am on the Tuesday */
+  /** The cutoff whose Tuesday list is due at `now` (the last Monday before today), or null before 10am on the Tuesday */
   gwListDue(now, tz = TZ) {
     const time = new LairTime(tz);
     const today = time.key(now);
@@ -560,7 +574,7 @@ export const gwOrderMethods = {
   },
 
   /**
-   * From 6am on Tuesday, once per cutoff: the GW order list (see the top of this file). The first run after this goes
+   * From 10am on Tuesday, once per cutoff: the GW order list (see the top of this file). The first run after this goes
    * live only notes the week, so the first list is the first whole week. The list is marked as sent only once the email
    * has gone, so a failed send is tried again on the next run (Resend's key stops it going twice).
    */

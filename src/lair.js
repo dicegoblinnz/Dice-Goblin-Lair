@@ -11252,7 +11252,7 @@ export class Lair {
     } catch (error) {
       console.error('Lair: weekly numbers email failed', error);
     }
-    // Round 25 (src/gw-orders.js): the Games Workshop order list from 6am on Tuesday, then ordered-in lines kept in step
+    // Round 25 (src/gw-orders.js): the Games Workshop order list from 10am on Tuesday, then ordered-in lines kept in step
     // with refunds and with stock that's come in, each step on its own
     try {
       const gwList = await this.gwOrderList(rules, Date.now());
