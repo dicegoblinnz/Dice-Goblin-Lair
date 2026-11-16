@@ -46,6 +46,9 @@ const nowIs = (ms) => {
 const ADDRESS = '56/691 Manukau Road, Royal Oak, Auckland 1023';
 const GM_PAGE = 'https://www.dicegoblin.nz/pages/gm-games';
 const MY_LAIR = 'https://www.dicegoblin.nz/pages/my-lair';
+// Nov 2026 (Mo): every day-after email asks for a Google review, the same way for everyone, with no reward
+const REVIEW_ASK = 'Got a minute? Tell other players what the Lair is like. Good, bad or somewhere in between, Gobgob reads every one.';
+const REVIEW_LINK = 'Leave a Google review: https://g.page/r/CUxwT2bTRFJTEBM/review';
 
 /* ---------------- helpers, as in test/round28-booked.test.js and test/round29-reminders.test.js ---------------- */
 function fakeCtx() {
@@ -497,6 +500,8 @@ test('round 29, first game: a weekly game with seats next session (mockup D3): s
     'Seats left: 4',
     'Loyalty card: 1 of 10 so far. Stamps land when you check in.',
     "Not quite your thing? That's fine. 2 other beginner games have seats this week.",
+    REVIEW_ASK,
+    REVIEW_LINK,
     'See you at the Lair!\nGobgob, the Dice Goblin',
     `Dice Goblin Lair\n${ADDRESS}`,
     `Don't send me emails like this: ${MY_LAIR}#unsubscribe=${ref}.${key}`,
@@ -514,6 +519,7 @@ test('round 29, first game: a weekly game with seats next session (mockup D3): s
   // one-click unsubscribe (RFC 8058), on the Lair's own address
   assert.deepEqual(m.headers, { 'List-Unsubscribe': `<https://lair.example.com/unsubscribe/${encodeURIComponent(s.ref)}/${key}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
   assert.ok(m.html.includes(`#unsubscribe=${s.ref}.${key}`));
+  assert.match(m.html, /<a href="https:\/\/g\.page\/r\/CUxwT2bTRFJTEBM\/review"[^>]*>Leave a Google review<\/a>/);
 });
 
 test('round 29, first game: a one-shot, a full next session, or none, built like D3 (Mo, 6 Nov 2026: "This one is the best please use that"): the soonest beginner game with seats this week, Save me a seat and its link, its details, the card, and the others counted', async () => {
@@ -554,6 +560,8 @@ test('round 29, first game: a one-shot, a full next session, or none, built like
       'Seats left: 4',
       'Loyalty card: 1 of 10 so far. Stamps land when you check in.',
       "Not quite your thing? That's fine. 1 other beginner game has seats this week.",
+      REVIEW_ASK,
+      REVIEW_LINK,
       'See you at the Lair!\nGobgob, the Dice Goblin',
       "Don't send me emails like this: ",
     ];
@@ -604,6 +612,8 @@ test('round 29, first game: with no other beginner game with seats this week, th
     'Fancy another? No beginner games have seats left this week, but GMs add new ones all the time.',
     `Find your next game: ${GM_PAGE}`,
     'Loyalty card: 1 of 10 so far. Stamps land when you check in.',
+    REVIEW_ASK,
+    REVIEW_LINK,
     'See you at the Lair!',
   ];
   let from = 0;

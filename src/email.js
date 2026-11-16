@@ -65,9 +65,11 @@ export function hoursSummary(hours) {
  *   detailsAfter  round 29: the details table goes after the button and its links (the email the day after a first
  *              game, mockup D3: "Save my seat every week" first, then the next session's details)
  *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details
+ *   aside      { text, label, url }: a short paragraph after the outro with one link of its own under it (the email the
+ *              day after a first game: the Google review ask, Nov 2026)
  * Returns { html, text }.
  */
-export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [], detailsAfter = false, unsubscribe = null }) {
+export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [], detailsAfter = false, unsubscribe = null, aside = null }) {
   // Round 11: small links under the button, http(s) only
   const extras = (Array.isArray(links) ? links : []).filter((l) => l && safeUrl(l.url) && String(l.label ?? '').trim()).map((l) => ({ label: String(l.label).trim(), url: safeUrl(l.url) }));
   const before = list(intro);
@@ -83,6 +85,8 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const said = String(quote ?? '').trim();
   const logo = safeUrl(brand.logo) || EMAIL_LOGO;
   const home = safeUrl(brand.url) || 'https://www.dicegoblin.nz/';
+  const note = aside && String(aside.text ?? '').trim() && safeUrl(aside.url) && String(aside.label ?? '').trim()
+    ? { text: String(aside.text).trim(), label: String(aside.label).trim(), url: safeUrl(aside.url) } : null;
   const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim() ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url) } : null;
 
   const p = (text, extra = '') => `<p style="margin:0 0 14px;font:16px/1.55 ${FONT};color:${C.ink};${extra}">${lines(text)}</p>`;
@@ -114,6 +118,8 @@ ${link ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" 
 ${extras.length ? `<p style="margin:-8px 0 20px;font:15px/1.6 ${FONT};color:${C.ink};">${extras.map((l) => `<a href="${escapeHtml(l.url)}" style="color:${C.button};font-weight:700;">${escapeHtml(l.label)}</a>`).join(' &nbsp;·&nbsp; ')}</p>` : ''}
 ${detailsAfter ? table : ''}
 ${after.map((t) => p(t)).join('\n')}
+${note ? `${p(note.text, 'margin-bottom:6px;')}
+<p style="margin:0 0 18px;font:15px/1.6 ${FONT};color:${C.ink};"><a href="${escapeHtml(note.url)}" style="color:${C.button};font-weight:700;">${escapeHtml(note.label)}</a></p>` : ''}
 ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
 </td></tr>
 <tr><td style="padding:18px 24px 24px;border-top:1px solid ${C.line};font:13px/1.55 ${FONT};color:${C.muted};">${foot.map(escapeHtml).join('<br>')}${stop ? `<br><br><a href="${escapeHtml(stop.url)}" style="color:${C.muted};text-decoration:underline;">${escapeHtml(stop.label)}</a>` : ''}</td></tr>
@@ -134,6 +140,7 @@ ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
     ...extras.map((l) => `${l.label}: ${l.url}`),
     detailsAfter ? textRows : null,
     ...after,
+    note ? `${note.text}\n\n${note.label}: ${note.url}` : null,
     signed.join('\n'),
     `--\n${foot.join('\n')}`,
     stop ? `${stop.label}: ${stop.url}` : null,
