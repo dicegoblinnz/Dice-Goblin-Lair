@@ -698,6 +698,61 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 41: everyone Shopify has subscribed to Dice Goblin's email marketing (Shopify's one list of who may get news
+   * emails), read a page of 100 customers at a time, at most `pages` pages. Only SUBSCRIBED counts: PENDING (a sign-up
+   * not confirmed yet), NOT_SUBSCRIBED, UNSUBSCRIBED, INVALID and REDACTED never get one. Each address once, lower case.
+   * read_customers. → [{ email, customerId, firstName }], or throws (more customers than `pages` pages hold, too: a
+   * list cut short would leave people out without anyone knowing).
+   */
+  async marketingSubscribers({ pages = 20 } = {}) {
+    const found = new Map();
+    let after = null;
+    for (let page = 0; page < pages; page += 1) {
+      const data = await this.graphql(
+        'query NewsSubscribers($after: String) { customers(first: 100, after: $after) { nodes { id firstName defaultEmailAddress { emailAddress marketingState } } pageInfo { hasNextPage endCursor } } }',
+        { after },
+        { timeout: 20_000 },
+      );
+      const list = data.customers || {};
+      for (const c of list.nodes || []) {
+        const email = String(c.defaultEmailAddress?.emailAddress || '').trim().toLowerCase();
+        if (!email || c.defaultEmailAddress?.marketingState !== 'SUBSCRIBED' || found.has(email)) continue;
+        found.set(email, { email, customerId: String(c.id || '').split('/').pop() || null, firstName: String(c.firstName || '').trim() });
+      }
+      if (!list.pageInfo?.hasNextPage) return [...found.values()];
+      after = list.pageInfo.endCursor;
+    }
+    throw new Error(`Shopify has more than ${pages * 100} customers, more than the news emails read in one go`);
+  }
+
+  /**
+   * Round 41: products new on the website since `since` (ms), in stock, newest first, for a news email's "New in the
+   * hoard": active, on the Online Store (onlineStoreUrl), with stock, never Games Workshop's (ordered in, and their own
+   * words only) or a library copy. vendor: only that vendor's ("Dice Goblin NZ" for dice). read_products.
+   * → { count, items: [{ title, url, image, price (cents) }] } (items: at most `limit`)
+   */
+  async newInStock({ since, vendor = null, limit = 4 } = {}) {
+    const parts = ['status:active', 'inventory_total:>0', "-vendor:'Games Workshop'", '-title:*Library*', '-product_type:Library'];
+    if (Number.isFinite(since)) parts.push(`created_at:>'${new Date(since).toISOString()}'`);
+    if (vendor) parts.push(`vendor:'${String(vendor).replace(/'/g, '')}'`);
+    const data = await this.graphql(
+      'query NewInStock($query: String!) { products(first: 50, query: $query, sortKey: CREATED_AT, reverse: true) { nodes { title onlineStoreUrl totalInventory priceRangeV2 { minVariantPrice { amount } } featuredMedia { preview { image { url } } } } } productsCount(query: $query) { count } }',
+      { query: parts.join(' AND ') },
+      { timeout: 20_000 },
+    );
+    const live = (data.products?.nodes || []).filter((n) => n.onlineStoreUrl && Number(n.totalInventory) > 0);
+    // the first 50 are read; past that Shopify's count says how many (it can't tell which are on the Online Store)
+    const counted = Number(data.productsCount?.count) || 0;
+    return {
+      count: (data.products?.nodes || []).length >= 50 ? Math.max(live.length, counted) : live.length,
+      items: live.slice(0, limit).map((n) => ({
+        title: String(n.title || '').trim(), url: n.onlineStoreUrl, image: n.featuredMedia?.preview?.image?.url || null,
+        price: Math.round(Number(n.priceRangeV2?.minVariantPrice?.amount || 0) * 100),
+      })),
+    };
+  }
+
+  /**
    * When each customer's Shopify account was made (round 6: years with Dice Goblin), for up to 100 customer IDs in one
    * call. read_customers. Returns a Map of customer ID → ms, or null for a customer Shopify doesn't have.
    */
