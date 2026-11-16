@@ -159,6 +159,7 @@ beforeEach(() => {
     shopify.subscribers += 1;
     return PEOPLE.map((p) => ({ ...p }));
   };
+  lair.shopify.eventImages = async () => new Map([['warhammer-night', 'https://cdn.shopify.com/s/files/1/dg-event-warhammer.jpg?v=1']]);
   lair.shopify.newInStock = async (options) => {
     shopify.products.push(options);
     return { count: 115, items: DICE.map((d) => ({ ...d })) };
@@ -466,4 +467,36 @@ test('round 41 review: an email still queued once its time has passed is not sen
   mail.fail(0);
   await run(at('2026-12-09', 9, 5));
   assert.equal(news().filter((m) => /This week/.test(m.subject)).length, 3, 'the 7 December weekly never went');
+});
+
+/* ---------------- pictures (Mo, 16 Nov 2026: "I want the game images be included with the events inside the email") ---------------- */
+
+test('round 41, news: each event shows its picture from Shopify (cropped to a thumbnail), each session its game\'s picture, and one without gets a day tile', async () => {
+  const g = await session();
+  lair.write('UPDATE games SET image_id = ? WHERE id = ?', 'https://cdn.shopify.com/s/files/1/lost-mine.png?v=2', g.id);
+  switchOn('weekly');
+  await run(at(MON, 10, 5));
+  const m = news('mia@example.com')[0];
+  // Warhammer Night: its Shopify picture, 240 x 135 from the CDN, shown 120 wide, linked to the events page
+  assert.match(m.html, /<a href="https:\/\/www\.dicegoblin\.nz\/pages\/our-games\?utm_medium=email&amp;utm_source=weekly-email&amp;utm_campaign=events" style="text-decoration:none;"><img src="https:\/\/cdn\.shopify\.com\/s\/files\/1\/dg-event-warhammer\.jpg\?v=1&amp;width=240&amp;height=135&amp;crop=center" width="120" alt="Warhammer Night"/);
+  // Lost Mine: the game's own picture, linked to its join sheet
+  assert.match(m.html, /<img src="https:\/\/cdn\.shopify\.com\/s\/files\/1\/lost-mine\.png\?v=2&amp;width=240&amp;height=135&amp;crop=center" width="120" alt="Lost Mine \(D&amp;D 5e\)"/);
+  // Oddity Alley has no picture here: a dark tile with its days in goblin green
+  assert.match(m.html, /background:#16110f;border-radius:8px;font:800 15px\/1\.25 [^"]*;color:#46d06c;[^"]*">Sat–Sun<br>28–29 Nov<\/td>/);
+  // the day sits over each title now
+  assert.match(m.html, /color:#1f7a3d;margin:0 0 2px;">Thu 26 Nov<\/div><a [^>]*>Warhammer Night<\/a>/);
+  // the plain-text copy is as it was
+  assert.match(m.text, /Thu 26 Nov {2}Warhammer Night\n {4}6pm to midnight · \$10 a person/);
+});
+
+test('round 41, news: with no pictures to be had (Shopify won\'t give them), the weekly email still goes, as the plain list', async () => {
+  lair.shopify.eventImages = async () => {
+    throw new Error('Access denied for reference field');
+  };
+  switchOn('weekly');
+  const r = await run(at(MON, 10, 5));
+  assert.equal(r.sent.sent, 3);
+  const m = news('mia@example.com')[0];
+  assert.doesNotMatch(m.html, /width="120"/);
+  assert.match(m.html, /font:700 13px\/1\.4 [^"]*;color:#6b5d52;vertical-align:top;width:64px;">Thu<br>26 Nov<\/td>/);
 });

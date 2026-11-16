@@ -66,8 +66,12 @@ export function hoursSummary(hours) {
  *              game, mockup D3: "Save my seat every week" first, then the next session's details)
  *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details;
  *              round 41: with note, a line before it ("You're getting this because you said yes to news from Dice Goblin.")
- *   agenda     round 41: [{ when, title, detail, url }]: what's on, a row each (the day on the left, the title linked to
- *              its page, a grey line under it), before the button (the weekly email, Mo's approved mockup of 16 Nov 2026)
+ *   agenda     round 41: [{ when, title, detail, url, image }]: what's on, a row each (the day on the left, the title
+ *              linked to its page, a grey line under it), before the button (the weekly email, Mo's approved mockup of 16
+ *              Nov 2026). With pictures (Mo, 16 Nov 2026: "I want the game images be included with the events inside the
+ *              email. Not just text"): when any row has an image, every row leads with a 16:9 thumbnail (a Shopify picture
+ *              is cropped to it by Shopify's CDN), the day over the title; a row with none gets a dark tile with its day
+ *              in goblin green, so the column stays even
  *   tiles      round 41: [{ title, image, url, price }]: products two to a row, each picture over its name and price,
  *              before the button (the Black Friday email)
  *   section    round 41: { heading, intro, tiles, link: { label, url }, after }: a second part after the button and its
@@ -94,7 +98,8 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim() ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url), note: String(unsubscribe.note ?? '').trim() } : null;
   // Round 41: what's on (a row a day), products two to a row, and a second part after the button
   const days = (Array.isArray(agenda) ? agenda : []).filter((a) => a && String(a.title ?? '').trim())
-    .map((a) => ({ when: list(a.when), title: String(a.title).trim(), detail: String(a.detail ?? '').trim(), url: safeUrl(a.url) }));
+    .map((a) => ({ when: list(a.when), title: String(a.title).trim(), detail: String(a.detail ?? '').trim(), url: safeUrl(a.url), image: safeUrl(a.image) }));
+  const pictured = days.some((a) => a.image);
   const products = (items) => (Array.isArray(items) ? items : []).filter((t) => t && String(t.title ?? '').trim())
     .map((t) => ({ title: String(t.title).trim(), image: safeUrl(t.image), url: safeUrl(t.url), price: String(t.price ?? '').trim() }));
   const shelf = products(tiles);
@@ -104,9 +109,32 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   } : null;
 
   const p = (text, extra = '') => `<p style="margin:0 0 14px;font:16px/1.55 ${FONT};color:${C.ink};${extra}">${lines(text)}</p>`;
-  const agendaHtml = days.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;border-collapse:collapse;">
-${days.map((a) => `<tr><td style="padding:12px 12px 12px 0;border-top:1px solid ${C.line};font:700 13px/1.4 ${FONT};color:${C.muted};vertical-align:top;width:64px;">${a.when.map(escapeHtml).join('<br>')}</td><td style="padding:12px 0;border-top:1px solid ${C.line};vertical-align:top;">${a.url ? `<a href="${escapeHtml(a.url)}" style="font:700 16px/1.35 ${FONT};color:${C.ink};text-decoration:none;">${escapeHtml(a.title)}</a>` : `<span style="font:700 16px/1.35 ${FONT};color:${C.ink};">${escapeHtml(a.title)}</span>`}${a.detail ? `<div style="font:14px/1.5 ${FONT};color:${C.muted};margin-top:2px;">${lines(a.detail)}</div>` : ''}</td></tr>`).join('\n')}
-</table>` : '';
+  const titleOf = (a) => (a.url ? `<a href="${escapeHtml(a.url)}" style="font:700 16px/1.35 ${FONT};color:${C.ink};text-decoration:none;">${escapeHtml(a.title)}</a>` : `<span style="font:700 16px/1.35 ${FONT};color:${C.ink};">${escapeHtml(a.title)}</span>`);
+  const detailOf = (a) => (a.detail ? `<div style="font:14px/1.5 ${FONT};color:${C.muted};margin-top:2px;">${lines(a.detail)}</div>` : '');
+  /** A picture as a 16:9 thumbnail: Shopify's CDN crops its own pictures to 240 × 135; others are shown 120 wide */
+  const thumb = (url) => {
+    if (!/^https:\/\/cdn\.shopify\.com\//.test(url)) return url;
+    try {
+      const u = new URL(url);
+      u.searchParams.set('width', '240');
+      u.searchParams.set('height', '135');
+      u.searchParams.set('crop', 'center');
+      return u.toString();
+    } catch {
+      return url;
+    }
+  };
+  const pictureOf = (a) => {
+    const inner = a.image
+      ? `<img src="${escapeHtml(thumb(a.image))}" width="120" alt="${escapeHtml(a.title)}" style="display:block;width:120px;max-width:120px;height:auto;border:0;border-radius:8px;background:${C.page};">`
+      : `<table role="presentation" width="120" cellpadding="0" cellspacing="0" border="0" style="width:120px;border-collapse:separate;"><tr><td align="center" height="68" style="height:68px;background:${C.head};border-radius:8px;font:800 15px/1.25 ${FONT};color:${C.goblin};text-align:center;vertical-align:middle;">${a.when.map(escapeHtml).join('<br>')}</td></tr></table>`;
+    return a.url ? `<a href="${escapeHtml(a.url)}" style="text-decoration:none;">${inner}</a>` : inner;
+  };
+  const agendaHtml = !days.length ? '' : pictured ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;border-collapse:collapse;">
+${days.map((a) => `<tr><td style="padding:12px 14px 12px 0;border-top:1px solid ${C.line};vertical-align:top;width:120px;">${pictureOf(a)}</td><td style="padding:12px 0;border-top:1px solid ${C.line};vertical-align:top;"><div style="font:700 13px/1.4 ${FONT};color:${C.button};margin:0 0 2px;">${escapeHtml(a.when.join(' '))}</div>${titleOf(a)}${detailOf(a)}</td></tr>`).join('\n')}
+</table>` : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;border-collapse:collapse;">
+${days.map((a) => `<tr><td style="padding:12px 12px 12px 0;border-top:1px solid ${C.line};font:700 13px/1.4 ${FONT};color:${C.muted};vertical-align:top;width:64px;">${a.when.map(escapeHtml).join('<br>')}</td><td style="padding:12px 0;border-top:1px solid ${C.line};vertical-align:top;">${titleOf(a)}${detailOf(a)}</td></tr>`).join('\n')}
+</table>`;
   const tileHtml = (items) => {
     if (!items.length) return '';
     const rowsOf = [];
