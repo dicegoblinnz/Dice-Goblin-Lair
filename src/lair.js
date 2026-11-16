@@ -2086,6 +2086,8 @@ export class Lair {
     try {
       await this.useConfig();
       await this.filterAlarm(Date.now(), callsAtStart);
+      // Round 43: the d20 roller's shelf list, when it's due a read (never throws)
+      await this.shelfAlarm(Date.now(), callsAtStart);
     } catch (error) {
       console.error('Lair: the alarm failed', error);
       this.wakeAt(Date.now() + FILTER_LIMITS.alarmRetry);
@@ -2126,7 +2128,11 @@ export class Lair {
         if (b === 'setup') {
           return json(await this.checkConnection(body.webhookUrl, { force: true, testEmail: body.testEmail === true, membershipsUrl, membershipsSetup: body.memberships === 'plans' }));
         }
-        if (b === 'maintenance') return json(await this.checkConnection(body.webhookUrl, { force: false, membershipsUrl }));
+        if (b === 'maintenance') {
+          // Round 43: the d20 roller's shelf list is read by the alarm when it's due, so it's ready before anyone rolls
+          this.shelfKeepWarm(Date.now());
+          return json(await this.checkConnection(body.webhookUrl, { force: false, membershipsUrl }));
+        }
         // Round 11: a job the owner queued in the config database (admin_jobs), run by the Worker's cron (src/admin.js)
         if (b === 'admin-job') return json(await this.adminJob(body));
         // Round 11: the day-before reminders on their own, at a fixed time when `at` is given (the live checks' clock)

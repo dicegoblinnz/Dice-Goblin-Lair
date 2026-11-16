@@ -12,8 +12,10 @@
  * answers from it at once with one product, every product equally likely, and the variants of it on the shelf; the
  * theme then reads the product's own page data, so the price and picture are always today's.
  *
- * Kept up to date by the roller itself: a pick from a list older than SHELF.fresh starts a fresh read in the background
- * (one at a time), and the pick answers from the list it has. A list older than SHELF.usable isn't used at all (the
+ * Kept up to date two ways. The 10-minute run (maintenance) wakes the Durable Object's alarm when the list is older
+ * than SHELF.fresh (or there's none), and the alarm reads it in its own invocation, so the list is ready before anyone
+ * rolls, at any hour (17 Nov 2026: the first roll after going live found no list and showed nothing). And a pick from a
+ * list older than SHELF.fresh starts a read in the background too (one at a time), answering from the list it has. A list older than SHELF.usable isn't used at all (the
  * roller falls back to its own careful pick), so a quiet week never sends anyone to something sold days ago. A read
  * is a page at a time, paced by Shopify's bucket, with at most SHELF.callsPerRun calls an invocation (Cloudflare's free
  * plan allows 50, counting what the request made before): what's left goes on with the next pick. The new list only
@@ -35,6 +37,11 @@ export const SHELF = {
   retry: 5 * MIN,
   // the most Shopify calls one invocation's read makes (logins included), counting the request's own before it
   callsPerRun: 20,
+  // the Durable Object's alarm keeps the list fresh between picks: the most calls its invocation makes, the filters'
+  // upkeep before it included (Cloudflare's free plan allows 50)
+  alarmCalls: 45,
+  // the 10-minute run sets the alarm this soon when the list is due a read
+  warmWait: 5_000,
   // a read that stopped part-way (its calls ran out) carries on with the next pick, unless it last moved this long ago
   stuck: 10 * MIN,
   // products the roller can ask to skip (the last few it showed)
@@ -113,6 +120,41 @@ export const shelfPickMethods = {
     return { pick: pick ? { productId: pick.productId, handle: pick.handle, variants: [...pick.variants] } : null, count: products.length, at };
   },
 
+  /** Whether the list is due a read: none yet, or older than SHELF.fresh, and the last failure (if any) long enough ago. No awaits. */
+  shelfDue(now = Date.now()) {
+    if (!this.shopify?.configured || this.shelfReading) return false;
+    const live = this.shelfRun('live');
+    if (live.done_at && now - live.done_at <= SHELF.fresh) return false;
+    const next = this.shelfRun('next');
+    return !(next.failed_at && now - next.failed_at < SHELF.retry);
+  },
+
+  /** The 10-minute run: when the list is due a read, the alarm does it in a few seconds. Never throws. No awaits. */
+  shelfKeepWarm(now = Date.now()) {
+    try {
+      if (this.shelfDue(now)) this.wakeAt(now + SHELF.warmWait);
+    } catch (error) {
+      console.error('Lair: could not plan the shelf read', error);
+    }
+  },
+
+  /** The alarm: read the list when it's due, within the alarm invocation's calls. Never throws. */
+  async shelfAlarm(now = Date.now(), callsAtStart = externalCalls.count) {
+    try {
+      if (!this.shelfDue(now)) return null;
+      this.shelfReading = this.shelfRead(now, callsAtStart, SHELF.alarmCalls);
+      const out = await this.shelfReading;
+      // more to read than the calls allowed: the alarm comes back in a minute, in a fresh invocation
+      if (!out.done && !out.error) this.wakeAt(Date.now() + MIN);
+      return out;
+    } catch (error) {
+      console.error('Lair: the shelf alarm failed', error);
+      return null;
+    } finally {
+      this.shelfReading = null;
+    }
+  },
+
   /** Start a read in the background unless one is going or the last failed too recently. Never throws. No awaits. */
   shelfRefreshSoon(now = Date.now(), callsAtStart = externalCalls.count) {
     try {
@@ -129,10 +171,11 @@ export const shelfPickMethods = {
   },
 
   /**
-   * Read the shelf from Shopify, a page at a time, carrying on a read the last invocation didn't finish. Swaps the new
-   * list in once the last page is read. → { done, pages, rows, error? }
+   * Read the shelf from Shopify, a page at a time, carrying on a read the last invocation didn't finish, with at most
+   * `cap` calls this invocation (counting from callsAtStart). Swaps the new list in once the last page is read.
+   * → { done, pages, rows, error? }
    */
-  async shelfRead(now = Date.now(), callsAtStart = externalCalls.count) {
+  async shelfRead(now = Date.now(), callsAtStart = externalCalls.count, cap = SHELF.callsPerRun) {
     const location = this.stockOffLocation();
     let next = this.shelfRun('next');
     // a fresh read, unless the last one stopped part-way (its calls ran out) a short while ago: that one carries on
@@ -150,7 +193,7 @@ export const shelfPickMethods = {
     try {
       for (;;) {
         // a login and a page: two calls at most
-        if (SHELF.callsPerRun - (externalCalls.count - callsAtStart) < 2) return { done: false, pages, rows: this.shelfCount('next') };
+        if (cap - (externalCalls.count - callsAtStart) < 2) return { done: false, pages, rows: this.shelfCount('next') };
         let page;
         try {
           page = await this.shopify.shelfPage(cursor, location);
