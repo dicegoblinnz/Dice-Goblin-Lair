@@ -1,6 +1,6 @@
-# Lair API contract v42-privacy: the legal check
+# Lair API contract v43-privacy: the legal check
 
-Round 42 (17 Nov 2026). Mo agreed the legal check's findings ("I agree with all that you are saying. Please push it"):
+Round 43 (17 Nov 2026). Mo agreed the legal check's findings ("I agree with all that you are saying. Please push it"):
 the shop's privacy policy, terms and library membership rules were rewritten for New Zealand law, and the Lair was brought
 in line with what they now promise. No routes change.
 

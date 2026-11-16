@@ -8308,7 +8308,7 @@ export class Lair {
 
   /** The last moment of a Lair day ('YYYY-MM-DD'): a pass that expires that day works until midnight. */
   /**
-   * The end of the Lair day `years` on from `now` (17 Nov 2026, from the round 42 review): a bought pass or gift works all
+   * The end of the Lair day `years` on from `now` (17 Nov 2026, from the round 43 review): a bought pass or gift works all
    * of its last day, as staff-set expiries do and as "Use by" and "good until" say.
    */
   lastDayIn(years, now, rules) {
