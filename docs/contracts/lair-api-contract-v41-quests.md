@@ -1,4 +1,4 @@
-# Lair API contract v40: quests (round 40)
+# Lair API contract v40: quests (round 41)
 
 Mo, 16 November 2026: "I want to build a quest for my customers to help them get more stamps we can do a daily quest say
 3 of them that refreshes daily a weekly quest maybe another 3 weekly and a one time quest etc. and have them be exciting

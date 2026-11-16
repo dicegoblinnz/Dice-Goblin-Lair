@@ -1205,7 +1205,7 @@ export function rulesFromSettings(settings = {}, rooms = [], events = [], shop =
     // Round 38, part 2: free sleeves with a Commander deck (src/commander-deal.js): the Lair keeps the deal's decks
     // current only while the live theme says Commander decks come with free sleeves (Theme settings › Commander decks),
     // and finds the deal by the theme's Discount title, as the cart does (snippets/deck-sleeves.liquid)
-    // Round 40: quests (src/quests.js): on only once the live theme's Lair bookings settings say true, so the Lair can go
+    // Round 41: quests (src/quests.js): on only once the live theme's Lair bookings settings say true, so the Lair can go
     // live before My Lair shows them
     quests: { on: settings.lair_quests === true },
     sleeves: {

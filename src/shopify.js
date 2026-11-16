@@ -2112,7 +2112,7 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 40, quests (src/quests.js): what each of these products is (numeric or gid ids, at most 50): [{ id, type,
+   * Round 41, quests (src/quests.js): what each of these products is (numeric or gid ids, at most 50): [{ id, type,
    * vendor, title, listedAt (ms, when it was first listed), dice (in the dice deal's collection) }]. Products Shopify
    * doesn't have come back as nothing.
    */
@@ -2131,7 +2131,7 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 40, quests' refunds (src/quests.js): of these orders, the ones with money back or cancelled, each with its
+   * Round 41, quests' refunds (src/quests.js): of these orders, the ones with money back or cancelled, each with its
    * lines as they stand: [{ id, cancelled, lines: [{ id (numeric), product_id, price, quantity, current_quantity,
    * discount_allocations }] }]. A cheap look at all of them first, then the lines of only those, 10 orders a call.
    */

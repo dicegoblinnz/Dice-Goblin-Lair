@@ -1,5 +1,5 @@
 /**
- * Round 40, quests (16 Nov 2026, contract v40-quests). Mo: "I want to build a quest for my customers to help them get
+ * Round 41, quests (16 Nov 2026, contract v41-quests). Mo: "I want to build a quest for my customers to help them get
  * more stamps we can do a daily quest say 3 of them that refreshes daily a weekly quest maybe another 3 weekly and a one
  * time quest etc. and have them be exciting for customers to explore". The pool was settled with him the same evening:
  * a stamp for every Dice Goblin die bought ("Gw dice don't count but all of my dice especially the ones with buy 2 get 3
@@ -507,13 +507,10 @@ export const questMethods = {
     return { kind: 'invite', message: QUEST_WORDS.inviteDone(first), loyalty: this.loyaltyOf(id, rules, { details: true }) };
   },
 
-  /** When a member's first paid session stamped (src/newplayers.js paidSession, a session at a time), or null. No awaits. */
+  /** When a member's first paid session stamped (src/newplayers.js firstPaidSession), or null. No awaits. */
   questFirstPaid(customerId, sessions, now = Date.now()) {
-    for (const r of sessions) {
-      if (!VISIT_KINDS.has(r.kind) && r.kind !== 'stamp-staff') continue;
-      if (this.paidSession(customerId, [r], now)) return Number(r.at);
-    }
-    return null;
+    const first = this.firstPaidSession(customerId, sessions, now);
+    return first ? Number(first.at) : null;
   },
 
   /** Whether two members share a mobile number on their bookings. No awaits. */

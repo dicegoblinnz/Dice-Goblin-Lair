@@ -1,4 +1,4 @@
-// Round 40: quests (contract v40-quests). Mo (16 Nov 2026): "I want to build a quest for my customers to help them get
+// Round 41: quests (contract v41-quests). Mo (16 Nov 2026): "I want to build a quest for my customers to help them get
 // more stamps we can do a daily quest say 3 of them that refreshes daily a weekly quest maybe another 3 weekly and a one
 // time quest etc." The pool as he settled it the same evening: "Gw dice don't count but all of my dice especially the
 // ones with buy 2 get 3 free you get a stamp per dice bought", "dice bought online earn stamps too", "Buying a drink $6+
@@ -194,7 +194,7 @@ afterEach(() => {
 
 /* ---------------- the pool ---------------- */
 
-test('round 40: the pool as Mo settled it: the numbers, the four layers and the words', () => {
+test('round 41: the pool as Mo settled it: the numbers, the four layers and the words', () => {
   assert.deepEqual([QUESTS_CONFIG.bountyCents, QUESTS_CONFIG.goldenStamps, QUESTS_CONFIG.hunterBounties, QUESTS_CONFIG.dwellerSessions, QUESTS_CONFIG.fullHouse], [600, 2, 5, 3, 3]);
   const layer = (l) => QUEST_LIST.filter((q) => q.layer === l).map((q) => q.id);
   assert.deepEqual(layer('daily'), ['bounty-drink', 'bounty-snack', 'bounty-icecream']);
@@ -210,7 +210,7 @@ test('round 40: the pool as Mo settled it: the numbers, the four layers and the 
   assert.equal(linePaid(line(1, 101, 30, 3, { discount: 30 }), 2), 4000, 'two of three keep their share of the discount');
 });
 
-test('round 40: off until the live theme says so: no Shopify, no facts, no stamps, and My Lair hears quests aren\'t open', async () => {
+test('round 41: off until the live theme says so: no Shopify, no facts, no stamps, and My Lair hears quests aren\'t open', async () => {
   lair.rulesCache = rulesFromSettings({ ...SETTINGS, lair_quests: undefined }, ROOMS, []);
   ok(await paid(order(1001, [line(1, 101, 30, 3)])));
   assert.deepEqual(asked, []);

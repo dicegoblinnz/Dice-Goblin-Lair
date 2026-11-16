@@ -177,7 +177,7 @@ export const tillPeopleMethods = {
       return { type: 'pass', pass: { label: p.label, left: Math.max(0, (p.sessionsTotal || 0) - (p.sessionsUsed || 0)) } };
     }
     if (found.type === 'member') {
-      // Round 40: Show your face, their first scan at the counter (src/quests.js)
+      // Round 41: Show your face, their first scan at the counter (src/quests.js)
       this.questCounterScan(found.item.customer_id, now, rules);
       const person = this.tillMemberView(found.item.customer_id, rules, now, { staff: Boolean(tokenHash) });
       if (!person) throw new RuleError(TILL_PEOPLE_WORDS.unknown, 404);
