@@ -171,6 +171,31 @@ for (const size of Object.keys(SIZES)) {
   check(tag, await R.locator(`.sr-week[data-sr-week="${lastWeek}"]`).evaluate((el) => el.classList.contains('is-empty')), 'Remove it takes it off: the week is empty again');
   check(tag, flat(await R.locator('.sr-cover').innerText()).startsWith('1 of the next 4 weeks has no riddle'), 'and the gap line says so');
 
+  // Round 44 (its own review): an unknown box is said under the answer, with the form and what they typed kept, even
+  // when the list can't load just then (a 404 for a code is not a riddle that's gone)
+  await week(3).locator('[data-sr-edit]').click();
+  edit = week(3).locator('form');
+  await edit.locator('[name="text"]').fill('Gobgob built a cathedral.');
+  await edit.locator('[name="code"]').fill('DGL99-NOPE');
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    be.realQuestRiddles = be.questRiddles;
+    be.questRiddles = () => Promise.reject(new Error('Offline'));
+  });
+  await edit.locator('[type="submit"]').click();
+  await page.waitForTimeout(400);
+  edit = week(3).locator('form');
+  const codeError = (await edit.count()) ? flat(await edit.locator('[data-error-name="code"]').innerText().catch(() => '')) : '';
+  check(tag, (await edit.count()) === 1 && (await edit.locator('[name="text"]').inputValue()) === 'Gobgob built a cathedral.' && /can.t find a library game/.test(codeError),
+    'an unknown box: said under the answer, the form and their words kept', codeError || flat(await R.innerText()).slice(0, 200));
+  await page.evaluate(() => {
+    const be = window.Lair.store.backend;
+    be.questRiddles = be.realQuestRiddles;
+  });
+  if (await edit.count()) await edit.locator('[data-sr-cancel]').click();
+  else await R.locator('[data-sr-retry]').click();
+  await page.waitForFunction(() => document.querySelectorAll('staff-riddles .sr-week').length >= 4 && !document.querySelector('staff-riddles .sr-week form'), null, { timeout: 5000 }).catch(() => {});
+
   // Round 44 (round 42's review): someone solves a riddle while staff have it open. Their change of answer is turned
   // down, and the form comes back as a solved riddle's (week and answer fixed), keeping what they typed, so Save
   // changes its words
@@ -204,6 +229,25 @@ for (const size of Object.keys(SIZES)) {
   text = flat(await week(2).innerText());
   check(tag, text.includes('Gobgob heard voices in the attic.') && text.includes('Mysterium') && text.includes('Solved by 1 player') && !text.includes('Remove'),
     'Save then changes its words; its answer stays and it shows as solved', text);
+
+  // Round 44: and one taken off on another phone while it's open closes, with the Lair's words
+  const goneWeek = await week(3).getAttribute('data-sr-week');
+  await week(3).locator('[data-sr-edit]').click();
+  await week(3).locator('form [name="text"]').fill('Gobgob built a cathedral.');
+  const third = await ctx.newPage();
+  await third.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  await third.evaluate((w) => {
+    const state = JSON.parse(localStorage.getItem('dg-lair-demo-v3'));
+    state.riddles = state.riddles.filter((r) => r.week !== w);
+    localStorage.setItem('dg-lair-demo-v3', JSON.stringify(state));
+  }, goneWeek);
+  await third.close();
+  await page.waitForTimeout(200);
+  await week(3).locator('form [type="submit"]').click();
+  await page.waitForFunction((w) => document.querySelector(`staff-riddles .sr-week[data-sr-week="${w}"]`)?.classList.contains('is-empty'), goneWeek, { timeout: 5000 }).catch(() => {});
+  check(tag, await R.locator(`.sr-week[data-sr-week="${goneWeek}"]`).evaluate((el) => el.classList.contains('is-empty') && !el.querySelector('form')),
+    'taken off meanwhile: the form closes and the week shows empty');
+  check(tag, await page.evaluate(() => /isn.t there any more/.test(document.body.innerText) && document.activeElement?.id === 'sr-h'), 'the Lair\'s words show, with focus on the tab\'s heading');
   check(tag, (await overflow(page)) === 0, 'no sideways scroll');
   check(tag, page.errors.length === 0, 'staff: no console or page errors', page.errors.slice(0, 3).join(' | '));
   await page.screenshot({ path: `${OUT}${tag}-4-after.png`, fullPage: !phone });
