@@ -698,7 +698,7 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 41: everyone Shopify has subscribed to Dice Goblin's email marketing (Shopify's one list of who may get news
+   * Round 42: everyone Shopify has subscribed to Dice Goblin's email marketing (Shopify's one list of who may get news
    * emails), read a page of 100 customers at a time, at most `pages` pages. Only SUBSCRIBED counts: PENDING (a sign-up
    * not confirmed yet), NOT_SUBSCRIBED, UNSUBSCRIBED, INVALID and REDACTED never get one. Each address once, lower case.
    * read_customers. → [{ email, customerId, firstName }], or throws (more customers than `pages` pages hold, too: a
@@ -726,7 +726,7 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 41 (Mo, 16 Nov 2026: "I want the game images be included with the events inside the email"): each event's
+   * Round 42 (Mo, 16 Nov 2026: "I want the game images be included with the events inside the email"): each event's
    * picture (lair_event "image", a Shopify Files picture), by the event's handle. read_metaobjects and read_files; the
    * caller goes on without pictures when it can't. → Map of handle → picture URL
    */
@@ -745,7 +745,7 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 41: products new on the website since `since` (ms), in stock, newest first, for a news email's "New in the
+   * Round 42: products new on the website since `since` (ms), in stock, newest first, for a news email's "New in the
    * hoard": active, on the Online Store (onlineStoreUrl), with stock, never Games Workshop's (ordered in, and their own
    * words only) or a library copy. vendor: only that vendor's ("Dice Goblin NZ" for dice). read_products.
    * → { count, items: [{ title, url, image, price (cents) }] } (items: at most `limit`)

@@ -65,16 +65,16 @@ export function hoursSummary(hours) {
  *   detailsAfter  round 29: the details table goes after the button and its links (the email the day after a first
  *              game, mockup D3: "Save my seat every week" first, then the next session's details)
  *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details;
- *              round 41: with note, a line before it ("You're getting this because you said yes to news from Dice Goblin.")
- *   agenda     round 41: [{ when, title, detail, url, image }]: what's on, a row each (the day on the left, the title
+ *              round 42: with note, a line before it ("You're getting this because you said yes to news from Dice Goblin.")
+ *   agenda     round 42: [{ when, title, detail, url, image }]: what's on, a row each (the day on the left, the title
  *              linked to its page, a grey line under it), before the button (the weekly email, Mo's approved mockup of 16
  *              Nov 2026). With pictures (Mo, 16 Nov 2026: "I want the game images be included with the events inside the
  *              email. Not just text"): when any row has an image, every row leads with a 16:9 thumbnail (a Shopify picture
  *              is cropped to it by Shopify's CDN), the day over the title; a row with none gets a dark tile with its day
  *              in goblin green, so the column stays even
- *   tiles      round 41: [{ title, image, url, price }]: products two to a row, each picture over its name and price,
+ *   tiles      round 42: [{ title, image, url, price }]: products two to a row, each picture over its name and price,
  *              before the button (the Black Friday email)
- *   section    round 41: { heading, intro, tiles, link: { label, url }, after }: a second part after the button and its
+ *   section    round 42: { heading, intro, tiles, link: { label, url }, after }: a second part after the button and its
  *              links, with its own heading, paragraph(s), products two to a row and a link (the weekly email's "New in the
  *              hoard"); after: paragraph(s) under its link
  * Returns { html, text }.
@@ -96,7 +96,7 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const logo = safeUrl(brand.logo) || EMAIL_LOGO;
   const home = safeUrl(brand.url) || 'https://www.dicegoblin.nz/';
   const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim() ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url), note: String(unsubscribe.note ?? '').trim() } : null;
-  // Round 41: what's on (a row a day), products two to a row, and a second part after the button
+  // Round 42: what's on (a row a day), products two to a row, and a second part after the button
   const days = (Array.isArray(agenda) ? agenda : []).filter((a) => a && String(a.title ?? '').trim())
     .map((a) => ({ when: list(a.when), title: String(a.title).trim(), detail: String(a.detail ?? '').trim(), url: safeUrl(a.url), image: safeUrl(a.image) }));
   const pictured = days.some((a) => a.image);

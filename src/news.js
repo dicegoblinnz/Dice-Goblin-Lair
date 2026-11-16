@@ -1,5 +1,5 @@
 /**
- * Round 41, news emails (16 Nov 2026). Later that night (Mo: "I want the game images be included with the events inside
+ * Round 42, news emails (16 Nov 2026). Later that night (Mo: "I want the game images be included with the events inside
  * the email. Not just text for the events."): each event in the weekly email shows its picture from Shopify, and each
  * TTRPG session its game's picture, with a day tile where there's none.
  * Mo asked: "Can we do our own marketing email to our customers? [...] Like adding new

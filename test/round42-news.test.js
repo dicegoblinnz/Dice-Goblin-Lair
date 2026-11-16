@@ -1,4 +1,4 @@
-// Round 41, news emails (16 Nov 2026). Mo asked for Dice Goblin's own marketing emails, with new items in them, saw test
+// Round 42, news emails (16 Nov 2026). Mo asked for Dice Goblin's own marketing emails, with new items in them, saw test
 // copies of "This week at the Lair" and the Black Friday email that night and said: "I'm happy lets build it but don't
 // send anything yet". So: nothing goes until NEWS_EMAILS switches an email on; then only to people Shopify has
 // subscribed to email marketing, less the Lair's stop list; the weekly email on Mondays from 10am with what's on this
@@ -173,13 +173,13 @@ afterEach(() => {
 
 /* ---------------- the switch ---------------- */
 
-test('round 41, news: NEWS_EMAILS reads as a list of what is on; empty or off is nothing', () => {
+test('round 42, news: NEWS_EMAILS reads as a list of what is on; empty or off is nothing', () => {
   assert.deepEqual([...newsSwitches({})], []);
   assert.deepEqual([...newsSwitches({ NEWS_EMAILS: 'off' })], []);
   assert.deepEqual([...newsSwitches({ NEWS_EMAILS: ' Weekly, black-friday-2026 ' })], ['weekly', 'black-friday-2026']);
 });
 
-test('round 41, news: nothing is sent while NEWS_EMAILS is unset or off, not even on a Monday at 10am; the week\'s draft is made for the staff page', async () => {
+test('round 42, news: nothing is sent while NEWS_EMAILS is unset or off, not even on a Monday at 10am; the week\'s draft is made for the staff page', async () => {
   await session();
   assert.deepEqual(await run(at(MON, 10, 5)), { drafted: [{ id: `weekly-${MON}` }] });
   switchOn('off');
@@ -191,7 +191,7 @@ test('round 41, news: nothing is sent while NEWS_EMAILS is unset or off, not eve
 
 /* ---------------- the weekly email ---------------- */
 
-test('round 41, news: the weekly email goes on Monday from 10am, once, to everyone subscribed in Shopify less the stop list, with this week and the new stock', async () => {
+test('round 42, news: the weekly email goes on Monday from 10am, once, to everyone subscribed in Shopify less the stop list, with this week and the new stock', async () => {
   await session();
   // an invite-only game and a session that's already full are left out
   await session({ title: 'Secret Table', private: true, tables: ['T13'] });
@@ -242,7 +242,7 @@ test('round 41, news: the weekly email goes on Monday from 10am, once, to everyo
   assert.notEqual(stopOf(news('ria@example.com')[0]).ref, stop.ref, 'each address its own');
 });
 
-test('round 41, news: with nothing on and nothing new there is no email that week, and Shopify is not asked who to send it to', async () => {
+test('round 42, news: with nothing on and nothing new there is no email that week, and Shopify is not asked who to send it to', async () => {
   switchOn('weekly');
   lair.rulesCache = rulesWith([]);
   lair.shopify.newInStock = async () => ({ count: 0, items: [] });
@@ -254,7 +254,7 @@ test('round 41, news: with nothing on and nothing new there is no email that wee
   assert.equal(news().length, 0, 'and not tried again that Monday');
 });
 
-test('round 41, news: a quiet week with new stock still goes, with Book a table', async () => {
+test('round 42, news: a quiet week with new stock still goes, with Book a table', async () => {
   switchOn('weekly');
   lair.rulesCache = rulesWith([]);
   await run(at(MON, 10, 5));
@@ -264,7 +264,7 @@ test('round 41, news: a quiet week with new stock still goes, with Book a table'
   assert.match(m.text, /Book a table: https:\/\/www\.dicegoblin\.nz\/pages\/book-a-table\?utm_medium=email&utm_source=weekly-email&utm_campaign=tables/);
 });
 
-test('round 41, news: Resend down puts the batch back on the queue for the next run; a refusal marks it failed', async () => {
+test('round 42, news: Resend down puts the batch back on the queue for the next run; a refusal marks it failed', async () => {
   switchOn('weekly');
   mail.fail(503);
   const down = await run(at(MON, 10, 5));
@@ -284,7 +284,7 @@ test('round 41, news: Resend down puts the batch back on the queue for the next 
   assert.equal(news().length, 6);
 });
 
-test('round 41, news: from 9am to 8pm only; a batch queued before 8pm waits for the morning', async () => {
+test('round 42, news: from 9am to 8pm only; a batch queued before 8pm waits for the morning', async () => {
   switchOn('weekly');
   // made at 7:55pm, then Resend is busy until after 8pm
   mail.fail(429);
@@ -298,7 +298,7 @@ test('round 41, news: from 9am to 8pm only; a batch queued before 8pm waits for 
 
 /* ---------------- unsubscribing ---------------- */
 
-test('round 41, news: the Unsubscribe works without logging in (view, then the tap), stops every news email, and a later email skips them', async () => {
+test('round 42, news: the Unsubscribe works without logging in (view, then the tap), stops every news email, and a later email skips them', async () => {
   switchOn('weekly');
   await run(at(MON, 10, 5));
   const stop = stopOf(news('mia@example.com')[0]);
@@ -317,7 +317,7 @@ test('round 41, news: the Unsubscribe works without logging in (view, then the t
   assert.deepEqual(news().filter((m) => m.subject === NEWS_WORDS.blackFriday.subject).map((m) => m.to).sort(), ['kai@example.com', 'ria@example.com']);
 });
 
-test('round 41, news: the mail app\'s one-click POST stops them; a GET only goes on to the page that asks', async () => {
+test('round 42, news: the mail app\'s one-click POST stops them; a GET only goes on to the page that asks', async () => {
   switchOn('weekly');
   await run(at(MON, 10, 5));
   const stop = stopOf(news('ria@example.com')[0]);
@@ -329,7 +329,7 @@ test('round 41, news: the mail app\'s one-click POST stops them; a GET only goes
   assert.equal(lair.followupStopped('ria@example.com'), true);
 });
 
-test('round 41, news: someone who unsubscribes after an email is made, before their batch goes, is not sent it', async () => {
+test('round 42, news: someone who unsubscribes after an email is made, before their batch goes, is not sent it', async () => {
   switchOn('weekly');
   mail.fail(503);
   await run(at(MON, 10, 5));
@@ -342,7 +342,7 @@ test('round 41, news: someone who unsubscribes after an email is made, before th
 
 /* ---------------- Black Friday ---------------- */
 
-test('round 41, news: Black Friday goes once, the first run after it is switched on between 17 and 30 November, with four Dice Goblin dice', async () => {
+test('round 42, news: Black Friday goes once, the first run after it is switched on between 17 and 30 November, with four Dice Goblin dice', async () => {
   switchOn('black-friday-2026');
   assert.equal((await run(at('2026-11-16', 11))).made, undefined, 'not before the 17th');
   assert.equal(lair.newsRow('black-friday-2026'), null);
@@ -365,13 +365,13 @@ test('round 41, news: Black Friday goes once, the first run after it is switched
   assert.equal(sent.filter((x) => /This week/.test(x.subject)).length, 0);
 });
 
-test('round 41, news: Black Friday switched on after 30 November never goes', async () => {
+test('round 42, news: Black Friday switched on after 30 November never goes', async () => {
   switchOn('black-friday-2026');
   assert.equal(await run(at('2026-12-01', 10)), null);
   assert.equal(news().length, 0);
 });
 
-test('round 41, news: NEWS_FROM sends them from its own address, with the usual reply-to', async () => {
+test('round 42, news: NEWS_FROM sends them from its own address, with the usual reply-to', async () => {
   switchOn('weekly', { NEWS_FROM: 'Gobgob at Dice Goblin <news@news.dicegoblin.test>', REPLY_TO: 'dicegoblinnz@example.com' });
   await run(at(MON, 10, 5));
   const m = news('mia@example.com')[0];
@@ -381,7 +381,7 @@ test('round 41, news: NEWS_FROM sends them from its own address, with the usual 
 
 /* ---------------- a test copy ---------------- */
 
-test('round 41, news: a test copy goes to one address only, [Test] on the subject, even with NEWS_EMAILS off, and nothing is queued', async () => {
+test('round 42, news: a test copy goes to one address only, [Test] on the subject, even with NEWS_EMAILS off, and nothing is queued', async () => {
   await session();
   const result = ok(await internal('news-test', { campaign: 'weekly', to: 'owner@example.com', at: at(MON, 10, 5) }));
   assert.deepEqual(result, { ok: true, subject: '[Test] This week at the Lair: Oddity Alley' });
@@ -401,7 +401,7 @@ test('round 41, news: a test copy goes to one address only, [Test] on the subjec
 
 /* ---------------- the layout ---------------- */
 
-test('round 41, news: the layout\'s list, products two to a row and second part render, and links get the email\'s tags', () => {
+test('round 42, news: the layout\'s list, products two to a row and second part render, and links get the email\'s tags', () => {
   const { html, text } = renderEmail({
     title: 'T', agenda: [{ when: ['Tue', '17 Nov'], title: 'A <b>', detail: 'x', url: 'https://a.nz' }],
     tiles: [{ title: 'D', price: '$1', url: 'https://b.nz', image: 'https://c.nz/i.jpg' }, { title: 'E' }, { title: 'F', url: 'javascript:alert(1)' }],
@@ -418,7 +418,7 @@ test('round 41, news: the layout\'s list, products two to a row and second part 
 
 /* ---------------- after the review ---------------- */
 
-test('round 41 review: a batch Resend refuses (one bad address) is halved and tried again, so only that address fails', async () => {
+test('round 42 review: a batch Resend refuses (one bad address) is halved and tried again, so only that address fails', async () => {
   switchOn('weekly');
   // Resend refuses any batch with Kai in it (a 422 for the whole batch, as it does)
   globalThis.fetch = async (url, init) => {
@@ -435,7 +435,7 @@ test('round 41 review: a batch Resend refuses (one bad address) is halved and tr
   assert.deepEqual(rows, [{ email: 'kai@example.com', status: 'failed' }, { email: 'mia@example.com', status: 'sent' }, { email: 'ria@example.com', status: 'sent' }]);
 });
 
-test('round 41 review: a refusal for every email (a sender Resend won\'t take) pauses the news emails after three, instead of using up the list', async () => {
+test('round 42 review: a refusal for every email (a sender Resend won\'t take) pauses the news emails after three, instead of using up the list', async () => {
   switchOn('weekly');
   lair.shopify.marketingSubscribers = async () => Array.from({ length: 8 }, (_, i) => ({ email: `p${i}@example.com`, customerId: String(i), firstName: '' }));
   mail.fail(403);
@@ -453,7 +453,7 @@ test('round 41 review: a refusal for every email (a sender Resend won\'t take) p
   assert.equal(after.sent.sent, 5);
 });
 
-test('round 41 review: an email still queued once its time has passed is not sent late (Black Friday after the 30th, a weekly after Tuesday)', async () => {
+test('round 42 review: an email still queued once its time has passed is not sent late (Black Friday after the 30th, a weekly after Tuesday)', async () => {
   switchOn('weekly, black-friday-2026');
   mail.fail(503);
   await run(at('2026-11-30', 19, 55));
@@ -473,7 +473,7 @@ test('round 41 review: an email still queued once its time has passed is not sen
 
 /* ---------------- pictures (Mo, 16 Nov 2026: "I want the game images be included with the events inside the email") ---------------- */
 
-test('round 41, news: each event shows its picture from Shopify (cropped to a thumbnail), each session its game\'s picture, and one without gets a day tile', async () => {
+test('round 42, news: each event shows its picture from Shopify (cropped to a thumbnail), each session its game\'s picture, and one without gets a day tile', async () => {
   const g = await session();
   lair.write('UPDATE games SET image_id = ? WHERE id = ?', 'https://cdn.shopify.com/s/files/1/lost-mine.png?v=2', g.id);
   switchOn('weekly');
@@ -491,7 +491,7 @@ test('round 41, news: each event shows its picture from Shopify (cropped to a th
   assert.match(m.text, /Thu 26 Nov {2}Warhammer Night\n {4}6pm to midnight · \$10 a person/);
 });
 
-test('round 41, news: with no pictures to be had (Shopify won\'t give them), the weekly email still goes, as the plain list', async () => {
+test('round 42, news: with no pictures to be had (Shopify won\'t give them), the weekly email still goes, as the plain list', async () => {
   lair.shopify.eventImages = async () => {
     throw new Error('Access denied for reference field');
   };
@@ -514,7 +514,7 @@ async function mondayDraft() {
   return `weekly-${MON}`;
 }
 
-test('round 41, Emails tab: only the owner sees it; a helper with every permission and a customer are turned away', async () => {
+test('round 42, Emails tab: only the owner sees it; a helper with every permission and a customer are turned away', async () => {
   await mondayDraft();
   const list = ok(await staffCall('GET', 'news'));
   assert.equal(list.ready, true);
@@ -526,7 +526,7 @@ test('round 41, Emails tab: only the owner sees it; a helper with every permissi
   assert.throws(() => lair.newsStaffList({ customerId: '5', staff: true, role: 'helper', perms: ['tables', 'checkin', 'money', 'members', 'sessions', 'events', 'library', 'community', 'team'] }, lair.rulesCache), /./);
 });
 
-test('round 41, Emails tab: Monday\'s draft shows as it will go, with every event, session and product to leave in or out', async () => {
+test('round 42, Emails tab: Monday\'s draft shows as it will go, with every event, session and product to leave in or out', async () => {
   const id = await mondayDraft();
   const e = ok(await staffCall('GET', 'news')).emails[0];
   assert.equal(e.id, id);
@@ -540,7 +540,7 @@ test('round 41, Emails tab: Monday\'s draft shows as it will go, with every even
   assert.match(e.preview, /Unsubscribe<\/a>/);
 });
 
-test('round 41, Emails tab: the owner\'s changes (subject, preview line, opening words, a note from Gobgob, rows and products left out, the new stock off) show in the preview, the test and what goes', async () => {
+test('round 42, Emails tab: the owner\'s changes (subject, preview line, opening words, a note from Gobgob, rows and products left out, the new stock off) show in the preview, the test and what goes', async () => {
   const id = await mondayDraft();
   const draft = ok(await staffCall('GET', 'news')).emails[0];
   const warhammer = draft.agenda.find((a) => a.title === 'Warhammer Night').key;
@@ -594,7 +594,7 @@ test('round 41, Emails tab: the owner\'s changes (subject, preview line, opening
   assert.equal(news().filter((m) => m.to === 'mia@example.com').length, 1);
 });
 
-test('round 41, Emails tab: NEWS_EMAILS sends the draft by itself at 10am with the owner\'s changes', async () => {
+test('round 42, Emails tab: NEWS_EMAILS sends the draft by itself at 10am with the owner\'s changes', async () => {
   const id = await mondayDraft();
   ok(await staffCall('POST', `news/${id}`, { subject: 'Edited before ten' }));
   switchOn('weekly');
@@ -604,7 +604,7 @@ test('round 41, Emails tab: NEWS_EMAILS sends the draft by itself at 10am with t
   assert.equal(ok(await staffCall('GET', 'news')).emails[0].sentBy, 'auto');
 });
 
-test('round 41, Emails tab: a draft made on another day, Refresh keeps the changes, Black Friday only in its days, and nothing left means nothing to send', async () => {
+test('round 42, Emails tab: a draft made on another day, Refresh keeps the changes, Black Friday only in its days, and nothing left means nothing to send', async () => {
   // Wednesday, no draft yet: the owner makes this week's
   nowIs(at(WED, 9));
   const made = ok(await staffCall('POST', 'news/draft', { kind: 'weekly' }));
@@ -628,7 +628,7 @@ test('round 41, Emails tab: a draft made on another day, Refresh keeps the chang
 
 /* ---------------- after the second review ---------------- */
 
-test('round 41 review 2: a news_campaigns table from before the drafts gets their columns on start, keeping its rows', () => {
+test('round 42 review 2: a news_campaigns table from before the drafts gets their columns on start, keeping its rows', () => {
   const ctx = fakeCtx();
   ctx.storage.sql.exec('CREATE TABLE news_campaigns (id TEXT PRIMARY KEY, kind TEXT NOT NULL, made_at INTEGER NOT NULL, subject TEXT, content TEXT, recipients INTEGER NOT NULL DEFAULT 0, skipped TEXT, until_at INTEGER)');
   ctx.storage.sql.exec("INSERT INTO news_campaigns (id, kind, made_at) VALUES ('weekly-2026-11-16', 'weekly', 1)");
@@ -638,7 +638,7 @@ test('round 41 review 2: a news_campaigns table from before the drafts gets thei
   assert.equal(upgraded.newsRow('weekly-2026-11-16').kind, 'weekly');
 });
 
-test('round 41 review 2: sent by itself at 10am, the weekly is made again first (seats taken since 7am show), the owner\'s changes kept', async () => {
+test('round 42 review 2: sent by itself at 10am, the weekly is made again first (seats taken since 7am show), the owner\'s changes kept', async () => {
   const g = await session();
   nowIs(at(MON, 8));
   await run(at(MON, 8));
@@ -654,7 +654,7 @@ test('round 41 review 2: sent by itself at 10am, the weekly is made again first 
   assert.match(m.text, /Lost Mine \(D&D 5e\)\n.*3 seats left/);
 });
 
-test('round 41 review 2: every product left out with the new stock still on is no new-stock part, and a weekly with nothing left can\'t be sent', async () => {
+test('round 42 review 2: every product left out with the new stock still on is no new-stock part, and a weekly with nothing left can\'t be sent', async () => {
   lair.rulesCache = rulesWith([]);
   const id = await mondayDraft();
   const e = ok(await staffCall('GET', 'news')).emails[0];

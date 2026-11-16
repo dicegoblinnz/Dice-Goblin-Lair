@@ -436,7 +436,7 @@ export const firstGameMethods = {
     if (misses.length >= CANCEL_TRIES) throw new RuleError(UNSUBSCRIBE_WORDS.tooMany, 429);
     const ref = typeof input?.ref === 'string' ? input.ref.trim().slice(0, 40) : '';
     const key = typeof input?.key === 'string' ? input.key.trim().slice(0, 64) : '';
-    // Round 41: a news email's code (NEWS-<16 hex>, src/news.js) is an address's own, with its own key
+    // Round 42: a news email's code (NEWS-<16 hex>, src/news.js) is an address's own, with its own key
     const news = /^NEWS-/.test(ref) ? this.newsKeyRow(ref) : null;
     const row = news ? null : ref && !/^NEWS-/.test(ref) ? this.sql.exec("SELECT * FROM bookings WHERE ref = ? AND kind = 'gm-seat'", ref).toArray()[0] : null;
     const stored = news?.key || row?.followup_key || '';
