@@ -8,6 +8,9 @@ import { LairTime, openWindow, rulesFromSettings, parseTableList, buildRooms, TA
 import { verifyProxySignature, verifyWebhook } from '../src/shopify.js';
 import worker from '../src/index.js';
 
+/** 3 years on from a moment, as the Lair counts a pass's or a gift's life (17 Nov 2026) */
+const threeYears = (ms) => { const d = new Date(ms); d.setUTCFullYear(d.getUTCFullYear() + 3); return d.getTime(); };
+
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
 const HOUR = 3_600_000;
@@ -3653,7 +3656,7 @@ test('passes from orders: each LAIR-PASS-10 bought makes a pass for the order\'s
     assert.match(pass.code, /^SJ-[A-Z]{3,9}-\d{1,2}$/, 'the code comes from the holder');
     assert.deepEqual(
       [pass.label, pass.sessionsTotal, pass.sessionsLeft, pass.cover, pass.pricePaid, pass.status, pass.source, pass.orderName, pass.note, pass.holder, pass.expiresAt],
-      ['Session pass: 10 sessions', 10, 10, 1000, 9000, 'active', 'order', '#1550', 'Bought online', { customerId: '1001', name: 'Sam Jones', email: 'sam@example.com' }, null],
+      ['Session pass: 10 sessions', 10, 10, 1000, 9000, 'active', 'order', '#1550', 'Bought online', { customerId: '1001', name: 'Sam Jones', email: 'sam@example.com' }, threeYears(pass.createdAt)],
     );
   }
   // Shopify sends it again, and then twice at once while Shopify is slow to answer: nothing new.
@@ -3668,6 +3671,8 @@ test('passes from orders: each LAIR-PASS-10 bought makes a pass for the order\'s
   assert.deepEqual([repeat.data.passes.length, fresh.data.passes.length], [0, 1]);
   const counter = (await ordersPasses('#1551'))[0];
   assert.deepEqual([counter.label, counter.pricePaid, counter.note, counter.source], ['Session pass: 5 sessions', 5000, 'Bought at the counter', 'order']);
+  // 17 Nov 2026 (Mo, the legal check): a bought pass lasts 3 years, like a gift card, and My Lair shows its use-by date
+  assert.equal(counter.expiresAt, threeYears(counter.createdAt));
   slow = 0;
 
   // My Lair lists them like any pass; they cover a table at check-in like any other.
@@ -5579,7 +5584,10 @@ test('experience gifts (16 Nov 2026): LAIR-XP-FIRSTGAME and LAIR-XP-PAINT lines 
     assert.match(email.text, /Your first roleplaying game/);
     assert.match(email.text, /GM's fee included/);
     assert.match(email.text, /Learn to paint/);
-    assert.match(email.text, /3 years/);
+    // 17 Nov 2026 (the legal check): a gift card's expiry date must show, so the email gives the date itself
+    const until = new Intl.DateTimeFormat('en-NZ', { timeZone: 'Pacific/Auckland', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(gifts[0].expiresAt));
+    assert.ok(email.text.includes(`good until ${until}, even if prices go up`), email.text);
+    assert.doesNotMatch(email.text, /years from today/);
     // Sent again: nothing new
     const again = await internal('orders-paid', order);
     assert.deepEqual(again.data.gifts, []);

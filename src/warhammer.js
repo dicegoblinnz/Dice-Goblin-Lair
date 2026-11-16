@@ -270,6 +270,8 @@ export const gamePlayerMethods = {
             ? `Show your Goblin card from My Lair at the counter when you arrive (or give ${firstName(booker)}'s name): it finds the game. It's in My Lair too.`
             : `Give ${firstName(booker)}'s name at the counter when you arrive: it finds the game. Make your free Dice Goblin account with this email (${p.email}) and the game shows up in My Lair.`,
           `Can't make it? Let ${firstName(booker)} know, so they can find someone else.`,
+          // 17 Nov 2026 (the legal check, IPP3A): someone without an account hears who gave us their email
+          ...(member ? [] : [this.privacyLine(firstName(booker), 'game')]),
         ],
         button: { label: member ? 'See it in My Lair' : 'Make your free account', url: this.page('myLair') },
       })));

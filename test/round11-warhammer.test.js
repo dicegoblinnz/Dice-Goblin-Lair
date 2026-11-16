@@ -270,6 +270,9 @@ test('warhammer (round 11): the booker\'s email says who\'s playing; every other
     assert.ok(!`${jo.subject}\n${jo.text}`.includes(ref), 'no booking code');
     assert.match(jo.text, /Can't make it\? Let Sam know, so they can find someone else\./);
     assert.match(jo.html, /Make your free account/);
+    // 17 Nov 2026 (the legal check, IPP3A): someone whose email another person gave hears who, and where the privacy policy is
+    assert.match(jo.text, /Sam gave us your email for this game\. Here's how we look after it: https:\/\/\S+\/policies\/privacy-policy/);
+    assert.doesNotMatch(kiri.text, /gave us your email/, 'a member gave us their own');
     assert.ok(playerRows().every((p) => p.invited_at === NOW), 'each marked sent');
     // A second confirmation (an online payment, say) never emails the players again
     mail.sent.length = 0;
