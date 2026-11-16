@@ -64,10 +64,22 @@ export function hoursSummary(hours) {
  *              (linked to its page) and short lines under it (the "Your picks" email)
  *   detailsAfter  round 29: the details table goes after the button and its links (the email the day after a first
  *              game, mockup D3: "Save my seat every week" first, then the next session's details)
- *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details
+ *   unsubscribe   round 29: { label, url }: a marketing email's unsubscribe link, last, under the shop's details;
+ *              round 42: with note, a line before it ("You're getting this because you said yes to news from Dice Goblin.")
+ *   agenda     round 42: [{ when, title, detail, url, image }]: what's on, a row each (the day on the left, the title
+ *              linked to its page, a grey line under it), before the button (the weekly email, Mo's approved mockup of 16
+ *              Nov 2026). With pictures (Mo, 16 Nov 2026: "I want the game images be included with the events inside the
+ *              email. Not just text"): when any row has an image, every row leads with a 16:9 thumbnail (a Shopify picture
+ *              is cropped to it by Shopify's CDN), the day over the title; a row with none gets a dark tile with its day
+ *              in goblin green, so the column stays even
+ *   tiles      round 42: [{ title, image, url, price }]: products two to a row, each picture over its name and price,
+ *              before the button (the Black Friday email)
+ *   section    round 42: { heading, intro, tiles, link: { label, url }, after }: a second part after the button and its
+ *              links, with its own heading, paragraph(s), products two to a row and a link (the weekly email's "New in the
+ *              hoard"); after: paragraph(s) under its link
  * Returns { html, text }.
  */
-export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [], detailsAfter = false, unsubscribe = null }) {
+export function renderEmail({ title, preheader, intro, quote, codes = [], details = [], button, links = [], outro, signoff, footer = {}, brand = {}, cards = [], detailsAfter = false, unsubscribe = null, agenda = [], tiles = [], section = null }) {
   // Round 11: small links under the button, http(s) only
   const extras = (Array.isArray(links) ? links : []).filter((l) => l && safeUrl(l.url) && String(l.label ?? '').trim()).map((l) => ({ label: String(l.label).trim(), url: safeUrl(l.url) }));
   const before = list(intro);
@@ -83,9 +95,65 @@ export function renderEmail({ title, preheader, intro, quote, codes = [], detail
   const said = String(quote ?? '').trim();
   const logo = safeUrl(brand.logo) || EMAIL_LOGO;
   const home = safeUrl(brand.url) || 'https://www.dicegoblin.nz/';
-  const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim() ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url) } : null;
+  const stop = unsubscribe && safeUrl(unsubscribe.url) && String(unsubscribe.label ?? '').trim() ? { label: String(unsubscribe.label).trim(), url: safeUrl(unsubscribe.url), note: String(unsubscribe.note ?? '').trim() } : null;
+  // Round 42: what's on (a row a day), products two to a row, and a second part after the button
+  const days = (Array.isArray(agenda) ? agenda : []).filter((a) => a && String(a.title ?? '').trim())
+    .map((a) => ({ when: list(a.when), title: String(a.title).trim(), detail: String(a.detail ?? '').trim(), url: safeUrl(a.url), image: safeUrl(a.image) }));
+  const pictured = days.some((a) => a.image);
+  const products = (items) => (Array.isArray(items) ? items : []).filter((t) => t && String(t.title ?? '').trim())
+    .map((t) => ({ title: String(t.title).trim(), image: safeUrl(t.image), url: safeUrl(t.url), price: String(t.price ?? '').trim() }));
+  const shelf = products(tiles);
+  const part = section && (String(section.heading ?? '').trim() || products(section.tiles).length) ? {
+    heading: String(section.heading ?? '').trim(), intro: list(section.intro), tiles: products(section.tiles), after: list(section.after),
+    link: section.link && safeUrl(section.link.url) && String(section.link.label ?? '').trim() ? { label: String(section.link.label).trim(), url: safeUrl(section.link.url) } : null,
+  } : null;
 
   const p = (text, extra = '') => `<p style="margin:0 0 14px;font:16px/1.55 ${FONT};color:${C.ink};${extra}">${lines(text)}</p>`;
+  const titleOf = (a) => (a.url ? `<a href="${escapeHtml(a.url)}" style="font:700 16px/1.35 ${FONT};color:${C.ink};text-decoration:none;">${escapeHtml(a.title)}</a>` : `<span style="font:700 16px/1.35 ${FONT};color:${C.ink};">${escapeHtml(a.title)}</span>`);
+  const detailOf = (a) => (a.detail ? `<div style="font:14px/1.5 ${FONT};color:${C.muted};margin-top:2px;">${lines(a.detail)}</div>` : '');
+  /** A picture as a 16:9 thumbnail: Shopify's CDN crops its own pictures to 240 × 135; others are shown 120 wide */
+  const thumb = (url) => {
+    if (!/^https:\/\/cdn\.shopify\.com\//.test(url)) return url;
+    try {
+      const u = new URL(url);
+      u.searchParams.set('width', '240');
+      u.searchParams.set('height', '135');
+      u.searchParams.set('crop', 'center');
+      return u.toString();
+    } catch {
+      return url;
+    }
+  };
+  const pictureOf = (a) => {
+    const inner = a.image
+      ? `<img src="${escapeHtml(thumb(a.image))}" width="120" alt="${escapeHtml(a.title)}" style="display:block;width:120px;max-width:120px;height:auto;border:0;border-radius:8px;background:${C.page};">`
+      : `<table role="presentation" width="120" cellpadding="0" cellspacing="0" border="0" style="width:120px;border-collapse:separate;"><tr><td align="center" height="68" style="height:68px;background:${C.head};border-radius:8px;font:800 15px/1.25 ${FONT};color:${C.goblin};text-align:center;vertical-align:middle;">${a.when.map(escapeHtml).join('<br>')}</td></tr></table>`;
+    return a.url ? `<a href="${escapeHtml(a.url)}" style="text-decoration:none;">${inner}</a>` : inner;
+  };
+  const agendaHtml = !days.length ? '' : pictured ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;border-collapse:collapse;">
+${days.map((a) => `<tr><td style="padding:12px 14px 12px 0;border-top:1px solid ${C.line};vertical-align:top;width:120px;">${pictureOf(a)}</td><td style="padding:12px 0;border-top:1px solid ${C.line};vertical-align:top;"><div style="font:700 13px/1.4 ${FONT};color:${C.button};margin:0 0 2px;">${escapeHtml(a.when.join(' '))}</div>${titleOf(a)}${detailOf(a)}</td></tr>`).join('\n')}
+</table>` : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;border-collapse:collapse;">
+${days.map((a) => `<tr><td style="padding:12px 12px 12px 0;border-top:1px solid ${C.line};font:700 13px/1.4 ${FONT};color:${C.muted};vertical-align:top;width:64px;">${a.when.map(escapeHtml).join('<br>')}</td><td style="padding:12px 0;border-top:1px solid ${C.line};vertical-align:top;">${titleOf(a)}${detailOf(a)}</td></tr>`).join('\n')}
+</table>`;
+  const tileHtml = (items) => {
+    if (!items.length) return '';
+    const rowsOf = [];
+    for (let i = 0; i < items.length; i += 2) rowsOf.push(items.slice(i, i + 2));
+    const one = (t, first) => {
+      const inner = `${t.image ? `<img src="${escapeHtml(t.image)}" width="250" alt="${escapeHtml(t.title)}" style="display:block;width:100%;max-width:250px;height:auto;border:0;border-radius:10px;background:${C.page};">` : ''}<div style="font:700 14px/1.35 ${FONT};color:${C.ink};margin-top:8px;">${escapeHtml(t.title)}</div>${t.price ? `<div style="font:14px/1.4 ${FONT};color:${C.muted};">${escapeHtml(t.price)}</div>` : ''}`;
+      return `<td width="50%" style="${first ? 'padding:0 6px 16px 0;' : 'padding:0 0 16px 6px;'}vertical-align:top;">${t.url ? `<a href="${escapeHtml(t.url)}" style="text-decoration:none;color:${C.ink};">${inner}</a>` : inner}</td>`;
+    };
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 8px;">
+${rowsOf.map((r) => `<tr>${r.map((t, i) => one(t, i === 0)).join('')}${r.length === 1 ? '<td width="50%" style="padding:0 0 16px 6px;"></td>' : ''}</tr>`).join('\n')}
+</table>`;
+  };
+  const partHtml = part ? [
+    part.heading ? `<h2 style="margin:26px 0 10px;font:800 20px/1.25 ${FONT};color:${C.ink};">${escapeHtml(part.heading)}</h2>` : '',
+    ...part.intro.map((t) => p(t)),
+    tileHtml(part.tiles),
+    part.link ? `<p style="margin:0 0 14px;font:15px/1.55 ${FONT};color:${C.ink};"><a href="${escapeHtml(part.link.url)}" style="color:${C.button};font-weight:700;">${escapeHtml(part.link.label)}</a></p>` : '',
+    ...part.after.map((t) => p(t, 'font-size:14px;color:' + C.muted + ';')),
+  ].filter(Boolean).join('\n') : '';
   const table = rows.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 20px;border-collapse:collapse;">
 ${rows.map(([label, value]) => `<tr><td style="padding:10px 12px 10px 0;border-top:1px solid ${C.line};font:700 15px/1.45 ${FONT};color:${C.ink};vertical-align:top;width:36%;">${escapeHtml(label)}</td><td style="padding:10px 0;border-top:1px solid ${C.line};font:15px/1.45 ${FONT};color:${C.ink};vertical-align:top;">${lines(value)}</td></tr>`).join('\n')}
 </table>` : '';
@@ -109,14 +177,17 @@ ${games.map((g) => `<table role="presentation" width="100%" cellpadding="0" cell
 ${g.image ? `<td style="width:96px;padding:0 14px 0 0;vertical-align:top;">${g.url ? `<a href="${escapeHtml(g.url)}">` : ''}<img src="${escapeHtml(g.image)}" width="96" alt="${escapeHtml(g.title)}" style="display:block;width:96px;max-width:96px;height:auto;border:0;border-radius:8px;">${g.url ? '</a>' : ''}</td>` : ''}
 <td style="vertical-align:top;font:16px/1.45 ${FONT};color:${C.ink};"><div style="font:700 17px/1.3 ${FONT};margin:0 0 4px;">${g.url ? `<a href="${escapeHtml(g.url)}" style="color:${C.ink};text-decoration:none;">${escapeHtml(g.title)}</a>` : escapeHtml(g.title)}</div>
 ${g.lines.map((t) => `<div style="font:15px/1.45 ${FONT};color:${C.muted};">${lines(t)}</div>`).join('\n')}</td></tr></table>`).join('\n')}
+${agendaHtml}
+${tileHtml(shelf)}
 ${detailsAfter ? '' : table}
 ${link ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px;"><tr><td style="border-radius:999px;background:${C.button};"><a href="${escapeHtml(link.url)}" style="display:inline-block;padding:14px 26px;font:700 16px/1 ${FONT};color:#ffffff;text-decoration:none;border-radius:999px;">${escapeHtml(link.label)}</a></td></tr></table>` : ''}
 ${extras.length ? `<p style="margin:-8px 0 20px;font:15px/1.6 ${FONT};color:${C.ink};">${extras.map((l) => `<a href="${escapeHtml(l.url)}" style="color:${C.button};font-weight:700;">${escapeHtml(l.label)}</a>`).join(' &nbsp;·&nbsp; ')}</p>` : ''}
 ${detailsAfter ? table : ''}
+${partHtml}
 ${after.map((t) => p(t)).join('\n')}
 ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
 </td></tr>
-<tr><td style="padding:18px 24px 24px;border-top:1px solid ${C.line};font:13px/1.55 ${FONT};color:${C.muted};">${foot.map(escapeHtml).join('<br>')}${stop ? `<br><br><a href="${escapeHtml(stop.url)}" style="color:${C.muted};text-decoration:underline;">${escapeHtml(stop.label)}</a>` : ''}</td></tr>
+<tr><td style="padding:18px 24px 24px;border-top:1px solid ${C.line};font:13px/1.55 ${FONT};color:${C.muted};">${foot.map(escapeHtml).join('<br>')}${stop ? `<br><br>${stop.note ? `${escapeHtml(stop.note)} ` : ''}<a href="${escapeHtml(stop.url)}" style="color:${C.muted};text-decoration:underline;">${escapeHtml(stop.label)}</a>` : ''}</td></tr>
 </table>
 </td></tr></table>
 </body></html>`;
@@ -129,14 +200,21 @@ ${signed.map((t) => p(t, 'margin-top:4px;')).join('\n')}
     said ? said.split(/\r?\n/).map((l) => `> ${l}`).join('\n') : null,
     ...boxes.map((b) => [`    ${b.code}`, ...b.lines.map((t) => `    ${t}`)].join('\n')),
     ...games.map((g) => [g.title, ...g.lines, g.url].filter(Boolean).join('\n')),
+    days.length ? days.map((a) => [`${a.when.join(' ')}  ${a.title}`, a.detail ? `    ${a.detail.replace(/\r?\n/g, '\n    ')}` : null].filter(Boolean).join('\n')).join('\n') : null,
+    shelf.length ? shelf.map((t) => [t.price ? `${t.title}, ${t.price}` : t.title, t.url].filter(Boolean).join('\n')).join('\n\n') : null,
     detailsAfter ? null : textRows,
     link ? `${link.label}: ${link.url}` : null,
     ...extras.map((l) => `${l.label}: ${l.url}`),
     detailsAfter ? textRows : null,
+    part?.heading ? part.heading.toUpperCase() : null,
+    ...(part ? part.intro : []),
+    part?.tiles.length ? part.tiles.map((t) => [t.price ? `${t.title}, ${t.price}` : t.title, t.url].filter(Boolean).join('\n')).join('\n\n') : null,
+    part?.link ? `${part.link.label}: ${part.link.url}` : null,
+    ...(part ? part.after : []),
     ...after,
     signed.join('\n'),
     `--\n${foot.join('\n')}`,
-    stop ? `${stop.label}: ${stop.url}` : null,
+    stop ? `${stop.note ? `${stop.note}\n` : ''}${stop.label}: ${stop.url}` : null,
   ].filter(Boolean).join('\n\n');
   return { html, text: `${text}\n` };
 }

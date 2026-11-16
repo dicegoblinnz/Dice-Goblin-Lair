@@ -91,6 +91,8 @@ import { BOOKING_REMINDER_COLUMNS, BOOKING_REMINDER_INDEXES, bookingReminderMeth
 import { ONLINE_WORDS } from './core.js';
 // Round 29, item 3: a first game for beginners (contract v29-roleplayers section 3)
 import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMethods } from './first-game.js';
+// Round 42: news emails to customers subscribed in Shopify (the weekly email, Black Friday), off until NEWS_EMAILS says (src/news.js)
+import { NEWS_COLUMNS, NEWS_TABLES, newsMethods } from './news.js';
 // Round 30: library members get in free at events marked so, and games that stay in the Lair never go home
 // (src/library-rules.js, contract v30-library)
 import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './library-rules.js';
@@ -1230,6 +1232,15 @@ export class Lair {
       }
     }
     for (const statement of FIRST_GAME_TABLES) this.sql.exec(statement);
+    // Round 42: news emails, who they're queued for, and each address's unsubscribe key (src/news.js)
+    for (const statement of NEWS_TABLES) this.sql.exec(statement);
+    for (const [table, column, type] of NEWS_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     // Round 31: open games (src/open-games.js)
     for (const statement of OPEN_GAME_TABLES) this.sql.exec(statement);
     // and when they first started: a catch-up the next day is only for a reminder day they were running on
@@ -2131,6 +2142,9 @@ export class Lair {
         // Round 31: open games' afternoon emails and Discord posts, at a fixed time (src/open-games.js)
         if (b === 'open-games') return json(await this.openGamesAt(Number(body.at) || Date.now()));
         if (b === 'unsubscribe') return this.oneClickUnsubscribe(body);
+        // Round 42: a test copy of a news email to one address, and where the news emails stand (src/news.js)
+        if (b === 'news-test') return json(await this.newsTest(body));
+        if (b === 'news-status') return json({ news: this.newsStatus() });
         // The POS extension's routes: the Worker has checked the POS session token, so these act for staff.
         const by = `pos:${request.headers.get('X-Lair-Pos-User') || ''}`;
         if (b === 'pos' && c === 'today') return json(await this.posToday());
@@ -2158,8 +2172,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock', 'quests'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock', 'quests'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock', 'quests', 'news'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock', 'quests', 'news'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2250,6 +2264,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'pick' && b === 'filters' && !c) return json(this.shopFiltersView(who));
       if (request.method === 'GET' && a === 'pick' && b && !c) return json(await this.sharedPicks(b, who));
       if (request.method === 'GET' && a === 'me' && b === 'picks' && !c) return json(this.myPicks(who));
+      // Round 42: the Emails tab (owner only): the emails and their drafts, and how many they'd go to (src/news.js)
+      if (request.method === 'GET' && a === 'news' && !b) return json(this.newsStaffList(who, await this.rules()));
+      if (request.method === 'GET' && a === 'news' && b === 'audience' && !c) return json(await this.newsAudience(who));
       // Round 26: the Warhammer tab: where the pad's import stands, and the plan's lines (src/gw-pad.js)
       if (request.method === 'GET' && a === 'gw' && (!b || b === 'plan') && !c) return json(this.gwPlanView(url, who));
       // Round 27: this week's order, a pad line by code or name, the delivery screen and order dates (src/gw-week.js)
@@ -2267,6 +2284,12 @@ export class Lair {
       if (request.method === 'GET' && a === 'stock' && b === 'log' && !c) return json(this.stockOffLog(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
+      // Round 42: the Emails tab (owner only): make this week's draft, change it, make it again, a test, and Send (src/news.js)
+      if (a === 'news' && b === 'draft' && !c) return json(await this.newsStaffDraft(body, who));
+      if (a === 'news' && b && b !== 'draft' && !c) return json(this.newsStaffEdit(decodeURIComponent(b), body, who, await this.rules()));
+      if (a === 'news' && b && c === 'refresh' && !d) return json(await this.newsStaffRefresh(decodeURIComponent(b), who));
+      if (a === 'news' && b && c === 'test' && !d) return json(await this.newsStaffTest(decodeURIComponent(b), body, who));
+      if (a === 'news' && b && c === 'send' && !d) return json(await this.newsStaffSend(decodeURIComponent(b), who));
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
       if (a === 'me' && b === 'passes' && c === 'claim') return json(await this.claimPass(body, who));
       if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
@@ -11529,6 +11552,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not look after open games', error);
     }
+    // Round 42: news emails (src/news.js): made when due, then a batch sent from the queue; nothing without NEWS_EMAILS
+    try {
+      const news = await this.newsUpkeep(rules, Date.now());
+      if (news) result.news = news;
+    } catch (error) {
+      console.error('Lair: could not send the news emails', error);
+    }
     // Round 29: unsubscribes from it reach Shopify's email marketing setting, tried again until they do (src/first-game.js)
     try {
       const stops = await this.pushStopsToShopify(Date.now());
@@ -11660,3 +11690,5 @@ Object.assign(Lair.prototype, questMethods);
 Object.assign(Lair.prototype, orderRollMethods);
 // Round 38, part 2: new Commander decks join the free sleeves deal by themselves (src/commander-deal.js)
 Object.assign(Lair.prototype, commanderDealMethods);
+// Round 42: news emails (src/news.js)
+Object.assign(Lair.prototype, newsMethods);
