@@ -272,12 +272,14 @@ test('round 41, news: Resend down puts the batch back on the queue for the next 
   const again = await run(at(MON, 10, 15));
   assert.deepEqual(again.sent, { sent: 3, stopped: 0, failed: 0 });
   assert.equal(news().length, 3);
-  // a new week, refused outright (a bad address): failed, not tried again
+  // a new week, refused outright: nothing is marked failed in a batch, it's halved and tried again (the review's tests below)
   mail.fail(422);
   const refused = await run(at('2026-11-30', 10, 5));
-  assert.equal(refused.sent.failed, 3);
+  assert.deepEqual(refused.sent, { sent: 0, failed: 0, retry: 3, stopped: 0 });
   mail.fail(0);
-  assert.equal(await run(at('2026-11-30', 10, 15)), null);
+  assert.equal((await run(at('2026-11-30', 10, 15))).sent.sent, 2, 'half a batch at a time now');
+  assert.equal((await run(at('2026-11-30', 10, 25))).sent.sent, 1);
+  assert.equal(news().length, 6);
 });
 
 test('round 41, news: from 9am to 8pm only; a batch queued before 8pm waits for the morning', async () => {
@@ -409,4 +411,59 @@ test('round 41, news: the layout\'s list, products two to a row and second part 
   assert.match(text, /Tue 17 Nov {2}A <b>\n {4}x/);
   assert.match(text, /NEW\n\nhi\n\nSee: https:\/\/d\.nz/);
   assert.equal(tagged('https://x.nz/p?a=1', 's', 'c'), 'https://x.nz/p?a=1&utm_medium=email&utm_source=s&utm_campaign=c');
+});
+
+/* ---------------- after the review ---------------- */
+
+test('round 41 review: a batch Resend refuses (one bad address) is halved and tried again, so only that address fails', async () => {
+  switchOn('weekly');
+  // Resend refuses any batch with Kai in it (a 422 for the whole batch, as it does)
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const list = Array.isArray(body) ? body : [body];
+    if (list.some((m) => m.to[0] === 'kai@example.com')) return new Response(JSON.stringify({ message: 'Invalid `to` field' }), { status: 422 });
+    for (const m of list) mail.sent.push({ ...m, to: m.to[0] });
+    return new Response(JSON.stringify(Array.isArray(body) ? { data: list.map((_, i) => ({ id: `e${i}` })) } : { id: 'e1' }), { status: 200 });
+  };
+  let t = at(MON, 10, 5);
+  for (let i = 0; i < 6; i += 1, t += 10 * 60_000) await run(t);
+  assert.deepEqual(news().map((m) => m.to).sort(), ['mia@example.com', 'ria@example.com'], 'the others still get it');
+  const rows = lair.sql.exec('SELECT email, status FROM news_sends ORDER BY email').toArray().map((r) => ({ ...r }));
+  assert.deepEqual(rows, [{ email: 'kai@example.com', status: 'failed' }, { email: 'mia@example.com', status: 'sent' }, { email: 'ria@example.com', status: 'sent' }]);
+});
+
+test('round 41 review: a refusal for every email (a sender Resend won\'t take) pauses the news emails after three, instead of using up the list', async () => {
+  switchOn('weekly');
+  lair.shopify.marketingSubscribers = async () => Array.from({ length: 8 }, (_, i) => ({ email: `p${i}@example.com`, customerId: String(i), firstName: '' }));
+  mail.fail(403);
+  let t = at(MON, 10, 5);
+  for (let i = 0; i < 12; i += 1, t += 10 * 60_000) await run(t);
+  const failed = lair.sql.exec("SELECT COUNT(*) AS n FROM news_sends WHERE status = 'failed'").one().n;
+  assert.equal(failed, 3, 'three marked failed, one at a time');
+  assert.match(lair.newsPaused(), /^Resend refused 3 emails in a row on their own: /);
+  assert.equal(lair.newsStatus().paused, lair.newsPaused());
+  assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM news_sends WHERE status = 'queued'").one().n, 5, 'the rest wait');
+  // fixed and resumed (the owner's job): the rest go
+  mail.fail(0);
+  assert.deepEqual(await lair.adminJob({ kind: 'news.resume' }), { resumed: true });
+  const after = await run(t);
+  assert.equal(after.sent.sent, 5);
+});
+
+test('round 41 review: an email still queued once its time has passed is not sent late (Black Friday after the 30th, a weekly after Tuesday)', async () => {
+  switchOn('weekly, black-friday-2026');
+  mail.fail(503);
+  await run(at('2026-11-30', 19, 55));
+  mail.fail(0);
+  const late = await run(at('2026-12-01', 9, 5));
+  assert.equal(news().filter((m) => m.subject === NEWS_WORDS.blackFriday.subject).length, 0, 'no Black Friday email on 1 December');
+  assert.equal(late.sent.expired, 3);
+  // this Monday's weekly went the same run (made at 7:55pm on the 30th), sent the next morning: still this week
+  assert.equal(news().filter((m) => /This week/.test(m.subject)).length, 3);
+  // a weekly made but not sent by the end of Tuesday is let go
+  mail.fail(503);
+  await run(at('2026-12-07', 19, 55));
+  mail.fail(0);
+  await run(at('2026-12-09', 9, 5));
+  assert.equal(news().filter((m) => /This week/.test(m.subject)).length, 3, 'the 7 December weekly never went');
 });

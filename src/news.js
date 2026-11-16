@@ -38,8 +38,11 @@ import { seatPriceOf } from './gm-sessions.js';
 
 export const NEWS_TABLES = [
   // one row an email made: its words and products as made (JSON, renderEmail's content less the unsubscribe)
-  'CREATE TABLE IF NOT EXISTS news_campaigns (id TEXT PRIMARY KEY, kind TEXT NOT NULL, made_at INTEGER NOT NULL, subject TEXT, content TEXT, recipients INTEGER NOT NULL DEFAULT 0, skipped TEXT)',
-  // who it's for: 'queued', 'sending' (at: when this run took it), 'sent', 'failed' (Resend refused it) or 'stopped'
+  // until_at: none of it goes after this (the weekly by the end of its Tuesday, a one-off after its last day)
+  'CREATE TABLE IF NOT EXISTS news_campaigns (id TEXT PRIMARY KEY, kind TEXT NOT NULL, made_at INTEGER NOT NULL, subject TEXT, content TEXT, recipients INTEGER NOT NULL DEFAULT 0, skipped TEXT, until_at INTEGER)',
+  // who it's for: 'queued', 'sending' (at: when this run took it), 'sent', 'failed' (Resend refused it on its own),
+  // 'unknown' (Resend never answered, so it may have gone: never sent again), 'stopped' (on the stop list by then) or
+  // 'expired' (still queued when its time passed)
   'CREATE TABLE IF NOT EXISTS news_sends (campaign TEXT NOT NULL, email TEXT NOT NULL, name TEXT, status TEXT NOT NULL, at INTEGER, PRIMARY KEY (campaign, email))',
   'CREATE INDEX IF NOT EXISTS news_sends_queued ON news_sends (status) WHERE status IN (\'queued\', \'sending\')',
   // an address's unsubscribe code and key, made the first time it's sent a news email, and kept
@@ -58,6 +61,13 @@ const AGENDA_MAX = 12;
 const TILES = 4;
 /** A send stuck as 'sending' (the run ended before Resend answered) goes back on the queue after this */
 const STUCK_AFTER = 30 * 60_000;
+/**
+ * Review, 16 Nov 2026: Resend refuses a whole batch for one address it won't take, so a refused batch is halved and
+ * tried again (meta 'news-batch'), down to one email, which is then marked failed on its own. This many refused in a row
+ * on their own means the fault isn't an address (a sender Resend won't take, a key): the news emails pause (meta
+ * 'news-paused', with Resend's words) until the owner's job news.resume, so a fault never uses up the list.
+ */
+export const NEWS_PAUSE_AFTER = 3;
 
 /** The one-off emails, by the name NEWS_EMAILS switches them on with: when they may go (Lair days, inclusive) */
 export const NEWS_CAMPAIGNS = {
@@ -183,9 +193,31 @@ export const newsMethods = {
       return { id: due.id, recipients: 0, skipped: 'nothing to say' };
     }
     const list = people.filter((p) => isEmail(p.email) && !this.followupStopped(p.email));
-    this.write('INSERT INTO news_campaigns (id, kind, made_at, subject, content, recipients) VALUES (?, ?, ?, ?, ?, ?)', due.id, due.kind, now, content.subject, JSON.stringify(content), list.length);
+    this.write('INSERT INTO news_campaigns (id, kind, made_at, subject, content, recipients, until_at) VALUES (?, ?, ?, ?, ?, ?, ?)', due.id, due.kind, now, content.subject, JSON.stringify(content), list.length, this.newsUntil(due, rules, now));
     for (const p of list) this.write("INSERT OR IGNORE INTO news_sends (campaign, email, name, status, at) VALUES (?, ?, ?, 'queued', ?)", due.id, lowerEmail(p.email), p.firstName || null, now);
     return { id: due.id, recipients: list.length };
+  },
+
+  /**
+   * When an email stops going (review, 16 Nov 2026: one queued behind a Resend outage mustn't go out stale): the weekly at
+   * the end of the Tuesday after its Monday, a one-off at the end of its last day. No awaits. → ms
+   */
+  newsUntil(due, rules, now) {
+    const time = new LairTime(rules.tz);
+    if (due.kind === 'weekly') return time.at(addDays(time.key(now), 2), 0);
+    const c = NEWS_CAMPAIGNS[due.kind];
+    return time.at(addDays(c ? c.until : time.key(now), 1), 0);
+  },
+
+  /** Why the news emails are paused (Resend's words), or null. No awaits. */
+  newsPaused() {
+    return this.sql.exec("SELECT value FROM meta WHERE key = 'news-paused'").toArray()[0]?.value || null;
+  },
+
+  /** The owner's job news.resume: sending starts again (after the fault's fixed), at full batches. No awaits. */
+  newsResume() {
+    this.write("DELETE FROM meta WHERE key IN ('news-paused', 'news-batch', 'news-refused')");
+    return { resumed: true };
   },
 
   /**
@@ -306,22 +338,31 @@ export const newsMethods = {
 
   /* ---------------- sending ---------------- */
   /**
-   * Up to NEWS_A_RUN queued emails (oldest email first), from 9am to 8pm: each marked 'sending' before it goes; anyone
-   * on the stop list by now is marked 'stopped' and not sent. Resend down or busy: they go back on the queue; any other
-   * refusal marks them 'failed'. → { sent, stopped, failed } or null.
+   * Up to NEWS_A_RUN queued emails (oldest email first; fewer while a refused batch is being halved), from 9am to 8pm
+   * and not while paused: each marked 'sending' before it goes; anyone on the stop list by now is marked 'stopped' and
+   * not sent, and anything past its email's time 'expired'. Resend down or busy: back on the queue; no answer: 'unknown';
+   * refused: see NEWS_PAUSE_AFTER. → { sent, stopped, failed, … } or null.
    */
   async sendNewsBatch(rules, now) {
     const time = new LairTime(rules.tz);
     const hour = time.parts(now).h;
-    if (hour < NEWS_FROM_HOUR || hour >= NEWS_UNTIL_HOUR) return null;
     // --- claimed with no awaits ---
     this.write("UPDATE news_sends SET status = 'queued' WHERE status = 'sending' AND at < ?", now - STUCK_AFTER);
+    // still queued once its time has passed: never sent late
+    const stale = this.sql.exec(
+      "SELECT COUNT(*) AS n FROM news_sends WHERE status = 'queued' AND campaign IN (SELECT id FROM news_campaigns WHERE until_at IS NOT NULL AND until_at <= ?)", now,
+    ).toArray()[0]?.n || 0;
+    if (stale) this.write("UPDATE news_sends SET status = 'expired', at = ? WHERE status = 'queued' AND campaign IN (SELECT id FROM news_campaigns WHERE until_at IS NOT NULL AND until_at <= ?)", now, now);
+    const expired = stale ? { expired: stale } : {};
+    if (hour < NEWS_FROM_HOUR || hour >= NEWS_UNTIL_HOUR || this.newsPaused()) return stale ? { sent: 0, stopped: 0, failed: 0, ...expired } : null;
+    const meta = (key) => Number(this.sql.exec('SELECT value FROM meta WHERE key = ?', key).toArray()[0]?.value) || 0;
+    const size = Math.min(NEWS_A_RUN, meta('news-batch') || NEWS_A_RUN);
     const rows = this.sql.exec(
       `SELECT s.campaign, s.email, s.name, c.content FROM news_sends s JOIN news_campaigns c ON c.id = s.campaign
         WHERE s.status = 'queued' ORDER BY c.made_at, s.email LIMIT ?`,
-      NEWS_A_RUN,
+      size,
     ).toArray();
-    if (!rows.length) return null;
+    if (!rows.length) return stale ? { sent: 0, stopped: 0, failed: 0, ...expired } : null;
     let stopped = 0;
     const going = [];
     for (const r of rows) {
@@ -333,13 +374,43 @@ export const newsMethods = {
       this.write("UPDATE news_sends SET status = 'sending', at = ? WHERE campaign = ? AND email = ? AND status = 'queued'", now, r.campaign, r.email);
       going.push({ r, letter: this.newsLetter(r.email, JSON.parse(r.content)) });
     }
-    if (!going.length) return { sent: 0, stopped, failed: 0 };
+    if (!going.length) return { sent: 0, stopped, failed: 0, ...expired };
     const result = await this.mailMany(going.map((g) => g.letter));
     // --- after the await, only these rows, and only where this run marked them ---
-    const busy = !result.ok && (result.status >= 500 || result.status === 429 || !result.attempted);
-    const status = result.ok ? 'sent' : busy ? 'queued' : 'failed';
-    for (const g of going) this.write('UPDATE news_sends SET status = ?, at = ? WHERE campaign = ? AND email = ? AND status = \'sending\' AND at = ?', status, now, g.r.campaign, g.r.email, now);
-    return { sent: result.ok ? going.length : 0, stopped, failed: status === 'failed' ? going.length : 0, ...(busy ? { retry: going.length } : {}) };
+    const mark = (status) => {
+      for (const g of going) this.write("UPDATE news_sends SET status = ?, at = ? WHERE campaign = ? AND email = ? AND status = 'sending' AND at = ?", status, now, g.r.campaign, g.r.email, now);
+    };
+    const setMeta = (key, value) => this.write('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', key, String(value));
+    const base = { stopped, ...expired };
+    if (result.ok) {
+      mark('sent');
+      this.write("DELETE FROM meta WHERE key IN ('news-batch', 'news-refused')");
+      return { sent: going.length, failed: 0, ...base };
+    }
+    // Resend down or busy (or email not set up): all back on the queue for the next run
+    if (result.status >= 500 || result.status === 429 || !result.attempted) {
+      mark('queued');
+      return { sent: 0, failed: 0, retry: going.length, ...base };
+    }
+    // no answer at all (timed out): it may have gone, so it's never sent again
+    if (!result.status) {
+      mark('unknown');
+      return { sent: 0, failed: 0, unknown: going.length, ...base };
+    }
+    // refused: a batch is halved and tried again; one email on its own is marked failed, and a run of those pauses
+    if (going.length > 1) {
+      mark('queued');
+      setMeta('news-batch', Math.ceil(going.length / 2));
+      return { sent: 0, failed: 0, retry: going.length, ...base };
+    }
+    mark('failed');
+    const refused = meta('news-refused') + 1;
+    setMeta('news-refused', refused);
+    if (refused >= NEWS_PAUSE_AFTER) {
+      setMeta('news-paused', `Resend refused ${refused} emails in a row on their own: ${String(result.message || result.status).slice(0, 200)}`);
+      console.error('Lair: news emails paused', result.status, result.message);
+    }
+    return { sent: 0, failed: 1, ...base };
   },
 
   /**
@@ -395,12 +466,14 @@ export const newsMethods = {
     return { ok: Boolean(result.ok), subject: letter.subject, ...(result.ok ? {} : { error: result.message || 'Resend refused it.' }) };
   },
 
-  /** For staff and Monday's checks: each email made, and where its sends stand. No awaits. */
+  /** For staff and Monday's checks: each email made, and where its sends stand (and why they're paused). No awaits. */
   newsStatus() {
-    return this.sql.exec(
+    const paused = this.newsPaused();
+    const list = this.sql.exec(
       `SELECT c.id, c.kind, c.made_at AS madeAt, c.subject, c.recipients, c.skipped,
               SUM(s.status = 'sent') AS sent, SUM(s.status IN ('queued', 'sending')) AS waiting, SUM(s.status = 'failed') AS failed, SUM(s.status = 'stopped') AS stopped
          FROM news_campaigns c LEFT JOIN news_sends s ON s.campaign = c.id GROUP BY c.id ORDER BY c.made_at DESC LIMIT 20`,
-    ).toArray();
+    ).toArray().map((r) => ({ ...r }));
+    return paused ? { paused, campaigns: list } : list;
   },
 };
