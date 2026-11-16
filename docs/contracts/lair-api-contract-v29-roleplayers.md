@@ -487,6 +487,12 @@ card row (a member's only).
 (level `new`), open with a seat anyone can book, starting in the next 7 days, a weekly game's next session only, not
 the game they played; soonest first.
 
+**Every one** (Nov 2026, Mo) then asks for a Google review, after the outro and before Gobgob's sign-off: "Got a
+minute? Tell other players what the Lair is like. Good, bad or somewhere in between, Gobgob reads every one." and the
+link "Leave a Google review" (`https://g.page/r/CUxwT2bTRFJTEBM/review`, the Business Profile's own review link;
+`renderEmail`'s `aside`). The same words for everyone, with no reward of any kind: Google's rules ban rewarding a review
+and asking only happy customers.
+
 **Every one** ends with the shop's details (the layout's footer: Dice Goblin Lair, the address, phone and hours) and
 "Don't send me emails like this", a link to `/pages/my-lair#unsubscribe=<code>.<key>` (the seat's code and the email's
 key). It carries `List-Unsubscribe: <https://<Lair app>/unsubscribe/<code>/<key>>` and `List-Unsubscribe-Post:

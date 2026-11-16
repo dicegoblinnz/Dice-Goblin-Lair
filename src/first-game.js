@@ -102,7 +102,16 @@ export const FIRST_GAME_WORDS = {
   none: 'Fancy another? No beginner games have seats left this week, but GMs add new ones all the time.',
   find: 'Find your next game',
   unsubscribe: "Don't send me emails like this",
+  /**
+   * Nov 2026 (Mo): every one asks for a Google review, the same way for everyone and with no reward (Google's rules
+   * ban both a reward and asking only the happy ones)
+   */
+  reviewAsk: 'Got a minute? Tell other players what the Lair is like. Good, bad or somewhere in between, Gobgob reads every one.',
+  reviewLink: 'Leave a Google review',
 };
+
+/** Dice Goblin's Google review form (the Business Profile's own link) */
+export const GOOGLE_REVIEW_URL = 'https://g.page/r/CUxwT2bTRFJTEBM/review';
 
 /** What the unsubscribe routes say when they can't, word for word in the contract */
 export const UNSUBSCRIBE_WORDS = {
@@ -323,8 +332,9 @@ export const firstGameMethods = {
    * session, its seats left and their loyalty card, and the other beginner games with seats this week (left out when
    * none). Anything else is built the same way (Mo, 6 Nov 2026: "This one is the best please use that"): the soonest
    * beginner game with seats this week, "Save me a seat" (its join sheet) and "Try a different game", then when it is,
-   * its seats left, their card and the others; with none, "Fancy another?", Find your next game and their card. All end
-   * with "Don't send me emails like this", and carry the one-click unsubscribe headers. d: a claimed email. No awaits.
+   * its seats left, their card and the others; with none, "Fancy another?", Find your next game and their card. All ask
+   * for a Google review (Nov 2026), then end with "Don't send me emails like this", and carry the one-click unsubscribe
+   * headers. d: a claimed email. No awaits.
    */
   nextDayLetter(d, rules, now) {
     const W = FIRST_GAME_WORDS;
@@ -339,6 +349,7 @@ export const firstGameMethods = {
     const card = [CARD_ROW, this.cardLine(x.customerId, rules)];
     const lair = String(this.env.PUBLIC_URL || 'https://dice-goblin-lair.dicegoblinnz.workers.dev').replace(/\/$/, '');
     const unsubscribe = { label: W.unsubscribe, url: `${this.page('myLair')}#unsubscribe=${encodeURIComponent(x.ref)}.${d.key}` };
+    const review = { text: W.reviewAsk, label: W.reviewLink, url: GOOGLE_REVIEW_URL };
     const extra = { headers: { 'List-Unsubscribe': `<${lair}/unsubscribe/${encodeURIComponent(x.ref)}/${d.key}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } };
     const next = game?.seriesId && game.schedule === 'weekly' ? this.upcomingSession(game.seriesId, now) : null;
     const left = next ? this.publicSeatsLeft(next, rules) : 0;
@@ -359,6 +370,7 @@ export const firstGameMethods = {
         ],
         detailsAfter: true,
         outro: others > 0 ? W.others(others) : [],
+        aside: review,
         unsubscribe,
       }, extra);
     }
@@ -383,11 +395,12 @@ export const firstGameMethods = {
         ],
         detailsAfter: true,
         outro: others > 1 ? W.others(others - 1) : [],
+        aside: review,
         unsubscribe,
       }, extra);
     }
     return this.letter(x.email, W.subject(name), {
-      title: W.title, intro: [thanks, W.none], button: { label: W.find, url: gm }, details: [card], detailsAfter: true, unsubscribe,
+      title: W.title, intro: [thanks, W.none], button: { label: W.find, url: gm }, details: [card], detailsAfter: true, aside: review, unsubscribe,
     }, extra);
   },
 
