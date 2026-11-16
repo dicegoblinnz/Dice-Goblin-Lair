@@ -144,7 +144,11 @@ the first time quests are on, for the four weeks from the next Monday); staff wi
   it). 422 when the week isn't a Monday, the text is empty or over 400 characters, or the code isn't a library game; 409
   when the week has one. Round 42: once someone has solved a riddle, a change to its week or answer is a 409 too
   (`riddleLocked`), since `questSync` would take back the stamps of everyone who solved it; its text and hint can still
-  change.
+  change. Round 44: the answer is the game, not the code. A change whose `code` is the riddle's own (as `answer.shelfCode`
+  has it, ignoring case and punctuation) or empty keeps its answer without looking the code up, so its words can change
+  after the box is relabelled, its old label goes on another game, the game leaves the library, or Shopify can't be
+  asked; the answer then shows the title and label the library has for that game now. Any other code is looked up as
+  before.
 - POST /quests/riddles/:id/remove (staff, Members): a riddle nobody has solved yet comes off; 409 once someone has.
 
 ## 5. Routes

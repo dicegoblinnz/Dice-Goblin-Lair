@@ -22,7 +22,7 @@
  *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair.
  */
-import { LairTime, RuleError, addDays, makeId } from './core.js';
+import { LairTime, RuleError, addDays, codeKey, makeId } from './core.js';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -1007,6 +1007,13 @@ export const questMethods = {
     return { riddles: this.sql.exec('SELECT * FROM quest_riddles WHERE week >= ? ORDER BY week', since).toArray().map((r) => this.questRiddleView(r)) };
   },
 
+  /** A riddle's own answer as a game, with the title and label the library has for it now (the last it knew, when the
+      game has more than one copy), else as the riddle has it. No awaits. */
+  riddleAnswerNow(row) {
+    const known = this.sql.exec('SELECT title, shelf_code FROM library_games WHERE product_id = ? ORDER BY checked_at DESC LIMIT 1', row.product_id).toArray()[0];
+    return { productId: row.product_id, title: known?.title || row.title, shelfCode: known?.shelf_code || row.shelf_code || '' };
+  },
+
   /** POST /quests/riddles { id?, week, text, hint?, code } (staff, Members): a new riddle or a change to one → { riddle } */
   async saveRiddle(input, who) {
     this.requireStaff(who, 'members');
@@ -1017,12 +1024,20 @@ export const questMethods = {
     if (!text || text.length > QUESTS_CONFIG.riddleChars) throw new RuleError(QUEST_WORDS.riddleText, 422);
     const hint = String(input?.hint ?? '').trim();
     if (hint.length > QUESTS_CONFIG.hintChars) throw new RuleError(QUEST_WORDS.riddleHint, 422);
-    const { game, save } = await this.findLibraryGame(input?.code);
+    const id = input?.id ? String(input.id) : null;
+    const before = id ? this.sql.exec('SELECT * FROM quest_riddles WHERE id = ?', id).toArray()[0] : null;
+    if (id && !before) throw new RuleError(QUEST_WORDS.riddleMissing, 404);
+    // round 44: the answer is the game, not the code typed for it. A change that leaves the box as it was (the riddle's
+    // own code, or none) keeps its answer without looking the code up again: that label may since be on another game,
+    // or the game gone from the library, and its words must still be able to change
+    const code = String(input?.code ?? '').trim();
+    const keep = Boolean(before) && (!code || codeKey(code) === codeKey(before.shelf_code));
+    const { game, save } = keep ? { game: this.riddleAnswerNow(before), save: null } : await this.findLibraryGame(input?.code);
     // --- no awaits from here on ---
     const now = Date.now();
     if (save) this.saveLibraryGame(save.game, now, save.codes);
-    const existing = input?.id ? this.sql.exec('SELECT * FROM quest_riddles WHERE id = ?', String(input.id)).toArray()[0] : null;
-    if (input?.id && !existing) throw new RuleError(QUEST_WORDS.riddleMissing, 404);
+    const existing = id ? this.sql.exec('SELECT * FROM quest_riddles WHERE id = ?', id).toArray()[0] : null;
+    if (id && !existing) throw new RuleError(QUEST_WORDS.riddleMissing, 404);
     const taken = this.sql.exec('SELECT id FROM quest_riddles WHERE week = ?', week).toArray()[0];
     if (taken && taken.id !== existing?.id) throw new RuleError(QUEST_WORDS.riddleTaken, 409);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
