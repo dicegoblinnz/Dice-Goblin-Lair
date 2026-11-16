@@ -5452,7 +5452,7 @@ export class Lair {
       const xp = line.xp || null;
       // An experience gift's code has 4 more random letters, so nobody can guess one (16 Nov 2026 review)
       const code = xp ? this.newGiftCode(id, now) : this.newCode('', 'pass', id, now);
-      const expires = addYears(now, xp ? XP_YEARS : PASS_YEARS);
+      const expires = this.lastDayIn(xp ? XP_YEARS : PASS_YEARS, now, rules);
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
            created_by, expires_at, status, source, order_id, order_name, order_line, order_unit, covers) VALUES (?, ?, ?, ?, 0, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, 'active', 'gift', ?, ?, ?, ?, ?)`,
@@ -5572,7 +5572,7 @@ export class Lair {
            created_by, expires_at, status, source, order_id, order_name, order_line, order_unit) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'order', ?, ?, ?, ?)`,
         id, code, `Session pass: ${plural(line.sessions, 'session', 'sessions')}`, line.sessions, rules.prices.table, buyer.customerId || null,
         buyer.name || (buyer.customerId ? null : SOLD_AT_COUNTER), buyer.email || null, pos ? 'Bought at the counter' : 'Bought online', line.each, now,
-        `order:${buyer.orderName || orderId}`, addYears(now, PASS_YEARS), orderId, buyer.orderName || null, line.lineId, unit,
+        `order:${buyer.orderName || orderId}`, this.lastDayIn(PASS_YEARS, now, rules), orderId, buyer.orderName || null, line.lineId, unit,
       );
       made.push(code);
     }
@@ -8307,6 +8307,14 @@ export class Lair {
   }
 
   /** The last moment of a Lair day ('YYYY-MM-DD'): a pass that expires that day works until midnight. */
+  /**
+   * The end of the Lair day `years` on from `now` (17 Nov 2026, from the round 42 review): a bought pass or gift works all
+   * of its last day, as staff-set expiries do and as "Use by" and "good until" say.
+   */
+  lastDayIn(years, now, rules) {
+    return this.endOfDay(new LairTime(rules.tz).key(addYears(now, years)), rules);
+  }
+
   endOfDay(key, rules) {
     const text = String(key || '').trim();
     const real = /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T00:00:00Z`)) && new Date(`${text}T00:00:00Z`).toISOString().slice(0, 10) === text;

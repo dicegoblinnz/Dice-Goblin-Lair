@@ -8,8 +8,15 @@ import { LairTime, openWindow, rulesFromSettings, parseTableList, buildRooms, TA
 import { verifyProxySignature, verifyWebhook } from '../src/shopify.js';
 import worker from '../src/index.js';
 
-/** 3 years on from a moment, as the Lair counts a pass's or a gift's life (17 Nov 2026) */
-const threeYears = (ms) => { const d = new Date(ms); d.setUTCFullYear(d.getUTCFullYear() + 3); return d.getTime(); };
+/** The end of the Auckland day 3 years on from a moment: a pass or gift works all of its last day (17 Nov 2026) */
+const threeYears = (ms) => {
+  const t = new LairTime('Pacific/Auckland');
+  const d = new Date(ms);
+  d.setUTCFullYear(d.getUTCFullYear() + 3);
+  const next = new Date(`${t.key(d.getTime())}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return t.at(next.toISOString().slice(0, 10), 0) - 1;
+};
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -5575,6 +5582,7 @@ test('experience gifts (16 Nov 2026): LAIR-XP-FIRSTGAME and LAIR-XP-PAINT lines 
       assert.match(p.code, /^DG-[A-Z]+-\d{1,2}-[A-HJ-NP-Z2-9]{4}$/, 'a long code nobody can guess');
       const years = (p.expiresAt - before) / (365.25 * 86400000);
       assert.ok(years > 2.99 && years < 3.01, `lasts 3 years (${years})`);
+      assert.equal(p.expiresAt, threeYears(p.createdAt), 'to the end of its last day, as the email says');
     }
     await settle();
     assert.equal(mail.sent.length, 1);

@@ -26,7 +26,8 @@ Someone whose email another person typed in is told who, and where the privacy p
 - An experience gift's email gives the date: "The experience is good until 17 November 2029, even if prices go up." (it
   said "good for 3 years from today").
 - A session pass bought online or at the counter, and a session gift, now lasts 3 years from purchase (`PASS_YEARS`; it
-  had no expiry). My Lair already shows "Use by {date}" for a pass with one. Passes made before this round keep no
+  had no expiry). Passes and experience gifts work to the end of their last Auckland day (`lastDayIn`, as staff-set
+  expiries do), so "Use by" and "good until" mean the whole day (from the round's review). My Lair already shows "Use by {date}" for a pass with one. Passes made before this round keep no
   expiry, and staff-made passes keep whatever staff set.
 
 ## 3. Ad clicks are forgotten when they can't count any more
