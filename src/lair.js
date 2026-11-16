@@ -2161,8 +2161,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock', 'news'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock', 'news'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2250,6 +2250,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'pick' && b === 'filters' && !c) return json(this.shopFiltersView(who));
       if (request.method === 'GET' && a === 'pick' && b && !c) return json(await this.sharedPicks(b, who));
       if (request.method === 'GET' && a === 'me' && b === 'picks' && !c) return json(this.myPicks(who));
+      // Round 41: the Emails tab (owner only): the emails and their drafts, and how many they'd go to (src/news.js)
+      if (request.method === 'GET' && a === 'news' && !b) return json(this.newsStaffList(who, await this.rules()));
+      if (request.method === 'GET' && a === 'news' && b === 'audience' && !c) return json(await this.newsAudience(who));
       // Round 26: the Warhammer tab: where the pad's import stands, and the plan's lines (src/gw-pad.js)
       if (request.method === 'GET' && a === 'gw' && (!b || b === 'plan') && !c) return json(this.gwPlanView(url, who));
       // Round 27: this week's order, a pad line by code or name, the delivery screen and order dates (src/gw-week.js)
@@ -2267,6 +2270,12 @@ export class Lair {
       if (request.method === 'GET' && a === 'stock' && b === 'log' && !c) return json(this.stockOffLog(url, who));
       if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
       const d = parts[3];
+      // Round 41: the Emails tab (owner only): make this week's draft, change it, make it again, a test, and Send (src/news.js)
+      if (a === 'news' && b === 'draft' && !c) return json(await this.newsStaffDraft(body, who));
+      if (a === 'news' && b && b !== 'draft' && !c) return json(this.newsStaffEdit(decodeURIComponent(b), body, who, await this.rules()));
+      if (a === 'news' && b && c === 'refresh' && !d) return json(await this.newsStaffRefresh(decodeURIComponent(b), who));
+      if (a === 'news' && b && c === 'test' && !d) return json(await this.newsStaffTest(decodeURIComponent(b), body, who));
+      if (a === 'news' && b && c === 'send' && !d) return json(await this.newsStaffSend(decodeURIComponent(b), who));
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
       if (a === 'me' && b === 'passes' && c === 'claim') return json(await this.claimPass(body, who));
       if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
