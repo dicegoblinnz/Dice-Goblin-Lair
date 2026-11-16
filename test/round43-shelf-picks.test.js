@@ -31,7 +31,12 @@ function fakeCtx(pending) {
     },
   };
   const kv = new Map();
-  return { storage: { sql, get: async (k) => kv.get(k), put: async (k, v) => kv.set(k, v) }, waitUntil: (p) => pending.push(p) };
+  const storage = { sql, get: async (k) => kv.get(k), put: async (k, v) => kv.set(k, v) };
+  storage.getAlarm = async () => alarmAt;
+  storage.setAlarm = async (at) => {
+    alarmAt = at;
+  };
+  return { storage, waitUntil: (p) => pending.push(p) };
 }
 
 const ENV = { CURRENCY: 'NZD', SHOP: 'ep0qiq-rp.myshopify.com' };
@@ -96,6 +101,7 @@ let pages; // the pages Shopify answers, each a list of nodes
 let asked; // every page asked for: its cursor
 let trouble; // { fail: n (the next n pages fail), throttle: n }
 let waits;
+let alarmAt; // the Durable Object's alarm
 
 const settle = async () => {
   while (pending.length) await Promise.all(pending.splice(0));
@@ -122,6 +128,7 @@ beforeEach(() => {
   asked = [];
   trouble = {};
   waits = [];
+  alarmAt = null;
   const all = NODES();
   pages = [all.slice(0, 7), all.slice(7, 14), all.slice(14)];
   lair = new Lair(fakeCtx(pending), ENV);
@@ -264,4 +271,62 @@ test('anyone can pick, logged in or not, and nobody is looked up', async () => {
   await pick();
   assert.equal((await pick()).count, 5);
   assert.equal(looked, 0);
+});
+
+/* ---------------- kept fresh by the alarm ---------------- */
+test('the 10-minute run wakes the alarm when the list is due, and the alarm reads it before anyone rolls', async () => {
+  lair.shelfKeepWarm(clock);
+  await settle();
+  assert.equal(alarmAt, NOW + SHELF.warmWait, 'no list yet: due');
+  clock = alarmAt;
+  await lair.alarm();
+  await settle();
+  assert.equal(asked.length, 3);
+  const first = await pick();
+  assert.equal(first.count, 5, 'the first roll finds a list');
+  assert.ok(first.pick);
+  assert.equal(asked.length, 3, 'a fresh list is not read again');
+});
+
+test('a fresh list leaves the alarm alone; a list older than 20 minutes wakes it', async () => {
+  await pick();
+  alarmAt = null;
+  lair.alarmAt = undefined;
+  later(10 * MIN);
+  lair.shelfKeepWarm(clock);
+  await settle();
+  assert.equal(alarmAt, null);
+  later(SHELF.fresh);
+  lair.shelfKeepWarm(clock);
+  await settle();
+  assert.equal(alarmAt, clock + SHELF.warmWait);
+});
+
+test("the alarm's read stops within its calls and comes back a minute later to finish", async () => {
+  const all = NODES();
+  pages = Array.from({ length: 60 }, (_, i) => (i === 59 ? all : []));
+  await lair.alarm();
+  await settle();
+  assert.equal(asked.length, SHELF.alarmCalls - 1);
+  assert.equal(lair.shelfCount('live'), 0);
+  assert.equal(alarmAt, clock + MIN, 'back in a minute');
+  clock = alarmAt;
+  await lair.alarm();
+  await settle();
+  assert.equal(asked.length, 60);
+  assert.equal(lair.shelfCount('live'), 5);
+});
+
+test('the alarm does nothing while a failed read waits its five minutes', async () => {
+  trouble.fail = 1;
+  await lair.alarm();
+  await settle();
+  assert.equal(asked.length, 1);
+  later(MIN);
+  await lair.alarm();
+  assert.equal(asked.length, 1);
+  later(SHELF.retry);
+  await lair.alarm();
+  await settle();
+  assert.equal(asked.length, 4);
 });

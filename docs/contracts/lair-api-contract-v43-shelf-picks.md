@@ -40,14 +40,20 @@ first 10): the roller sends the last few it showed.
 
 ## 3. Keeping the list
 
-- The list lives in the Lair (`shelf_stock`, `shelf_runs`). A pick from a list older than **20 minutes** (or no list)
-  starts a fresh read in the background; the pick itself answers at once from the list it has.
+- The list lives in the Lair (`shelf_stock`, `shelf_runs`).
+- **Kept fresh before anyone rolls** (17 Nov 2026: the first roll after going live found no list yet, and the theme's
+  fallback collection had nothing on the shelf, so it showed nothing). The 10-minute run sets the Durable Object's
+  alarm 5 seconds on when the list is due (none yet, or older than **20 minutes**, and no failure in the last 5
+  minutes). The alarm reads it in its own invocation, with at most **45** Shopify calls counting the filters' upkeep
+  before it; a read with more pages than that comes back on the alarm a minute later to finish.
+- A pick from a list older than 20 minutes (or no list) also starts a read in the background; the pick itself answers
+  at once from the list it has.
 - A read asks Shopify for every variant with stock anywhere (`inventory_quantity:>0`, active products), 150 a page, each
   with its count at the shop's location, paced by Shopify's query bucket (a throttled page waits and is asked again, up
   to 3 times in a row).
-- One read at a time. A read uses at most **20** Shopify calls an invocation, counting the request's own (Cloudflare's
-  free plan allows 50); what's left carries on from the same page with the next pick, unless it last moved more than 10
-  minutes ago, when a fresh read starts.
+- One read at a time. A read a pick starts uses at most **20** Shopify calls an invocation, counting the request's own
+  (Cloudflare's free plan allows 50); what's left carries on from the same page with the next pick or alarm, unless it
+  last moved more than 10 minutes ago, when a fresh read starts.
 - The new list replaces the old only once its last page is read, so a pick never sees half a list.
 - A read that fails keeps the old list, and the next read waits **5 minutes**.
 - A list older than **2 hours** isn't picked from (see 2).
