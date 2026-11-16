@@ -787,6 +787,8 @@ test('a GM who isn\'t a customer (round 7): invited by email; the game waits on 
       // round 30 (Mo, 6 Nov 2026): GM credit comes as each player pays through the Lair, once the session's started
       "Make your Dice Goblin account with this email (Rua.T@example.com), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account as each player pays through the Lair.",
       'Players can book already. Gobgob will email you each time someone joins.', 'Open My Lair: https://www.dicegoblin.nz/pages/my-lair', 'Happy GMing!\nGobgob',
+      // 17 Nov 2026 (the legal check, IPP3A): the team gave us the GM's email
+      "The Dice Goblin team gave us your email for this game. Here's how we look after it: https://www.dicegoblin.nz/policies/privacy-policy",
     ]) assert.ok(text.includes(words), words);
     // Staff see who it's waiting for
     const staffGames = (await call('GET', 'floor', null, 'staff')).data.games.filter((g) => g.seriesId === seriesId);
@@ -899,6 +901,8 @@ test('staff reserve a weekly seat for someone without an account (round 7): an i
     assert.equal(lair.booking(mere.data.booking.id).phone, '021 555 0142');
     await settle();
     const confirmation = mail.sent.find((m) => m.to === 'Mere@example.com');
+    // 17 Nov 2026 (the legal check, IPP3A): staff typed her email, so she hears who gave it and where the privacy policy is
+    assert.ok(confirmation.text.includes("The Dice Goblin team gave us your email for this seat. Here's how we look after it: https://www.dicegoblin.nz/policies/privacy-policy"), confirmation.text);
     assert.ok(confirmation.text.includes("It's a weekly game: make your Dice Goblin account with this email and Gobgob will save your seat every week.") && !confirmation.text.includes('Make an account with this email any time'));
     // Staff and the GM see it waiting (the GM without the email); it holds nothing in later sessions until it's taken up
     const staffView = (await call('GET', 'floor', null, 'staff')).data.games;

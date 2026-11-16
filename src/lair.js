@@ -204,6 +204,8 @@ const EXPERIENCES = {
   },
 };
 const XP_YEARS = 3;
+// 17 Nov 2026 (Mo, the legal check): a bought session pass lasts 3 years, like a gift card, and My Lair shows its use-by date
+const PASS_YEARS = 3;
 /** The same day and time n years on (29 Feb lands on 1 Mar) */
 const addYears = (ms, n) => { const d = new Date(ms); d.setUTCFullYear(d.getUTCFullYear() + n); return d.getTime(); };
 /** Letters for the end of an experience gift's code: no I, O, 0 or 1, so it reads back right */
@@ -2997,7 +2999,7 @@ export class Lair {
    * and FROM_EMAIL). invite (round 7): the schedule of the game a seat staff reserved for someone without an account was
    * also invited to every session of ('weekly', 'fortnightly' or 'flexible'), for its last line.
    */
-  confirm(booking, rules, game = null, { invite = null } = {}) {
+  confirm(booking, rules, game = null, { invite = null, givenBy = null } = {}) {
     if (!emailReady(this.env) || !isEmail(booking.email)) return false;
     const when = this.when(booking, rules);
     const online = Boolean(booking.paid && booking.pay === 'now');
@@ -3031,6 +3033,8 @@ export class Lair {
           // Round 7: a seat staff reserved at a weekly game for someone without an account says the account also saves
           // their seat every week (a guest's account picking up the seat is in the line above, round 15)
           ...(booking.customerId || !invite ? [] : [this.inviteLine(invite)]),
+          // 17 Nov 2026 (the legal check, IPP3A): an email someone else typed in says who, and where the privacy policy is
+          ...(givenBy ? [this.privacyLine(givenBy, 'seat')] : []),
         ],
       };
     } else {
@@ -3063,6 +3067,19 @@ export class Lair {
     if (schedule === 'fortnightly') return "It's a fortnightly game: make your Dice Goblin account with this email and Gobgob will save your seat every fortnight.";
     if (schedule === 'flexible') return "It's a regular game: make your Dice Goblin account with this email and Gobgob will save your seat every session.";
     return "It's a weekly game: make your Dice Goblin account with this email and Gobgob will save your seat every week.";
+  }
+
+  /**
+   * 17 Nov 2026 (the legal check): the line for someone whose email another person gave us (the Privacy Act's IPP3A asks
+   * that they're told who collected it and why, and can see the privacy policy). who: "Sam", "GM Ana", "The Dice Goblin team".
+   */
+  privacyLine(who, what) {
+    return `${who} gave us your email for this ${what}. Here's how we look after it: ${this.link('/policies/privacy-policy')}`;
+  }
+
+  /** "17 November 2029", in the Lair's time zone */
+  longDay(ms, rules) {
+    return new Intl.DateTimeFormat('en-NZ', { timeZone: rules?.tz || 'Pacific/Auckland', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(ms));
   }
 
   /** An alert for the team (STAFF_EMAIL). content: { title, intro, details, outro }. extra: { replyTo }. */
@@ -3929,6 +3946,7 @@ export class Lair {
       outro: [
         `Make your Dice Goblin account with this email (${game.gmEmail}), or log in at dicegoblin.nz with it, and the game joins your account. From My Lair you can see who's coming, message your players and add dates. Your store credit goes onto your account as each player pays through the Lair.`,
         'Players can book already. Gobgob will email you each time someone joins.',
+        this.privacyLine('The Dice Goblin team', 'game'),
       ],
       button: { label: 'Open My Lair', url: this.page('myLair') },
       signoff: 'Happy GMing!\nGobgob',
@@ -4204,7 +4222,10 @@ export class Lair {
     }
     // the GM hears about a new player, unless they added them to their own game themselves (round 18)
     if (!(who.customerId && String(who.customerId) === String(game.gmCustomerId || ''))) this.tellGmNewPlayer(seat, game, rules);
-    const emailed = this.confirm(seat, rules, game, { invite: invite ? game.schedule : null });
+    // 17 Nov 2026 (the legal check, IPP3A): someone without an account whose email staff or the GM typed in hears who gave it
+    const byGm = Boolean(who.customerId && String(who.customerId) === String(game.gmCustomerId || ''));
+    const givenBy = customerId ? null : byGm && game.gm ? `GM ${game.gm}` : 'The Dice Goblin team';
+    const emailed = this.confirm(seat, rules, game, { invite: invite ? game.schedule : null, givenBy });
     if (regular) this.tellStaffRegular(seat, game, rules);
     return {
       booking: { ...this.ownView(seat), players, customerId, ...(desk ? { newPlayer } : {}) },
@@ -5431,7 +5452,7 @@ export class Lair {
       const xp = line.xp || null;
       // An experience gift's code has 4 more random letters, so nobody can guess one (16 Nov 2026 review)
       const code = xp ? this.newGiftCode(id, now) : this.newCode('', 'pass', id, now);
-      const expires = xp ? addYears(now, XP_YEARS) : null;
+      const expires = this.lastDayIn(xp ? XP_YEARS : PASS_YEARS, now, rules);
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
            created_by, expires_at, status, source, order_id, order_name, order_line, order_unit, covers) VALUES (?, ?, ?, ?, 0, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, 'active', 'gift', ?, ?, ?, ?, ?)`,
@@ -5439,7 +5460,7 @@ export class Lair {
         giver.firstName ? `A gift from ${giver.firstName}` : null, line.each, now, `order:${orderName || orderId}`, expires, orderId, orderName || null, line.lineId, unit,
         xp?.covers || null,
       );
-      made.push({ code, sessions: line.sessions, xp });
+      made.push({ code, sessions: line.sessions, xp, expires });
     }
     return made;
   }
@@ -5457,7 +5478,8 @@ export class Lair {
     const experiences = gifts.some((g) => g.xp);
     const cover = [
       sessionGifts ? `Each session covers one person's table fee (up to ${money(rules.prices.table)}) at the Dice Goblin Lair.` : '',
-      experiences ? `${many ? 'Each experience is' : 'The experience is'} good for ${XP_YEARS} years from today, even if prices go up.` : '',
+      // 17 Nov 2026 (the legal check): a gift card's expiry date has to show, so it's the date itself, not "3 years from today"
+      experiences ? `${many ? 'Each experience is' : 'The experience is'} good until ${this.longDay(Math.min(...gifts.filter((g) => g.xp).map((g) => g.expires)), rules)}, even if prices go up.` : '',
     ].filter(Boolean).join(' ');
     const subject = experiences ? 'Your gift is ready' : 'Your session gift is ready';
     const what = experiences ? (many ? 'gifts' : 'a gift') : (many ? 'session gifts' : 'a session gift');
@@ -5547,10 +5569,10 @@ export class Lair {
       const code = this.newCode(buyer.name, 'pass', id, now);
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
-           created_by, expires_at, status, source, order_id, order_name, order_line, order_unit) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', 'order', ?, ?, ?, ?)`,
+           created_by, expires_at, status, source, order_id, order_name, order_line, order_unit) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'order', ?, ?, ?, ?)`,
         id, code, `Session pass: ${plural(line.sessions, 'session', 'sessions')}`, line.sessions, rules.prices.table, buyer.customerId || null,
         buyer.name || (buyer.customerId ? null : SOLD_AT_COUNTER), buyer.email || null, pos ? 'Bought at the counter' : 'Bought online', line.each, now,
-        `order:${buyer.orderName || orderId}`, orderId, buyer.orderName || null, line.lineId, unit,
+        `order:${buyer.orderName || orderId}`, this.lastDayIn(PASS_YEARS, now, rules), orderId, buyer.orderName || null, line.lineId, unit,
       );
       made.push(code);
     }
@@ -8285,6 +8307,14 @@ export class Lair {
   }
 
   /** The last moment of a Lair day ('YYYY-MM-DD'): a pass that expires that day works until midnight. */
+  /**
+   * The end of the Lair day `years` on from `now` (17 Nov 2026, from the round 43 review): a bought pass or gift works all
+   * of its last day, as staff-set expiries do and as "Use by" and "good until" say.
+   */
+  lastDayIn(years, now, rules) {
+    return this.endOfDay(new LairTime(rules.tz).key(addYears(now, years)), rules);
+  }
+
   endOfDay(key, rules) {
     const text = String(key || '').trim();
     const real = /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(`${text}T00:00:00Z`)) && new Date(`${text}T00:00:00Z`).toISOString().slice(0, 10) === text;
@@ -11459,6 +11489,13 @@ export class Lair {
       if (offers) result.offers = offers;
     } catch (error) {
       console.error('Lair: early access upkeep failed', error);
+    }
+    // 17 Nov 2026 (the legal check): ad clicks that can't count any more are forgotten (src/walkins.js)
+    try {
+      const forgot = this.forgetOldClicks(Date.now());
+      if (forgot) result.clicksForgotten = forgot;
+    } catch (error) {
+      console.error('Lair: could not forget old ad clicks', error);
     }
     // Round 7: birthday gifts' product codes the webhook couldn't see used (gifts from before round 7, and codes that ran
     // out with no recorded use) are checked with Shopify, a few a run.

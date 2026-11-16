@@ -307,3 +307,15 @@ test(`from the review: the list's password is read from the config database, whe
   assert.equal(env.ADS_FEED_KEY, KEY);
   assert.equal(feedAllowed(new Request('https://lair.test/ads/walkins.csv', { headers: { Authorization: `Basic ${btoa(`google:${KEY}`)}` } }), env.ADS_FEED_KEY), true);
 });
+
+test(`a click is forgotten once it can't count any more (17 Nov 2026, the legal check): after the 90 days it can lead to a first visit and the 60 a visit stays on the list`, async () => {
+  await table(MIA, 'Mia', { click: { gclid: GCLID, at: NOW - 2 * HOUR } });
+  await table(RIA, 'Ria', { tables: ['T4'], click: { gclid: GCLID2, at: NOW - HOUR } });
+  // a day short of 150 days for Mia, a day past it for Ria
+  lair.sql.exec('UPDATE members SET click_at = ? WHERE customer_id = ?', NOW - (WALKIN.clickDays + WALKIN.listDays - 1) * DAY, MIA);
+  lair.sql.exec('UPDATE members SET click_at = ? WHERE customer_id = ?', NOW - (WALKIN.clickDays + WALKIN.listDays + 1) * DAY, RIA);
+  assert.equal(lair.forgetOldClicks(NOW), 1);
+  assert.equal(clickOf(MIA).click_gclid, GCLID, 'still able to be on the list');
+  assert.deepEqual(clickOf(RIA), { click_gclid: null, click_at: null });
+  assert.equal(lair.forgetOldClicks(NOW), 0, 'nothing twice');
+});

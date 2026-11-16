@@ -117,6 +117,17 @@ export const walkinMethods = {
     return true;
   },
 
+  /**
+   * 17 Nov 2026 (the legal check): a click older than the 90 days it can lead to a First visit plus the 60 a visit stays on
+   * the list can't count any more, so it's forgotten (each maintenance run). Returns how many were.
+   */
+  forgetOldClicks(now = Date.now()) {
+    const before = now - (WALKIN.clickDays + WALKIN.listDays) * DAY;
+    const n = this.sql.exec('SELECT COUNT(*) AS n FROM members WHERE click_gclid IS NOT NULL AND click_at < ?', before).one().n;
+    if (n) this.write('UPDATE members SET click_gclid = NULL, click_at = NULL WHERE click_gclid IS NOT NULL AND click_at < ?', before);
+    return n;
+  },
+
   /** POST /me/click { gclid, at? } (logged in): their latest Google click, from the website. Returns { saved }. */
   meClick(input, who) {
     if (!who.customerId) throw new RuleError('Log in first.', 401);
