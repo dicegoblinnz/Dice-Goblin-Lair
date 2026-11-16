@@ -208,8 +208,8 @@ test('round 41, news: the weekly email goes on Monday from 10am, once, to everyo
   assert.deepEqual(first.made, [{ id: `weekly-${MON}`, recipients: 2 }]);
   assert.deepEqual(first.sent, { sent: 2, stopped: 0, failed: 0 });
   assert.deepEqual(news().map((m) => m.to).sort(), ['mia@example.com', 'ria@example.com']);
-  assert.equal(shopify.products.length, 1);
-  assert.equal(shopify.products[0].since, at(MON, 9, 55) - 7 * DAY, 'new in the 7 days before the draft was made');
+  assert.equal(shopify.products.length, 2, 'once for the draft, once more as it goes by itself');
+  assert.equal(shopify.products[1].since, at(MON, 10, 5) - 7 * DAY, 'new in the 7 days before it went');
   // once: the next runs that day make nothing and send nothing
   await run(at(MON, 10, 15));
   await run(at(MON, 15));
@@ -348,7 +348,7 @@ test('round 41, news: Black Friday goes once, the first run after it is switched
   assert.equal(lair.newsRow('black-friday-2026'), null);
   const made = await run(at('2026-11-23', 9, 5));
   assert.deepEqual(made.made, [{ id: 'black-friday-2026', recipients: 3 }]);
-  assert.deepEqual(shopify.products.filter((o) => o.vendor), [{ vendor: 'Dice Goblin NZ', limit: 4 }]);
+  assert.deepEqual(shopify.products.filter((o) => o.vendor), [{ vendor: 'Dice Goblin NZ', limit: 4 }, { vendor: 'Dice Goblin NZ', limit: 4 }], 'the draft, then made again as it goes');
   await run(at('2026-11-24', 10));
   const sent = news();
   assert.equal(sent.length, 3);
@@ -624,4 +624,48 @@ test('round 41, Emails tab: a draft made on another day, Refresh keeps the chang
   const fresh = ok(await staffCall('POST', `news/${id}/refresh`, {})).emails.find((x) => x.id === id);
   assert.equal(fresh.subject, 'Kept');
   assert.equal(fresh.edits.hideNew, true);
+});
+
+/* ---------------- after the second review ---------------- */
+
+test('round 41 review 2: a news_campaigns table from before the drafts gets their columns on start, keeping its rows', () => {
+  const ctx = fakeCtx();
+  ctx.storage.sql.exec('CREATE TABLE news_campaigns (id TEXT PRIMARY KEY, kind TEXT NOT NULL, made_at INTEGER NOT NULL, subject TEXT, content TEXT, recipients INTEGER NOT NULL DEFAULT 0, skipped TEXT, until_at INTEGER)');
+  ctx.storage.sql.exec("INSERT INTO news_campaigns (id, kind, made_at) VALUES ('weekly-2026-11-16', 'weekly', 1)");
+  const upgraded = new Lair(ctx, { CURRENCY: 'NZD', SHOP: 'example-shop.myshopify.com' });
+  const cols = upgraded.sql.exec("SELECT name FROM pragma_table_info('news_campaigns')").toArray().map((c) => c.name);
+  for (const c of ['status', 'base', 'edits', 'updated_at', 'sent_at', 'sent_by']) assert.ok(cols.includes(c), c);
+  assert.equal(upgraded.newsRow('weekly-2026-11-16').kind, 'weekly');
+});
+
+test('round 41 review 2: sent by itself at 10am, the weekly is made again first (seats taken since 7am show), the owner\'s changes kept', async () => {
+  const g = await session();
+  nowIs(at(MON, 8));
+  await run(at(MON, 8));
+  const id = `weekly-${MON}`;
+  ok(await staffCall('POST', `news/${id}`, { subject: 'Kept from the morning' }));
+  // a seat is booked at 9am
+  nowIs(at(MON, 9));
+  ok(await call('POST', 'bookings', { kind: 'gm-seat', gameId: g.id, people: 1, name: 'Leo Park', email: 'leo@example.com', phone: '021 555 0100' }, ''));
+  switchOn('weekly');
+  await run(at(MON, 10, 5));
+  const m = news('mia@example.com')[0];
+  assert.equal(m.subject, 'Kept from the morning');
+  assert.match(m.text, /Lost Mine \(D&D 5e\)\n.*3 seats left/);
+});
+
+test('round 41 review 2: every product left out with the new stock still on is no new-stock part, and a weekly with nothing left can\'t be sent', async () => {
+  lair.rulesCache = rulesWith([]);
+  const id = await mondayDraft();
+  const e = ok(await staffCall('GET', 'news')).emails[0];
+  const sessionKey = e.agenda[0].key;
+  const preview = ok(await staffCall('POST', `news/${id}`, { hide: [sessionKey, ...e.newStock.tiles.map((t) => t.key)] })).emails[0].preview;
+  assert.doesNotMatch(preview, /New in the hoard/);
+  assert.equal((await staffCall('POST', `news/${id}/send`, {})).status, 422);
+  // NEWS_EMAILS can't send it either: nothing goes, the draft stays
+  switchOn('weekly');
+  const r = await run(at(MON, 10, 5));
+  assert.equal(news().length, 0);
+  assert.match(JSON.stringify(r.errors), /nothing in it/);
+  assert.equal(lair.newsRow(id).status, 'draft');
 });

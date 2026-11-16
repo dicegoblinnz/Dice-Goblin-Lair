@@ -92,7 +92,7 @@ import { ONLINE_WORDS } from './core.js';
 // Round 29, item 3: a first game for beginners (contract v29-roleplayers section 3)
 import { FIRST_GAME_COLUMNS, FIRST_GAME_TABLES, FIRST_GAME_WORDS, firstGameMethods } from './first-game.js';
 // Round 41: news emails to customers subscribed in Shopify (the weekly email, Black Friday), off until NEWS_EMAILS says (src/news.js)
-import { NEWS_TABLES, newsMethods } from './news.js';
+import { NEWS_COLUMNS, NEWS_TABLES, newsMethods } from './news.js';
 // Round 30: library members get in free at events marked so, and games that stay in the Lair never go home
 // (src/library-rules.js, contract v30-library)
 import { IN_STORE_WORDS, MEMBER_FREE_COLUMNS, libraryRuleMethods } from './library-rules.js';
@@ -1234,6 +1234,13 @@ export class Lair {
     for (const statement of FIRST_GAME_TABLES) this.sql.exec(statement);
     // Round 41: news emails, who they're queued for, and each address's unsubscribe key (src/news.js)
     for (const statement of NEWS_TABLES) this.sql.exec(statement);
+    for (const [table, column, type] of NEWS_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     // Round 31: open games (src/open-games.js)
     for (const statement of OPEN_GAME_TABLES) this.sql.exec(statement);
     // and when they first started: a catch-up the next day is only for a reminder day they were running on

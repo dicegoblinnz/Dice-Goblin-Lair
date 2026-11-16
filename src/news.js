@@ -62,6 +62,12 @@ export const NEWS_TABLES = [
   'CREATE TABLE IF NOT EXISTS news_keys (email TEXT PRIMARY KEY, id TEXT NOT NULL UNIQUE, key TEXT NOT NULL, at INTEGER NOT NULL)',
 ];
 
+/** news_campaigns' columns from the drafts (the review, 17 Nov 2026): added on start when a table made before them lacks them */
+export const NEWS_COLUMNS = [
+  ['news_campaigns', 'status', "TEXT NOT NULL DEFAULT 'draft'"], ['news_campaigns', 'base', 'TEXT'], ['news_campaigns', 'edits', 'TEXT'],
+  ['news_campaigns', 'updated_at', 'INTEGER'], ['news_campaigns', 'sent_at', 'INTEGER'], ['news_campaigns', 'sent_by', 'TEXT'],
+];
+
 /** Emails sent a run: one Resend batch (Resend takes 100 a batch) */
 export const NEWS_A_RUN = 100;
 /** The weekly email goes from this hour on a Monday, Lair time (Mo, 1 Nov 2026: "Monday 10am"), when NEWS_EMAILS sends it */
@@ -189,7 +195,7 @@ export const newsMethods = {
     }
     for (const id of this.newsAutoDue(rules, now, on)) {
       try {
-        const made = await this.queueNews(id, rules, now, 'auto');
+        const made = await this.queueNews(id, rules, now, 'auto', { rebuild: true });
         if (made) (result.made ||= []).push(made);
       } catch (error) {
         console.error(`Lair: could not send the news email ${id}`, error);
@@ -270,16 +276,28 @@ export const newsMethods = {
    * Every await first (Shopify's subscribers); then, if it's still a draft, one write of the lot. by: who sent it ('auto'
    * for NEWS_EMAILS, else the staff member's customer id). → { id, recipients } or null when it isn't a draft any more.
    */
-  async queueNews(id, rules, now, by) {
+  async queueNews(id, rules, now, by, { rebuild = false } = {}) {
     const before = this.newsRow(id);
     if (!before || before.status !== 'draft') return null;
-    if (before.skipped || !before.base) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
+    if (!rebuild && (before.skipped || !before.base)) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
     if (before.until_at && before.until_at <= now) throw new RuleError(NEWS_STAFF_WORDS.tooLate, 422);
+    // sent by itself (the review): made again from the calendar and the shop as they are now, the owner's edits kept, so
+    // seats left and stock aren't three hours old
+    const fresh = rebuild ? await this.newsContent(before.kind, rules, now) : undefined;
     const people = await this.shopify.marketingSubscribers();
     // --- no awaits from here ---
-    const row = this.newsRow(id);
+    let row = this.newsRow(id);
     if (!row || row.status !== 'draft') return null;
+    if (rebuild) {
+      this.write(
+        "UPDATE news_campaigns SET base = ?, subject = ?, skipped = ?, updated_at = ? WHERE id = ? AND status = 'draft'",
+        fresh ? JSON.stringify(fresh) : null, fresh?.subject || null, fresh ? null : 'nothing to say', now, id,
+      );
+      row = this.newsRow(id);
+      if (!fresh) return { id, recipients: 0, skipped: 'nothing to say' };
+    }
     const content = this.newsFinal(row);
+    if (!this.newsHasSomething(content)) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
     const list = people.filter((p) => isEmail(p.email) && !this.followupStopped(p.email));
     this.write(
       "UPDATE news_campaigns SET status = 'queued', subject = ?, content = ?, recipients = ?, sent_at = ?, sent_by = ?, updated_at = ? WHERE id = ? AND status = 'draft'",
@@ -287,6 +305,16 @@ export const newsMethods = {
     );
     for (const p of list) this.write("INSERT OR IGNORE INTO news_sends (campaign, email, name, status, at) VALUES (?, ?, ?, 'queued', ?)", id, lowerEmail(p.email), p.firstName || null, now);
     return { id, recipients: list.length };
+  },
+
+  /**
+   * Whether an email as it will go has something in it: a weekly needs an event or session, or new stock with a product
+   * left in (the review: a heading with nothing under it isn't an email); a one-off always has its offer. No awaits.
+   */
+  newsHasSomething(content) {
+    if (!content) return false;
+    if (content.kind !== 'weekly') return true;
+    return (content.agenda || []).length > 0 || ((content.section && content.section.tiles) || []).length > 0;
   },
 
   /**
@@ -307,7 +335,8 @@ export const newsMethods = {
     if (Array.isArray(base.tiles)) out.tiles = base.tiles.filter((t) => !hidden.has(String(t.key)));
     if (base.section) {
       const tiles = Array.isArray(base.section.tiles) ? base.section.tiles.filter((t) => !hidden.has(String(t.key))) : base.section.tiles;
-      out.section = e.hideNew === true && base.kind === 'weekly' ? null : { ...base.section, tiles };
+      // the weekly's new stock with every product left out goes too: a heading with nothing under it isn't worth sending
+      out.section = base.kind === 'weekly' && (e.hideNew === true || !(tiles || []).length) ? null : { ...base.section, tiles };
     }
     return out;
   },
@@ -735,8 +764,7 @@ export const newsMethods = {
     const row = this.newsRow(id);
     if (!row) throw new RuleError(NEWS_STAFF_WORDS.missing, 404);
     if (row.status !== 'draft') throw new RuleError(NEWS_STAFF_WORDS.sent, 409);
-    const content = this.newsFinal(row);
-    if (!content || !((content.agenda || []).length || (content.tiles || []).length || content.section || content.kind !== 'weekly')) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
+    if (!this.newsHasSomething(this.newsFinal(row))) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
     const now = Date.now();
     const made = await this.queueNews(id, rules, now, who.customerId || 'staff');
     if (!made) throw new RuleError(NEWS_STAFF_WORDS.sent, 409);
