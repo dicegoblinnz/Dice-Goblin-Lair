@@ -71,6 +71,7 @@ export const adminMethods = {
     // Round 41 (src/news.js): a test copy of a news email to one address ({ campaign, to, at }), and where they stand
     if (kind === 'news.test') return this.newsTest(payload);
     if (kind === 'news.status') return { news: this.newsStatus() };
+    if (kind === 'news.resume') return this.newsResume();
     throw new RuleError(`Unknown job: ${kind || '(none)'}`, 422);
   },
 
