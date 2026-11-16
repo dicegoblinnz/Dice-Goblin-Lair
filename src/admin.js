@@ -68,6 +68,9 @@ export const adminMethods = {
       // --- no awaits from here on ---
       return this.adminOpenSeats(payload, rules, Date.now());
     }
+    // Round 41 (src/news.js): a test copy of a news email to one address ({ campaign, to, at }), and where they stand
+    if (kind === 'news.test') return this.newsTest(payload);
+    if (kind === 'news.status') return { news: this.newsStatus() };
     throw new RuleError(`Unknown job: ${kind || '(none)'}`, 422);
   },
 

@@ -30,6 +30,10 @@ export const CONFIG_KEYS = [
   // Round 40: the walk-ins list's password (src/walkins.js), at least 24 characters: Google Ads' Data Manager reads
   // /ads/walkins.csv with the username google and this password. Never in the code: the repository is public.
   'ADS_FEED_KEY',
+  // Round 41: news emails to customers subscribed in Shopify (src/news.js): NEWS_EMAILS is a comma list of the ones
+  // switched on ('weekly', 'black-friday-2026'), empty or 'off' for none; NEWS_FROM the sender for them (FROM_EMAIL
+  // when unset)
+  'NEWS_EMAILS', 'NEWS_FROM',
 ];
 const TTL = 60_000;
 let cache = null;
