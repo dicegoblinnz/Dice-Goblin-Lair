@@ -155,6 +155,9 @@ const tillMoney = (field) => `${field} { shopMoney { amount currencyCode } }`;
 const TILL_FIGURES = `taxesIncluded ${tillMoney('subtotalPriceSet')} ${tillMoney('totalPriceSet')} ${tillMoney('totalTaxSet')} platformDiscounts { title totalAmount { amount } }`;
 // (round 35: the variant's compare-at price, its full price when it's on sale: a staff discount is held to 80% of it)
 const TILL_LINE_FIELDS = `uuid custom quantity title variantTitle sku variant { id compareAtPrice } ${tillMoney('originalUnitPriceSet')} ${tillMoney('originalTotalSet')} ${tillMoney('discountedTotalSet')} customAttributes { key value } appliedDiscount { ${tillMoney('amountSet')} }`;
+/** Round 43: the shelf list's page size and how long one page may take */
+const SHELF_PAGE = 150;
+const SHELF_TIMEOUT = 20_000;
 /** An amount Shopify gives as text ("15.99") in cents, or null */
 const centsOf = (amount) => {
   if (amount == null || amount === '') return null;
@@ -180,6 +183,29 @@ export function tillVariantOf(v) {
     barcodes: (v?.barcodes?.nodes || []).map((b) => String(b?.value || '').trim()).filter(Boolean),
     price: centsOf(v?.price) ?? 0, tracked, stock: tracked && v?.inventoryQuantity != null && Number.isFinite(stock) ? stock : null, oversell: v?.inventoryPolicy === 'CONTINUE',
   };
+}
+
+/**
+ * Round 43: a variant the d20 roller may land on, or null: counted (tracked), at least one free to sell at the asked
+ * location (Shopify's "available": on hand less what's already sold or set aside), a price over $0, and its product
+ * active, on the Online Store and something the shop sells (never a library copy, a membership, a gift card, a hidden
+ * product or a dice-chest prize, as the theme's own check). → { productId, handle, variantId, stock } (ids numeric)
+ */
+export function shelfRowOf(node) {
+  const product = node?.product;
+  if (!node?.id || !product?.id || !product.handle) return null;
+  if (node.inventoryItem?.tracked !== true) return null;
+  const level = node.inventoryItem.inventoryLevel;
+  const available = (level?.quantities || []).find((q) => q?.name === 'available');
+  const stock = Number(available?.quantity);
+  if (!Number.isFinite(stock) || stock <= 0) return null;
+  if (!(Number(node.price) > 0)) return null;
+  if (product.status !== 'ACTIVE' || !product.onlineStoreUrl || product.isGiftCard === true) return null;
+  const tags = (product.tags || []).map((t) => String(t).trim().toLowerCase());
+  if (tags.includes('hidden') || tags.includes('dice-chest-prize') || tags.includes('board game rental')) return null;
+  const words = `${product.title || ''} ${product.handle} ${product.productType || ''}`;
+  if (/\(library\)/i.test(product.title || '') || /board-game-rental/i.test(product.handle) || /gift.?card|membership/i.test(words)) return null;
+  return { productId: lastPart(product.id), handle: product.handle, variantId: lastPart(node.id), stock };
 }
 
 /**
@@ -1575,6 +1601,28 @@ export class ShopifyAdmin {
       { version: this.tillVersion, timeout: STOCK_OFF_TIMEOUT },
     );
     return (data.productVariants?.nodes || []).map(stockOffMatch).filter(Boolean);
+  }
+
+  /**
+   * Round 43 (src/shelf-picks.js): one page of variants with any stock anywhere, each with its count at `location` (the
+   * shop's own) and its product's handle, tags and Online Store address. 150 a page keeps a page's asked-for cost under
+   * Shopify's 1,000 a query. → { rows: shelfRowOf's (only what's on the shelf and could be picked), next (cursor or null) }
+   */
+  async shelfPage(after, location) {
+    const data = await this.graphql(
+      `query LairShelf($after: String, $location: ID!) { productVariants(first: ${SHELF_PAGE}, after: $after, query: "inventory_quantity:>0 AND product_status:active") {
+        nodes { id price inventoryItem { tracked inventoryLevel(locationId: $location) { quantities(names: ["available"]) { name quantity } } }
+          product { id handle title productType tags isGiftCard status onlineStoreUrl } }
+        pageInfo { hasNextPage endCursor } } }`,
+      { after: after || null, location },
+      { version: this.tillVersion, timeout: SHELF_TIMEOUT },
+    );
+    const page = data.productVariants || {};
+    return {
+      rows: (page.nodes || []).map(shelfRowOf).filter(Boolean),
+      seen: (page.nodes || []).length,
+      next: page.pageInfo?.hasNextPage ? page.pageInfo.endCursor || null : null,
+    };
   }
 
   /** A lot's things by their variant numbers (up to 40), each as stockOffByCode gives it: a Map of number → match */

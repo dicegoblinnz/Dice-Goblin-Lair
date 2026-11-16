@@ -120,6 +120,8 @@ import { COMMANDER_DEAL_TABLES, commanderDealMethods } from './commander-deal.js
 // Round 39: Stock off: lots scanned off the shop's count at a market or in the shop, with no order (src/stock-off.js)
 import { STOCK_OFF_TABLES, stockOffMethods } from './stock-off.js';
 import { QUEST_TABLES, questMethods } from './quests.js';
+// Round 43: what's on the shelf, for the home page's d20 roller
+import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1203,6 +1205,8 @@ export class Lair {
     // Round 41: quests' facts, weeks, riddles and invite codes (src/quests.js); the first four riddles go in once quests
     // are on
     for (const statement of QUEST_TABLES) this.sql.exec(statement);
+    // Round 43: the shelf list the d20 roller picks from (src/shelf-picks.js)
+    for (const statement of SHELF_TABLES) this.sql.exec(statement);
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -2187,6 +2191,8 @@ export class Lair {
         const from = request.headers.get('X-Lair-Client') || '';
         return json(b === 'view' ? this.unsubscribeView(input, from) : this.unsubscribeStop(input, from));
       }
+      // Round 43: a product on the shelf for the home page's d20 roller (src/shelf-picks.js), for anyone, before anyone is looked up
+      if (request.method === 'GET' && a === 'shelf' && b === 'pick' && !c) return json(this.shelfPick(url, callsAtStart));
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
@@ -11693,6 +11699,8 @@ Object.assign(Lair.prototype, gmPerkMethods);
 Object.assign(Lair.prototype, stockOffMethods);
 // Round 41: quests (src/quests.js)
 Object.assign(Lair.prototype, questMethods);
+// Round 43: the d20 roller's shelf list (src/shelf-picks.js)
+Object.assign(Lair.prototype, shelfPickMethods);
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)
 Object.assign(Lair.prototype, orderRollMethods);
 // Round 38, part 2: new Commander decks join the free sleeves deal by themselves (src/commander-deal.js)
