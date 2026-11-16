@@ -27,6 +27,9 @@ export const CONFIG_KEYS = [
   // nowhere. With nothing set it goes to the shop owner's own address as Shopify has it (Settings, Store details). It's
   // the owner's alone: it never goes to STAFF_EMAIL.
   'DISCOUNT_EMAIL',
+  // Round 40: the walk-ins list's password (src/walkins.js), at least 24 characters: Google Ads' Data Manager reads
+  // /ads/walkins.csv with the username google and this password. Never in the code: the repository is public.
+  'ADS_FEED_KEY',
 ];
 const TTL = 60_000;
 let cache = null;

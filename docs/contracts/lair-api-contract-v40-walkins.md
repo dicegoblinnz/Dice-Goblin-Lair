@@ -51,5 +51,6 @@ Google Click ID,Conversion Name,Conversion Time,Order ID
 - The Order ID is the session's own random ID, so a row read again on later days is counted once.
 - Only the click ID and the time go to Google: no name, email or phone.
 - Only with the list's password, `ADS_FEED_KEY` in the config database (at least 24 characters; never in this public
-  repository): the username `google` and that password, or `?key=<password>`. Anything else is a 401. With no password
-  set there's no list.
+  repository): the username `google` and that password. `?key=<password>` also works, only for a tool that can't send
+  a username and password, since an address with the password in it can end up in logs. Anything else is a 401. With
+  no password set there's no list.

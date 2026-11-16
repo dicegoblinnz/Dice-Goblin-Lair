@@ -293,3 +293,14 @@ test(`only Google Ads, with the list's password, reads it: by its username and p
   assert.equal(feedAllowed(new Request(`https://lair.test/ads/walkins.csv?key=${KEY}`), ''), false, 'no password set: nobody');
   assert.equal(feedAllowed(new Request('https://lair.test/ads/walkins.csv?key=short'), 'short'), false, 'a password under 24 characters is never accepted');
 });
+
+test(`from the review: the list's password is read from the config database, where it's kept`, async () => {
+  const { withConfig } = await import('../src/config.js');
+  const KEY = 'p'.repeat(40);
+  const CONFIG = { prepare: () => ({ all: async () => ({ results: [{ key: 'ADS_FEED_KEY', value: KEY }] }) }) };
+  // past the minute the config is cached for (the Lair read it, empty, as these checks started)
+  nowIs(NOW + 400 * DAY);
+  const env = await withConfig({ CONFIG });
+  assert.equal(env.ADS_FEED_KEY, KEY);
+  assert.equal(feedAllowed(new Request('https://lair.test/ads/walkins.csv', { headers: { Authorization: `Basic ${btoa(`google:${KEY}`)}` } }), env.ADS_FEED_KEY), true);
+});
