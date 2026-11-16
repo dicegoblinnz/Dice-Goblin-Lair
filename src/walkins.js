@@ -13,8 +13,8 @@
  * 90 days, and they hadn't been to Dice Goblin before the click (playedBefore). Like stamps, nothing is stored: it's
  * worked out each time, so a session taken back drops off the list.
  *
- * The list. GET /ads/walkins.csv on the Lair app's own address, read by Google Ads' Data Manager every day: Google's
- * "conversions from clicks" file, Auckland time, one row per First visit in the last 60 days, its Order ID the session's
+ * The list. GET /ads/walkins.csv on the Lair app's own address, read by Google Ads' Data Manager every day: its column
+ * names on the first line, times in Auckland time with their offset, one row per First visit in the last 60 days, its Order ID the session's
  * own random ID (fv-<id>), so a row read again on later days is counted once. Only with the list's password
  * (ADS_FEED_KEY, at least 24 characters, set in the config database, never in this public repository): by the username
  * google and that password, or ?key=<password>. With none set there's no list.
@@ -59,14 +59,24 @@ export function cleanClick(input, now = Date.now()) {
   return { gclid, at: when };
 }
 
-/** A time as Google's file wants it, in Auckland time: 2026-11-01 14:00:00 */
+/**
+ * A time in Auckland time with its offset, as Google Ads' Data Manager reads it: 2026-11-01T14:00:00+13:00. (After going
+ * live: Data Manager reads a file's first line as its column names, so the time zone rides on each time, not on a
+ * Parameters:TimeZone line above the columns.)
+ */
 export function walkinTime(ms) {
+  const whole = Math.floor(ms / 1000) * 1000;
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-CA', { timeZone: WALKIN.tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
-      .formatToParts(new Date(ms))
+      .formatToParts(new Date(whole))
       .map((p) => [p.type, p.value]),
   );
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+  // the offset is how far Auckland's wall clock is from UTC at that moment (+13:00 in summer, +12:00 in winter)
+  const local = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+  const minutes = Math.round((local - whole) / 60000);
+  const sign = minutes < 0 ? '-' : '+';
+  const offset = `${sign}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, '0')}:${String(Math.abs(minutes) % 60).padStart(2, '0')}`;
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${offset}`;
 }
 
 /**
@@ -140,7 +150,7 @@ export const walkinMethods = {
   /** GET /internal/walkins (the Worker checked the list's password): Google's conversions-from-clicks file */
   walkinFile(now = Date.now()) {
     const rows = this.walkins(now).map((w) => [w.gclid, WALKIN.name, walkinTime(w.at), w.orderId].join(','));
-    const body = [`Parameters:TimeZone=${WALKIN.tz}`, 'Google Click ID,Conversion Name,Conversion Time,Order ID', ...rows].join('\n') + '\n';
+    const body = ['Google Click ID,Conversion Name,Conversion Time,Order ID', ...rows].join('\n') + '\n';
     return new Response(body, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store' } });
   },
 };

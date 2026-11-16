@@ -43,10 +43,12 @@ Nothing is stored: it's worked out each time, so a session taken back (a no-show
 Ads' Data Manager to read every day:
 
 ```
-Parameters:TimeZone=Pacific/Auckland
 Google Click ID,Conversion Name,Conversion Time,Order ID
-<gclid>,First visit,2026-11-01 14:00:00,fv-<session id>
+<gclid>,First visit,2026-11-01T14:00:00+13:00,fv-<session id>
 ```
+
+Data Manager reads the first line as the column names, so there's no `Parameters:TimeZone` line: each time carries
+Auckland's offset (+13:00 in summer, +12:00 in winter).
 
 - The Order ID is the session's own random ID, so a row read again on later days is counted once.
 - Only the click ID and the time go to Google: no name, email or phone.

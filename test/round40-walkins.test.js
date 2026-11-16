@@ -230,7 +230,7 @@ const feed = async () => {
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
   return (await response.text()).trim().split('\n');
 };
-const HEADER = ['Parameters:TimeZone=Pacific/Auckland', 'Google Click ID,Conversion Name,Conversion Time,Order ID'];
+const HEADER = ['Google Click ID,Conversion Name,Conversion Time,Order ID'];
 
 test(`the list: a new player from a Google ad shows up once they've come in and paid for their first session, and not before`, async () => {
   nowIs(at(TODAY, 11));
@@ -242,10 +242,10 @@ test(`the list: a new player from a Google ad shows up once they've come in and 
   // here but not paid: still not counted (the welcome code's rule: they came and paid)
   assert.deepEqual(await feed(), HEADER);
   ok(await internal('orders-paid', posOrder(7101, [bookingLine(71011, mias.ref, 10)])));
-  assert.deepEqual(await feed(), [...HEADER, `${GCLID},First visit,2026-11-01 14:00:00,fv-${mias.id}`]);
+  assert.deepEqual(await feed(), [...HEADER, `${GCLID},First visit,2026-11-01T14:00:00+13:00,fv-${mias.id}`]);
   // the same row every day after, so Google counts it once
   nowIs(at(TODAY, 20));
-  assert.deepEqual(await feed(), [...HEADER, `${GCLID},First visit,2026-11-01 14:00:00,fv-${mias.id}`]);
+  assert.deepEqual(await feed(), [...HEADER, `${GCLID},First visit,2026-11-01T14:00:00+13:00,fv-${mias.id}`]);
 });
 
 test(`the list: someone who'd played at the Lair before the click isn't a new player`, async () => {
@@ -268,15 +268,15 @@ test(`the list: a click more than 90 days before the visit, or a visit more than
   nowIs(at(TODAY, 14, 5));
   ok(await pos('checkin', { id: mias.id, type: 'booking' }));
   ok(await internal('orders-paid', posOrder(7301, [bookingLine(73011, mias.ref, 10)])));
-  assert.equal((await feed()).length, 3);
+  assert.equal((await feed()).length, 2);
   nowIs(at(TODAY, 14) + 61 * DAY);
   assert.deepEqual(await feed(), HEADER);
 });
 
-test(`conversion times are Auckland time, across the daylight saving change`, () => {
+test(`conversion times are Auckland time with its offset, across the daylight saving change (Data Manager reads the first line as the column names, so there's no time zone line)`, () => {
   // 5 April 2026 3am NZDT is 2am NZST: 1pm on 4 April and 1pm on 6 April
-  assert.equal(walkinTime(Date.UTC(2026, 3, 4, 0, 0, 0)), '2026-04-04 13:00:00');
-  assert.equal(walkinTime(Date.UTC(2026, 3, 6, 1, 0, 0)), '2026-04-06 13:00:00');
+  assert.equal(walkinTime(Date.UTC(2026, 3, 4, 0, 0, 0)), '2026-04-04T13:00:00+13:00');
+  assert.equal(walkinTime(Date.UTC(2026, 3, 6, 1, 0, 0)), '2026-04-06T13:00:00+12:00');
   assert.equal(WALKIN.name, 'First visit');
 });
 
