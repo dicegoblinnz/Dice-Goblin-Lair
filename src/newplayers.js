@@ -163,7 +163,8 @@ export const newPlayerMethods = {
    * with their account on the sale. An online order isn't a visit.
    */
   playedBefore(customerId, before, tally = this.stampTally(customerId)) {
-    if (tally.sessions.some((r) => r.at < before)) return true;
+    // (round 40: a quest's stamps are never a visit, src/quests.js)
+    if (tally.sessions.some((r) => r.kind !== 'stamp-quest' && r.at < before)) return true;
     const id = String(customerId);
     const visit = (b) => `(${b}.status IN ('seated', 'done') OR (${b}.paid_amount > 0 AND ${b}.status NOT IN ('cancelled', 'noshow', 'held')))`;
     const went = (j) => `(${j}.status = 'attended' OR (${j}.paid_amount > 0 AND ${j}.status NOT IN ('cancelled', 'held')))`;

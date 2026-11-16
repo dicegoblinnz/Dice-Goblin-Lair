@@ -119,6 +119,7 @@ import { ORDER_ROLL_COLUMNS, ORDER_ROLL_TABLES, orderRollMethods } from './order
 import { COMMANDER_DEAL_TABLES, commanderDealMethods } from './commander-deal.js';
 // Round 39: Stock off: lots scanned off the shop's count at a market or in the shop, with no order (src/stock-off.js)
 import { STOCK_OFF_TABLES, stockOffMethods } from './stock-off.js';
+import { QUEST_TABLES, questMethods } from './quests.js';
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -1197,6 +1198,9 @@ export class Lair {
     for (const statement of CREDIT_GIFT_TABLES) this.sql.exec(statement);
     // Round 39: Stock off's lots and the owner's lists (src/stock-off.js)
     for (const statement of STOCK_OFF_TABLES) this.sql.exec(statement);
+    // Round 40: quests' facts, weeks, riddles and invite codes (src/quests.js), and the first four riddles
+    for (const statement of QUEST_TABLES) this.sql.exec(statement);
+    this.questSeedRiddles(Date.now());
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -2154,8 +2158,8 @@ export class Lair {
         const day = new Date().toISOString().slice(0, 10);
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
-          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock'].includes(a));
+          || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock', 'quests'].includes(a))
+          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock', 'quests'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
@@ -2191,6 +2195,9 @@ export class Lair {
       if (request.method === 'GET' && a === 'games' && b && c === 'books' && !parts[3]) return json(this.gameBooks(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'gm-perks' && !b) return json(await this.listGmPerks(who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
+      // Round 40: a member's quests, and the staff's riddles (src/quests.js)
+      if (request.method === 'GET' && a === 'me' && b === 'quests' && !c) return json(await this.myQuests(who));
+      if (request.method === 'GET' && a === 'quests' && b === 'riddles' && !c) return json(await this.listRiddles(who));
       // Round 31: the open games of the next four game nights (src/open-games.js); first names to members only
       if (request.method === 'GET' && a === 'open-games' && !b) return json(await this.openGamesList(url, who));
       // Round 16: the wishlist, newest first (src/wishlist.js)
@@ -2263,6 +2270,10 @@ export class Lair {
       if (a === 'me' && b === 'profile') return json(await this.saveProfile(body, who));
       if (a === 'me' && b === 'passes' && c === 'claim') return json(await this.claimPass(body, who));
       if (a === 'me' && b === 'codes' && c === 'redeem') return json(await this.redeemCode(body, who));
+      // Round 40: Gobgob's riddles (staff, src/quests.js), and the d20 picker's game for Rolled it
+      if (a === 'quests' && b === 'riddles' && !c) return json(await this.saveRiddle(body, who));
+      if (a === 'quests' && b === 'riddles' && c && d === 'remove' && !parts[4]) return json(await this.removeRiddle(decodeURIComponent(c), who));
+      if (a === 'pick' && b === 'rolled' && !c) return json(await this.pickRolled(body, who));
       // Round 24: "How did you find us?" in My Lair, and the ad tags of the link they came by (src/newplayers.js)
       if (a === 'me' && b === 'found-us' && !c) return json(this.meFoundUs(body, who));
       if (a === 'me' && b === 'ad' && !c) return json(this.meAd(body, who));
@@ -5370,12 +5381,17 @@ export class Lair {
     // own awaits, then its own writes. If Shopify can't say how the stock stands, this throws and the webhook comes
     // again, which only repeats what's above (kept once per order).
     const gw = await this.gwOrderPaid(order, orderId, { pos, spend });
+    // Round 40: the order's quest facts (src/quests.js): dice, the daily bounties, its products and a late counter sale.
+    // Off unless the live theme has quests on; if Shopify can't say what the products are, this throws and the webhook
+    // comes again, which only repeats what's above.
+    const quests = await this.questOrderPaid(order, orderId, { pos, spend, rules });
     return {
       updated, tabs: [...tabsPaid, ...cartTabs], spend: counted, passes, gifts: gifts.map((g) => g.code), giftCodes, bills: billsPaid, ...(librarySends.length ? { librarySends } : {}),
       ...(stamps ? { stamps } : {}),
       ...(sessionsPaid.length ? { sessionsPaid } : {}),
       ...(gw ? { gw } : {}),
       ...(orderRolls ? { orderRolls } : {}),
+      ...(quests ? { quests } : {}),
     };
   }
 
@@ -6221,6 +6237,8 @@ export class Lair {
     if (found.type === 'pass') return { type: 'pass', pass: this.passView(found.item, { now }) };
     if (found.type === 'member') {
       const customerId = found.item.customer_id;
+      // Round 40: Show your face, their first scan at the counter (src/quests.js)
+      this.questCounterScan(customerId, now, rules);
       const { member, today, owed } = this.memberDay(customerId, rules, now);
       return {
         type: 'member', member: { customerId, name: member?.name || member?.first_name || '', code: member?.code || null },
@@ -7611,7 +7629,8 @@ export class Lair {
     const time = new LairTime(rules?.tz || 'Pacific/Auckland');
     const days = new Map();
     for (const r of kept) {
-      if (r.kind === 'stamp-staff') continue;
+      // (round 40: a quest's stamps aren't a session either, src/quests.js)
+      if (r.kind === 'stamp-staff' || r.kind === 'stamp-quest') continue;
       const day = time.key(r.at);
       if (!days.has(day)) days.set(day, { sessions: 0, sales: [] });
       const d = days.get(day);
@@ -7701,6 +7720,8 @@ export class Lair {
     // Round 22: the stamp ledger's: a session rung up at the counter ("RPG Session"), or a stamp staff added
     if (s.kind === 'stamp-sale') return s.join_title || STAMP_WORDS.saleTitle;
     if (s.kind === 'stamp-staff') return STAMP_WORDS.staffTitle;
+    // Round 40: a quest's stamps, by the quest's name (src/quests.js)
+    if (s.kind === 'stamp-quest') return s.join_title || 'Quest';
     if (s.occurrence_id) return (rules && findOccurrence(rules, s.occurrence_id)?.title) || 'Event game spot';
     return this.tablesTitle(parse(s.tables, []));
   }
@@ -7934,6 +7955,9 @@ export class Lair {
     this.claimHits = this.claimHits || new Map();
     if (this.claimHits.size > 2000) this.claimHits.clear();
     this.claimHits.set(who.customerId, [...tries, now]);
+    // Round 40: a friend's invite code (src/quests.js)
+    const invite = this.questInviteByText(text);
+    if (invite) return this.redeemInvite(invite, String(who.customerId), rules, now);
     const loot = this.rollCodeByText(text);
     if (loot) {
       const me = String(who.customerId);
@@ -9536,8 +9560,13 @@ export class Lair {
   async libraryScan(input, who) {
     if (!who.customerId) throw new RuleError('Log in to borrow games.', 401);
     const rules = await this.rules();
-    const action = ['borrow', 'return'].includes(input?.action) ? input.action : null;
+    const action = ['borrow', 'return', 'play'].includes(input?.action) ? input.action : null;
     const { game, save } = await this.findLibraryGame(input?.code);
+    // Round 40: Playing it here (src/quests.js): nothing goes home, so no copies to count
+    if (action === 'play') {
+      if (save) this.saveLibraryGame(save.game, Date.now(), save.codes);
+      return this.libraryPlayHere(game, who, rules, Date.now());
+    }
     const fromShopify = (await this.shopifyCopies([game.variantId])).get(game.variantId);
     // --- no awaits from here on: read, check and save together, so two people can't take the last copy ---
     const now = Date.now();
@@ -9583,6 +9612,8 @@ export class Lair {
     this.touchMember(me, {}, now);
     // Round 17: borrowing is acting, so a stalled queue of theirs starts again
     this.queueMemberActed(me, who, now);
+    // Round 40: a game picked up counts for their quests (src/quests.js), the week's riddle too
+    this.questSync(me, now, rules, { force: true });
     // Round 37 (1.7): whoever takes a book a table wants is told there and then; it never stops the loan
     const want = this.bookWanted(game.variantId, now, { forId: me });
     const heads = this.wantedWords(want, me);
@@ -10851,6 +10882,8 @@ export class Lair {
     // joined their account counts)
     this.gmPerkListed(who.customerId, who, now);
     const member = this.memberView(this.memberRow(who.customerId), now);
+    // Round 40: their quest stamps, up to date (at most once a minute; src/quests.js)
+    this.questSync(who.customerId, now, rules);
     // The loyalty card (round 6); the old `rolls` mirrors its rolls for clients from before
     const loyalty = this.loyaltyOf(who.customerId, rules, { details: true });
     const since = now - 30 * 24 * HOUR;
@@ -11321,6 +11354,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: GM perk upkeep failed', error);
     }
+    // Round 40 (src/quests.js): this week's golden bounty and weekly quests, and refunds taking quest stamps back
+    try {
+      const quests = await this.questUpkeep(Date.now(), rules);
+      if (quests) result.quests = quests;
+    } catch (error) {
+      console.error('Lair: quests upkeep failed', error);
+    }
     // Round 38 (src/order-rolls.js): an online order's email a restart cut short, and a parcel's tags not on yet
     try {
       const orderRolls = await this.orderRollsUpkeep(Date.now());
@@ -11614,6 +11654,8 @@ Object.assign(Lair.prototype, changeMethods);
 Object.assign(Lair.prototype, gmPerkMethods);
 // Round 39: Stock off
 Object.assign(Lair.prototype, stockOffMethods);
+// Round 40: quests (src/quests.js)
+Object.assign(Lair.prototype, questMethods);
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)
 Object.assign(Lair.prototype, orderRollMethods);
 // Round 38, part 2: new Commander decks join the free sleeves deal by themselves (src/commander-deal.js)

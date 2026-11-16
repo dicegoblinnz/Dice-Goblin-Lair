@@ -2112,6 +2112,65 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 40, quests (src/quests.js): what each of these products is (numeric or gid ids, at most 50): [{ id, type,
+   * vendor, title, listedAt (ms, when it was first listed), dice (in the dice deal's collection) }]. Products Shopify
+   * doesn't have come back as nothing.
+   */
+  async questProducts(productIds, diceCollection) {
+    const ids = [...new Set((productIds || []).map((id) => String(id).split('/').pop()).filter((id) => /^\d+$/.test(id)))].slice(0, 50);
+    if (!ids.length) return [];
+    const data = await this.graphql(
+      `query LairQuestProducts($ids: [ID!]!, $dice: ID!) { nodes(ids: $ids) { ... on Product { id productType vendor title createdAt publishedAt
+        inCollection(id: $dice) } } }`,
+      { ids: ids.map((id) => `gid://shopify/Product/${id}`), dice: diceCollection },
+    );
+    return (data.nodes || []).filter((p) => p?.id).map((p) => ({
+      id: p.id, type: p.productType || '', vendor: p.vendor || '', title: p.title || '',
+      listedAt: Date.parse(p.publishedAt || p.createdAt || '') || null, dice: p.inCollection === true,
+    }));
+  }
+
+  /**
+   * Round 40, quests' refunds (src/quests.js): of these orders, the ones with money back or cancelled, each with its
+   * lines as they stand: [{ id, cancelled, lines: [{ id (numeric), product_id, price, quantity, current_quantity,
+   * discount_allocations }] }]. A cheap look at all of them first, then the lines of only those, 10 orders a call.
+   */
+  async questOrderLines(orderIds) {
+    const ids = [...new Set((orderIds || []).map(String))].slice(0, 250);
+    if (!ids.length) return [];
+    const screen = await this.graphql(
+      'query LairQuestRefundScreen($ids: [ID!]!) { nodes(ids: $ids) { ... on Order { id cancelledAt displayFinancialStatus } } }',
+      { ids },
+    );
+    const changed = (screen.nodes || [])
+      .filter((o) => o?.id && (o.cancelledAt || ['PARTIALLY_REFUNDED', 'REFUNDED'].includes(o.displayFinancialStatus)))
+      .map((o) => o.id);
+    const money = (set) => set?.shopMoney?.amount ?? '0';
+    const orders = [];
+    for (let i = 0; i < changed.length; i += 10) {
+      const data = await this.graphql(
+        `query LairQuestRefundLines($ids: [ID!]!) { nodes(ids: $ids) { ... on Order { id cancelledAt
+          lineItems(first: 50) { nodes { id product { id } quantity currentQuantity
+            originalUnitPriceSet { shopMoney { amount } } discountAllocations { allocatedAmountSet { shopMoney { amount } } } } } } } }`,
+        { ids: changed.slice(i, i + 10) },
+      );
+      for (const o of data.nodes || []) {
+        if (!o?.id) continue;
+        orders.push({
+          id: o.id,
+          cancelled: Boolean(o.cancelledAt),
+          lines: (o.lineItems?.nodes || []).map((l) => ({
+            id: String(l.id).split('/').pop(), product_id: l.product?.id ? String(l.product.id).split('/').pop() : null, price: money(l.originalUnitPriceSet),
+            quantity: l.quantity, current_quantity: l.currentQuantity,
+            discount_allocations: (l.discountAllocations || []).map((d) => ({ amount: money(d.allocatedAmountSet) })),
+          })),
+        });
+      }
+    }
+    return orders;
+  }
+
+  /**
    * Round 38, part 2 (src/commander-deal.js): in one call, the products and options with Commander in their titles
    * (Wizards of the Coast's; products not archived) and the shop's live and scheduled automatic Buy X get Y discounts.
    * Returns { products: [{ id, title, vendor, status }], variants: [{ id, title, product: { id, title, vendor, status } }],
