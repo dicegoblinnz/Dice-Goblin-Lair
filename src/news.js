@@ -31,18 +31,28 @@
  *   verified), FROM_EMAIL when unset.
  * - POST /internal/news-test { campaign, to, at }: one copy to `to`, "[Test]" on the subject, nothing queued or marked.
  *
+ * Later still (Mo: "can we have it automated inside the staff section to be sent as a weekly template with the chance to
+ * edit any possible changes if not just the ability to send the email from staff is good enough"): every email is a
+ * draft first. Each Monday from 7am the Lair makes that week's draft by itself; the staff page's Emails tab (owner only:
+ * it emails every subscriber) shows it as it will look, lets the owner change the subject, the preview line and the
+ * opening words, add a note from Gobgob, leave out any event, session or product, or the new stock altogether, refresh
+ * it from the calendar and the shop, send themselves a test, and Send it. NEWS_EMAILS still sends a draft by itself
+ * (the weekly at 10am, a one-off when it's due), edits and all, for when Mo wants it hands-free.
+ *
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair; each
  * keeps its rule: every await first, then one synchronous read-check-write.
  */
-import { LairTime, addDays, eventOccurrences } from './core.js';
+import { LairTime, RuleError, addDays, eventOccurrences } from './core.js';
 import { emailReady } from './shopify.js';
 import { clockLabel } from './email.js';
 import { seatPriceOf } from './gm-sessions.js';
 
 export const NEWS_TABLES = [
-  // one row an email made: its words and products as made (JSON, renderEmail's content less the unsubscribe)
-  // until_at: none of it goes after this (the weekly by the end of its Tuesday, a one-off after its last day)
-  'CREATE TABLE IF NOT EXISTS news_campaigns (id TEXT PRIMARY KEY, kind TEXT NOT NULL, made_at INTEGER NOT NULL, subject TEXT, content TEXT, recipients INTEGER NOT NULL DEFAULT 0, skipped TEXT, until_at INTEGER)',
+  // one row an email: status 'draft' (base: its words and products as the Lair made them, edits: the owner's changes,
+  // both JSON) until it's sent, then 'queued' (content: what went, renderEmail's content less the unsubscribe; sent_at,
+  // sent_by: when and who, 'auto' when NEWS_EMAILS sent it). until_at: none of it goes after this (the weekly by the end of
+  // its Tuesday, a one-off after its last day). skipped: a draft with nothing to say ('nothing to say')
+  'CREATE TABLE IF NOT EXISTS news_campaigns (id TEXT PRIMARY KEY, kind TEXT NOT NULL, made_at INTEGER NOT NULL, subject TEXT, content TEXT, recipients INTEGER NOT NULL DEFAULT 0, skipped TEXT, until_at INTEGER, status TEXT NOT NULL DEFAULT \'draft\', base TEXT, edits TEXT, updated_at INTEGER, sent_at INTEGER, sent_by TEXT)',
   // who it's for: 'queued', 'sending' (at: when this run took it), 'sent', 'failed' (Resend refused it on its own),
   // 'unknown' (Resend never answered, so it may have gone: never sent again), 'stopped' (on the stop list by then) or
   // 'expired' (still queued when its time passed)
@@ -54,8 +64,12 @@ export const NEWS_TABLES = [
 
 /** Emails sent a run: one Resend batch (Resend takes 100 a batch) */
 export const NEWS_A_RUN = 100;
-/** The weekly email goes from this hour on a Monday, Lair time (Mo, 1 Nov 2026: "Monday 10am") */
+/** The weekly email goes from this hour on a Monday, Lair time (Mo, 1 Nov 2026: "Monday 10am"), when NEWS_EMAILS sends it */
 export const WEEKLY_FROM_HOUR = 10;
+/** Its draft is made from this hour on a Monday, so it's there to look over before then */
+export const WEEKLY_DRAFT_HOUR = 7;
+/** The longest subject, preview line, opening words and note the owner can write (characters) */
+export const NEWS_LIMITS = { subject: 120, preheader: 200, intro: 1200, note: 1200 };
 /** News emails only go from 9am to 8pm at the Lair */
 export const NEWS_FROM_HOUR = 9;
 export const NEWS_UNTIL_HOUR = 20;
@@ -112,6 +126,20 @@ export const NEWS_WORDS = {
   },
 };
 
+/** The emails' names on the staff page */
+export const NEWS_KIND_LABELS = { weekly: 'This week at the Lair', 'black-friday-2026': 'Black Friday 2026' };
+/** What the Emails tab's routes say when they can't (staff words: plain) */
+export const NEWS_STAFF_WORDS = {
+  missing: 'That email isn’t here any more. Reload the Emails tab.',
+  sent: 'That email has been sent, so it can’t be changed now.',
+  nothing: 'This email has nothing in it to send. Refresh it, or put something back in.',
+  tooLate: 'This email’s time has passed, so it can’t be sent now.',
+  noKind: 'There’s no email of that kind.',
+  notOn: 'That email isn’t on yet.',
+  noEmail: 'Email isn’t set up for the Lair app, so nothing can be sent.',
+  noTo: 'There’s no email address to send the test to. Type one in.',
+  long: (what, most) => `The ${what} can be at most ${most} characters.`,
+};
 const lowerEmail = (v) => String(v || '').trim().toLowerCase();
 const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 const money = (cents) => `$${cents % 100 === 0 ? cents / 100 : (cents / 100).toFixed(2)}`;
@@ -143,20 +171,29 @@ export function newsSwitches(env) {
 export const newsMethods = {
   /* ---------------- the 10-minute run ---------------- */
   /**
-   * Makes the emails that are due (their awaits first: Shopify's subscribers and products), then sends a batch from the
-   * queue. Nothing at all without NEWS_EMAILS. → { made, sent, … } or null.
+   * Makes this Monday's weekly draft (from 7am) and the drafts of one-offs switched on, sends by itself what NEWS_EMAILS
+   * switches on and is due, then sends a batch from the queue. → { drafted, made, sent, … } or null.
    */
   async newsUpkeep(rules, now) {
+    if (!emailReady(this.env)) return null;
     const on = newsSwitches(this.env);
-    if (!on.size || !emailReady(this.env)) return null;
     const result = {};
-    for (const due of this.newsDue(rules, now, on)) {
+    for (const due of this.newsDraftsDue(rules, now, on)) {
       try {
-        const made = await this.makeNews(due, rules, now);
-        if (made) (result.made ||= []).push(made);
+        const made = await this.makeNewsDraft(due, rules, now);
+        if (made) (result.drafted ||= []).push(made);
       } catch (error) {
         console.error(`Lair: could not make the news email ${due.id}`, error);
         (result.errors ||= []).push({ id: due.id, error: String(error?.message || error).slice(0, 300) });
+      }
+    }
+    for (const id of this.newsAutoDue(rules, now, on)) {
+      try {
+        const made = await this.queueNews(id, rules, now, 'auto');
+        if (made) (result.made ||= []).push(made);
+      } catch (error) {
+        console.error(`Lair: could not send the news email ${id}`, error);
+        (result.errors ||= []).push({ id, error: String(error?.message || error).slice(0, 300) });
       }
     }
     const sent = await this.sendNewsBatch(rules, now);
@@ -164,41 +201,115 @@ export const newsMethods = {
     return Object.keys(result).length ? result : null;
   },
 
+  /** This Monday's weekly email's id (weekly-YYYY-MM-DD, the Monday of `now`'s week, Lair time). No awaits. */
+  weeklyId(rules, now) {
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    return `weekly-${addDays(today, -((time.weekday(today) + 6) % 7))}`;
+  },
+
   /**
-   * The emails switched on that are due at `now` and not made yet: this Monday's weekly from 10am to 8pm, and each
-   * one-off in its days from 9am to 8pm. No awaits. → [{ id, kind }]
+   * Drafts to make at `now` that aren't made yet: this week's weekly on Monday from 7am (until 8pm), and each one-off
+   * switched on, in its days. No awaits. → [{ id, kind }]
    */
-  newsDue(rules, now, on) {
+  newsDraftsDue(rules, now, on) {
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    const hour = time.parts(now).h;
+    if (hour >= NEWS_UNTIL_HOUR) return [];
+    const due = [];
+    if (time.weekday(today) === 1 && hour >= WEEKLY_DRAFT_HOUR) due.push({ id: this.weeklyId(rules, now), kind: 'weekly' });
+    for (const [id, c] of Object.entries(NEWS_CAMPAIGNS)) {
+      if (on.has(id) && today >= c.from && today <= c.until && hour >= NEWS_FROM_HOUR) due.push({ id, kind: id });
+    }
+    return due.filter((d) => !this.newsRow(d.id));
+  },
+
+  /**
+   * Drafts NEWS_EMAILS sends by itself now: this Monday's weekly from 10am, a one-off in its days from 9am; each still a
+   * draft with something to say. No awaits. → [id]
+   */
+  newsAutoDue(rules, now, on) {
+    if (!on.size) return [];
     const time = new LairTime(rules.tz);
     const today = time.key(now);
     const hour = time.parts(now).h;
     if (hour < NEWS_FROM_HOUR || hour >= NEWS_UNTIL_HOUR) return [];
-    const due = [];
-    if (on.has('weekly') && time.weekday(today) === 1 && hour >= WEEKLY_FROM_HOUR) due.push({ id: `weekly-${today}`, kind: 'weekly' });
-    for (const [id, c] of Object.entries(NEWS_CAMPAIGNS)) {
-      if (on.has(id) && today >= c.from && today <= c.until) due.push({ id, kind: id });
-    }
-    return due.filter((d) => !this.sql.exec('SELECT 1 AS n FROM news_campaigns WHERE id = ?', d.id).toArray().length);
+    const ids = [];
+    if (on.has('weekly') && time.weekday(today) === 1 && hour >= WEEKLY_FROM_HOUR) ids.push(this.weeklyId(rules, now));
+    for (const [id, c] of Object.entries(NEWS_CAMPAIGNS)) if (on.has(id) && today >= c.from && today <= c.until) ids.push(id);
+    return ids.filter((id) => {
+      const row = this.newsRow(id);
+      return row && row.status === 'draft' && !row.skipped;
+    });
+  },
+
+  /** One email's row, or null. No awaits. */
+  newsRow(id) {
+    return this.sql.exec('SELECT * FROM news_campaigns WHERE id = ?', String(id || '')).toArray()[0] || null;
   },
 
   /**
-   * One email made: its content (newsContent: products from Shopify), and everyone subscribed in Shopify less the stop
-   * list queued for it. Every await first; then, if no other run made it meanwhile, one write of the lot. With nothing to
-   * say (the weekly with nothing on and nothing new) it's noted as skipped and nobody's queued. → { id, recipients }
+   * One draft made: its words and products (newsContent: from Shopify and the calendar), kept as its base. Every await
+   * first; then, if nobody made it meanwhile, one write. Nothing to say (the weekly with nothing on and nothing new): a
+   * draft marked skipped, which never goes. → { id, skipped? } or null
    */
-  async makeNews(due, rules, now) {
+  async makeNewsDraft(due, rules, now) {
     const content = await this.newsContent(due.kind, rules, now);
-    const people = content ? await this.shopify.marketingSubscribers() : [];
     // --- no awaits from here ---
-    if (this.sql.exec('SELECT 1 AS n FROM news_campaigns WHERE id = ?', due.id).toArray().length) return null;
-    if (!content) {
-      this.write('INSERT INTO news_campaigns (id, kind, made_at, recipients, skipped) VALUES (?, ?, ?, 0, ?)', due.id, due.kind, now, 'nothing to say');
-      return { id: due.id, recipients: 0, skipped: 'nothing to say' };
-    }
+    if (this.newsRow(due.id)) return null;
+    this.write(
+      "INSERT INTO news_campaigns (id, kind, made_at, subject, base, status, skipped, until_at, updated_at) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)",
+      due.id, due.kind, now, content?.subject || null, content ? JSON.stringify(content) : null, content ? null : 'nothing to say', this.newsUntil(due, rules, now), now,
+    );
+    return content ? { id: due.id } : { id: due.id, skipped: 'nothing to say' };
+  },
+
+  /**
+   * A draft sent: everyone subscribed in Shopify less the stop list queued for it, with the draft as edited (newsFinal).
+   * Every await first (Shopify's subscribers); then, if it's still a draft, one write of the lot. by: who sent it ('auto'
+   * for NEWS_EMAILS, else the staff member's customer id). → { id, recipients } or null when it isn't a draft any more.
+   */
+  async queueNews(id, rules, now, by) {
+    const before = this.newsRow(id);
+    if (!before || before.status !== 'draft') return null;
+    if (before.skipped || !before.base) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
+    if (before.until_at && before.until_at <= now) throw new RuleError(NEWS_STAFF_WORDS.tooLate, 422);
+    const people = await this.shopify.marketingSubscribers();
+    // --- no awaits from here ---
+    const row = this.newsRow(id);
+    if (!row || row.status !== 'draft') return null;
+    const content = this.newsFinal(row);
     const list = people.filter((p) => isEmail(p.email) && !this.followupStopped(p.email));
-    this.write('INSERT INTO news_campaigns (id, kind, made_at, subject, content, recipients, until_at) VALUES (?, ?, ?, ?, ?, ?, ?)', due.id, due.kind, now, content.subject, JSON.stringify(content), list.length, this.newsUntil(due, rules, now));
-    for (const p of list) this.write("INSERT OR IGNORE INTO news_sends (campaign, email, name, status, at) VALUES (?, ?, ?, 'queued', ?)", due.id, lowerEmail(p.email), p.firstName || null, now);
-    return { id: due.id, recipients: list.length };
+    this.write(
+      "UPDATE news_campaigns SET status = 'queued', subject = ?, content = ?, recipients = ?, sent_at = ?, sent_by = ?, updated_at = ? WHERE id = ? AND status = 'draft'",
+      content.subject, JSON.stringify(content), list.length, now, String(by || 'auto'), now, id,
+    );
+    for (const p of list) this.write("INSERT OR IGNORE INTO news_sends (campaign, email, name, status, at) VALUES (?, ?, ?, 'queued', ?)", id, lowerEmail(p.email), p.firstName || null, now);
+    return { id, recipients: list.length };
+  },
+
+  /**
+   * A draft as it will go: its base with the owner's edits (their subject, preview line, opening words and note; the
+   * events, sessions and products they left out, by key; the new stock left out altogether). No awaits. → content
+   */
+  newsFinal(row) {
+    const base = row.base ? JSON.parse(row.base) : null;
+    if (!base) return null;
+    const e = row.edits ? JSON.parse(row.edits) : {};
+    const hidden = new Set(Array.isArray(e.hide) ? e.hide.map(String) : []);
+    const out = { ...base };
+    if (typeof e.subject === 'string' && e.subject.trim()) out.subject = e.subject.trim();
+    if (typeof e.preheader === 'string' && e.preheader.trim()) out.preheader = e.preheader.trim();
+    if (typeof e.intro === 'string' && e.intro.trim()) out.intro = e.intro.trim();
+    if (typeof e.note === 'string' && e.note.trim()) out.quote = e.note.trim();
+    if (Array.isArray(base.agenda)) out.agenda = base.agenda.filter((a) => !hidden.has(String(a.key)));
+    if (Array.isArray(base.tiles)) out.tiles = base.tiles.filter((t) => !hidden.has(String(t.key)));
+    if (base.section) {
+      const tiles = Array.isArray(base.section.tiles) ? base.section.tiles.filter((t) => !hidden.has(String(t.key))) : base.section.tiles;
+      out.section = e.hideNew === true && base.kind === 'weekly' ? null : { ...base.section, tiles };
+    }
+    return out;
   },
 
   /**
@@ -276,7 +387,7 @@ export const newsMethods = {
       const [d2, n2] = dayParts(o.lastStart, rules.tz);
       const when = o.days > 1 ? [`${d1}–${d2}`, `${n1.split(' ')[0]}–${n2}`] : [d1, n1];
       const hours = `${clockLabel(time.minutesOf(o.start))} to ${clockLabel(time.minutesOf(o.end))}${o.days > 1 ? ' each day' : ''}`;
-      rows.push({ start: o.start, weekly: ev.repeat === 'weekly', row: { when, title: o.title, detail: [hours, this.newsPrice(o, ev)].filter(Boolean).join(' · '), url: tagged(this.page('events'), SRC, 'events'), image: pictures.get(o.eventId) || null } });
+      rows.push({ start: o.start, weekly: ev.repeat === 'weekly', row: { key: `e:${o.eventId}@${time.key(o.start)}`, when, title: o.title, detail: [hours, this.newsPrice(o, ev)].filter(Boolean).join(' · '), url: tagged(this.page('events'), SRC, 'events'), image: pictures.get(o.eventId) || null } });
     }
     // TTRPG sessions with seats anyone can book now
     const st = this.state(now, end + 1);
@@ -292,6 +403,7 @@ export const newsMethods = {
       rows.push({
         start: g.start, weekly: Boolean(g.seriesId), session: true,
         row: {
+          key: `g:${g.id}`,
           when: dayParts(g.start, rules.tz), title: g.system ? `${g.title} (${g.system})` : g.title,
           detail: [`${W.ttrpg}${gm ? ` ${W.withGm(gm)}` : ''}`, `${clockLabel(time.minutesOf(g.start))} to ${clockLabel(time.minutesOf(g.end))}`, price ? W.seat(money(price)) : '', W.seats(left)].filter(Boolean).join(' · '),
           url: tagged(`${this.page('gm')}?join=${encodeURIComponent(g.id)}`, SRC, 'ttrpg'),
@@ -308,6 +420,7 @@ export const newsMethods = {
     const highlight = (agenda.find((r) => !r.weekly && !r.session) || agenda.find((r) => r.session) || agenda[0])?.row.title || '';
     const subject = W.subject(highlight.length <= 28 ? highlight : '');
     return {
+      kind: 'weekly',
       subject,
       title: W.title,
       preheader: W.preheader(agenda.length, count),
@@ -317,7 +430,7 @@ export const newsMethods = {
       section: items.length ? {
         heading: W.newHeading,
         intro: W.newIntro(count),
-        tiles: items.map((t) => ({ title: t.title, image: t.image, url: tagged(t.url, SRC, 'shop'), price: t.price ? money(t.price) : '' })),
+        tiles: items.map((t) => ({ key: `p:${t.url}`, title: t.title, image: t.image, url: tagged(t.url, SRC, 'shop'), price: t.price ? money(t.price) : '' })),
         link: { label: W.newLink, url: tagged(this.link('/collections/all?sort_by=created-descending'), SRC, 'shop') },
       } : null,
       signoff: NEWS_WORDS.signoff,
@@ -337,11 +450,12 @@ export const newsMethods = {
     const B = NEWS_WORDS.blackFriday;
     const SRC = 'black-friday';
     return {
+      kind: 'black-friday-2026',
       subject: B.subject,
       title: B.title,
       preheader: B.preheader,
       intro: B.intro,
-      tiles: (dice?.items || []).filter((t) => t.title && t.url).map((t) => ({ title: t.title, image: t.image, url: tagged(t.url, SRC, 'shop'), price: t.price ? money(t.price) : '' })),
+      tiles: (dice?.items || []).filter((t) => t.title && t.url).map((t) => ({ key: `p:${t.url}`, title: t.title, image: t.image, url: tagged(t.url, SRC, 'shop'), price: t.price ? money(t.price) : '' })),
       button: { label: B.button, url: tagged(this.link('/collections/all-dice'), SRC, 'shop') },
       section: { heading: B.rollsHeading, intro: B.rolls, after: B.finePrint },
       signoff: B.signoff,
@@ -371,7 +485,7 @@ export const newsMethods = {
     const size = Math.min(NEWS_A_RUN, meta('news-batch') || NEWS_A_RUN);
     const rows = this.sql.exec(
       `SELECT s.campaign, s.email, s.name, c.content FROM news_sends s JOIN news_campaigns c ON c.id = s.campaign
-        WHERE s.status = 'queued' ORDER BY c.made_at, s.email LIMIT ?`,
+        WHERE s.status = 'queued' AND c.status = 'queued' ORDER BY c.sent_at, s.email LIMIT ?`,
       size,
     ).toArray();
     if (!rows.length) return stale ? { sent: 0, stopped: 0, failed: 0, ...expired } : null;
@@ -455,6 +569,186 @@ export const newsMethods = {
     const m = String(ref || '').match(/^NEWS-([0-9a-f]{16})$/);
     if (!m) return null;
     return this.sql.exec('SELECT email, key FROM news_keys WHERE id = ?', m[1]).toArray()[0] || null;
+  },
+
+  /* ---------------- the staff page's Emails tab (owner only) ---------------- */
+  /**
+   * GET /news: the emails, newest first (the last 12), each as the tab shows it: where it stands, what's in it (every
+   * event, session and product, hidden or not, by key), the owner's edits and the words they replace, and a preview of
+   * it as it will go. With whether email works, what NEWS_EMAILS sends by itself, a pause and the one-offs on offer.
+   * Owner only. No awaits.
+   */
+  newsStaffList(who, rules, now = Date.now()) {
+    this.requireStaff(who, 'news');
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    const rows = this.sql.exec('SELECT * FROM news_campaigns ORDER BY made_at DESC LIMIT 12').toArray();
+    return {
+      ready: emailReady(this.env),
+      on: [...newsSwitches(this.env)],
+      paused: this.newsPaused(),
+      week: this.weeklyId(rules, now),
+      kinds: [
+        { kind: 'weekly', label: 'This week at the Lair' },
+        ...Object.entries(NEWS_CAMPAIGNS).filter(([, c]) => today >= c.from && today <= c.until).map(([kind]) => ({ kind, label: NEWS_KIND_LABELS[kind] || kind })),
+      ],
+      emails: rows.map((r) => this.newsStaffView(r, now)),
+    };
+  },
+
+  /** One email as the tab shows it. No awaits. */
+  newsStaffView(row, now) {
+    const base = row.base ? JSON.parse(row.base) : null;
+    const e = row.edits ? JSON.parse(row.edits) : {};
+    const hidden = new Set(Array.isArray(e.hide) ? e.hide.map(String) : []);
+    const draft = row.status === 'draft';
+    const content = draft ? this.newsFinal(row) : row.content ? JSON.parse(row.content) : null;
+    const counts = draft ? null : this.sql.exec(
+      `SELECT SUM(status = 'sent') AS sent, SUM(status IN ('queued', 'sending')) AS waiting, SUM(status IN ('failed', 'unknown')) AS failed,
+              SUM(status = 'stopped') AS stopped, SUM(status = 'expired') AS expired FROM news_sends WHERE campaign = ?`, row.id,
+    ).toArray()[0];
+    const items = (list) => (Array.isArray(list) ? list : []).map((x) => ({ key: String(x.key || ''), title: x.title, when: x.when || null, detail: x.detail || '', price: x.price || '', image: x.image || null, hidden: hidden.has(String(x.key)) }));
+    const part = base?.section || null;
+    let preview = null;
+    if (content) {
+      const unsubscribe = { label: NEWS_WORDS.unsubscribe, note: NEWS_WORDS.why, url: this.page('myLair') };
+      const { subject, ...rest } = content;
+      preview = this.letter('preview@dicegoblin.nz', subject, { ...rest, unsubscribe }).html;
+    }
+    return {
+      id: row.id, kind: row.kind, label: NEWS_KIND_LABELS[row.kind] || row.kind, status: draft ? 'draft' : 'sent',
+      madeAt: row.made_at, updatedAt: row.updated_at || row.made_at, sentAt: row.sent_at || null,
+      sentBy: row.sent_by === 'auto' ? 'auto' : row.sent_by ? 'staff' : null, until: row.until_at || null,
+      expired: Boolean(draft && row.until_at && row.until_at <= now), skipped: row.skipped || null,
+      subject: content?.subject || row.subject || '',
+      edits: { subject: e.subject || '', preheader: e.preheader || '', intro: e.intro || '', note: e.note || '', hideNew: e.hideNew === true },
+      defaults: base ? { subject: base.subject || '', preheader: base.preheader || '', intro: base.intro || '' } : null,
+      agenda: items(base?.agenda),
+      tiles: items(base?.tiles),
+      newStock: part && Array.isArray(part.tiles) && part.tiles.length ? { heading: part.heading || '', tiles: items(part.tiles) } : null,
+      recipients: draft ? null : row.recipients,
+      counts: counts ? { sent: counts.sent || 0, waiting: counts.waiting || 0, failed: counts.failed || 0, stopped: counts.stopped || 0, expired: counts.expired || 0 } : null,
+      preview,
+    };
+  },
+
+  /**
+   * POST /news/draft { kind }: this week's weekly draft (or a one-off's, in its days), made now if it isn't there; one
+   * that's there already is left as it is. Owner only. → GET /news's answer
+   */
+  async newsStaffDraft(body, who) {
+    this.requireStaff(who, 'news');
+    const rules = await this.rules();
+    const now = Date.now();
+    const kind = String(body?.kind || 'weekly');
+    const time = new LairTime(rules.tz);
+    const today = time.key(now);
+    let due;
+    if (kind === 'weekly') due = { id: this.weeklyId(rules, now), kind };
+    else if (NEWS_CAMPAIGNS[kind] && today >= NEWS_CAMPAIGNS[kind].from && today <= NEWS_CAMPAIGNS[kind].until) due = { id: kind, kind };
+    else throw new RuleError(NEWS_STAFF_WORDS.noKind, 422);
+    if (!this.newsRow(due.id)) await this.makeNewsDraft(due, rules, now);
+    return this.newsStaffList(who, rules, Date.now());
+  },
+
+  /**
+   * POST /news/:id { subject, preheader, intro, note, hide, hideNew }: the owner's changes to a draft. A word field sent
+   * empty goes back to the Lair's own words; hide: the keys of the events, sessions and products to leave out (only
+   * this draft's); hideNew: leave the new stock out. Only what's sent changes. Owner only. No awaits. → GET /news's answer
+   */
+  newsStaffEdit(id, body, who, rules) {
+    this.requireStaff(who, 'news');
+    const row = this.newsRow(id);
+    if (!row) throw new RuleError(NEWS_STAFF_WORDS.missing, 404);
+    if (row.status !== 'draft') throw new RuleError(NEWS_STAFF_WORDS.sent, 409);
+    const e = row.edits ? JSON.parse(row.edits) : {};
+    const names = { subject: 'subject', preheader: 'preview line', intro: 'opening words', note: 'note' };
+    for (const field of Object.keys(NEWS_LIMITS)) {
+      if (!(field in (body || {}))) continue;
+      const value = String(body[field] ?? '').replace(/\r\n/g, '\n').trim();
+      if (value.length > NEWS_LIMITS[field]) throw new RuleError(NEWS_STAFF_WORDS.long(names[field], NEWS_LIMITS[field]), 422);
+      if (field === 'subject' || field === 'preheader') e[field] = value.replace(/\s+/g, ' ');
+      else e[field] = value;
+    }
+    if (Array.isArray(body?.hide)) {
+      const base = row.base ? JSON.parse(row.base) : {};
+      const keys = new Set([...(base.agenda || []), ...(base.tiles || []), ...(base.section?.tiles || [])].map((x) => String(x.key)));
+      e.hide = [...new Set(body.hide.map(String).filter((k) => keys.has(k)))];
+    }
+    if (typeof body?.hideNew === 'boolean') e.hideNew = body.hideNew;
+    this.write('UPDATE news_campaigns SET edits = ?, updated_at = ? WHERE id = ? AND status = \'draft\'', JSON.stringify(e), Date.now(), id);
+    return this.newsStaffList(who, rules, Date.now());
+  },
+
+  /**
+   * POST /news/:id/refresh: a draft made again from the calendar and the shop as they are now, keeping the owner's
+   * edits (what they left out stays out when it's still there). Owner only. → GET /news's answer
+   */
+  async newsStaffRefresh(id, who) {
+    this.requireStaff(who, 'news');
+    const rules = await this.rules();
+    const before = this.newsRow(id);
+    if (!before) throw new RuleError(NEWS_STAFF_WORDS.missing, 404);
+    if (before.status !== 'draft') throw new RuleError(NEWS_STAFF_WORDS.sent, 409);
+    const now = Date.now();
+    const content = await this.newsContent(before.kind, rules, now);
+    // --- no awaits from here ---
+    this.write(
+      "UPDATE news_campaigns SET base = ?, subject = ?, skipped = ?, updated_at = ? WHERE id = ? AND status = 'draft'",
+      content ? JSON.stringify(content) : null, content?.subject || null, content ? null : 'nothing to say', now, id,
+    );
+    return this.newsStaffList(who, rules, now);
+  },
+
+  /**
+   * POST /news/:id/test { to }: one copy of the email as it will go, "[Test]" on its subject, to `to` or else the owner's
+   * own account email. Nothing queued or marked. Owner only. → { ok, to, subject }
+   */
+  async newsStaffTest(id, body, who) {
+    this.requireStaff(who, 'news');
+    if (!emailReady(this.env)) throw new RuleError(NEWS_STAFF_WORDS.noEmail, 503);
+    const typed = String(body?.to || '').trim();
+    let to = isEmail(typed) ? typed : '';
+    if (!to && typed) throw new RuleError(NEWS_STAFF_WORDS.noTo, 422);
+    if (!to && who.customerId) to = (await this.accountEmail(who.customerId))?.email || '';
+    if (!to) throw new RuleError(NEWS_STAFF_WORDS.noTo, 422);
+    // --- no awaits until it's sent ---
+    const row = this.newsRow(id);
+    if (!row) throw new RuleError(NEWS_STAFF_WORDS.missing, 404);
+    const content = row.status === 'draft' ? this.newsFinal(row) : row.content ? JSON.parse(row.content) : null;
+    if (!content) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
+    const letter = this.newsLetter(to, content, { subject: NEWS_WORDS.test(content.subject) });
+    const result = await this.mail(letter);
+    if (!result.ok) throw new RuleError(`The test didn’t go: ${String(result.message || 'Resend refused it.').slice(0, 200)}`, 502);
+    return { ok: true, to, subject: letter.subject };
+  },
+
+  /**
+   * POST /news/:id/send: the draft, as edited, to everyone subscribed in Shopify less the stop list; the first batch goes
+   * straight away from 9am to 8pm, the rest with the 10-minute run (outside those hours, from 9am). Owner only.
+   * → { sent: { id, recipients }, …GET /news's answer }
+   */
+  async newsStaffSend(id, who) {
+    this.requireStaff(who, 'news');
+    if (!emailReady(this.env)) throw new RuleError(NEWS_STAFF_WORDS.noEmail, 503);
+    const rules = await this.rules();
+    const row = this.newsRow(id);
+    if (!row) throw new RuleError(NEWS_STAFF_WORDS.missing, 404);
+    if (row.status !== 'draft') throw new RuleError(NEWS_STAFF_WORDS.sent, 409);
+    const content = this.newsFinal(row);
+    if (!content || !((content.agenda || []).length || (content.tiles || []).length || content.section || content.kind !== 'weekly')) throw new RuleError(NEWS_STAFF_WORDS.nothing, 422);
+    const now = Date.now();
+    const made = await this.queueNews(id, rules, now, who.customerId || 'staff');
+    if (!made) throw new RuleError(NEWS_STAFF_WORDS.sent, 409);
+    this.later(this.sendNewsBatch(rules, Date.now()));
+    return { sent: made, ...this.newsStaffList(who, rules, Date.now()) };
+  },
+
+  /** GET /news/audience: how many it would go to now (subscribed in Shopify, less the stop list). Owner only. → { count } */
+  async newsAudience(who) {
+    this.requireStaff(who, 'news');
+    const people = await this.shopify.marketingSubscribers();
+    return { count: people.filter((p) => isEmail(p.email) && !this.followupStopped(p.email)).length };
   },
 
   /* ---------------- a test copy ---------------- */

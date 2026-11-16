@@ -179,14 +179,14 @@ test('round 41, news: NEWS_EMAILS reads as a list of what is on; empty or off is
   assert.deepEqual([...newsSwitches({ NEWS_EMAILS: ' Weekly, black-friday-2026 ' })], ['weekly', 'black-friday-2026']);
 });
 
-test('round 41, news: nothing is made or sent while NEWS_EMAILS is unset or off, not even on a Monday at 10am', async () => {
+test('round 41, news: nothing is sent while NEWS_EMAILS is unset or off, not even on a Monday at 10am; the week\'s draft is made for the staff page', async () => {
   await session();
-  assert.equal(await run(at(MON, 10, 5)), null);
+  assert.deepEqual(await run(at(MON, 10, 5)), { drafted: [{ id: `weekly-${MON}` }] });
   switchOn('off');
   assert.equal(await run(at(MON, 11)), null);
   assert.equal(news().length, 0);
-  assert.equal(shopify.subscribers, 0, 'Shopify was not even asked');
-  assert.equal(lair.sql.exec('SELECT COUNT(*) AS n FROM news_campaigns').one().n, 0);
+  assert.equal(shopify.subscribers, 0, 'Shopify was not asked who to send it to');
+  assert.equal(lair.newsRow(`weekly-${MON}`).status, 'draft');
 });
 
 /* ---------------- the weekly email ---------------- */
@@ -201,14 +201,15 @@ test('round 41, news: the weekly email goes on Monday from 10am, once, to everyo
   switchOn('weekly');
   // Kai used an unsubscribe in an earlier email
   lair.write("INSERT INTO followup_stops (email, at, ref, via) VALUES ('kai@example.com', ?, 'X', 'link')", NOW);
-  assert.equal(await run(at(MON, 9, 55)), null, 'not before 10am');
-  assert.equal(await run(at(TUE, 11)), null, 'not on a Tuesday');
+  assert.equal(await run(at(MON, 6, 55)), null, 'no draft before 7am');
+  assert.deepEqual(await run(at(MON, 9, 55)), { drafted: [{ id: `weekly-${MON}` }] }, 'the draft at 7am, not sent before 10am');
+  assert.equal(news().length, 0);
   const first = await run(at(MON, 10, 5));
   assert.deepEqual(first.made, [{ id: `weekly-${MON}`, recipients: 2 }]);
   assert.deepEqual(first.sent, { sent: 2, stopped: 0, failed: 0 });
   assert.deepEqual(news().map((m) => m.to).sort(), ['mia@example.com', 'ria@example.com']);
   assert.equal(shopify.products.length, 1);
-  assert.equal(shopify.products[0].since, at(MON, 10, 5) - 7 * DAY, 'new in the last 7 days');
+  assert.equal(shopify.products[0].since, at(MON, 9, 55) - 7 * DAY, 'new in the 7 days before the draft was made');
   // once: the next runs that day make nothing and send nothing
   await run(at(MON, 10, 15));
   await run(at(MON, 15));
@@ -246,7 +247,7 @@ test('round 41, news: with nothing on and nothing new there is no email that wee
   lair.rulesCache = rulesWith([]);
   lair.shopify.newInStock = async () => ({ count: 0, items: [] });
   const result = await run(at(MON, 10, 5));
-  assert.deepEqual(result.made, [{ id: `weekly-${MON}`, recipients: 0, skipped: 'nothing to say' }]);
+  assert.deepEqual(result, { drafted: [{ id: `weekly-${MON}`, skipped: 'nothing to say' }] });
   assert.equal(news().length, 0);
   assert.equal(shopify.subscribers, 0, 'nobody to ask about');
   await run(at(MON, 11));
@@ -343,10 +344,11 @@ test('round 41, news: someone who unsubscribes after an email is made, before th
 
 test('round 41, news: Black Friday goes once, the first run after it is switched on between 17 and 30 November, with four Dice Goblin dice', async () => {
   switchOn('black-friday-2026');
-  assert.equal(await run(at('2026-11-16', 11)), null, 'not before the 17th');
+  assert.equal((await run(at('2026-11-16', 11))).made, undefined, 'not before the 17th');
+  assert.equal(lair.newsRow('black-friday-2026'), null);
   const made = await run(at('2026-11-23', 9, 5));
   assert.deepEqual(made.made, [{ id: 'black-friday-2026', recipients: 3 }]);
-  assert.deepEqual(shopify.products, [{ vendor: 'Dice Goblin NZ', limit: 4 }]);
+  assert.deepEqual(shopify.products.filter((o) => o.vendor), [{ vendor: 'Dice Goblin NZ', limit: 4 }]);
   await run(at('2026-11-24', 10));
   const sent = news();
   assert.equal(sent.length, 3);
@@ -499,4 +501,127 @@ test('round 41, news: with no pictures to be had (Shopify won\'t give them), the
   const m = news('mia@example.com')[0];
   assert.doesNotMatch(m.html, /width="120"/);
   assert.match(m.html, /font:700 13px\/1\.4 [^"]*;color:#6b5d52;vertical-align:top;width:64px;">Thu<br>26 Nov<\/td>/);
+});
+
+/* ---------------- the staff page's Emails tab (Mo: "automated inside the staff section to be sent as a weekly template with the chance to edit") ---------------- */
+
+const MO = 'mo@dicegoblin.test';
+const staffCall = (method, path, body) => call(method, path, body, OWNER);
+async function mondayDraft() {
+  await session();
+  nowIs(at(MON, 8));
+  await run(at(MON, 8));
+  return `weekly-${MON}`;
+}
+
+test('round 41, Emails tab: only the owner sees it; a helper with every permission and a customer are turned away', async () => {
+  await mondayDraft();
+  const list = ok(await staffCall('GET', 'news'));
+  assert.equal(list.ready, true);
+  assert.deepEqual(list.on, []);
+  assert.equal(list.week, `weekly-${MON}`);
+  assert.equal(list.emails.length, 1);
+  const customer = await call('GET', 'news', null, '6001');
+  assert.equal(customer.status, 403);
+  assert.throws(() => lair.newsStaffList({ customerId: '5', staff: true, role: 'helper', perms: ['tables', 'checkin', 'money', 'members', 'sessions', 'events', 'library', 'community', 'team'] }, lair.rulesCache), /./);
+});
+
+test('round 41, Emails tab: Monday\'s draft shows as it will go, with every event, session and product to leave in or out', async () => {
+  const id = await mondayDraft();
+  const e = ok(await staffCall('GET', 'news')).emails[0];
+  assert.equal(e.id, id);
+  assert.equal(e.status, 'draft');
+  assert.equal(e.subject, 'This week at the Lair: Oddity Alley');
+  assert.deepEqual(e.agenda.map((a) => a.title), ['Lost Mine (D&D 5e)', 'Warhammer Night', 'Oddity Alley']);
+  assert.ok(e.agenda.every((a) => a.key && a.hidden === false));
+  assert.equal(e.newStock.tiles.length, 4);
+  assert.equal(e.defaults.intro, NEWS_WORDS.weekly.intro);
+  assert.match(e.preview, /<h1[^>]*>This week at the Lair<\/h1>/);
+  assert.match(e.preview, /Unsubscribe<\/a>/);
+});
+
+test('round 41, Emails tab: the owner\'s changes (subject, preview line, opening words, a note from Gobgob, rows and products left out, the new stock off) show in the preview, the test and what goes', async () => {
+  const id = await mondayDraft();
+  const draft = ok(await staffCall('GET', 'news')).emails[0];
+  const warhammer = draft.agenda.find((a) => a.title === 'Warhammer Night').key;
+  const basilisk = draft.newStock.tiles.find((t) => /Basilisk/.test(t.title)).key;
+  let e = ok(await staffCall('POST', `news/${id}`, {
+    subject: 'Oddity Alley this weekend, friend', preheader: 'Stalls, snacks and strange things.', intro: 'Big week at the Lair.',
+    note: 'Black Friday is coming: buy one dice set, get one free.', hide: [warhammer, basilisk, 'not-a-key'],
+  })).emails[0];
+  assert.equal(e.subject, 'Oddity Alley this weekend, friend');
+  assert.deepEqual(e.edits, { subject: 'Oddity Alley this weekend, friend', preheader: 'Stalls, snacks and strange things.', intro: 'Big week at the Lair.', note: 'Black Friday is coming: buy one dice set, get one free.', hideNew: false });
+  assert.equal(e.agenda.find((a) => a.key === warhammer).hidden, true);
+  assert.doesNotMatch(e.preview, /Warhammer Night/);
+  assert.doesNotMatch(e.preview, /Basilisk/);
+  assert.match(e.preview, /Big week at the Lair\./);
+  assert.match(e.preview, /Black Friday is coming: buy one dice set, get one free\./);
+  // the test copy: to the owner's own account email, as it will go
+  lair.accountEmail = async () => ({ fetched: true, email: MO });
+  const test = ok(await staffCall('POST', `news/${id}/test`, {}));
+  assert.deepEqual(test, { ok: true, to: MO, subject: '[Test] Oddity Alley this weekend, friend' });
+  const copy = mail.sent.find((m) => m.to === MO);
+  assert.match(copy.text, /^THIS WEEK AT THE LAIR\n\nBig week at the Lair\.\n\n> Black Friday is coming/);
+  assert.doesNotMatch(copy.text, /Warhammer Night|Basilisk/);
+  // or to an address typed in
+  ok(await staffCall('POST', `news/${id}/test`, { to: 'caleb@example.com' }));
+  assert.equal(mail.sent.filter((m) => m.to === 'caleb@example.com').length, 1);
+  assert.equal((await staffCall('POST', `news/${id}/test`, { to: 'not an email' })).status, 422);
+  // the new stock off altogether, then a word field back to the Lair's own words
+  e = ok(await staffCall('POST', `news/${id}`, { hideNew: true, intro: '' })).emails[0];
+  assert.doesNotMatch(e.preview, /New in the hoard/);
+  assert.match(e.preview, /Pull up a chair, friend/);
+  assert.equal(e.edits.subject, 'Oddity Alley this weekend, friend', 'what wasn\'t sent stays as it was');
+  // too long
+  assert.equal((await staffCall('POST', `news/${id}`, { subject: 'x'.repeat(121) })).status, 422);
+  // Send: to everyone subscribed less the stop list, as edited, first batch straight away
+  nowIs(at(MON, 9, 30));
+  const sent = ok(await staffCall('POST', `news/${id}/send`, {}));
+  assert.deepEqual(sent.sent, { id, recipients: 3 });
+  await new Promise((r) => setTimeout(r, 20));
+  const went = news().filter((m) => m.to !== MO && m.to !== 'caleb@example.com');
+  assert.equal(went.length, 3);
+  assert.ok(went.every((m) => m.subject === 'Oddity Alley this weekend, friend' && !/Warhammer Night|New in the hoard/.test(m.html)));
+  const after = ok(await staffCall('GET', 'news')).emails[0];
+  assert.equal(after.status, 'sent');
+  assert.equal(after.sentBy, 'staff');
+  assert.deepEqual(after.counts, { sent: 3, waiting: 0, failed: 0, stopped: 0, expired: 0 });
+  // once sent, it can't be changed or sent again; NEWS_EMAILS at 10am sends nothing more
+  assert.equal((await staffCall('POST', `news/${id}`, { subject: 'Again' })).status, 409);
+  assert.equal((await staffCall('POST', `news/${id}/send`, {})).status, 409);
+  switchOn('weekly');
+  await run(at(MON, 10, 5));
+  assert.equal(news().filter((m) => m.to === 'mia@example.com').length, 1);
+});
+
+test('round 41, Emails tab: NEWS_EMAILS sends the draft by itself at 10am with the owner\'s changes', async () => {
+  const id = await mondayDraft();
+  ok(await staffCall('POST', `news/${id}`, { subject: 'Edited before ten' }));
+  switchOn('weekly');
+  const r = await run(at(MON, 10, 5));
+  assert.deepEqual(r.made, [{ id, recipients: 3 }]);
+  assert.ok(news().every((m) => m.subject === 'Edited before ten'));
+  assert.equal(ok(await staffCall('GET', 'news')).emails[0].sentBy, 'auto');
+});
+
+test('round 41, Emails tab: a draft made on another day, Refresh keeps the changes, Black Friday only in its days, and nothing left means nothing to send', async () => {
+  // Wednesday, no draft yet: the owner makes this week's
+  nowIs(at(WED, 9));
+  const made = ok(await staffCall('POST', 'news/draft', { kind: 'weekly' }));
+  assert.equal(made.emails[0].id, `weekly-${MON}`);
+  assert.equal((await staffCall('POST', 'news/draft', { kind: 'black-friday-2027' })).status, 422);
+  const kinds = made.kinds.map((k) => k.kind);
+  assert.deepEqual(kinds, ['weekly', 'black-friday-2026']);
+  const bf = ok(await staffCall('POST', 'news/draft', { kind: 'black-friday-2026' }));
+  assert.equal(bf.emails.find((e) => e.id === 'black-friday-2026').status, 'draft');
+  // leave everything out of the weekly: nothing to send
+  const id = `weekly-${MON}`;
+  const e = made.emails[0];
+  const all = [...e.agenda.map((a) => a.key), ...e.newStock.tiles.map((t) => t.key)];
+  ok(await staffCall('POST', `news/${id}`, { hide: all, hideNew: true, subject: 'Kept' }));
+  assert.equal((await staffCall('POST', `news/${id}/send`, {})).status, 422);
+  // Refresh: made again, the changes kept
+  const fresh = ok(await staffCall('POST', `news/${id}/refresh`, {})).emails.find((x) => x.id === id);
+  assert.equal(fresh.subject, 'Kept');
+  assert.equal(fresh.edits.hideNew, true);
 });
