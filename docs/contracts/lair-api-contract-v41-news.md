@@ -33,3 +33,23 @@ Each address has its own code and key (`news_keys`: `NEWS-<16 hex>`, 32 hex). Th
 - `NEWS_FROM` (config): the sender for these, e.g. a marketing subdomain once Resend has verified it; `FROM_EMAIL` when unset.
 - Admin jobs (`admin_jobs`): `news.test` `{ "campaign": "weekly" | "black-friday-2026", "to": "…", "at": ms }` sends one copy, "[Test]" on the subject, nothing queued; `news.status` says each email's counts (and why they're paused); `news.resume` starts sending again after a pause.
 - `POST /internal/news-test` and `/internal/news-status`: the same, internally.
+
+## Drafts and the staff page's Emails tab (17 Nov 2026)
+
+Mo: "can we have it automated inside the staff section to be sent as a weekly template with the chance to edit any possible changes if not just the ability to send the email from staff is good enough".
+
+Every email is a draft first (`news_campaigns.status` `draft`, `base` the Lair's words and products, `edits` the owner's changes), and `queued` once it's sent (`content` what went, `sent_at`, `sent_by`: `auto` or the staff member). The Lair makes each Monday's weekly draft from 7am by itself. NEWS_EMAILS still sends a draft by itself (the weekly at 10am, a one-off when due), made again from the calendar and the shop first with the owner's changes kept.
+
+Owner only (`requireStaff(who, 'news')`: not a permission a helper can be given):
+
+| Route | What |
+|---|---|
+| `GET /news` | `{ ready, on, paused, week, kinds: [{ kind, label }], emails: [{ id, kind, label, status ('draft' or 'sent'), madeAt, updatedAt, sentAt, sentBy, until, expired, skipped, subject, edits: { subject, preheader, intro, note, hideNew }, defaults: { subject, preheader, intro }, agenda: [{ key, when, title, detail, image, hidden }], tiles, newStock: { heading, tiles } , recipients, counts: { sent, waiting, failed, stopped, expired }, preview (HTML) }] }`, the last 12 |
+| `GET /news/audience` | `{ count }`: subscribed in Shopify, less the stop list |
+| `POST /news/draft { kind }` | this week's weekly draft (or Black Friday's in its days), made if it isn't there |
+| `POST /news/:id { subject, preheader, intro, note, hide: [key], hideNew }` | the owner's changes; a word field sent empty goes back to the Lair's own words; limits 120, 200, 1200 and 1200 characters |
+| `POST /news/:id/refresh` | made again from the calendar and the shop, changes kept |
+| `POST /news/:id/test { to }` | one copy, "[Test]" on the subject, to `to` or the owner's account email |
+| `POST /news/:id/send` | to everyone it's for now; the first batch straight away from 9am to 8pm |
+
+A weekly with no event, session or product left in can't be sent (422), by the tab or by NEWS_EMAILS. The note shows in a box under the opening words. The website's side is the theme's `assets/lair-staff-news.js` (the Emails tab, under Setup).
