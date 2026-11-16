@@ -383,6 +383,16 @@ test('the riddle: staff set it for a Monday; it\'s out from 10am; scanning the a
   assert.equal(q.riddle.solved, true);
   // once someone has solved it, it stays
   assert.equal((await call('POST', `quests/riddles/${riddle.id}/remove`, {}, OWNER)).data.error, W.riddleSolvedAlready);
+  // round 42: and its answer and week stay too, or the stamps of everyone who solved it would be taken back; its words
+  // can still change
+  const moved = await call('POST', 'quests/riddles', { id: riddle.id, week: WEEK, text: riddle.text, code: 'DGL34-M011' }, OWNER);
+  assert.deepEqual([moved.status, moved.data.error], [409, W.riddleLocked]);
+  const later = await call('POST', 'quests/riddles', { id: riddle.id, week: '2026-12-28', text: riddle.text, code: 'DGL34-M007' }, OWNER);
+  assert.deepEqual([later.status, later.data.error], [409, W.riddleLocked]);
+  const reworded = ok(await call('POST', 'quests/riddles', { id: riddle.id, week: WEEK, text: 'Tiles, tiles, tiles.', hint: '', code: 'DGL34-M007' }, OWNER)).riddle;
+  assert.deepEqual([reworded.text, reworded.hint, reworded.answer.title, reworded.solvedBy], ['Tiles, tiles, tiles.', '', 'Azul', 1]);
+  await quests(MIA);
+  assert.equal(questStamps(MIA)[`weekly:riddle:${WEEK}`], 1, 'their stamp stays');
   // playing here needs no library plan, and is counted once a game an hour
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM quest_facts WHERE kind = 'play' AND customer_id = ?", MIA).one().n, 5);
 });

@@ -161,6 +161,7 @@ export const QUEST_WORDS = Object.freeze({
   riddleTaken: 'That week has a riddle already. Change that one, or pick another week.',
   riddleMissing: "That riddle isn't there any more.",
   riddleSolvedAlready: 'Someone has solved that riddle already, so it stays.',
+  riddleLocked: 'Someone has solved that riddle already, so its answer and week stay. You can still change the words.',
 });
 
 export const QUEST_TABLES = [
@@ -1026,6 +1027,11 @@ export const questMethods = {
     if (taken && taken.id !== existing?.id) throw new RuleError(QUEST_WORDS.riddleTaken, 409);
     const by = who.customerId ? `staff:${who.customerId}` : 'staff';
     const productId = plainId(game.productId);
+    // round 42: once someone has solved it, its answer and week stay (questSync would take their stamps back); its
+    // words can still change
+    if (existing && (existing.week !== week || existing.product_id !== productId) && this.questRiddleView(existing).solvedBy > 0) {
+      throw new RuleError(QUEST_WORDS.riddleLocked, 409);
+    }
     if (existing) {
       this.write('UPDATE quest_riddles SET week = ?, text = ?, hint = ?, product_id = ?, title = ?, shelf_code = ?, updated_at = ? WHERE id = ?',
         week, text, hint || null, productId, game.title, game.shelfCode || null, now, existing.id);
