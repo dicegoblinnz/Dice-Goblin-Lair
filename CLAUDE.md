@@ -1,6 +1,6 @@
 # Dice Goblin Lair: notes for Claude
 
-This repo is the Lair, the Cloudflare Worker behind Dice Goblin's website (dicegoblin.nz) and counter: table bookings, the GM games board, events, members and their loyalty card, session passes, store credit, the board game library and its memberships, the till, Games Workshop orders and Stock off. Mo owns Dice Goblin, a tabletop hobby shop and events space in Auckland. The theme the customers see is a separate repo, `dicegoblinnz/dice-goblin-website`, on the branch `dice-goblin-2-theme`.
+This repo is the Lair, the Cloudflare Worker behind Dice Goblin's website (dicegoblin.nz) and counter: table bookings, the GM games board, events, members and their loyalty card, session passes, store credit, the board game library and its memberships, the till, Games Workshop orders and Stock off. Mo owns Dice Goblin, a tabletop hobby shop and events space in Auckland. The theme the customers see is a separate repo, `dicegoblinnz/dice-goblin-website`: the live site is its branch `r17-theme` (a push there reaches customers at once), and `dice-goblin-2-theme` is an unpublished preview, not the live site.
 
 `README.md` is the full manual (about 150 KB): how it fits together, every config key, the rules the app enforces, and every route under "For developers". Grep it for what you need. Never read it whole.
 
