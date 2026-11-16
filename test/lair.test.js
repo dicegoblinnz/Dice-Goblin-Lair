@@ -5543,3 +5543,56 @@ test('live data: round 5\'s database (main, db8702b) moves to round 6 with every
   assert.equal(lair.loyaltyFrom, NOW);
   assert.equal(sql.exec("SELECT COUNT(*) AS n FROM loyalty_grants WHERE customer_id = '1001' AND kind = 'welcome'").one().n, 0);
 });
+
+test('experience gifts (16 Nov 2026): LAIR-XP-FIRSTGAME and LAIR-XP-PAINT lines make a one-use gift with a long code, emailed to the buyer, lasting 3 years; the first game covers the GM fee too', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true });
+  lair.shopify.orderSpend = async (id) => ({ customerId: null, amount: 7000, source: 'web', name: `#${id.split('/').pop()}` });
+  lair.shopify.orderGiftBuyer = async () => ({ name: '#1700', email: 'aroha@example.com', firstName: 'Aroha' });
+  const mail = captureEmails();
+  try {
+    const order = passOrder(1700, [
+      passLine(17001, 'LAIR-XP-FIRSTGAME', 1, '30.00', { title: 'Your first roleplaying game' }),
+      passLine(17002, 'lair-xp-paint', 1, '15.00', { title: 'Learn to paint gift' }),
+      passLine(17003, 'LAIR-XP-PAINT-LARGE', 1, '25.00', { title: 'Learn to paint gift - Large' }),
+      passLine(17004, 'LAIR-XP-NOPE', 1, '5.00'),
+    ]);
+    const before = Date.now();
+    const paid = await internal('orders-paid', order);
+    assert.equal(paid.status, 200, paid.data.error);
+    assert.equal(paid.data.gifts.length, 3, 'one gift per experience line, nothing for an unknown XP code');
+    const gifts = await Promise.all(paid.data.gifts.map(passNamed));
+    assert.deepEqual(gifts.map((p) => [p.label, p.sessionsTotal, p.source, p.cover, p.pricePaid, p.note, p.status]), [
+      ['Gift: Your first roleplaying game', 1, 'gift', 2500, 3000, 'A gift from Aroha', 'active'],
+      ['Gift: Learn to paint', 1, 'gift', 1500, 1500, 'A gift from Aroha', 'active'],
+      ['Gift: Learn to paint, large miniature', 1, 'gift', 2500, 2500, 'A gift from Aroha', 'active'],
+    ]);
+    for (const p of gifts) {
+      assert.match(p.code, /^DG-[A-Z]+-\d{1,2}-[A-HJ-NP-Z2-9]{4}$/, 'a long code nobody can guess');
+      const years = (p.expiresAt - before) / (365.25 * 86400000);
+      assert.ok(years > 2.99 && years < 3.01, `lasts 3 years (${years})`);
+    }
+    await settle();
+    assert.equal(mail.sent.length, 1);
+    const [email] = mail.sent;
+    assert.deepEqual([email.to, email.subject], ['aroha@example.com', 'Your gift is ready']);
+    for (const code of paid.data.gifts) assert.ok(email.text.includes(code) && email.html.includes(code), code);
+    assert.match(email.text, /Your first roleplaying game/);
+    assert.match(email.text, /GM's fee included/);
+    assert.match(email.text, /Learn to paint/);
+    assert.match(email.text, /3 years/);
+    // Sent again: nothing new
+    const again = await internal('orders-paid', order);
+    assert.deepEqual(again.data.gifts, []);
+    // The long code works however it's typed
+    const claim = await call('POST', 'me/passes/claim', { code: paid.data.gifts[0].toLowerCase().replace(/-/g, ' ') }, '1002');
+    assert.equal(claim.status, 200, claim.data.error);
+    // The first game gift covers a whole beginner seat, GM fee included; a session pass covers only the table part
+    const rules = await lair.rules();
+    const seat = { kind: 'gm-seat', amount: 2500, people: 1, gameId: null };
+    const firstGame = lair.passByCode(paid.data.gifts[0]);
+    assert.equal(Math.min(firstGame.cover, lair.coverablePerPerson(seat, rules, firstGame)), 2500);
+    assert.equal(lair.coverablePerPerson(seat, rules, null), 2500 - rules.prices.gmCredit);
+  } finally {
+    mail.restore();
+  }
+});

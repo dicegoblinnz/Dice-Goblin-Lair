@@ -178,6 +178,34 @@ const GIFT_CODE_DAYS = 30;
 const GIFT_SKU = /^LAIR-GIFT-(\d{1,3})$/i;
 /** How to redeem a session gift, in the buyer's email (round 7: one box for every code, "Got a code?") */
 const GIFT_REDEEM = "Log in at dicegoblin.nz, open My Lair › Wallet and enter the code under 'Got a code?'";
+/**
+ * Experience gifts sold as products (16 Nov 2026, Mo: "make the Lair send a code"): an order line with one of these SKUs
+ * makes a one-use gift for each unit, emailed to the buyer like a session gift. cover is the most it takes off; covers
+ * 'seat' means a whole TTRPG seat, GM fee included (a session pass covers only the table part). Gifts last 3 years.
+ */
+const XP_SKU = /^LAIR-XP-([A-Z]+(?:-LARGE)?)$/i;
+const EXPERIENCES = {
+  FIRSTGAME: {
+    label: 'Your first roleplaying game', cover: 2500, covers: 'seat',
+    what: "Your first roleplaying game at the Dice Goblin Lair: one seat at a game that takes beginners, GM's fee included, plus a set of dice to keep",
+    redeem: `${GIFT_REDEEM}, then book a game marked New players welcome on dicegoblin.nz/pages/our-games and use the gift on it.`,
+  },
+  PAINT: {
+    label: 'Learn to paint', cover: 1500, covers: null,
+    what: 'Learn to paint at the Dice Goblin Lair: a paint session with our paints, and a miniature to keep',
+    redeem: 'Bring the code to Learn to paint, the first Thursday of each month, 6pm to 8pm (ages 8 and up). Book a seat on dicegoblin.nz/pages/warhammer.',
+  },
+  'PAINT-LARGE': {
+    label: 'Learn to paint, large miniature', cover: 2500, covers: null,
+    what: 'Learn to paint at the Dice Goblin Lair: a paint session with our paints, and a large miniature to keep',
+    redeem: 'Bring the code to Learn to paint, the first Thursday of each month, 6pm to 8pm (ages 8 and up). Book a seat on dicegoblin.nz/pages/warhammer.',
+  },
+};
+const XP_YEARS = 3;
+/** The same day and time n years on (29 Feb lands on 1 Mar) */
+const addYears = (ms, n) => { const d = new Date(ms); d.setUTCFullYear(d.getUTCFullYear() + n); return d.getTime(); };
+/** Letters for the end of an experience gift's code: no I, O, 0 or 1, so it reads back right */
+const XP_CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 /** The roll Mo retired in round 6, and what's said when it's asked for */
 const SPEND_RETIRED = 'The spend dice have retired. Fill your loyalty card: 10 sessions earn a roll.';
 /** A library game's copies from Shopify are kept this long (10 minutes) */
@@ -421,6 +449,11 @@ const ROUND21_COLUMNS = [['bookings', 'covered_by', 'TEXT'], ['bookings', 'cover
  * round 23 too); 'sure': they took the sure $10, and the row's roll is 0, since nothing was rolled.
  */
 const ROUND23_COLUMNS = [['member_rolls', 'pick', 'TEXT']];
+/**
+ * Experience gifts (16 Nov 2026): passes.covers, made sure of on every start as ROUND15_COLUMNS are. 'seat': the gift
+ * covers a whole TTRPG seat, GM fee included (Your first roleplaying game); null: the table part only, as a pass always has.
+ */
+const XP_GIFT_COLUMNS = [['passes', 'covers', 'TEXT']];
 
 /** Schema changes go at the end of this list; each entry runs once. Entry 1 is the first release's schema. */
 export const MIGRATIONS = [
@@ -1248,6 +1281,14 @@ export class Lair {
     // Round 38, part 2: what the Lair has seen in the free sleeves deal, so a deck taken out by hand stays out
     // (src/commander-deal.js)
     for (const statement of COMMANDER_DEAL_TABLES) this.sql.exec(statement);
+    // Experience gifts (16 Nov 2026): what a gift pass covers
+    for (const [table, column, type] of XP_GIFT_COLUMNS) {
+      try {
+        this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
+      } catch {
+        this.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
     this.backfillStamps();
     // Round 18 (16 Oct 2026, Mo: seats for new players are staff's to fill, back end only): a seat booked online or
     // saved for a regular never fills one, so the new-player marks those got before are cleared, once
@@ -1802,6 +1843,18 @@ export class Lair {
     const code = uniqueCode(name, (key) => this.codeTaken(key));
     this.write('INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, ?, ?, ?)', codeKey(code), code, kind, String(targetId), now);
     return code;
+  }
+
+  /** An experience gift's code (16 Nov 2026): like DG-OWLBEAR-17-K7QM, the last 4 random, so it can't be guessed. */
+  newGiftCode(targetId, now = Date.now()) {
+    for (let i = 0; i < 40; i += 1) {
+      const tail = [...crypto.getRandomValues(new Uint32Array(4))].map((n) => XP_CODE_LETTERS[n % XP_CODE_LETTERS.length]).join('');
+      const code = `${uniqueCode('', (key) => this.codeTaken(key))}-${tail}`;
+      if (this.codeTaken(codeKey(code))) continue;
+      this.write('INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, ?, ?, ?)', codeKey(code), code, 'pass', String(targetId), now);
+      return code;
+    }
+    throw new Error('Could not find a free gift code');
   }
 
   /**
@@ -5218,6 +5271,11 @@ export class Lair {
       if (gift && Number(gift[1]) > 0 && quantity > 0) {
         giftLines.push({ lineId, sessions: Number(gift[1]), quantity: Math.min(quantity, PASSES_A_LINE), each: Math.round(lineAmount(item) / quantity) });
       }
+      // 16 Nov 2026: an experience gift (LAIR-XP-FIRSTGAME, LAIR-XP-PAINT, LAIR-XP-PAINT-LARGE) is a one-use gift
+      const xp = EXPERIENCES[String(item.sku ?? '').trim().match(XP_SKU)?.[1]?.toUpperCase()];
+      if (xp && quantity > 0) {
+        giftLines.push({ lineId, sessions: 1, quantity: Math.min(quantity, PASSES_A_LINE), each: Math.round(lineAmount(item) / quantity), xp });
+      }
     });
     // Round 22: sessions rung up by hand at the counter (a SKU starting LAIR-SESSION): a stamp a unit for the sale's
     // customer. Only staff make POS orders, so only those count.
@@ -5346,14 +5404,18 @@ export class Lair {
     const made = [];
     for (const { line, unit } of this.passUnitsToMake(orderId, giftLines)) {
       const id = makeId('ps');
-      const code = this.newCode('', 'pass', id, now);
+      const xp = line.xp || null;
+      // An experience gift's code has 4 more random letters, so nobody can guess one (16 Nov 2026 review)
+      const code = xp ? this.newGiftCode(id, now) : this.newCode('', 'pass', id, now);
+      const expires = xp ? addYears(now, XP_YEARS) : null;
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
-           created_by, expires_at, status, source, order_id, order_name, order_line, order_unit) VALUES (?, ?, ?, ?, 0, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, 'active', 'gift', ?, ?, ?, ?)`,
-        id, code, `Gift: ${plural(line.sessions, 'session', 'sessions')}`, line.sessions, rules.prices.table,
-        giver.firstName ? `A gift from ${giver.firstName}` : null, line.each, now, `order:${orderName || orderId}`, orderId, orderName || null, line.lineId, unit,
+           created_by, expires_at, status, source, order_id, order_name, order_line, order_unit, covers) VALUES (?, ?, ?, ?, 0, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, 'active', 'gift', ?, ?, ?, ?, ?)`,
+        id, code, xp ? `Gift: ${xp.label}` : `Gift: ${plural(line.sessions, 'session', 'sessions')}`, line.sessions, xp ? xp.cover : rules.prices.table,
+        giver.firstName ? `A gift from ${giver.firstName}` : null, line.each, now, `order:${orderName || orderId}`, expires, orderId, orderName || null, line.lineId, unit,
+        xp?.covers || null,
       );
-      made.push({ code, sessions: line.sessions });
+      made.push({ code, sessions: line.sessions, xp });
     }
     return made;
   }
@@ -5366,29 +5428,36 @@ export class Lair {
   sendGiftCodes(gifts, giver, { orderName, rules }) {
     if (!emailReady(this.env)) return;
     const many = gifts.length > 1;
-    const codes = gifts.map((g) => ({ code: g.code, lines: [`${plural(g.sessions, 'session', 'sessions')} at the Dice Goblin Lair`, GIFT_REDEEM] }));
-    const cover = `Each session covers one person's table fee (up to ${money(rules.prices.table)}) at the Dice Goblin Lair.`;
-    const toStaff = (why) => this.notifyStaff(`Session gift codes to pass on${orderName ? `: ${orderName}` : ''}`, {
-      title: 'Session gift codes to pass on',
+    const codes = gifts.map((g) => ({ code: g.code, lines: g.xp ? [g.xp.what, g.xp.redeem] : [`${plural(g.sessions, 'session', 'sessions')} at the Dice Goblin Lair`, GIFT_REDEEM] }));
+    const sessionGifts = gifts.some((g) => !g.xp);
+    const experiences = gifts.some((g) => g.xp);
+    const cover = [
+      sessionGifts ? `Each session covers one person's table fee (up to ${money(rules.prices.table)}) at the Dice Goblin Lair.` : '',
+      experiences ? `${many ? 'Each experience is' : 'The experience is'} good for ${XP_YEARS} years from today, even if prices go up.` : '',
+    ].filter(Boolean).join(' ');
+    const subject = experiences ? 'Your gift is ready' : 'Your session gift is ready';
+    const what = experiences ? (many ? 'gifts' : 'a gift') : (many ? 'session gifts' : 'a session gift');
+    const toStaff = (why) => this.notifyStaff(`${experiences ? 'Gift' : 'Session gift'} codes to pass on${orderName ? `: ${orderName}` : ''}`, {
+      title: `${experiences ? 'Gift' : 'Session gift'} codes to pass on`,
       intro: [why, `Give ${many ? 'these codes' : 'this code'} to whoever bought ${orderName || 'the gift'}. ${many ? 'They also show' : 'It also shows'} under Passes on the staff page.`],
       codes, outro: cover,
     });
     if (!isEmail(giver.email)) {
-      toStaff("Someone bought a session gift, but there's no email address on the order, so Gobgob couldn't send them the codes.");
+      toStaff(`Someone bought ${experiences ? 'a gift' : 'a session gift'}, but there's no email address on the order, so Gobgob couldn't send them the codes.`);
       return;
     }
     this.later((async () => {
-      const sent = await this.mail(this.letter(giver.email, 'Your session gift is ready', {
-        title: many ? 'Your session gifts are ready' : 'Your session gift is ready',
+      const sent = await this.mail(this.letter(giver.email, subject, {
+        title: experiences ? (many ? 'Your gifts are ready' : 'Your gift is ready') : (many ? 'Your session gifts are ready' : 'Your session gift is ready'),
         intro: [
-          `Kia ora ${giver.firstName || 'friend'}, thanks for buying ${many ? 'session gifts' : 'a session gift'}. Gobgob wrapped ${many ? 'them' : 'it'} themselves.`,
+          `Kia ora ${giver.firstName || 'friend'}, thanks for buying ${what}. Gobgob wrapped ${many ? 'them' : 'it'} themselves.`,
           `Here ${many ? `are your ${gifts.length} gift codes` : 'is your gift code'}. Hand ${many ? 'each one' : 'it'} to whoever it's for: they add it to their account and play at the Lair.`,
         ],
         codes,
         outro: cover,
         button: { label: 'Open My Lair', url: this.page('myLair') },
       }));
-      if (!sent.ok) toStaff(`The session gift codes${orderName ? ` for ${orderName}` : ''} couldn't be emailed to ${giver.email} (${sent.message || 'the email failed'}).`);
+      if (!sent.ok) toStaff(`The ${experiences ? 'gift' : 'session gift'} codes${orderName ? ` for ${orderName}` : ''} couldn't be emailed to ${giver.email} (${sent.message || 'the email failed'}).`);
     })());
   }
 
@@ -8040,7 +8109,7 @@ export class Lair {
   /* ---------------- session passes ---------------- */
   rowToPass(r) {
     return {
-      id: r.id, code: r.code, label: r.label, sessionsTotal: r.sessions_total, sessionsUsed: r.sessions_used, cover: r.cover,
+      id: r.id, code: r.code, label: r.label, sessionsTotal: r.sessions_total, sessionsUsed: r.sessions_used, cover: r.cover, covers: r.covers || null,
       customerId: r.customer_id || null, holderName: r.holder_name || '', holderEmail: r.holder_email || '', note: r.note || '',
       pricePaid: r.price_paid || 0, createdAt: r.created_at, createdBy: r.created_by || null, expiresAt: r.expires_at || null, status: r.status,
       // Where it came from: 'staff' (made on the staff page; older passes have no source), 'order' (bought as a product)
@@ -8687,9 +8756,10 @@ export class Lair {
    * One person's part of a booking a pass can cover: the table fee (tables and walk-ins pay the room price), a GM
    * seat's table part (its price less the game's GM fee, which is still paid), or a game spot's price a person.
    */
-  coverablePerPerson(b, rules) {
+  coverablePerPerson(b, rules, pass = null) {
     const unit = Math.round((b.amount || 0) / Math.max(1, b.people || 1));
-    if (b.kind !== 'gm-seat') return unit;
+    // 16 Nov 2026: an experience gift for a first roleplaying game covers the whole seat, GM fee included
+    if (b.kind !== 'gm-seat' || pass?.covers === 'seat') return unit;
     const game = b.gameId ? this.game(b.gameId) : null;
     return Math.max(0, unit - (game?.gmFee ?? rules.prices.gmCredit));
   }
@@ -8722,7 +8792,7 @@ export class Lair {
     const unpaid = Math.min(Math.max(0, (booking.people || 1) - coveredPeople), Math.ceil(owed / unit));
     if (unpaid <= 0) return { pass: null, notice: null };
     if (!left) return { pass: null, notice: `Pass ${p.code} has no sessions left, so it wasn't used.` };
-    const per = Math.min(p.cover, this.coverablePerPerson(booking, rules));
+    const per = Math.min(p.cover, this.coverablePerPerson(booking, rules, p));
     if (per <= 0) return { pass: null, notice: explicit ? "There's no table fee on this booking for a pass to cover, so no pass was used." : null };
     const sessions = Math.min(unpaid, left);
     const covered = Math.min(sessions * per, owed);
