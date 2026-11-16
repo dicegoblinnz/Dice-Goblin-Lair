@@ -142,7 +142,9 @@ the first time quests are on, for the four weeks from the next Monday); staff wi
 - POST /quests/riddles (staff, Members) `{ id?, week, text, hint?, code }`: a new riddle, or a change to one (`id`). `week`
   is a Monday (YYYY-MM-DD), one riddle a week; `code` is the answer's box (scanned or typed, as the library scan reads
   it). 422 when the week isn't a Monday, the text is empty or over 400 characters, or the code isn't a library game; 409
-  when the week has one.
+  when the week has one. Round 42: once someone has solved a riddle, a change to its week or answer is a 409 too
+  (`riddleLocked`), since `questSync` would take back the stamps of everyone who solved it; its text and hint can still
+  change.
 - POST /quests/riddles/:id/remove (staff, Members): a riddle nobody has solved yet comes off; 409 once someone has.
 
 ## 5. Routes
