@@ -74,6 +74,7 @@ import { counterMethods, counterSale, counterSource, customSale } from './counte
 import { HOLD_COLUMNS, HOLD_TABLES, holdMethods, timeOf } from './holds.js';
 // Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
 import { NEW_PLAYER_COLUMNS, NEW_PLAYER_STAMP_COLUMNS, NEW_PLAYER_TABLES, WELCOME, WELCOME_WORDS, cleanAd, newPlayerMethods } from './newplayers.js';
+import { WALKIN_COLUMNS, cleanClick, walkinMethods } from './walkins.js';
 import { GW_COLUMNS, GW_TABLES, gwOrderMethods } from './gw-orders.js';
 // Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)
 import { GW_PAD_TABLES, gwPadMethods } from './gw-pad.js';
@@ -1122,7 +1123,7 @@ export class Lair {
         );
       }
     }
-    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS, ...HOLD_COLUMNS, ...ROUND23_COLUMNS, ...NEW_PLAYER_COLUMNS]) {
+    for (const [table, column, type] of [...ROUND15_COLUMNS, ...ROUND17_COLUMNS, ...ROUND18_COLUMNS, ...PRIVATE_COLUMNS, ...REPORT_COLUMNS, ...GM_CREDIT_COLUMNS, ...ROUND21_COLUMNS, ...HOLD_COLUMNS, ...ROUND23_COLUMNS, ...NEW_PLAYER_COLUMNS, ...WALKIN_COLUMNS]) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
       } catch {
@@ -2099,6 +2100,8 @@ export class Lair {
         if (request.method === 'GET' && b === 'bookingics') return this.bookingIcs(decodeURIComponent(c || ''));
         // Round 13: a followed game's calendar on the Lair app's own address (public: GET /feeds/<key>.ics)
         if (request.method === 'GET' && b === 'feed') return this.eventFeed(c || '');
+        // Round 40: the walk-ins list for Google Ads (public: GET /ads/walkins.csv, with the list's password)
+        if (request.method === 'GET' && b === 'walkins' && !c) return this.walkinFile();
         if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
         const body = await request.json().catch(() => ({}));
         if (b === 'orders-paid') return json(await this.ordersPaid(body));
@@ -2263,6 +2266,8 @@ export class Lair {
       // Round 24: "How did you find us?" in My Lair, and the ad tags of the link they came by (src/newplayers.js)
       if (a === 'me' && b === 'found-us' && !c) return json(this.meFoundUs(body, who));
       if (a === 'me' && b === 'ad' && !c) return json(this.meAd(body, who));
+      // Round 40: their latest Google click (src/walkins.js)
+      if (a === 'me' && b === 'click' && !c) return json(this.meClick(body, who));
       // Round 9: "Pay online now" for everything on a monthly account
       if (a === 'me' && b === 'account' && c === 'pay') return json(await this.payAccountNow(who));
       // Round 30: store credit to a friend, by their member code: who it is, then send it (src/credit-gifts.js)
@@ -2858,6 +2863,8 @@ export class Lair {
     if (!override) this.touchMember(who.customerId, { name: booking.name, email: booking.email, mobile: booking.phone }, now);
     // Round 24: the ad tags of the link they came by (src/newplayers.js), never on what staff make for someone
     if (!override) this.tagAd('bookings', id, who.customerId || null, cleanAd(input.ad), now);
+    // Round 40: and the Google click they came by (src/walkins.js)
+    if (!override) this.noteClick(who.customerId, cleanClick(input.click, now), now);
     if (tableGame) booking.game = this.setBookingGame(booking.id, tableGame, now).game;
     // --- saved: the table is ours ---
     // Round 29 (src/first-game.js): a TTRPG seat keeps the answer to "Is this your first roleplaying game?" and, after
@@ -4483,6 +4490,7 @@ export class Lair {
     this.touchMember(who.customerId, { name, email, mobile }, now);
     // Round 24: the ad tags of the link they came by, as their first (src/newplayers.js); the seats Gobgob saves don't carry them
     this.firstAd(who.customerId, cleanAd(input.ad), now);
+    this.noteClick(who.customerId, cleanClick(input.click, now), now);
     const member = this.seriesMember(game.seriesId, who.customerId);
     const code = this.memberRow(who.customerId)?.code || null;
     const booked = [];
@@ -6463,6 +6471,7 @@ export class Lair {
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // Round 24: the ad tags of the link they came by (src/newplayers.js)
     this.tagAd('event_joins', join.id, who.customerId || null, cleanAd(input.ad), now);
+    this.noteClick(who.customerId, cleanClick(input.click, now), now);
     // --- saved: the spaces are ours ---
     const result = await this.payOrConfirmJoin(join, rules, plan);
     // Round 28: "Booked a session" for the ad platforms (src/newplayers.js bookedTrack)
@@ -6705,6 +6714,7 @@ export class Lair {
     this.touchMember(who.customerId, { name, email, mobile: phone }, now);
     // Round 24: the ad tags of the link they came by (src/newplayers.js)
     this.tagAd('bookings', spotId, who.customerId || null, cleanAd(input.ad), now);
+    this.noteClick(who.customerId, cleanClick(input.click, now), now);
     // --- saved: the spot is ours ---
     const result = await this.payOrConfirm(booking, rules, { ...plan, title: `Game spot at ${occurrence.title} (${free[0].join(', ')})` });
     if (openGameId) this.later(this.syncOpenGamePost(openGameId));
@@ -11568,6 +11578,8 @@ Object.assign(Lair.prototype, counterMethods);
 Object.assign(Lair.prototype, holdMethods);
 // Round 24: welcome codes that pay out at a first paid session, "How did you find us?" and ad tags (src/newplayers.js)
 Object.assign(Lair.prototype, newPlayerMethods);
+// Round 40: walk-ins from Google ads, for Google Ads' First visit (src/walkins.js)
+Object.assign(Lair.prototype, walkinMethods);
 // Round 25: Games Workshop items ordered in (src/gw-orders.js)
 Object.assign(Lair.prototype, gwOrderMethods);
 // Round 26: GW's weekly order pad into Shopify, from the staff page's Warhammer tab (src/gw-pad.js)

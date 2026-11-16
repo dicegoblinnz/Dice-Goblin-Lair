@@ -186,11 +186,19 @@ export const newPlayerMethods = {
    * a seat their GM pays for, a GM's own session, or someone else paying for them (after round 24's review).
    */
   paidSession(customerId, sessions, now = Date.now()) {
+    return this.firstPaidSession(customerId, sessions, now) !== null;
+  },
+
+  /**
+   * Round 40: the session paidSession finds, the earliest (sessions come oldest first), or null: what the walk-ins list
+   * tells Google Ads about (src/walkins.js). No awaits.
+   */
+  firstPaidSession(customerId, sessions, now = Date.now()) {
     const id = String(customerId);
     for (const r of sessions) {
-      if (r.kind === 'stamp-staff') return true;
+      if (r.kind === 'stamp-staff') return r;
       if (r.kind === 'stamp-sale') {
-        if (this.sql.exec('SELECT 1 AS n FROM loyalty_stamps WHERE id = ? AND amount > 0', r.id).toArray().length) return true;
+        if (this.sql.exec('SELECT 1 AS n FROM loyalty_stamps WHERE id = ? AND amount > 0', r.id).toArray().length) return r;
         continue;
       }
       const join = r.kind === 'join';
@@ -205,11 +213,11 @@ export const newPlayerMethods = {
       // their own, paid in full: by a session pass, or with money that wasn't all someone else's (after the second review:
       // another member's code on every sale that paid for it is them paying, not this member)
       const own = String(row.customer_id || '') === id;
-      if (own && Number(row.paid) === 1 && (Number(row.covered) > 0 || (Number(row.paid_amount) > 0 && !this.paidByOthers(r.id, kind, id)))) return true;
+      if (own && Number(row.paid) === 1 && (Number(row.covered) > 0 || (Number(row.paid_amount) > 0 && !this.paidByOthers(r.id, kind, id)))) return r;
       const theirs = this.sql.exec('SELECT 1 AS n FROM payments WHERE booking_id = ? AND kind = ? AND customer_id = ? AND amount > 0 LIMIT 1', r.id, kind, id);
-      if (theirs.toArray().length) return true;
+      if (theirs.toArray().length) return r;
     }
-    return false;
+    return null;
   },
 
   /**
