@@ -4,6 +4,8 @@
 //      solved riddle has no Remove; Write one on the empty week (its week picked, the Lair's words for an empty riddle
 //      and an unknown box, then saved and the gap line covered); Edit on a solved riddle offers only its words; Edit
 //      on an unsolved one changes its answer; Remove asks first, Keep it keeps it, Remove it takes it off.
+//      Round 44 (round 42's review): a riddle solved while staff have it open comes back, after the Lair turns their
+//      change of answer down, as a solved one's form keeping what they typed, and Save then changes its words.
 //   2. The d20 roller: logged in, with the Lair live and Quests in My Lair ticked, a roll POSTs the pick's product to
 //      /pick/rolled; logged out, or quests off, nothing goes.
 // No sideways scroll, no console errors, and the tab's buttons are 44px or more to tap on a phone.
@@ -168,6 +170,40 @@ for (const size of Object.keys(SIZES)) {
   await page.waitForFunction((w) => document.querySelector(`staff-riddles .sr-week[data-sr-week="${w}"]`)?.classList.contains('is-empty'), lastWeek, { timeout: 5000 }).catch(() => {});
   check(tag, await R.locator(`.sr-week[data-sr-week="${lastWeek}"]`).evaluate((el) => el.classList.contains('is-empty')), 'Remove it takes it off: the week is empty again');
   check(tag, flat(await R.locator('.sr-cover').innerText()).startsWith('1 of the next 4 weeks has no riddle'), 'and the gap line says so');
+
+  // Round 44 (round 42's review): someone solves a riddle while staff have it open. Their change of answer is turned
+  // down, and the form comes back as a solved riddle's (week and answer fixed), keeping what they typed, so Save
+  // changes its words
+  await week(2).locator('[data-sr-edit]').click();
+  edit = week(2).locator('form');
+  await edit.locator('[name="text"]').fill('Gobgob heard voices in the attic.');
+  const other = await ctx.newPage(); // another phone at the counter: the demo's store is shared
+  await other.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  const solvedWeek = await week(2).getAttribute('data-sr-week');
+  await other.evaluate((w) => {
+    const state = JSON.parse(localStorage.getItem('dg-lair-demo-v3'));
+    state.riddles.find((r) => r.week === w).solvedBy = 1;
+    localStorage.setItem('dg-lair-demo-v3', JSON.stringify(state));
+  }, solvedWeek);
+  await other.close();
+  await page.waitForTimeout(200);
+  await edit.locator('[name="code"]').fill('DGL12-001');
+  await edit.locator('[type="submit"]').click();
+  await page.waitForFunction(() => !document.querySelector('staff-riddles .sr-week:nth-child(3) form [name="code"]'), null, { timeout: 5000 }).catch(() => {});
+  edit = week(2).locator('form');
+  check(tag, (await edit.count()) === 1 && (await edit.locator('[name="week"]').count()) === 0 && (await edit.locator('[name="code"]').count()) === 0,
+    'solved under the form: it comes back with its week and answer fixed');
+  check(tag, (await edit.locator('[name="text"]').count()) && (await edit.locator('[name="text"]').inputValue()) === 'Gobgob heard voices in the attic.', 'what they typed is still there');
+  text = flat(await edit.innerText());
+  check(tag, text.includes('That didn’t save: 1 player solved it while you had it open, so its week and answer stay. Your words are still here. Save to change them.')
+    && !text.includes('1 player solved it, so'), 'it says once what happened and why', text.slice(0, 300));
+  check(tag, await page.evaluate(() => document.activeElement?.matches('staff-riddles [data-form-error]')), 'focus is on the message');
+  await page.screenshot({ path: `${OUT}${tag}-5-solved-under.png`, fullPage: !phone });
+  await edit.locator('[type="submit"]').click();
+  await page.waitForFunction(() => !document.querySelector('staff-riddles .sr-week:nth-child(3) form'), null, { timeout: 5000 }).catch(() => {});
+  text = flat(await week(2).innerText());
+  check(tag, text.includes('Gobgob heard voices in the attic.') && text.includes('Mysterium') && text.includes('Solved by 1 player') && !text.includes('Remove'),
+    'Save then changes its words; its answer stays and it shows as solved', text);
   check(tag, (await overflow(page)) === 0, 'no sideways scroll');
   check(tag, page.errors.length === 0, 'staff: no console or page errors', page.errors.slice(0, 3).join(' | '));
   await page.screenshot({ path: `${OUT}${tag}-4-after.png`, fullPage: !phone });

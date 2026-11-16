@@ -397,6 +397,45 @@ test('the riddle: staff set it for a Monday; it\'s out from 10am; scanning the a
   assert.equal(lair.sql.exec("SELECT COUNT(*) AS n FROM quest_facts WHERE kind = 'play' AND customer_id = ?", MIA).one().n, 5);
 });
 
+// Round 44 (round 42's review): a riddle's answer is the game, not the code typed for it. A change that leaves the answer's
+// box as it was (the form sends the riddle's own code, or none) keeps its answer without looking the code up again, so
+// its words can still change after the box is relabelled, its old label goes on another game, or the game leaves the
+// library, and while Shopify can't be asked
+test('round 44: a riddle\'s words still change after its answer\'s box is relabelled or leaves the library', async () => {
+  lair.saveLibraryGame({ variantId: '9001', productId: '7001', title: 'Azul', handle: 'azul', shelfCode: 'DGL34-M007', image: null }, NOW, ['DGL34-M007']);
+  const riddle = ok(await call('POST', 'quests/riddles', { week: WEEK, text: 'Gobgob was hired to tile a palace wall.', code: 'DGL34-M007' }, OWNER)).riddle;
+  session(MIA, { start: at(WEEK, 18) });
+  nowIs(at(WEEK, 20, 30));
+  assert.equal(ok(await call('POST', 'library/scan', { code: 'DGL34-M007', action: 'play' }, MIA)).riddle, true);
+  // Azul gets a new label, and its old one goes on Ticket to Ride
+  lair.saveLibraryGame({ variantId: '9001', productId: '7001', title: 'Azul', handle: 'azul', shelfCode: 'DGL34-M099', image: null }, NOW, ['DGL34-M099']);
+  lair.saveLibraryGame({ variantId: '9003', productId: '7003', title: 'Ticket to Ride', handle: 'ticket-to-ride', shelfCode: 'DGL34-M007', image: null }, NOW, ['DGL34-M007']);
+  // the form sends the riddle's own code: its words change, its answer is still Azul, now with Azul's new label
+  const reworded = await call('POST', 'quests/riddles', { id: riddle.id, week: WEEK, text: 'Tiles, tiles, tiles.', hint: '', code: 'DGL34-M007' }, OWNER);
+  assert.equal(reworded.status, 200, reworded.data.error);
+  assert.deepEqual([reworded.data.riddle.text, reworded.data.riddle.answer, reworded.data.riddle.solvedBy],
+    ['Tiles, tiles, tiles.', { productId: '7001', title: 'Azul', shelfCode: 'DGL34-M099' }, 1]);
+  // a box that is a different game is still a change of answer, so still refused
+  const moved = await call('POST', 'quests/riddles', { id: riddle.id, week: WEEK, text: 'Tiles, tiles, tiles.', code: 'DGL34-M007' }, OWNER);
+  assert.deepEqual([moved.status, moved.data.error], [409, W.riddleLocked]);
+  // Azul leaves the library (the Lair no longer knows its codes, and Shopify can't be asked): its words still change
+  lair.sql.exec("DELETE FROM library_codes WHERE variant_id = '9001'");
+  const later = await call('POST', 'quests/riddles', { id: riddle.id, week: WEEK, text: 'Blue tiles.', hint: 'Gone now', code: 'DGL34-M099' }, OWNER);
+  assert.equal(later.status, 200, later.data.error);
+  assert.deepEqual([later.data.riddle.text, later.data.riddle.hint, later.data.riddle.answer.title], ['Blue tiles.', 'Gone now', 'Azul']);
+  // no code at all keeps the answer too
+  assert.equal(ok(await call('POST', 'quests/riddles', { id: riddle.id, week: WEEK, text: 'Blue tiles!' }, OWNER)).riddle.answer.productId, '7001');
+  await quests(MIA);
+  assert.equal(questStamps(MIA)[`weekly:riddle:${WEEK}`], 1, 'their stamp stays');
+  // an unsolved one too: a seeded riddle's box was never scanned into the Lair, and Shopify can't be asked
+  const seeded = ok(await call('GET', 'quests/riddles', null, OWNER)).riddles.find((r) => r.week === '2026-11-30');
+  const reseeded = await call('POST', 'quests/riddles', { id: seeded.id, week: seeded.week, text: 'New words.', code: seeded.answer.shelfCode }, OWNER);
+  assert.equal(reseeded.status, 200, reseeded.data.error);
+  assert.deepEqual([reseeded.data.riddle.text, reseeded.data.riddle.answer], ['New words.', seeded.answer]);
+  // but a new box for it is still looked up
+  assert.equal((await call('POST', 'quests/riddles', { id: seeded.id, week: seeded.week, text: 'New words.', code: 'DGL99-X' }, OWNER)).status, 503);
+});
+
 /* ---------------- one-off and secret quests from sessions ---------------- */
 
 test('one-offs from sessions: the first of each kind of night, 3 systems, 3 GMs, a weekly seat, Four in a row; titles when a chapter\'s done', async () => {
