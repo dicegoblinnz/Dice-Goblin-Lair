@@ -10,6 +10,7 @@ import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings, DEFAULT_HOURS } from '../src/core.js';
 import { CASH_WORDS as W } from '../src/cash.js';
+import { shopifyTabPrices } from './tab-prices.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -132,6 +133,7 @@ beforeEach(async () => {
   };
   Date.now = () => NOW;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD' });
+  shopifyTabPrices(lair); // 17 Nov 2026: the Lair prices a tab from Shopify (test/tab-prices.js)
   // background work (the Shopify order) is kept, so a test can wait for it
   lair.later = (promise) => {
     const safe = Promise.resolve(promise).catch((error) => console.error('background', error));

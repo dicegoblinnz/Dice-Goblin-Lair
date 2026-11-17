@@ -7,6 +7,7 @@ import { Lair } from '../src/lair.js';
 import { LairTime, openWindow, rulesFromSettings, parseTableList, buildRooms, TAB_WORDS } from '../src/core.js';
 import { verifyProxySignature, verifyWebhook } from '../src/shopify.js';
 import worker from '../src/index.js';
+import { TEST_TAB_PRICES, shopifyTabPrices } from './tab-prices.js';
 
 /** The end of the Auckland day 3 years on from a moment: a pass or gift works all of its last day (17 Nov 2026) */
 const threeYears = (ms) => {
@@ -78,6 +79,7 @@ const tableBooking = (over = {}) => ({
 beforeEach(() => {
   Date.now = () => NOW;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD' });
+  shopifyTabPrices(lair); // 17 Nov 2026: the Lair prices a tab from Shopify (test/tab-prices.js)
   lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: id === 'gm' });
   // Paid orders are looked up for members' spend (and a pass buyer's name); tests that care replace these.
   lair.shopify.orderSpend = async () => null;
@@ -3053,7 +3055,8 @@ test('passes: staff make, find and change them; the code comes from the holder; 
   assert.equal((await call('POST', 'passes', { label: 'x', sessions: 1, holderName: 'Sam' }, '1001')).status, 403);
   assert.equal((await call('GET', 'passes', null, '1001')).status, 403);
   const pass = await makePass({ note: 'Paid cash', pricePaid: 80, expires: '2026-12-31' });
-  assert.match(pass.code, /^SJ-[A-Z]{3,9}-([1-9]|1\d|20)$/);
+  // 17 Nov 2026 (contract v45-guard): a pass with no member on it is claimed by its code, so it ends in 4 random letters
+  assert.match(pass.code, /^SJ-[A-Z]{3,9}-([1-9]|1\d|20)-[A-HJ-NP-Z2-9]{4}$/);
   assert.deepEqual(
     [pass.label, pass.sessionsTotal, pass.sessionsUsed, pass.sessionsLeft, pass.cover, pass.pricePaid, pass.status, pass.note, pass.holder, pass.uses, pass.createdAt],
     ['Warhammer league: 10 sessions', 10, 0, 10, 1000, 8000, 'active', 'Paid cash', { customerId: null, name: 'Sam Jones', email: '' }, [], NOW],
@@ -3297,6 +3300,11 @@ const pos = (path, body = {}) => lair
 test('the self-serve tab: today\'s tab in My Lair, checked and merged; at the counter it can\'t change; paying it at the POS marks it paid', async () => {
   const coffee = { variantId: '44100000000001', title: 'Flat white', variantTitle: 'Regular', price: 550, qty: 1 };
   const chips = { variantId: 44100000000002, title: `Chips ${'x'.repeat(100)}`, variantTitle: '', price: 300, qty: 2 };
+  // 17 Nov 2026 (contract v45-guard): the names and prices are Shopify's (here, test/tab-prices.js), never the page's
+  shopifyTabPrices(lair, {
+    ...TEST_TAB_PRICES, 44100000000002: { price: 300, title: chips.title, variantTitle: '' },
+    ...Object.fromEntries(Array.from({ length: 31 }, (_, i) => [1000 + i, { price: 100000, title: 'Big box', variantTitle: '' }])),
+  });
   assert.equal((await call('POST', 'tab', { items: [coffee] })).status, 401);
   const saved = await call('POST', 'tab', { items: [coffee, chips, { ...coffee, qty: 2 }] }, '1001');
   assert.equal(saved.status, 200, saved.data.error);
@@ -3316,8 +3324,8 @@ test('the self-serve tab: today\'s tab in My Lair, checked and merged; at the co
   await refused([{ ...coffee, qty: 21 }], 'Pick 1 to 20 of each thing.');
   await refused([{ ...coffee, qty: 1.5 }], 'Pick 1 to 20 of each thing.');
   await refused([{ ...coffee, qty: 15 }, { ...coffee, qty: 6 }], 'Pick 1 to 20 of each thing.');
-  await refused([{ ...coffee, price: -1 }], "That price doesn't look right. Pick it from the menu again.");
-  await refused([{ ...coffee, price: 100001 }], "That price doesn't look right. Pick it from the menu again.");
+  // 17 Nov 2026 (contract v45-guard): the page's price is ignored, so a strange one changes nothing
+  for (const price of [-1, 100001, 'free']) assert.equal((await call('POST', 'tab', { items: [{ ...coffee, price }] }, '1001')).data.tab.total, 550, String(price));
   await refused(Array.from({ length: 31 }, (_, i) => ({ ...coffee, variantId: String(1000 + i) })), 'A tab holds up to 30 different things. Pay for this lot, then start a fresh one.');
   await refused('coffee', "Something on your tab didn't look right. Pick it from the menu again.");
   assert.equal((await call('POST', 'tab', { items: Array.from({ length: 30 }, (_, i) => ({ ...coffee, variantId: String(1000 + i), price: 100000 })) }, '1001')).status, 200, '30 lines at the top price');
@@ -5016,7 +5024,7 @@ test('session gifts (round 6): LAIR-GIFT-N lines make unlinked gift passes, once
       ['Gift: 5 sessions', 5, 'gift', 1000, 5000, '#1600', 'A gift from Sam', 'active'],
       ['Gift: 10 sessions', 10, 'gift', 1000, 9000, '#1600', 'A gift from Sam', 'active'],
     ]);
-    assert.ok(passes.every((p) => !p.holder.customerId && !p.holder.name && !p.holder.email && /^DG-[A-Z]+-\d{1,2}$/.test(p.code)), 'unlinked, whoever bought them');
+    assert.ok(passes.every((p) => !p.holder.customerId && !p.holder.name && !p.holder.email && /^DG-[A-Z]+-\d{1,2}-[A-HJ-NP-Z2-9]{4}$/.test(p.code)), 'unlinked, whoever bought them (17 Nov 2026: a long code nobody can guess)');
     await settle();
     assert.equal(mail.sent.length, 1);
     const [email] = mail.sent;

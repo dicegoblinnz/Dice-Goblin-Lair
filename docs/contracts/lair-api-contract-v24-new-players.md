@@ -141,6 +141,8 @@ isn't tags, nothing is saved, and the request goes ahead: an ad tag never stops 
   member as their first (`members.ad_source`, `ad_medium`, `ad_campaign`, `ad_at`) when they're logged in and have none.
   A later ad never replaces a member's first. A weekly seat keeps them on the member only.
 - `POST /me/ad { source, medium?, campaign? }` (logged in): the website sends the tags it kept once GET /me has answered.
+  Since 17 Nov 2026 (contract v28, section 6) a paid click (`isPaidAd`: medium paid, cpc, ppc, cpm, cpv or paid-social
+  and the like) replaces a member's unpaid tags once, while they haven't been to the Lair yet.
   `{ saved: true }` when they were the member's first, else `{ saved: false }`. Someone the Lair hasn't met yet is a 404
   (from the review: making their member record here, without their name, gave them a DG- member code).
 

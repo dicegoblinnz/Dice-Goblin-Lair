@@ -10,6 +10,7 @@ import { Lair } from '../src/lair.js';
 import { LairTime, rulesFromSettings, DEFAULT_HOURS } from '../src/core.js';
 import { CREDIT_PAY, CREDIT_PAY_WORDS as W } from '../src/credit-pay.js';
 import { TILL_SALE_WORDS as S } from '../src/till-sales.js';
+import { shopifyTabPrices } from './tab-prices.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -222,6 +223,7 @@ beforeEach(async () => {
   };
   nowIs(NOW);
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD', SHOP: 'dice-goblin.myshopify.com' });
+  shopifyTabPrices(lair); // 17 Nov 2026: the Lair prices a tab from Shopify (test/tab-prices.js)
   lair.taggedPerson = async (id) => {
     const person = { customerId: id || null, staff: id === OWNER, gm: false, tags: [] };
     if (id) lair.people.set(id, { at: Date.now(), person });

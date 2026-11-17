@@ -122,6 +122,12 @@ import { STOCK_OFF_TABLES, stockOffMethods } from './stock-off.js';
 import { QUEST_TABLES, questMethods } from './quests.js';
 // Round 43: what's on the shelf, for the home page's d20 roller
 import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
+// Round 46: library copies bought online are held (src/library-hold.js)
+import { LIBRARY_HOLD_TABLES, libraryHoldMethods } from './library-hold.js';
+// 17 Nov 2026 (contract v45-guard): the robot check, the day's cap without an account, limits kept in the Durable
+// Object, the staff email about a burst, and the shop-wide cap on wrong codes (src/guard.js)
+import { GUARD_LIMITS, GUARD_TABLES, GUARD_WORDS, guardMethods, guardedForm, isLongCode } from './guard.js';
+export { GUARD_LIMITS, GUARD_WORDS };
 
 const FALLBACK_ROOMS = [
   { id: 'main-room', name: 'Main room', code: 'T', tables: 21, seats: 4, order: 1 },
@@ -139,14 +145,14 @@ FEATURE_SCOPES.read_store_credit_accounts = 'store credit balances on the staff 
 FEATURE_SCOPES.write_discounts += ', same-parcel delivery codes and new Commander decks in the free sleeves deal';
 // Round 25: Games Workshop orders tagged Ordered in, with a note; round 26: the staff page's Warhammer tab adding GW's
 // order pad (new products stocked at 0 and on the till, prices and costs kept current)
-FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in';
+FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in, and orders with a library copy (round 46)';
 FEATURE_SCOPES.write_products = "adding Games Workshop's order pad (the Warhammer tab), and the shop's filters and On the shelf now (round 31)";
 FEATURE_SCOPES.write_inventory = 'new Games Workshop products stocked at 0, and their costs';
 FEATURE_SCOPES.write_publications = 'new Games Workshop products on the till';
 // Round 29: an unsubscribe from the email the day after a first game reaches Shopify's email marketing setting
 FEATURE_SCOPES.write_customers = "unsubscribes from the Lair's emails reaching Shopify's email marketing";
 // Round 32, the till, part 3: its sales marked fulfilled at the shop as soon as they're paid (src/till-sales.js)
-FEATURE_SCOPES.write_merchant_managed_fulfillment_orders = 'the till marking its sales fulfilled at the shop';
+FEATURE_SCOPES.write_merchant_managed_fulfillment_orders = 'the till marking its sales fulfilled at the shop, and holding online orders with a library copy (round 46)';
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -157,7 +163,7 @@ const FLOOR_WRITES = /\b(?:INTO|UPDATE|FROM)\s+(?:bookings|games|blocks|openings
 /** 17 Oct 2026: a member's last seen is kept to within this (touchMember skips the write when nothing else changes) */
 const TOUCH_EVERY = 15 * 60_000;
 /** Abuse limits for people who are not staff */
-const LIMITS = { perClientPer10Min: 20, activePerEmail: 6, messagesPerGamePerDay: 5 };
+const LIMITS = { activePerEmail: 6, messagesPerGamePerDay: 5 };
 /** What the public sees for a staff hold (staff labels can hold names or notes) */
 const PUBLIC_HOLD = { tournament: 'Tournament', market: 'Market', event: 'Event', maintenance: 'Out of action' };
 /** An event that's paid online only, when Shopify can't make the checkout */
@@ -1049,7 +1055,6 @@ export class Lair {
     this.rulesCache = null;
     this.rulesLoadedAt = 0;
     this.people = new Map();
-    this.recent = new Map();
     this.webhookRetryAt = 0;
     this.version = 0;
     this.stateCache = new Map();
@@ -1207,6 +1212,10 @@ export class Lair {
     for (const statement of QUEST_TABLES) this.sql.exec(statement);
     // Round 43: the shelf list the d20 roller picks from (src/shelf-picks.js)
     for (const statement of SHELF_TABLES) this.sql.exec(statement);
+    // Round 46: orders held for a library copy, and what's done for each (src/library-hold.js)
+    for (const statement of LIBRARY_HOLD_TABLES) this.sql.exec(statement);
+    // 17 Nov 2026: counted tries for the limits, kept through a restart (src/guard.js)
+    for (const statement of GUARD_TABLES) this.sql.exec(statement);
     for (const [table, column, type] of GW_COLUMNS) {
       try {
         this.sql.exec(`SELECT ${column} FROM ${table} LIMIT 0`);
@@ -1858,14 +1867,23 @@ export class Lair {
 
   /** An experience gift's code (16 Nov 2026): like DG-OWLBEAR-17-K7QM, the last 4 random, so it can't be guessed. */
   newGiftCode(targetId, now = Date.now()) {
+    return this.newLongCode('', 'pass', targetId, now);
+  }
+
+  /**
+   * A code nobody can guess, from the person's name: like AN-OWLBEAR-17-K7QM, the last 4 random (about a million
+   * times more codes than the short ones). 17 Nov 2026 (contract v45-guard): every pass nobody is linked to gets one,
+   * since whoever has its code can claim it. No awaits.
+   */
+  newLongCode(name, kind, targetId, now = Date.now()) {
     for (let i = 0; i < 40; i += 1) {
       const tail = [...crypto.getRandomValues(new Uint32Array(4))].map((n) => XP_CODE_LETTERS[n % XP_CODE_LETTERS.length]).join('');
-      const code = `${uniqueCode('', (key) => this.codeTaken(key))}-${tail}`;
+      const code = `${uniqueCode(name, (key) => this.codeTaken(key))}-${tail}`;
       if (this.codeTaken(codeKey(code))) continue;
-      this.write('INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, ?, ?, ?)', codeKey(code), code, 'pass', String(targetId), now);
+      this.write('INSERT INTO codes (key, code, kind, target_id, created_at) VALUES (?, ?, ?, ?, ?)', codeKey(code), code, kind, String(targetId), now);
       return code;
     }
-    throw new Error('Could not find a free gift code');
+    throw new Error('Could not find a free long code');
   }
 
   /**
@@ -2062,15 +2080,7 @@ export class Lair {
       : null;
   }
 
-  /** A soft limit per client address, so one person can't flood the floor with fake bookings. */
-  checkRate(who, client, now) {
-    if (who.staff || !client) return;
-    const hits = (this.recent.get(client) || []).filter((t) => now - t < 10 * MIN);
-    if (hits.length >= LIMITS.perClientPer10Min) throw new RuleError('Too many bookings in a short time. Call us and we will sort it out.', 429);
-    hits.push(now);
-    if (this.recent.size > 2000) this.recent.clear();
-    this.recent.set(client, hits);
-  }
+  // checkRate (a soft limit per client address) lives in src/guard.js since 17 Nov 2026, kept in guard_hits
 
   /* ---------------- HTTP ---------------- */
   /**
@@ -2199,9 +2209,14 @@ export class Lair {
       }
       // Round 43: a product on the shelf for the home page's d20 roller (src/shelf-picks.js), for anyone, before anyone is looked up
       if (request.method === 'GET' && a === 'shelf' && b === 'pick' && !c) return json(this.shelfPick(url, callsAtStart));
+      // 17 Nov 2026 (contract v45-guard): the robot check's site key for the website's forms (null while it's off)
+      if (request.method === 'GET' && a === 'guard' && !b) return json(this.guardView());
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+      // 17 Nov 2026 (contract v45-guard): forms that book, sign up or send an email ask someone who isn't logged in for the
+      // robot check's token first (off until its keys are set)
+      if (request.method === 'POST' && guardedForm(a, b, c, parts[3])) await this.robotCheck(body, who, client);
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
       // 17 Oct 2026 (contract v18-private): the private game an invite link is for
       if (request.method === 'GET' && a === 'games' && b === 'invite' && c && !parts[3]) return json(await this.gameByInvite(decodeURIComponent(c), who));
@@ -2209,6 +2224,8 @@ export class Lair {
       if (request.method === 'GET' && a === 'games' && b && c === 'books' && !parts[3]) return json(this.gameBooks(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'gm-perks' && !b) return json(await this.listGmPerks(who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
+      // 17 Nov 2026 (contract v45-guard): the tab menu's counter drinks at the prices the tab charges (src/tab.js)
+      if (request.method === 'GET' && a === 'tab' && b === 'prices' && !c) return json(await this.tabPricesView(who));
       // Round 41: a member's quests, and the staff's riddles (src/quests.js)
       if (request.method === 'GET' && a === 'me' && b === 'quests' && !c) return json(await this.myQuests(who));
       if (request.method === 'GET' && a === 'quests' && b === 'riddles' && !c) return json(await this.listRiddles(who));
@@ -2866,6 +2883,8 @@ export class Lair {
     }
     // Round 7: a mobile number on every customer booking (tables, game seats); not on what staff make for someone
     if (!override) booking.phone = checkMobile(input.phone);
+    // 17 Nov 2026 (contract v45-guard): the day's cap on bookings made without an account
+    if (!override) this.checkGuestDay(who, booking.start, rules, client, now);
     if (!who.staff) this.checkEmailLimit(booking.email, now);
     // Round 9: on a monthly account, not over its credit limit (staff booking for someone, the override, skip this)
     if (!override) this.checkAccountLimit(who.customerId, booking.amount, rules, now, 'book');
@@ -5413,6 +5432,9 @@ export class Lair {
     // Round 25: Games Workshop lines ordered in from GW (src/gw-orders.js), last, so it never holds up anything above: its
     // own awaits, then its own writes. If Shopify can't say how the stock stands, this throws and the webhook comes
     // again, which only repeats what's above (kept once per order).
+    // Round 46: a library copy bought online (not the buyer's own My Library purchase, or $0) holds the order in Shopify
+    // and tells staff (src/library-hold.js). Before Games Workshop's, which can throw: this never does.
+    const libraryHold = await this.libraryHoldPaid(order, orderId, { pos, spend });
     const gw = await this.gwOrderPaid(order, orderId, { pos, spend });
     // Round 41: the order's quest facts (src/quests.js): dice, the daily bounties, its products and a late counter sale.
     // Off unless the live theme has quests on; if Shopify can't say what the products are, this throws and the webhook
@@ -5425,6 +5447,7 @@ export class Lair {
       ...(gw ? { gw } : {}),
       ...(orderRolls ? { orderRolls } : {}),
       ...(quests ? { quests } : {}),
+      ...(libraryHold ? { libraryHold } : {}),
     };
   }
 
@@ -5462,8 +5485,9 @@ export class Lair {
     for (const { line, unit } of this.passUnitsToMake(orderId, giftLines)) {
       const id = makeId('ps');
       const xp = line.xp || null;
-      // An experience gift's code has 4 more random letters, so nobody can guess one (16 Nov 2026 review)
-      const code = xp ? this.newGiftCode(id, now) : this.newCode('', 'pass', id, now);
+      // A gift's code has 4 more random letters, so nobody can guess one (16 Nov 2026 review: experiences; 17 Nov 2026:
+      // every gift, since nobody is linked to it until it's claimed)
+      const code = this.newGiftCode(id, now);
       const expires = this.lastDayIn(xp ? XP_YEARS : PASS_YEARS, now, rules);
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
@@ -5578,7 +5602,8 @@ export class Lair {
     const made = [];
     for (const { line, unit } of this.passUnitsToMake(orderId, passLines)) {
       const id = makeId('ps');
-      const code = this.newCode(buyer.name, 'pass', id, now);
+      // 17 Nov 2026 (contract v45-guard): with nobody on the sale it's claimed by its code, so the code is a long one
+      const code = buyer.customerId ? this.newCode(buyer.name, 'pass', id, now) : this.newLongCode(buyer.name, 'pass', id, now);
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
            created_by, expires_at, status, source, order_id, order_name, order_line, order_unit) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'order', ?, ?, ?, ?)`,
@@ -6483,6 +6508,8 @@ export class Lair {
     // Round 7: a mobile number on every sign-up
     const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
+    // 17 Nov 2026 (contract v45-guard): the day's cap on sign-ups made without an account
+    this.checkGuestDay(who, occurrence.start, rules, client, now);
     // Round 8: after the rate limit, so trying member codes counts towards it
     const guests = listed ? this.findGuests(listed, who) : [];
     const taken = this.sql
@@ -6726,6 +6753,8 @@ export class Lair {
     // Round 7: a mobile number on every game spot
     const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
+    // 17 Nov 2026 (contract v45-guard): the day's cap on game spots made without an account
+    this.checkGuestDay(who, occurrence.start, rules, client, now);
     if (!who.staff) this.checkEmailLimit(email, now);
     // Round 31: listed as looking for a game (src/open-games.js): a member, 1 v 1, a game and size from the lists. Until
     // someone joins it's the booker alone (people 1, their own share), so a game nobody joined never owes more.
@@ -6897,12 +6926,8 @@ export class Lair {
     if (!name) throw new RuleError('Add your name.');
     if (!isEmail(email)) throw new RuleError('Add your email so the team can reply.');
     if (details.length < 10) throw new RuleError('Tell us a little about your event.');
-    if (!who.staff) {
-      const hits = (this.contactHits?.get(client) || []).filter((t) => now - t < HOUR);
-      if (hits.length >= 3) throw new RuleError("We've got your messages. The team will be in touch soon.", 429);
-      this.contactHits = this.contactHits || new Map();
-      this.contactHits.set(client, [...hits, now]);
-    }
+    // 3 an hour from one address, kept through a restart (src/guard.js)
+    this.checkIdeaRate(who, client, now);
     if (!emailReady(this.env) || !this.env.STAFF_EMAIL) throw new RuleError("We can't send messages from here right now. Email or call us instead.", 503);
     const field = (value) => String(value ?? '').trim().slice(0, 200);
     const sent = await this.mail(this.letter(this.env.STAFF_EMAIL, `Event idea from ${name}${input.eventType ? `: ${String(input.eventType).slice(0, 60)}` : ''}`, {
@@ -7978,17 +8003,14 @@ export class Lair {
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
-    const tries = (this.claimHits?.get(who.customerId) || []).filter((t) => now - t < 10 * MIN);
-    if (tries.length >= 10) throw new RuleError('Too many tries in a row. Give it ten minutes, or ask us at the counter.', 429);
     // A pass or session gift: exactly the claim route (claimPass has no awaits of its own, so it reads, checks and saves
     // straight through, and counts the try itself)
     if (this.findCode(text)?.type === 'pass') {
       const { pass } = await this.claimPass({ code: text }, who);
       return { kind: 'pass', pass, message: `Added to your wallet: ${pass.label}.` };
     }
-    this.claimHits = this.claimHits || new Map();
-    if (this.claimHits.size > 2000) this.claimHits.clear();
-    this.claimHits.set(who.customerId, [...tries, now]);
+    // 10 tries in 10 minutes a member, shared with the claim route and kept through a restart (src/guard.js)
+    this.checkCodeTries(who.customerId, now);
     // Round 41: a friend's invite code (src/quests.js)
     const invite = this.questInviteByText(text);
     if (invite) return this.redeemInvite(invite, String(who.customerId), rules, now);
@@ -8014,6 +8036,10 @@ export class Lair {
       return { kind: 'roll', rolls: loot.rolls, message, loyalty: this.loyaltyOf(me, rules, { details: true }) };
     }
     if (this.isGiftProductCode(text)) throw new RuleError("That's a shop discount code. Use it at checkout online, or show it at the counter.");
+    // 17 Nov 2026 (contract v45-guard): while wrong codes are paused, an unknown one gets the same answer as a short pass
+    // code, so nothing can be learned from it; otherwise it counts as a wrong guess across the shop
+    if (this.codesPaused(now)) throw new RuleError(GUARD_WORDS.codesPaused, 429);
+    this.wrongCode(now);
     throw new RuleError("Gobgob doesn't know that code. Check it and try again.", 404);
   }
 
@@ -8085,14 +8111,13 @@ export class Lair {
       if (!/^\d{1,20}$/.test(variantId)) throw new RuleError("Gobgob doesn't know that one. Pick it from the menu instead.");
       const qty = Number(raw.qty);
       if (!Number.isInteger(qty) || qty < 1 || qty > 20) throw new RuleError('Pick 1 to 20 of each thing.');
-      const price = Number(raw.price);
-      if (!Number.isFinite(price) || price < 0 || price > 100000) throw new RuleError("That price doesn't look right. Pick it from the menu again.");
+      // 17 Nov 2026 (contract v45-guard): the page's price and names are ignored; tabPriced (src/tab.js) gives Shopify's
       const line = lines.get(variantId);
       if (line) {
         line.qty += qty;
         if (line.qty > 20) throw new RuleError('Pick 1 to 20 of each thing.');
       } else {
-        lines.set(variantId, { variantId, title: trimmed(raw.title, 80), variantTitle: trimmed(raw.variantTitle, 80), price: Math.round(price), qty });
+        lines.set(variantId, { variantId, qty });
       }
     }
     if (lines.size > 30) throw new RuleError('A tab holds up to 30 different things. Pay for this lot, then start a fresh one.');
@@ -8105,10 +8130,11 @@ export class Lair {
    */
   async saveTab(input, who) {
     if (!who.customerId) throw new RuleError('Log in to start a tab.', 401);
+    // 17 Nov 2026 (contract v45-guard): priced by the Lair (Shopify's prices), never by the page
+    const items = await this.tabPriced(this.tabItems(input.items));
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
-    const items = this.tabItems(input.items);
     const current = this.todayTabRow(who.customerId, rules, now);
     const open = current && current.status !== 'paid' ? current : null;
     if (open?.status === 'in-cart') throw new RuleError('Your tab is at the counter already. Pay for that one, then start a fresh one.', 409);
@@ -8424,7 +8450,9 @@ export class Lair {
     if (f.picked) this.makeMember(f.picked, now);
     const id = makeId('ps');
     // A group's pass takes its code from the group's name (Warhammer League: WL-…), round 7
-    const code = this.newCode(f.groupName || f.holderName || '', 'pass', id, now);
+    // 17 Nov 2026 (contract v45-guard): a pass with no member and no group is claimed by its code, so it's a long one
+    const claimable = !f.customerId && !f.groupId;
+    const code = claimable ? this.newLongCode(f.holderName || '', 'pass', id, now) : this.newCode(f.groupName || f.holderName || '', 'pass', id, now);
     this.write(
       `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
          created_by, expires_at, status, group_id) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
@@ -8520,18 +8548,22 @@ export class Lair {
     if (!who.customerId) throw new RuleError('Log in to add a pass to your account.', 401);
     // --- no awaits from here on ---
     const now = Date.now();
-    // Codes are easy to read out, so they're easy to guess: 10 tries in 10 minutes per member.
-    const tries = (this.claimHits?.get(who.customerId) || []).filter((t) => now - t < 10 * MIN);
-    if (tries.length >= 10) throw new RuleError('Too many tries in a row. Give it ten minutes, or ask us at the counter.', 429);
-    this.claimHits = this.claimHits || new Map();
-    if (this.claimHits.size > 2000) this.claimHits.clear();
-    this.claimHits.set(who.customerId, [...tries, now]);
+    // Codes are easy to read out, so they're easy to guess: 10 tries in 10 minutes per member, kept through a restart
+    // (17 Nov 2026, src/guard.js)
+    this.checkCodeTries(who.customerId, now);
     const p = this.passByCode(input.code);
-    if (!p || p.status === 'void') throw new RuleError('No pass with that code. Check it and try again.', 404);
+    // 17 Nov 2026 (contract v45-guard): after too many wrong codes across the shop, only a long code (one nobody can
+    // guess) is claimed online; a short one, real or not, gets the same answer
+    if (this.codesPaused(now) && !(p && isLongCode(p.code))) throw new RuleError(GUARD_WORDS.codesPaused, 429);
+    const wrong = (message, status) => {
+      this.wrongCode(now);
+      return new RuleError(message, status);
+    };
+    if (!p || p.status === 'void') throw wrong('No pass with that code. Check it and try again.', 404);
     // Round 7: a group's pass stays the group's (its members use it as it is)
-    if (p.groupId) throw new RuleError('That pass belongs to a group. Ask us at the counter.', 409);
+    if (p.groupId) throw wrong('That pass belongs to a group. Ask us at the counter.', 409);
     const me = String(who.customerId);
-    if (p.customerId && p.customerId !== me) throw new RuleError('That pass already belongs to someone. Ask us at the counter.', 409);
+    if (p.customerId && p.customerId !== me) throw wrong('That pass already belongs to someone. Ask us at the counter.', 409);
     if (!p.customerId) {
       // A pass sold with no name on the order ("Sold at the counter") takes the name of whoever claims it.
       const member = this.memberRow(me);
@@ -11410,6 +11442,13 @@ export class Lair {
     } catch (error) {
       console.error('Lair: order rolls upkeep failed', error);
     }
+    // Round 46 (src/library-hold.js): an order held for a library copy whose hold, tag or staff email isn't done yet
+    try {
+      const libraryHold = await this.libraryHoldUpkeep(Date.now());
+      if (libraryHold) result.libraryHold = libraryHold;
+    } catch (error) {
+      console.error('Lair: library hold upkeep failed', error);
+    }
     // Round 38, part 2 (src/commander-deal.js): once an hour, new Commander decks into the free sleeves deal, with what's
     // left of this run's outside calls (the setup check looks straight away)
     try {
@@ -11707,7 +11746,11 @@ Object.assign(Lair.prototype, stockOffMethods);
 Object.assign(Lair.prototype, questMethods);
 // Round 43: the d20 roller's shelf list (src/shelf-picks.js)
 Object.assign(Lair.prototype, shelfPickMethods);
+// 17 Nov 2026: the guard on the website's forms and on codes (src/guard.js)
+Object.assign(Lair.prototype, guardMethods);
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)
 Object.assign(Lair.prototype, orderRollMethods);
 // Round 38, part 2: new Commander decks join the free sleeves deal by themselves (src/commander-deal.js)
 Object.assign(Lair.prototype, commanderDealMethods);
+// Round 46: library copies bought online are held (src/library-hold.js)
+Object.assign(Lair.prototype, libraryHoldMethods);
