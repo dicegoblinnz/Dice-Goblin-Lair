@@ -18,7 +18,7 @@ Checks: `test/round45-guard.test.js`.
   - No token, or Cloudflare says no → **403** `{ error, guard: 'turnstile' }`, `error` = "Gobgob couldn't tell you're not a
     robot. Refresh the page and try again, or log in to skip the check."
   - Logged-in members and staff are never checked.
-  - Cloudflare can't be reached (5 seconds, or an error) → the request goes on, and `turnstileDown` is noted in the status
+  - Cloudflare can't be reached (5 seconds, a network error or a 5xx) → the request goes on (a 4xx is a failed check, never this), and `turnstileDown` is noted in the status
     table. The limits below still hold.
   - A token works once: the page gets a fresh one for every send.
 
@@ -96,3 +96,8 @@ someone else's), and `POST /me/codes/redeem` answering 404. After **20 in 24 hou
   line), and gives the token. `lair-core.js` (every guarded call in `LiveBackend.request`) and `help-me-pick.js` (Email my
   picks) add it as `turnstile` when nobody is logged in. Nothing happens while the Lair says it's off.
 - My Lair's tab menu takes the drinks' prices from `GET /tab/prices`, and shows the tab as the Lair saved it.
+
+## Review notes (17 Nov 2026)
+
+- `events/:id/join` and `events/:id/reserve` need the check with anything after them too, since their routes don't look past `join` or `reserve`.
+- Failed checks stop adding rows to `guard_hits` once the 10-minute count is already a burst, so a flood of junk can't grow the table.
