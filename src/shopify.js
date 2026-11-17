@@ -1237,6 +1237,58 @@ export class ShopifyAdmin {
     return true;
   }
 
+  /**
+   * Round 44 (src/library-hold.js): which of these products (numbers, up to 50) are library copies, as Shopify has them
+   * now: a Map of product number → { title, libraryCode } (libraryCode null when it has none). A product Shopify no
+   * longer has isn't in it. Needs read_products; throws when Shopify can't answer, or hasn't within timeout ms (default 5 s), so a
+   * hanging Shopify can't hold up the rest of the paid-order webhook (the caller then holds anything that looks like a copy).
+   */
+  async libraryProducts(productIds, { timeout = 5000 } = {}) {
+    const ids = [...new Set((productIds || []).map((id) => String(id).split('/').pop()).filter((id) => /^\d+$/.test(id)))].slice(0, 50);
+    const found = new Map();
+    if (!ids.length) return found;
+    const data = await this.graphql(
+      'query LairLibraryProducts($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title libraryCode: metafield(namespace: "custom", key: "library_code") { value } } } }',
+      { ids: ids.map((id) => `gid://shopify/Product/${id}`) },
+      { timeout },
+    );
+    for (const node of data?.nodes || []) {
+      if (!node?.id) continue;
+      found.set(String(node.id).split('/').pop(), { title: String(node.title || ''), libraryCode: String(node.libraryCode?.value || '').trim() || null });
+    }
+    return found;
+  }
+
+  /**
+   * Round 44 (src/library-hold.js): put Shopify's fulfilment hold on each of an order's fulfilment orders that can be
+   * held (supportedActions HOLD), reason OTHER with the Lair's handle and notes, without Shopify's own email to the shop.
+   * One that already has the Lair's hold counts as held. → { held } (0 when there's nothing to hold). Needs
+   * write_merchant_managed_fulfillment_orders; throws when Shopify says no.
+   */
+  async holdOrderFulfilment(orderId, { handle, reasonNotes }) {
+    const data = await this.graphql(
+      'query LairLibraryHoldFind($id: ID!) { order(id: $id) { id fulfillmentOrders(first: 10) { nodes { id status supportedActions { action } fulfillmentHolds { handle } } } } }',
+      { id: orderId },
+    );
+    if (!data?.order) throw new Error('No such order.');
+    let held = 0;
+    for (const fo of data.order.fulfillmentOrders?.nodes || []) {
+      if ((fo.fulfillmentHolds || []).some((h) => h.handle === handle)) {
+        held += 1;
+        continue;
+      }
+      if (!(fo.supportedActions || []).some((a) => a.action === 'HOLD')) continue;
+      const answer = await this.graphql(
+        'mutation LairLibraryHold($id: ID!, $hold: FulfillmentOrderHoldInput!) { fulfillmentOrderHold(id: $id, fulfillmentHold: $hold) { fulfillmentOrder { id status } userErrors { field message } } }',
+        { id: fo.id, hold: { reason: 'OTHER', reasonNotes: String(reasonNotes || '').slice(0, 255), handle, notifyMerchant: false } },
+      );
+      const errors = answer?.fulfillmentOrderHold?.userErrors || [];
+      if (errors.length) throw new Error(errors.map((e) => e.message).join('; '));
+      held += 1;
+    }
+    return { held };
+  }
+
   /** Round 25: Games Workshop variants below zero (up to 100) and the shop's schedule changes, for the Tuesday list */
   async gwBelowZero() {
     const data = await this.graphql(
