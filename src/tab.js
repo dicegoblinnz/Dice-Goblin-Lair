@@ -34,6 +34,23 @@ const lineAmount = (item) => {
   return Math.max(0, gross - discounts);
 };
 
+/**
+ * 17 Nov 2026 (contract v45-guard): the counter's two drinks on My Lair's tab menu, the $3 can and the $2 water. Like
+ * the theme's COUNTER_DRINKS (my-lair.js) and the till's DRINK_KEYS (lair-till.js) they're built in: both are sold at
+ * the counter only, not on the Online Store. A tab is priced at Shopify's own prices (tabPriced); these prices are the
+ * Lair's own list, used only when Shopify can't answer, so a price changed in Shopify needs changing here too.
+ */
+export const TAB_COUNTER_DRINKS = [
+  { productId: '10305549140071', variantId: '51525157716071', title: 'Can of Drink', price: 300 },
+  { productId: '10305549107303', variantId: '51525157683303', title: 'Water 600ml', price: 200 },
+];
+export const TAB_PRICE_WORDS = {
+  down: "Gobgob can't check that price right now. Try again in a minute, or add it at the counter.",
+  unknown: "Gobgob doesn't know that one. Pick it from the menu instead.",
+};
+/** GET /tab/prices is kept this long (the menu's two prices change rarely) */
+const TAB_PRICES_TTL = 5 * 60_000;
+
 /** The highest credit limit staff can set: $5,000 */
 export const TAB_LIMIT_MAX = 500000;
 /** An open bill gets one friendly reminder after this many days */
@@ -76,6 +93,57 @@ export function limitWords(limit, used, what = 'book') {
 }
 
 export const runningTabMethods = {
+  /**
+   * 17 Nov 2026 (contract v45-guard): a tab's lines (tabItems: variantId, qty) priced by the Lair, never by the page:
+   * Shopify's price and names for each variant, which must be on sale (active, not a gift card), else 422. When Shopify
+   * can't answer, only the counter drinks go on, at the Lair's own price (TAB_COUNTER_DRINKS); anything else is a 503.
+   * Awaits Shopify: call it before a handler's no-await part.
+   */
+  async tabPriced(items) {
+    if (!items.length) return items;
+    let found = null;
+    try {
+      found = await this.shopify.tabVariants(items.map((x) => x.variantId));
+    } catch (error) {
+      console.error('Lair: Shopify could not price a tab', error);
+    }
+    return items.map((x) => {
+      if (found) {
+        const v = found.get(x.variantId);
+        if (!v || !v.sellable || !Number.isInteger(v.price) || v.price < 0) throw new RuleError(TAB_PRICE_WORDS.unknown);
+        return { variantId: x.variantId, title: trimmed(v.title, 80), variantTitle: trimmed(v.variantTitle, 80), price: v.price, qty: x.qty };
+      }
+      const drink = TAB_COUNTER_DRINKS.find((d) => d.variantId === x.variantId);
+      if (!drink) throw new RuleError(TAB_PRICE_WORDS.down, 503);
+      return { variantId: x.variantId, title: drink.title, variantTitle: 'Default Title', price: drink.price, qty: x.qty };
+    });
+  },
+
+  /**
+   * GET /tab/prices (logged in): the counter drinks as the tab will price them, for My Lair's menu →
+   * { drinks: [{ productId, variantId, title, price }] }: Shopify's price, or the Lair's own when Shopify can't answer.
+   */
+  async tabPricesView(who) {
+    if (!who.customerId) throw new RuleError('Log in to start a tab.', 401);
+    const now = Date.now();
+    this.tabPriceCache = this.tabPriceCache || new Map();
+    const kept = this.tabPriceCache.get('drinks');
+    if (kept && now - kept.at < TAB_PRICES_TTL) return { drinks: kept.drinks };
+    let found = null;
+    try {
+      found = await this.shopify.tabVariants(TAB_COUNTER_DRINKS.map((d) => d.variantId));
+    } catch (error) {
+      console.error('Lair: Shopify could not price the counter drinks', error);
+    }
+    const drinks = TAB_COUNTER_DRINKS.map((d) => {
+      const v = found?.get(d.variantId);
+      const live = v && v.sellable && Number.isInteger(v.price) && v.price >= 0;
+      return { productId: d.productId, variantId: d.variantId, title: live ? trimmed(v.title, 80) || d.title : d.title, price: live ? v.price : d.price };
+    });
+    if (found) this.tabPriceCache.set('drinks', { at: now, drinks });
+    return { drinks };
+  },
+
   /* ---------------- accounts ---------------- */
   /** A member's account row, or null (pay each visit, never switched). No awaits. */
   accountRow(customerId) {
