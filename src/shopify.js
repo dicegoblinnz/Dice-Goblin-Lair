@@ -1835,7 +1835,7 @@ export class ShopifyAdmin {
    * [{ product: tillProductOf, variant: tillVariantOf }]. dice: the dice deal's collection (Product.inCollection), or null.
    */
   /**
-   * 17 Nov 2026 (contract v43-guard): what each variant on a member's tab costs, for the Lair to price the tab itself.
+   * 17 Nov 2026 (contract v45-guard): what each variant on a member's tab costs, for the Lair to price the tab itself.
    * → Map(variant id (numeric) → { price (cents), title (the product's), variantTitle, sellable (its product is active
    * and not a gift card) }); a variant Shopify doesn't know is left out. Throws when Shopify isn't connected or can't
    * answer.

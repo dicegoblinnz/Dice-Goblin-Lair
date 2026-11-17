@@ -1,4 +1,4 @@
-// 17 Nov 2026, before the ads bring strangers (the 16 Nov review's three holes; contract v43-guard):
+// 17 Nov 2026, before the ads bring strangers (the 16 Nov review's three holes; contract v45-guard):
 //  1. Fake bookings: a robot check (Cloudflare Turnstile) on every form that books, signs up or sends an email for
 //     someone who isn't logged in, off until both its keys are set; a cap on bookings made without an account for any
 //     one day; limits kept in the Durable Object's own tables, so a restart doesn't forget them; and one email to staff

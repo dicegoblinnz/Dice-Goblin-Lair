@@ -122,7 +122,7 @@ import { STOCK_OFF_TABLES, stockOffMethods } from './stock-off.js';
 import { QUEST_TABLES, questMethods } from './quests.js';
 // Round 43: what's on the shelf, for the home page's d20 roller
 import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
-// 17 Nov 2026 (contract v43-guard): the robot check, the day's cap without an account, limits kept in the Durable
+// 17 Nov 2026 (contract v45-guard): the robot check, the day's cap without an account, limits kept in the Durable
 // Object, the staff email about a burst, and the shop-wide cap on wrong codes (src/guard.js)
 import { GUARD_LIMITS, GUARD_TABLES, GUARD_WORDS, guardMethods, guardedForm, isLongCode } from './guard.js';
 export { GUARD_LIMITS, GUARD_WORDS };
@@ -1868,7 +1868,7 @@ export class Lair {
 
   /**
    * A code nobody can guess, from the person's name: like AN-OWLBEAR-17-K7QM, the last 4 random (about a million
-   * times more codes than the short ones). 17 Nov 2026 (contract v43-guard): every pass nobody is linked to gets one,
+   * times more codes than the short ones). 17 Nov 2026 (contract v45-guard): every pass nobody is linked to gets one,
    * since whoever has its code can claim it. No awaits.
    */
   newLongCode(name, kind, targetId, now = Date.now()) {
@@ -2205,12 +2205,12 @@ export class Lair {
       }
       // Round 43: a product on the shelf for the home page's d20 roller (src/shelf-picks.js), for anyone, before anyone is looked up
       if (request.method === 'GET' && a === 'shelf' && b === 'pick' && !c) return json(this.shelfPick(url, callsAtStart));
-      // 17 Nov 2026 (contract v43-guard): the robot check's site key for the website's forms (null while it's off)
+      // 17 Nov 2026 (contract v45-guard): the robot check's site key for the website's forms (null while it's off)
       if (request.method === 'GET' && a === 'guard' && !b) return json(this.guardView());
       const who = await this.person(request.headers.get('X-Lair-Customer') || '');
       const client = request.headers.get('X-Lair-Client') || '';
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
-      // 17 Nov 2026 (contract v43-guard): forms that book, sign up or send an email ask someone who isn't logged in for the
+      // 17 Nov 2026 (contract v45-guard): forms that book, sign up or send an email ask someone who isn't logged in for the
       // robot check's token first (off until its keys are set)
       if (request.method === 'POST' && guardedForm(a, b, c, parts[3])) await this.robotCheck(body, who, client);
       if (request.method === 'GET' && a === 'floor') return json(await this.floor(url, who));
@@ -2220,7 +2220,7 @@ export class Lair {
       if (request.method === 'GET' && a === 'games' && b && c === 'books' && !parts[3]) return json(this.gameBooks(decodeURIComponent(b), who));
       if (request.method === 'GET' && a === 'gm-perks' && !b) return json(await this.listGmPerks(who));
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
-      // 17 Nov 2026 (contract v43-guard): the tab menu's counter drinks at the prices the tab charges (src/tab.js)
+      // 17 Nov 2026 (contract v45-guard): the tab menu's counter drinks at the prices the tab charges (src/tab.js)
       if (request.method === 'GET' && a === 'tab' && b === 'prices' && !c) return json(await this.tabPricesView(who));
       // Round 41: a member's quests, and the staff's riddles (src/quests.js)
       if (request.method === 'GET' && a === 'me' && b === 'quests' && !c) return json(await this.myQuests(who));
@@ -2879,7 +2879,7 @@ export class Lair {
     }
     // Round 7: a mobile number on every customer booking (tables, game seats); not on what staff make for someone
     if (!override) booking.phone = checkMobile(input.phone);
-    // 17 Nov 2026 (contract v43-guard): the day's cap on bookings made without an account
+    // 17 Nov 2026 (contract v45-guard): the day's cap on bookings made without an account
     if (!override) this.checkGuestDay(who, booking.start, rules, client, now);
     if (!who.staff) this.checkEmailLimit(booking.email, now);
     // Round 9: on a monthly account, not over its credit limit (staff booking for someone, the override, skip this)
@@ -5594,7 +5594,7 @@ export class Lair {
     const made = [];
     for (const { line, unit } of this.passUnitsToMake(orderId, passLines)) {
       const id = makeId('ps');
-      // 17 Nov 2026 (contract v43-guard): with nobody on the sale it's claimed by its code, so the code is a long one
+      // 17 Nov 2026 (contract v45-guard): with nobody on the sale it's claimed by its code, so the code is a long one
       const code = buyer.customerId ? this.newCode(buyer.name, 'pass', id, now) : this.newLongCode(buyer.name, 'pass', id, now);
       this.write(
         `INSERT INTO passes (id, code, label, sessions_total, sessions_used, cover, customer_id, holder_name, holder_email, note, price_paid, created_at,
@@ -6500,7 +6500,7 @@ export class Lair {
     // Round 7: a mobile number on every sign-up
     const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
-    // 17 Nov 2026 (contract v43-guard): the day's cap on sign-ups made without an account
+    // 17 Nov 2026 (contract v45-guard): the day's cap on sign-ups made without an account
     this.checkGuestDay(who, occurrence.start, rules, client, now);
     // Round 8: after the rate limit, so trying member codes counts towards it
     const guests = listed ? this.findGuests(listed, who) : [];
@@ -6745,7 +6745,7 @@ export class Lair {
     // Round 7: a mobile number on every game spot
     const phone = checkMobile(input.phone);
     this.checkRate(who, client, now);
-    // 17 Nov 2026 (contract v43-guard): the day's cap on game spots made without an account
+    // 17 Nov 2026 (contract v45-guard): the day's cap on game spots made without an account
     this.checkGuestDay(who, occurrence.start, rules, client, now);
     if (!who.staff) this.checkEmailLimit(email, now);
     // Round 31: listed as looking for a game (src/open-games.js): a member, 1 v 1, a game and size from the lists. Until
@@ -8028,7 +8028,7 @@ export class Lair {
       return { kind: 'roll', rolls: loot.rolls, message, loyalty: this.loyaltyOf(me, rules, { details: true }) };
     }
     if (this.isGiftProductCode(text)) throw new RuleError("That's a shop discount code. Use it at checkout online, or show it at the counter.");
-    // 17 Nov 2026 (contract v43-guard): while wrong codes are paused, an unknown one gets the same answer as a short pass
+    // 17 Nov 2026 (contract v45-guard): while wrong codes are paused, an unknown one gets the same answer as a short pass
     // code, so nothing can be learned from it; otherwise it counts as a wrong guess across the shop
     if (this.codesPaused(now)) throw new RuleError(GUARD_WORDS.codesPaused, 429);
     this.wrongCode(now);
@@ -8103,7 +8103,7 @@ export class Lair {
       if (!/^\d{1,20}$/.test(variantId)) throw new RuleError("Gobgob doesn't know that one. Pick it from the menu instead.");
       const qty = Number(raw.qty);
       if (!Number.isInteger(qty) || qty < 1 || qty > 20) throw new RuleError('Pick 1 to 20 of each thing.');
-      // 17 Nov 2026 (contract v43-guard): the page's price and names are ignored; tabPriced (src/tab.js) gives Shopify's
+      // 17 Nov 2026 (contract v45-guard): the page's price and names are ignored; tabPriced (src/tab.js) gives Shopify's
       const line = lines.get(variantId);
       if (line) {
         line.qty += qty;
@@ -8122,7 +8122,7 @@ export class Lair {
    */
   async saveTab(input, who) {
     if (!who.customerId) throw new RuleError('Log in to start a tab.', 401);
-    // 17 Nov 2026 (contract v43-guard): priced by the Lair (Shopify's prices), never by the page
+    // 17 Nov 2026 (contract v45-guard): priced by the Lair (Shopify's prices), never by the page
     const items = await this.tabPriced(this.tabItems(input.items));
     const rules = await this.rules();
     // --- no awaits from here on ---
@@ -8442,7 +8442,7 @@ export class Lair {
     if (f.picked) this.makeMember(f.picked, now);
     const id = makeId('ps');
     // A group's pass takes its code from the group's name (Warhammer League: WL-…), round 7
-    // 17 Nov 2026 (contract v43-guard): a pass with no member and no group is claimed by its code, so it's a long one
+    // 17 Nov 2026 (contract v45-guard): a pass with no member and no group is claimed by its code, so it's a long one
     const claimable = !f.customerId && !f.groupId;
     const code = claimable ? this.newLongCode(f.holderName || '', 'pass', id, now) : this.newCode(f.groupName || f.holderName || '', 'pass', id, now);
     this.write(
@@ -8544,7 +8544,7 @@ export class Lair {
     // (17 Nov 2026, src/guard.js)
     this.checkCodeTries(who.customerId, now);
     const p = this.passByCode(input.code);
-    // 17 Nov 2026 (contract v43-guard): after too many wrong codes across the shop, only a long code (one nobody can
+    // 17 Nov 2026 (contract v45-guard): after too many wrong codes across the shop, only a long code (one nobody can
     // guess) is claimed online; a short one, real or not, gets the same answer
     if (this.codesPaused(now) && !(p && isLongCode(p.code))) throw new RuleError(GUARD_WORDS.codesPaused, 429);
     const wrong = (message, status) => {

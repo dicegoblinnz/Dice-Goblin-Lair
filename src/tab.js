@@ -35,7 +35,7 @@ const lineAmount = (item) => {
 };
 
 /**
- * 17 Nov 2026 (contract v43-guard): the counter's two drinks on My Lair's tab menu, the $3 can and the $2 water. Like
+ * 17 Nov 2026 (contract v45-guard): the counter's two drinks on My Lair's tab menu, the $3 can and the $2 water. Like
  * the theme's COUNTER_DRINKS (my-lair.js) and the till's DRINK_KEYS (lair-till.js) they're built in: both are sold at
  * the counter only, not on the Online Store. A tab is priced at Shopify's own prices (tabPriced); these prices are the
  * Lair's own list, used only when Shopify can't answer, so a price changed in Shopify needs changing here too.
@@ -94,7 +94,7 @@ export function limitWords(limit, used, what = 'book') {
 
 export const runningTabMethods = {
   /**
-   * 17 Nov 2026 (contract v43-guard): a tab's lines (tabItems: variantId, qty) priced by the Lair, never by the page:
+   * 17 Nov 2026 (contract v45-guard): a tab's lines (tabItems: variantId, qty) priced by the Lair, never by the page:
    * Shopify's price and names for each variant, which must be on sale (active, not a gift card), else 422. When Shopify
    * can't answer, only the counter drinks go on, at the Lair's own price (TAB_COUNTER_DRINKS); anything else is a 503.
    * Awaits Shopify: call it before a handler's no-await part.

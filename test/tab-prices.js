@@ -1,4 +1,4 @@
-// 17 Nov 2026 (contract v43-guard): the Lair prices a tab itself, from Shopify, never from the page. Tests that put
+// 17 Nov 2026 (contract v45-guard): the Lair prices a tab itself, from Shopify, never from the page. Tests that put
 // things on a tab stand in for Shopify with this catalogue: the prices and names their items always had.
 export const TEST_TAB_PRICES = {
   5001: { price: 450, title: 'Pocky', variantTitle: 'Strawberry' },

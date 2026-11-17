@@ -215,7 +215,7 @@ const settingsText = () => fs.readFileSync(path.join(THEME, 'config/settings_dat
 
 function answer(op, query, v) {
   switch (op) {
-    // 17 Nov 2026 (contract v43-guard): the Lair prices a tab from Shopify; these are the QA flows' things, and the
+    // 17 Nov 2026 (contract v45-guard): the Lair prices a tab from Shopify; these are the QA flows' things, and the
     // counter's can and water
     case 'LairTabPrices': {
       const known = {

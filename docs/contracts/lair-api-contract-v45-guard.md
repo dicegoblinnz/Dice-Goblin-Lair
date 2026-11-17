@@ -1,8 +1,8 @@
-# Lair API contract v43-guard: the website's forms, pass codes and the tab's prices (17 Nov 2026)
+# Lair API contract v45-guard: the website's forms, pass codes and the tab's prices (17 Nov 2026)
 
 Before Mo's ads bring strangers to dicegoblin.nz, the three holes the 16 Nov review found are closed. Where this and an
 older contract disagree, this one wins. Code: `src/guard.js`, `src/tab.js` (`tabPriced`, `tabPricesView`), `src/lair.js`.
-Checks: `test/round43-guard.test.js`.
+Checks: `test/round45-guard.test.js`.
 
 ## 1. Fake bookings
 

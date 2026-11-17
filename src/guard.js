@@ -1,5 +1,5 @@
 /**
- * 17 Nov 2026 (contract v43-guard): keeping strangers' robots off the website's forms before the ads bring strangers.
+ * 17 Nov 2026 (contract v45-guard): keeping strangers' robots off the website's forms before the ads bring strangers.
  *
  * The 16 Nov review found anyone logged out could fill a night with made-up names and make the Lair email any address,
  * that the limits lived in memory (a restart forgot them), and that a pass sold at the counter with no name got a code

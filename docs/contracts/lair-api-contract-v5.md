@@ -24,7 +24,7 @@ No shipping, not tracked.
   - `pricePaid`: the line's net amount (after its discount allocations) ÷ quantity.
   - `source: 'order'`, plus `orderName` (like "#1550").
 - **Holder:** the order's customer (linked: customerId, name, email).
-  - With no customer, the pass is unlinked. The holder name comes from the order's billing or shipping name when there is one, otherwise "Sold at the counter". Since 17 Nov 2026 (v43-guard) its code is a long one, like `AN-OWLBEAR-17-K7QM`, since whoever has it can claim it.
+  - With no customer, the pass is unlinked. The holder name comes from the order's billing or shipping name when there is one, otherwise "Sold at the counter". Since 17 Nov 2026 (v45-guard) its code is a long one, like `AN-OWLBEAR-17-K7QM`, since whoever has it can claim it.
 - **Idempotent:** one pass per (order id, line id, unit index). A repeated webhook issues nothing new.
 - **Pass view (all routes):**
   - adds `source: 'staff'|'order'|'birthday'` and `orderName`
