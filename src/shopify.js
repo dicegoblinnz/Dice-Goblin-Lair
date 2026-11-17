@@ -1240,15 +1240,17 @@ export class ShopifyAdmin {
   /**
    * Round 44 (src/library-hold.js): which of these products (numbers, up to 50) are library copies, as Shopify has them
    * now: a Map of product number → { title, libraryCode } (libraryCode null when it has none). A product Shopify no
-   * longer has isn't in it. Needs read_products; throws when Shopify can't answer.
+   * longer has isn't in it. Needs read_products; throws when Shopify can't answer, or hasn't within timeout ms (default 5 s), so a
+   * hanging Shopify can't hold up the rest of the paid-order webhook (the caller then holds anything that looks like a copy).
    */
-  async libraryProducts(productIds) {
+  async libraryProducts(productIds, { timeout = 5000 } = {}) {
     const ids = [...new Set((productIds || []).map((id) => String(id).split('/').pop()).filter((id) => /^\d+$/.test(id)))].slice(0, 50);
     const found = new Map();
     if (!ids.length) return found;
     const data = await this.graphql(
       'query LairLibraryProducts($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title libraryCode: metafield(namespace: "custom", key: "library_code") { value } } } }',
       { ids: ids.map((id) => `gid://shopify/Product/${id}`) },
+      { timeout },
     );
     for (const node of data?.nodes || []) {
       if (!node?.id) continue;

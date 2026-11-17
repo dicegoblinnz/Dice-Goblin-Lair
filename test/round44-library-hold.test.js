@@ -168,7 +168,7 @@ test('round 44: the words, word for word', () => {
   assert.equal(W.subject('#1550'), "Don't send order #1550: it has a library copy");
   assert.equal(W.title, 'A library copy was bought online');
   assert.equal(W.introHeld('#1550'), "Order #1550 has a library copy in it, so Gobgob has put it on hold in Shopify. Don't post it or hand it over.");
-  assert.equal(W.introNotHeld('#1550'), "Order #1550 has a library copy in it. Shopify wouldn't let Gobgob put it on hold, so it's tagged Library copy. Don't post it or hand it over.");
+  assert.equal(W.introNotHeld('#1550'), "Order #1550 has a library copy in it. It isn't on hold in Shopify yet (Gobgob keeps trying for a day), and it's tagged Library copy. Don't post it or hand it over.");
   assert.equal(W.line({ title: 'Catan', code: 'DGL34-M011', quantity: 1, each: 0, why: 'free' }), 'Catan (DGL34-M011): $0.00, a $0 library copy');
   assert.equal(W.line({ title: 'Catan', code: 'DGL34-M011', quantity: 1, each: 6500, why: 'notTheirs' }), 'Catan (DGL34-M011): $65.00, not a game they have on loan');
   assert.equal(W.line({ title: 'Catan', code: 'DGL34-M011', quantity: 2, each: 6500, why: 'notTheirs' }), '2 × Catan (DGL34-M011): $65.00 each, not a game they have on loan');
@@ -288,7 +288,7 @@ test("round 44: a hold Shopify refuses is emailed as tagged, then the 10-minute 
   assert.equal(marked.length, 1);
   const mail = staffMail();
   assert.equal(mail.length, 1);
-  assert.match(mail[0].html, /Shopify wouldn&#39;t let Gobgob put it on hold|Shopify wouldn't let Gobgob put it on hold/);
+  assert.match(mail[0].html, /isn&#39;t on hold in Shopify yet|isn't on hold in Shopify yet/);
   assert.match(rowOf(2000).hold_note, /Shopify said no/);
   sent.length = 0;
   nowIs(NOW + 10 * MIN);

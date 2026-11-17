@@ -40,7 +40,7 @@ export const LIBRARY_HOLD_WORDS = {
   subject: (name) => `Don't send order ${name}: it has a library copy`,
   title: 'A library copy was bought online',
   introHeld: (name) => `Order ${name} has a library copy in it, so Gobgob has put it on hold in Shopify. Don't post it or hand it over.`,
-  introNotHeld: (name) => `Order ${name} has a library copy in it. Shopify wouldn't let Gobgob put it on hold, so it's tagged ${LIBRARY_HOLD.tag}. Don't post it or hand it over.`,
+  introNotHeld: (name) => `Order ${name} has a library copy in it. It isn't on hold in Shopify yet (Gobgob keeps trying for a day), and it's tagged ${LIBRARY_HOLD.tag}. Don't post it or hand it over.`,
   why: { free: 'a $0 library copy', notTheirs: 'not a game they have on loan' },
   line: (l) => `${l.quantity > 1 ? `${l.quantity} × ` : ''}${gameText(l)}: ${money(l.each)}${l.quantity > 1 ? ' each' : ''}, ${LIBRARY_HOLD_WORDS.why[l.why] || LIBRARY_HOLD_WORDS.why.notTheirs}`,
   note: (lines) => `${lines.length > 1 ? 'Library copies' : 'Library copy'} in this order: ${listText(lines.map(gameText))}. Don't post it or hand it over. Refund or cancel unless there's a good reason.`,

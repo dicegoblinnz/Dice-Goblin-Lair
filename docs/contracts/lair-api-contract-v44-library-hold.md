@@ -60,7 +60,7 @@ Plain and clear, in Gobgob's voice for staff (`LIBRARY_HOLD_WORDS`):
 - Subject: `Don't send order #1550: it has a library copy`
 - Title: `A library copy was bought online`
 - Intro, held: `Order #1550 has a library copy in it, so Gobgob has put it on hold in Shopify. Don't post it or hand it over.`
-- Intro, not held (Shopify said no, or had nothing to hold): `Order #1550 has a library copy in it. Shopify wouldn't let Gobgob put it on hold, so it's tagged Library copy. Don't post it or hand it over.`
+- Intro, not held (Shopify said no, or had nothing to hold): `Order #1550 has a library copy in it. It isn't on hold in Shopify yet (Gobgob keeps trying for a day), and it's tagged Library copy. Don't post it or hand it over.`
 - Details: `Order` #1550; one `Library copy` row a game (the row label once, then blank), each
   `Catan (DGL34-M011): $0.00, a $0 library copy` or `Catan (DGL34-M011): $65.00, not a game they have on loan`
   (`2 × Catan (DGL34-M011): $65.00 each, …` for more than one); `Customer` their name as the Lair knows it, or
