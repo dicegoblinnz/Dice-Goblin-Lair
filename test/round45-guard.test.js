@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair, GUARD_WORDS, GUARD_LIMITS } from '../src/lair.js';
+import { guardedForm } from '../src/guard.js';
 import { TAB_COUNTER_DRINKS, TAB_PRICE_WORDS } from '../src/tab.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
 
@@ -87,15 +88,18 @@ const guestTable = (over = {}) => {
 let verified;
 let sent;
 let siteverifyDown;
+let siteverifyStatus;
 const realFetch = globalThis.fetch;
 beforeEach(() => {
   verified = [];
   sent = [];
   siteverifyDown = false;
+  siteverifyStatus = 200;
   n = 0;
   globalThis.fetch = async (url, init) => {
     if (String(url) === SITEVERIFY) {
       if (siteverifyDown) throw new Error('Cloudflare is having a moment');
+      if (siteverifyStatus !== 200) return new Response('{}', { status: siteverifyStatus });
       const form = new URLSearchParams(init.body);
       verified.push(Object.fromEntries(form));
       return new Response(JSON.stringify({ success: form.get('response') === 'good' }), { status: 200 });
@@ -189,6 +193,28 @@ test('guard: when Cloudflare cannot be reached the booking goes through (the oth
   assert.equal(res.status, 200, res.data.error);
   assert.ok(lair.statusSeen.turnstileDown, 'noted for the status table');
   assert.equal(said(await call('POST', 'bookings', guestTable())), `403 ${GUARD_WORDS.robot}`, 'no token at all is still refused');
+});
+
+test('guard (review): an extra piece on the end of a sign-up or game-spot address still needs the check', () => {
+  assert.equal(guardedForm('events', 'occ1', 'join', 'x'), true);
+  assert.equal(guardedForm('events', 'occ1', 'reserve', 'x'), true);
+  assert.equal(guardedForm('events', 'joins', 'join', 'x'), false, 'the joins list is not a sign-up');
+});
+
+test('guard (review): Cloudflare refusing the check with a 4xx is a failed check, not Cloudflare being down; a 5xx still lets it through', async () => {
+  start(TURNSTILE);
+  siteverifyStatus = 400;
+  assert.equal(said(await call('POST', 'bookings', { ...guestTable(), turnstile: 'junk' })), `403 ${GUARD_WORDS.robot}`);
+  siteverifyStatus = 503;
+  const res = await call('POST', 'bookings', { ...guestTable(), turnstile: 'junk' });
+  assert.equal(res.status, 200, res.data.error);
+});
+
+test('guard (review): a flood of failed checks stops adding rows once it is already a burst', async () => {
+  start(TURNSTILE);
+  const rows = () => lair.sql.exec("SELECT COUNT(*) AS n FROM guard_hits WHERE bucket = 'robot-fail'").toArray()[0].n;
+  for (let i = 0; i < GUARD_LIMITS.failedChecksPer10Min + 15; i += 1) await call('POST', 'bookings', { ...guestTable(), turnstile: 'bad' }, '', `203.0.113.${i}`);
+  assert.equal(rows(), GUARD_LIMITS.failedChecksPer10Min);
 });
 
 /* ---------------- 1. the day's cap on bookings made without an account ---------------- */

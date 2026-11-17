@@ -71,7 +71,8 @@ export const GUARD_WORDS = {
 /** A route that books, signs up or sends an email for someone who may not be logged in (POST only) */
 export function guardedForm(a, b, c, d) {
   if (a === 'bookings' && !b) return true;
-  if (a === 'events' && b && b !== 'joins' && (c === 'join' || c === 'reserve') && !d) return true;
+  // Any piece after join or reserve too: their routes in src/lair.js don't look past it (review, 17 Nov 2026)
+  if (a === 'events' && b && b !== 'joins' && (c === 'join' || c === 'reserve')) return true;
   if (a === 'interest' && !b) return true;
   if (a === 'contact' && !b) return true;
   return a === 'pick' && Boolean(b) && c === 'email' && !d;
@@ -165,8 +166,9 @@ export const guardMethods = {
           method: 'POST', body: form, headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           ...(typeof AbortSignal?.timeout === 'function' ? { signal: AbortSignal.timeout(GUARD_LIMITS.verifyWait) } : {}),
         });
-        if (!res.ok) throw new Error(`siteverify answered ${res.status}`);
-        answer = await res.json();
+        // Only Cloudflare being down (no answer, a timeout or a 5xx) lets the request through; a 4xx is a failed check
+        if (res.status >= 500) throw new Error(`siteverify answered ${res.status}`);
+        answer = res.ok ? await res.json() : { success: false };
       } catch (error) {
         console.error('Lair: Turnstile siteverify could not be reached', error);
         this.note({ turnstileDown: { at: new Date().toISOString(), message: String(error?.message || error).slice(0, 200) } });
@@ -175,7 +177,8 @@ export const guardMethods = {
       if (answer?.success === true) return;
     }
     const now = Date.now();
-    this.guardHit('robot-fail', now);
+    // Counted until it's a burst, then no more rows: a flood of junk can't grow the table (review, 17 Nov 2026)
+    if (this.guardCount('robot-fail', now - 10 * MIN) < GUARD_LIMITS.failedChecksPer10Min) this.guardHit('robot-fail', now);
     if (this.guardCount('robot-fail', now - 10 * MIN) >= GUARD_LIMITS.failedChecksPer10Min) {
       this.guardAlert({ what: GUARD_WORDS.alert.robot(GUARD_LIMITS.failedChecksPer10Min), from: client || null }, now);
     }
