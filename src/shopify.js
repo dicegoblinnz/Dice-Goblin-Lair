@@ -1834,6 +1834,30 @@ export class ShopifyAdmin {
    * share a barcode are all offered at the till), as the till needs them:
    * [{ product: tillProductOf, variant: tillVariantOf }]. dice: the dice deal's collection (Product.inCollection), or null.
    */
+  /**
+   * 17 Nov 2026 (contract v43-guard): what each variant on a member's tab costs, for the Lair to price the tab itself.
+   * → Map(variant id (numeric) → { price (cents), title (the product's), variantTitle, sellable (its product is active
+   * and not a gift card) }); a variant Shopify doesn't know is left out. Throws when Shopify isn't connected or can't
+   * answer.
+   */
+  async tabVariants(ids) {
+    if (!this.configured) throw new Error('Shopify is not connected');
+    const list = [...new Set(ids.map(String).filter((id) => /^\d{1,20}$/.test(id)))].slice(0, 50);
+    if (!list.length) return new Map();
+    const data = await this.graphql(
+      `query LairTabPrices($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id title price product { ${TILL_PRODUCT_FIELDS} } } } }`,
+      { ids: list.map((id) => `gid://shopify/ProductVariant/${id}`) },
+      { version: this.tillVersion, timeout: 10_000 },
+    );
+    const out = new Map();
+    for (const n of data.nodes || []) {
+      if (!n?.id || !n.product) continue;
+      const product = tillProductOf(n.product);
+      out.set(lastPart(n.id), { price: centsOf(n.price), title: product.title, variantTitle: n.title || 'Default Title', sellable: product.status === 'ACTIVE' && !product.giftCard });
+    }
+    return out;
+  }
+
   async tillVariants(code, dice) {
     const text = String(code ?? '').replace(/["\\]/g, '');
     const query = [...barcodeForms(text).map((form) => `barcode:"${form}"`), `sku:"${text}"`].join(' OR ');

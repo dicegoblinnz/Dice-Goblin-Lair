@@ -30,6 +30,10 @@ export const CONFIG_KEYS = [
   // Round 40: the walk-ins list's password (src/walkins.js), at least 24 characters: Google Ads' Data Manager reads
   // /ads/walkins.csv with the username google and this password. Never in the code: the repository is public.
   'ADS_FEED_KEY',
+  // 17 Nov 2026 (contract v43-guard): Cloudflare Turnstile, the robot check on the website's forms for anyone not
+  // logged in. Off until both are set. The site key is public (the page shows it); keep the secret a Worker secret.
+  // GUEST_NIGHT_CAP: the most bookings and sign-ups made without an account for any one day (20 when unset; 'off')
+  'TURNSTILE_SITE_KEY', 'TURNSTILE_SECRET_KEY', 'GUEST_NIGHT_CAP',
 ];
 const TTL = 60_000;
 let cache = null;

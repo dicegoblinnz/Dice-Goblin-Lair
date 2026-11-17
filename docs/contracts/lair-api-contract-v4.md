@@ -166,7 +166,7 @@ The owner (Mo) made these decisions this morning. Don't reopen them.
 
 **Members:**
 - `GET /me` adds `passes`: their passes that are active or used up in the last 30 days, each as `{ code, label, sessionsTotal, sessionsLeft, cover, expiresAt, status }`.
-- `POST /me/passes/claim { code }` (logged in) links an unlinked active pass to them and returns `{ pass }`. The errors are:
+- `POST /me/passes/claim { code }` (logged in) links an unlinked active pass to them and returns `{ pass }`. (17 Nov 2026, v43-guard section 2: unlinked passes get long codes, and 20 wrong codes across the shop in 24 hours pause short codes with a 429.) The errors are:
   - 404 "No pass with that code. Check it and try again."
   - 409 "That pass already belongs to someone. Ask us at the counter."
 - `usePass` on `POST /bookings` (`kind` table or gm-seat) and on `POST /events/:id/reserve`: the code of a pass linked to the logged-in member. Staff may use any active pass.
@@ -210,10 +210,10 @@ The owner (Mo) made these decisions this morning. Don't reopen them.
   ```
 
   - `variantId` is the numeric Shopify variant id as a string.
-  - `price` is in cents, taken from the theme's catalogue.
-  - The amount at the counter always comes from Shopify's own prices in POS.
+  - `price` is in cents. ~~Taken from the theme's catalogue.~~ Since 17 Nov 2026 (contract v43-guard, section 3) the Lair prices each line from Shopify and ignores the page's `price` and titles.
+  - ~~The amount at the counter always comes from Shopify's own prices in POS.~~ The till charges the tab's prices, which are Shopify's (v43-guard).
 - **`POST /tab { items }`** (logged in) saves today's tab, replacing its items, and returns `{ tab }`.
-  - Rules: up to 30 lines, `qty` 1–20, `variantId` must be `/^\d{1,20}$/`, `price` 0–100000, titles trimmed to 80 characters. Identical variantIds are merged.
+  - Rules: up to 30 lines, `qty` 1–20, `variantId` must be `/^\d{1,20}$/`, titles trimmed to 80 characters. Identical variantIds are merged. (17 Nov 2026, v43-guard: `price` and titles from the page are ignored; a variant Shopify doesn't sell is a 422.)
   - An empty `items` deletes the open tab.
   - If today's tab is `'in-cart'`, it returns 409 "Your tab is at the counter already. Pay for that one, then start a fresh one."
   - If today's tab is `'paid'`, a new tab starts.

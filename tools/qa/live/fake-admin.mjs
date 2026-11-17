@@ -215,6 +215,22 @@ const settingsText = () => fs.readFileSync(path.join(THEME, 'config/settings_dat
 
 function answer(op, query, v) {
   switch (op) {
+    // 17 Nov 2026 (contract v43-guard): the Lair prices a tab from Shopify; these are the QA flows' things, and the
+    // counter's can and water
+    case 'LairTabPrices': {
+      const known = {
+        44114640568423: [300, 'Drinks', '$3 Drink'], 44114640601191: [600, 'Drinks', '$6 Drink'], 44114682347623: [400, 'Snacks', '$4 Snack'],
+        9001: [350, 'Coke', 'Default Title'], 9002: [300, 'Moro', 'Default Title'], 9101: [350, 'Coke', 'Default Title'],
+        9102: [800, 'Pizza slice', 'Default Title'], 9190000001: [450, 'Pocky', 'Strawberry'],
+        51525157716071: [300, 'Can of Drink', 'Default Title'], 51525157683303: [200, 'Water 600ml', 'Default Title'],
+      };
+      return {
+        nodes: (v.ids || []).map((gid) => {
+          const row = known[String(gid).split('/').pop()];
+          return row ? { id: gid, title: row[2], price: (row[0] / 100).toFixed(2), product: { id: 'gid://shopify/Product/1', title: row[1], productType: '', vendor: '', status: 'ACTIVE', isGiftCard: false } } : null;
+        }),
+      };
+    }
     case 'LairData':
       return {
         rooms: { nodes: rooms },

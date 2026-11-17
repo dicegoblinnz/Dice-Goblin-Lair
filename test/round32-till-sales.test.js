@@ -15,6 +15,7 @@ import { tillDraftInput, tillFiguresOf } from '../src/shopify.js';
 import { TILL_PEOPLE_WORDS as P } from '../src/till-people.js';
 import { TILL_SALE_WORDS as S, TILL_MARKER, TILL_SHOP_LOCATION, TILL_SALE_OPEN_MS, tillBasketIn, tillPick } from '../src/till-sales.js';
 import { TILL_WORDS as W } from '../src/till.js';
+import { shopifyTabPrices } from './tab-prices.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -232,6 +233,7 @@ beforeEach(async () => {
   };
   nowIs(NOW);
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD', SHOP: 'dice-goblin.myshopify.com' });
+  shopifyTabPrices(lair); // 17 Nov 2026: the Lair prices a tab from Shopify (test/tab-prices.js)
   lair.taggedPerson = async (id) => {
     const person = { customerId: id || null, staff: id === OWNER, gm: false, tags: [] };
     if (id) lair.people.set(id, { at: Date.now(), person });

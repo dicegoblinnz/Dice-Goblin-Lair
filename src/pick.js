@@ -1688,13 +1688,8 @@ export const pickMethods = {
     if (!isEmail(to) || to.length > 200) throw new RuleError(PICK_MESSAGES.email);
     if (row.emails >= PICK_LIMITS.emailsPerSession) throw new RuleError(PICK_MESSAGES.busy, 429);
     const mailKey = who?.staff ? null : pickRateKey(who, client);
-    if (mailKey) {
-      this.pickMails = this.pickMails || new Map();
-      const sent = (this.pickMails.get(mailKey) || []).filter((t) => now - t < HOUR);
-      if (sent.length >= PICK_LIMITS.emailsPerHour) throw new RuleError(PICK_MESSAGES.busy, 429);
-      if (this.pickMails.size > 2000) this.pickMails.clear();
-      this.pickMails.set(mailKey, [...sent, now]);
-    }
+    // 30 an hour a member or address, kept through a restart (17 Nov 2026, src/guard.js)
+    if (mailKey) this.guardLimit(`pickmail:${mailKey}`, PICK_LIMITS.emailsPerHour, HOUR, now, PICK_MESSAGES.busy);
     this.sql.exec('UPDATE pick_sessions SET emails = emails + 1, updated_at = ? WHERE id = ?', now, row.id);
     const shared = this.sharedPicksNow(row, who);
     if (emailReady(this.env)) this.later(this.mail(this.letter(to, 'Your game picks from Dice Goblin', this.picksLetter(shared))));

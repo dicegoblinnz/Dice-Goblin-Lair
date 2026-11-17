@@ -10,6 +10,7 @@ import { cloudflareSql } from './cloudflare-sql.js';
 import { Lair, MIGRATIONS } from '../src/lair.js';
 import { LairTime, rulesFromSettings } from '../src/core.js';
 import { limitWords, TAB_MESSAGES } from '../src/tab.js';
+import { shopifyTabPrices } from './tab-prices.js';
 
 const TZ = 'Pacific/Auckland';
 const time = new LairTime(TZ);
@@ -163,6 +164,7 @@ beforeEach(() => {
   clock = LIVE;
   Date.now = () => clock;
   lair = new Lair(fakeCtx(), { CURRENCY: 'NZD', SHOP: 'ep0qiq-rp.myshopify.com' });
+  shopifyTabPrices(lair); // 17 Nov 2026: the Lair prices a tab from Shopify (test/tab-prices.js)
   lair.person = async (id) => ({ customerId: id || null, staff: id === 'staff', gm: false, tags: [] });
   lair.rulesCache = rulesFromSettings({ lair_hours: HOURS, lair_shop_tables: '' }, ROOMS, EVENTS);
   lair.rulesLoadedAt = LIVE + 10 * 365 * DAY;
