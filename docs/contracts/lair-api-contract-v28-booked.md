@@ -24,7 +24,8 @@ track: { id, kind, value, currency, first }
 - `value`: what it comes to, in dollars (its amount; 0 for something free). `currency`: `CURRENCY` (NZD).
 - `first`: whether it's their first booking at Dice Goblin: no session at the Lair before (round 24's `playedBefore`: a
   visit, a named or guest place, or a counter purchase) and no other booking or sign-up of theirs that wasn't cancelled.
-  null without an account (a TTRPG seat booked as a guest).
+  Since 17 Nov 2026 (section 6) "theirs" is found by account, email and mobile, for guests too; null only with none of
+  those.
 
 Only a **confirmed** one is told. Left out: one held for online payment (its checkout's purchase is counted by the
 channel apps), what staff make for someone (the staff page's bookings and walk-ins), and joining a weekly game when the
@@ -67,7 +68,7 @@ Empty switches that platform off.
 
 - Browser only for now. Ad blockers and some browsers stop some events; server-side sending (Meta's Conversions API,
   TikTok's Events API) with the same event IDs can come later and would be counted once with these.
-- No customer details are sent (no advanced matching or enhanced conversions). That needs Mo's yes first.
+- No customer details were sent until 17 Nov 2026; section 6 adds enhanced matching, with marketing consent only.
 - TikTok keeps its click in its own cookie when its pixel loads on the landing page. When TikTok ads start, check in
   TikTok's Events Manager that Schedule events are matched to clicks.
 
@@ -84,3 +85,38 @@ A separate review found no critical or high problems. Fixed, each with a browser
 
 The Lair app first (today's theme ignores `track`), then the theme: lab, preview, live, each with Mo's yes. Then the IDs
 in Theme settings on the live theme.
+
+## 6. 17 November 2026: first booking for everyone, paid clicks keep their credit, enhanced matching
+
+From the website review before more ad spend (Google Search ads live since 16 Nov; Meta and TikTok next): the ads
+couldn't tell a new player from a regular, an old unpaid link took the credit for a paid click, and the platforms got no
+customer details to match bookings to the people who saw the ads.
+
+**First booking for guests (Lair, `firstBooking` in `src/newplayers.js`).** `first` is worked out from the booking's
+account and the email and mobile saved on it (any case; a mobile by its key, `phoneKeySql`, the same as `mobileKey`:
+021 555 0100 and +64 21-555-0100 are one). Not first when the Lair knows them from before by any of those:
+- a member with that account, email (or verified account email) or mobile (at most 5) with another booking or sign-up
+  that wasn't cancelled, or who has been to the Lair (`playedBefore`, which takes in counter purchases at the till);
+- another booking or sign-up that wasn't cancelled with that email or mobile on it, whoever made it;
+- a named place by that email on someone else's booking that wasn't cancelled (round 11's game spot players).
+What the same request made never counts. The answer is only `first: true | false` for this booking: nothing about who
+matched. Lookups by mobile use the new expression indexes `bookings_phone_key`, `event_joins_phone_key` and
+`members_mobile_key` (made on start). Someone could book with another person's email or mobile to learn whether the Lair
+knows it; that costs a real, confirmed booking (a confirmation to that email, staff see it, at most 6 upcoming per email).
+
+**Paid clicks keep their credit.** A member's first ad tags (round 24, what the weekly numbers credit a new player to)
+give way once to a paid click (`isPaidAd`: utm_medium paid, cpc, ppc, cpm, cpv, paid-social and the like) while the member
+hasn't been to the Lair yet. A booking's own tags are always its own. The website does the same with the link it keeps
+(theme `assets/theme.js`): a paid click (utm_medium as above, or Google's gclid, gbraid or wbraid, or TikTok's ttclid)
+replaces an unpaid one it kept, and the first paid click stays for its 30 days. Meta's fbclid alone is facebook/social,
+because Facebook adds it to every link, paid or not: Meta ads carry `utm_medium=paid` in their URL parameters.
+
+**The website's tags (theme `assets/tracking.js`).**
+- First booking (`first: true`): Google Ads' "First booking" conversion (as before, once its label is set); Meta's and
+  TikTok's standard `CompleteRegistration` (`booked-first-<id>` as the event ID), on top of `Schedule`. A standard event,
+  because TikTok can't aim ad groups at custom events, Meta optimises standard events best, and neither the Shopify
+  channel apps nor anything else on the site sends `CompleteRegistration`, so it means only "someone's first booking".
+- Enhanced matching, only when marketing is allowed: the email and mobile from the booking form (or the logged-in
+  customer's), normalised and SHA-256 hashed in the browser. Google: `gtag('set', 'user_data', { sha256_email_address,
+  sha256_phone_number })` (gmail dots dropped, E.164 phone); Meta: `em` and `ph` on `fbq('init')` (digits with country
+  code); TikTok: `identify({ email, phone_number })` (E.164). Plain text never leaves the page.

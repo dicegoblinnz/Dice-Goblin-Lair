@@ -31,7 +31,7 @@
  * These are methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair. No
  * awaits anywhere in here.
  */
-import { LairTime, RuleError, codeKey, makeId } from './core.js';
+import { LairTime, RuleError, codeKey, makeId, mobileKey } from './core.js';
 import { ORDERMATE, TILL_SOURCE } from './counter.js';
 
 /** roll_codes.pays_on and roll_code_uses.pays_on for a welcome code: its rolls wait for the first paid session */
@@ -67,9 +67,29 @@ export const NEW_PLAYER_STAMP_COLUMNS = [['loyalty_stamps', 'amount', 'INTEGER']
 export const COUNTER_SOURCES = ['pos', ORDERMATE.app, TILL_SOURCE];
 
 /** Round 24's index, made when missing: one welcome code a member, kept in the data itself */
+/**
+ * A mobile number's key in SQL, the same as mobileKey (src/core.js) gives in JavaScript: its digits, with a leading 0
+ * read as 64, so 021 555 0100 and +64 21-555-0100 are one. checkMobile keeps a number as typed, so only spaces, dashes,
+ * dots, brackets and a + are taken out. The same text is the phone-key indexes' expression (NEW_PLAYER_TABLES), and
+ * SQLite only uses an expression index for exactly the same expression, so every lookup by mobile goes through this.
+ * @param {string} column
+ */
+export function phoneKeySql(column) {
+  const bare = `replace(replace(replace(replace(replace(replace(trim(${column}), ' ', ''), '-', ''), '.', ''), '(', ''), ')', ''), '+', '')`;
+  return `(CASE WHEN substr(trim(${column}), 1, 1) = '+' THEN ${bare} WHEN substr(${bare}, 1, 1) = '0' THEN '64' || substr(${bare}, 2) ELSE ${bare} END)`;
+}
+
 export const NEW_PLAYER_TABLES = [
   "CREATE UNIQUE INDEX IF NOT EXISTS roll_code_uses_welcome ON roll_code_uses (customer_id) WHERE pays_on = 'first-session'",
+  // 17 Nov 2026 (first booking for guests): finding someone by the mobile they typed (firstBooking)
+  `CREATE INDEX IF NOT EXISTS bookings_phone_key ON bookings (${phoneKeySql('phone')})`,
+  `CREATE INDEX IF NOT EXISTS event_joins_phone_key ON event_joins (${phoneKeySql('phone')})`,
+  `CREATE INDEX IF NOT EXISTS members_mobile_key ON members (${phoneKeySql('mobile')})`,
 ];
+
+/** The most members one booking's email and mobile are matched to (firstBooking): more than this is someone shared */
+const FIRST_MATCHES = 5;
+const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 
 /**
  * The welcome codes made once on start (meta 'welcome-codes'), one for each channel in the ads plan, each 1 roll with no
@@ -128,6 +148,16 @@ export function cleanAd(input) {
   const { source, medium, campaign } = /** @type {{ source?: unknown, medium?: unknown, campaign?: unknown }} */ (input);
   const clean = tidy(source, 40);
   return clean ? { source: clean, medium: tidy(medium, 40) || null, campaign: tidy(campaign, 80) || null } : null;
+}
+
+/**
+ * Whether ad tags are a paid click (17 Nov 2026): their medium says so, as the ads plan tags paid links (utm_medium
+ * "paid"), Google's auto-tagging is read (cpc), or the usual paid names are spelt (ppc, cpm, paid-social and the like).
+ * @param {{ source?: string, medium?: string | null } | null} ad
+ */
+export function isPaidAd(ad) {
+  const medium = String(ad?.medium || '').toLowerCase();
+  return /^(?:paid(?:[-_.+]?(?:social|search|media|ads?))?|cpc|ppc|cpm|cpv)$/.test(medium);
 }
 
 export const newPlayerMethods = {
@@ -360,11 +390,22 @@ export const newPlayerMethods = {
     if (customerId) this.firstAd(customerId, ad, now);
   },
 
-  /** A member's first ad tags, kept once: a later one never replaces them. Returns whether these were saved. */
+  /**
+   * A member's first ad tags, kept once: a later one never replaces them, with one exception (17 Nov 2026, from the
+   * website review before more ad spend): a paid click (isPaidAd) replaces unpaid tags (an old Facebook page or
+   * Eventfinda link) while the member hasn't been to the Lair yet, so the ad that brought them in gets the credit in the
+   * weekly numbers. After that first paid click, or once they've visited, nothing replaces them. Returns whether these
+   * were saved.
+   */
   firstAd(customerId, ad, now = Date.now()) {
     if (!ad || !customerId || !this.memberRow(customerId)) return false;
     const id = String(customerId);
-    if (this.sql.exec('SELECT 1 AS n FROM members WHERE customer_id = ? AND ad_source IS NOT NULL', id).toArray().length) return false;
+    const had = this.sql.exec('SELECT ad_source, ad_medium FROM members WHERE customer_id = ?', id).toArray()[0];
+    if (had && had.ad_source != null) {
+      if (!isPaidAd(ad) || isPaidAd({ source: had.ad_source, medium: had.ad_medium }) || this.playedBefore(id, now)) return false;
+      this.write('UPDATE members SET ad_source = ?, ad_medium = ?, ad_campaign = ?, ad_at = ? WHERE customer_id = ?', ad.source, ad.medium, ad.campaign, now, id);
+      return true;
+    }
     this.write('UPDATE members SET ad_source = ?, ad_medium = ?, ad_campaign = ?, ad_at = ? WHERE customer_id = ? AND ad_source IS NULL', ad.source, ad.medium, ad.campaign, now, id);
     return true;
   },
@@ -378,22 +419,60 @@ export const newPlayerMethods = {
    * instead, and what staff make for someone isn't an ad's doing. id: its own opaque ID, so each platform counts it once
    * (never its code: a code carries the booker's initials, from round 28's review). kind:
    * 'table', 'ttrpg', 'event', 'game-spot' or 'weekly'. value: what it comes to, in dollars. first: whether it's their
-   * first booking at Dice Goblin (no session at the Lair before, and no other booking or sign-up of theirs that wasn't
-   * cancelled, besides `besides`: what this same request made); null without an account. No awaits.
+   * first booking at Dice Goblin (firstBooking, from its account and the email and mobile saved on it; `besides`: what
+   * this same request made). No awaits.
    */
   bookedTrack(item, kind, customerId, { besides = [], now = Date.now() } = {}) {
     if (!item || item.status !== 'confirmed' || !item.id) return null;
-    const id = customerId ? String(customerId) : null;
-    let first = null;
-    if (id) {
-      const mine = [...new Set([item.id, ...besides].filter(Boolean).map(String))];
-      const not = mine.length ? `AND id NOT IN (${mine.map(() => '?').join(', ')})` : '';
-      const other = (query) => this.sql.exec(query, id, ...mine).toArray().length > 0;
-      first = !other(`SELECT 1 AS n FROM bookings WHERE customer_id = ? ${not} AND status != 'cancelled' AND kind != 'gm-cover' LIMIT 1`)
-        && !other(`SELECT 1 AS n FROM event_joins WHERE customer_id = ? ${not} AND status != 'cancelled' LIMIT 1`)
-        && !this.playedBefore(id, now);
-    }
+    const mine = [...new Set([item.id, ...besides].filter(Boolean).map(String))];
+    // the email and mobile as saved on it (a sign-up's on event_joins, everything else on bookings)
+    const row = this.sql.exec(`SELECT email, phone FROM ${kind === 'event' ? 'event_joins' : 'bookings'} WHERE id = ?`, String(item.id)).toArray()[0] || {};
+    const first = this.firstBooking({ customerId, email: row.email, phone: row.phone, mine, now });
     return { id: String(item.id), kind, value: Math.max(0, Math.round(Number(item.amount) || 0)) / 100, currency: this.env.CURRENCY || 'NZD', first };
+  },
+
+  /**
+   * Whether a booking is someone's first at Dice Goblin (17 Nov 2026, so the ads can aim at new players: before this a
+   * guest's was null). They're not new when the Lair knows them from before by any of their account, the email or the
+   * mobile they typed (any case, any spacing, 021 or +64 21):
+   *  - a member with that account, email (or verified account email) or mobile (at most FIRST_MATCHES of them) who has
+   *    another booking or sign-up that wasn't cancelled, or has been to the Lair (playedBefore: a visit, a named or guest
+   *    place, a counter purchase with their account on it);
+   *  - another booking or sign-up that wasn't cancelled with that email or mobile on it, made by anyone (a guest's own,
+   *    or a walk-in staff noted);
+   *  - a named place by that email on someone else's booking that wasn't cancelled (round 11's game spot players).
+   * `mine`: the IDs this same request made, which never count. Null only when there's nothing to go on (no account, no
+   * email, no mobile). It only ever answers for this booking: nothing about who else matched leaves here. No awaits.
+   */
+  firstBooking({ customerId = null, email = '', phone = '', mine = [], now = Date.now() } = {}) {
+    const mail = isEmail(email) ? String(email).trim().toLowerCase() : '';
+    const digits = mobileKey(phone);
+    const key = digits.length >= 8 ? digits : '';
+    if (!customerId && !mail && !key) return null;
+    const not = (column) => (mine.length ? `AND ${column} NOT IN (${mine.map(() => '?').join(', ')})` : '');
+    const found = (query, ...binds) => this.sql.exec(query, ...binds, ...mine).toArray().length > 0;
+    const rows = (query, ...binds) => this.sql.exec(query, ...binds).toArray();
+
+    // their account, and the members with this email or mobile
+    const ids = new Set(customerId ? [String(customerId)] : []);
+    if (mail) {
+      for (const r of rows(`SELECT customer_id FROM members WHERE lower(email) = ? OR lower(account_email) = ? LIMIT ${FIRST_MATCHES}`, mail, mail)) ids.add(String(r.customer_id));
+    }
+    if (key) for (const r of rows(`SELECT customer_id FROM members WHERE ${phoneKeySql('mobile')} = ? LIMIT ${FIRST_MATCHES}`, key)) ids.add(String(r.customer_id));
+    for (const id of [...ids].slice(0, FIRST_MATCHES + 1)) {
+      if (found(`SELECT 1 AS n FROM bookings WHERE customer_id = ? AND status != 'cancelled' AND kind != 'gm-cover' ${not('id')} LIMIT 1`, id)) return false;
+      if (found(`SELECT 1 AS n FROM event_joins WHERE customer_id = ? AND status != 'cancelled' ${not('id')} LIMIT 1`, id)) return false;
+      if (this.playedBefore(id, now)) return false;
+    }
+    // bookings and sign-ups with this email or mobile on them, one look each way so each uses its index
+    for (const [column, value] of [['lower(email)', mail], [phoneKeySql('phone'), key]]) {
+      if (!value) continue;
+      if (found(`SELECT 1 AS n FROM bookings WHERE ${column} = ? AND status != 'cancelled' AND kind != 'gm-cover' ${not('id')} LIMIT 1`, value)) return false;
+      if (found(`SELECT 1 AS n FROM event_joins WHERE ${column} = ? AND status != 'cancelled' ${not('id')} LIMIT 1`, value)) return false;
+    }
+    // a named place on someone else's game
+    if (mail && found(`SELECT 1 AS n FROM booking_players p JOIN bookings b ON b.id = p.booking_id WHERE lower(p.email) = ? AND b.status != 'cancelled' ${not('b.id')} LIMIT 1`, mail)) return false;
+    return true;
   },
 
   /**

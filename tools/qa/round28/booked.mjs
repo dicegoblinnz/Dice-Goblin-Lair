@@ -4,9 +4,14 @@
 // The platforms' own scripts are stood in for (nothing reaches Meta, Google or TikTok): each stub queues its calls, as
 // their real loaders do before the script arrives, and the checks read those queues.
 //
+// 17 Nov 2026 (contract v28, section 6): someone's first booking is also "First booking" (Google) and
+// CompleteRegistration (Meta, TikTok); the booker's email and mobile go with it, SHA-256 hashed in the browser, only with
+// marketing consent; and a paid click beats an older unpaid link in the ad tags the site keeps.
+//
 // Usage: DG_THEME=/path/to/theme [PORT=4993] [OUT=dir] node tools/qa/round28/booked.mjs
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 const lib = await import('../round15/lib.mjs');
 const { chromium, m, check, totals, go, RUBY } = lib;
@@ -18,10 +23,20 @@ fs.mkdirSync(OUT, { recursive: true });
 const IDS = { ads_meta_pixel: '123456789012345', ads_google_id: 'AW-987654321', ads_google_booked: 'BookedLabel1', ads_google_first: 'FirstLabel22', ads_tiktok_pixel: 'CTEST123ABC456DEF789' };
 // the booking's own opaque ID (from the review: never its code, which carries the booker's initials)
 const TRACK = { id: 'bk_9f3k27', kind: 'table', value: 20, currency: 'NZD', first: true };
+// what the booker typed, and each platform's hashed copy (Google drops a gmail address's dots; phones in E.164)
+const TYPED = { email: ' Ruby.Tane@Gmail.com ', phone: '021 555 0100' };
+const hash = (text) => createHash('sha256').update(text).digest('hex');
+const MATCH = {
+  google: { sha256_email_address: hash('rubytane@gmail.com'), sha256_phone_number: hash('+64215550100') },
+  meta: { em: hash('ruby.tane@gmail.com'), ph: hash('64215550100') },
+  tiktok: { email: hash('ruby.tane@gmail.com'), phone_number: hash('+64215550100') },
+};
+const GOOGLE_CONFIG = ['config', 'AW-987654321', { send_page_view: false, allow_enhanced_conversions: true }];
 
 /* ---------------- a stand-in Lair behind /apps/liar ---------------- */
 const API = '/apps/liar';
 let calls = [];
+let bodies = [];
 // what the next POST /bookings answers: 'track' (confirmed, with track), 'plain' (no track) or 'refused' (a 422)
 let bookingAnswer = 'track';
 let track = TRACK;
@@ -31,6 +46,11 @@ m.mockState.before = async (req, res, url) => {
   for await (const chunk of req) chunks.push(chunk);
   const route = url.pathname.slice(API.length);
   calls.push(`${req.method} ${route}`);
+  try {
+    if (chunks.length) bodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+  } catch {
+    /* not JSON */
+  }
   const send = (status, body) => {
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(body));
@@ -99,20 +119,20 @@ const told = (page) => page.evaluate((tiktok) => {
     tiktok: window.ttq && window.ttq._i && window.ttq._i[tiktok] ? arr(window.ttq._i[tiktok]) : null,
     published: window.__published,
     config: document.getElementById('ad-tracking') ? JSON.parse(document.getElementById('ad-tracking').textContent) : null,
-    script: Boolean(document.querySelector('script[src*="tracking.js"]')),
+    script: Boolean(document.querySelector('script[src*="/tracking."]')),
   };
 }, IDS.ads_tiktok_pixel);
 const cookie = async (ctx, name) => (await ctx.cookies()).find((c) => c.name === name)?.value || null;
-/** A booking from a Lair page, as the booking form makes it, after the Lair app's answer */
-async function book(page) {
-  await page.evaluate(async () => {
+/** A booking from a Lair page, as the booking form makes it (with what the booker typed), after the Lair app's answer */
+async function book(page, typed = TYPED) {
+  await page.evaluate(async (more) => {
     try {
-      await window.Lair.store.backend.createBooking({ kind: 'table', tables: ['T3'], people: 2, name: 'Ruby' });
+      await window.Lair.store.backend.createBooking({ kind: 'table', tables: ['T3'], people: 2, name: 'Ruby', ...more });
     } catch {
       /* a refused booking: the page shows its error */
     }
-  });
-  await page.waitForTimeout(300);
+  }, typed);
+  await page.waitForTimeout(400);
 }
 async function lairPage(page, where = '/pages/my-lair') {
   await go(page, BASE, where, RUBY);
@@ -162,7 +182,7 @@ set(IDS);
   await page.goto(`${BASE}/?gclid=Gtest-123456`, { waitUntil: 'networkidle' });
   const t = await told(page);
   check(`${tag} Google's tag loads, set up without a page view, so it keeps the click`,
-    JSON.stringify(ctx.loads) === JSON.stringify(['google']) && JSON.stringify(t.google) === JSON.stringify([['config', IDS.ads_google_id, { send_page_view: false }]]), { loads: ctx.loads, google: t.google });
+    JSON.stringify(ctx.loads) === JSON.stringify(['google']) && JSON.stringify(t.google) === JSON.stringify([GOOGLE_CONFIG]), { loads: ctx.loads, google: t.google });
   check(`${tag} nothing else loads`, t.meta === null && t.tiktok === null);
   await ctx.close();
 }
@@ -203,33 +223,43 @@ set(IDS);
   let t = await told(page);
   check(`${tag} the booking went to the Lair`, calls.includes('POST /bookings'), calls);
   check(`${tag} each platform's script loads once`, JSON.stringify([...ctx.loads].sort()) === JSON.stringify(['google', 'meta', 'tiktok']), ctx.loads);
-  check(`${tag} Meta: automatic events off, the pixel, and Schedule with its value, kind, first booking and the event ID; no page view`,
+  check(`${tag} Meta: automatic events off, the pixel with the booker's hashed email and mobile, Schedule, and CompleteRegistration (first booking); no page view`,
     JSON.stringify(t.meta) === JSON.stringify([
       ['set', 'autoConfig', false, IDS.ads_meta_pixel],
-      ['init', IDS.ads_meta_pixel],
+      ['init', IDS.ads_meta_pixel, MATCH.meta],
       ['trackSingle', IDS.ads_meta_pixel, 'Schedule', { value: 20, currency: 'NZD', content_category: 'table', first_booking: true }, { eventID: 'booked-bk_9f3k27' }],
+      ['trackSingle', IDS.ads_meta_pixel, 'CompleteRegistration', { value: 20, currency: 'NZD', content_name: 'first booking', status: true }, { eventID: 'booked-first-bk_9f3k27' }],
     ]), t.meta);
-  check(`${tag} Google: Booked a session, and First booking (it's Ruby's first), each with its own transaction ID`,
+  check(`${tag} Google: the hashed email and mobile, Booked a session, and First booking (it's Ruby's first), each with its own transaction ID`,
     JSON.stringify(t.google) === JSON.stringify([
-      ['config', IDS.ads_google_id, { send_page_view: false }],
+      GOOGLE_CONFIG,
+      ['set', 'user_data', MATCH.google],
       ['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_booked}`, value: 20, currency: 'NZD', transaction_id: 'bk_9f3k27' }],
       ['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_first}`, value: 20, currency: 'NZD', transaction_id: 'first-bk_9f3k27' }],
     ]), t.google);
-  check(`${tag} TikTok: Schedule with the event ID`,
-    JSON.stringify(t.tiktok) === JSON.stringify([['track', 'Schedule', { value: 20, currency: 'NZD', content_type: 'product', content_id: 'table', description: 'first booking' }, { event_id: 'booked-bk_9f3k27' }]]), t.tiktok);
+  check(`${tag} TikTok: identify with the hashed email and mobile, Schedule, and CompleteRegistration, each with its event ID`,
+    JSON.stringify(t.tiktok) === JSON.stringify([
+      ['identify', MATCH.tiktok],
+      ['track', 'Schedule', { value: 20, currency: 'NZD', content_type: 'product', content_id: 'table', description: 'first booking' }, { event_id: 'booked-bk_9f3k27' }],
+      ['track', 'CompleteRegistration', { value: 20, currency: 'NZD', content_type: 'product', content_id: 'table', description: 'first booking' }, { event_id: 'booked-first-bk_9f3k27' }],
+    ]), t.tiktok);
+  const plain = JSON.stringify({ meta: t.meta, google: t.google, tiktok: t.tiktok, published: t.published }).toLowerCase();
+  check(`${tag} the email and mobile never go in plain text`, !plain.includes('ruby.tane') && !plain.includes('gmail') && !plain.includes('555'), plain.slice(0, 300));
   check(`${tag} Shopify's analytics hear it too (dice_goblin:booked)`,
     JSON.stringify(t.published) === JSON.stringify([['dice_goblin:booked', { id: 'bk_9f3k27', kind: 'table', value: 20, currency: 'NZD', first: true }]]), t.published);
   // the same booking told twice (a second answer, or the event again) is sent once
   await page.evaluate((x) => document.dispatchEvent(new CustomEvent('lair:ad-booked', { detail: x })), TRACK);
   await book(page);
   t = await told(page);
-  check(`${tag} the same booking again sends nothing more`, t.meta.length === 3 && t.google.length === 3 && t.tiktok.length === 1 && t.published.length === 1, t);
+  check(`${tag} the same booking again sends nothing more`, t.meta.length === 4 && t.google.length === 4 && t.tiktok.length === 3 && t.published.length === 1, t);
   // a second booking, not their first: no First booking conversion
   track = { ...TRACK, id: 'bk_9f3k28', first: false };
   await book(page);
   t = await told(page);
-  check(`${tag} a later booking: Booked a session only`,
-    JSON.stringify(t.google.slice(3)) === JSON.stringify([['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_booked}`, value: 20, currency: 'NZD', transaction_id: 'bk_9f3k28' }]]) && t.meta.length === 4 && t.tiktok.length === 2, t.google);
+  check(`${tag} a later booking: Booked a session, Schedule and Schedule only (no First booking, no CompleteRegistration)`,
+    JSON.stringify(t.google.slice(4)) === JSON.stringify([['set', 'user_data', MATCH.google], ['event', 'conversion', { send_to: `${IDS.ads_google_id}/${IDS.ads_google_booked}`, value: 20, currency: 'NZD', transaction_id: 'bk_9f3k28' }]])
+      && JSON.stringify(t.meta.slice(4).map((a) => a[2])) === JSON.stringify(['Schedule'])
+      && JSON.stringify(t.tiktok.slice(3).map((a) => (a[0] === 'identify' ? 'identify' : a[1]))) === JSON.stringify(['identify', 'Schedule']), { google: t.google.slice(4), meta: t.meta.slice(4), tiktok: t.tiktok.slice(3) });
   // an answer without track (staff made it, or it's held for payment) and a refused booking send nothing
   track = { ...TRACK, id: 'bk_9f3k29' };
   bookingAnswer = 'plain';
@@ -237,7 +267,7 @@ set(IDS);
   bookingAnswer = 'refused';
   await book(page);
   t = await told(page);
-  check(`${tag} an answer without track, or a refused booking, sends nothing`, t.meta.length === 4 && t.google.length === 4 && t.tiktok.length === 2 && t.published.length === 2, t);
+  check(`${tag} an answer without track, or a refused booking, sends nothing`, t.meta.length === 5 && t.google.length === 6 && t.tiktok.length === 5 && t.published.length === 2, t);
   check(`${tag} no console errors`, !page.errors.length, page.errors);
   await page.screenshot({ path: path.join(OUT, 'booking-page.png') });
   await ctx.close();
@@ -321,9 +351,79 @@ set(IDS);
   await book(page);
   const t = await told(page);
   check(`${tag} Google alone hears it (no First booking label: Booked a session only)`,
-    JSON.stringify(ctx.loads) === JSON.stringify(['google']) && t.google.length === 2 && t.meta === null && t.tiktok === null, { loads: ctx.loads, t });
+    JSON.stringify(ctx.loads) === JSON.stringify(['google']) && t.google.filter((a) => a[0] === 'event').length === 1 && t.meta === null && t.tiktok === null, { loads: ctx.loads, t });
   await ctx.close();
   set(IDS);
+}
+{
+  const tag = '[a guest\'s first booking]';
+  bookingAnswer = 'track';
+  track = { ...TRACK, id: 'bk_9f3k50', kind: 'ttrpg', first: true };
+  const ctx = await context();
+  const page = watch(await ctx.newPage());
+  await go(page, BASE, '/pages/book-a-table', null);
+  await page.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
+  await book(page, { email: 'ash@example.com', phone: '+64 27 555 0123' });
+  const t = await told(page);
+  const names = (list, at) => (list || []).filter((a) => a[0] === 'trackSingle' || a[0] === 'track' || a[0] === 'event').map((a) => (a[0] === 'event' ? a[2].send_to.split('/')[1] : a[at]));
+  check(`${tag} all four: Booked a session and First booking (Google), Schedule and CompleteRegistration (Meta and TikTok)`,
+    JSON.stringify(names(t.google)) === JSON.stringify([IDS.ads_google_booked, IDS.ads_google_first])
+      && JSON.stringify(names(t.meta, 2)) === JSON.stringify(['Schedule', 'CompleteRegistration'])
+      && JSON.stringify(names(t.tiktok, 1)) === JSON.stringify(['Schedule', 'CompleteRegistration']), { google: names(t.google), meta: names(t.meta, 2), tiktok: names(t.tiktok, 1) });
+  check(`${tag} matched by what they typed (an overseas-style +64 mobile is E.164 too)`,
+    JSON.stringify(t.meta[1]) === JSON.stringify(['init', IDS.ads_meta_pixel, { em: hash('ash@example.com'), ph: hash('64275550123') }]), t.meta[1]);
+  check(`${tag} no console errors`, !page.errors.length, page.errors);
+  await ctx.close();
+}
+{
+  const tag = '[a member who typed nothing]';
+  track = { ...TRACK, id: 'bk_9f3k51', first: false };
+  const ctx = await context();
+  const page = watch(await ctx.newPage());
+  await lairPage(page);
+  await book(page, {});
+  const t = await told(page);
+  check(`${tag} their account's email is used (RUBY has no phone on her account), and nothing marks it a first booking`,
+    JSON.stringify(t.google.find((a) => a[0] === 'set')) === JSON.stringify(['set', 'user_data', { sha256_email_address: hash('ruby@example.com') }])
+      && !t.meta.some((a) => a[2] === 'CompleteRegistration') && !t.tiktok.some((a) => a[1] === 'CompleteRegistration'), { google: t.google, meta: t.meta });
+  await ctx.close();
+}
+
+/* ---------------- paid clicks keep their credit (the ad tags theme.js keeps) ---------------- */
+{
+  const tag = '[ad credit]';
+  const ctx = await context();
+  const page = watch(await ctx.newPage());
+  const kept = async () => JSON.parse((await page.evaluate(() => window.localStorage.getItem('lair-ad'))) || 'null');
+  const visit = async (query) => {
+    await page.goto(`${BASE}/${query}`, { waitUntil: 'networkidle' });
+    const k = await kept();
+    return k ? `${k.source}/${k.medium}/${k.campaign}` : null;
+  };
+  check(`${tag} an Eventfinda link is kept`, (await visit('?utm_source=eventfinda&utm_medium=referral&utm_campaign=trivia')) === 'eventfinda/referral/trivia');
+  check(`${tag} a Facebook link (fbclid alone) doesn't replace it: Facebook adds fbclid to every link, paid or not`, (await visit('?fbclid=IwAR0test12345')) === 'eventfinda/referral/trivia');
+  check(`${tag} a TikTok ad (ttclid) beats the unpaid link`, (await visit('?ttclid=E.C.P.test12345')) === 'tiktok/paid/null');
+  check(`${tag} the first paid click stays: a Google ad later doesn't replace it`, (await visit('?gclid=Gtest-1234567890')) === 'tiktok/paid/null');
+  await page.evaluate(() => window.localStorage.clear());
+  check(`${tag} fbclid alone, nothing kept before: facebook/social`, (await visit('?fbclid=IwAR0test12345')) === 'facebook/social/null');
+  check(`${tag} a Meta ad tagged utm_medium=paid beats it`, (await visit('?utm_source=facebook&utm_medium=paid&utm_campaign=new-players&fbclid=IwAR0test12345')) === 'facebook/paid/new-players');
+  await page.evaluate(() => window.localStorage.clear());
+  check(`${tag} a Google ad's gclid alone is google/cpc`, (await visit('?gclid=Gtest-1234567890')) === 'google/cpc/null');
+  await page.evaluate(() => window.localStorage.clear());
+  check(`${tag} a gclid makes a link paid whatever its medium says`, (await visit('?utm_source=google&utm_medium=social&gclid=Gtest-1234567890')) === 'google/cpc/null');
+  // the paid click goes with the booking to the Lair, pages later
+  await page.evaluate(() => window.localStorage.setItem('lair-ad', JSON.stringify({ source: 'eventfinda', medium: 'referral', campaign: null, at: Date.now() - 86400000 })));
+  await visit('?utm_source=tiktok&utm_medium=paid&utm_campaign=burst-1&ttclid=E.C.P.test12345');
+  bookingAnswer = 'track';
+  track = { ...TRACK, id: 'bk_9f3k52' };
+  bodies = [];
+  await go(page, BASE, '/pages/book-a-table', RUBY);
+  await page.waitForFunction(() => window.Lair && window.Lair.store && window.Lair.store.backend, null, { timeout: 20000 });
+  await book(page);
+  const sentAd = (bodies.find((b) => b && b.kind === 'table') || {}).ad;
+  check(`${tag} the booking carries the paid click's tags to the Lair`, JSON.stringify(sentAd) === JSON.stringify({ source: 'tiktok', medium: 'paid', campaign: 'burst-1' }), sentAd);
+  check(`${tag} no console errors`, !page.errors.length, page.errors);
+  await ctx.close();
 }
 {
   const tag = '[demo mode]';

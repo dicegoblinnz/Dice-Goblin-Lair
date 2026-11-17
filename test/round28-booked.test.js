@@ -103,13 +103,15 @@ const bookingLine = (id, ref, amount) => ({ id, quantity: 1, price: amount.toFix
 /** An order line for the Session product, $15 unless said */
 const sessionLine = (id, variant, sku, price = '15.00') => ({ id, title: 'Session', variant_title: variant, sku, quantity: 1, price, properties: [] });
 
+// Each person's own mobile (17 Nov 2026: first booking matches people by the mobile they type, so no two share one here)
+const phoneOf = (name) => `021 555 ${String(1000 + [...String(name)].reduce((n, c) => (n * 31 + c.charCodeAt(0)) % 9000, 0)).slice(-4)}`;
 /** A table booked online by a member (pay at the Lair), today 2pm to 4pm unless said → the booking */
 async function table(who, name, { tables = ['T3'], people = 1, start = at(TODAY, 14), end = at(TODAY, 16), ...more } = {}) {
-  return ok(await call('POST', 'bookings', { kind: 'table', tables, start, end, people, name, email: `${name.toLowerCase()}@example.com`, phone: '021 555 0100', pay: 'day', ...more }, who)).booking;
+  return ok(await call('POST', 'bookings', { kind: 'table', tables, start, end, people, name, email: `${name.toLowerCase()}@example.com`, phone: phoneOf(name), pay: 'day', ...more }, who)).booking;
 }
 /** A sign-up to one of today's events (pay at the Lair) → the sign-up */
 async function signUp(who, name, event = 'quiz', more = {}) {
-  return ok(await call('POST', `events/${event}@${TODAY}/join`, { name, email: `${name.toLowerCase()}@example.com`, phone: '021 555 0100', people: 1, ...more }, who)).join;
+  return ok(await call('POST', `events/${event}@${TODAY}/join`, { name, email: `${name.toLowerCase()}@example.com`, phone: phoneOf(name), people: 1, ...more }, who)).join;
 }
 /** Kai played yesterday: a table checked in and paid at the counter */
 async function kaiPlayedYesterday() {
@@ -177,11 +179,11 @@ afterEach(() => {
 
 /** POST a table booking as a member → the whole answer (booking, track, ...) */
 async function bookTable(who, name, { tables = ['T3'], people = 1, start = at(TODAY, 14), end = at(TODAY, 16), ...more } = {}) {
-  return ok(await call('POST', 'bookings', { kind: 'table', tables, start, end, people, name, email: `${name.toLowerCase()}@example.com`, phone: '021 555 0100', pay: 'day', ...more }, who));
+  return ok(await call('POST', 'bookings', { kind: 'table', tables, start, end, people, name, email: `${name.toLowerCase()}@example.com`, phone: phoneOf(name), pay: 'day', ...more }, who));
 }
 /** POST a sign-up to one of today's events → the whole answer */
 async function join(who, name, event = 'quiz', more = {}) {
-  return ok(await call('POST', `events/${event}@${TODAY}/join`, { name, email: `${name.toLowerCase()}@example.com`, phone: '021 555 0100', people: 1, ...more }, who));
+  return ok(await call('POST', `events/${event}@${TODAY}/join`, { name, email: `${name.toLowerCase()}@example.com`, phone: phoneOf(name), people: 1, ...more }, who));
 }
 /** A TTRPG session the GM lists for tonight (schedule 'flexible' makes it a weekly game you can join) → the game */
 async function session(more = {}) {
@@ -235,11 +237,11 @@ test('round 28: what staff make for someone (the staff page, a walk-in) tells no
   assert.equal('track' in walkin, false);
 });
 
-test('round 28: a TTRPG seat tells "booked" as ttrpg; without an account, first is null (nobody to know)', async () => {
+test('round 28: a TTRPG seat tells "booked" as ttrpg; a guest\'s first is worked out from their email and mobile (17 Nov 2026: no longer null)', async () => {
   const game = await session();
-  const guest = ok(await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people: 1, name: 'Ash', email: 'ash@example.com', phone: '021 555 0100' }, ''));
-  assert.deepEqual(guest.track, track(guest, 'ttrpg', null));
-  const member = ok(await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people: 1, name: 'Mia', email: 'mia@example.com', phone: '021 555 0100' }, MIA));
+  const guest = ok(await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people: 1, name: 'Ash', email: 'ash@example.com', phone: phoneOf('Ash') }, ''));
+  assert.deepEqual(guest.track, track(guest, 'ttrpg', true));
+  const member = ok(await call('POST', 'bookings', { kind: 'gm-seat', gameId: game.id, people: 1, name: 'Mia', email: 'mia@example.com', phone: phoneOf('Mia') }, MIA));
   assert.deepEqual(member.track, track(member, 'ttrpg', true));
 });
 
