@@ -85,6 +85,7 @@ export const NEW_PLAYER_TABLES = [
   `CREATE INDEX IF NOT EXISTS bookings_phone_key ON bookings (${phoneKeySql('phone')})`,
   `CREATE INDEX IF NOT EXISTS event_joins_phone_key ON event_joins (${phoneKeySql('phone')})`,
   `CREATE INDEX IF NOT EXISTS members_mobile_key ON members (${phoneKeySql('mobile')})`,
+  'CREATE INDEX IF NOT EXISTS members_account_email ON members (lower(account_email))',
 ];
 
 /** The most members one booking's email and mobile are matched to (firstBooking): more than this is someone shared */
@@ -456,7 +457,9 @@ export const newPlayerMethods = {
     // their account, and the members with this email or mobile
     const ids = new Set(customerId ? [String(customerId)] : []);
     if (mail) {
-      for (const r of rows(`SELECT customer_id FROM members WHERE lower(email) = ? OR lower(account_email) = ? LIMIT ${FIRST_MATCHES}`, mail, mail)) ids.add(String(r.customer_id));
+      // Two looks, not one OR, so each uses its own index (members_email, members_account_email).
+      for (const r of rows(`SELECT customer_id FROM members WHERE lower(email) = ? LIMIT ${FIRST_MATCHES}`, mail)) ids.add(String(r.customer_id));
+      for (const r of rows(`SELECT customer_id FROM members WHERE lower(account_email) = ? LIMIT ${FIRST_MATCHES}`, mail)) ids.add(String(r.customer_id));
     }
     if (key) for (const r of rows(`SELECT customer_id FROM members WHERE ${phoneKeySql('mobile')} = ? LIMIT ${FIRST_MATCHES}`, key)) ids.add(String(r.customer_id));
     for (const id of [...ids].slice(0, FIRST_MATCHES + 1)) {
