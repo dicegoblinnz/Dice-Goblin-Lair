@@ -76,6 +76,11 @@ const PRODUCTS = {
   401: { type: 'Board Games', vendor: 'Next Move Games', title: 'Azul: Summer Pavilion', dice: false, listedAt: at('2026-11-15', 9) },
   402: { type: 'Board Games', vendor: 'Next Move Games', title: 'Azul', dice: false, listedAt: at('2024-01-01', 9) },
   501: { type: 'Lair', vendor: 'Dice Goblin NZ', title: 'Paint session', dice: false, listedAt: at('2026-11-01', 9) },
+  // 18 Nov 2026: the shop's six categories (paints in Warhammer & Hobby, gift cards and plush in Gifts)
+  601: { type: 'Warhammer & Hobby', vendor: 'Games Workshop', title: 'Warhammer Colour: Base Paints', dice: false, listedAt: at('2025-01-01', 9) },
+  602: { type: 'Gifts', vendor: 'Dice Goblin NZ', title: 'Dice Goblin gift card', dice: false, listedAt: at('2026-11-15', 9) },
+  603: { type: 'Gifts', vendor: 'Relatable', title: 'Emotional Support Pizza', dice: false, listedAt: at('2026-11-15', 9) },
+  604: { type: 'Warhammer & Hobby', vendor: 'Games Workshop', title: 'Space Marines: Intercessors', dice: false, listedAt: at('2024-01-01', 9) },
 };
 
 let lair;
@@ -528,6 +533,19 @@ test('a session undone takes its quests with it; a quest stamp staff took back b
 });
 
 /* ---------------- secret quests from sales, rolls and the library ---------------- */
+
+test('the six shop categories (18 Nov 2026): a pot in Warhammer & Hobby is paint, a gift card in Gifts is never fresh, plush is', async () => {
+  // a kit isn't paint, and an old kit isn't fresh
+  ok(await paid(order(1201, [line(1, 604, 60, 1)], { customer: NOVA })));
+  assert.equal(questStamps(NOVA)['once:fresh-pot'], undefined);
+  // a gift card listed three days ago isn't new stock
+  ok(await paid(order(1202, [line(1, 602, 25, 1)], { customer: NOVA })));
+  assert.equal(questStamps(NOVA)['once:fresh-blood'], undefined);
+  ok(await paid(order(1203, [line(1, 601, 7.8, 1), line(2, 603, 30, 1)], { customer: NOVA })));
+  const s = questStamps(NOVA);
+  assert.equal(s['once:fresh-pot'], 1, 'a Warhammer Colour pot is paint');
+  assert.equal(s['once:fresh-blood'], 1, 'plush listed this week is fresh');
+});
 
 test('secrets from sales: Fresh blood, Fresh pot, Paint it, Rolled it and Last one out (paid after 11:30pm, never said)', async () => {
   // a paint handle isn't paint; a pot is

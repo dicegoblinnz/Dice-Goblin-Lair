@@ -508,7 +508,7 @@ test('round 26: applying: updates and stops, then new products on the till, then
   assert.deepEqual(made.input, {
     title: 'Space Marines: Test Squad 10',
     vendor: 'Games Workshop',
-    productType: 'War Game',
+    productType: 'Warhammer & Hobby',
     tags: ['Warhammer', 'Warhammer 40K', 'Space Marines'],
     status: 'ACTIVE',
     descriptionHtml: '<p>Space Marines: Test Squad 10</p>',

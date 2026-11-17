@@ -213,6 +213,15 @@ export function padType(row) {
   return 'War Game';
 }
 
+/**
+ * The product type a new listing gets in Shopify (Mo, 18 Nov 2026: the shop's six categories). Kits, books, paints and
+ * tools are all one category now, Warhammer, paint and hobby; padType still tells them apart for their tags.
+ */
+export const SHOP_TYPES = Object.freeze({ 'War Game': 'Warhammer & Hobby', 'Paints & Hobby': 'Warhammer & Hobby' });
+export function shopType(type) {
+  return SHOP_TYPES[type] || type || 'Warhammer & Hobby';
+}
+
 /** The game's tags, by the pad's System, as the live GW listings have them */
 const GAME_TAGS = {
   'warhammer 40k': ['Warhammer 40K'], 'age of sigmar': ['Age of Sigmar'], 'kill team': ['Kill Team'], 'the horus heresy': ['Horus Heresy'],
@@ -952,7 +961,7 @@ export const gwPadMethods = {
       input: {
         title: p.title,
         vendor: 'Games Workshop',
-        productType: p.type || 'War Game',
+        productType: shopType(p.type),
         tags,
         status: draft ? 'DRAFT' : 'ACTIVE',
         descriptionHtml: `<p>${escapeHtml(p.title)}</p>`,
@@ -970,7 +979,7 @@ export const gwPadMethods = {
     return {
       title: range.title,
       vendor: 'Games Workshop',
-      productType: 'Paints & Hobby',
+      productType: shopType('Paints & Hobby'),
       tags: ['Warhammer', 'Citadel', 'Paints', key.startsWith('wh-pro') ? 'Warhammer Pro' : 'Warhammer Colour'],
       status: 'ACTIVE',
       descriptionHtml: `<p>${escapeHtml(range.title)}</p>`,

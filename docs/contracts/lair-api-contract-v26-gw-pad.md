@@ -23,6 +23,8 @@ As the 56 live GW listings (31 Oct 2026):
   Auckland, in store or ordered in from Games Workshop."
 - Vendor Games Workshop. Type: Dice & Accessories (Hobby - Play), Paints & Hobby (paints, paint sets such as "Orks +
   Paints", brushes, sprays, tools), else War Game (kits, sets and books).
+  Since 18 Nov 2026 (the shop's six categories) a new listing's Shopify type is Warhammer & Hobby for both of the last
+  two (`shopType`); the two still decide its tags.
 - Tags: Warhammer; the game (Warhammer 40K, Age of Sigmar, Kill Team, Horus Heresy, The Old World, Necromunda, Legions
   Imperialis, Middle-earth, Blood Bowl, Warhammer Underworlds; Chaos Daemons adds both Age of Sigmar and Warhammer 40K);
   a faction for 40K, Age of Sigmar, Kill Team, Horus Heresy, Necromunda and The Old World (the Race's last part, or the

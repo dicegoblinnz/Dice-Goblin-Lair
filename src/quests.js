@@ -251,6 +251,11 @@ const TCG_SALE = /\btcg\b/i;
 const PAINT_SESSION_SKU = /^LAIR-PAINT-SESSION(?:-[A-Z0-9]+)*$/i;
 // what Fresh blood never counts: the Lair's own things, gift cards and library copies
 const NOT_FRESH = new Set(['Lair', 'Drinks', 'Snacks', 'Ice Cream', 'Session pass', 'Session gift', 'Experience gift', 'Gift card', 'deposit', 'Library', 'Staff test']);
+// 18 Nov 2026: gift cards and experience gifts joined plush and toys in the Gifts type, so those two are told by name
+const NOT_FRESH_GIFTS = /\bgift card\b|^your first roleplaying game$|^learn to paint gift$/i;
+const notFresh = (facts) => NOT_FRESH.has(facts.type) || (facts.type === 'Gifts' && NOT_FRESH_GIFTS.test(String(facts.title || '').trim()));
+// paint: Paints & Hobby until 18 Nov 2026, Warhammer & Hobby since (one category with kits and books)
+const PAINT_TYPES = new Set(['Paints & Hobby', 'Warhammer & Hobby']);
 // the stamped sessions that are visits (stampTally's sessions less the ledger's own stamps)
 const VISIT_KINDS = new Set(['table', 'walkin', 'gm-seat', 'join', 'gm-run', 'stamp-sale']);
 
@@ -397,8 +402,8 @@ export const questMethods = {
       if (kind) kinds.set(kind, (kinds.get(kind) || 0) + linePaid(line));
       const flags = [];
       if (PAINT_SESSION_SKU.test(String(line.sku ?? '').trim())) flags.push('paint-session');
-      if (facts && facts.type === 'Paints & Hobby' && /\bpaints?\b/i.test(facts.title)) flags.push('paint');
-      if (facts?.listedAt && !NOT_FRESH.has(facts.type) && paidAt - facts.listedAt <= QUESTS_CONFIG.freshDays * DAY && paidAt >= facts.listedAt) flags.push('fresh');
+      if (facts && PAINT_TYPES.has(facts.type) && /\bpaints?\b/i.test(facts.title)) flags.push('paint');
+      if (facts?.listedAt && !notFresh(facts) && paidAt - facts.listedAt <= QUESTS_CONFIG.freshDays * DAY && paidAt >= facts.listedAt) flags.push('fresh');
       if (productId || flags.length) {
         this.questFact({ ...base, key: `line:${orderId}:${lineId}`, kind: 'line', productId, variantId: plainId(line.variant_id), lineId, amount: linePaid(line), flags }, now);
       }
