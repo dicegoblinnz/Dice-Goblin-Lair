@@ -1,4 +1,4 @@
-// Round 44 (17 Nov 2026, contract docs/contracts/lair-api-contract-v44-library-hold.md): library copies bought online
+// Round 46 (17 Nov 2026, contract docs/contracts/lair-api-contract-v46-library-hold.md): library copies bought online
 // are held. From the website review: library copies ("(Library)" at the end of the title, custom.library_code) are on
 // the Online Store, so anyone with a cart link can buy one, and 163 are still $0. Members may buy a library copy they've
 // borrowed at 20% off from My Library (Mo, 2 Nov 2026: decided, not built yet). Any other order with a library copy must

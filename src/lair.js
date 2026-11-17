@@ -122,7 +122,7 @@ import { STOCK_OFF_TABLES, stockOffMethods } from './stock-off.js';
 import { QUEST_TABLES, questMethods } from './quests.js';
 // Round 43: what's on the shelf, for the home page's d20 roller
 import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
-// Round 44: library copies bought online are held (src/library-hold.js)
+// Round 46: library copies bought online are held (src/library-hold.js)
 import { LIBRARY_HOLD_TABLES, libraryHoldMethods } from './library-hold.js';
 // 17 Nov 2026 (contract v45-guard): the robot check, the day's cap without an account, limits kept in the Durable
 // Object, the staff email about a burst, and the shop-wide cap on wrong codes (src/guard.js)
@@ -145,14 +145,14 @@ FEATURE_SCOPES.read_store_credit_accounts = 'store credit balances on the staff 
 FEATURE_SCOPES.write_discounts += ', same-parcel delivery codes and new Commander decks in the free sleeves deal';
 // Round 25: Games Workshop orders tagged Ordered in, with a note; round 26: the staff page's Warhammer tab adding GW's
 // order pad (new products stocked at 0 and on the till, prices and costs kept current)
-FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in, and orders with a library copy (round 44)';
+FEATURE_SCOPES.write_orders = 'tagging Games Workshop orders Ordered in, and orders with a library copy (round 46)';
 FEATURE_SCOPES.write_products = "adding Games Workshop's order pad (the Warhammer tab), and the shop's filters and On the shelf now (round 31)";
 FEATURE_SCOPES.write_inventory = 'new Games Workshop products stocked at 0, and their costs';
 FEATURE_SCOPES.write_publications = 'new Games Workshop products on the till';
 // Round 29: an unsubscribe from the email the day after a first game reaches Shopify's email marketing setting
 FEATURE_SCOPES.write_customers = "unsubscribes from the Lair's emails reaching Shopify's email marketing";
 // Round 32, the till, part 3: its sales marked fulfilled at the shop as soon as they're paid (src/till-sales.js)
-FEATURE_SCOPES.write_merchant_managed_fulfillment_orders = 'the till marking its sales fulfilled at the shop, and holding online orders with a library copy (round 44)';
+FEATURE_SCOPES.write_merchant_managed_fulfillment_orders = 'the till marking its sales fulfilled at the shop, and holding online orders with a library copy (round 46)';
 const IMAGE_LIMIT = 700 * 1024;
 const HOLD_MINUTES = 30;
 const RULES_TTL = 5 * MIN;
@@ -1212,7 +1212,7 @@ export class Lair {
     for (const statement of QUEST_TABLES) this.sql.exec(statement);
     // Round 43: the shelf list the d20 roller picks from (src/shelf-picks.js)
     for (const statement of SHELF_TABLES) this.sql.exec(statement);
-    // Round 44: orders held for a library copy, and what's done for each (src/library-hold.js)
+    // Round 46: orders held for a library copy, and what's done for each (src/library-hold.js)
     for (const statement of LIBRARY_HOLD_TABLES) this.sql.exec(statement);
     // 17 Nov 2026: counted tries for the limits, kept through a restart (src/guard.js)
     for (const statement of GUARD_TABLES) this.sql.exec(statement);
@@ -5432,7 +5432,7 @@ export class Lair {
     // Round 25: Games Workshop lines ordered in from GW (src/gw-orders.js), last, so it never holds up anything above: its
     // own awaits, then its own writes. If Shopify can't say how the stock stands, this throws and the webhook comes
     // again, which only repeats what's above (kept once per order).
-    // Round 44: a library copy bought online (not the buyer's own My Library purchase, or $0) holds the order in Shopify
+    // Round 46: a library copy bought online (not the buyer's own My Library purchase, or $0) holds the order in Shopify
     // and tells staff (src/library-hold.js). Before Games Workshop's, which can throw: this never does.
     const libraryHold = await this.libraryHoldPaid(order, orderId, { pos, spend });
     const gw = await this.gwOrderPaid(order, orderId, { pos, spend });
@@ -11442,7 +11442,7 @@ export class Lair {
     } catch (error) {
       console.error('Lair: order rolls upkeep failed', error);
     }
-    // Round 44 (src/library-hold.js): an order held for a library copy whose hold, tag or staff email isn't done yet
+    // Round 46 (src/library-hold.js): an order held for a library copy whose hold, tag or staff email isn't done yet
     try {
       const libraryHold = await this.libraryHoldUpkeep(Date.now());
       if (libraryHold) result.libraryHold = libraryHold;
@@ -11752,5 +11752,5 @@ Object.assign(Lair.prototype, guardMethods);
 Object.assign(Lair.prototype, orderRollMethods);
 // Round 38, part 2: new Commander decks join the free sleeves deal by themselves (src/commander-deal.js)
 Object.assign(Lair.prototype, commanderDealMethods);
-// Round 44: library copies bought online are held (src/library-hold.js)
+// Round 46: library copies bought online are held (src/library-hold.js)
 Object.assign(Lair.prototype, libraryHoldMethods);

@@ -1238,7 +1238,7 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 44 (src/library-hold.js): which of these products (numbers, up to 50) are library copies, as Shopify has them
+   * Round 46 (src/library-hold.js): which of these products (numbers, up to 50) are library copies, as Shopify has them
    * now: a Map of product number → { title, libraryCode } (libraryCode null when it has none). A product Shopify no
    * longer has isn't in it. Needs read_products; throws when Shopify can't answer, or hasn't within timeout ms (default 5 s), so a
    * hanging Shopify can't hold up the rest of the paid-order webhook (the caller then holds anything that looks like a copy).
@@ -1260,7 +1260,7 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 44 (src/library-hold.js): put Shopify's fulfilment hold on each of an order's fulfilment orders that can be
+   * Round 46 (src/library-hold.js): put Shopify's fulfilment hold on each of an order's fulfilment orders that can be
    * held (supportedActions HOLD), reason OTHER with the Lair's handle and notes, without Shopify's own email to the shop.
    * One that already has the Lair's hold counts as held. → { held } (0 when there's nothing to hold). Needs
    * write_merchant_managed_fulfillment_orders; throws when Shopify says no.

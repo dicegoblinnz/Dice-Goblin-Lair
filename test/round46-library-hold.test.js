@@ -1,4 +1,4 @@
-// Round 44: library copies bought online are held (contract v44-library-hold). From the website review of 17 Nov 2026:
+// Round 46: library copies bought online are held (contract v46-library-hold). From the website review of 17 Nov 2026:
 // library copies ("(Library)" in the title, custom.library_code) can be bought online by anyone with a cart link, and
 // 163 are still $0. Members may buy a library copy they've borrowed, at 20% off, from My Library (Mo, 2 Nov 2026). Any
 // other online order with a library copy must never be posted out by mistake, and a $0 library copy is always held.
@@ -162,7 +162,7 @@ afterEach(async () => {
 
 /* ---------------- the words ---------------- */
 
-test('round 44: the words, word for word', () => {
+test('round 46: the words, word for word', () => {
   assert.equal(LIBRARY_HOLD.tag, 'Library copy');
   assert.equal(LIBRARY_HOLD.handle, 'lair-library-copy');
   assert.equal(W.subject('#1550'), "Don't send order #1550: it has a library copy");
@@ -183,7 +183,7 @@ test('round 44: the words, word for word', () => {
 
 /* ---------------- who's held ---------------- */
 
-test('round 44: anyone buying a library copy online is held in Shopify, tagged and noted, and staff are emailed once', async () => {
+test('round 46: anyone buying a library copy online is held in Shopify, tagged and noted, and staff are emailed once', async () => {
   const res = await paid(order(1550, [catan(1, 65), shopCatan(2)]));
   assert.deepEqual(res.libraryHold, { lines: 1 });
   // Shopify is asked only about the line that could be a library copy
@@ -213,7 +213,7 @@ test('round 44: anyone buying a library copy online is held in Shopify, tagged a
   assert.equal(await lair.libraryHoldUpkeep(Date.now()), null);
 });
 
-test("round 44: a member buying the copy they have at home isn't held, but a $0 one always is", async () => {
+test("round 46: a member buying the copy they have at home isn't held, but a $0 one always is", async () => {
   atHome(MIA, 901);
   // 20% off, paid: their own My Library purchase
   let res = await paid(order(1600, [catan(1, 65, { discount: 13 })], { customer: MIA }));
@@ -231,7 +231,7 @@ test("round 44: a member buying the copy they have at home isn't held, but a $0 
   assert.deepEqual(res.libraryHold, { lines: 1 });
 });
 
-test("round 44: a member is held for a game they haven't got at home, more copies than they have, or someone else's", async () => {
+test("round 46: a member is held for a game they haven't got at home, more copies than they have, or someone else's", async () => {
   atHome(MIA, 901);
   atHome(KAI, 902, 'Azul');
   // Azul is at home with Kai, not Mia
@@ -254,7 +254,7 @@ test("round 44: a member is held for a game they haven't got at home, more copie
   assert.match(staffMail().at(-1).html, /No customer on the order/);
 });
 
-test("round 44: counter sales, shop products, books with no library code and the Lair's postal swap line aren't held", async () => {
+test("round 46: counter sales, shop products, books with no library code and the Lair's postal swap line aren't held", async () => {
   // rung up at the counter (Shopify POS)
   let res = await paid(order(1800, [catan(1, 0)], { source: 'pos' }));
   assert.equal(res.libraryHold, undefined);
@@ -271,7 +271,7 @@ test("round 44: counter sales, shop products, books with no library code and the
   assert.equal(holds.length + marked.length + staffMail().length, 0);
 });
 
-test("round 44: when Shopify can't say what the products are, a line that looks like a library copy is held anyway", async () => {
+test("round 46: when Shopify can't say what the products are, a line that looks like a library copy is held anyway", async () => {
   lair.shopify.libraryProducts = async () => {
     throw new Error('Shopify is down');
   };
@@ -281,7 +281,7 @@ test("round 44: when Shopify can't say what the products are, a line that looks 
   assert.match(staffMail()[0].html, /Catan/);
 });
 
-test("round 44: a hold Shopify refuses is emailed as tagged, then the 10-minute run tries again, and the email isn't sent twice", async () => {
+test("round 46: a hold Shopify refuses is emailed as tagged, then the 10-minute run tries again, and the email isn't sent twice", async () => {
   holdFails = 1;
   await paid(order(2000, [catan(1, 65)]));
   assert.equal(holds.length, 0);
@@ -300,7 +300,7 @@ test("round 44: a hold Shopify refuses is emailed as tagged, then the 10-minute 
   assert.equal(await lair.libraryHoldUpkeep(Date.now()), null);
 });
 
-test('round 44: the 10-minute run gives up on a hold after a day, and sends an email a restart cut short', async () => {
+test('round 46: the 10-minute run gives up on a hold after a day, and sends an email a restart cut short', async () => {
   holdFails = 1000;
   await paid(order(2100, [catan(1, 65)]));
   nowIs(NOW + 10 * MIN);
@@ -325,7 +325,7 @@ test('round 44: the 10-minute run gives up on a hold after a day, and sends an e
   assert.equal(await lair.libraryHoldUpkeep(Date.now()), null);
 });
 
-test('round 44: LIBRARY_HOLD_EMAILS = off stops the email, not the hold', async () => {
+test('round 46: LIBRARY_HOLD_EMAILS = off stops the email, not the hold', async () => {
   lair.baseEnv = { ...lair.baseEnv, LIBRARY_HOLD_EMAILS: 'off' };
   await paid(order(2200, [catan(1, 0)]));
   assert.equal(holds.length, 1);

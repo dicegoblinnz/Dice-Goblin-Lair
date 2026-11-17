@@ -1,4 +1,4 @@
-# Lair API contract v44: library copies bought online are held (round 44)
+# Lair API contract v46: library copies bought online are held (round 46)
 
 From the website review of 17 November 2026: library copies (products whose title ends "(Library)" and that carry the
 metafield `custom.library_code`) are on the Online Store, so anyone with a cart link can buy one, and 163 of them are
