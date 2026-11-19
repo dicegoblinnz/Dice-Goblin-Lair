@@ -50,7 +50,7 @@ button:disabled{opacity:.45;cursor:default}
 [hidden]{display:none!important}
 .page{max-width:480px;margin:0 auto;padding:20px 16px 132px;display:flex;flex-direction:column;gap:10px}
 .staff .page{padding-bottom:32px;gap:14px}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px}
 .top h1{font-size:34px;line-height:1;color:var(--gold)}
 .top h1 small{display:block;font-size:15px;line-height:1.3;color:var(--cream)}
 .staff .top h1{font-size:26px;line-height:1.1;color:var(--cream)}
@@ -203,6 +203,8 @@ function tavernKit(LOOKS) {
   };
   const h = make(null);
   const s = make(SVG);
+  // a QR card covers one table ("Table F1") or the tables next to each other ("Tables T4 & T5")
+  const at = (id) => `${String(id).includes('&') ? 'Tables' : 'Table'} ${id}`;
   const money = (cents) => `$${cents % 100 ? (cents / 100).toFixed(2) : cents / 100}`;
   const look = (id) => LOOKS[id] || { c: '#c4b5a5', p: '#6b3f1d', art: 'cream' };
 
@@ -319,12 +321,12 @@ function tavernKit(LOOKS) {
   }
   // the store's own log-in, which comes back to this page (as the staff page's does)
   const loginUrl = () => `/customer_authentication/login?return_to=${encodeURIComponent(location.pathname + location.search)}`;
-  return { h, s, put, money, look, mug, lair, loginUrl, base };
+  return { h, s, put, money, look, mug, lair, loginUrl, base, at };
 }
 
 /** The order page at the table */
 function tavernOrderPage(kit) {
-  const { h, s, money, look, mug, lair, loginUrl } = kit;
+  const { h, s, money, look, mug, lair, loginUrl, at } = kit;
   const root = document.getElementById('app');
   const code = (new URLSearchParams(location.search).get('t') || '').trim().toUpperCase();
   const KEEP = `tavern-order-${code}`;
@@ -417,7 +419,7 @@ function tavernOrderPage(kit) {
     const of = (t) => m.items.filter((x) => x.tier === t);
     const price = (t) => money(m.tiers[t].price);
     return [
-      h('div', { class: 'top' }, brand(), m.table ? h('span', { class: 'pill' }, `Table ${m.table.id}`) : null),
+      h('div', { class: 'top' }, brand(), m.table ? h('span', { class: 'pill' }, at(m.table.id)) : null),
       h('p', { class: 'muted' }, 'Order here and it goes on your tab. Pay at the counter when you\'re ready.'),
       state.justOrdered ? h('p', { class: 'notice gold', role: 'status' }, `Ordered. ${money(state.justOrdered)} is on your tab, and we're on it. `, h('a', { href: '/pages/my-lair', vars: { color: '#16110f' } }, 'See your tab')) : null,
       myDrinks(),
@@ -467,7 +469,7 @@ function tavernOrderPage(kit) {
     const need = missing(draft);
     const line = { item: draft.item, options: o };
     return [
-      h('div', { class: 'crumb' }, h('span', null, `Apothecary${state.menu.table ? ` · Table ${state.menu.table.id}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
+      h('div', { class: 'crumb' }, h('span', null, `Apothecary${state.menu.table ? ` · ${at(state.menu.table.id)}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
       h('div', { class: 'body', vars: { '--c': look(x.id).c } },
         h('div', { class: 'head' },
           h('div', { class: 'art big' }, mug(x.id, `${x.name}`, 60, 0)),
@@ -526,7 +528,7 @@ function tavernOrderPage(kit) {
   /* ---- your order ---- */
   function reviewView() {
     return [
-      h('div', { class: 'crumb' }, h('span', null, `Apothecary${state.menu.table ? ` · Table ${state.menu.table.id}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
+      h('div', { class: 'crumb' }, h('span', null, `Apothecary${state.menu.table ? ` · ${at(state.menu.table.id)}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
       h('div', { class: 'body' },
         h('h1', { class: 'fancy', id: 'sheet-title', tabindex: '-1', vars: { 'font-size': '28px' } }, 'Your order'),
         h('div', null, state.lines.map((l, n) => {
@@ -667,7 +669,7 @@ function tavernOrderPage(kit) {
 
 /** The staff's side: drinks to make, the ring, and each drink's recipe card */
 function tavernStaffPage(kit) {
-  const { h, s, look, mug, lair, loginUrl, base } = kit;
+  const { h, s, look, mug, lair, loginUrl, base, at } = kit;
   const root = document.getElementById('app');
   const state = { tables: null, queue: null, gate: '', recipe: null, say: '', ring: false, skew: 0, sure: null, failed: 0 };
 
@@ -763,14 +765,14 @@ function tavernStaffPage(kit) {
         d.words ? h('small', null, d.words) : null,
         d.recipe?.note ? h('span', { class: 'tag' }, `Note: ${d.recipe.note}`) : null),
       mine ? h('button', { type: 'button', class: 'ghost', 'aria-label': `Recipe for ${d.name}`, on: { click: () => openRecipe(order.id, d.id) } }, 'Recipe') : null,
-      mine ? h('button', { type: 'button', class: 'go', 'aria-label': `${d.name} for table ${order.table} is done`, on: { click: () => act(`tavern/drinks/${encodeURIComponent(d.id)}/done`) } }, 'Done') : null);
+      mine ? h('button', { type: 'button', class: 'go', 'aria-label': `${d.name} for ${at(order.table)} is done`, on: { click: () => act(`tavern/drinks/${encodeURIComponent(d.id)}/done`) } }, 'Done') : null);
   }
   function orderCard(o) {
     const started = Boolean(o.onIt) || !o.ringing;
     const waited = mins(now() - o.at);
     const who = o.onIt ? `${o.onIt.by ? `${o.onIt.by}'s on it` : 'Being made'} · ${mins(now() - o.onIt.at)} min` : started ? `Being made · ${waited} min` : `waiting ${waited} min`;
-    return h('section', { class: `order ${started ? 'mine' : 'new'}`, 'aria-label': `Table ${o.table}, ${o.name}` },
-      h('div', { class: 'who' }, h('strong', null, `Table ${o.table} · ${o.name}`), h('span', null, who)),
+    return h('section', { class: `order ${started ? 'mine' : 'new'}`, 'aria-label': `${at(o.table)}, ${o.name}` },
+      h('div', { class: 'who' }, h('strong', null, `${at(o.table)} · ${o.name}`), h('span', null, who)),
       o.drinks.map((d) => drinkRow(o, d, started)),
       started ? null : h('button', { type: 'button', class: 'go wide', vars: { 'font-size': '17px' }, on: { click: () => act(`tavern/orders/${encodeURIComponent(o.id)}/on-it`) } }, 'On it'));
   }
@@ -790,8 +792,8 @@ function tavernStaffPage(kit) {
       q.orders.length ? q.orders.map(orderCard) : h('p', { class: 'notice' }, 'No drinks to make. New orders land here, oldest first.'),
       state.tables
         ? h('section', { class: 'notice', 'aria-label': 'Table links' },
-          h('h2', { class: 'label', vars: { margin: '0 0 6px' } }, "Each table's own order link (for its QR card)"),
-          h('div', { class: 'picks' }, state.tables.map((tb) => h('a', { class: 'pill', href: `${base}/apothecary?t=${encodeURIComponent(tb.code)}`, vars: { 'text-decoration': 'none', 'min-height': '44px', display: 'flex', 'align-items': 'center' } }, `Table ${tb.id}`))))
+          h('h2', { class: 'label', vars: { margin: '0 0 6px' } }, "Each QR card's own order link"),
+          h('div', { class: 'picks' }, state.tables.map((tb) => h('a', { class: 'pill', href: `${base}/apothecary?t=${encodeURIComponent(tb.code)}`, vars: { 'text-decoration': 'none', 'min-height': '44px', display: 'flex', 'align-items': 'center' } }, at(tb.id)))))
         : h('button', { type: 'button', class: 'ghost wide', on: { click: async () => {
           const { status, data } = await lair('GET', 'tavern/tables');
           if (status === 200) state.tables = data.tables;
@@ -825,7 +827,7 @@ function tavernStaffPage(kit) {
         h('div', null,
           h('h1', { class: 'fancy', id: 'recipe-title', tabindex: '-1' }, r.title),
           d.fantasy ? h('div', { class: 'fname' }, `${d.no ? `No. ${d.no} · ` : ''}${d.fantasy}`) : null,
-          h('div', { class: 'muted', vars: { 'margin-top': '4px' } }, `Table ${o.table} · ${o.name} · ${r.cup}`))),
+          h('div', { class: 'muted', vars: { 'margin-top': '4px' } }, `${at(o.table)} · ${o.name} · ${r.cup}`))),
       d.words ? h('p', { class: 'notice' }, d.words) : null,
       r.note ? h('p', { class: 'notice gold' }, `Note from ${o.name}: ${r.note}`) : null,
       h('div', { class: 'goes' }, h('h2', null, 'What goes in'), r.ingredients.map((i) => h('div', null, h('span', null, i.what), h('b', null, i.amount)))),

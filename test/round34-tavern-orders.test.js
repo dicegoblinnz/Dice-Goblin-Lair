@@ -78,7 +78,8 @@ afterEach(() => {
 async function codeOf(table = 'T4') {
   const res = await call('GET', 'tavern/tables', null, 'staff');
   assert.equal(res.status, 200, said(res));
-  return res.data.tables.find((t) => t.id === table).code;
+  // a QR card covers the tables next to each other, so find the card this table is on
+  return res.data.tables.find((t) => t.tables.includes(table)).code;
 }
 const TARO = { item: 'taro-milk', options: {} };
 const LEMONADE = { item: 'strawberry-lemonade', options: {} };
@@ -97,7 +98,7 @@ test("the menu opens only from a table's code (its QR card); ordering is open on
   assert.ok(!seen.data.locked && !JSON.stringify(seen.data).includes('scoops'), 'no recipes on the menu');
 
   const atTable = await call('GET', `tavern/menu?t=${code}`);
-  assert.deepEqual(atTable.data.table, { id: 'T4', room: 'Common room' });
+  assert.deepEqual(atTable.data.table, { id: 'T3 & T4', room: 'Common room', tables: ['T3', 'T4'] });
 
   now = NOW + 10 * HOUR; // 11pm: closed
   assert.equal((await call('GET', `tavern/menu?t=${code}`)).data.open, false);
@@ -120,7 +121,7 @@ test("an order goes on today's tab as locked lines at the Lair's prices, and My 
   }, 'sam');
   assert.equal(res.status, 200, said(res));
   assert.equal(res.data.order.total, 900 + 100 + 800);
-  assert.equal(res.data.order.table, 'T4');
+  assert.equal(res.data.order.table, 'T3 & T4');
   assert.deepEqual(res.data.order.drinks.map((d) => [d.name, d.status, d.price]), [['Taro Milk', 'waiting', 1000], ['Strawberry Lemonade', 'waiting', 800]]);
   assert.ok(!JSON.stringify(res.data).includes('scoops'), 'the recipe is for staff');
 
@@ -200,7 +201,7 @@ test("the staff's list: drinks to make, oldest first, each with its recipe card;
   now = NOW + 5 * MIN;
 
   let q = (await call('GET', 'tavern/queue', null, 'staff')).data;
-  assert.deepEqual(q.orders.map((o) => [o.id, o.table, o.waited]), [[first.id, 'T4', 5 * MIN], [second.id, 'T7', 2 * MIN]]);
+  assert.deepEqual(q.orders.map((o) => [o.id, o.table, o.waited]), [[first.id, 'T3 & T4', 5 * MIN], [second.id, 'T7 & T8', 2 * MIN]]);
   assert.equal(q.orders[0].name, 'Sam');
   assert.equal(q.ringing, 2);
   const card = q.orders[0].drinks[0].recipe;
@@ -279,13 +280,13 @@ test('the Rush sign: staff put it out, only the quick drinks can be ordered, and
   assert.equal(time.key(now), '2026-10-02');
 });
 
-test("every table has its own code, staff only, and it stays the same", async () => {
+test("every QR card has its own code, staff only, and it stays the same", async () => {
   assert.equal((await call('GET', 'tavern/tables', null, 'sam')).status, 403);
   const a = (await call('GET', 'tavern/tables', null, 'staff')).data.tables;
   const b = (await call('GET', 'tavern/tables', null, 'staff')).data.tables;
-  assert.equal(a.length, 20);
+  assert.equal(a.length, 10, 'twenty tables, two to a card');
   assert.deepEqual(a, b);
-  assert.equal(new Set(a.map((t) => t.code)).size, 20);
+  assert.equal(new Set(a.map((t) => t.code)).size, 10);
   assert.match(a[0].code, /^[A-HJ-NP-Z2-9]{8}$/);
 });
 
@@ -301,4 +302,34 @@ test("a drink nobody ever made stops ringing: the staff's list holds the last 12
   assert.deepEqual([q.orders.length, q.ringing], [0, 0]);
   // it's still on their tab: the till takes it off if it was never made
   assert.equal((await call('GET', 'tavern/mine', null, 'sam')).status, 200);
+});
+
+test('one QR card for two tables next to each other, one for the main table of three, one for a room with a single table', async () => {
+  // Mo, 20 Nov 2026: "have one code per two tables next to each other the main table with 3 on it is one code and the
+  // fancy room is another code"
+  const rooms = [
+    { id: 'main', name: 'Main room', code: 'T', tables: 8, seats: 4, order: 1 },
+    { id: 'fancy', name: 'Fancy room', code: 'F', tables: 1, seats: 6, order: 2 },
+  ];
+  lair.rulesCache = rulesFromSettings({ lair_hours: TEST_HOURS, lair_shop_tables: 'T1-T3' }, rooms, []);
+  const spots = (await call('GET', 'tavern/tables', null, 'staff')).data.tables;
+  assert.deepEqual(spots.map((s) => [s.id, s.tables, s.room]), [
+    ['T1, T2 & T3', ['T1', 'T2', 'T3'], 'Main room'],
+    ['T4 & T5', ['T4', 'T5'], 'Main room'],
+    ['T6 & T7', ['T6', 'T7'], 'Main room'],
+    ['T8', ['T8'], 'Main room'], // the odd one out keeps a card of its own
+    ['F1', ['F1'], 'Fancy room'],
+  ]);
+  assert.equal(new Set(spots.map((s) => s.code)).size, 5);
+  for (const s of spots) assert.match(s.code, /^[A-HJ-NP-Z2-9]{8}$/);
+  // the same cards and codes every time
+  assert.deepEqual((await call('GET', 'tavern/tables', null, 'staff')).data.tables, spots);
+  // an order from the pair's card names both tables to the staff
+  const order = await call('POST', 'tavern/orders', { table: spots[1].code, lines: [TARO] }, 'sam');
+  assert.equal(order.data.order.table, 'T4 & T5');
+  assert.equal((await call('GET', 'tavern/queue', null, 'staff')).data.orders[0].table, 'T4 & T5');
+  // a code from before the cards were paired (the pair's second table had its own) opens nothing now
+  lair.sql.exec("INSERT INTO tavern_tables (table_id, code, made_at) VALUES ('T5', 'OLDCODE5', 1)");
+  assert.deepEqual((await call('GET', 'tavern/menu?t=OLDCODE5')).data, { locked: true, table: null });
+  assert.equal(said(await call('POST', 'tavern/orders', { table: 'OLDCODE5', lines: [TARO] }, 'sam')), `422 ${TAVERN_WORDS.table}`);
 });

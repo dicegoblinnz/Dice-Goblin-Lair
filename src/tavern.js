@@ -11,7 +11,7 @@
 //
 // These are Lair methods (lair.js copies them onto Lair.prototype). The same rule holds: every await first, then one
 // synchronous read-check-write.
-import { LairTime, RuleError, makeId, tableIndex, windowAt } from './core.js';
+import { LairTime, RuleError, makeId, windowAt } from './core.js';
 import { tavernMenuView, tavernPrice, tavernRecipe } from './tavern-menu.js';
 
 const TZ = 'Pacific/Auckland';
@@ -90,18 +90,34 @@ export const tavernMethods = {
     return Boolean(row && row.value === this.tavernDay(rules, now));
   },
 
-  /** A table as pages show it, or null when the floor has no such table */
-  tavernTableView(id, rules) {
-    const t = tableIndex(rules.rooms).get(id);
-    return t ? { id: t.id, room: t.roomObj?.name || '' } : null;
+  /**
+   * The QR cards (Mo, 20 Nov 2026: one code for two tables next to each other, one for the main table of three, one for
+   * the Fancy room): in each room the shop's own tables (lair_shop_tables, the main table) share a card, and the rest
+   * go two to a card in the order they're numbered, an odd one out on its own. Each is { id, tables, room }: id is how
+   * it's named to people ("T4 & T5"), and its code is its first table's.
+   */
+  tavernSpots(rules) {
+    const main = new Set(rules.shopTables || []);
+    const name = (ids) => (ids.length > 1 ? `${ids.slice(0, -1).join(', ')} & ${ids.at(-1)}` : ids[0]);
+    const spots = [];
+    for (const room of rules.rooms) {
+      const ids = room.tables.map((t) => t.id);
+      const shared = ids.filter((id) => main.has(id));
+      const rest = ids.filter((id) => !main.has(id));
+      const groups = shared.length ? [shared] : [];
+      for (let i = 0; i < rest.length; i += 2) groups.push(rest.slice(i, i + 2));
+      for (const tables of groups) spots.push({ id: name(tables), tables, room: room.name || '' });
+    }
+    return spots;
   },
 
-  /** The table a QR card's code belongs to, or null. No awaits. */
+  /** The card a code belongs to ({ id, room, tables }), or null. Only a card's own code counts. No awaits. */
   tavernTableByCode(code, rules) {
     const text = String(code ?? '').trim().toUpperCase();
     if (!/^[A-Z0-9]{4,16}$/.test(text)) return null;
     const row = this.sql.exec('SELECT table_id FROM tavern_tables WHERE code = ?', text).toArray()[0];
-    return row ? this.tavernTableView(row.table_id, rules) : null;
+    const spot = row ? this.tavernSpots(rules).find((s) => s.tables[0] === row.table_id) : null;
+    return spot ? { id: spot.id, room: spot.room, tables: spot.tables } : null;
   },
 
   /**
@@ -359,7 +375,7 @@ export const tavernMethods = {
     return { rush: this.tavernRush(rules, now) };
   },
 
-  /** GET /tavern/tables (staff): every table on the floor with its code, for the QR cards. A table gets its code once. */
+  /** GET /tavern/tables (staff): every QR card with its tables and its code. A card gets its code once (its first table's). */
   async tavernTables(who) {
     this.tavernGate(who);
     const rules = await this.rules();
@@ -368,15 +384,15 @@ export const tavernMethods = {
     const have = new Map(this.sql.exec('SELECT table_id, code FROM tavern_tables').toArray().map((r) => [r.table_id, r.code]));
     const taken = new Set(have.values());
     const tables = [];
-    for (const [id, t] of tableIndex(rules.rooms)) {
-      let code = have.get(id);
+    for (const spot of this.tavernSpots(rules)) {
+      let code = have.get(spot.tables[0]);
       if (!code) {
         do code = newCode();
         while (taken.has(code));
         taken.add(code);
-        this.write('INSERT INTO tavern_tables (table_id, code, made_at) VALUES (?, ?, ?)', id, code, now);
+        this.write('INSERT INTO tavern_tables (table_id, code, made_at) VALUES (?, ?, ?)', spot.tables[0], code, now);
       }
-      tables.push({ id, room: t.roomObj?.name || '', code });
+      tables.push({ ...spot, code });
     }
     return { tables };
   },
