@@ -244,10 +244,11 @@ test('round 25: the dates, as the theme works them out', () => {
 
 test('round 25: the customer\'s words, word for word', () => {
   assert.equal(W.toldSubject('#2041'), 'Ordered in for you: order #2041');
-  assert.equal(W.toldIntro('Kai', false, 'Thursday 26 November'), "Thanks, Kai! It isn't on our shelf, so it's going on our next order from Games Workshop. It should be with you by Thursday 26 November.");
-  assert.equal(W.toldIntro('', true, 'Thursday 26 November'), "Thanks for your order! Some of it isn't on our shelf, so it's going on our next order from Games Workshop. It should be with you by Thursday 26 November.");
+  // 19 Nov 2026 (Mo): the only promise is that it's sent within the week of it reaching us, so no date
+  assert.equal(W.toldIntro('Kai', false), "Thanks, Kai! It isn't on our shelf, so it's going on our next order from Games Workshop.");
+  assert.equal(W.toldIntro('', true), "Thanks for your order! Some of it isn't on our shelf, so it's going on our next order from Games Workshop.");
   assert.deepEqual(W.toldOutro, {
-    ship: "We'll post your order in one parcel once everything's here.",
+    ship: "We'll post your order in one parcel within the week of everything reaching us.",
     pickup: "We'll email you when it's in at the Lair, ready to collect.",
     counter: "We'll email you when it's in, ready to collect at the Lair.",
     none: "We'll let you know when it's in.",
@@ -270,7 +271,8 @@ test('round 25: a GW kit that isn\'t on the shelf is ordered in: recorded, tagge
   assert.deepEqual(marks, [['gid://shopify/Order/2041', 'Ordered in', 'Ordered in from Games Workshop: 1 × Combat Patrol: Space Marines (99120101386). Should be with them by Mon 30 Nov. One parcel: send it all once it\'s in.']]);
   const [told] = mailsTo('kai@example.com');
   assert.equal(told.subject, 'Ordered in for you: order #2041');
-  assert.match(told.text, /Thanks, Kai! It isn't on our shelf, so it's going on our next order from Games Workshop\. It should be with you by Monday 30 November\./);
+  assert.match(told.text, /Thanks, Kai! It isn't on our shelf, so it's going on our next order from Games Workshop\./);
+  assert.doesNotMatch(told.text, /should be with you|30 November/, 'no date promised (Mo, 19 Nov 2026)');
   assert.match(told.text, /1 × Combat Patrol: Space Marines/);
   assert.match(told.text, /We'll email you when it's in at the Lair, ready to collect\./);
   assert.match(told.text, /refund it in full/);
@@ -314,7 +316,8 @@ test('round 25: a counter sale with no customer is ordered in quietly, and an ad
   assert.equal(order.delivery, 'counter');
   const soon = await pay(2051, [gwLine(1, SOON, 1)], { who: MIA });
   assert.equal(soon.gw.lines[0].promise, '2026-12-07');
-  assert.match(mailsTo('mia@example.com')[0].text, /Monday 7 December/);
+  assert.doesNotMatch(mailsTo('mia@example.com')[0].text, /7 December/, 'no date promised (Mo, 19 Nov 2026)');
+  assert.equal(lair.sql.exec('SELECT promise FROM gw_orders WHERE order_id = ?', 'gid://shopify/Order/2051').one().promise, '2026-12-07', 'kept for staff');
 });
 
 test('round 25: an order placed before midnight on Monday is that week\'s, however late its webhook comes', async () => {

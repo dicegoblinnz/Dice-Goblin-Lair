@@ -11,7 +11,8 @@ email. This round adds the rest to the staff page's Warhammer tab (owner only):
 - **When the box comes**: scan or type what came and add it to stock in Shopify in one go. The Lair marks customers'
   items in straight away: It's in emails, and what to pack or put aside.
 - **Order dates**: skip a week or change its dates. The website, the emails and Tuesday's list follow (they already read
-  the shop's `gw.schedule`), and customers with orders that week can be told their new date.
+  the shop's `gw.schedule`), and the Lair's late flags follow. Customers aren't emailed a new date (19 Nov 2026, Mo: "sent within the week" is the
+  only delivery promise; `tell` is still accepted and sends nothing).
 
 The code: `src/gw-week.js` (everything below), `src/gw-orders.js` (lines GW couldn't supply, top-ups on the list, the list
 kept once sent), `src/shopify.js` (`gwReceiveLookup`, `gwAdjust`, `gwScheduleRead`, `gwScheduleSave`), `src/lair.js`
@@ -65,8 +66,8 @@ from 0 to 99."
 
 A code GW couldn't supply, on a list sent in the last 8 weeks. Its lines on that list still to come:
 
-- `again`: back on the next list (the open week's), with that week's date. Customers with an email hear the new date
-  when `tell` is true.
+- `again`: back on the next list (the open week's), with that week's date. Customers with an email hear it's on the next
+  order (no date since 19 Nov 2026) when `tell` is true.
 - `refund`: refunds to do. Customers with an email hear it's not coming and is being refunded in full, when `tell` (no
   amount: the line's price is before any discount, and Shopify's refund says what they paid). Their
   units stop waiting for stock (stock that comes in goes to other orders or the shelf), an order with nothing else to

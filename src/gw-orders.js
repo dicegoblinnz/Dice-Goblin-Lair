@@ -61,12 +61,13 @@ export const GW_WORDS = {
   // the customer's email when it's ordered
   toldSubject: (name) => (name ? `Ordered in for you: order ${name}` : 'Ordered in for you'),
   toldTitle: 'Ordered in from Games Workshop',
-  toldIntro: (first, some, promise) => `${first ? `Thanks, ${first}!` : 'Thanks for your order!'} ${some ? "Some of it isn't" : "It isn't"} on our shelf, so it's going on our next order from Games Workshop. It should be with you by ${promise}.`,
+  // no date for the customer (Mo, 19 Nov 2026: "Make it sent within the week and that's the only promise we need to
+  // make"): ordered-in is sent within the week of it reaching us; the date stays for staff (the note, late flags)
+  toldIntro: (first, some) => `${first ? `Thanks, ${first}!` : 'Thanks for your order!'} ${some ? "Some of it isn't" : "It isn't"} on our shelf, so it's going on our next order from Games Workshop.`,
   toldRow: 'Ordered in',
-  toldWhen: 'Should be with you by',
   toldOrder: 'Order',
   toldOutro: {
-    ship: "We'll post your order in one parcel once everything's here.",
+    ship: "We'll post your order in one parcel within the week of everything reaching us.",
     pickup: "We'll email you when it's in at the Lair, ready to collect.",
     counter: "We'll email you when it's in, ready to collect at the Lair.",
     none: "We'll let you know when it's in.",
@@ -401,14 +402,12 @@ export const gwOrderMethods = {
     const { order, lines } = this.gwOrderRows(orderId);
     if (!order?.email || order.told_at || !lines.length) return false;
     const some = order.units < order.all_units;
-    const promise = gwLabel(order.promise);
     const outro = GW_WORDS.toldOutro[order.delivery] || GW_WORDS.toldOutro.none;
     const sent = await this.mail(this.letter(order.email, GW_WORDS.toldSubject(order.name), {
       title: GW_WORDS.toldTitle,
-      intro: GW_WORDS.toldIntro(order.first_name, some, promise),
+      intro: GW_WORDS.toldIntro(order.first_name, some),
       details: [
         ...lines.map((l, i) => [i === 0 ? GW_WORDS.toldRow : '', lineText(l)]),
-        [GW_WORDS.toldWhen, promise],
         [GW_WORDS.toldOrder, order.name || ''],
       ],
       outro: [outro, GW_WORDS.refund],

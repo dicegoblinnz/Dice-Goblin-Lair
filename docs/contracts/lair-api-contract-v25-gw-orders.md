@@ -49,8 +49,10 @@ With any ordered-in units: the order is tagged `Ordered in` and a paragraph adde
 - counter: "Ordered in from Games Workshop at the counter: … Should be in by Thu 26 Nov: put it aside for them."
 
 Shopify turning the tag down (before `write_orders` is approved) is tried again by maintenance, three a run, for two
-weeks. A customer with an email gets "Ordered in for you: order #2041" (words in `GW_WORDS`): what's ordered in, the
-date, how it reaches them (one parcel, or an email when it's in), and the refund line.
+weeks. A customer with an email gets "Ordered in for you: order #2041" (words in `GW_WORDS`): what's ordered in, how
+it reaches them (no date since 19 Nov 2026: Mo made "sent within the week" the only delivery promise, so a posted order
+says it's sent in one parcel within the week of everything reaching us; the date stays on the order note for staff; a pickup is emailed when it's in), and the refund
+line.
 
 `ordersPaid`'s answer adds `gw: { units, lines: [{ code, quantity, promise }] }` for an order with GW lines.
 

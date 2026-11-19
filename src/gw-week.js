@@ -73,9 +73,9 @@ export const GW_WEEK_WORDS = {
   dates: "Pick dates after that Monday: GW ships, then it's with customers by the second date, within eight weeks.",
   clash: 'The dates changed just now. Have another look, then try again.',
   // customers (Gobgob, plain first: these are about their order)
-  againSubject: (name) => (name ? `A new date for order ${name}` : 'A new date for your order'),
+  againSubject: (name) => (name ? `A little longer: order ${name}` : 'A little longer for your order'),
   againTitle: 'A little longer',
-  againIntro: (first, what, promise) => `${first ? `Hi ${first}! ` : ''}Games Workshop couldn't send ${what} this week, so it's on our next order. It should now be with you by ${promise}.`,
+  againIntro: (first, what) => `${first ? `Hi ${first}! ` : ''}Games Workshop couldn't send ${what} this week, so it's on our next order.`,
   againRow: 'On our next order',
   againOutro: (reply) => (reply ? "Rather not wait? Reply to this email and we'll refund it in full." : "Rather not wait? Let us know and we'll refund it in full."),
   refundSubject: (name) => (name ? `Sorry: part of order ${name} isn't coming` : "Sorry: part of your order isn't coming"),
@@ -84,11 +84,6 @@ export const GW_WEEK_WORDS = {
   refundRow: 'Not coming',
   refundRest: 'The rest of your order is still on its way.',
   refundOutro: 'Gobgob is sorry about this one.',
-  datesSubject: (name) => (name ? `A new date for order ${name}` : 'A new date for your order'),
-  datesTitle: 'A new date',
-  datesIntro: (first, promise, later) => (later
-    ? `${first ? `Hi ${first}! ` : ''}Games Workshop's delivery is running later than usual, so your order should now be with you by ${promise}. Sorry for the wait.`
-    : `${first ? `Hi ${first}! ` : ''}Good news: your order should now be with you by ${promise}.`),
 };
 const W = GW_WEEK_WORDS;
 
@@ -396,11 +391,10 @@ export const gwWeekMethods = {
         const mine = rows.filter((r) => r.order_id === orderId);
         if (!tell || !order || order.ready_at || !moved) continue;
         const what = listText(mine.map((r) => lineText(r, left(r))));
-        const label = gwLabel(moved.after);
         letters.push(this.gwLetter(order, W.againSubject(order.name), {
           title: W.againTitle,
-          intro: W.againIntro(order.first_name, what, label),
-          details: [[W.againRow, what], [GW_WORDS.toldWhen, label], [GW_WORDS.toldOrder, order.name || '']],
+          intro: W.againIntro(order.first_name, what),
+          details: [[W.againRow, what], [GW_WORDS.toldOrder, order.name || '']],
           outro: [GW_WORDS.toldOutro[order.delivery] || GW_WORDS.toldOutro.none, W.againOutro(isEmail(this.env.STAFF_EMAIL))],
         }, `gw-again-${String(orderId).split('/').pop()}-${cutoff}-${code}`));
       }
@@ -729,7 +723,7 @@ export const gwWeekMethods = {
 
   /**
    * After a week's dates changed: every line still to come whose week is (or was) that Monday gets its week's date, and
-   * its order's date follows. Returns the emails for customers whose date moved, when `tell` (sent by the caller). No awaits.
+   * its order's date follows. No customer emails since 19 Nov 2026 (an empty list, kept for the caller). No awaits.
    */
   gwRedate(before, after, monday, tell, now = Date.now()) {
     const today = new LairTime(this.rulesCache?.tz || TZ).key(now);
@@ -745,20 +739,9 @@ export const gwWeekMethods = {
       this.write('UPDATE gw_orderins SET promise = ? WHERE id = ?', promise, row.id);
       moved.add(row.order_id);
     }
-    const letters = [];
-    for (const orderId of moved) {
-      const change = this.gwOrderDate(orderId, today);
-      if (!tell || !change) continue;
-      const { order } = this.gwOrderRows(orderId);
-      if (!order || order.ready_at) continue;
-      const label = gwLabel(change.after);
-      letters.push(this.gwLetter(order, W.datesSubject(order.name), {
-        title: W.datesTitle,
-        intro: W.datesIntro(order.first_name, label, !change.before || change.after > change.before),
-        details: [[GW_WORDS.toldWhen, label], [GW_WORDS.toldOrder, order.name || '']],
-        outro: GW_WORDS.toldOutro[order.delivery] || GW_WORDS.toldOutro.none,
-      }, `gw-dates-${String(orderId).split('/').pop()}-${change.after}`));
-    }
-    return letters;
+    // customers aren't emailed a new date (Mo, 19 Nov 2026): they're only promised it's sent within the week of it
+    // reaching us, so `tell` no longer sends anything here. Each order's own date still follows its lines (staff, late flags).
+    for (const orderId of moved) this.gwOrderDate(orderId, today);
+    return [];
   },
 };
