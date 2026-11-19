@@ -102,17 +102,46 @@ login, as Stock off).
 - **Recipes**: Mo's first rule is in (the creamy range: 3 scoops of creamer, 2 scoops of the flavour). The rest are
   still drafts (`draft: true` on every card) until his full list arrives; the amounts live in `src/tavern-menu.js`.
 
+## 4a. The two screens (round 34b, `src/tavern-pages.js`, built 19 Nov 2026 on branch `r34-tavern-orders`, not live)
+
+Mo (19 Nov 2026): "build the order page at the table and the staff drinks screen with the ring, matching the canvas
+'Tavern ordering: phone screens'." And of the mockups: colour, each drink as an icon or drawing, the fancy name on top
+with the actual name under it, kept apart from the other descriptors, animated if possible.
+
+- **Served by the Lair, through the store** (a change from "the order page (theme)"): `GET /tavern` is the order page
+  and `GET /tavern/drinks` the staff's list, so they open at `www.dicegoblin.nz/apps/liar/tavern?t=<code>` and
+  `.../apps/liar/tavern/drinks`. Shopify still says who's logged in, the theme needs only a link, and a table's QR card
+  points at the first address. Each page is the same for everyone and holds nothing about anyone: it asks the routes
+  in sections 3 and 4. Only its own script and styles run (a fresh nonce each time), it's never kept or framed, and it
+  only ever shows what the Lair sends as text.
+- **The order page**: every drink as a card (its drawing in its own colour, the fantasy name, then "No. 5 · Taro Milk",
+  then what's in it), in Common, Rare, Legendary, Brew Your Own and Hot drinks. The green plus opens **make it your
+  way** (topping, ice, add sweetness, takeaway cup, oat milk, extra topping, make it frozen, a note; Brew Your Own's
+  base and flavours; which coffee or tea), with the price on its button. The bar along the bottom adds the order up
+  and opens it to take a drink off; **Order** sends it. Nobody logged in: the bar says Log in to order, and the drinks
+  picked are still there after logging in. No table code, or closed: the menu, and no Order button. The Rush sign out:
+  the slow drinks show as Resting. After ordering: "Your drinks today", each In the queue, Being made, On its way or
+  Cancelled, asked for again every 20 seconds while one is still to come.
+- **The staff's list**: orders oldest first. A new one is a light card with **On it**; once someone's on it, each drink
+  has **Recipe** and **Done**. The recipe card: the plain name, the cup, how it was ordered, the member's note, what
+  goes in, the steps, **Done**, and "Can't make it: cancel this drink" (two taps). The Rush sign is a button at the top.
+- **The ring**: the page asks for the list every 5 seconds. With the ring turned on (one tap, which a phone needs
+  before a page may make a sound), it rings and buzzes every 2 seconds while any order has nobody on it, on every phone
+  with the page open, and keeps the screen awake. It can't ring a locked phone or a closed page: that's the Drinks app
+  below.
+- Checked in a real browser by `tools/qa/round34-tavern/screens.mjs` (orders as a member, makes them as staff).
+
 **Still to build:**
 
-- **The Drinks app**: a page staff add to their phone's home screen (served by the Lair, not the theme, so it can ring
-  and keep working as an app). A phone is linked once from the till (Link a phone: a code that lasts 10 minutes), then
-  the person's till PIN; it stays linked until the owner unlinks it on the till.
+- **The Drinks app**: the staff's list added to a phone's home screen, so it rings when the phone is locked. A phone
+  is linked once from the till (Link a phone: a code that lasts 10 minutes), then the person's till PIN; it stays
+  linked until the owner unlinks it on the till.
 - **Who's rung**: the person on call (Caleb Friday to Sunday, Felix Monday to Thursday; the owner changes this on the
   till), every 30 seconds until someone taps **On it**; after **2 minutes**, every linked staff phone and Mo's too.
 - **Android**: a notification that rings and vibrates and stays until it's tapped. **iPhone**: the app must be added to
-  the home screen (iOS 16.4 or later) for notifications; the phone's own notification sound plays. With the app open
-  on either, it rings loudly until On it is tapped.
-- **The screens**: the order page at the table (theme), the list and its recipe cards on staff phones and the till.
+  the home screen (iOS 16.4 or later) for notifications; the phone's own notification sound plays.
+- The list and its recipe cards on the till.
+- **Mo's full recipe list**: not in yet (19 Nov 2026). Every card still says "Draft amounts until Mo's list is in."
 
 ## 5. The order pad (round 34c)
 

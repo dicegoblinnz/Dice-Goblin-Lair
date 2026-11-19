@@ -313,7 +313,7 @@ function toppingIngredients(o) {
 
 function toppingStep(o) {
   const names = [o.topping, o.extraTopping].filter(Boolean).map((id) => TOPPING.get(id).short);
-  return names.length ? `${names.join(' and ').replace(/^./, (c) => c.toUpperCase())} in the mug first (${TOPPING_SCOOPS} each).` : null;
+  return names.length ? `${names.join(' and ').replace(/^./, (c) => c.toUpperCase())} in the mug first (${TOPPING_SCOOPS}${names.length > 1 ? ' each' : ''}).` : null;
 }
 
 function sweetness(o, ingredients, steps, when) {
