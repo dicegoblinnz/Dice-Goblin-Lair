@@ -119,6 +119,8 @@ import { ORDER_ROLL_COLUMNS, ORDER_ROLL_TABLES, orderRollMethods } from './order
 import { COMMANDER_DEAL_TABLES, commanderDealMethods } from './commander-deal.js';
 // Round 39: Stock off: lots scanned off the shop's count at a market or in the shop, with no order (src/stock-off.js)
 import { STOCK_OFF_TABLES, stockOffMethods } from './stock-off.js';
+// Round 34: the Tavern's orders, onto the tab and the staff's drinks list (src/tavern.js)
+import { TAVERN_ORDER_TABLES, tavernMethods } from './tavern.js';
 import { QUEST_TABLES, questMethods } from './quests.js';
 // Round 43: what's on the shelf, for the home page's d20 roller
 import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
@@ -1207,6 +1209,8 @@ export class Lair {
     for (const statement of CREDIT_GIFT_TABLES) this.sql.exec(statement);
     // Round 39: Stock off's lots and the owner's lists (src/stock-off.js)
     for (const statement of STOCK_OFF_TABLES) this.sql.exec(statement);
+    // Round 34: the Tavern's table codes, orders and drinks (src/tavern.js)
+    for (const statement of TAVERN_ORDER_TABLES) this.sql.exec(statement);
     // Round 41: quests' facts, weeks, riddles and invite codes (src/quests.js); the first four riddles go in once quests
     // are on
     for (const statement of QUEST_TABLES) this.sql.exec(statement);
@@ -2226,6 +2230,11 @@ export class Lair {
       if (request.method === 'GET' && a === 'me' && !b) return json(await this.me(who, url));
       // 17 Nov 2026 (contract v45-guard): the tab menu's counter drinks at the prices the tab charges (src/tab.js)
       if (request.method === 'GET' && a === 'tab' && b === 'prices' && !c) return json(await this.tabPricesView(who));
+      // Round 34 (src/tavern.js): the Tavern's menu, a member's drinks today, and for staff the drinks list and table codes
+      if (request.method === 'GET' && a === 'tavern' && b === 'menu' && !c) return json(await this.tavernMenu(url));
+      if (request.method === 'GET' && a === 'tavern' && b === 'mine' && !c) return json(await this.tavernMine(who));
+      if (request.method === 'GET' && a === 'tavern' && b === 'queue' && !c) return json(await this.tavernQueue(who));
+      if (request.method === 'GET' && a === 'tavern' && b === 'tables' && !c) return json(await this.tavernTables(who));
       // Round 41: a member's quests, and the staff's riddles (src/quests.js)
       if (request.method === 'GET' && a === 'me' && b === 'quests' && !c) return json(await this.myQuests(who));
       if (request.method === 'GET' && a === 'quests' && b === 'riddles' && !c) return json(await this.listRiddles(who));
@@ -2528,6 +2537,12 @@ export class Lair {
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
       if (a === 'prizes' && b && c === 'done') return json(await this.prizeDone(decodeURIComponent(b), who));
       if (a === 'tab' && !b) return json(await this.saveTab(body, who));
+      // Round 34 (src/tavern.js): an order from a table; staff tap On it and Done, cancel a drink, and put the Rush sign out
+      if (a === 'tavern' && b === 'orders' && !c) return json(await this.tavernOrder(body, who));
+      if (a === 'tavern' && b === 'orders' && c && d === 'on-it' && !parts[4]) return json(this.tavernOnIt(decodeURIComponent(c), who));
+      if (a === 'tavern' && b === 'drinks' && c && d === 'done' && !parts[4]) return json(this.tavernDone(decodeURIComponent(c), who));
+      if (a === 'tavern' && b === 'drinks' && c && d === 'cancel' && !parts[4]) return json(await this.tavernCancel(decodeURIComponent(c), who));
+      if (a === 'tavern' && b === 'rush' && !c) return json(await this.tavernSetRush(body, who));
       if (a === 'tab' && b === 'clear') return json(await this.clearTab(who));
       return json({ error: 'Not found' }, 404);
     } catch (error) {
@@ -8131,13 +8146,17 @@ export class Lair {
   async saveTab(input, who) {
     if (!who.customerId) throw new RuleError('Log in to start a tab.', 401);
     // 17 Nov 2026 (contract v45-guard): priced by the Lair (Shopify's prices), never by the page
-    const items = await this.tabPriced(this.tabItems(input.items));
+    const priced = await this.tabPriced(this.tabItems(input.items));
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
     const current = this.todayTabRow(who.customerId, rules, now);
     const open = current && current.status !== 'paid' ? current : null;
     if (open?.status === 'in-cart') throw new RuleError('Your tab is at the counter already. Pay for that one, then start a fresh one.', 409);
+    // Round 34 (contract v34-tavern): the Tavern's drinks are locked lines. The page can't take one off or change its
+    // count: they're kept as they are, and a locked line the page sends back isn't counted twice.
+    const locked = open ? parse(open.items, []).filter((x) => x.locked) : [];
+    const items = [...priced.filter((x) => !locked.some((l) => l.variantId === x.variantId)), ...locked];
     if (!items.length) {
       if (open) this.write("DELETE FROM tabs WHERE id = ? AND status = 'open'", open.id);
       // Round 9: a bill with this tab on it is cancelled (what it charges has changed)
@@ -8171,7 +8190,13 @@ export class Lair {
     const now = Date.now();
     const current = this.todayTabRow(who.customerId, rules, now);
     if (current?.status === 'in-cart') throw new RuleError('Your tab is at the counter already. Pay for that one, then start a fresh one.', 409);
-    if (current?.status === 'open') this.write("DELETE FROM tabs WHERE id = ? AND status = 'open'", current.id);
+    // Round 34 (contract v34-tavern): the Tavern's drinks stay on it
+    const locked = current?.status === 'open' ? parse(current.items, []).filter((x) => x.locked) : [];
+    if (locked.length) {
+      this.write("UPDATE tabs SET items = ?, total = ?, updated_at = ? WHERE id = ? AND status = 'open'", JSON.stringify(locked), locked.reduce((sum, x) => sum + x.price * x.qty, 0), now, current.id);
+    } else if (current?.status === 'open') {
+      this.write("DELETE FROM tabs WHERE id = ? AND status = 'open'", current.id);
+    }
     // Round 9: a bill with this tab on it is cancelled
     if (current?.status === 'open') this.reconcileBills(rules, now);
     return { tab: this.tabView(this.todayTabRow(who.customerId, rules, now)) };
@@ -11742,6 +11767,8 @@ Object.assign(Lair.prototype, changeMethods);
 Object.assign(Lair.prototype, gmPerkMethods);
 // Round 39: Stock off
 Object.assign(Lair.prototype, stockOffMethods);
+// Round 34: the Tavern's orders (src/tavern.js)
+Object.assign(Lair.prototype, tavernMethods);
 // Round 41: quests (src/quests.js)
 Object.assign(Lair.prototype, questMethods);
 // Round 43: the d20 roller's shelf list (src/shelf-picks.js)

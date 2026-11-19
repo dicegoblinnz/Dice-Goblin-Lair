@@ -22,6 +22,7 @@ import { Lair } from './lair.js';
 import { safeEqual, verifyProxySignature, verifySessionToken, verifyWebhook } from './shopify.js';
 import { withConfig } from './config.js';
 import { feedAllowed } from './walkins.js';
+import { tavernPageFor, tavernPageResponse } from './tavern-pages.js';
 
 export { Lair };
 
@@ -244,6 +245,10 @@ export default {
       }
       const path = (proxyPath ? url.pathname.slice('/proxy'.length) : url.pathname) || '/';
       if (/^\/internal(\/|$)/.test(path)) return json({ error: 'Not found' }, 404);
+      // Round 34b (src/tavern-pages.js): the Tavern's order page and the staff's drinks list are pages the Lair serves
+      // itself through the store. Neither has anything about anyone in it: each asks the routes below for what it shows.
+      const tavernPage = request.method === 'GET' ? tavernPageFor(path) : null;
+      if (tavernPage) return tavernPageResponse(tavernPage);
       const inner = new URL(url);
       inner.pathname = path;
       const headers = new Headers({
