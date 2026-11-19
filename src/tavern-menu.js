@@ -73,18 +73,18 @@ export const TAVERN_ITEMS = [
     make: { syrups: [['Peach syrup', 20], ['Grapefruit syrup', 20]] } },
   { id: 'taro-milk', no: 5, name: 'Taro Milk', fantasy: 'Twilight Tonic', tier: 'rare', kind: 'creamy', rush: true,
     describe: 'taro, creamer', topping: 'brown-sugar-jelly',
-    make: { powders: [['Taro powder', 4]] } },
+    make: { powders: [['Taro powder', 2]] } },
   { id: 'strawberry-milk', no: 6, name: 'Strawberry Milk', fantasy: 'Charm Potion', tier: 'rare', kind: 'creamy', rush: true,
     describe: 'strawberry, creamer', topping: 'strawberry-pearls',
-    make: { powders: [['Strawberry powder', 4]] } },
+    make: { powders: [['Strawberry powder', 2]] } },
   { id: 'honeydew-milk', no: 7, name: 'Honeydew Milk', fantasy: "Dryad's Dew", tier: 'rare', kind: 'creamy', rush: true,
     describe: 'honeydew, creamer', topping: 'mango-pearls',
-    make: { powders: [['Honeydew powder', 4]] } },
+    make: { powders: [['Honeydew powder', 2]] } },
   { id: 'brown-sugar-milk-tea', no: 8, name: 'Brown Sugar Milk Tea', fantasy: 'Dwarven Brew', tier: 'rare', kind: 'milktea', caffeine: true,
     describe: 'black tea, brown sugar, creamer', topping: 'brown-sugar-jelly', make: {} },
   { id: 'thai-milk-tea', no: 9, name: 'Thai Milk Tea', fantasy: "Dragon's Ember", tier: 'rare', kind: 'creamy', caffeine: true, rush: true,
     describe: 'Thai tea, creamer', topping: 'brown-sugar-jelly',
-    make: { powders: [['Thai tea powder', 4]] } },
+    make: { powders: [['Thai tea powder', 2]] } },
   { id: 'strawberry-matcha', no: 10, name: 'Strawberry Matcha', fantasy: "Druid's Bloom", tier: 'rare', kind: 'matcha', caffeine: true,
     describe: 'strawberry, creamer, matcha', topping: 'strawberry-pearls', make: {} },
   { id: 'cookies-cream-shake', no: 11, name: 'Cookies & Cream Shake', fantasy: "Frost Giant's Feast", tier: 'legendary', kind: 'shake',
@@ -320,8 +320,11 @@ function sweetness(o, ingredients, steps, when) {
 
 /** Syrups for Brew Your Own's fruit flavours: 40 ml for one, 20 ml each for two */
 const byoSyrups = (flavours) => flavours.filter((f) => f.kind === 'fruit').map((f, _, all) => [`${f.name.replace(/^./, (c) => c.toUpperCase())} syrup`, all.length > 1 ? 20 : 40]);
-/** Powders for its creamy flavours: 4 scoops for one, 2 each for two */
-const byoPowders = (flavours) => flavours.filter((f) => f.kind === 'creamy').map((f, _, all) => [`${f.name.replace(/^./, (c) => c.toUpperCase())} powder`, all.length > 1 ? 2 : 4]);
+/**
+ * Powders for its creamy flavours: 2 scoops each. Mo (19 Nov 2026): the creamy range is 3 scoops of creamer and 2
+ * scoops of the flavour. Two flavours stay at 2 each, the draft from before, until his full list says otherwise.
+ */
+const byoPowders = (flavours) => flavours.filter((f) => f.kind === 'creamy').map((f) => [`${f.name.replace(/^./, (c) => c.toUpperCase())} powder`, 2]);
 
 function sparklingCard(o, syrups) {
   const ingredients = [...toppingIngredients(o), ...syrups.map(([what, ml]) => ({ what, amount: `${ml} ml` }))];
@@ -341,12 +344,14 @@ function sparklingCard(o, syrups) {
   return { ingredients, steps };
 }
 
+const scoopsOf = (n) => `${n} ${n === 1 ? 'scoop' : 'scoops'}`;
+
 function creamyCard(o, powders, syrups = []) {
   const ingredients = [...toppingIngredients(o)];
-  for (const [what, scoops] of powders) ingredients.push({ what, amount: `${scoops} scoops` });
+  for (const [what, scoops] of powders) ingredients.push({ what, amount: scoopsOf(scoops) });
   for (const [what, ml] of syrups) ingredients.push({ what, amount: `${ml} ml` });
   const steps = [toppingStep(o)];
-  const flavour = [...powders.map(([w, s]) => `${w} ${s} scoops`), ...syrups.map(([w, ml]) => `${w} ${ml} ml`)].join(', ');
+  const flavour = [...powders.map(([w, s]) => `${w} ${scoopsOf(s)}`), ...syrups.map(([w, ml]) => `${w} ${ml} ml`)].join(', ');
   if (o.oat) {
     ingredients.push({ what: 'Hot water', amount: '80 ml' }, { what: 'Oat milk (instead of creamer)', amount: '150 ml' });
     steps.push(`${flavour} into the shaker with 80 ml hot water. Stir until there are no lumps.`, 'Add 150 ml oat milk (no creamer).');

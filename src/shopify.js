@@ -1910,6 +1910,28 @@ export class ShopifyAdmin {
     return out;
   }
 
+  /**
+   * Round 34 (contract v34-tavern): the Tavern's counter-only products by SKU → Map(sku → { variantId, price, title,
+   * variantTitle, sellable }). The Admin API sees products that aren't on the Online Store.
+   */
+  async tavernVariants(skus) {
+    if (!this.configured) throw new Error('Shopify is not connected');
+    const list = [...new Set(skus.map(String).filter((s) => /^[A-Z0-9-]{1,40}$/.test(s)))].slice(0, 60);
+    if (!list.length) return new Map();
+    const data = await this.graphql(
+      `query LairTavernVariants($query: String!) { productVariants(first: 100, query: $query) { nodes { id title sku price product { ${TILL_PRODUCT_FIELDS} } } } }`,
+      { query: list.map((s) => `sku:"${s}"`).join(' OR ') },
+      { version: this.tillVersion, timeout: 10_000 },
+    );
+    const out = new Map();
+    for (const n of data.productVariants?.nodes || []) {
+      if (!n?.id || !n.product || !list.includes(n.sku) || out.has(n.sku)) continue;
+      const product = tillProductOf(n.product);
+      out.set(n.sku, { variantId: lastPart(n.id), price: centsOf(n.price), title: product.title, variantTitle: n.title || 'Default Title', sellable: product.status === 'ACTIVE' && !product.giftCard });
+    }
+    return out;
+  }
+
   async tillVariants(code, dice) {
     const text = String(code ?? '').replace(/["\\]/g, '');
     const query = [...barcodeForms(text).map((form) => `barcode:"${form}"`), `sku:"${text}"`].join(' OR ');

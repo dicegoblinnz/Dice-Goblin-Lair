@@ -55,18 +55,54 @@ one place. Prices are the Lair's: a page never sends a price the Lair believes.
 - Ordering needs a logged-in member (Mo: "it gets added to their account"). Walk-ins order through staff (the order
   pad, section 5).
 
-## 3. Orders onto the tab (round 34a)
+## 3. Orders onto the tab (round 34a, `src/tavern.js`, built 19 Nov 2026 on branch `r34-tavern`, not live)
 
-- `GET /tavern/menu` (anyone): the menu as section 1 (no recipes), `open` (ordering open now), `rush` (only the quick
-  drinks while the Rush sign is out: 1–7 and 9), and the table when `?t=` is a table's code.
-- `POST /tavern/orders { table, lines }` (a logged-in member): each line `{ item, options }`. The Lair checks the table
-  code, opening hours and every option, prices it, and puts it on **today's tab** as lines that are locked (the member
-  can't take them off; staff can, before the drink is made). Answers `{ order }`.
-- `GET /tavern/mine` (a logged-in member): today's drinks and where each one is (waiting, being made, done).
-- The tab: Tavern lines carry `locked: true` and the order's id. Saving the tab from My Lair keeps them. Paying is as
-  for any tab: at the counter (till or POS), with cash or store credit in My Lair.
+Mo (19 Nov 2026): "start building the drink online menu for people to order from ... make it staff facing too so that
+when an order is made the staff will get a notification and that notification will tell them what the drink is and when
+they are on the staff side of the drink making they see what's on order and we will have instructions on how to make
+it ... the creamy ranges is 3 scoops of creamer and 2 scoops of the flavour with a full list of instructions I will send
+it tomorrow."
 
-## 4. Staff phones (rounds 34b and 34c)
+- `GET /tavern/menu[?t=code]` (anyone): the menu as section 1 (no recipes), `open` (inside today's opening hours),
+  `rush` (the Rush sign is out: only the quick drinks, 1–7 and 9, and hot drinks) and `table` (`{ id, room }` when `t`
+  is a table's code, else null).
+- `POST /tavern/orders { table, lines }` (a logged-in member; 401 otherwise): `table` is the code from the table's QR
+  card (422 when it matches none), each line `{ item, options }`. The Lair checks opening hours (409), the Rush sign
+  and every option, prices it from its own menu, and puts it on **today's tab** as locked lines. Answers `{ order }`:
+  `{ id, table, at, total, drinks: [{ id, item, no, name, fantasy, words, price, status, caffeine }] }`.
+- **Shopify's price must be the menu's.** Each part of a drink (the drink, extra topping, oat milk, frozen) is a
+  counter-only variant found by its SKU (`TAVERN-…`, kept 5 minutes). If one is missing, not on sale, or priced
+  differently from the menu, the order is refused (503, "order at the counter") and nothing goes on the tab: the till
+  charges Shopify's price, so nobody is charged a price the menu didn't show. A price is changed in the menu file and
+  in Shopify together.
+- **The tab's locked lines**: `{ variantId, title, variantTitle, price, qty, locked: true }`, one line a variant (the
+  same drink again counts it up). `POST /tab` keeps them as they are whatever the page sends (a locked line sent back
+  isn't counted twice), and `POST /tab/clear` clears everything else. A tab at the counter (`in-cart`) takes no more
+  drinks until it's paid (409); after it's paid the next order starts a fresh tab. A monthly account's credit limit
+  holds for drinks too. Paying is as for any tab.
+- `GET /tavern/mine` (a logged-in member): today's orders, newest first, each drink `waiting`, `making`, `done` or
+  `cancelled`.
+- **Table codes**: `GET /tavern/tables` (staff) lists every table on the floor with its code (8 letters and numbers,
+  made once and kept), for the QR cards: a card opens the order page with `?t=<code>`.
+
+## 4. The staff's side (round 34b)
+
+**Built (19 Nov 2026, same branch):** the list, for anyone the staff page lets in (the owner or a helper, with their own
+login, as Stock off).
+
+- `GET /tavern/queue`: `{ now, rush, ringing, orders }`: the orders with a drink still to make, oldest first, each
+  `{ id, table, name, at, waited, onIt, ringing, total, drinks }`, and each drink with its **recipe card** (`recipe`:
+  the cup, the amounts and the steps for the drink as ordered, and the member's note). `ringing` counts the orders
+  nobody has tapped On it for: the page rings while it's above 0.
+- `POST /tavern/orders/:id/on-it`: someone's making it. The ring stops and its drinks show `making` to the member.
+- `POST /tavern/drinks/:id/done`: made. It leaves the list (the order leaves with its last drink).
+- `POST /tavern/drinks/:id/cancel`: a drink not made yet comes off the list and off the member's tab. A made drink
+  stays on the tab (409); so does one on a tab that's at the counter or paid (409: the till takes it off or refunds).
+- `POST /tavern/rush { on }`: the Rush sign out or in. It comes in by itself when the day changes.
+- **Recipes**: Mo's first rule is in (the creamy range: 3 scoops of creamer, 2 scoops of the flavour). The rest are
+  still drafts (`draft: true` on every card) until his full list arrives; the amounts live in `src/tavern-menu.js`.
+
+**Still to build:**
 
 - **The Drinks app**: a page staff add to their phone's home screen (served by the Lair, not the theme, so it can ring
   and keep working as an app). A phone is linked once from the till (Link a phone: a code that lasts 10 minutes), then
@@ -76,8 +112,7 @@ one place. Prices are the Lair's: a page never sends a price the Lair believes.
 - **Android**: a notification that rings and vibrates and stays until it's tapped. **iPhone**: the app must be added to
   the home screen (iOS 16.4 or later) for notifications; the phone's own notification sound plays. With the app open
   on either, it rings loudly until On it is tapped.
-- **The list**: drinks to make, oldest first, with the table, the member's first name and how long they've waited. Tap
-  a drink for its recipe card; **On it**, then **Done** (the member's My Lair shows it's on its way).
+- **The screens**: the order page at the table (theme), the list and its recipe cards on staff phones and the till.
 
 ## 5. The order pad (round 34c)
 
