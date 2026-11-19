@@ -53,7 +53,7 @@ const REASONS = [
   { key: 'lost', label: 'Lost or stolen' }, { key: 'other', label: 'Something else' },
 ];
 function lairApp({ round39 = true, who = 'staff' } = {}) {
-  const thing = (id, title, option, stock) => ({ product: { id: `p${id}`, title, vendor: 'KOSMOS', type: 'Board Games', status: 'ACTIVE' }, variant: { id: String(id), title: option || 'Default Title', sku: null, stock } });
+  const thing = (id, title, option, stock) => ({ product: { id: `p${id}`, title, vendor: 'KOSMOS', type: 'Board Games', status: 'ACTIVE' }, variant: { id: String(id), title: option || 'Default Title', sku: null, stock, price: { 4001: '89.90', 4002: '119.00', 4003: '18.00', 4004: '19.50' }[id] ?? null } });
   const state = {
     calls: [],
     signal: 'up', // 'up' | 'down' (nothing gets through) | 'lost' (the next answer to /stock/off or /stock/undo is lost on the way back)
@@ -196,6 +196,7 @@ const lines = (page) => page.evaluate(() => [...document.querySelectorAll('lair-
   title: [li.querySelector('.so-line__title').textContent.trim(), ((li.querySelector('.so-line__option') || {}).textContent || '').trim()].filter(Boolean).join(' · '),
   qty: Number(li.querySelector('.so-step__count').lastChild.textContent),
   hint: ((li.querySelector('.so-line__hint') || {}).textContent || '').trim(),
+  price: ((li.querySelector('.so-line__price') || {}).textContent || '').replace(/\s+/g, ' ').trim(),
   status: li.dataset.status,
 })));
 const said = async (page) => flat(await page.locator('lair-stock .so-said').textContent());
@@ -270,6 +271,8 @@ if (wanted('A')) {
   let list = await lines(page);
   check('A2 a barcode in the frame is scanned: one line, one of it', list.length === 1 && list[0].title === 'Catan' && list[0].qty === 1, list);
   check('A2 the line says what the count has', list[0]?.hint === '5 on the count', list);
+  // Mo, 20 Nov 2026: "add the price of the item as well so I know the cost just give me the information"
+  check("A2 and the shop's price for it", list[0]?.price === 'Price: $89.90', list);
   check('A2 and the words under the picture name it', (await said(page)) === 'Catan', await said(page));
   await settle(page, 1600);
   list = await lines(page);
@@ -280,6 +283,7 @@ if (wanted('A')) {
   await settle(page, 500);
   list = await lines(page);
   check('A2 taken away and shown again, it counts again', list.length === 1 && list[0].qty === 2, list);
+  check('A2 with two of it the price is still for one, and says so', list[0]?.price === 'Price: $89.90 each', list);
   check('A2 the words count along', (await said(page)) === 'Catan ×2', await said(page));
   await hold(page, []);
   await settle(page, 1500);
@@ -311,11 +315,13 @@ if (wanted('A')) {
   check('A5 a barcode two things share asks which one it is', list[0].status === 'choose' && (await page.locator('.so-line__ask').textContent()) === 'Which one is it?', list);
   await tap(page, '[data-act="sold"]');
   check('A5 Sold waits until that is answered', (await lines(page)).length === 4 && (await said(page)) === 'Tap which one it is first.', await said(page));
+  check('A5 each choice has its own price, and the line has none until one is tapped', JSON.stringify((await page.locator('[data-act="pick"]').allTextContents()).map(flat)) === JSON.stringify(['Day (Espeon) $249.00', 'Night (Umbreon) $259.00']) && list[0].price === '', [await page.locator('[data-act="pick"]').allTextContents(), list]);
   await shot(page, 'a5-which-one');
   await page.locator('[data-act="pick"]').nth(1).click();
   await settle(page);
   list = await lines(page);
   check('A5 tapping one makes the line that one', list[0].title === 'Pokemon 30th Celebration UPC · Night (Umbreon)' && list[0].status === 'ok', list);
+  check('A5 at that one\'s price', list[0].price === 'Price: $259.00', list);
 
   // the stepper
   const wing = () => page.locator('.so-line', { hasText: 'Wingspan' });
@@ -489,6 +495,7 @@ if (wanted('B')) {
   await settle(page);
   let list = await lines(page);
   check('B2 codes are looked up in the shop, once each', lair.calls('POST stock/product').length === 2 && list.length === 2 && list[1].title === 'Catan' && list[1].qty === 2 && list[1].hint === '5 on the count', list);
+  check("B2 each line has the shop's price for one, and a thing Shopify gives no price for has none", list[1].price === 'Price: $89.90 each' && list[0].price === '', list);
   await tap(page, '[data-act="sold"]');
   await settle(page, 400);
   let offs = offCalls(lair);
@@ -942,6 +949,10 @@ if (wanted('G')) {
   lair.state.reasons = REASONS.map((r) => (r.key === 'damaged' ? { key: 'damaged', label: NASTY } : r));
   lair.state.things[4001].product.title = NASTY;
   lair.state.things[4003].variant.title = NASTY;
+  // (20 Nov 2026: a price that isn't a number of dollars is never shown, so it can't carry markup onto the page)
+  lair.state.things[4001].variant.price = NASTY;
+  lair.state.things[4003].variant.price = NASTY;
+  lair.state.things[4004].variant.price = NASTY;
   v = await visit({ shop: true, section: 'live', lair });
   check('G2 a place from the Lair app that is markup is offered as words', (await v.page.locator('[data-act="where-pick"]').first().textContent()).startsWith('<img src=x onerror='));
   await safe(v.page, 'the places');

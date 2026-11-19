@@ -230,7 +230,7 @@ export function stockOffHits(matches, code) {
 
 /** A product and a variant as POST /stock/product answers them */
 const productView = (p) => ({ id: String(p.id), title: p.title || '', vendor: p.vendor || '', type: p.type || '', status: p.status || null });
-const variantView = (v) => ({ id: String(v.id), title: v.title || 'Default Title', sku: v.sku || null, stock: Number(v.stock) });
+const variantView = (v) => ({ id: String(v.id), title: v.title || 'Default Title', sku: v.sku || null, stock: Number(v.stock), price: v.price ?? null });
 
 /**
  * POST /stock/product's answer for a code, from Shopify's matches: the thing, with choices when several that can come
@@ -409,6 +409,8 @@ export const stockOffMethods = {
   /**
    * POST /stock/product { code }: a barcode in any of its forms, or a SKU → { product, variant, choices? }, each with
    * the shop's own count, or why it can't come off (see the contract). Shopify's answers for a code are kept a minute.
+   * (20 Nov 2026, Mo: "add the price of the item as well so I know the cost just give me the information don't do
+   * anything else with it": each variant carries the shop's price for the page to show. A lot still has no prices.)
    */
   async stockOffProduct(body, who) {
     this.stockOffGate(who);
