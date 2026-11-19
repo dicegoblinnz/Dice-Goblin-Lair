@@ -28,6 +28,8 @@ const VARIANTS_TTL = 5 * 60_000;
 /** A table's code: 8 letters and numbers nobody mixes up (no I, O, 0 or 1) */
 const CODE_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 8;
+/** The staff's list holds an order this long: one nobody ever made mustn't ring the next day (a night past midnight still fits) */
+const QUEUE_KEEPS = 12 * 60 * 60_000;
 
 export const TAVERN_WORDS = {
   login: 'Log in to order, so your drinks go on your tab.',
@@ -274,8 +276,9 @@ export const tavernMethods = {
     const now = Date.now();
     const rows = this.sql
       .exec(
-        `SELECT o.* FROM tavern_orders o WHERE EXISTS (SELECT 1 FROM tavern_drinks d WHERE d.order_id = o.id AND d.status IN ('waiting', 'making'))
+        `SELECT o.* FROM tavern_orders o WHERE o.at > ? AND EXISTS (SELECT 1 FROM tavern_drinks d WHERE d.order_id = o.id AND d.status IN ('waiting', 'making'))
          ORDER BY o.at, o.rowid LIMIT 60`,
+        now - QUEUE_KEEPS,
       )
       .toArray();
     const orders = rows.map((o) => {

@@ -286,3 +286,17 @@ test("every table has its own code, staff only, and it stays the same", async ()
   assert.equal(new Set(a.map((t) => t.code)).size, 20);
   assert.match(a[0].code, /^[A-HJ-NP-Z2-9]{8}$/);
 });
+
+test("a drink nobody ever made stops ringing: the staff's list holds the last 12 hours only", async () => {
+  // review, 20 Nov 2026: an order left on the list at closing rang every phone the next morning, for good
+  const code = await codeOf();
+  await call('POST', 'tavern/orders', { table: code, lines: [TARO] }, 'sam');
+  now = NOW + 11 * HOUR;
+  let q = (await call('GET', 'tavern/queue', null, 'staff')).data;
+  assert.deepEqual([q.orders.length, q.ringing], [1, 1], 'a late night past midnight is still on the list');
+  now = NOW + 12 * HOUR + MIN;
+  q = (await call('GET', 'tavern/queue', null, 'staff')).data;
+  assert.deepEqual([q.orders.length, q.ringing], [0, 0]);
+  // it's still on their tab: the till takes it off if it was never made
+  assert.equal((await call('GET', 'tavern/mine', null, 'sam')).status, 200);
+});

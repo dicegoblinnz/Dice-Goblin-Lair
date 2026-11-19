@@ -93,7 +93,8 @@ login, as Stock off).
 - `GET /tavern/queue`: `{ now, rush, ringing, orders }`: the orders with a drink still to make, oldest first, each
   `{ id, table, name, at, waited, onIt, ringing, total, drinks }`, and each drink with its **recipe card** (`recipe`:
   the cup, the amounts and the steps for the drink as ordered, and the member's note). `ringing` counts the orders
-  nobody has tapped On it for: the page rings while it's above 0.
+  nobody has tapped On it for: the page rings while it's above 0. An order older than 12 hours is off the
+  list (review, 20 Nov 2026: one nobody made must not ring the next morning); it stays on the member's tab for the till.
 - `POST /tavern/orders/:id/on-it`: someone's making it. The ring stops and its drinks show `making` to the member.
 - `POST /tavern/drinks/:id/done`: made. It leaves the list (the order leaves with its last drink).
 - `POST /tavern/drinks/:id/cancel`: a drink not made yet comes off the list and off the member's tab. A made drink
