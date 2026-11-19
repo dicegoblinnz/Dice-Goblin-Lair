@@ -121,7 +121,7 @@ for (const size of process.argv[2] ? [process.argv[2]] : ['phone', 'desktop']) {
   await page.check('[data-wt-filters] input[value="all"]');
   await page.waitForSelector('[data-wt-learn-when]:not([hidden])', { timeout: 10000 }).catch(() => {});
   const learn = flat(await page.innerText('.wt__learn'));
-  check(`${size}: Learn to paint: its next date and the prices`, /Next: \w+ \d+ \w+, \d.* to \d/i.test(learn) && /\$10/.test(learn) && /\$5 more/.test(learn), learn.slice(-160));
+  check(`${size}: Learn to paint: its next date and Mo's 16 Nov prices ($15, $25 large)`, /Next: \w+ \d+ \w+, \d.* to \d/i.test(learn) && /\$15/.test(learn) && /\$25/.test(learn) && !/\$5 more/.test(learn), learn.slice(-160));
   check(`${size}: Book a seat opens it on the calendar`, /\/pages\/events-calendar#event=(learn-to-paint|demo-learn)%40/.test(await page.getAttribute('[data-wt-learn-book]', 'href')));
   await page.waitForTimeout(400); // the chip just picked fades to its colour; axe measures after
   await scan(page, `${size} the hobby page's Thursdays`, 'warhammer-thursdays');
