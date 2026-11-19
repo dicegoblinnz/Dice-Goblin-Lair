@@ -127,10 +127,42 @@ with the actual name under it, kept apart from the other descriptors, animated i
   has **Recipe** and **Done**. The recipe card: the plain name, the cup, how it was ordered, the member's note, what
   goes in, the steps, **Done**, and "Can't make it: cancel this drink" (two taps). The Rush sign is a button at the top.
 - **The ring**: the page asks for the list every 5 seconds. With the ring turned on (one tap, which a phone needs
-  before a page may make a sound), it rings and buzzes every 2 seconds while any order has nobody on it, on every phone
+  before a page may make a sound), it rings and buzzes (every 3.2 seconds since 4b) while any order has nobody on it, on every phone
   with the page open, and keeps the screen awake. It can't ring a locked phone or a closed page: that's the Drinks app
   below.
 - Checked in a real browser by `tools/qa/round34-tavern/screens.mjs` (orders as a member, makes them as staff).
+
+## 4b. Goblin's Apothecary (20 Nov 2026, live)
+
+Mo (20 Nov 2026): "change the name from tavern to the apothecary or goblin's apothecary or something like that since the
+naming fits that now"; "make the bell ring something less high pitch and annoying ... fitting to the theme"; "make the
+straw do a little swirl after the bubbles are floating for a second or two and when the swirl is happening a reaction
+happens and a magical explosion with the colour and sign of the name appears ... make the other drinks staggered ...
+give special names for the coffee and chocolate hot drinks and teas too"; "make the drink land on their tab".
+
+- **The name** people read is **Goblin's Apothecary** (the pages, their titles and the Lair's messages). The pages also
+  open at `/apothecary` and `/apothecary/drinks`; `/tavern` and `/tavern/drinks` still work. The code, the routes
+  (`/tavern/...`), the SKUs (`TAVERN-…`) and this contract keep the old name.
+- **Hot drinks have potion names**: Coffee is Second Wind, Hot Chocolate is Warmth Potion, Tea is Clarity, Pukka Tea is
+  Calm (Claude's picks, for Mo to change).
+- **Each drink's reaction** on the order page, an 8-second round: the bubbles rise, at about 1.5 seconds the straw
+  stirs, and at about 2.5 seconds the sign of its name bursts out in its colour for about 2 seconds (a heart with a
+  plus, a blue star, a lightning bolt, a clover, a moon, a heart with a spark, a drop with a tick, a dumbbell, a flame,
+  a spiral, a shield, a snowflake, a flask; wind, a sun, an eye and a leaf for the hot drinks). Each card starts 3.1
+  seconds on from the one before, so no two go off together. The staff's list keeps the quiet drawings. Nothing moves
+  for someone who has asked their phone for less motion.
+- **The ring** is two potion bubbles and then a brass shop bell, two low notes falling, every 3.2 seconds (it was a
+  high two-tone beep every 2).
+- **Shopify's products exist** (20 Nov 2026): 17 drinks and the 3 extras, each on the Point of Sale channel only, at
+  the menu's prices, stock not counted. So an order now goes on the member's tab; a made drink stays on it until it's
+  paid at the counter. After ordering, the page links to the tab in My Lair.
+- **Only a table's QR card opens the menu** (Mo, 20 Nov 2026: "Make sure the link isn't able to be viewed unless someone
+  is scanning the QR code"; this replaces "the page shows the menu but no Order button" in sections 2 and 4a and
+  "`GET /tavern/menu` (anyone)" in section 3). `GET /tavern/menu` without a table's code, or with one that matches no
+  table, answers `{ locked: true, table: null }` and nothing else, and the page shows only "Scan the code on your
+  table's card". A code is 8 letters and numbers, made by the Lair and listed to staff only.
+- **Table links**: the staff's list has a button that shows each table's own order link, to try an order or to make
+  the QR cards.
 
 **Still to build:**
 

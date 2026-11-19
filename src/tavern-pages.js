@@ -10,25 +10,29 @@
 // The pages' code is written here as ordinary functions and sent as text (fn.toString()), so each one may only use
 // what's inside itself or handed to it: nothing from this file's scope.
 
-/** How each drink is drawn: its colour, its topping's colour and its kind of drawing */
+/**
+ * How each drink is drawn: its colour, its topping's colour and its kind of drawing, and the sign of its name that
+ * bursts out of it when the straw stirs (Mo, 20 Nov 2026: a heart with a plus for Healing, blue energy for Mana, a
+ * lightning bolt for Haste, and so on), in its own colour.
+ */
 export const TAVERN_LOOKS = {
-  'strawberry-lemonade': { c: '#ff8fa3', p: '#e0304f', art: 'fizz' },
-  'blue-lychee': { c: '#5ec8f2', p: '#f6d34b', art: 'fizz' },
-  'passionfruit-mango': { c: '#ffb347', p: '#ff7a1a', art: 'fizz' },
-  'peach-grapefruit': { c: '#ff9e80', p: '#ffd0ad', art: 'fizz' },
-  'taro-milk': { c: '#b79ae8', p: '#6b3f1d', art: 'cream' },
-  'strawberry-milk': { c: '#ffb3c7', p: '#e0304f', art: 'cream' },
-  'honeydew-milk': { c: '#b8e986', p: '#ff7a1a', art: 'cream' },
-  'brown-sugar-milk-tea': { c: '#c9976b', p: '#6b3f1d', art: 'cream' },
-  'thai-milk-tea': { c: '#e8894a', p: '#6b3f1d', art: 'cream' },
-  'strawberry-matcha': { c: '#ffb3c7', c2: '#9fce6e', p: '#e0304f', art: 'layer' },
-  'cookies-cream-shake': { c: '#e9dcc9', p: '#3a2a20', art: 'shake' },
-  'mango-slushy': { c: '#ffc94d', p: '#ff7a1a', art: 'slush' },
-  'brew-your-own': { c: '#c9a6ff', c2: '#5ec8f2', p: '#f6d34b', art: 'layer' },
-  coffee: { c: '#8a5a3c', art: 'hot' },
-  'hot-chocolate': { c: '#6b3f1d', art: 'hot' },
-  tea: { c: '#c98a3c', art: 'hot' },
-  pukka: { c: '#9fce6e', art: 'hot' },
+  'strawberry-lemonade': { sign: 'heart', sc: '#ff4d6d', c: '#ff8fa3', p: '#e0304f', art: 'fizz' },
+  'blue-lychee': { sign: 'star', sc: '#4db8ff', c: '#5ec8f2', p: '#f6d34b', art: 'fizz' },
+  'passionfruit-mango': { sign: 'bolt', sc: '#ffd23f', c: '#ffb347', p: '#ff7a1a', art: 'fizz' },
+  'peach-grapefruit': { sign: 'clover', sc: '#46d06c', c: '#ff9e80', p: '#ffd0ad', art: 'fizz' },
+  'taro-milk': { sign: 'moon', sc: '#c9a6ff', c: '#b79ae8', p: '#6b3f1d', art: 'cream' },
+  'strawberry-milk': { sign: 'charm', sc: '#ff7eb6', c: '#ffb3c7', p: '#e0304f', art: 'cream' },
+  'honeydew-milk': { sign: 'drop', sc: '#5fd38a', c: '#b8e986', p: '#ff7a1a', art: 'cream' },
+  'brown-sugar-milk-tea': { sign: 'strength', sc: '#e0a060', c: '#c9976b', p: '#6b3f1d', art: 'cream' },
+  'thai-milk-tea': { sign: 'flame', sc: '#ff7a1a', c: '#e8894a', p: '#6b3f1d', art: 'cream' },
+  'strawberry-matcha': { sign: 'spiral', sc: '#b98cff', c: '#ffb3c7', c2: '#9fce6e', p: '#e0304f', art: 'layer' },
+  'cookies-cream-shake': { sign: 'shield', sc: '#b9c0c8', c: '#e9dcc9', p: '#3a2a20', art: 'shake' },
+  'mango-slushy': { sign: 'snow', sc: '#9be7ff', c: '#ffc94d', p: '#ff7a1a', art: 'slush' },
+  'brew-your-own': { sign: 'flask', sc: '#c9a6ff', c: '#c9a6ff', c2: '#5ec8f2', p: '#f6d34b', art: 'layer' },
+  coffee: { sign: 'wind', sc: '#f8efe2', c: '#8a5a3c', art: 'hot' },
+  'hot-chocolate': { sign: 'sun', sc: '#ffb347', c: '#6b3f1d', art: 'hot' },
+  tea: { sign: 'eye', sc: '#ffd98a', c: '#c98a3c', art: 'hot' },
+  pukka: { sign: 'leaf', sc: '#8fd16a', c: '#9fce6e', art: 'hot' },
 };
 
 const CSS = `
@@ -47,7 +51,8 @@ button:disabled{opacity:.45;cursor:default}
 .page{max-width:480px;margin:0 auto;padding:20px 16px 132px;display:flex;flex-direction:column;gap:10px}
 .staff .page{padding-bottom:32px;gap:14px}
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.top h1{font-size:36px;line-height:1.05;color:var(--gold)}
+.top h1{font-size:34px;line-height:1;color:var(--gold)}
+.top h1 small{display:block;font-size:15px;line-height:1.3;color:var(--cream)}
 .staff .top h1{font-size:26px;line-height:1.1;color:var(--cream)}
 .pill{background:var(--gold);color:var(--ink);font-weight:700;font-size:14px;border-radius:999px;padding:6px 14px;white-space:nowrap}
 .pill.small{padding:2px 12px}
@@ -149,6 +154,10 @@ button:disabled{opacity:.45;cursor:default}
 @keyframes tv-steam{0%{transform:translateY(2px);opacity:0}40%{opacity:.9}100%{transform:translateY(-5px);opacity:0}}
 @keyframes tv-ring{0%,60%,100%{transform:rotate(0)}10%,30%,50%{transform:rotate(-14deg)}20%,40%{transform:rotate(14deg)}}
 @keyframes tv-pulse{0%,100%{box-shadow:0 0 0 0 rgba(246,185,59,.75)}50%{box-shadow:0 0 0 7px rgba(246,185,59,0)}}
+@keyframes tv-stir{0%,19%{transform:rotate(0)}22%{transform:rotate(-9deg)}25%{transform:rotate(8deg)}28%{transform:rotate(-7deg)}31%{transform:rotate(6deg)}34%,100%{transform:rotate(0)}}
+@keyframes tv-burst{0%,31%{opacity:0;transform:scale(.15) rotate(-25deg)}35%{opacity:1;transform:scale(1.25) rotate(4deg)}39%{opacity:1;transform:scale(1)}52%{opacity:1;transform:scale(1.06)}58%,100%{opacity:0;transform:scale(1.6)}}
+@keyframes tv-ringfx{0%,31%{opacity:0;transform:scale(.3)}34%{opacity:.9}46%,100%{opacity:0;transform:scale(1.7)}}
+@keyframes tv-flash{0%,31%,46%,100%{filter:none}36%{filter:brightness(1.35) saturate(1.3)}}
 @keyframes tv-up{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
 @keyframes tv-pop{0%{transform:scale(1)}40%{transform:scale(1.12)}100%{transform:scale(1)}}
 .tv-bub{animation:tv-rise 2.4s linear infinite}.tv-b2{animation-delay:.8s}.tv-b3{animation-delay:1.6s}
@@ -157,7 +166,14 @@ button:disabled{opacity:.45;cursor:default}
 .tv-steam{animation:tv-steam 2.6s ease-in-out infinite}
 .ringer.on .bell{animation:tv-ring 1.6s ease-in-out infinite;transform-origin:50% 10%}
 .ringer.on{animation:tv-pulse 1.6s ease-out infinite}
-.pop{animation:tv-pop .3s ease-out}
+.mug{overflow:visible}
+.tv-fx{opacity:0;transform-box:fill-box;transform-origin:center;pointer-events:none}
+.tv-ringfx{transform-box:fill-box;transform-origin:center}
+.tv-straw{transform-box:view-box;transform-origin:20px 36px}
+.live .tv-straw{animation:tv-stir 8s ease-in-out infinite;animation-delay:var(--d,0s)}
+.live .tv-fx{animation:tv-burst 8s ease-out infinite;animation-delay:var(--d,0s)}
+.live .tv-ringfx{animation:tv-ringfx 8s ease-out infinite;animation-delay:var(--d,0s)}
+.live .tv-liquid{animation:tv-flash 8s ease-out infinite;animation-delay:var(--d,0s)}
 @media (prefers-reduced-motion:reduce){*,*::before{animation:none!important}}
 `;
 
@@ -190,26 +206,77 @@ function tavernKit(LOOKS) {
   const money = (cents) => `$${cents % 100 ? (cents / 100).toFixed(2) : cents / 100}`;
   const look = (id) => LOOKS[id] || { c: '#c4b5a5', p: '#6b3f1d', art: 'cream' };
 
-  /** A drink as a little drawing: a glass tavern mug (or a hot mug), filled its own colour, with its topping */
-  function mug(id, label, width = 46) {
+  // Each sign fits a 24 by 24 box: [path, how it's painted] (f filled in the sign's colour, s a line in it, w a white
+  // line, wf filled white, k filled dark)
+  const SIGNS = {
+    heart: [['M12 20.5C5 15.5 3 12 3 8.8A4.8 4.8 0 0 1 12 6.6 4.8 4.8 0 0 1 21 8.8c0 3.2-2 6.7-9 11.7z', 'f'], ['M12 9.5v6M9 12.5h6', 'w']],
+    star: [['M12 1.5l2.8 7.7 7.7 2.8-7.7 2.8L12 22.5l-2.8-7.7L1.5 12l7.7-2.8z', 'f'], ['M12 8.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1z', 'wf']],
+    bolt: [['M13.5 1.5 4.5 13.5h5.5L8.5 22.5l10-13h-5.5z', 'f']],
+    clover: [['M12 12c-6-1-7-8-2.5-8.5C12 3.2 12 7 12 12zM12 12c1-6 8-7 8.5-2.5C20.8 12 17 12 12 12zM12 12c6 1 7 8 2.5 8.5C12 20.8 12 17 12 12zM12 12c-1 6-8 7-8.5 2.5C3.2 12 7 12 12 12z', 'f']],
+    moon: [['M20 14.8A8.8 8.8 0 1 1 9.2 4a7 7 0 0 0 10.8 10.8z', 'f'], ['M15.5 3.5h4l-4 4.5h4', 'w']],
+    charm: [['M12 20.5C5 15.5 3 12 3 8.8A4.8 4.8 0 0 1 12 6.6 4.8 4.8 0 0 1 21 8.8c0 3.2-2 6.7-9 11.7z', 'f'], ['M12 8.6l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1z', 'wf']],
+    drop: [['M12 2.5c4.2 5 6.8 8.3 6.8 12a6.8 6.8 0 0 1-13.6 0c0-3.7 2.6-7 6.8-12z', 'f'], ['M8.8 14.2l2.3 2.3 4.2-4.4', 'w']],
+    strength: [['M2.5 9.5h3v5h-3zM18.5 9.5h3v5h-3zM5.5 7h3v10h-3zM15.5 7h3v10h-3zM8.5 10.8h7v2.4h-7z', 'f']],
+    flame: [['M12 1.5c1 4.5 6.5 7 6.5 13a6.5 6.5 0 0 1-13 0c0-2.6 1.2-4.4 2.6-5.8.3 1.6 1.2 2.6 2 2.8C9.6 8 10.8 4.5 12 1.5z', 'f'], ['M12 12.5c.5 2 2.5 2.8 2.5 5a2.5 2.5 0 0 1-5 0c0-2 1.8-2.8 2.5-5z', 'wf']],
+    spiral: [['M12 12.4a1.6 1.6 0 1 1 1.6-1.6 3.8 3.8 0 1 1-3.8 3.8 6.2 6.2 0 1 1 6.2 6.2', 's'], ['M4 3.5v3M2.5 5h3M20 16.5v3M18.5 18h3', 'w']],
+    shield: [['M12 2l8.5 3v6.5c0 5-3.5 8.6-8.5 10.5-5-1.9-8.5-5.5-8.5-10.5V5z', 'f'], ['M12 5.2l5.5 2v4.3c0 3.3-2.2 5.8-5.5 7.2z', 'wf']],
+    snow: [['M12 2v20M3.3 7l17.4 10M3.3 17 20.7 7M12 5.500l-2-2M12 5.500l2-2M12 18.500l-2 2M12 18.500l2 2', 's']],
+    flask: [['M9.5 2.500h5V4h-1v5l5.2 9.600a2 2 0 0 1-1.8 2.900H7.100a2 2 0 0 1-1.8-2.900L10.5 9V4h-1z', 'f'], ['M8.2 16h7.6', 'w']],
+    wind: [['M2.5 9h10.500a3 3 0 1 0-3-3M2.5 13h16a3 3 0 1 1-3 3M2.5 17h7', 's']],
+    sun: [['M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z', 'f'], ['M12 1.500v3M12 19.500v3M1.5 12h3M19.5 12h3M4.6 4.600l2.1 2.100M17.3 17.300l2.1 2.100M4.6 19.400l2.1-2.100M17.3 6.700l2.1-2.1', 's']],
+    eye: [['M1.5 12s4-7 10.5-7 10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z', 'f'], ['M12 8.500a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z', 'wf'], ['M12 10.800a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.400z', 'k']],
+    leaf: [['M4.5 19.500C3.5 10 9 3.5 20.5 3.500c0 11.5-6.5 17-16 16z', 'f'], ['M5 19l9-9', 'w']],
+  };
+  /** The burst: a glow, a ring, sparks and the sign of the drink's name, all in the sign's colour */
+  function burst(k) {
+    const ink = '#16110f';
+    const fx = s('g', { class: 'tv-fx', 'aria-hidden': 'true' },
+      s('circle', { cx: 21, cy: 24, r: 14, fill: k.sc, 'fill-opacity': 0.45 }),
+      s('circle', { class: 'tv-ringfx', cx: 21, cy: 24, r: 13, fill: 'none', stroke: k.sc, 'stroke-width': 2 }));
+    for (let n = 0; n < 8; n += 1) {
+      const a = (n * Math.PI) / 4 + 0.4;
+      fx.append(s('path', { d: `M${(21 + Math.cos(a) * 15.5).toFixed(1)} ${(24 + Math.sin(a) * 15.5).toFixed(1)}L${(21 + Math.cos(a) * 19.5).toFixed(1)} ${(24 + Math.sin(a) * 19.5).toFixed(1)}`, stroke: n % 2 ? '#fff' : k.sc, 'stroke-width': 2, 'stroke-linecap': 'round' }));
+    }
+    const sign = s('g', { transform: 'translate(9 12)' });
+    for (const [d, how] of SIGNS[k.sign] || []) {
+      if (how === 'f') sign.append(s('path', { d, fill: k.sc, stroke: ink, 'stroke-width': 1.4, 'stroke-linejoin': 'round' }));
+      else if (how === 'wf') sign.append(s('path', { d, fill: '#fff', 'fill-opacity': 0.9 }));
+      else if (how === 'k') sign.append(s('path', { d, fill: ink }));
+      else {
+        if (how === 's') sign.append(s('path', { d, fill: 'none', stroke: ink, 'stroke-width': 4.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+        sign.append(s('path', { d, fill: 'none', stroke: how === 's' ? k.sc : '#fff', 'stroke-width': how === 's' ? 2.4 : 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+      }
+    }
+    fx.append(sign);
+    return fx;
+  }
+
+  /**
+   * A drink as a little drawing: a glass tavern mug (or a hot mug), filled its own colour, with its topping. With a
+   * delay (seconds into its 8-second round, so the drinks on a page don't all go off together) it's alive: the bubbles
+   * rise, the straw gives a little stir, and the sign of its name bursts out. Without one it's the quiet drawing.
+   */
+  function mug(id, label, width = 46, delay = null) {
     const k = look(id);
     const ink = '#16110f';
-    const svg = s('svg', { role: 'img', 'aria-label': label, width, height: Math.round((width * 56) / 48), viewBox: '0 0 48 56' });
+    const live = delay !== null && Boolean(k.sign);
+    const svg = s('svg', { class: live ? 'mug live' : 'mug', role: 'img', 'aria-label': label, width, height: Math.round((width * 56) / 48), viewBox: '0 0 48 56' });
+    if (live) svg.style.setProperty('--d', `${-delay}s`);
     if (k.art === 'hot') {
       put(svg, [
         s('path', { class: 'tv-steam', d: 'M16 12c-3-3 3-5 0-8', fill: 'none', stroke: '#f8efe2', 'stroke-width': 2, 'stroke-linecap': 'round' }),
         s('path', { class: 'tv-steam tv-b2', d: 'M24 12c-3-3 3-5 0-8', fill: 'none', stroke: '#f8efe2', 'stroke-width': 2, 'stroke-linecap': 'round' }),
         s('path', { d: 'M34 26h4a5 5 0 0 1 5 5v4a5 5 0 0 1-5 5h-4', fill: 'none', stroke: ink, 'stroke-width': 2.6 }),
         s('path', { d: 'M7 18h28v24a8 8 0 0 1-8 8H15a8 8 0 0 1-8-8z', fill: '#fffaf2', stroke: ink, 'stroke-width': 2.6, 'stroke-linejoin': 'round' }),
-        s('path', { d: 'M9.6 22h22.8v4H9.6z', fill: k.c }),
-        s('path', { d: 'M9.6 20.6h22.8', stroke: k.c, 'stroke-width': 2.4 }),
+        s('path', { class: 'tv-liquid', d: 'M9.6 19.4h22.800v6.600H9.600z', fill: k.c }),
       ]);
+      if (live) svg.append(burst(k));
       return svg;
     }
     put(svg, [
       s('path', { d: 'M34 21h4a5 5 0 0 1 5 5v8a5 5 0 0 1-5 5h-4', fill: 'none', stroke: ink, 'stroke-width': 2.6 }),
       s('rect', { x: 8, y: 10, width: 26, height: 40, rx: 5, fill: '#fffaf2', stroke: ink, 'stroke-width': 2.6 }),
-      s('rect', { x: 10.5, y: 17, width: 21, height: 30.5, rx: 3, fill: k.c }),
+      s('rect', { class: 'tv-liquid', x: 10.5, y: 17, width: 21, height: 30.5, rx: 3, fill: k.c }),
     ]);
     if (k.art === 'layer') svg.append(s('rect', { x: 10.5, y: 17, width: 21, height: 11, rx: 3, fill: k.c2 }));
     if (k.art === 'fizz') {
@@ -228,15 +295,15 @@ function tavernKit(LOOKS) {
       const pearls = [[14.5, 43, ''], [21, 44, ' tv-p2'], [27.5, 43, ' tv-p3'], [17.5, 39.5, ' tv-p3'], [24.5, 39.5, '']];
       for (const [x, y, extra] of pearls) svg.append(s('circle', { class: `tv-pearl${extra}`, cx: x, cy: y, r: 2.6, fill: k.p, stroke: ink, 'stroke-width': 1 }));
     }
-    put(svg, [
+    svg.append(s('g', { class: 'tv-straw' },
       s('path', { d: 'M25 3 20 36', stroke: ink, 'stroke-width': 4.4, 'stroke-linecap': 'round' }),
-      s('path', { d: 'M25 3 20 36', stroke: k.p, 'stroke-width': 2.2, 'stroke-linecap': 'round' }),
-    ]);
+      s('path', { d: 'M25 3 20 36', stroke: k.p, 'stroke-width': 2.2, 'stroke-linecap': 'round' })));
+    if (live) svg.append(burst(k));
     return svg;
   }
 
   // The page sits at <the store's link to the Lair>/tavern, and the Lair's routes sit beside it
-  const base = location.pathname.replace(/\/tavern(\/drinks)?\/?$/, '');
+  const base = location.pathname.replace(/\/(tavern|apothecary)(\/drinks)?\/?$/, '');
   async function lair(method, path, body) {
     let res;
     try {
@@ -252,7 +319,7 @@ function tavernKit(LOOKS) {
   }
   // the store's own log-in, which comes back to this page (as the staff page's does)
   const loginUrl = () => `/customer_authentication/login?return_to=${encodeURIComponent(location.pathname + location.search)}`;
-  return { h, s, put, money, look, mug, lair, loginUrl };
+  return { h, s, put, money, look, mug, lair, loginUrl, base };
 }
 
 /** The order page at the table */
@@ -261,6 +328,8 @@ function tavernOrderPage(kit) {
   const root = document.getElementById('app');
   const code = (new URLSearchParams(location.search).get('t') || '').trim().toUpperCase();
   const KEEP = `tavern-order-${code}`;
+  const brand = () => h('h1', { class: 'fancy' }, h('small', null, "Goblin's"), 'Apothecary');
+  let drawn = 0;
   const state = { menu: null, lines: [], member: null, mine: [], sheet: null, say: '', busy: false, justOrdered: null, failed: false };
   try {
     const kept = JSON.parse(sessionStorage.getItem(KEEP) || '[]');
@@ -313,7 +382,7 @@ function tavernOrderPage(kit) {
         ? h('button', { type: 'button', class: 'added', 'aria-label': `${x.name}: ${count} on your order. Add another or change it`, on: { click: () => open({ kind: 'options', draft: draftFor(x) }) } }, `${count} added`)
         : h('button', { type: 'button', class: 'plus', 'aria-label': `Add ${x.name}`, on: { click: () => open({ kind: 'options', draft: draftFor(x) }) } }, plusIcon());
     return h('div', { class: `card${rest ? ' resting' : ''}`, vars: { '--c': look(x.id).c } },
-      h('div', { class: 'art' }, mug(x.id, `${x.name} in a ${x.kind === 'hot' ? 'hot' : 'glass'} mug`)),
+      h('div', { class: 'art' }, mug(x.id, `${x.name} in a ${x.kind === 'hot' ? 'hot' : 'glass'} mug`, 46, ((drawn++) * 3.1) % 8)),
       h('div', { class: 'words' },
         x.fantasy ? h('div', { class: 'fancy' }, x.fantasy) : null,
         x.fantasy
@@ -344,15 +413,15 @@ function tavernOrderPage(kit) {
   }
   function menuView() {
     const m = state.menu;
+    drawn = 0;
     const of = (t) => m.items.filter((x) => x.tier === t);
     const price = (t) => money(m.tiers[t].price);
     return [
-      h('div', { class: 'top' }, h('h1', { class: 'fancy' }, 'Tavern'), m.table ? h('span', { class: 'pill' }, `Table ${m.table.id}`) : null),
+      h('div', { class: 'top' }, brand(), m.table ? h('span', { class: 'pill' }, `Table ${m.table.id}`) : null),
       h('p', { class: 'muted' }, 'Order here and it goes on your tab. Pay at the counter when you\'re ready.'),
-      state.justOrdered ? h('p', { class: 'notice gold', role: 'status' }, `Ordered. ${money(state.justOrdered)} is on your tab, and we're on it.`) : null,
+      state.justOrdered ? h('p', { class: 'notice gold', role: 'status' }, `Ordered. ${money(state.justOrdered)} is on your tab, and we're on it. `, h('a', { href: '/pages/my-lair', vars: { color: '#16110f' } }, 'See your tab')) : null,
       myDrinks(),
-      !m.table ? h('p', { class: 'notice' }, code ? "That code didn't match a table. Scan the code on your table's card again to order." : "Here's the menu. To order from your seat, scan the code on your table's card.") : null,
-      m.table && !m.open ? h('p', { class: 'notice' }, "The Tavern's closed right now. Order when the Lair's open.") : null,
+      m.table && !m.open ? h('p', { class: 'notice' }, "The Apothecary's closed right now. Order when the Lair's open.") : null,
       m.rush ? h('p', { class: 'notice' }, "It's a rush right now, so only the quick drinks are on. The rest are back soon.") : null,
       tier('Common', '#f8efe2', price('common'), of('common')),
       tier('Rare', '#3cc8d8', price('rare'), of('rare')),
@@ -398,10 +467,10 @@ function tavernOrderPage(kit) {
     const need = missing(draft);
     const line = { item: draft.item, options: o };
     return [
-      h('div', { class: 'crumb' }, h('span', null, `Tavern${state.menu.table ? ` · Table ${state.menu.table.id}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
+      h('div', { class: 'crumb' }, h('span', null, `Apothecary${state.menu.table ? ` · Table ${state.menu.table.id}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
       h('div', { class: 'body', vars: { '--c': look(x.id).c } },
         h('div', { class: 'head' },
-          h('div', { class: 'art big' }, mug(x.id, `${x.name}`, 60)),
+          h('div', { class: 'art big' }, mug(x.id, `${x.name}`, 60, 0)),
           h('div', null,
             h('h1', { class: 'fancy', id: 'sheet-title', tabindex: '-1' }, x.fantasy || x.name),
             x.fantasy ? h('div', { class: 'plainname' }, x.no ? h('b', null, `No. ${x.no} · `) : null, x.name) : null,
@@ -457,7 +526,7 @@ function tavernOrderPage(kit) {
   /* ---- your order ---- */
   function reviewView() {
     return [
-      h('div', { class: 'crumb' }, h('span', null, `Tavern${state.menu.table ? ` · Table ${state.menu.table.id}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
+      h('div', { class: 'crumb' }, h('span', null, `Apothecary${state.menu.table ? ` · Table ${state.menu.table.id}` : ''}`), h('button', { type: 'button', class: 'ghost', on: { click: close } }, 'Back to the menu')),
       h('div', { class: 'body' },
         h('h1', { class: 'fancy', id: 'sheet-title', tabindex: '-1', vars: { 'font-size': '28px' } }, 'Your order'),
         h('div', null, state.lines.map((l, n) => {
@@ -535,9 +604,16 @@ function tavernOrderPage(kit) {
   }
   function render() {
     if (!state.menu) {
-      root.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'top' }, h('h1', { class: 'fancy' }, 'Tavern')),
-        h('p', { class: 'muted', role: 'status' }, state.failed ? 'The menu didn\'t load. Check your signal, or order at the counter.' : 'Pouring the menu…'),
+      root.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'top' }, brand()),
+        h('p', { class: 'muted', role: 'status' }, state.failed ? 'The menu didn\'t load. Check your signal, or order at the counter.' : 'Brewing the menu…'),
         state.failed ? h('button', { type: 'button', class: 'ghost wide', on: { click: refresh } }, 'Try again') : null));
+      return;
+    }
+    if (state.menu.locked) {
+      // only a table's QR card opens the menu
+      root.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'top' }, brand()),
+        h('p', { class: 'notice gold' }, code ? "That code didn't match a table. Scan the code on your table's card again." : "Scan the code on your table's card to see the menu and order from your seat."),
+        h('p', { class: 'muted' }, "The Apothecary pours at the Dice Goblin Lair. Not at a table? Order at the counter.")));
       return;
     }
     const kept = document.activeElement?.id;
@@ -561,10 +637,12 @@ function tavernOrderPage(kit) {
     else if (at >= 0) controls()[at]?.focus({ preventScroll: true });
   }
   async function refresh() {
-    const [menu, mine] = await Promise.all([lair('GET', `tavern/menu${code ? `?t=${encodeURIComponent(code)}` : ''}`), lair('GET', 'tavern/mine')]);
+    const menu = await lair('GET', `tavern/menu${code ? `?t=${encodeURIComponent(code)}` : ''}`);
+    // without a table's code there's nothing to show, so nothing more is asked
+    const mine = menu.data?.locked ? { status: 0 } : await lair('GET', 'tavern/mine');
     if (menu.status === 200) {
       state.menu = menu.data;
-      state.lines = state.lines.filter((l) => item(l.item));
+      if (!menu.data.locked) state.lines = state.lines.filter((l) => item(l.item));
       state.failed = false;
     } else if (!state.menu) state.failed = true;
     if (mine.status === 200) {
@@ -589,9 +667,9 @@ function tavernOrderPage(kit) {
 
 /** The staff's side: drinks to make, the ring, and each drink's recipe card */
 function tavernStaffPage(kit) {
-  const { h, s, look, mug, lair, loginUrl } = kit;
+  const { h, s, look, mug, lair, loginUrl, base } = kit;
   const root = document.getElementById('app');
-  const state = { queue: null, gate: '', recipe: null, say: '', ring: false, skew: 0, sure: null, failed: 0 };
+  const state = { tables: null, queue: null, gate: '', recipe: null, say: '', ring: false, skew: 0, sure: null, failed: 0 };
 
   /* ---- the ring: a bell from the phone's speaker and a buzz, every 2 seconds while an order waits ---- */
   let audio = null;
@@ -599,26 +677,37 @@ function tavernStaffPage(kit) {
   let lock = null;
   function ding() {
     if (!audio) return;
-    const t = audio.currentTime;
-    for (const [n, hz] of [[0, 1318.5], [0.22, 1046.5], [0.6, 1318.5], [0.82, 1046.5]]) {
+    const t = audio.currentTime + 0.02;
+    const out = audio.createGain();
+    out.gain.value = 0.9;
+    out.connect(audio.destination);
+    const voice = (hz, to, at, peak, ends) => {
       const osc = audio.createOscillator();
       const gain = audio.createGain();
-      osc.type = 'triangle';
-      osc.frequency.value = hz;
-      gain.gain.setValueAtTime(0.0001, t + n);
-      gain.gain.exponentialRampToValueAtTime(0.9, t + n + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + n + 0.5);
-      osc.connect(gain).connect(audio.destination);
-      osc.start(t + n);
-      osc.stop(t + n + 0.55);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(hz, t + at);
+      if (to) osc.frequency.exponentialRampToValueAtTime(to, t + at + 0.09);
+      gain.gain.setValueAtTime(0.0001, t + at);
+      gain.gain.exponentialRampToValueAtTime(peak, t + at + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + ends);
+      osc.connect(gain).connect(out);
+      osc.start(t + at);
+      osc.stop(t + at + ends + 0.05);
+    };
+    // two potion bubbles popping...
+    voice(260, 520, 0, 0.5, 0.12);
+    voice(330, 700, 0.16, 0.5, 0.12);
+    // ...then the shop's brass bell, two warm notes falling (G then E), each with a bell's overtones
+    for (const [at, hz] of [[0.38, 392], [0.86, 329.6]]) {
+      for (const [times, peak, rings] of [[1, 0.5, 1.5], [2, 0.3, 1.1], [3.01, 0.13, 0.7], [4.2, 0.05, 0.4]]) voice(hz * times, 0, at, peak, rings);
     }
-    navigator.vibrate?.([300, 150, 300]);
+    navigator.vibrate?.([200, 120, 200]);
   }
   function ringing() {
     const should = state.ring && (state.queue?.ringing || 0) > 0;
     if (should && !ringTimer) {
       ding();
-      ringTimer = setInterval(ding, 2000);
+      ringTimer = setInterval(ding, 3200);
     } else if (!should && ringTimer) {
       clearInterval(ringTimer);
       ringTimer = null;
@@ -699,6 +788,16 @@ function tavernStaffPage(kit) {
       state.say ? h('p', { class: 'notice gold', role: 'alert' }, state.say) : null,
       state.failed > 2 ? h('p', { class: 'notice', role: 'alert' }, "This phone has lost the Lair, so the list may be out of date. Check its signal.") : null,
       q.orders.length ? q.orders.map(orderCard) : h('p', { class: 'notice' }, 'No drinks to make. New orders land here, oldest first.'),
+      state.tables
+        ? h('section', { class: 'notice', 'aria-label': 'Table links' },
+          h('h2', { class: 'label', vars: { margin: '0 0 6px' } }, "Each table's own order link (for its QR card)"),
+          h('div', { class: 'picks' }, state.tables.map((tb) => h('a', { class: 'pill', href: `${base}/apothecary?t=${encodeURIComponent(tb.code)}`, vars: { 'text-decoration': 'none', 'min-height': '44px', display: 'flex', 'align-items': 'center' } }, `Table ${tb.id}`))))
+        : h('button', { type: 'button', class: 'ghost wide', on: { click: async () => {
+          const { status, data } = await lair('GET', 'tavern/tables');
+          if (status === 200) state.tables = data.tables;
+          else state.say = data.error || "The table links didn't load. Try again.";
+          render();
+        } } }, 'Table links (to try an order, or for QR cards)'),
       h('p', { class: 'muted small' }, q.rush ? 'The Rush sign is out: only the quick drinks can be ordered. It comes in by itself tomorrow.' : 'Oldest order first. Tap Recipe for the amounts and steps.'));
   }
 
@@ -796,14 +895,15 @@ function tavernStaffPage(kit) {
 /* ------------------------------------------------------------------------------------------------------------------ */
 
 const PAGES = {
-  order: { title: 'Tavern: order at the table', app: tavernOrderPage },
-  staff: { title: 'Tavern: drinks to make', app: tavernStaffPage },
+  order: { title: "Goblin's Apothecary: order at the table", app: tavernOrderPage },
+  staff: { title: "Goblin's Apothecary: drinks to make", app: tavernStaffPage },
 };
 
 /** Which page an address under the store's link to the Lair is ('/tavern' the order page, '/tavern/drinks' the staff's), or null */
 export function tavernPageFor(path) {
   const clean = String(path || '').replace(/\/+$/, '');
-  return clean === '/tavern' ? 'order' : clean === '/tavern/drinks' ? 'staff' : null;
+  // the Tavern became Goblin's Apothecary on 20 Nov 2026 (Mo): both names open the pages
+  return ['/apothecary', '/tavern'].includes(clean) ? 'order' : ['/apothecary/drinks', '/tavern/drinks'].includes(clean) ? 'staff' : null;
 }
 
 /** A page's whole HTML. nonce: this answer's own, so only the page's own script and styles run. */
@@ -825,7 +925,7 @@ export function tavernPageHtml(kind, nonce) {
 <style nonce="${nonce}">${CSS}</style>
 </head>
 <body>
-<main id="app"><noscript><p>The Tavern's menu needs JavaScript. Order at the counter and we'll sort you out.</p></noscript></main>
+<main id="app"><noscript><p>The Apothecary's menu needs JavaScript. Order at the counter and we'll sort you out.</p></noscript></main>
 <script nonce="${nonce}">${script}</script>
 </body>
 </html>`;

@@ -36,8 +36,8 @@ export const TAVERN_WORDS = {
   staffLogin: 'Log in with your staff account.',
   team: "The drinks list is for the Lair's team.",
   table: "Scan the code on your table's card again: that one didn't match a table.",
-  closed: "The Tavern's closed right now. Order when the Lair's open.",
-  notReady: "The Tavern can't take that order from here right now. Order at the counter and we'll sort you out.",
+  closed: "The Apothecary's closed right now. Order when the Lair's open.",
+  notReady: "The Apothecary can't take that order from here right now. Order at the counter and we'll sort you out.",
   atCounter: 'Your tab is at the counter already. Pay for that one, then order again.',
   gone: "That drink isn't on the list any more.",
   madeAlready: "That one's made already, so it stays on their tab. Take it off at the till if it shouldn't be there.",
@@ -138,15 +138,18 @@ export const tavernMethods = {
     };
   },
 
-  /** GET /tavern/menu[?t=code] (anyone): the menu, whether ordering is open, the Rush sign, and the code's table */
+  /**
+   * GET /tavern/menu?t=code: the menu, whether ordering is open, the Rush sign, and the code's table. Only a table's
+   * code opens it (Mo, 20 Nov 2026: the page isn't to be seen unless someone scanned a table's QR card): without one
+   * the answer is { locked: true, table: null } and nothing else.
+   */
   async tavernMenu(url) {
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
-    return {
-      ...tavernMenuView(), open: this.tavernOpen(rules, now), rush: this.tavernRush(rules, now),
-      table: this.tavernTableByCode(url.searchParams.get('t'), rules),
-    };
+    const table = this.tavernTableByCode(url.searchParams.get('t'), rules);
+    if (!table) return { locked: true, table: null };
+    return { ...tavernMenuView(), open: this.tavernOpen(rules, now), rush: this.tavernRush(rules, now), table };
   },
 
   /**

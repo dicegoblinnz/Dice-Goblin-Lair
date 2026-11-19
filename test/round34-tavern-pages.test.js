@@ -28,11 +28,14 @@ test('which address is which page', () => {
   assert.equal(tavernPageFor('/tavern'), 'order');
   assert.equal(tavernPageFor('/tavern/'), 'order');
   assert.equal(tavernPageFor('/tavern/drinks'), 'staff');
+  // 20 Nov 2026 (Mo): the Tavern is Goblin's Apothecary now; the first address still opens it
+  assert.equal(tavernPageFor('/apothecary'), 'order');
+  assert.equal(tavernPageFor('/apothecary/drinks'), 'staff');
   for (const path of ['/tavern/menu', '/tavern/mine', '/tavern/queue', '/tavern/drinks/td_1/done', '/tavernx', '/', '']) assert.equal(tavernPageFor(path), null, path);
 });
 
 test('through the store, /tavern and /tavern/drinks are pages, locked down, and the same whoever asks', async () => {
-  for (const [path, title] of [['/tavern', 'Tavern: order at the table'], ['/tavern/drinks', 'Tavern: drinks to make']]) {
+  for (const [path, title] of [['/apothecary', "Goblin's Apothecary: order at the table"], ['/apothecary/drinks', "Goblin's Apothecary: drinks to make"], ['/tavern', "Goblin's Apothecary: order at the table"]]) {
     asked.length = 0;
     const res = await through(path, { params: { t: 'ABCD2345', logged_in_customer_id: '7001' } });
     const html = await res.text();
@@ -73,6 +76,10 @@ test("the pages are only reached through the store, and the Lair's own routes be
 
 test("the pages' code: every drink has its drawing, the script can't be ended early, and it never writes HTML", () => {
   for (const item of TAVERN_ITEMS) assert.ok(TAVERN_LOOKS[item.id]?.c, `${item.name} has a colour`);
+  // every drink has a potion name, and its own sign for the burst (Mo, 20 Nov 2026: the hot drinks too)
+  for (const item of TAVERN_ITEMS) assert.ok(item.fantasy && TAVERN_LOOKS[item.id].sign && TAVERN_LOOKS[item.id].sc, item.name);
+  assert.equal(new Set(TAVERN_ITEMS.map((x) => x.fantasy)).size, TAVERN_ITEMS.length, 'no two drinks share a name');
+  assert.equal(new Set(Object.values(TAVERN_LOOKS).map((l) => l.sign)).size, TAVERN_ITEMS.length, 'no two drinks share a sign');
   assert.deepEqual(Object.keys(TAVERN_LOOKS).filter((id) => !TAVERN_ITEMS.some((x) => x.id === id)), []);
   for (const kind of ['order', 'staff']) {
     const html = tavernPageHtml(kind, 'N0NCE');

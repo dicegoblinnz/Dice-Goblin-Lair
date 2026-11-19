@@ -95,13 +95,17 @@ const T4 = tables.tables.find((t) => t.id === 'T4').code;
 const guestCtx = await browser.newContext(phone);
 const guest = await guestCtx.newPage();
 watch(guest, 'guest');
-await guest.goto(`${site}/tavern`);
-await guest.waitForSelector('.card');
-check('A1 without a table code it shows the menu and how to order, with no Order button', flat(await guest.innerText('body')).includes("scan the code on your table's card") && (await guest.locator('button.order').count()) === 0);
-check('A2 seventeen drinks, each with a drawing', (await guest.locator('.card').count()) === 17 && (await guest.locator('.card svg[role=img]').count()) === 17);
-check('A3 the fancy name sits above the plain one', flat(await guest.locator('.card').first().innerText()).startsWith('Healing Potion No. 1 · Strawberry Lemonade'), await guest.locator('.card').first().innerText());
-await guest.goto(`${site}/tavern?t=${T4}`);
+await guest.goto(`${site}/apothecary`);
+await guest.getByText("Scan the code on your table's card to see the menu").waitFor();
+check("A1 without a table's code there's no menu at all, only how to get one", (await guest.locator('.card').count()) === 0 && (await guest.locator('.bar').count()) === 0, await guest.innerText('body'));
+await guest.screenshot({ path: `${out}/0-locked.png` });
+await guest.goto(`${site}/apothecary?t=WRONG234`);
+await guest.getByText("That code didn't match a table").waitFor();
+check('A1b a made-up code gets no menu either', (await guest.locator('.card').count()) === 0);
+await guest.goto(`${site}/apothecary?t=${T4}`);
 await guest.waitForSelector('.pill');
+check('A2 seventeen drinks, each with a drawing that comes alive', (await guest.locator('.card').count()) === 17 && (await guest.locator('.card svg.live .tv-fx').count()) === 17);
+check('A3 the fancy name sits above the plain one', (await guest.locator('.card').first().innerText()).replace(/\s+/g, ' ').startsWith('Healing Potion No. 1 · Strawberry Lemonade'), await guest.locator('.card').first().innerText());
 await guest.getByRole('button', { name: 'Add Blue Lychee' }).click();
 await guest.getByRole('button', { name: /^Add to order/ }).click();
 check('A4 a guest can fill an order but is asked to log in', (await guest.locator('a.order').getAttribute('href'))?.startsWith('/customer_authentication/login?return_to=') && flat(await guest.innerText('.bar')).includes('1 drink · $8'), await guest.innerText('.bar'));
@@ -111,9 +115,9 @@ await guestCtx.close();
 const samCtx = await browser.newContext(phone);
 const sam = await samCtx.newPage();
 watch(sam, 'sam');
-await sam.goto(`${site}/tavern?t=${T4}&as=sam`);
+await sam.goto(`${site}/apothecary?t=${T4}&as=sam`);
 await sam.waitForSelector('.pill');
-check('B1 the table from the QR card is named', flat(await sam.innerText('.top')) === 'Tavern Table T4', await sam.innerText('.top'));
+check('B1 the table from the QR card is named', flat(await sam.innerText('.top')) === "Goblin's Apothecary Table T4", await sam.innerText('.top'));
 await sam.getByRole('button', { name: 'Add Strawberry Lemonade' }).click();
 await sam.getByRole('button', { name: 'Less ice' }).click();
 await sam.getByRole('button', { name: /^Add to order · \$8$/ }).click();
@@ -145,7 +149,7 @@ check('B6 ordering says so and shows where each drink is', flat(await sam.innerT
 await sam.screenshot({ path: `${out}/5-ordered.png` });
 
 /* ---- Caleb's phone ---- */
-await staff.goto(`${site}/tavern/drinks?as=caleb`);
+await staff.goto(`${site}/apothecary/drinks?as=caleb`);
 await staff.waitForSelector('.order');
 check('C1 the new order sits on top with its ring', flat(await staff.innerText('.ringer')).startsWith('1 new order') && flat(await staff.innerText('.order.new')).includes('Table T4 · Sam'), await staff.innerText('.page'));
 check('C2 each drink says how it was ordered, and the note', flat(await staff.innerText('.order.new')).includes('5 Taro Milk Brown sugar jelly · oat milk Note: birthday!') && flat(await staff.innerText('.order.new')).includes('1 Strawberry Lemonade Strawberry pearls · less ice'), await staff.innerText('.order.new'));
@@ -181,7 +185,7 @@ check('B8 with the Rush sign out the slow drinks rest', (await sam.locator('.car
 await sam.screenshot({ path: `${out}/10-rush.png`, fullPage: true });
 
 /* ---- someone who isn't staff ---- */
-await sam.goto(`${site}/tavern/drinks`);
+await sam.goto(`${site}/apothecary/drinks`);
 await sam.waitForSelector('.notice');
 check("D1 the drinks list is for the team only", flat(await sam.innerText('.page')).includes("The drinks list is for the Lair's team."), await sam.innerText('.page'));
 
