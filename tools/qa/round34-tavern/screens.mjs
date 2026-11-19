@@ -89,7 +89,7 @@ const staffCtx = await browser.newContext(phone);
 const staff = await staffCtx.newPage();
 watch(staff, 'staff');
 const tables = await (await staffCtx.request.get(`${site}/tavern/tables?as=caleb`)).json();
-const T4 = tables.tables.find((t) => t.id === 'T4').code;
+const T4 = tables.tables.find((t) => t.tables.includes('T4')).code;
 
 /* ---- the order page, nobody logged in, no table ---- */
 const guestCtx = await browser.newContext(phone);
@@ -117,7 +117,7 @@ const sam = await samCtx.newPage();
 watch(sam, 'sam');
 await sam.goto(`${site}/apothecary?t=${T4}&as=sam`);
 await sam.waitForSelector('.pill');
-check('B1 the table from the QR card is named', flat(await sam.innerText('.top')) === "Goblin's Apothecary Table T4", await sam.innerText('.top'));
+check('B1 the table from the QR card is named', flat(await sam.innerText('.top')) === "Goblin's Apothecary Tables T3 & T4", await sam.innerText('.top'));
 await sam.getByRole('button', { name: 'Add Strawberry Lemonade' }).click();
 await sam.getByRole('button', { name: 'Less ice' }).click();
 await sam.getByRole('button', { name: /^Add to order · \$8$/ }).click();
@@ -151,7 +151,7 @@ await sam.screenshot({ path: `${out}/5-ordered.png` });
 /* ---- Caleb's phone ---- */
 await staff.goto(`${site}/apothecary/drinks?as=caleb`);
 await staff.waitForSelector('.order');
-check('C1 the new order sits on top with its ring', flat(await staff.innerText('.ringer')).startsWith('1 new order') && flat(await staff.innerText('.order.new')).includes('Table T4 · Sam'), await staff.innerText('.page'));
+check('C1 the new order sits on top with its ring', flat(await staff.innerText('.ringer')).startsWith('1 new order') && flat(await staff.innerText('.order.new')).includes('Tables T3 & T4 · Sam'), await staff.innerText('.page'));
 check('C2 each drink says how it was ordered, and the note', flat(await staff.innerText('.order.new')).includes('5 Taro Milk Brown sugar jelly · oat milk Note: birthday!') && flat(await staff.innerText('.order.new')).includes('1 Strawberry Lemonade Strawberry pearls · less ice'), await staff.innerText('.order.new'));
 await staff.locator('button.ringer').click();
 await staff.waitForSelector('div.ringer.on');
@@ -163,7 +163,7 @@ check('C4 On it stops the ring and names who has it', flat(await staff.innerText
 await staff.screenshot({ path: `${out}/7-staff-on-it.png`, fullPage: true });
 await staff.getByRole('button', { name: 'Recipe for Taro Milk' }).click();
 const card = flat(await staff.innerText('.page'));
-check('C5 the recipe card is the drink as ordered', card.includes('Taro Milk') && card.includes('No. 5 · Sleep Potion') && card.includes('Table T4 · Sam · Glass tavern mug') && card.includes('Note from Sam: birthday!') && card.includes('Taro powder 2 scoops') && card.includes('Oat milk (instead of creamer) 150 ml') && !card.includes('Creamer 3 scoops'), card);
+check('C5 the recipe card is the drink as ordered', card.includes('Taro Milk') && card.includes('No. 5 · Sleep Potion') && card.includes('Tables T3 & T4 · Sam · Glass tavern mug') && card.includes('Note from Sam: birthday!') && card.includes('Taro powder 2 scoops') && card.includes('Oat milk (instead of creamer) 150 ml') && !card.includes('Creamer 3 scoops'), card);
 await staff.screenshot({ path: `${out}/8-recipe.png`, fullPage: true });
 await staff.getByRole('button', { name: 'Done', exact: true }).click();
 await staff.waitForSelector('.order.mine');

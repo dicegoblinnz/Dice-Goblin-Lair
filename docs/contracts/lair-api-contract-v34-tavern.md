@@ -161,6 +161,14 @@ give special names for the coffee and chocolate hot drinks and teas too"; "make 
   "`GET /tavern/menu` (anyone)" in section 3). `GET /tavern/menu` without a table's code, or with one that matches no
   table, answers `{ locked: true, table: null }` and nothing else, and the page shows only "Scan the code on your
   table's card". A code is 8 letters and numbers, made by the Lair and listed to staff only.
+- **One QR card for tables next to each other** (Mo, 20 Nov 2026: "have one code per two tables next to each other the
+  main table with 3 on it is one code and the fancy room is another code"; this replaces "every table on the floor
+  with its code" in section 3). In each room the shop's own tables (`lair_shop_tables`, the main table: T1, T2 and T3)
+  share one card, and the rest go two to a card in the order they're numbered, an odd one out on its own: 15 cards for
+  the 30 tables. `GET /tavern/tables` lists the cards, each `{ id, tables, room, code }`; `id` is how it's named to
+  people ("T4 & T5"), and it's what an order's `table` holds and what staff see. A card's code is its first table's;
+  the code a pair's second table had before opens nothing. Which tables are "next to each other" is taken from their
+  numbers, not from the floor plan: Mo to say if a pair is wrong.
 - **Table links**: the staff's list has a button that shows each table's own order link, to try an order or to make
   the QR cards.
 
