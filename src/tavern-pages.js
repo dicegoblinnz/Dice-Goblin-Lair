@@ -421,7 +421,6 @@ function tavernOrderPage(kit) {
       h('p', { class: 'muted' }, 'Order here and it goes on your tab. Pay at the counter when you\'re ready.'),
       state.justOrdered ? h('p', { class: 'notice gold', role: 'status' }, `Ordered. ${money(state.justOrdered)} is on your tab, and we're on it. `, h('a', { href: '/pages/my-lair', vars: { color: '#16110f' } }, 'See your tab')) : null,
       myDrinks(),
-      !m.table ? h('p', { class: 'notice' }, code ? "That code didn't match a table. Scan the code on your table's card again to order." : "Here's the menu. To order from your seat, scan the code on your table's card.") : null,
       m.table && !m.open ? h('p', { class: 'notice' }, "The Apothecary's closed right now. Order when the Lair's open.") : null,
       m.rush ? h('p', { class: 'notice' }, "It's a rush right now, so only the quick drinks are on. The rest are back soon.") : null,
       tier('Common', '#f8efe2', price('common'), of('common')),
@@ -610,6 +609,13 @@ function tavernOrderPage(kit) {
         state.failed ? h('button', { type: 'button', class: 'ghost wide', on: { click: refresh } }, 'Try again') : null));
       return;
     }
+    if (state.menu.locked) {
+      // only a table's QR card opens the menu
+      root.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'top' }, brand()),
+        h('p', { class: 'notice gold' }, code ? "That code didn't match a table. Scan the code on your table's card again." : "Scan the code on your table's card to see the menu and order from your seat."),
+        h('p', { class: 'muted' }, "The Apothecary pours at the Dice Goblin Lair. Not at a table? Order at the counter.")));
+      return;
+    }
     const kept = document.activeElement?.id;
     const sheet = state.sheet;
     const y = document.querySelector('.sheet')?.scrollTop || 0;
@@ -631,10 +637,12 @@ function tavernOrderPage(kit) {
     else if (at >= 0) controls()[at]?.focus({ preventScroll: true });
   }
   async function refresh() {
-    const [menu, mine] = await Promise.all([lair('GET', `tavern/menu${code ? `?t=${encodeURIComponent(code)}` : ''}`), lair('GET', 'tavern/mine')]);
+    const menu = await lair('GET', `tavern/menu${code ? `?t=${encodeURIComponent(code)}` : ''}`);
+    // without a table's code there's nothing to show, so nothing more is asked
+    const mine = menu.data?.locked ? { status: 0 } : await lair('GET', 'tavern/mine');
     if (menu.status === 200) {
       state.menu = menu.data;
-      state.lines = state.lines.filter((l) => item(l.item));
+      if (!menu.data.locked) state.lines = state.lines.filter((l) => item(l.item));
       state.failed = false;
     } else if (!state.menu) state.failed = true;
     if (mine.status === 200) {

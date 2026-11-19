@@ -138,15 +138,18 @@ export const tavernMethods = {
     };
   },
 
-  /** GET /tavern/menu[?t=code] (anyone): the menu, whether ordering is open, the Rush sign, and the code's table */
+  /**
+   * GET /tavern/menu?t=code: the menu, whether ordering is open, the Rush sign, and the code's table. Only a table's
+   * code opens it (Mo, 20 Nov 2026: the page isn't to be seen unless someone scanned a table's QR card): without one
+   * the answer is { locked: true, table: null } and nothing else.
+   */
   async tavernMenu(url) {
     const rules = await this.rules();
     // --- no awaits from here on ---
     const now = Date.now();
-    return {
-      ...tavernMenuView(), open: this.tavernOpen(rules, now), rush: this.tavernRush(rules, now),
-      table: this.tavernTableByCode(url.searchParams.get('t'), rules),
-    };
+    const table = this.tavernTableByCode(url.searchParams.get('t'), rules);
+    if (!table) return { locked: true, table: null };
+    return { ...tavernMenuView(), open: this.tavernOpen(rules, now), rush: this.tavernRush(rules, now), table };
   },
 
   /**

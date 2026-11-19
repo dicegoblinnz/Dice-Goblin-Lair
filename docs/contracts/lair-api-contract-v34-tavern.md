@@ -156,6 +156,11 @@ give special names for the coffee and chocolate hot drinks and teas too"; "make 
 - **Shopify's products exist** (20 Nov 2026): 17 drinks and the 3 extras, each on the Point of Sale channel only, at
   the menu's prices, stock not counted. So an order now goes on the member's tab; a made drink stays on it until it's
   paid at the counter. After ordering, the page links to the tab in My Lair.
+- **Only a table's QR card opens the menu** (Mo, 20 Nov 2026: "Make sure the link isn't able to be viewed unless someone
+  is scanning the QR code"; this replaces "the page shows the menu but no Order button" in sections 2 and 4a and
+  "`GET /tavern/menu` (anyone)" in section 3). `GET /tavern/menu` without a table's code, or with one that matches no
+  table, answers `{ locked: true, table: null }` and nothing else, and the page shows only "Scan the code on your
+  table's card". A code is 8 letters and numbers, made by the Lair and listed to staff only.
 - **Table links**: the staff's list has a button that shows each table's own order link, to try an order or to make
   the QR cards.
 

@@ -84,18 +84,20 @@ const TARO = { item: 'taro-milk', options: {} };
 const LEMONADE = { item: 'strawberry-lemonade', options: {} };
 const tabOf = async (customer) => (await call('GET', 'me', null, customer)).data.tab;
 
-test('the menu is for anyone; ordering is open only at a table, in opening hours', async () => {
+test("the menu opens only from a table's code (its QR card); ordering is open only in opening hours", async () => {
   const code = await codeOf('T4');
-  const plain = await call('GET', 'tavern/menu');
-  assert.equal(plain.status, 200, said(plain));
-  assert.equal(plain.data.items.find((x) => x.id === 'taro-milk').price, 900);
-  assert.equal(plain.data.table, null);
-  assert.equal(plain.data.open, true);
-  assert.ok(!JSON.stringify(plain.data).includes('scoops'), 'no recipes on the menu');
+  // Mo, 20 Nov 2026: "Make sure the link isn't able to be viewed unless someone is scanning the QR code"
+  for (const path of ['tavern/menu', 'tavern/menu?t=', 'tavern/menu?t=NOPE1234']) {
+    const plain = await call('GET', path);
+    assert.deepEqual([plain.status, plain.data], [200, { locked: true, table: null }], path);
+  }
+  const seen = await call('GET', `tavern/menu?t=${code}`);
+  assert.equal(seen.data.items.find((x) => x.id === 'taro-milk').price, 900);
+  assert.equal(seen.data.open, true);
+  assert.ok(!seen.data.locked && !JSON.stringify(seen.data).includes('scoops'), 'no recipes on the menu');
 
   const atTable = await call('GET', `tavern/menu?t=${code}`);
   assert.deepEqual(atTable.data.table, { id: 'T4', room: 'Common room' });
-  assert.equal((await call('GET', 'tavern/menu?t=NOPE1234')).data.table, null);
 
   now = NOW + 10 * HOUR; // 11pm: closed
   assert.equal((await call('GET', `tavern/menu?t=${code}`)).data.open, false);
@@ -267,13 +269,13 @@ test('the Rush sign: staff put it out, only the quick drinks can be ordered, and
   assert.equal((await call('POST', 'tavern/rush', { on: true }, 'sam')).status, 403);
   const res = await call('POST', 'tavern/rush', { on: true }, 'staff');
   assert.equal(res.data.rush, true);
-  assert.equal((await call('GET', 'tavern/menu')).data.rush, true);
+  assert.equal((await call('GET', `tavern/menu?t=${code}`)).data.rush, true);
   assert.equal(said(await call('POST', 'tavern/orders', { table: code, lines: [{ item: 'cookies-cream-shake', options: {} }] }, 'sam')), `422 ${TAVERN_MENU_WORDS.rush}`);
   assert.equal((await call('POST', 'tavern/orders', { table: code, lines: [TARO] }, 'sam')).status, 200);
   assert.equal((await call('POST', 'tavern/rush', { on: false }, 'staff')).data.rush, false);
   await call('POST', 'tavern/rush', { on: true }, 'staff');
   now = NOW + 24 * HOUR;
-  assert.equal((await call('GET', 'tavern/menu')).data.rush, false);
+  assert.equal((await call('GET', `tavern/menu?t=${code}`)).data.rush, false);
   assert.equal(time.key(now), '2026-10-02');
 });
 
