@@ -54,6 +54,10 @@ export const TAVERN_FLAVOURS = [
 const pad = (n) => String(n).padStart(2, '0');
 
 /**
+ * The fantasy names (Mo, 19 Nov 2026, after a fresh read of them): each drink is named for what it would do to your
+ * character, like the three he likes (Healing Potion, Mana Potion, Charm Potion): an effect off a character sheet, no
+ * creatures, scenery or invented words, and Potion the only container word.
+ *
  * The menu. kind says how a drink is made (and so which recipe card and options it has): sparkling, creamy (powder and
  * creamer), milktea (a brewed black tea), matcha (layered), shake, slushy, byo (Brew Your Own) or hot. rush: one of the
  * quick drinks the Rush sign keeps on (1–7 and 9).
@@ -65,31 +69,31 @@ export const TAVERN_ITEMS = [
   { id: 'blue-lychee', no: 2, name: 'Blue Lychee', fantasy: 'Mana Potion', tier: 'common', kind: 'sparkling', rush: true,
     describe: 'lychee, blue citrus, sparkling', topping: 'pineapple-pearls',
     make: { syrups: [['Lychee syrup', 30], ['Blue curaçao syrup', 10]] } },
-  { id: 'passionfruit-mango', no: 3, name: 'Passionfruit Mango', fantasy: 'Sunfire Elixir', tier: 'common', kind: 'sparkling', rush: true,
+  { id: 'passionfruit-mango', no: 3, name: 'Passionfruit Mango', fantasy: 'Haste Potion', tier: 'common', kind: 'sparkling', rush: true,
     describe: 'passionfruit, sparkling', topping: 'mango-pearls',
     make: { syrups: [['Passionfruit syrup', 40]] } },
-  { id: 'peach-grapefruit', no: 4, name: 'Peach Grapefruit', fantasy: 'Dawn Nectar', tier: 'common', kind: 'sparkling', rush: true,
+  { id: 'peach-grapefruit', no: 4, name: 'Peach Grapefruit', fantasy: 'Luck Potion', tier: 'common', kind: 'sparkling', rush: true,
     describe: 'peach, grapefruit, sparkling', topping: 'peach-pearls',
     make: { syrups: [['Peach syrup', 20], ['Grapefruit syrup', 20]] } },
-  { id: 'taro-milk', no: 5, name: 'Taro Milk', fantasy: 'Twilight Tonic', tier: 'rare', kind: 'creamy', rush: true,
+  { id: 'taro-milk', no: 5, name: 'Taro Milk', fantasy: 'Sleep Potion', tier: 'rare', kind: 'creamy', rush: true,
     describe: 'taro, creamer', topping: 'brown-sugar-jelly',
     make: { powders: [['Taro powder', 2]] } },
   { id: 'strawberry-milk', no: 6, name: 'Strawberry Milk', fantasy: 'Charm Potion', tier: 'rare', kind: 'creamy', rush: true,
     describe: 'strawberry, creamer', topping: 'strawberry-pearls',
     make: { powders: [['Strawberry powder', 2]] } },
-  { id: 'honeydew-milk', no: 7, name: 'Honeydew Milk', fantasy: "Dryad's Dew", tier: 'rare', kind: 'creamy', rush: true,
+  { id: 'honeydew-milk', no: 7, name: 'Honeydew Milk', fantasy: 'Antidote', tier: 'rare', kind: 'creamy', rush: true,
     describe: 'honeydew, creamer', topping: 'mango-pearls',
     make: { powders: [['Honeydew powder', 2]] } },
-  { id: 'brown-sugar-milk-tea', no: 8, name: 'Brown Sugar Milk Tea', fantasy: 'Dwarven Brew', tier: 'rare', kind: 'milktea', caffeine: true,
+  { id: 'brown-sugar-milk-tea', no: 8, name: 'Brown Sugar Milk Tea', fantasy: 'Strength Potion', tier: 'rare', kind: 'milktea', caffeine: true,
     describe: 'black tea, brown sugar, creamer', topping: 'brown-sugar-jelly', make: {} },
-  { id: 'thai-milk-tea', no: 9, name: 'Thai Milk Tea', fantasy: "Dragon's Ember", tier: 'rare', kind: 'creamy', caffeine: true, rush: true,
+  { id: 'thai-milk-tea', no: 9, name: 'Thai Milk Tea', fantasy: 'Fire Breath', tier: 'rare', kind: 'creamy', caffeine: true, rush: true,
     describe: 'Thai tea, creamer', topping: 'brown-sugar-jelly',
     make: { powders: [['Thai tea powder', 2]] } },
-  { id: 'strawberry-matcha', no: 10, name: 'Strawberry Matcha', fantasy: "Druid's Bloom", tier: 'rare', kind: 'matcha', caffeine: true,
+  { id: 'strawberry-matcha', no: 10, name: 'Strawberry Matcha', fantasy: 'Polymorph', tier: 'rare', kind: 'matcha', caffeine: true,
     describe: 'strawberry, creamer, matcha', topping: 'strawberry-pearls', make: {} },
-  { id: 'cookies-cream-shake', no: 11, name: 'Cookies & Cream Shake', fantasy: "Frost Giant's Feast", tier: 'legendary', kind: 'shake',
+  { id: 'cookies-cream-shake', no: 11, name: 'Cookies & Cream Shake', fantasy: 'Stoneskin', tier: 'legendary', kind: 'shake',
     describe: 'made with our own ice cream', topping: null, make: {} },
-  { id: 'mango-slushy', no: 12, name: 'Mango Slushy', fantasy: 'Glacier Sun', tier: 'legendary', kind: 'slushy',
+  { id: 'mango-slushy', no: 12, name: 'Mango Slushy', fantasy: 'Frost Potion', tier: 'legendary', kind: 'slushy',
     describe: 'mango, blended with ice', topping: 'mango-pearls', make: {} },
   { id: 'brew-your-own', name: 'Brew Your Own', fantasy: "Alchemist's Choice", price: 1000, kind: 'byo', sku: 'TAVERN-BYO',
     describe: 'a base, up to two flavours and a topping', topping: null },
