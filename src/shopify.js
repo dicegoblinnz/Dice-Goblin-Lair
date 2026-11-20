@@ -147,7 +147,8 @@ const TILL_PRODUCT_FIELDS = 'id title productType vendor status isGiftCard';
  * every location's together) and whether its product is in the dice deal ($dice). Its calls give up after 15 seconds:
  * someone is standing at a stall with a phone.
  */
-const STOCK_OFF_VARIANT = `id title sku barcodes(first: 5) { nodes { value } }
+// (20 Nov 2026: price, the shop's price for one, for Stock off to show and nothing else)
+const STOCK_OFF_VARIANT = `id title sku price barcodes(first: 5) { nodes { value } }
   inventoryItem { id tracked inventoryLevel(locationId: $location) { quantities(names: ["available"]) { name quantity } } }
   product { ${TILL_PRODUCT_FIELDS} dice: inCollection(id: $dice) }`;
 const STOCK_OFF_TIMEOUT = 15_000;
@@ -211,19 +212,22 @@ export function shelfRowOf(node) {
 /**
  * Round 39: a variant as Stock off sees it, or null for anything that isn't one: { product: tillProductOf's, variant:
  * { id (numeric), title, sku, barcodes, tracked, itemId (its inventory item), stock (the count at the location asked
- * about, or null when it has none there) } }
+ * about, or null when it has none there), price (the shop's price for one, as '89.90', or null when Shopify gives
+ * none: shown on the page and nothing else) } }
  */
 export function stockOffMatch(node) {
   if (!node?.id || !node.product || !node.inventoryItem) return null;
   const level = node.inventoryItem.inventoryLevel;
   const available = (level?.quantities || []).find((q) => q?.name === 'available');
   const stock = available && Number.isFinite(Number(available.quantity)) ? Number(available.quantity) : null;
+  const dollars = node.price == null || String(node.price).trim() === '' ? NaN : Number(node.price);
   return {
     product: tillProductOf(node.product),
     variant: {
       id: lastPart(node.id), title: node.title || 'Default Title', sku: node.sku || null,
       barcodes: (node.barcodes?.nodes || []).map((b) => String(b?.value || '').trim()).filter(Boolean),
       tracked: node.inventoryItem.tracked === true, itemId: node.inventoryItem.id || null, stock: level ? stock : null,
+      price: Number.isFinite(dollars) && dollars >= 0 ? dollars.toFixed(2) : null,
     },
   };
 }

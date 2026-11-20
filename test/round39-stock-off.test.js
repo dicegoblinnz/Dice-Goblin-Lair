@@ -79,7 +79,7 @@ function thing(id, title, o = {}) {
   const t = {
     id: String(id),
     product: { id: String(o.productId || Number(id) + 5000), title, type: o.type || 'Board Games', vendor: o.vendor || 'KOSMOS', status: o.status || 'ACTIVE', giftCard: o.giftCard === true, dice: o.dice === true },
-    option: o.option || 'Default Title', sku: o.sku || null, barcodes: o.barcodes || [], tracked: o.tracked !== false,
+    option: o.option || 'Default Title', sku: o.sku || null, barcodes: o.barcodes || [], tracked: o.tracked !== false, price: o.price === undefined ? '10.00' : o.price,
     levels: new Map(o.shop === null ? [] : [[LOCATION, o.shop ?? 5]]),
   };
   if (o.hoard != null) t.levels.set(HOARD, o.hoard);
@@ -88,7 +88,7 @@ function thing(id, title, o = {}) {
 }
 const matchOf = (t, location) => ({
   product: { ...t.product },
-  variant: { id: t.id, title: t.option, sku: t.sku, barcodes: [...t.barcodes], tracked: t.tracked, itemId: itemOf(t.id), stock: t.levels.has(location) ? t.levels.get(location) : null },
+  variant: { id: t.id, title: t.option, sku: t.sku, barcodes: [...t.barcodes], tracked: t.tracked, itemId: itemOf(t.id), stock: t.levels.has(location) ? t.levels.get(location) : null, price: t.price },
 });
 const count = (t, location = LOCATION) => t.levels.get(location);
 
@@ -360,11 +360,11 @@ test("POST /stock/product: a barcode in any of its forms, or a SKU, gives the th
   for (const code of ['0029877030712', '029877030712', '29877030712']) {
     const found = ok(await call('POST', 'stock/product', { code }));
     assert.deepEqual(found.product, { id: '5101', title: 'Catan', vendor: 'KOSMOS', type: 'Board Games', status: 'ACTIVE' });
-    assert.deepEqual(found.variant, { id: '101', title: 'Default Title', sku: null, stock: 5 });
+    assert.deepEqual(found.variant, { id: '101', title: 'Default Title', sku: null, stock: 5, price: '10.00' });
     assert.equal(found.choices, undefined);
   }
   const bySku = ok(await call('POST', 'stock/product', { code: 'at-11002' }));
-  assert.deepEqual(bySku.variant, { id: '103', title: 'Jet', sku: 'AT-11002', stock: 4 });
+  assert.deepEqual(bySku.variant, { id: '103', title: 'Jet', sku: 'AT-11002', stock: 4, price: '10.00' });
   // a count of 0 or less is still the answer: the page says so
   assert.equal(ok(await call('POST', 'stock/product', { code: '5706569110215' })).variant.stock, 0);
   // another maker's dice are counted stock
@@ -1023,7 +1023,7 @@ function adminWith(answer) {
   return { admin, asked };
 }
 const node = (id, o = {}) => ({
-  id: `gid://shopify/ProductVariant/${id}`, title: o.option || 'Default Title', sku: o.sku ?? null,
+  id: `gid://shopify/ProductVariant/${id}`, title: o.option || 'Default Title', sku: o.sku ?? null, price: o.price === undefined ? '89.9' : o.price,
   barcodes: { nodes: (o.barcodes || []).map((value) => ({ value })) },
   inventoryItem: { id: itemOf(id), tracked: o.tracked !== false, inventoryLevel: o.level === null ? null : { quantities: [{ name: 'available', quantity: o.level ?? 5 }] } },
   product: { id: `gid://shopify/Product/${Number(id) + 5000}`, title: o.title || 'Catan', productType: 'Board Games', vendor: 'KOSMOS', status: 'ACTIVE', isGiftCard: false, dice: o.dice === true },
@@ -1034,8 +1034,9 @@ test("Shopify, by code: the barcode in every form or the SKU, each thing with it
   const found = await admin.stockOffByCode('0029877030712', { location: LOCATION, dice: DICE_DEAL });
   assert.deepEqual(found[0], {
     product: { id: '5101', title: 'Catan', type: 'Board Games', vendor: 'KOSMOS', status: 'ACTIVE', giftCard: false, dice: false },
-    variant: { id: '101', title: 'Default Title', sku: null, barcodes: ['029877030712'], tracked: true, itemId: itemOf(101), stock: 5 },
+    variant: { id: '101', title: 'Default Title', sku: null, barcodes: ['029877030712'], tracked: true, itemId: itemOf(101), stock: 5, price: '89.90' },
   });
+  assert.match(asked[0].query, /nodes \{ id title sku price /, "the shop's price is asked for");
   assert.equal(found[1].variant.stock, null, 'no count at the shop');
   assert.match(asked[0].query, /inventoryLevel\(locationId: \$location\) \{ quantities\(names: \["available"\]\) \{ name quantity \} \}/);
   assert.match(asked[0].query, /dice: inCollection\(id: \$dice\)/);
@@ -1074,4 +1075,16 @@ test("Shopify, a change to the count: available at the location, each line from 
   const refused = adminWith({ inventoryAdjustQuantities: { inventoryAdjustmentGroup: null, userErrors: [{ field: ['input'], message: 'Stale', code: 'CHANGE_FROM_QUANTITY_STALE' }] } });
   assert.deepEqual(await refused.admin.stockOffAdjust(changes, LOCATION, 'k', 'other', 'gid://dice-goblin-lair/StockOff/k'), { errors: [{ code: 'CHANGE_FROM_QUANTITY_STALE', message: 'Stale' }] });
   await assert.rejects(adminWith({}).admin.stockOffAdjust(changes, LOCATION, 'k', 'other', 'gid://dice-goblin-lair/StockOff/k'), /no answer/);
+});
+
+// Mo, 20 Nov 2026: "add the price of the item as well so I know the cost just give me the information don't do
+// anything else with it": the shop's price is shown on the page and nothing else is done with it.
+test("the shop's price comes with a looked-up thing, to be read only: dollars and cents, or null when Shopify gives none", async () => {
+  for (const [given, want] of [['89.9', '89.90'], ['12', '12.00'], ['0.00', '0.00'], [null, null], ['', null], ['abc', null], ['-5', null]]) {
+    const { admin } = adminWith({ productVariants: { nodes: [node(101, { barcodes: ['029877030712'], price: given })] } });
+    const [found] = await admin.stockOffByCode('029877030712', { location: LOCATION, dice: DICE_DEAL });
+    assert.equal(found.variant.price, want, `Shopify's ${JSON.stringify(given)}`);
+  }
+  // the page's answer carries it, for the first thing and for each choice
+  assert.equal(ok(await call('POST', 'stock/product', { code: '029877030712' })).variant.price, '10.00');
 });
