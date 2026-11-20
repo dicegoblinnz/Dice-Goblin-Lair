@@ -878,13 +878,19 @@ if (wanted('F')) {
       const page = watch(await ctx.newPage());
       await page.goto(`${BASE}/pages/lair-staff`, { waitUntil: 'networkidle', timeout: 60000 });
       await settle(page, 600);
-      const link = page.locator('.staff-stock-link a');
-      check(`F1 ${look} ${width}: the staff page links to Stock off for staff`, (await link.count()) === 1 && (await link.isVisible()) && (await link.getAttribute('href')) === '/pages/lair-staff?view=stock', await link.count());
-      check(`F1 ${look} ${width}: on one line`, (await link.evaluate((el) => el.getClientRects().length)) === 1);
-      if (look === 'pieces') check(`F1 ${look} ${width}: the top bar still has room for its name`, await page.evaluate(() => {
-        const t = document.querySelector('.staff-top__title');
-        return t.scrollWidth <= t.clientWidth;
-      }));
+      // Pieces: a key in the top bar (the theme, 16 Nov 2026, in place of the line over the tabs). First look: that line.
+      const link = page.locator(look === 'pieces' ? '.staff-top__link--stock' : '.staff-stock-link a');
+      const there = (await link.count()) === 1;
+      check(`F1 ${look} ${width}: the staff page links to Stock off for staff`, there && (await link.isVisible()) && (await link.getAttribute('href')) === '/pages/lair-staff?view=stock', await link.count());
+      check(`F1 ${look} ${width}: on one line`, there && (await link.evaluate((el) => el.getClientRects().length)) === 1);
+      if (look === 'pieces') {
+        check(`F1 ${look} ${width}: it's the only way in, not a second line over the tabs`, (await page.locator('.staff-stock-link').count()) === 0);
+        check(`F1 ${look} ${width}: on a phone Shop gives way to it`, !(await page.locator('.staff-top__link--shop').isVisible()));
+        check(`F1 ${look} ${width}: the top bar still has room for its name`, await page.evaluate(() => {
+          const t = document.querySelector('.staff-top__title');
+          return t.scrollWidth <= t.clientWidth;
+        }));
+      }
       check(`F1 ${look} ${width}: no sideways scroll`, (await overflowX(page)) === 0);
       await ctx.close();
     }
