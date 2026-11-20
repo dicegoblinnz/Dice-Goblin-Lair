@@ -5,7 +5,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { cloudflareSql } from './cloudflare-sql.js';
-import { MEETUP, MEETUP_TABLES, meetupLink, meetupMethods, parseMeetup } from '../src/meetup.js';
+import { MEETUP, MEETUP_TABLES, meetupLink, meetupMethods, ownCapacity, parseMeetup } from '../src/meetup.js';
 
 const HOUR = 3_600_000;
 const NOW = Date.UTC(2026, 10, 20, 5, 0); // Friday 20 November 2026, 6pm in Auckland
@@ -144,4 +144,19 @@ test('at most 3 pages a run', async () => {
   assert.equal(await l.meetupRefresh(links, NOW), MEETUP.aRun);
   assert.equal(await l.meetupRefresh(links, NOW + 600_000), 2);
   assert.equal(calls.length, 5);
+});
+
+// Mo, 20 Nov 2026 (later): "don't make our own signups ... make them all go through Meetup and just keep the update
+// on the website."
+test('an event that links to a Meetup event takes no sign-ups of its own', () => {
+  assert.equal(ownCapacity('40', LINK), null);
+  assert.equal(ownCapacity('40', 'https://meetu.ps/e/QplTV/z5ZqL/i'), null);
+  // a date that isn't up on Meetup yet links to the group's page: still no sign-ups here (Mo, 20 Nov 2026, 7:37pm)
+  assert.equal(ownCapacity('40', 'https://www.meetup.com/auckland-games-meetup-group/events/'), null);
+  assert.equal(meetupLink('https://www.meetup.com/auckland-games-meetup-group/events/'), null, 'and a group page is never read for numbers');
+  assert.equal(ownCapacity('40', 'https://www.meetup.com.evil.example/g/'), 40);
+  assert.equal(ownCapacity('40', ''), 40);
+  assert.equal(ownCapacity('40', 'https://www.dicegoblin.nz/pages/our-games'), 40, 'any other link changes nothing');
+  assert.equal(ownCapacity(null, LINK), null);
+  assert.equal(ownCapacity('', ''), null);
 });

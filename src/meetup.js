@@ -53,6 +53,24 @@ export function meetupLink(link) {
   return /^\/(?:[a-z]{2}-[A-Z]{2}\/)?[\w-]+\/events\/\w+\/?$/.test(url.pathname) ? text : null;
 }
 
+/** A link anywhere on Meetup: an event's page, or its group's (for a date that isn't up there yet) */
+export function onMeetup(link) {
+  try {
+    const url = new URL(String(link || '').trim());
+    return url.protocol === 'https:' && ['www.meetup.com', 'meetup.com', 'meetu.ps'].includes(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * An event's own capacity (its sign-ups, places and waitlist): none when its link is on Meetup. Mo, 20 Nov 2026:
+ * "don't make our own signups ... make them all go through Meetup and just keep the update on the website." So the
+ * Meetup group's list is the only list, and its limit the only limit. The website asks the same (onMeetup in
+ * assets/lair-calendar.js and lair-core.js).
+ */
+export const ownCapacity = (capacity, link) => (capacity && !onMeetup(link) ? Number(capacity) : null);
+
 /**
  * What a Meetup event page says: { going, cap, start }, or null when it doesn't say (not an event page, a cancelled
  * event, a page Meetup has changed). going: people going. cap: the places there are (null: no limit). start: ms.

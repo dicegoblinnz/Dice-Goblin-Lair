@@ -167,7 +167,7 @@ export function lairEvents() {
     // days (number_integer, round 11): how many days in a row each date runs (Oddity Alley: Saturday and Sunday)
     days: field(e.days || null),
     product: field(null),
-    link: field(null),
+    link: field(e.link || null),
     description: field(e.description),
     image: field({ __seed: `event-${e.image_slug}__${SIZES[e.image_slug] || '240x135'}`, alt: e.title, width: 240, height: 135 }),
   }));

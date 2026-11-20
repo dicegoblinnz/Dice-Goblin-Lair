@@ -1,5 +1,6 @@
 // Dice Goblin Lair — talking to Shopify: request signatures, Admin API token and GraphQL calls.
 import { eventDays, eventPayment } from './core.js';
+import { ownCapacity } from './meetup.js';
 import { barcodeForms } from './core.js';
 // Round 30: a library game that stays in the Lair (its In Store Only tag)
 import { inStoreTagged } from './core.js';
@@ -503,7 +504,9 @@ export class ShopifyAdmin {
         return {
           // gid (round 22): the entry's Shopify id, which a new entry never shares even when it takes the same handle
           id: n.handle, gid: n.id || null, title: f.title, start, end: f.ends_at ? Date.parse(f.ends_at) : start + 3 * 3_600_000, tables: f.tables || '',
-          repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: list(f.skip_dates), capacity: f.capacity ? Number(f.capacity) : null,
+          repeat: f.repeat || '', repeatUntil: f.repeat_until || null, skipDates: list(f.skip_dates),
+          // Round 47: an event that links to a Meetup event takes no sign-ups of its own (src/meetup.js)
+          capacity: ownCapacity(f.capacity, f.link),
           // entry_fee: NZD a person (cents here). game_tables: bookable game spots like "T14+T15, T16+T17".
           entryFee: Number.isFinite(fee) && fee > 0 ? fee : 0, gameTables: f.game_tables || '',
           // Round 11: the price as the event says it (price_note, like "Free entry"), and a $0 entry fee, for reminder emails

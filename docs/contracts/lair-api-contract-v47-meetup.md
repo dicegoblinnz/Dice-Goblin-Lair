@@ -20,11 +20,20 @@ Code: `src/meetup.js`. Checks: `test/round47-meetup.test.js`.
    an event that started more than 12 hours ago, aren't given out. A link no event has any more is forgotten.
    A Lair that couldn't read the events from Shopify reads nothing and forgets nothing.
 5. `GET /floor` answers `meetup: { [link]: { going, cap, start } }` for everyone: counts only, never names.
-6. Nothing here changes a sign-up, a place, a waitlist or a price: the event's own capacity and sign-ups are as they
-   were. The website shows the Meetup number beside them (theme: `assets/lair-calendar.js`).
+6. Mo, 20 Nov 2026 (later): "don't make our own signups ... make them all go through Meetup and just keep the update
+   on the website." An event whose Link is anywhere on Meetup (an event's page, or the group's page for a date that isn't up there
+   yet: no numbers are read for that) **takes no sign-ups of its own**: the Lair reads it as having
+   no capacity (`ownCapacity`), so there's no Join, no places count and no waitlist for it, whatever its Capacity field
+   says. Sign-ups made before the link was added stay as they are (and on the tab). Prices don't change.
 
 ## What the website shows
 
-On a date within 12 hours of the Meetup event's start: "10 going on Meetup" on its card, and in its sheet a **Join on
-Meetup** button with "10 going on Meetup · 22 places left there". With no number to show (never read, or too old), the
-button alone.
+On a date within 12 hours of the Meetup event's start: "10 going on Meetup" on its card, and in its sheet "10 going on
+Meetup · 22 places left there". The sheet's one button is **Join on Meetup**, with the entry fee as before; there's no
+Join, I'm coming, Maybe or waitlist. With no number to show (never read, or too old), the note and button without it.
+
+## The usual week's list
+
+Mo, 20 Nov 2026: "only show the next one". A monthly event whose date moves one month is a one-off entry with the same
+title. The list's monthly line then says and opens that sooner date, and the one-off isn't listed again under Coming up
+(theme: `snippets/lair-events-schedule.liquid`).
