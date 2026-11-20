@@ -34,6 +34,9 @@ export const CONFIG_KEYS = [
   // logged in. Off until both are set. The site key is public (the page shows it); keep the secret a Worker secret.
   // GUEST_NIGHT_CAP: the most bookings and sign-ups made without an account for any one day (20 when unset; 'off')
   'TURNSTILE_SITE_KEY', 'TURNSTILE_SECRET_KEY', 'GUEST_NIGHT_CAP',
+  // Round 48 (contract v48-card-pay): who takes the card for Pay by card in My Lair (src/card-providers.js). Unset, or a
+  // name with no adapter, and card pay is off. The provider's own keys are Worker secrets.
+  'CARD_PROVIDER',
 ];
 const TTL = 60_000;
 let cache = null;

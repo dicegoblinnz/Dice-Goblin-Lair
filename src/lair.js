@@ -106,6 +106,8 @@ import { tillPeopleMethods } from './till-people.js';
 // Round 32, the till, part 3: real products, prices and sales saved to Shopify (src/till-sales.js, contract v32-till section 6)
 import { TILL_SALE_TABLES, tillSalesMethods } from './till-sales.js';
 import { CREDIT_PAY_COLUMNS, CREDIT_PAY_INDEXES, CREDIT_PAY_TABLES, creditPayMethods } from './credit-pay.js';
+import { CARD_ORDER, CARD_PAY_TABLES, cardPayMethods } from './card-pay.js';
+import { paidOrderMethods } from './paid-order.js';
 import { TILL_DISCOUNT_COLUMNS, tillDiscountMethods } from './till-discounts.js';
 // Round 37 (14 Nov 2026): changes people make themselves: a table booking's numbers and the seats or sign-ups someone
 // booked for friends, until 24 hours before; and a GM cancelling or moving a session, until 4 hours before
@@ -1275,6 +1277,8 @@ export class Lair {
     for (const statement of TILL_SALE_TABLES) this.sql.exec(statement);
     // Round 33: paying with store credit, in My Lair and at the till (src/credit-pay.js), and a till sale's store credit
     for (const statement of CREDIT_PAY_TABLES) this.sql.exec(statement);
+    // Round 48: My Lair's bill paid by card on the phone (src/card-pay.js)
+    for (const statement of CARD_PAY_TABLES) this.sql.exec(statement);
     // Round 34: who approved a till sale's discount, and what it took off (src/till-discounts.js)
     // Round 37: when a seat's session last moved under it, and the series date a moved session fills (src/changes.js)
     for (const [table, column, type] of [...CREDIT_PAY_COLUMNS, ...TILL_DISCOUNT_COLUMNS, ...CHANGE_COLUMNS]) {
@@ -2336,6 +2340,9 @@ export class Lair {
       if (a === 'me' && b === 'credit' && c === 'gift' && !d) return json(await this.sendCreditGift(body, who));
       // Round 33: My Lair's bill paid from store credit (src/credit-pay.js)
       if (a === 'me' && b === 'credit' && !c) return json(await this.payBillWithCredit(body, who));
+      // Round 48: My Lair's bill paid by card on the phone: open a card page, and ask how a payment stands (src/card-pay.js)
+      if (a === 'me' && b === 'card' && !c) return json(await this.payBillByCard(body, who));
+      if (a === 'me' && b === 'card' && c && !d) return json(await this.checkCardPay(c, who));
       // 17 Oct 2026: pay with cash at the counter, or not after all
       if (a === 'me' && b === 'cash' && !c) return json(await this.payCash(who));
       if (a === 'me' && b === 'cash' && c === 'cancel' && !d) return json(await this.cancelCash(who));
@@ -2858,6 +2865,8 @@ export class Lair {
       ...(staffView ? { monthlyAccounts: this.monthlyIds() } : {}),
       // 17 Oct 2026: today's cash payments waiting for staff who take cash (Check-in or Money)
       ...(who.staff && this.can(who, CASH_STAFF) ? { cash: this.cashWaiting(rules, now) } : {}),
+      // Round 48: who paid their own bill on their phone today (card or store credit), for "I've paid" at the counter
+      ...(who.staff && this.can(who, CASH_STAFF) ? { paidOnPhone: this.paidOnPhone(rules, now) } : {}),
       shopTables: rules.shopTables || [],
       openings: st.openings.map((o) => (staffView ? o : { id: o.id, tables: o.tables, start: o.start, end: o.end })),
       staff: staffView,
@@ -11147,6 +11156,8 @@ export class Lair {
       cash: this.cashView(this.cashWaitingFor(who.customerId, rules, now)),
       // Round 33: their bill paid from store credit, still being checked with Shopify, or null
       creditPay: this.memberCreditPay(who.customerId),
+      // Round 48: whether Pay by card shows, and their card payment still to finish or being sorted
+      cardPay: this.memberCardPay(who.customerId, now),
       // Round 9: the running tab (owed now, coming up) and, on a monthly account, the limit and the open bill
       account: this.memberAccount(who.customerId, rules, now),
       // Round 9, play: the sessions they're interested in and the event dates they said maybe (or coming) to, still to come
@@ -11626,6 +11637,15 @@ export class Lair {
     } catch (error) {
       console.error('Lair: could not look after store credit payments', error);
     }
+    // Round 48: card payments from My Lair: open pages asked about, expired ones looked at once more, and their Shopify orders
+    try {
+      const cardPay = await this.cardPayUpkeep(Date.now());
+      if (cardPay) result.cardPay = cardPay;
+      const cardOrders = await this.retryPaidOrders(CARD_ORDER, Date.now());
+      if (cardOrders.length) result.cardOrders = { looked: cardOrders.length };
+    } catch (error) {
+      console.error('Lair: could not look after card payments', error);
+    }
     // Round 32, part 3: till sales: unpaid ones let go after 30 minutes, paid ones' orders and fulfilments tried again
     // until they're made (src/till-sales.js)
     try {
@@ -11781,6 +11801,9 @@ Object.assign(Lair.prototype, tillPeopleMethods);
 Object.assign(Lair.prototype, tillSalesMethods);
 Object.assign(Lair.prototype, tillDiscountMethods);
 Object.assign(Lair.prototype, creditPayMethods);
+// Round 48: My Lair's bill paid by card on the phone (src/card-pay.js), and its Shopify order (src/paid-order.js)
+Object.assign(Lair.prototype, cardPayMethods);
+Object.assign(Lair.prototype, paidOrderMethods);
 // Round 37: changes people make themselves: a booking's numbers, and a GM cancelling or moving a session (src/changes.js)
 Object.assign(Lair.prototype, changeMethods);
 // Round 37: the GM perk, the staff slot and a game's books (src/gm-perk.js)

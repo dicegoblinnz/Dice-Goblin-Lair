@@ -316,7 +316,18 @@ export const creditPayMethods = {
    * waiting Pay with cash request ended, and its Shopify order started. No awaits.
    */
   creditPayBill(id, customerId, bill, rules, now) {
-    const orderKey = `credit:${id}`;
+    const orderLines = this.settleMyBill(`credit:${id}`, customerId, bill, rules, now, 'store credit');
+    this.creditPayUpdate(id, { status: 'paid', paid_at: now, lines: JSON.stringify(orderLines), order_status: 'due' });
+    this.touchMember(customerId, {}, now);
+    this.startCreditOrder(id);
+  },
+
+  /**
+   * My Lair's bill is paid (store credit here, a card in src/card-pay.js): a payment for each booking, seat and sign-up
+   * under orderKey with the member as the payer, today's tab paid, what's owed settled, a TTRPG seat's GM credited and a
+   * waiting Pay with cash request ended (endedBy says how). Returns its Shopify order's lines. No awaits.
+   */
+  settleMyBill(orderKey, customerId, bill, rules, now, endedBy) {
     const paying = [];
     const orderLines = [];
     for (const item of bill.items) {
@@ -336,10 +347,8 @@ export const creditPayMethods = {
     // (round 30) a TTRPG seat paid gives its GM their fee once its session has started (src/gm-credit.js)
     if (paidRefs.length) this.gmCreditSoon();
     // a Pay with cash request still waiting is for this same bill: it's paid now
-    this.write("UPDATE cash_requests SET status = 'ended', ended_at = ?, ended_by = 'store credit', updated_at = ? WHERE customer_id = ? AND status = 'waiting'", now, now, customerId);
-    this.creditPayUpdate(id, { status: 'paid', paid_at: now, lines: JSON.stringify(orderLines), order_status: 'due' });
-    this.touchMember(customerId, {}, now);
-    this.startCreditOrder(id);
+    this.write("UPDATE cash_requests SET status = 'ended', ended_at = ?, ended_by = ?, updated_at = ? WHERE customer_id = ? AND status = 'waiting'", now, endedBy, now, customerId);
+    return orderLines;
   },
 
   /** The till keeps a member's store credit for a minute (src/till-people.js): once some has moved, it's read again, so
