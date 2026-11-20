@@ -118,6 +118,12 @@ for (const size of sizes) {
   await axe(page, `${tag} the question`, '[aria-labelledby="t-results-title"]');
   check(`${tag} the question: no sideways scroll`, (await overflowX(page)) <= 0, await overflowX(page));
 
+  /* ---------- 1b. a second scan waits for the answer (20 Nov 2026, the review: it used to replace the question, and the first box was never sold) ---------- */
+  await scan('6900000000123');
+  v = await look();
+  check(`${tag} a second scan while it asks: the first question stays, nothing is added, and the till says to answer it`,
+    v.head === 'Which one is it?' && v.rows.length === 2 && v.rows[0].startsWith('Pokemon Surging Sparks Booster') && v.lines.length === 0 && v.toast === 'Tap which one it is first, or None of these. Then scan the next one.', v);
+
   /* ---------- 2. picking ---------- */
   await tap('[data-act="result"][data-i="1"][data-j="0"]');
   v = await look();
