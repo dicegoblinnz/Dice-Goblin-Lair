@@ -115,6 +115,24 @@ check('a barcode two products share: both on the menu, open, nothing more picked
 said = await scan('9300000000024');
 v = await look();
 check('a barcode only one thing has goes straight on', said.startsWith('Added ') && v.picked['5013'] === 1, { said, picked: v.picked });
+
+/* ---------- 6. the Lair app can't say (its 503): the shop's own search finds the product, and still asks ---------- */
+await ctx.route('**/search/suggest.json*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ resources: { results: { products: [{ handle: 'spare-decks' }] } } }) }));
+await ctx.route('**/products/spare-decks.js', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+  id: 880, handle: 'spare-decks', title: 'Spare Decks', tags: [], type: 'Trading Card Games',
+  variants: [{ id: 8801, title: 'Red', price: 5000, barcode: '4000000000017', sku: '', available: true }, { id: 8802, title: 'Blue', price: 5000, barcode: '4000000000017', sku: '', available: true }, { id: 8803, title: 'Green', price: 5000, barcode: '4000000000024', sku: '', available: true }],
+}) }));
+await page.evaluate(() => {
+  window.Lair.store.backend.tabLookup = async () => {
+    throw Object.assign(new Error("Gobgob can't look up barcodes just now. Pick it from the menu instead."), { status: 503 });
+  };
+});
+said = await scan('4000000000017');
+v = await look();
+check("the app's lookup is down and the shop's search finds two variants with the code: nothing is added, and it asks", said === 'Found Spare Decks. Pick which one from the menu.' && !v.picked['8801'] && !v.picked['8802'], { said, picked: v.picked });
+said = await scan('4000000000024');
+v = await look();
+check('down still, a code only one of its variants has goes straight on', said.startsWith('Added ') && v.picked['8803'] === 1, { said, picked: v.picked });
 check('no console errors', page.errors.length === 0, page.errors);
 
 await ctx.close();
