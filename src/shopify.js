@@ -929,7 +929,8 @@ export class ShopifyAdmin {
   }
 
   /**
-   * Round 7: the product variants whose barcode or SKU is `code` (Shopify's search, up to 5), for scanning library games
+   * Round 7: the product variants whose barcode or SKU is `code` (Shopify's search, up to 20: 5 until 20 Nov 2026, and
+   * things that share a barcode are all offered on a tab), for scanning library games
    * and tab items. Library copies' barcodes and SKUs are their shelf codes, and a library copy's product has its shelf
    * code in custom.library_code. Needs read_products (waiting for Mo); until then Shopify refuses and this throws. Each:
    * { variantId, productId, handle, title (the variant's), productTitle, sku, barcode, price (cents), available, image
@@ -941,7 +942,7 @@ export class ShopifyAdmin {
     // Round 8: a barcode in every form it can be read in (barcodeForms: a UPC-A read as EAN-13 gains a leading 0)
     const query = [...barcodeForms(text).map((form) => `barcode:"${form}"`), `sku:"${text}"`].join(' OR ');
     const data = await this.graphql(
-      `query LairVariantByCode($query: String!) { productVariants(first: 5, query: $query) { nodes { id title sku barcode price availableForSale
+      `query LairVariantByCode($query: String!) { productVariants(first: 20, query: $query) { nodes { id title sku barcode price availableForSale
         media(first: 1) { nodes { preview { image { url } } } }
         product { id handle title status tags isGiftCard requiresSellingPlan featuredMedia { preview { image { url } } } libraryCode: metafield(namespace: "custom", key: "library_code") { value } } } } }`,
       { query },

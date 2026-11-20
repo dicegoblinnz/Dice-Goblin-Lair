@@ -110,3 +110,47 @@ test('barcodes (round 8): the tab finds Mo\'s bundle whether the camera reads 19
   assert.equal(upc.data.item.variantId, '44556175933543', 'typed as it is in Shopify, as before');
   assert.equal((await lookup('195166315387')).status, 404, 'a different code is still unknown');
 });
+
+// 20 Nov 2026 (Mo: "Fix it in my tab too"): the four Final Fantasy Commander decks are one product's four variants, all
+// with barcode 195166270999, and a scan put Cloud's deck on the tab straight away
+test('barcodes (20 Nov 2026): a barcode several things share comes back with choices, each one a tab can take', async () => {
+  Object.defineProperty(lair.shopify, 'configured', { value: true, configurable: true });
+  const deck = (variantId, title, extra = {}) => ({
+    variantId, productId: '7002', handle: 'ff-commander-decks', title, productTitle: 'Final Fantasy Commander Decks', sku: '', barcode: '195166270999',
+    price: 14000, available: true, image: null, productImage: null, status: 'ACTIVE', giftCard: false, sellingPlan: false, libraryCode: null, ...extra,
+  });
+  const decks = [deck('51', 'Limit Break'), deck('52', 'Revival Trance'), deck('53', 'Scions & Spellcraft', { available: false }), deck('54', 'Counter Blitz')];
+  const others = [
+    deck('55', 'Default Title', { productId: '7003', productTitle: 'Final Fantasy Commander Decks (Library)', libraryCode: 'DGL34-M099' }),
+    deck('56', 'Old box', { productId: '7004', status: 'ARCHIVED' }),
+    deck('57', 'Gift card', { productId: '7005', giftCard: true }),
+    deck('58', 'Another code', { barcode: '195166270998' }),
+  ];
+  lair.shopify.variantByCode = async (code) => (code === '195166270999' ? [...decks, ...others] : code === '9300000000017' ? [decks[0]].map((d) => ({ ...d, barcode: code })) : []);
+  const lookup = (code) => call('GET', `tab/lookup?code=${encodeURIComponent(code)}`, null, '1001');
+  const shared = await lookup('195166270999');
+  assert.equal(shared.status, 200, shared.data.error);
+  assert.equal(shared.data.item.variantId, '51', 'item is still the first, for a page that doesn\'t ask yet');
+  assert.deepEqual(shared.data.choices.map((c) => [c.variantId, c.productId, c.title, c.variantTitle, c.price, c.available, c.barcode]), [
+    ['51', '7002', 'Final Fantasy Commander Decks', 'Limit Break', 14000, true, '195166270999'],
+    ['52', '7002', 'Final Fantasy Commander Decks', 'Revival Trance', 14000, true, '195166270999'],
+    ['53', '7002', 'Final Fantasy Commander Decks', 'Scions & Spellcraft', 14000, false, '195166270999'],
+    ['54', '7002', 'Final Fantasy Commander Decks', 'Counter Blitz', 14000, true, '195166270999'],
+  ], 'the four decks, in Shopify\'s order: never the library copy, the archived one, the gift card or another barcode');
+  const again = await lookup('195166270999');
+  assert.equal(again.data.choices.length, 4, 'the kept answer has them too');
+  const one = await lookup('9300000000017');
+  assert.equal(one.data.item.variantId, '51');
+  assert.equal('choices' in one.data, false, 'a barcode only one thing has: no choices, as before');
+});
+
+test('barcodes (20 Nov 2026): Shopify is asked for up to 20 variants a code, so things that share one are all found', async () => {
+  const admin = new ShopifyAdmin({ shop: 'test.myshopify.com', clientId: 'id', clientSecret: 'secret' });
+  let asked = '';
+  admin.graphql = async (query) => {
+    asked = query;
+    return { productVariants: { nodes: [] } };
+  };
+  await admin.variantByCode('195166270999');
+  assert.match(asked, /productVariants\(first: 20, /);
+});
