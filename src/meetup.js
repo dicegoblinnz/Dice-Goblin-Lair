@@ -54,6 +54,13 @@ export function meetupLink(link) {
 }
 
 /**
+ * An event's own capacity (its sign-ups, places and waitlist): none when its link is a Meetup event. Mo, 20 Nov 2026:
+ * "don't make our own signups ... make them all go through Meetup and just keep the update on the website." So the
+ * Meetup group's list is the only list, and its limit the only limit.
+ */
+export const ownCapacity = (capacity, link) => (capacity && !meetupLink(link) ? Number(capacity) : null);
+
+/**
  * What a Meetup event page says: { going, cap, start }, or null when it doesn't say (not an event page, a cancelled
  * event, a page Meetup has changed). going: people going. cap: the places there are (null: no limit). start: ms.
  */
