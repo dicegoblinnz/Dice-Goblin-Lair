@@ -10,7 +10,7 @@ Code: `src/meetup.js`. Checks: `test/round47-meetup.test.js`.
 
 1. An event's **Link** (`lair_event` `link`, set in the staff page's events editor) that is a Meetup event's address
    (`https://www.meetup.com/<group>/events/<id>/`, or Meetup's short `https://meetu.ps/e/...` link) is a Meetup link.
-   No other address is ever fetched.
+   No other address is ever fetched: a short link's hand-on is followed only to another Meetup link (3 hops at most).
 2. The 10-minute run reads each Meetup link's public page **at most once every 8 hours**, 3 pages a run at most. It
    uses no Meetup account, key or API.
 3. From the page's own data it keeps who's going (`goingCount`), the places there are (`maxTickets`, none when 0) and
@@ -18,6 +18,7 @@ Code: `src/meetup.js`. Checks: `test/round47-meetup.test.js`.
    that failed.
 4. A read that fails keeps the last numbers and waits its 8 hours like any other. Numbers older than 26 hours, or of
    an event that started more than 12 hours ago, aren't given out. A link no event has any more is forgotten.
+   A Lair that couldn't read the events from Shopify reads nothing and forgets nothing.
 5. `GET /floor` answers `meetup: { [link]: { going, cap, start } }` for everyone: counts only, never names.
 6. Nothing here changes a sign-up, a place, a waitlist or a price: the event's own capacity and sign-ups are as they
    were. The website shows the Meetup number beside them (theme: `assets/lair-calendar.js`).

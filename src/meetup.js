@@ -72,6 +72,16 @@ export function parseMeetup(html) {
 
 export const meetupMethods = {
   /**
+   * The 10-minute run's step: the events' links, read when due. Only with the events read from Shopify: a Lair that
+   * couldn't reach Shopify knows no events, and that must never forget every link (and its 8 hours). Returns pages read.
+   */
+  async meetupRun(now = Date.now()) {
+    const rules = await this.rules();
+    if (!this.eventsKnown()) return 0;
+    return this.meetupRefresh(rules.events.map((e) => e.link), now);
+  },
+
+  /**
    * The 10-minute run: read each Meetup link that's due. links: every event's Link. Never throws (a page that can't
    * be read is tried again in MEETUP.every). Returns how many pages it read.
    */
@@ -91,13 +101,24 @@ export const meetupMethods = {
       read += 1;
       let found = null;
       try {
-        externalCalls.count += 1;
-        const res = await fetch(url, {
-          headers: { accept: 'text/html', 'user-agent': 'Mozilla/5.0 (compatible; DiceGoblinLair/1.0; +https://www.dicegoblin.nz)' },
-          signal: AbortSignal.timeout(MEETUP.timeout),
-        });
-        // the short link lands on the event's own page: anywhere else isn't read
-        if (res.ok && meetupLink(res.url || url)) found = parseMeetup(await res.text());
+        // the short link hands on to the event's own page: each hop is checked before it's asked for, so nowhere
+        // but Meetup is ever fetched
+        let at = url;
+        for (let hop = 0; hop < 3 && at; hop += 1) {
+          externalCalls.count += 1;
+          const res = await fetch(at, {
+            redirect: 'manual',
+            headers: { accept: 'text/html', 'user-agent': 'Mozilla/5.0 (compatible; DiceGoblinLair/1.0; +https://www.dicegoblin.nz)' },
+            signal: AbortSignal.timeout(MEETUP.timeout),
+          });
+          const next = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+          if (next) {
+            at = meetupLink(new URL(next, at).href.split('?')[0]);
+            continue;
+          }
+          if (res.ok) found = parseMeetup(await res.text());
+          break;
+        }
       } catch {
         found = null;
       }

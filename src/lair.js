@@ -2151,7 +2151,7 @@ export class Lair {
           const health = await this.checkConnection(body.webhookUrl, { force: false, membershipsUrl });
           // Round 47: each Meetup link read once every 8 hours (src/meetup.js); a failure there never fails the run
           try {
-            if (this.eventsKnown()) await this.meetupRefresh((await this.rules()).events.map((e) => e.link));
+            await this.meetupRun();
           } catch {
             // the next run tries again
           }

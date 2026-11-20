@@ -42,7 +42,7 @@ function meetup(answer) {
     calls.push(String(url));
     const a = answer();
     if (a instanceof Error) throw a;
-    return { ok: a.ok !== false, url: a.url || String(url), text: async () => a.body || '' };
+    return { ok: a.ok !== false && !a.to, status: a.to ? 302 : a.ok === false ? 503 : 200, headers: { get: (h) => (h === 'location' ? a.to || null : null) }, text: async () => a.body || '' };
   };
   return calls;
 }
@@ -97,11 +97,33 @@ test('a read that fails keeps the last numbers, waits its 8 hours, and they stop
   assert.deepEqual(l.meetupCounts(NOW + 27 * HOUR), {});
 });
 
-test('a short link that lands anywhere but a Meetup event is not read', async () => {
-  const l = lair();
-  meetup(() => ({ url: 'https://elsewhere.example/', body: page(99) }));
-  await l.meetupRefresh(['https://meetu.ps/e/QplTV/z5ZqL/i'], NOW);
+test('a short link is followed to its Meetup event, and nowhere else is ever asked for', async () => {
+  const SHORT = 'https://meetu.ps/e/QplTV/z5ZqL/i';
+  let l = lair();
+  let calls = meetup(() => (calls.length === 1 ? { to: `${LINK}?utm=share` } : { body: page(10) }));
+  await l.meetupRefresh([SHORT], NOW);
+  assert.deepEqual(calls, [SHORT, LINK]);
+  assert.equal(l.meetupCounts(NOW)[SHORT].going, 10);
+  l = lair();
+  calls = meetup(() => ({ to: 'https://elsewhere.example/', body: page(99) }));
+  await l.meetupRefresh([SHORT], NOW);
+  assert.deepEqual(calls, [SHORT], 'the other address is never fetched');
   assert.deepEqual(l.meetupCounts(NOW), {});
+});
+
+test("a Lair that couldn't reach Shopify forgets nothing and reads nothing", async () => {
+  const l = lair();
+  const calls = meetup(() => ({ body: page(10) }));
+  let known = true;
+  l.rules = async () => ({ events: known ? [{ link: LINK }] : [] });
+  l.eventsKnown = () => known;
+  assert.equal(await l.meetupRun(NOW), 1);
+  known = false; // Shopify down on a fresh start: the built-in rules have no events
+  assert.equal(await l.meetupRun(NOW + 600_000), 0);
+  assert.equal(l.meetupCounts(NOW + 600_000)[LINK].going, 10, 'kept');
+  known = true;
+  assert.equal(await l.meetupRun(NOW + 1_200_000), 0, 'still inside its 8 hours');
+  assert.equal(calls.length, 1);
 });
 
 test("a link no event has any more is forgotten, and an event that's over shows nothing", async () => {
