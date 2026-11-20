@@ -517,6 +517,8 @@ export class ShopifyAdmin {
           days: eventDays(f.days),
           // Round 30: member_free ("Free for library members"): library members get in free (contract v30-library)
           memberFree: String(f.member_free || '').trim().toLowerCase() === 'true',
+          // Round 47: its Link ("More info"), read for who's going when it's a Meetup event (src/meetup.js)
+          link: String(f.link || '').trim(),
         };
       })
       .filter((e) => Number.isFinite(e.start));

@@ -124,6 +124,7 @@ import { TAVERN_ORDER_TABLES, tavernMethods } from './tavern.js';
 import { QUEST_TABLES, questMethods } from './quests.js';
 // Round 43: what's on the shelf, for the home page's d20 roller
 import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
+import { MEETUP_TABLES, meetupMethods } from './meetup.js';
 // Round 46: library copies bought online are held (src/library-hold.js)
 import { LIBRARY_HOLD_TABLES, libraryHoldMethods } from './library-hold.js';
 // 17 Nov 2026 (contract v45-guard): the robot check, the day's cap without an account, limits kept in the Durable
@@ -1216,6 +1217,8 @@ export class Lair {
     for (const statement of QUEST_TABLES) this.sql.exec(statement);
     // Round 43: the shelf list the d20 roller picks from (src/shelf-picks.js)
     for (const statement of SHELF_TABLES) this.sql.exec(statement);
+    // Round 47: who's going on Meetup, for events that link to one (src/meetup.js)
+    for (const statement of MEETUP_TABLES) this.sql.exec(statement);
     // Round 46: orders held for a library copy, and what's done for each (src/library-hold.js)
     for (const statement of LIBRARY_HOLD_TABLES) this.sql.exec(statement);
     // 17 Nov 2026: counted tries for the limits, kept through a restart (src/guard.js)
@@ -2145,7 +2148,14 @@ export class Lair {
         if (b === 'maintenance') {
           // Round 43: the d20 roller's shelf list is read by the alarm when it's due, so it's ready before anyone rolls
           this.shelfKeepWarm(Date.now());
-          return json(await this.checkConnection(body.webhookUrl, { force: false, membershipsUrl }));
+          const health = await this.checkConnection(body.webhookUrl, { force: false, membershipsUrl });
+          // Round 47: each Meetup link read once every 8 hours (src/meetup.js); a failure there never fails the run
+          try {
+            if (this.eventsKnown()) await this.meetupRefresh((await this.rules()).events.map((e) => e.link));
+          } catch {
+            // the next run tries again
+          }
+          return json(health);
         }
         // Round 11: a job the owner queued in the config database (admin_jobs), run by the Worker's cron (src/admin.js)
         if (b === 'admin-job') return json(await this.adminJob(body));
@@ -2787,6 +2797,8 @@ export class Lair {
       : new Set();
     return {
       now,
+      // Round 47: who's going on Meetup, by an event's link (src/meetup.js): counts only
+      meetup: this.meetupCounts(now),
       // (round 21: a GM's charge for a player's seat is no place on the floor: only staff see it, to settle it)
       bookings: st.bookings.filter((bk) => staffView || (ACTIVE.has(bk.status) && bk.kind !== 'gm-cover')).map(view),
       // Round 8: staff see a hold's series (seriesId, repeat, repeatTag, until); the public see nothing new
@@ -11781,6 +11793,8 @@ Object.assign(Lair.prototype, tavernMethods);
 Object.assign(Lair.prototype, questMethods);
 // Round 43: the d20 roller's shelf list (src/shelf-picks.js)
 Object.assign(Lair.prototype, shelfPickMethods);
+// Round 47: who's going on Meetup (src/meetup.js)
+Object.assign(Lair.prototype, meetupMethods);
 // 17 Nov 2026: the guard on the website's forms and on codes (src/guard.js)
 Object.assign(Lair.prototype, guardMethods);
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)
