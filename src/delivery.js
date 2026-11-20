@@ -11,8 +11,11 @@
  * for the box and wrap. Rural is the courier's call from the address, never the customer's. When there's no live
  * price (no key, GoSweetSpot down, no Aramex service), the old flat rates stand: nobody is ever stopped from buying.
  *
- * This file is the rule and the call to GoSweetSpot. It keeps nothing and changes nothing.
+ * This file is the rule, the call to GoSweetSpot, and POST /delivery/quote (deliveryMethods, on the Lair). It changes
+ * nothing in Shopify; the last live quote's workings go to the config database's status table (key delivery).
  */
+import { recordStatus } from './config.js';
+import { RuleError } from './core.js';
 
 /** The numbers in one place */
 export const DELIVERY = Object.freeze({
@@ -118,9 +121,12 @@ export async function deliveryQuote(env, { address, lines }, fetcher = fetch, d 
       signal: AbortSignal.timeout(d.timeout),
     });
     if (!response?.ok) return fallback();
-    const rate = pickRate((await response.json())?.Available, d);
+    const available = (await response.json())?.Available;
+    const rate = pickRate(available, d);
     if (!rate) return fallback();
     return {
+      // every service GoSweetSpot offered, for the status note only
+      seen: (Array.isArray(available) ? available : []).slice(0, 12).map((r) => ({ carrier: r.CarrierName, type: r.DeliveryType, cost: r.Cost, charge: r.Charge, rural: r.IsRuralDelivery })),
       cents: deliveryCents(rate, { costHasGst: env.GSS_COST_HAS_GST === 'yes', pack: d.pack, gst: d.gst }),
       rural: Boolean(rate.IsRuralDelivery), source: 'live', estimated: parcel.estimated,
       service: String(rate.DeliveryType || '').slice(0, 60), costCents: Math.round(Number(rate.Cost) * 100),
@@ -128,4 +134,80 @@ export async function deliveryQuote(env, { address, lines }, fetcher = fetch, d 
   } catch {
     return fallback();
   }
+}
+
+/** Quotes one address may ask for in ten minutes, and how long an answer is kept (the same cart to the same door) */
+export const QUOTE_LIMIT = { count: 30, window: 600_000, keep: 600_000, lines: 60 };
+
+const GRAMS = { GRAMS: 1, KILOGRAMS: 1000, OUNCES: 28.3495, POUNDS: 453.592 };
+
+/** A Shopify variant (with its product's ship_* fields) as a parcel line */
+export function lineOf(variant, quantity) {
+  const weight = variant?.inventoryItem?.measurement?.weight;
+  const cm = ['shipLength', 'shipWidth', 'shipHeight'].map((key) => Number(variant?.product?.[key]?.value));
+  return {
+    grams: positive(weight?.value) ? Number(weight.value) * (GRAMS[weight.unit] || 1) : 0,
+    quantity,
+    cm: cm.every(positive) ? cm : null,
+    ships: variant?.inventoryItem?.requiresShipping !== false,
+  };
+}
+
+/** What the website sent, cleaned: { address, lines: [{ id, quantity }] }; throws a RuleError the page can show */
+export function quoteInput(body) {
+  const text = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const address = {
+    street: text(body?.address?.street, 100), suburb: text(body?.address?.suburb, 60), city: text(body?.address?.city, 60),
+    postcode: text(body?.address?.postcode, 4),
+  };
+  if (address.street.length < 3 || !address.city) throw new RuleError('Add your street address and town or city.');
+  if (!/^\d{4}$/.test(address.postcode)) throw new RuleError('Add your 4-digit postcode.');
+  const lines = (Array.isArray(body?.lines) ? body.lines : []).slice(0, QUOTE_LIMIT.lines)
+    .map((line) => ({ id: String(line?.variantId ?? '').match(/(\d{5,20})$/)?.[1] || '', quantity: Math.min(99, Math.floor(Number(line?.quantity) || 0)) }))
+    .filter((line) => line.id && line.quantity > 0);
+  if (!lines.length) throw new RuleError('Your cart is empty.');
+  return { address, lines };
+}
+
+/** Methods of the Lair Durable Object (Object.assign onto its prototype in lair.js), so `this` is the Lair. */
+export const deliveryMethods = {
+  /**
+   * POST /delivery/quote { address: { street, suburb, city, postcode }, lines: [{ variantId, quantity }] }, for anyone
+   * with a cart. Answers { cents, rural, source, estimated }: never the courier's own cost.
+   */
+  async deliveryQuoteFor(body, client = '', now = Date.now()) {
+    const { address, lines } = quoteInput(body);
+    this.deliveryAsks ||= new Map();
+    this.deliveryKept ||= new Map();
+    const asks = (this.deliveryAsks.get(client) || []).filter((at) => now - at < QUOTE_LIMIT.window);
+    if (asks.length >= QUOTE_LIMIT.count) throw new RuleError('Too many tries just now. Give it a few minutes and try again.', 429);
+    this.deliveryAsks.set(client, [...asks, now]);
+    const key = JSON.stringify([address, lines]);
+    const kept = this.deliveryKept.get(key);
+    if (kept && now - kept.at < QUOTE_LIMIT.keep) return kept.answer;
+    if (this.deliveryKept.size > 500) this.deliveryKept.clear();
+    const data = await this.shopify.graphql(
+      `query DeliveryLines($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id
+        inventoryItem { requiresShipping measurement { weight { value unit } } }
+        product { shipLength: metafield(namespace: "custom", key: "ship_length_cm") { value }
+          shipWidth: metafield(namespace: "custom", key: "ship_width_cm") { value }
+          shipHeight: metafield(namespace: "custom", key: "ship_height_cm") { value } } } } }`,
+      { ids: lines.map((line) => `gid://shopify/ProductVariant/${line.id}`) },
+    );
+    const found = new Map((data?.nodes || []).filter(Boolean).map((node) => [String(node.id).split('/').pop(), node]));
+    const parcelLines = lines.filter((line) => found.has(line.id)).map((line) => lineOf(found.get(line.id), line.quantity));
+    if (!parcelLines.length) throw new RuleError("We couldn't find what's in your cart. Refresh the page and try again.");
+    const quote = await deliveryQuote(this.env, { address, lines: parcelLines });
+    const answer = { cents: quote.cents, rural: quote.rural, source: quote.source, estimated: quote.estimated };
+    if (quote.source === 'live') {
+      this.deliveryKept.set(key, { at: now, answer });
+      this.later?.(recordDelivery(this.env, { at: new Date(now).toISOString(), ...quote, parcel: parcelOf(parcelLines), postcode: address.postcode }));
+    }
+    return answer;
+  },
+};
+
+/** The last live quote's workings, for checking against GoSweetSpot's invoices (the config database's status table) */
+async function recordDelivery(env, entry) {
+  await recordStatus(env, { delivery: entry });
 }

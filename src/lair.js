@@ -125,6 +125,8 @@ import { QUEST_TABLES, questMethods } from './quests.js';
 // Round 43: what's on the shelf, for the home page's d20 roller
 import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
 import { MEETUP_TABLES, meetupMethods } from './meetup.js';
+// Round 48: delivery priced from the parcel and the address (src/delivery.js, contract v48-delivery)
+import { deliveryMethods } from './delivery.js';
 // Round 46: library copies bought online are held (src/library-hold.js)
 import { LIBRARY_HOLD_TABLES, libraryHoldMethods } from './library-hold.js';
 // 17 Nov 2026 (contract v45-guard): the robot check, the day's cap without an account, limits kept in the Durable
@@ -2544,6 +2546,8 @@ export class Lair {
       if (a === 'events' && b && c === 'update') return json(await this.updateEvent(decodeURIComponent(b), body, who));
       if (a === 'events' && b && c === 'delete') return json(await this.deleteEvent(decodeURIComponent(b), who));
       if (a === 'contact' && !b) return json(await this.contact(body, who, client));
+      // Round 48: what delivery costs for this cart to this address (src/delivery.js)
+      if (a === 'delivery' && b === 'quote' && !c) return json(await this.deliveryQuoteFor(body, client));
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
       if (a === 'prizes' && b && c === 'done') return json(await this.prizeDone(decodeURIComponent(b), who));
       if (a === 'tab' && !b) return json(await this.saveTab(body, who));
@@ -11795,6 +11799,7 @@ Object.assign(Lair.prototype, questMethods);
 Object.assign(Lair.prototype, shelfPickMethods);
 // Round 47: who's going on Meetup (src/meetup.js)
 Object.assign(Lair.prototype, meetupMethods);
+Object.assign(Lair.prototype, deliveryMethods);
 // 17 Nov 2026: the guard on the website's forms and on codes (src/guard.js)
 Object.assign(Lair.prototype, guardMethods);
 // Round 38: d20 rolls on online orders, and a second order in the same parcel (src/order-rolls.js)

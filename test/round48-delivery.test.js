@@ -92,3 +92,44 @@ test('nothing to post costs nothing', async () => {
   const q = await deliveryQuote(ENV, { address: ADDRESS, lines: [{ ...dice, ships: false }] }, async () => { throw new Error('not asked'); });
   assert.deepEqual({ cents: q.cents, source: q.source }, { cents: 0, source: 'none' });
 });
+
+// POST /delivery/quote
+const { QUOTE_LIMIT, deliveryMethods, lineOf, quoteInput } = await import('../src/delivery.js');
+const variant = (id, o = {}) => ({
+  id: `gid://shopify/ProductVariant/${id}`,
+  inventoryItem: { requiresShipping: o.ships ?? true, measurement: { weight: { value: o.value ?? 0.4, unit: o.unit || 'KILOGRAMS' } } },
+  product: { shipLength: { value: '20' }, shipWidth: { value: '10' }, shipHeight: { value: '5' } },
+});
+const BODY = { address: ADDRESS, lines: [{ variantId: 'gid://shopify/ProductVariant/4000000001', quantity: 2 }] };
+
+test('a variant becomes a parcel line: grams whatever its unit, its product\'s size, and whether it is posted', () => {
+  assert.deepEqual(lineOf(variant(1), 2), { grams: 400, quantity: 2, cm: [20, 10, 5], ships: true });
+  assert.equal(lineOf(variant(1, { value: 250, unit: 'GRAMS' }), 1).grams, 250);
+  assert.equal(lineOf({ inventoryItem: { requiresShipping: false }, product: {} }, 1).ships, false);
+  assert.equal(lineOf({ inventoryItem: {}, product: {} }, 1).cm, null);
+});
+
+test('a quote needs a street, a town and a 4-digit postcode, and something in the cart', () => {
+  assert.throws(() => quoteInput({ ...BODY, address: { ...ADDRESS, postcode: '10' } }), /postcode/);
+  assert.throws(() => quoteInput({ ...BODY, address: { ...ADDRESS, street: '' } }), /street/);
+  assert.throws(() => quoteInput({ address: ADDRESS, lines: [{ variantId: 'x', quantity: 1 }] }), /empty/);
+  assert.equal(quoteInput(BODY).lines[0].id, '4000000001');
+});
+
+test('the route answers the price without the courier\'s cost, keeps it for the same cart, and caps the asking', async () => {
+  const realFetch = globalThis.fetch;
+  let asked = 0;
+  globalThis.fetch = async () => { asked += 1; return new Response(JSON.stringify({ Available: [rate({ Cost: 5 })] })); };
+  try {
+    const lair = { env: ENV, shopify: { graphql: async () => ({ nodes: [variant(4000000001)] }) }, ...deliveryMethods };
+    const first = await lair.deliveryQuoteFor(BODY, 'a', 1000);
+    assert.deepEqual(first, { cents: 675, rural: false, source: 'live', estimated: false });
+    await lair.deliveryQuoteFor(BODY, 'a', 2000);
+    assert.equal(asked, 1, 'the same cart to the same door is not asked twice');
+    for (let i = 0; i < QUOTE_LIMIT.count - 2; i += 1) await lair.deliveryQuoteFor(BODY, 'a', 3000);
+    await assert.rejects(lair.deliveryQuoteFor(BODY, 'a', 4000), /Too many/);
+    assert.equal((await lair.deliveryQuoteFor(BODY, 'b', 4000)).cents, 675, 'someone else is not held up');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
