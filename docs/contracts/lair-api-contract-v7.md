@@ -362,6 +362,9 @@ Loans, scan, check-out, check-in and GET /me's `library` on the demo's library c
   { item: { variantId, productId, handle, title, variantTitle ('' for "Default Title"), price (cents), image, available, barcode, sku } }
   ```
   - Shopify: `LairVariantByCode` (section 13), exact match on barcode first, then SKU (ignoring case).
+  - (20 Nov 2026) When several things a tab takes share the code (the four Final Fantasy Commander decks, one barcode),
+    the answer has `choices: [item, …]` too, in Shopify's order, and `item` is the first of them. My Lair puts them all
+    on the Tab menu and asks which one, adding nothing. `LairVariantByCode` asks for up to 20 variants (it was 5).
   - ★ **What a tab takes:** an `ACTIVE` product. "Published" means Active here: café things sold only at the counter count. Not a library copy, a gift card, or something that needs a selling plan.
   - Stock isn't refused here: `available` is Shopify's `availableForSale`, and the theme keeps today's "<name> is sold out, sorry friend. Pick something else from the menu."
   - Answers are kept 10 minutes.

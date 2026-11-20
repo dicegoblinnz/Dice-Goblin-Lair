@@ -9551,13 +9551,14 @@ export class Lair {
    * Which product variant a barcode or SKU is, from Shopify (LairVariantByCode): the one whose barcode, then SKU, equals
    * the code (ignoring case), or null. Answers (a miss too) are kept 10 minutes. If Shopify refuses (read_products not
    * approved yet) or is down, it isn't asked again for 10 minutes and this throws a 503 with `down`.
+   * (20 Nov 2026) all: every variant with that barcode (else that SKU), in Shopify's order, for the tab to ask which.
    */
-  async variantForCode(code, down) {
+  async variantForCode(code, down, all = false) {
     const key = codeKey(code);
     const now = Date.now();
     this.codeLookups = this.codeLookups || new Map();
     const hit = this.codeLookups.get(key);
-    if (hit && now - hit.at < LOOKUP_TTL) return hit.variant;
+    if (hit && now - hit.at < LOOKUP_TTL) return all ? hit.all : hit.variant;
     if (!this.shopify.configured || now < (this.retryAt.get('variant-code') || 0)) throw new RuleError(down, 503);
     let found;
     try {
@@ -9568,12 +9569,14 @@ export class Lair {
       throw new RuleError(down, 503);
     }
     // Round 8: a barcode matches in any of its forms (sameBarcode: leading zeros don't count), a SKU ignoring case
-    const variant = found.find((v) => sameBarcode(v.barcode, code)) || found.find((v) => sameBarcode(v.sku, code)) || null;
+    const byBarcode = found.filter((v) => sameBarcode(v.barcode, code));
+    const matches = byBarcode.length ? byBarcode : found.filter((v) => sameBarcode(v.sku, code));
+    const variant = matches[0] || null;
     // Round 30: whether it's tagged In Store Only (a library game that stays in the Lair), as Shopify says now
     if (variant) this.noteInStore(variant.variantId, variant.inStoreOnly);
     if (this.codeLookups.size > 2000) this.codeLookups.clear();
-    this.codeLookups.set(key, { at: Date.now(), variant });
-    return variant;
+    this.codeLookups.set(key, { at: Date.now(), variant, all: matches });
+    return all ? matches : variant;
   }
 
   /**
@@ -9882,6 +9885,8 @@ export class Lair {
    * variantTitle ('' for "Default Title"), price (cents), image, available, barcode, sku } }. A tab takes an Active
    * product that isn't a library copy, a gift card or something that needs a selling plan; stock isn't refused here
    * (available is Shopify's availableForSale). 60 lookups a member in 10 minutes; Shopify's answers are kept 10 minutes.
+   * (20 Nov 2026) When several things a tab takes share the code, choices: [item] too, in Shopify's order, for My Lair
+   * to ask which; item is the first of them, as before.
    */
   async tabLookup(url, who) {
     if (!who.customerId) throw new RuleError('Log in to start a tab.', 401);
@@ -9895,18 +9900,21 @@ export class Lair {
     this.tabHits.set(key, [...hits, now]);
     const library = "That's one of our library games, so it doesn't go on a tab. Borrow it in My Library.";
     if (this.sql.exec('SELECT 1 AS n FROM library_codes WHERE key = ?', codeKey(code)).toArray().length) throw new RuleError(library, 422);
-    const v = await this.variantForCode(code, "Gobgob can't look up barcodes just now. Pick it from the menu instead.");
+    const matches = await this.variantForCode(code, "Gobgob can't look up barcodes just now. Pick it from the menu instead.", true);
     // --- no awaits from here on ---
+    const v = matches[0] || null;
     if (!v) throw new RuleError("Gobgob doesn't know that one. Pick it from the menu instead.", 404);
     if (v.libraryCode) throw new RuleError(library, 422);
     if (v.status !== 'ACTIVE') throw new RuleError("That one isn't on sale right now. Ask us at the counter.", 422);
     if (v.giftCard || v.sellingPlan) throw new RuleError("That one can't go on a tab. Ask us at the counter.", 422);
-    return {
-      item: {
-        variantId: v.variantId, productId: v.productId, handle: v.handle, title: v.productTitle, variantTitle: v.title === 'Default Title' ? '' : v.title || '',
-        price: v.price, image: v.image || v.productImage || null, available: v.available, barcode: v.barcode || '', sku: v.sku || '',
-      },
-    };
+    const item = (m) => ({
+      variantId: m.variantId, productId: m.productId, handle: m.handle, title: m.productTitle, variantTitle: m.title === 'Default Title' ? '' : m.title || '',
+      price: m.price, image: m.image || m.productImage || null, available: m.available, barcode: m.barcode || '', sku: m.sku || '',
+    });
+    // (Mo, 20 Nov 2026: the four Final Fantasy Commander decks share a barcode, and Cloud's went on the tab straight
+    // away) every one of them a tab takes, for My Lair to ask which
+    const takes = matches.filter((m) => !m.libraryCode && m.status === 'ACTIVE' && !m.giftCard && !m.sellingPlan);
+    return { item: item(v), ...(takes.length > 1 ? { choices: takes.map(item) } : {}) };
   }
 
   /* ---------------- members ---------------- */
