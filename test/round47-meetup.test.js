@@ -151,6 +151,10 @@ test('at most 3 pages a run', async () => {
 test('an event that links to a Meetup event takes no sign-ups of its own', () => {
   assert.equal(ownCapacity('40', LINK), null);
   assert.equal(ownCapacity('40', 'https://meetu.ps/e/QplTV/z5ZqL/i'), null);
+  // a date that isn't up on Meetup yet links to the group's page: still no sign-ups here (Mo, 20 Nov 2026, 7:37pm)
+  assert.equal(ownCapacity('40', 'https://www.meetup.com/auckland-games-meetup-group/events/'), null);
+  assert.equal(meetupLink('https://www.meetup.com/auckland-games-meetup-group/events/'), null, 'and a group page is never read for numbers');
+  assert.equal(ownCapacity('40', 'https://www.meetup.com.evil.example/g/'), 40);
   assert.equal(ownCapacity('40', ''), 40);
   assert.equal(ownCapacity('40', 'https://www.dicegoblin.nz/pages/our-games'), 40, 'any other link changes nothing');
   assert.equal(ownCapacity(null, LINK), null);
