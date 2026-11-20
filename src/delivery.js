@@ -34,6 +34,8 @@ export const DELIVERY = Object.freeze({
   /** the flat rates from before, for when there's no live price */
   flat: 1000,
   flatRural: 1500,
+  /** a live courier cost under this (before GST) isn't believed: the flat rates stand */
+  floor: 3,
   /** how long GoSweetSpot gets to answer */
   timeout: 8000,
   url: 'https://api.gosweetspot.com/api/rates',
@@ -69,7 +71,7 @@ export function parcelOf(lines, d = DELIVERY) {
 /** The cheapest Aramex service that isn't a Saturday one, from GoSweetSpot's Available list; null when there's none */
 export function pickRate(available, d = DELIVERY) {
   const mine = (Array.isArray(available) ? available : [])
-    .filter((r) => String(r?.CarrierName || '').toLowerCase().includes(d.carrier) && !r.IsSaturdayDelivery && positive(r.Cost));
+    .filter((r) => String(r?.CarrierName || '').toLowerCase().includes(d.carrier) && !r.IsSaturdayDelivery && Number(r.Cost) >= d.floor);
   return mine.sort((a, b) => a.Cost - b.Cost)[0] || null;
 }
 
@@ -80,7 +82,11 @@ export function deliveryCents(rate, { costHasGst = false, pack = DELIVERY.pack, 
 }
 
 /** An address with RD in it (RD 2, R.D.1, Rural Delivery): the flat rates' only way of telling */
-const looksRural = (address) => /\b(r\.?\s?d\.?\s?\d+|rural delivery)\b/i.test([address?.street, address?.suburb, address?.city].filter(Boolean).join(' '));
+function looksRural(address) {
+  const text = [address?.street, address?.suburb, address?.city].filter(Boolean).join(' ');
+  // RD as an address writes it, never the Rd of a road
+  return /\b(RD\s?\d+|R\.\s?D\.\s?\d+)\b/.test(text) || /\brural delivery\b/i.test(text);
+}
 
 /** The flat rate from before, for when there's no live price */
 export function fallbackCents(address, d = DELIVERY) {
@@ -144,7 +150,17 @@ const GRAMS = { GRAMS: 1, KILOGRAMS: 1000, OUNCES: 28.3495, POUNDS: 453.592 };
 /** A Shopify variant (with its product's ship_* fields) as a parcel line */
 export function lineOf(variant, quantity) {
   const weight = variant?.inventoryItem?.measurement?.weight;
-  const cm = ['shipLength', 'shipWidth', 'shipHeight'].map((key) => Number(variant?.product?.[key]?.value));
+  const CM = { CENTIMETERS: 1, MILLIMETERS: 0.1, METERS: 100, INCHES: 2.54 };
+  const cm = ['shipLength', 'shipWidth', 'shipHeight'].map((key) => {
+    const raw = variant?.product?.[key]?.value;
+    if (positive(raw)) return Number(raw);
+    try {
+      const size = JSON.parse(raw);
+      return Number(size?.value) * (CM[size?.unit] || 1);
+    } catch {
+      return NaN;
+    }
+  });
   return {
     grams: positive(weight?.value) ? Number(weight.value) * (GRAMS[weight.unit] || 1) : 0,
     quantity,
@@ -181,22 +197,28 @@ export const deliveryMethods = {
     this.deliveryKept ||= new Map();
     const asks = (this.deliveryAsks.get(client) || []).filter((at) => now - at < QUOTE_LIMIT.window);
     if (asks.length >= QUOTE_LIMIT.count) throw new RuleError('Too many tries just now. Give it a few minutes and try again.', 429);
+    if (this.deliveryAsks.size > 2000) this.deliveryAsks.clear();
     this.deliveryAsks.set(client, [...asks, now]);
     const key = JSON.stringify([address, lines]);
     const kept = this.deliveryKept.get(key);
     if (kept && now - kept.at < QUOTE_LIMIT.keep) return kept.answer;
     if (this.deliveryKept.size > 500) this.deliveryKept.clear();
-    const data = await this.shopify.graphql(
-      `query DeliveryLines($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id
-        inventoryItem { requiresShipping measurement { weight { value unit } } }
-        product { shipLength: metafield(namespace: "custom", key: "ship_length_cm") { value }
-          shipWidth: metafield(namespace: "custom", key: "ship_width_cm") { value }
-          shipHeight: metafield(namespace: "custom", key: "ship_height_cm") { value } } } } }`,
-      { ids: lines.map((line) => `gid://shopify/ProductVariant/${line.id}`) },
-    );
-    const found = new Map((data?.nodes || []).filter(Boolean).map((node) => [String(node.id).split('/').pop(), node]));
-    const parcelLines = lines.filter((line) => found.has(line.id)).map((line) => lineOf(found.get(line.id), line.quantity));
-    if (!parcelLines.length) throw new RuleError("We couldn't find what's in your cart. Refresh the page and try again.");
+    // Shopify not answering never stops a sale: every line is then a guess, and so is one Shopify doesn't know
+    let found = new Map();
+    try {
+      const data = await this.shopify.graphql(
+        `query DeliveryLines($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id
+          inventoryItem { requiresShipping measurement { weight { value unit } } }
+          product { shipLength: metafield(namespace: "custom", key: "ship_length_cm") { value }
+            shipWidth: metafield(namespace: "custom", key: "ship_width_cm") { value }
+            shipHeight: metafield(namespace: "custom", key: "ship_height_cm") { value } } } } }`,
+        { ids: lines.map((line) => `gid://shopify/ProductVariant/${line.id}`) },
+      );
+      found = new Map((data?.nodes || []).filter((node) => node?.id).map((node) => [String(node.id).split('/').pop(), node]));
+    } catch {
+      found = new Map();
+    }
+    const parcelLines = lines.map((line) => (found.has(line.id) ? lineOf(found.get(line.id), line.quantity) : { grams: 0, quantity: line.quantity, cm: null, ships: true }));
     const quote = await deliveryQuote(this.env, { address, lines: parcelLines });
     const answer = { cents: quote.cents, rural: quote.rural, source: quote.source, estimated: quote.estimated };
     if (quote.source === 'live') {

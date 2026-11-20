@@ -85,6 +85,7 @@ test('when GoSweetSpot is down, has no Aramex price, or no key is set, the old f
   assert.equal(noKey.source, 'fallback');
   assert.equal(asked, 0);
   assert.equal(fallbackCents({ street: 'R.D.1', city: 'Pukekohe' }), 1500);
+  assert.equal(fallbackCents({ street: '12 Mt Eden Rd 3', city: 'Auckland' }), 1000, 'Rd is a road');
   assert.equal(fallbackCents({ street: '3 Garden Road', city: 'Auckland' }), 1000);
 });
 
@@ -129,6 +130,31 @@ test('the route answers the price without the courier\'s cost, keeps it for the 
     for (let i = 0; i < QUOTE_LIMIT.count - 2; i += 1) await lair.deliveryQuoteFor(BODY, 'a', 3000);
     await assert.rejects(lair.deliveryQuoteFor(BODY, 'a', 4000), /Too many/);
     assert.equal((await lair.deliveryQuoteFor(BODY, 'b', 4000)).cents, 675, 'someone else is not held up');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a courier cost too small to be true is not believed', () => {
+  assert.equal(pickRate([rate({ Cost: 0.01 }), rate({ Cost: 9.5 })]).Cost, 9.5);
+  assert.equal(pickRate([rate({ Cost: 0.01 })]), null);
+});
+
+test('a size kept as Shopify\'s dimension type is read too', () => {
+  const v = variant(1);
+  v.product.shipLength = { value: '{"value":300,"unit":"MILLIMETERS"}' };
+  assert.deepEqual(lineOf(v, 1).cm, [30, 10, 5]);
+});
+
+test('Shopify not answering, or not knowing an item, never stops the quote: that line is a guess', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ Available: [rate({ Cost: 5 })] }));
+  try {
+    const down = { env: ENV, shopify: { graphql: async () => { throw new Error('502'); } }, ...deliveryMethods };
+    assert.deepEqual(await down.deliveryQuoteFor(BODY, 'a', 1), { cents: 675, rural: false, source: 'live', estimated: true });
+    const part = { env: ENV, shopify: { graphql: async () => ({ nodes: [variant(4000000001), null] }) }, ...deliveryMethods };
+    const two = { address: ADDRESS, lines: [...BODY.lines, { variantId: '4000000002', quantity: 1 }] };
+    assert.equal((await part.deliveryQuoteFor(two, 'a', 1)).estimated, true);
   } finally {
     globalThis.fetch = realFetch;
   }

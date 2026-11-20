@@ -34,8 +34,8 @@ export const CONFIG_KEYS = [
   // logged in. Off until both are set. The site key is public (the page shows it); keep the secret a Worker secret.
   // GUEST_NIGHT_CAP: the most bookings and sign-ups made without an account for any one day (20 when unset; 'off')
   'TURNSTILE_SITE_KEY', 'TURNSTILE_SECRET_KEY', 'GUEST_NIGHT_CAP',
-  // Round 48 (contract v48-delivery): GoSweetSpot, the courier account delivery is priced from. GSS_ACCESS_KEY is a
-  // Worker secret only: never in this table or GitHub. GSS_SITE_ID is the account's site number. GSS_COST_HAS_GST: 'yes'
+  // Round 48 (contract v48-delivery): GoSweetSpot, the courier account delivery is priced from. GSS_ACCESS_KEY is best
+  // kept a Worker secret, and never in GitHub. GSS_SITE_ID is the account's site number. GSS_COST_HAS_GST: 'yes'
   // if GoSweetSpot's Cost already has GST in it (unset: GST is added). With no key, delivery stays at the flat rates.
   'GSS_ACCESS_KEY', 'GSS_SITE_ID', 'GSS_COST_HAS_GST',
 ];

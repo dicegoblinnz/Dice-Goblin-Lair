@@ -14,19 +14,35 @@ Delivery is now worked out in the Lair before payment: the real Aramex price to 
   up to a whole cent, plus $1.00 packing. Rural is the courier's answer for the address (`IsRuralDelivery`).
 - **No live price** (no key, GoSweetSpot down or slow past 8 seconds, no Aramex service): the flat rates from before
   stand, $10, or $15 when the address has RD in it. Nobody is stopped from buying.
-- **Settings:** `GSS_ACCESS_KEY` (Worker secret only), `GSS_SITE_ID`, `GSS_COST_HAS_GST` (`yes` if `Cost` turns out to
+- **Settings:** `GSS_ACCESS_KEY` (Worker secret only), `GSS_SITE_ID` (in `wrangler.toml`), `GSS_COST_HAS_GST` (`yes` if `Cost` turns out to
   include GST).
 
-## 2. Still to build
+## 2. `POST /delivery/quote` (built)
+
+`{ address: { street, suburb, city, postcode }, lines: [{ variantId, quantity }] }`, for anyone with a cart, through
+the store's app proxy. Answers `{ cents, rural, source, estimated }` and never the courier's own cost. `source` is
+`live`, `fallback` or `none` (nothing to post).
+
+- Each variant's weight comes from Shopify, and its size from its product's `custom.ship_length_cm`,
+  `ship_width_cm` and `ship_height_cm` (a plain number, or Shopify's dimension type).
+- An item with no weight or size, one Shopify doesn't know, or Shopify not answering: that line is a guess and the
+  answer says `estimated: true`. The quote still comes.
+- A live courier cost under $3 isn't believed, and the flat rates stand.
+- At most 60 lines; 30 quotes in ten minutes from one address (429 past that); the same cart to the same door is kept
+  for ten minutes.
+- The last live quote's workings (every service offered, the one picked, the parcel) go to the config database's
+  `status` table, key `delivery`.
+
+## 3. Still to build
 
 1. **Check against a real quote** once the key is in: that `Cost` has no GST or fuel surcharge missing, against a
    GoSweetSpot invoice.
-2. **`POST /delivery/quote`** `{ address, lines: [{ variantId, quantity }] }`: reads each variant's weight and its
-   product's `custom.ship_length_cm`, `ship_width_cm`, `ship_height_cm` from Shopify, answers `deliveryQuote`'s result.
-3. **`POST /delivery/checkout`**: quotes again on the server, then makes a draft order for the cart with the delivery
+2. **`POST /delivery/checkout`**: quotes again on the server, then makes a draft order for the cart with the delivery
    as its shipping line (as `createLibrarySend` does) and answers its checkout link. To prove before it goes live: the
    dice deal, a deck's free sleeves, discount codes, store credit, gift cards, the d20 rolls and Same parcel all behave
    as they do at the normal checkout.
-4. **The website's delivery step** (lab first): Proceed to pay opens it, the address goes in, one line shows the price.
+3. **The website's delivery step** (lab first): Proceed to pay opens it, the address goes in, one line shows the price.
+4. **Parcels Aramex won't take** (too big or heavy, so no live price): today they get the flat rate. Decide before
+   checkout uses the quote: split into parcels, or ask the customer to get in touch.
 5. **Staff page:** parcels that cost more than the customer paid, from GoSweetSpot's webhook (`TotalCost`), and
    tracking in My Lair.

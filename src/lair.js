@@ -2197,7 +2197,7 @@ export class Lair {
         const prefix = url.searchParams.get('path_prefix') || null;
         const known = (['GET', 'HEAD'].includes(request.method) && a === 'feeds')
           || (request.method === 'GET' && ['floor', 'games', 'gm-perks', 'open-games', 'me', 'members', 'passes', 'library', 'tab', 'roll-codes', 'groups', 'customers', 'events', 'community', 'offers', 'products', 'staff', 'team', 'accounts', 'memberships', 'pick', 'queue', 'report', 'gw', 'till', 'stock', 'quests'].includes(a))
-          || (request.method === 'POST' && ['bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock', 'quests'].includes(a));
+          || (request.method === 'POST' && ['delivery', 'bookings', 'games', 'open-games', 'series', 'blocks', 'openings', 'checkin', 'events', 'contact', 'roll', 'gm-profile', 'me', 'members', 'passes', 'prizes', 'tab', 'library', 'roll-codes', 'groups', 'community', 'offers', 'team', 'accounts', 'bills', 'interest', 'memberships', 'pick', 'queue', 'cash', 'steps', 'gw', 'cancel-links', 'unsubscribe', 'credit-gifts', 'till', 'stock', 'quests'].includes(a));
         this.note(known ? { proxy: { seen: true, prefix, day } } : { proxyMiss: { path: url.pathname, method: request.method, prefix, day } });
       }
       // Round 13: a followed game's calendar through the store's app proxy (www.dicegoblin.nz/apps/liar/feeds/<key>.ics).
