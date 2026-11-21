@@ -29,6 +29,8 @@
 import { HOUR, MIN, lairTime, makeId } from './core.js';
 import { emailReady } from './shopify.js';
 import { deliveryOf } from './gw-orders.js';
+import { DELIVERY_TAG } from './delivery.js';
+import { orderTags } from './counter.js';
 
 export const ORDER_ROLLS = Object.freeze({
   // a roll for every $200 (the theme's "A d20 roll for every" when it's empty or not a number)
@@ -244,7 +246,7 @@ export const orderRollMethods = {
    */
   orderRollsPaid(order, orderId, { pos = false, spend = null, rules = this.rulesCache, now = Date.now() } = {}) {
     const result = {};
-    const first = this.parcelOrderPaid(orderId, spend);
+    const first = this.parcelOrderPaid(orderId, spend, order);
     if (first) result.parcel = first.order_name || null;
     const setup = rules?.rolls;
     const source = String(order?.source_name ?? '');
@@ -252,7 +254,9 @@ export const orderRollMethods = {
     // checkouts and bills, and orders staff make in Shopify admin), never a subscription's own billing (a library
     // membership's month, a damage charge on its card), and only for an order with a customer
     // (no source at all is taken as a draft, as ordersPaid takes it)
-    const notOnline = pos || !source || source === 'shopify_draft_order' || /subscription/i.test(source);
+    // Round 48: the delivery step's checkout is a draft order too, but it's the website's own checkout (its tag says so)
+    const viaDelivery = source === 'shopify_draft_order' && orderTags(order).includes(DELIVERY_TAG);
+    const notOnline = pos || !source || (source === 'shopify_draft_order' && !viaDelivery) || /subscription/i.test(source);
     if (!setup?.on || notOnline || !spend?.customerId) return Object.keys(result).length ? result : null;
     if (this.sql.exec('SELECT 1 AS n FROM order_rolls WHERE order_id = ?', orderId).toArray().length) return Object.keys(result).length ? result : null;
     const paidAt = Number(spend.processedAt) || now;
@@ -280,13 +284,17 @@ export const orderRollMethods = {
    * A paid order that used a same-parcel code: the first order it goes with (its order_rolls row), linked to it once,
    * with both orders' tags and notes in the background. The code must be the customer's own. No awaits.
    */
-  parcelOrderPaid(orderId, spend) {
+  parcelOrderPaid(orderId, spend, order = null) {
     const prefix = ORDER_ROLLS.parcelPrefix;
     const codes = [...new Set((spend?.discountCodes || []).map((c) => String(c).trim().toUpperCase()).filter((c) => c.startsWith(prefix)))].slice(0, 5);
-    if (!codes.length || !spend?.customerId) return null;
-    const first = this.sql
-      .exec(`SELECT * FROM order_rolls WHERE parcel_code IN (${codes.map(() => '?').join(', ')}) AND customer_id = ? LIMIT 1`, ...codes, String(spend.customerId))
-      .toArray()[0];
+    // Round 48: the delivery step names the first order itself (_parcel on its tagged draft), in place of the code
+    const marked = orderTags(order).includes(DELIVERY_TAG) ? String((order.note_attributes || []).find((a) => a?.name === '_parcel')?.value || '') : '';
+    if ((!codes.length && !marked) || !spend?.customerId) return null;
+    const first = codes.length
+      ? this.sql
+        .exec(`SELECT * FROM order_rolls WHERE parcel_code IN (${codes.map(() => '?').join(', ')}) AND customer_id = ? LIMIT 1`, ...codes, String(spend.customerId))
+        .toArray()[0]
+      : this.sql.exec('SELECT * FROM order_rolls WHERE order_id = ? AND customer_id = ? AND parcel_code IS NOT NULL LIMIT 1', marked, String(spend.customerId)).toArray()[0];
     if (!first || first.order_id === orderId) return null;
     if (!first.parcel_order_id) {
       this.sql.exec('UPDATE order_rolls SET parcel_order_id = ?, parcel_order_name = ? WHERE order_id = ?', orderId, spend.name || null, first.order_id);

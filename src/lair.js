@@ -2547,7 +2547,9 @@ export class Lair {
       if (a === 'events' && b && c === 'delete') return json(await this.deleteEvent(decodeURIComponent(b), who));
       if (a === 'contact' && !b) return json(await this.contact(body, who, client));
       // Round 48: what delivery costs for this cart to this address (src/delivery.js)
-      if (a === 'delivery' && b === 'quote' && !c) return json(await this.deliveryQuoteFor(body, client));
+      if (a === 'delivery' && b === 'quote' && !c) return json(await this.deliveryQuoteFor(body, client, Date.now(), who));
+      // Round 48: the cart as a draft order with that delivery on it, and its checkout link
+      if (a === 'delivery' && b === 'checkout' && !c) return json(await this.deliveryCheckoutFor(body, who, client));
       if (a === 'roll' && !b) return json(await this.roll(body, who, client));
       if (a === 'prizes' && b && c === 'done') return json(await this.prizeDone(decodeURIComponent(b), who));
       if (a === 'tab' && !b) return json(await this.saveTab(body, who));

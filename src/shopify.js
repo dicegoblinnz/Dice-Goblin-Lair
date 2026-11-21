@@ -1078,6 +1078,41 @@ export class ShopifyAdmin {
   }
 
   /**
+   * Round 48: the delivery step's checkout (src/delivery.js), the cart as a draft order with the Lair's delivery price
+   * as its shipping line. Shopify's automatic discounts apply as at the normal checkout (the dice deal, a deck's free
+   * sleeves), the cart's discount codes go on and more can be typed at checkout, and a signed-in customer is on it, so
+   * their store credit and saved cards work. Tagged lair-delivery, which its paid order keeps. Returns
+   * { draftOrderId, checkoutUrl }; throws when Shopify says no.
+   */
+  async createDeliveryCheckout({ customerId, email, address, note, codes = [], lines = [], delivery, attributes = [], currency }) {
+    const [firstName, ...rest] = String(address?.name || '').split(' ');
+    const data = await this.graphql(
+      'mutation LairDeliveryCheckout($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id invoiceUrl } userErrors { field message } } }',
+      {
+        input: {
+          purchasingEntity: customerId ? { customerId: `gid://shopify/Customer/${customerId}` } : undefined,
+          email: email || undefined,
+          note: note || undefined,
+          tags: ['lair-delivery'],
+          customAttributes: attributes,
+          acceptAutomaticDiscounts: true,
+          allowDiscountCodesInCheckout: true,
+          discountCodes: codes.length ? codes : undefined,
+          shippingAddress: {
+            firstName, lastName: rest.join(' ') || firstName, address1: address?.street, address2: address?.suburb || undefined, city: address?.city,
+            zip: address?.postcode, countryCode: 'NZ', phone: address?.phone || undefined,
+          },
+          shippingLine: { title: delivery.title, priceWithCurrency: { amount: (delivery.cents / 100).toFixed(2), currencyCode: currency } },
+          lineItems: lines.map((line) => ({ variantId: `gid://shopify/ProductVariant/${line.variantId}`, quantity: line.quantity, customAttributes: line.properties || [] })),
+        },
+      },
+    );
+    const result = data?.draftOrderCreate;
+    if (!result || result.userErrors?.length || !result.draftOrder?.id) throw new Error((result?.userErrors || []).map((e) => e.message).join('; ') || 'no draft order came back');
+    return { draftOrderId: result.draftOrder.id, checkoutUrl: result.draftOrder.invoiceUrl };
+  }
+
+  /**
    * Who paid for an order and its subtotal after discounts (in cents), for members' spend, and the order's name
    * ("#1550"). customerId is null when the order has no customer. Round 7: its discount codes and when it was processed
    * (a birthday gift's product code on it has been used).

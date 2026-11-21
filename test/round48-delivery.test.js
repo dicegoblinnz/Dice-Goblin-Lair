@@ -4,7 +4,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DELIVERY, deliveryCents, deliveryQuote, fallbackCents, parcelOf, pickRate, ratesBody } from '../src/delivery.js';
+import { DELIVERY, deliveryCents, deliveryQuote, fallbackCents, parcelOf, parcelsOf, pickRate, ratesBody } from '../src/delivery.js';
 
 const dice = { grams: 120, quantity: 1, cm: [12, 8, 3], ships: true };
 const game = { grams: 1800, quantity: 1, cm: [30, 30, 8], ships: true };
@@ -158,4 +158,58 @@ test('Shopify not answering, or not knowing an item, never stops the quote: that
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+// Packing (contract v48, section 4). Mo, 21 Nov 2026: the Lair chooses the box sizes itself, "on the slightly higher
+// side" to allow for error, as one parcel or as two or more when the order needs it. The customer sees one price.
+test('an ordinary order is one parcel', () => {
+  const parcels = parcelsOf([dice, game]);
+  assert.equal(parcels.length, 1);
+  assert.deepEqual(parcels[0], parcelOf([dice, game]));
+  assert.deepEqual(parcelsOf([{ ...dice, ships: false }]), []);
+});
+
+test('an order too heavy for one parcel is split, and every item is in a parcel', () => {
+  const heavy = { grams: 9000, quantity: 5, cm: [30, 30, 10], ships: true }; // 45 kg of rulebooks
+  const parcels = parcelsOf([heavy, dice]);
+  assert.ok(parcels.length >= 3, 'two of these to a parcel at most');
+  for (const p of parcels) assert.ok(p.kg <= DELIVERY.maxKg, `${p.kg} kg is under the most one parcel may weigh`);
+  const packing = (parcels.length * DELIVERY.packGrams) / 1000;
+  assert.ok(parcels.reduce((sum, p) => sum + p.kg, 0) >= 45.12 + packing, 'nothing left behind');
+});
+
+test('an order too bulky for one parcel is split by size too', () => {
+  const big = { grams: 2000, quantity: 4, cm: [60, 40, 30], ships: true }; // 72 litres each
+  const parcels = parcelsOf([big]);
+  assert.equal(parcels.length, 4);
+  for (const p of parcels) assert.ok(p.length * p.width * p.height <= DELIVERY.maxLitres * 1000);
+});
+
+test('one item too big for any parcel still gets a parcel of its own: the courier says no, not the Lair', () => {
+  const parcels = parcelsOf([{ grams: 30000, quantity: 1, cm: [160, 40, 40], ships: true }, dice]);
+  assert.equal(parcels.length, 2);
+});
+
+test('parcels are sized on the heavy side', () => {
+  // 1,000 g of items is weighed as 1,050 g, plus 150 g of packing, rounded up to 100 g
+  assert.equal(parcelOf([{ grams: 1000, quantity: 1, cm: [20, 15, 6], ships: true }]).kg, 1.2);
+});
+
+test('several parcels go to GoSweetSpot as one request, and the customer gets one price', async () => {
+  const heavy = { grams: 9000, quantity: 4, cm: [30, 30, 10], ships: true };
+  let sent;
+  const quote = await deliveryQuote(ENV, { address: ADDRESS, lines: [heavy] }, async (url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, json: async () => ({ Available: [rate({ Cost: 20 })] }) };
+  });
+  assert.equal(sent.Packages.length, 2);
+  assert.equal(quote.cents, 2400, '$20 + GST, and one $1 for packing');
+  assert.equal(quote.parcels, 2);
+});
+
+test('with no live price, each parcel is charged the flat rate', async () => {
+  const heavy = { grams: 9000, quantity: 4, cm: [30, 30, 10], ships: true };
+  const quote = await deliveryQuote({}, { address: ADDRESS, lines: [heavy] });
+  assert.equal(quote.source, 'fallback');
+  assert.equal(quote.cents, 2 * DELIVERY.flat);
 });
