@@ -56,5 +56,8 @@ the store's app proxy. Answers `{ cents, rural, source, estimated }` and never t
   the box there if they used another), and that makes the shipment, prints the label and books the Aramex pickup.
 - **What leaves the Lair:** everything except the dropshipped dice, which their supplier sends direct, so those lines
   get no label and no pickup. The Baron of Dice range does leave the Lair: Mo collects it first, then packs it.
+- **Every parcel that's ready goes:** the pickup the Packed button books covers every packed parcel the driver hasn't
+  collected yet, not only the one just packed (Mo: "Make sure it takes all the items ready for delivery"). If the
+  Lair can't book through GoSweetSpot, staff book it by hand on GoSweetSpot's Reprint & Manifests page.
 - **Pickup:** Aramex's driver already collects from the Lair. To check on the account: whether GoSweetSpot's
   `bookpickup` takes Aramex, or the pickups are a standing arrangement.
