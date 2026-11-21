@@ -36,6 +36,9 @@ GW_POS_PUBLICATION_ID = "129866989671"
 # Round 34: the Online Store and the Shop app, where a pad product goes once it shows GW's picture (src/gw-pictures.js)
 GW_ONLINE_PUBLICATION_ID = "129866924135"
 GW_SHOP_PUBLICATION_ID = "129866956903"
+# Round 48: the GoSweetSpot site delivery is priced from (src/delivery.js). Its access key, GSS_ACCESS_KEY, is a Worker
+# secret only.
+GSS_SITE_ID = "12234943"
 
 # Round 17, Help me pick: Workers AI tags new library games (config PICK_AI = "off" stops it; PICK_AI_MODEL picks the model)
 [ai]
