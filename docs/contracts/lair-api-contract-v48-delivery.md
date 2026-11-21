@@ -46,3 +46,15 @@ the store's app proxy. Answers `{ cents, rural, source, estimated }` and never t
    checkout uses the quote: split into parcels, or ask the customer to get in touch.
 5. **Staff page:** parcels that cost more than the customer paid, from GoSweetSpot's webhook (`TotalCost`), and
    tracking in My Lair.
+
+## 4. Packing and dispatch (decided by Mo, 21 November 2026; not built)
+
+- **No AI when it runs:** packing, pricing, the label and the pickup are plain rules and GoSweetSpot calls.
+- **Packing:** the Lair chooses the box sizes itself, on the slightly larger and heavier side to allow for error, as
+  one parcel or as two or more when the order needs it. The customer sees one delivery price.
+- **Packed button:** nothing is sent to GoSweetSpot when the order is paid. Staff tap Packed on the staff page (changing
+  the box there if they used another), and that makes the shipment, prints the label and books the Aramex pickup.
+- **What leaves the Lair:** everything except the dropshipped dice, which their supplier sends direct, so those lines
+  get no label and no pickup. The Baron of Dice range does leave the Lair: Mo collects it first, then packs it.
+- **Pickup:** Aramex's driver already collects from the Lair. To check on the account: whether GoSweetSpot's
+  `bookpickup` takes Aramex, or the pickups are a standing arrangement.
