@@ -296,6 +296,11 @@ test('the rolls (Mo: "they get the dice after purchase. And credit is immediatel
   assert.equal((await card(MIA)).rolls.available, 2);
 });
 
+test('round 48: an order paid through the delivery step (a draft tagged lair-delivery) is an online order, and earns its rolls', async () => {
+  ok(await paid(webOrder(1650, [dice(16501, 400)], { source: 'shopify_draft_order', extra: { tags: 'lair-delivery' } })));
+  assert.equal((await card(MIA)).rolls.available, 2);
+});
+
 test('online only (Mo: "The $200 spend is online only no in-store correlation"): a counter sale, the till\'s, a draft order, a subscription\'s billing, a damage charge and an order with no customer earn nothing', async () => {
   // Shopify POS at the counter
   ok(await paid(webOrder(1601, [dice(16011, 400)], { source: 'pos' })));

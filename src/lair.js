@@ -126,7 +126,7 @@ import { QUEST_TABLES, questMethods } from './quests.js';
 import { SHELF_TABLES, shelfPickMethods } from './shelf-picks.js';
 import { MEETUP_TABLES, meetupMethods } from './meetup.js';
 // Round 48: delivery priced from the parcel and the address (src/delivery.js, contract v48-delivery)
-import { deliveryMethods } from './delivery.js';
+import { asOnlineOrder, deliveryMethods } from './delivery.js';
 // Round 46: library copies bought online are held (src/library-hold.js)
 import { LIBRARY_HOLD_TABLES, libraryHoldMethods } from './library-hold.js';
 // 17 Nov 2026 (contract v45-guard): the robot check, the day's cap without an account, limits kept in the Durable
@@ -5337,6 +5337,8 @@ export class Lair {
    * customer's spend, once per order: the order id is the key.
    */
   async ordersPaid(order) {
+    // Round 48: the delivery step's checkout is the website's own, though Shopify makes it from a draft (src/delivery.js)
+    order = asOnlineOrder(order);
     const orderId = order.admin_graphql_api_id || (order.id ? `gid://shopify/Order/${order.id}` : '');
     if (!orderId || !this.shopify.configured) return { updated: [] };
     const source = order.source_name || '';

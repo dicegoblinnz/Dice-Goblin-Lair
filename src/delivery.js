@@ -16,9 +16,19 @@
  */
 import { recordStatus } from './config.js';
 import { RuleError } from './core.js';
+import { orderTags } from './counter.js';
 
 /** The tag on a delivery checkout's draft order, and so on its paid order: an online order, though it came from a draft */
 export const DELIVERY_TAG = 'lair-delivery';
+
+/**
+ * A paid order as the rest of the Lair should take it. The delivery step's checkout is a draft order, and ordersPaid
+ * trusts drafts as the Lair's own (a note naming a booking pays it). This one carries the customer's own cart, note
+ * and line properties, so it's taken as the online order it is: its rolls, its quests, and no draft's trust.
+ */
+export function asOnlineOrder(order) {
+  return order?.source_name === 'shopify_draft_order' && orderTags(order).includes(DELIVERY_TAG) ? { ...order, source_name: 'web' } : order;
+}
 
 /** What customers read on the order's delivery line */
 export const DELIVERY_WORDS = Object.freeze({

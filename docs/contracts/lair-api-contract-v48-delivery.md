@@ -7,7 +7,8 @@ Delivery is now worked out in the Lair before payment: the real Aramex price to 
 
 - **One rule for every posted order:** it's priced as one Aramex parcel sent from the Lair, whoever really sends it
   (dropshipped dice and the Baron of Dice range included). Pickup is free and skips all of this.
-- **The parcel:** the items' weights plus 150 g of packing, rounded up to 100 g. The box is as long and wide as the
+- **The parcel:** the items' weights, 5% on the heavy side, plus 150 g of packing, rounded up to 100 g (section 3
+  says when an order is split). The box is as long and wide as the
   biggest item and tall enough for everything with 15% padding. An item with no weight or size on its listing counts as
   300 g and 20 × 15 × 6 cm, and the quote is marked `estimated`.
 - **The price:** GoSweetSpot's `Cost` for the cheapest Aramex service that isn't a Saturday one, plus 15% GST, rounded
@@ -33,21 +34,56 @@ the store's app proxy. Answers `{ cents, rural, source, estimated }` and never t
 - The last live quote's workings (every service offered, the one picked, the parcel) go to the config database's
   `status` table, key `delivery`.
 
-## 3. Still to build
+## 3. Parcels (built: `parcelsOf`)
 
-1. **Check against a real quote** once the key is in: that `Cost` has no GST or fuel surcharge missing, against a
-   GoSweetSpot invoice.
-2. **`POST /delivery/checkout`**: quotes again on the server, then makes a draft order for the cart with the delivery
-   as its shipping line (as `createLibrarySend` does) and answers its checkout link. To prove before it goes live: the
-   dice deal, a deck's free sleeves, discount codes, store credit, gift cards, the d20 rolls and Same parcel all behave
-   as they do at the normal checkout.
-3. **The website's delivery step** (lab first): Proceed to pay opens it, the address goes in, one line shows the price.
-4. **Parcels Aramex won't take** (too big or heavy, so no live price): today they get the flat rate. Decide before
-   checkout uses the quote: split into parcels, or ask the customer to get in touch.
-5. **Staff page:** parcels that cost more than the customer paid, from GoSweetSpot's webhook (`TotalCost`), and
+- **One parcel or several:** biggest items first, each into the first parcel with room. A parcel is split off before it
+  passes 22 kg, 140 cm long or 150 litres, a little under Aramex's 25 kg, 1.5 m and 175 litres.
+- **On the large side:** items are weighed 5% heavy, each parcel gets its 150 g of packing and 15% padding, and
+  everything rounds up.
+- **One price:** the parcels go to GoSweetSpot as one request, and the customer sees one price with one $1.00 for
+  packing. With no live price, each parcel is charged the flat rate.
+- **An item too big for any parcel** gets a parcel of its own. Aramex then offers no service, so the flat rate stands.
+  Still Mo's to decide: charge the flat rate as now, or ask the customer to get in touch.
+
+## 4. `POST /delivery/checkout` (built, on the branch; nothing calls it yet)
+
+`{ address: { name, street, suburb, city, postcode, phone }, email, note, codes, lines: [{ variantId, quantity,
+properties }] }`. The Lair prices the delivery again itself (a price sent by the page is ignored), makes a draft order
+for the cart with that as its shipping line, and answers `{ checkoutUrl, cents, rural, source, estimated,
+sameParcel? }`. `checkoutUrl` is `null` when nothing in the cart is posted: the page goes to the normal checkout.
+
+- **The draft:** tagged `lair-delivery`, the signed-in customer on it, the address filled in, automatic discounts on,
+  the cart's discount codes on it and more allowed at checkout, each line's properties kept.
+- **Its paid order is an online order** (`asOnlineOrder`): it earns d20 rolls and quests as any website order does,
+  and gets none of the trust the Lair's own drafts get (a note naming a booking pays nothing).
+- **Same parcel:** a signed-in customer inside their hour pays no delivery. The Lair honours it itself (the quote
+  answers `cents: 0, sameParcel: "#1550"`, the line reads "Same parcel as #1550"), since the `PARCEL-` code can't take
+  the Lair's own delivery line off. The paid order is linked to its first by `_parcel`, then tagged and noted as before.
+
+What's proven, and how:
+
+| | How | |
+|---|---|---|
+| Dice deal, free sleeves | Shopify's own sum for a delivery draft on the real shop (`draftOrderCalculate`, 21 Nov 2026): 3 dice sets, a Commander deck and sleeves came to $150 after $35 off, plus $6.75 delivery | proven |
+| d20 rolls, Same parcel | `test/round48-delivery-checkout.test.js`, `test/round38-order-rolls.test.js` | proven |
+| Discount codes | The draft is asked for with the codes on it and allowed at checkout (test). The shop had no live code to try on 21 Nov 2026 | to try with a real code |
+| Store credit, gift cards | Both are taken on Shopify's payment page, which the draft's link opens for the customer on it | to try on one real checkout in the lab |
+
+Known gap: two delivery checkouts opened inside the same hour both read $0 until one is paid.
+
+Also to try on that real checkout: whether the address can be changed on Shopify's page after the price is set, and
+that an item out of stock can't be bought.
+
+## 5. Still to build
+
+1. **Check against a real quote:** that `Cost` has no GST or fuel surcharge missing, against GoSweetSpot.
+2. **The website's delivery step** (lab first): Proceed to pay opens it, the address goes in, one line shows the price.
+   Express checkout buttons skip it: Mo to say whether they stay.
+3. **The Packed button** (section 6).
+4. **Staff page:** parcels that cost more than the customer paid, from GoSweetSpot's webhook (`TotalCost`), and
    tracking in My Lair.
 
-## 4. Packing and dispatch (decided by Mo, 21 November 2026; not built)
+## 6. Packing and dispatch (decided by Mo, 21 November 2026; not built)
 
 - **No AI when it runs:** packing, pricing, the label and the pickup are plain rules and GoSweetSpot calls.
 - **Packing:** the Lair chooses the box sizes itself, on the slightly larger and heavier side to allow for error, as

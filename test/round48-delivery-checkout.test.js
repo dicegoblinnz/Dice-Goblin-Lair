@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { cloudflareSql } from './cloudflare-sql.js';
-import { DELIVERY_TAG, deliveryMethods } from '../src/delivery.js';
+import { DELIVERY_TAG, asOnlineOrder, deliveryMethods } from '../src/delivery.js';
 import { ORDER_ROLL_TABLES, orderRollMethods } from '../src/order-rolls.js';
 import { ShopifyAdmin } from '../src/shopify.js';
 
@@ -174,4 +174,12 @@ test('Same parcel: the paid second order is linked to its first by the delivery 
   assert.equal(row.parcel_order_id, 'gid://shopify/Order/1551');
   // the second order of a parcel doesn't start a parcel of its own
   assert.equal(lair.sql.exec("SELECT parcel_ok FROM order_rolls WHERE order_id = 'gid://shopify/Order/1551'").one().parcel_ok, 0);
+});
+
+test('a paid delivery order is treated as the online order it is: none of the trust a Lair-made draft gets', () => {
+  // ordersPaid lets a draft order pay a booking named only in its note; a delivery order's note is the customer's own
+  const order = paidOrder(1700, { tags: DELIVERY_TAG, note: 'GOB-ABC123' });
+  assert.equal(asOnlineOrder(order).source_name, 'web');
+  assert.equal(asOnlineOrder(paidOrder(1701)).source_name, 'shopify_draft_order', 'any other draft is still a draft');
+  assert.equal(asOnlineOrder(paidOrder(1702, { tags: DELIVERY_TAG, source_name: 'pos' })).source_name, 'pos');
 });
